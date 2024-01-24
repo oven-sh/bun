@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const uv = bun.windows.libuv;
-const Path = @import("../../resolver/resolve_path.zig");
+const path_handler = bun.path;
 const Fs = @import("../../fs.zig");
 const Mutex = @import("../../lock.zig").Lock;
 const string = bun.string;
@@ -57,7 +57,7 @@ pub const PathWatcherManager = struct {
                     .is_file = true,
                     .path = cloned_path,
                     // if is really a file we need to get the dirname
-                    .dirname = Path.dirname(cloned_path, .windows),
+                    .dirname = std.fs.path.dirname(cloned_path),
                     .hash = Watcher.getHash(cloned_path),
                     .refs = 1,
                 };
@@ -276,12 +276,12 @@ pub const PathWatcher = struct {
         // we need the absolute path to get the file info
         var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
         var parts = [_]string{path};
-        const cwd = Path.dirname(this.path.path, .windows);
+        const cwd = std.fs.path.dirname(this.path.path);
         @memcpy(buf[0..cwd.len], cwd);
         buf[cwd.len] = std.fs.path.sep;
 
         var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-        const file_path = Path.joinAbsStringBuf(
+        const file_path = path_handler.joinAbsStringBuf(
             buf[0 .. cwd.len + 1],
             &joined_buf,
             &parts,

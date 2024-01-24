@@ -16,7 +16,7 @@ const sync = @import("sync.zig");
 const Mutex = @import("./lock.zig").Lock;
 const Semaphore = sync.Semaphore;
 const Fs = @This();
-const path_handler = @import("./resolver/resolve_path.zig");
+const path_handler = bun.path;
 const PathString = bun.PathString;
 const allocators = @import("./allocators.zig");
 
@@ -124,7 +124,7 @@ pub const FileSystem = struct {
 
         // Ensure there's a trailing separator in the top level directory
         // This makes path resolution more reliable
-        if (!bun.path.isSepAny(top_level_dir[top_level_dir.len - 1])) {
+        if (!std.fs.path.isSep(top_level_dir[top_level_dir.len - 1])) {
             const tld = try allocator.alloc(u8, top_level_dir.len + 1);
             bun.copy(u8, tld, top_level_dir);
             tld[tld.len - 1] = std.fs.path.sep;
@@ -546,7 +546,7 @@ pub const FileSystem = struct {
                         if (bun.getenvZ("USERPROFILE")) |profile| {
                             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
-                            const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
+                            const out = path_handler.joinAbsStringBuf(profile, &buf, &parts, .loose);
                             break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
                         }
 
@@ -1352,63 +1352,15 @@ pub const NodeJSPathName = struct {
 
     pub fn init(_path: string, comptime isWindows: bool) NodeJSPathName {
         const platform: path_handler.Platform = if (isWindows) .windows else .posix;
-        const getLastSep = comptime platform.getLastSeparatorFunc();
-
-        var path = _path;
-        var base = path;
-        // ext must be empty if not detected
-        var ext: string = "";
-        var dir = path;
-        var is_absolute = true;
-        var _i = getLastSep(path);
-        var first = true;
-        while (_i) |i| {
-            // Stop if we found a non-trailing slash
-            if (i + 1 != path.len and path.len >= i + 1) {
-                base = path[i + 1 ..];
-                dir = path[0..i];
-                is_absolute = false;
-                break;
-            }
-
-            // If the path starts with a slash and it's the only slash, it's absolute
-            if (i == 0 and first) {
-                base = path[1..];
-                dir = &([_]u8{});
-                break;
-            }
-
-            first = false;
-            // Ignore trailing slashes
-
-            path = path[0..i];
-
-            _i = getLastSep(path);
-        }
-
-        // clean trailing slashs
-        if (base.len > 1 and platform.isSeparator(base[base.len - 1])) {
-            base = base[0 .. base.len - 1];
-        }
-
+        const isAbsolute = platform.isAbsolute(_path);
+        const dir = if (isAbsolute) &([_]u8{}) else platform.dirname(_path) orelse &([_]u8{});
+        const base = platform.basename(_path);
+        const ext = std.fs.path.extension(base);
         // filename is base without extension
         var filename = base;
-
-        // if only one character ext = "" even if filename it's "."
-        if (filename.len > 1) {
-            // Strip off the extension
-            if (strings.lastIndexOfChar(filename, '.')) |dot| {
-                if (dot > 0) {
-                    filename = filename[0..dot];
-                    ext = base[dot..];
-                }
-            }
+        if (filename.len > 1 and ext.len > 0) {
+            filename = filename[0 .. filename.len - ext.len];
         }
-
-        if (is_absolute) {
-            dir = &([_]u8{});
-        }
-
         return NodeJSPathName{
             .dir = dir,
             .base = base,
@@ -1476,7 +1428,7 @@ pub const PathName = struct {
         return if (this.dir.len == 0) "./" else this.dir.ptr[0 .. this.dir.len + @as(
             usize,
             @intCast(@intFromBool(
-                !bun.path.isSepAny(this.dir[this.dir.len - 1]) and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
+                !std.fs.path.isSep(this.dir[this.dir.len - 1]) and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
             )),
         )];
     }
@@ -1488,61 +1440,15 @@ pub const PathName = struct {
             std.debug.assert(!strings.startsWith(_path, "/:/"));
             std.debug.assert(!strings.startsWith(_path, "\\:\\"));
         }
-
-        var path = _path;
-        var base = path;
-        var ext: []const u8 = undefined;
-        var dir = path;
-        var is_absolute = true;
-        const has_disk_designator = path.len > 2 and path[1] == ':' and switch (path[0]) {
-            'a'...'z', 'A'...'Z' => true,
-            else => false,
-        } and bun.path.isSepAny(path[2]);
-        if (has_disk_designator) {
-            path = path[2..];
-        }
-
-        var _i = bun.path.lastIndexOfSep(path);
-        while (_i) |i| {
-            // Stop if we found a non-trailing slash
-            if (i + 1 != path.len and path.len > i + 1) {
-                base = path[i + 1 ..];
-                dir = path[0..i];
-                is_absolute = false;
-                break;
-            }
-
-            // Ignore trailing slashes
-            path = path[0..i];
-
-            _i = bun.path.lastIndexOfSep(path);
-        }
-
-        // Strip off the extension
-        if (strings.lastIndexOfChar(base, '.')) |dot| {
-            ext = base[dot..];
-            base = base[0..dot];
-        } else {
-            ext = "";
-        }
-
-        if (is_absolute) {
-            dir = &([_]u8{});
-        }
-
-        if (base.len > 1 and bun.path.isSepAny(base[base.len - 1])) {
-            base = base[0 .. base.len - 1];
-        }
-
-        if (!is_absolute and has_disk_designator) {
-            dir = _path[0 .. dir.len + 2];
-        }
-
+        const isAbsolute = std.fs.path.isAbsolute(_path);
+        const dir = if (isAbsolute) &([_]u8{}) else std.fs.path.dirname(_path) orelse &([_]u8{});
+        const base = std.fs.path.basename(_path);
+        const filename = if (dir.len > 0) _path[dir.len + 1 ..] else _path;
         return PathName{
             .dir = dir,
             .base = base,
-            .ext = ext,
-            .filename = if (dir.len > 0) _path[dir.len + 1 ..] else _path,
+            .ext = std.fs.path.extension(base),
+            .filename = filename,
         };
     }
 };

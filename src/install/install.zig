@@ -24,7 +24,7 @@ const linker = @import("../linker.zig");
 
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
-const Path = bun.path;
+const path_handler = bun.path;
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const BunArguments = @import("../cli.zig").Arguments;
@@ -1251,7 +1251,7 @@ pub const PackageInstall = struct {
                     const createFile = if (comptime Environment.isWindows) std.fs.Dir.createFileW else std.fs.Dir.createFile;
 
                     var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
-                        if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                        if (std.fs.path.dirname(entry.path)) |entry_dirname| {
                             bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                         }
                         break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
@@ -1666,7 +1666,7 @@ pub const PackageInstall = struct {
         const dest = std.fs.path.basename(dest_path);
         if (comptime Environment.isWindows) {
             var dest_buf2: bun.PathBuffer = undefined;
-            const dest_z = bun.path.joinAbsStringBufZ(
+            const dest_z = path_handler.joinAbsStringBufZ(
                 dest_dir_path,
                 &dest_buf2,
                 &.{
@@ -1692,7 +1692,7 @@ pub const PackageInstall = struct {
                 .result => {},
             }
         } else {
-            const target = Path.relative(dest_dir_path, to_path);
+            const target = path_handler.relative(dest_dir_path, to_path);
             std.os.symlinkat(target, dest_dir.fd, dest) catch |err| return Result{
                 .fail = .{
                     .err = err,
@@ -2482,7 +2482,7 @@ pub const PackageManager = struct {
                 };
             }
 
-            this.cache_directory_path = this.allocator.dupe(u8, Path.joinAbsString(
+            this.cache_directory_path = this.allocator.dupe(u8, path_handler.joinAbsString(
                 Fs.FileSystem.instance.top_level_dir,
                 &.{
                     "node_modules",
@@ -5366,7 +5366,7 @@ pub const PackageManager = struct {
             if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{ "install", "global" };
-                const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                const path = path_handler.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                 return try std.fs.cwd().makeOpenPath(path, .{});
             }
 
@@ -5374,14 +5374,14 @@ pub const PackageManager = struct {
                 if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     var parts = [_]string{ ".bun", "install", "global" };
-                    const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                    const path = path_handler.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                     return try std.fs.cwd().makeOpenPath(path, .{});
                 }
             } else {
                 if (bun.getenvZ("USERPROFILE")) |home_dir| {
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     var parts = [_]string{ ".bun", "install", "global" };
-                    const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                    const path = path_handler.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                     return try std.fs.cwd().makeOpenPath(path, .{});
                 }
             }
@@ -5407,7 +5407,7 @@ pub const PackageManager = struct {
                 var parts = [_]string{
                     "bin",
                 };
-                const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                const path = path_handler.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                 return try std.fs.cwd().makeOpenPath(path, .{});
             }
 
@@ -5417,7 +5417,7 @@ pub const PackageManager = struct {
                     ".bun",
                     "bin",
                 };
-                const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+                const path = path_handler.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                 return try std.fs.cwd().makeOpenPath(path, .{});
             }
 
@@ -6481,7 +6481,7 @@ pub const PackageManager = struct {
             var parts = [_]string{
                 "./bun.lockb",
             };
-            const lockfile_path = Path.joinAbsStringBuf(
+            const lockfile_path = path_handler.joinAbsStringBuf(
                 Fs.FileSystem.instance.top_level_dir,
                 &buf,
                 &parts,
@@ -6748,7 +6748,7 @@ pub const PackageManager = struct {
                 }
             }
 
-            switch (Syscall.lstat(Path.joinAbsStringZ(try manager.globalLinkDirPath(), &.{name}, .auto))) {
+            switch (Syscall.lstat(path_handler.joinAbsStringZ(try manager.globalLinkDirPath(), &.{name}, .auto))) {
                 .result => |stat| {
                     if (!std.os.S.ISLNK(stat.mode)) {
                         Output.prettyErrorln("<r><green>success:<r> package \"{s}\" is not globally linked, so there's nothing to do.", .{name});
@@ -7173,7 +7173,7 @@ pub const PackageManager = struct {
                 if (cwd_.len > 0 and cwd_[0] == '.') {
                     const cwd = try bun.getcwd(&buf);
                     var parts = [_]string{cwd_};
-                    const path_ = Path.joinAbsStringBuf(cwd, &buf2, &parts, .auto);
+                    const path_ = path_handler.joinAbsStringBuf(cwd, &buf2, &parts, .auto);
                     buf2[path_.len] = 0;
                     final_path = buf2[0..path_.len :0];
                 } else {
@@ -8323,7 +8323,7 @@ pub const PackageManager = struct {
                     scripts.install.isEmpty() and
                     scripts.postinstall.isEmpty())
                 brk: {
-                    const binding_dot_gyp_path = Path.joinAbsStringZ(
+                    const binding_dot_gyp_path = path_handler.joinAbsStringZ(
                         this.node_modules_folder_path.items,
                         &[_]string{ folder_name, "binding.gyp" },
                         .auto,
@@ -8332,7 +8332,7 @@ pub const PackageManager = struct {
                     break :brk Syscall.exists(binding_dot_gyp_path);
                 } else false;
 
-                const cwd = Path.joinAbsStringBufZTrailingSlash(
+                const cwd = path_handler.joinAbsStringBufZTrailingSlash(
                     this.node_modules_folder_path.items,
                     &path_buf_to_use,
                     &[_]string{destination_dir_subpath},
@@ -9401,7 +9401,7 @@ pub const PackageManager = struct {
             }
         }
 
-        const binding_dot_gyp_path = Path.joinAbsStringZ(
+        const binding_dot_gyp_path = path_handler.joinAbsStringZ(
             Fs.FileSystem.instance.top_level_dir,
             &[_]string{"binding.gyp"},
             .auto,

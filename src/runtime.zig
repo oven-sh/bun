@@ -10,7 +10,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const resolve_path = @import("./resolver/resolve_path.zig");
+const path_handler = bun.path;
 const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
 const Ref = @import("ast/base.zig").Ref;
@@ -38,7 +38,7 @@ pub const ErrorCSS = struct {
             const dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, content.error_css_path };
             const file = std.fs.cwd().openFile(
-                resolve_path.joinAbsString(dirname, &paths, .auto),
+                path_handler.joinAbsString(dirname, &paths, .auto),
                 .{ .mode = .read_only },
             ) catch return embedDebugFallback(
                 "Missing packages/bun-error/bun-error.css. Please run \"make bun_error\"",
@@ -61,7 +61,7 @@ pub const ErrorJS = struct {
             const dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, content.error_js_path };
             const file = std.fs.cwd().openFile(
-                resolve_path.joinAbsString(dirname, &paths, .auto),
+                path_handler.joinAbsString(dirname, &paths, .auto),
                 .{ .mode = .read_only },
             ) catch return embedDebugFallback(
                 "Missing " ++ content.error_js_path ++ ". Please run \"make bun_error\"",
@@ -117,7 +117,7 @@ pub const Fallback = struct {
 
     pub inline fn scriptContent() string {
         if (comptime Environment.isDebug) {
-            const dirpath = comptime bun.Environment.base_path ++ (bun.Dirname.dirname(u8, @src().file) orelse "");
+            const dirpath = comptime bun.Environment.base_path ++ (std.fs.path.dirname(@src().file).?);
             var buf: bun.PathBuffer = undefined;
             const user = bun.getUserName(&buf) orelse "";
             const dir = std.mem.replaceOwned(

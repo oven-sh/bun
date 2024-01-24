@@ -1,11 +1,12 @@
 const std = @import("std");
+const bun = @import("root").bun;
 const Api = @import("../../api/schema.zig").Api;
 const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
-const bun = @import("root").bun;
+const path_handler = bun.path;
 const string = bun.string;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const js = JSC.C;
 const WebCore = JSC.WebCore;
 const Bundler = bun.bundler;
@@ -19,14 +20,14 @@ const JSObject = JSC.JSObject;
 const JSError = Base.JSError;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const strings = @import("root").bun.strings;
+const strings = bun.strings;
 
 const To = Base.To;
 const Request = WebCore.Request;
 
 const URLPath = @import("../../http/url_path.zig");
 const URL = @import("../../url.zig").URL;
-const Log = @import("root").bun.logger;
+const Log = bun.logger;
 const Resolver = @import("../../resolver/resolver.zig").Resolver;
 const Router = @import("../../router.zig");
 
@@ -88,11 +89,11 @@ pub const FileSystemRouter = struct {
             if (!(root_dir_path_.len == 0 or strings.eqlComptime(root_dir_path_.slice(), "."))) {
                 // resolve relative path if needed
                 const path = root_dir_path_.slice();
-                if (bun.path.Platform.isAbsolute(.auto, path)) {
+                if (path_handler.Platform.auto.isAbsolute(path)) {
                     root_dir_path = root_dir_path_;
                 } else {
                     var parts = [_][]const u8{path};
-                    root_dir_path = JSC.ZigString.Slice.fromUTF8NeverFree(bun.path.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, &parts, .auto));
+                    root_dir_path = JSC.ZigString.Slice.fromUTF8NeverFree(path_handler.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, &parts, .auto));
                 }
             }
         } else {

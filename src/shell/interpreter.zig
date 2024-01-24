@@ -16,10 +16,11 @@
 //!     `defer` some code, then try to yield execution to some state machine struct,
 //!     and it immediately finishes, it will deinit itself and the defer code might
 //!     use undefined memory.
-const bun = @import("root").bun;
+//!
 const std = @import("std");
-const os = std.os;
 const builtin = @import("builtin");
+const bun = @import("root").bun;
+const os = std.os;
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -27,11 +28,11 @@ const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
 const JSPromise = bun.JSC.JSPromise;
 const JSGlobalObject = bun.JSC.JSGlobalObject;
+const path_handler = bun.path;
 const which = @import("../which.zig").which;
 const Braces = @import("./braces.zig");
 const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
-const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
@@ -662,27 +663,27 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 const is_sentinel = @TypeOf(new_cwd_) == [:0]const u8;
 
                 const new_cwd: [:0]const u8 = brk: {
-                    if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) {
+                    if (path_handler.Platform.auto.isAbsolute(new_cwd_)) {
                         if (is_sentinel) {
-                            @memcpy(ResolvePath.join_buf[0..new_cwd_.len], new_cwd_[0..new_cwd_.len]);
-                            ResolvePath.join_buf[new_cwd_.len] = 0;
-                            break :brk ResolvePath.join_buf[0..new_cwd_.len :0];
+                            @memcpy(path_handler.join_buf[0..new_cwd_.len], new_cwd_[0..new_cwd_.len]);
+                            path_handler.join_buf[new_cwd_.len] = 0;
+                            break :brk path_handler.join_buf[0..new_cwd_.len :0];
                         }
-                        std.mem.copyForwards(u8, &ResolvePath.join_buf, new_cwd_);
-                        ResolvePath.join_buf[new_cwd_.len] = 0;
-                        break :brk ResolvePath.join_buf[0..new_cwd_.len :0];
+                        std.mem.copyForwards(u8, &path_handler.join_buf, new_cwd_);
+                        path_handler.join_buf[new_cwd_.len] = 0;
+                        break :brk path_handler.join_buf[0..new_cwd_.len :0];
                     }
 
                     const existing_cwd = this.cwd();
-                    const cwd_str = ResolvePath.joinZ(&[_][]const u8{
+                    const cwd_str = path_handler.joinZ(&[_][]const u8{
                         existing_cwd,
                         new_cwd_,
                     }, .auto);
 
                     // remove trailing separator
                     if (cwd_str.len > 1 and cwd_str[cwd_str.len - 1] == '/') {
-                        ResolvePath.join_buf[cwd_str.len - 1] = 0;
-                        break :brk ResolvePath.join_buf[0 .. cwd_str.len - 1 :0];
+                        path_handler.join_buf[cwd_str.len - 1] = 0;
+                        break :brk path_handler.join_buf[0 .. cwd_str.len - 1 :0];
                     }
 
                     break :brk cwd_str;
@@ -5009,11 +5010,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         _ = this; // autofix
                         if (!is_absolute) {
                             // If relative paths enabled, stdlib join is preferred over
-                            // ResolvePath.joinBuf because it doesn't try to normalize the path
+                            // path_handler.joinBuf because it doesn't try to normalize the path
                             return std.fs.path.joinZ(alloc, subdir_parts) catch bun.outOfMemory();
                         }
 
-                        const out = alloc.dupeZ(u8, bun.path.join(subdir_parts, .auto)) catch bun.outOfMemory();
+                        const out = alloc.dupeZ(u8, path_handler.join(subdir_parts, .auto)) catch bun.outOfMemory();
 
                         return out;
                     }
@@ -5665,7 +5666,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                         const path_in_dir = std.fs.path.joinZ(fixed_alloc.allocator(), &[_][]const u8{
                             "./",
-                            ResolvePath.basename(src),
+                            std.fs.path.basename(src),
                         }) catch {
                             this.err = Syscall.Error.fromCode(bun.C.E.NAMETOOLONG, .rename);
                             return false;
@@ -5673,9 +5674,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                         switch (Syscall.renameat(this.cwd, src, this.target_fd.?, path_in_dir)) {
                             .err => |e| {
-                                const target_path = ResolvePath.joinZ(&[_][]const u8{
+                                const target_path = path_handler.joinZ(&[_][]const u8{
                                     this.target,
-                                    ResolvePath.basename(src),
+                                    std.fs.path.basename(src),
                                 }, .auto);
 
                                 this.err = e.withPath(bun.default_allocator.dupeZ(u8, target_path[0..]) catch bun.outOfMemory());
@@ -6285,10 +6286,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                                                     for (filepath_args) |filepath| {
                                                         const path = filepath[0..bun.len(filepath)];
-                                                        const resolved_path = if (ResolvePath.Platform.auto.isAbsolute(path)) path else bun.path.join(&[_][]const u8{ cwd, path }, .auto);
+                                                        const resolved_path = if (path_handler.Platform.auto.isAbsolute(path)) path else path_handler.join(&[_][]const u8{ cwd, path }, .auto);
                                                         const is_root = brk: {
-                                                            const normalized = bun.path.normalizeString(resolved_path, false, .auto);
-                                                            const dirname = ResolvePath.dirname(normalized, .auto);
+                                                            const normalized = path_handler.normalizeString(resolved_path, false, .auto);
+                                                            const dirname = path_handler.Platform.auto.dirname(normalized) orelse &([_]u8{});
                                                             const is_root = std.mem.eql(u8, dirname, "");
                                                             break :brk is_root;
                                                         };
@@ -6405,7 +6406,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                     for (this.state.exec.filepath_args) |root_raw| {
                                         const root = root_raw[0..std.mem.len(root_raw)];
                                         const root_path_string = bun.PathString.init(root[0..root.len]);
-                                        const is_absolute = ResolvePath.Platform.auto.isAbsolute(root);
+                                        const is_absolute = path_handler.Platform.auto.isAbsolute(root);
                                         var task = ShellRmTask.create(root_path_string, this, cwd, &this.state.exec.error_signal, is_absolute);
                                         task.schedule();
                                         // task.
@@ -6730,7 +6731,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             defer this.postRun();
 
                             print("DirTask: {s}", .{this.path});
-                            switch (this.task_manager.removeEntry(this, ResolvePath.Platform.auto.isAbsolute(this.path[0..this.path.len]))) {
+                            switch (this.task_manager.removeEntry(this, path_handler.Platform.auto.isAbsolute(this.path[0..this.path.len]))) {
                                 .err => |err| {
                                     print("DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
                                     this.task_manager.err_mutex.lock();
@@ -7206,11 +7207,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         _ = this;
                         if (!is_absolute) {
                             // If relative paths enabled, stdlib join is preferred over
-                            // ResolvePath.joinBuf because it doesn't try to normalize the path
+                            // path_handler.joinBuf because it doesn't try to normalize the path
                             return std.fs.path.joinZ(alloc, subdir_parts) catch bun.outOfMemory();
                         }
 
-                        const out = alloc.dupeZ(u8, bun.path.join(subdir_parts, .auto)) catch bun.outOfMemory();
+                        const out = alloc.dupeZ(u8, path_handler.join(subdir_parts, .auto)) catch bun.outOfMemory();
 
                         return out;
                     }

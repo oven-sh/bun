@@ -26,7 +26,7 @@ const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
 const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
-const ResolvePath = @import("./resolve_path.zig");
+const path_handler = bun.path;
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = bun.StringHashMap(bool);
@@ -1188,7 +1188,7 @@ pub const Resolver = struct {
             }
 
             // Run node's resolution rules (e.g. adding ".js")
-            var normalizer = ResolvePath.PosixToWinNormalizer{};
+            var normalizer = path_handler.PosixToWinNormalizer{};
             if (r.loadAsFileOrDirectory(normalizer.resolve(source_dir, import_path), kind)) |entry| {
                 return .{
                     .success = Result{
@@ -2293,7 +2293,7 @@ pub const Resolver = struct {
                             if (entries.get(file_name) != null) {
                                 if (r.debug_logs) |*debug| {
                                     const parts = [_]string{ package_json.name, package_subpath };
-                                    debug.addNoteFmt("The import {s} is missing the extension {s}", .{ ResolvePath.join(parts, .auto), ext });
+                                    debug.addNoteFmt("The import {s} is missing the extension {s}", .{ path_handler.join(parts, .auto), ext });
                                 }
                                 esm_resolution.status = .ModuleNotFoundMissingExtension;
                                 missing_suffix = ext;
@@ -2323,7 +2323,7 @@ pub const Resolver = struct {
                                             missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
                                             defer r.allocator.free(missing_suffix);
                                             const parts = [_]string{ package_json.name, package_subpath };
-                                            debug.addNoteFmt("The import {s} is missing the suffix {s}", .{ ResolvePath.join(parts, .auto), missing_suffix });
+                                            debug.addNoteFmt("The import {s} is missing the suffix {s}", .{ path_handler.join(parts, .auto), missing_suffix });
                                         }
                                         break;
                                     }
@@ -2542,25 +2542,20 @@ pub const Resolver = struct {
         var path = dir_info_uncached_path_buf[0.._path.len];
 
         bufs(.dir_entry_paths_to_resolve)[0] = (DirEntryResolveQueueItem{ .result = top_result, .unsafe_path = path, .safe_path = "" });
-        var top = Dirname.dirname(path);
+        var top = std.fs.path.dirname(path) orelse &([_]u8{});
 
         var top_parent: allocators.Result = allocators.Result{
             .index = allocators.NotFound,
             .hash = 0,
             .status = .not_found,
         };
-        const root_path = if (comptime Environment.isWindows)
-            ResolvePath.windowsFilesystemRoot(path)
-        else
-            // we cannot just use "/"
-            // we will write to the buffer past the ptr len so it must be a non-const buffer
-            path[0..1];
+        const root_path = path_handler.getRoot(path);
         var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
 
         rfs.entries_mutex.lock();
         defer rfs.entries_mutex.unlock();
 
-        while (!strings.eql(top, root_path)) : (top = Dirname.dirname(top)) {
+        while (!strings.eql(top, root_path)) : (top = std.fs.path.dirname(top) orelse &([_]u8{})) {
             const result = try r.dir_cache.getOrPut(top);
 
             if (result.status != .unknown) {
@@ -3054,7 +3049,7 @@ pub const Resolver = struct {
             var index_path: string = "";
             {
                 var parts = [_]string{ std.mem.trimRight(u8, path_to_check, std.fs.path.sep_str), std.fs.path.sep_str ++ "index" };
-                index_path = ResolvePath.joinStringBuf(bufs(.tsconfig_base_url), &parts, .auto);
+                index_path = path_handler.joinStringBuf(bufs(.tsconfig_base_url), &parts, .auto);
             }
 
             if (map.get(index_path)) |_remapped| {
@@ -3618,7 +3613,7 @@ pub const Resolver = struct {
             }
         }
 
-        const dir_path = Dirname.dirname(path);
+        const dir_path = std.fs.path.dirname(path) orelse &([_]u8{});
 
         const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(
             dir_path,
@@ -4011,8 +4006,8 @@ pub const Resolver = struct {
                     try parent_configs.append(tsconfig_json);
                     var current = tsconfig_json;
                     while (current.extends.len > 0) {
-                        const ts_dir_name = Dirname.dirname(current.abs_path);
-                        const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
+                        const ts_dir_name = std.fs.path.dirname(current.abs_path) orelse &([_]u8{});
+                        const abs_path = path_handler.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
                         const parent_config_maybe = r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
                             r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{
                                 @errorName(err),
@@ -4057,43 +4052,6 @@ pub const Resolver = struct {
                 info.enclosing_tsconfig_json = info.tsconfig_json;
             }
         }
-    }
-};
-
-pub const Dirname = struct {
-    pub fn dirname(path: string) string {
-        if (path.len == 0)
-            return std.fs.path.sep_str;
-
-        const root = brk: {
-            if (Environment.isWindows) {
-                const root = ResolvePath.windowsFilesystemRoot(path);
-                std.debug.assert(root.len > 0);
-                break :brk root;
-            }
-            break :brk "/";
-        };
-
-        var end_index: usize = path.len - 1;
-        while (bun.path.isSepAny(path[end_index])) {
-            if (end_index == 0)
-                return root;
-            end_index -= 1;
-        }
-
-        while (!bun.path.isSepAny(path[end_index])) {
-            if (end_index == 0)
-                return root;
-            end_index -= 1;
-        }
-
-        if (end_index == 0 and bun.path.isSepAny(path[0]))
-            return path[0..1];
-
-        if (end_index == 0)
-            return root;
-
-        return path[0 .. end_index + 1];
     }
 };
 

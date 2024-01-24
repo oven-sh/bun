@@ -1,6 +1,7 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
 const bun = @import("root").bun;
+const logger = bun.logger;
+const path_handler = bun.path;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -13,7 +14,7 @@ const C = bun.C;
 const CLI = @import("./cli.zig").Cli;
 const Features = @import("./analytics/analytics_thread.zig").Features;
 const Platform = @import("./analytics/analytics_thread.zig").GenerateHeader.GeneratePlatform;
-const HTTP = @import("root").bun.http.AsyncHTTP;
+const HTTP = bun.http.AsyncHTTP;
 const CrashReporter = @import("./crash_reporter.zig");
 
 const Report = @This();
@@ -72,7 +73,7 @@ pub const CrashReportWriter = struct {
             .{ base_dir, Global.package_json_version, @as(u64, @intCast(@max(std.time.milliTimestamp(), 0))) },
         ) catch return;
 
-        if (bun.path.nextDirname(file_path)) |dirname| {
+        if (std.fs.path.dirname(file_path)) |dirname| {
             _ = bun.sys.mkdirA(dirname, 0);
         }
 
@@ -238,7 +239,7 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
         // because zig's panic handler will also trigger right after
         if (!Environment.isWindows) {
             // It only is a real crash report if it's not coming from Zig
-            if (comptime !@import("root").bun.JSC.is_bindgen) {
+            if (comptime !bun.JSC.is_bindgen) {
                 std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
                 Bun__crashReportDumpStackTrace(&crash_report_writer);
             }
@@ -306,7 +307,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     }
 
     if (!Environment.isWindows) {
-        if (comptime !@import("root").bun.JSC.is_bindgen) {
+        if (comptime !bun.JSC.is_bindgen) {
             std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
             Bun__crashReportDumpStackTrace(&crash_report_writer);
         }

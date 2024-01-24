@@ -1,10 +1,11 @@
 const std = @import("std");
+const bun = @import("root").bun;
 const expect = std.testing.expect;
 const Environment = @import("./env.zig");
 const string = bun.string;
 const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
-const bun = @import("root").bun;
+const path_handler = bun.path;
 pub const joiner = @import("./string_joiner.zig");
 const log = bun.Output.scoped(.STR, true);
 const js_lexer = @import("./js_lexer.zig");
@@ -15,6 +16,9 @@ pub const Encoding = enum {
     latin1,
     utf16,
 };
+
+const sep_posix = std.fs.path.sep_posix;
+const sep_windows = std.fs.path.sep_windows;
 
 pub inline fn containsChar(self: string, char: u8) bool {
     return indexOfChar(self, char) != null;
@@ -1651,18 +1655,18 @@ pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
     var path_to_use = utf8;
 
-    if (bun.strings.containsChar(utf8, '/')) {
+    if (bun.strings.containsChar(utf8, sep_posix)) {
         @memcpy(renormalized[0..utf8.len], utf8);
         for (renormalized[0..utf8.len]) |*c| {
-            if (c.* == '/') {
-                c.* = '\\';
+            if (c.* == sep_posix) {
+                c.* = sep_windows;
             }
         }
         path_to_use = renormalized[0..utf8.len];
     }
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
-    if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
+    if (path_to_use.len > 3 and std.fs.path.isSep(path_to_use[path_to_use.len - 1])) {
         path_to_use = path_to_use[0 .. path_to_use.len - 1];
     }
 
@@ -1673,11 +1677,11 @@ pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
     var path_to_use = utf8;
 
-    if (bun.strings.containsChar(utf8, '/')) {
+    if (bun.strings.containsChar(utf8, sep_posix)) {
         @memcpy(renormalized[0..utf8.len], utf8);
         for (renormalized[0..utf8.len]) |*c| {
-            if (c.* == '/') {
-                c.* = '\\';
+            if (c.* == sep_posix) {
+                c.* = sep_windows;
             }
         }
         path_to_use = renormalized[0..utf8.len];
@@ -2287,7 +2291,7 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
     return input_len + total_non_ascii_count;
 }
 
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 
 pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: type, latin1_: Type) EncodeIntoResult {
     var buf = buf_;

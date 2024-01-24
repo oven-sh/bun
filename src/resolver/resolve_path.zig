@@ -1,6 +1,7 @@
-const tester = @import("../test/tester.zig");
+const builtin = @import("builtin");
 const std = @import("std");
 const strings = @import("../string_immutable.zig");
+const tester = @import("../test/tester.zig");
 const FeatureFlags = @import("../feature_flags.zig");
 const default_allocator = @import("../memory_allocator.zig").c_allocator;
 const bun = @import("root").bun;
@@ -8,6 +9,29 @@ const Fs = @import("../fs.zig");
 
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
+
+const WindowsPath = std.fs.path.WindowsPath;
+const sep_posix = std.fs.path.sep_posix;
+const sep_windows = std.fs.path.sep_windows;
+const sep_loose = std.fs.path.sep;
+
+const sep_str_posix = std.fs.path.sep_str_posix;
+const sep_str_windows = std.fs.path.sep_str_windows;
+const sep_str_loose = std.fs.path.sep_str;
+
+const sep_index_of_posix = sep_posix;
+const sep_index_of_windows = "/\\";
+const sep_index_of = sep_index_of_windows;
+
+const basenameWindows = std.fs.path.basenameWindows;
+const basenamePosix = std.fs.path.basenamePosix;
+const basenameLoose = std.fs.path.basename;
+const dirnameWindows = std.fs.path.dirnameWindows;
+const dirnamePosix = std.fs.path.dirnamePosix;
+const dirnameLoose = std.fs.path.dirname;
+const isAbsoluteWindows = std.fs.path.isAbsoluteWindows;
+const isAbsolutePosix = std.fs.path.isAbsolutePosix;
+const isAbsoluteLoose = std.fs.path.isAbsolute;
 
 inline fn nqlAtIndex(comptime string_count: comptime_int, index: usize, input: []const []const u8) bool {
     comptime var string_index = 1;
@@ -34,23 +58,23 @@ inline fn nqlAtIndexCaseInsensitive(comptime string_count: comptime_int, index: 
 }
 
 const IsSeparatorFunc = fn (char: u8) bool;
-const LastSeparatorFunction = fn (slice: []const u8) ?usize;
+const LastSeparatorFunction = fn (path: []const u8) ?usize;
 
-inline fn @"is .."(slice: []const u8) bool {
-    return slice.len >= 2 and @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readInt(u16, "..", .little);
+inline fn @"is .."(path: []const u8) bool {
+    return path.len >= 2 and @as(u16, @bitCast(path[0..2].*)) == comptime std.mem.readInt(u16, "..", .little);
 }
 
-inline fn isDotSlash(slice: []const u8) bool {
-    return @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readInt(u16, "./", .little);
+inline fn isDotSlash(path: []const u8) bool {
+    return @as(u16, @bitCast(path[0..2].*)) == comptime std.mem.readInt(u16, "./", .little);
 }
 
-inline fn @"is ../"(slice: []const u8) bool {
-    return strings.hasPrefixComptime(slice, "../");
+inline fn @"is ../"(path: []const u8) bool {
+    return strings.hasPrefixComptime(path, "../");
 }
 
 pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime platform: Platform) ?[]const u8 {
     const separator = comptime platform.separator();
-    const isPathSeparator = comptime platform.getSeparatorFunc();
+    const isPathSeparator = comptime platform.getIsSepFunc();
 
     const nqlAtIndexFn = switch (platform) {
         else => nqlAtIndex,
@@ -141,7 +165,7 @@ pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime p
 // only boether to check if this function appears in benchmarking
 pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Platform) []const u8 {
     const separator = comptime platform.separator();
-    const isPathSeparator = comptime platform.getSeparatorFunc();
+    const isPathSeparator = comptime platform.getIsSepFunc();
 
     const nqlAtIndexFn = switch (platform) {
         else => nqlAtIndex,
@@ -167,10 +191,10 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Pl
         inline 2, 3, 4, 5, 6, 7, 8 => |n| {
             // If volume IDs do not match on windows, we can't have a common path
             if (platform == .windows) {
-                const first_root = windowsFilesystemRoot(input[0]);
+                const first_root = getRootWindows(input[0]);
                 comptime var i = 1;
                 inline while (i < n) : (i += 1) {
-                    const root = windowsFilesystemRoot(input[i]);
+                    const root = getRootWindows(input[i]);
                     if (!strings.eqlCaseInsensitiveASCIIICheckLength(first_root, root)) {
                         return "";
                     }
@@ -189,10 +213,10 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Pl
         else => {
             // If volume IDs do not match on windows, we can't have a common path
             if (platform == .windows) {
-                const first_root = windowsFilesystemRoot(input[0]);
+                const first_root = getRootWindows(input[0]);
                 var i: usize = 1;
                 while (i < input.len) : (i += 1) {
-                    const root = windowsFilesystemRoot(input[i]);
+                    const root = getRootWindows(input[i]);
                     if (!strings.eqlCaseInsensitiveASCIIICheckLength(first_root, root)) {
                         return "";
                     }
@@ -283,13 +307,13 @@ pub fn relativeToCommonPath(
     var normalized_from = normalized_from_;
     var normalized_to = normalized_to_;
     const win_root_len = if (platform == .windows) k: {
-        const from_root = windowsFilesystemRoot(normalized_from_);
-        const to_root = windowsFilesystemRoot(normalized_to_);
+        const from_root = getRootWindows(normalized_from_);
+        const to_root = getRootWindows(normalized_to_);
 
         if (common_path_.len == 0) {
             // the only case path.relative can return not a relative string
             if (!strings.eqlCaseInsensitiveASCIIICheckLength(from_root, to_root)) {
-                if (normalized_to_.len > to_root.len and normalized_to_[normalized_to_.len - 1] == '\\') {
+                if (normalized_to_.len > to_root.len and normalized_to_[normalized_to_.len - 1] == sep_windows) {
                     if (always_copy) {
                         bun.copy(u8, buf, normalized_to_[0 .. normalized_to_.len - 1]);
                         return buf[0 .. normalized_to_.len - 1];
@@ -317,7 +341,7 @@ pub fn relativeToCommonPath(
 
     const common_path = if (platform == .windows)
         common_path_[win_root_len..]
-    else if (std.fs.path.isAbsolutePosix(common_path_))
+    else if (isAbsolutePosix(common_path_))
         common_path_[1..]
     else
         common_path_;
@@ -435,24 +459,6 @@ pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: P
     return relativeToCommonPath(common_path, from, to, &relative_to_common_path_buf, always_copy, platform);
 }
 
-pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
-    switch (comptime platform.resolve()) {
-        .loose => {
-            const separator = lastIndexOfSeparatorLoose(str) orelse return "";
-            return str[0..separator];
-        },
-        .posix => {
-            const separator = lastIndexOfSeparatorPosix(str) orelse return "";
-            return str[0..separator];
-        },
-        .windows => {
-            const separator = lastIndexOfSeparatorWindows(str) orelse return std.fs.path.diskDesignatorWindows(str);
-            return str[0..separator];
-        },
-        else => @compileError("unreachable"),
-    }
-}
-
 threadlocal var relative_from_buf: [4096]u8 = undefined;
 threadlocal var relative_to_buf: [4096]u8 = undefined;
 pub fn relative(from: []const u8, to: []const u8) []const u8 {
@@ -496,68 +502,43 @@ pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const
     return try allocator.dupe(u8, result);
 }
 
-// This function is based on Go's volumeNameLen function
-// https://cs.opensource.google/go/go/+/refs/tags/go1.17.6:src/path/filepath/path_windows.go;l=57
 // volumeNameLen returns length of the leading volume name on Windows.
+//
+// This function is based on Go's volumeNameLen function but zigified:
+// https://cs.opensource.google/go/go/+/refs/tags/go1.17.6:src/path/filepath/path_windows.go;l=57
 fn windowsVolumeNameLen(path: []const u8) struct { usize, usize } {
-    if (path.len < 2) return .{ 0, 0 };
-    // with drive letter
-    const c = path[0];
-    if (path[1] == ':') {
-        if ('a' <= c and c <= 'z' or 'A' <= c and c <= 'Z') {
-            return .{ 2, 0 };
-        }
+    const parsed = std.fs.path.windowsParsePath(path);
+    if (parsed.kind == WindowsPath.Kind.None) {
+        return .{ 0, 0 };
     }
-    // UNC
-    if (path.len >= 5 and
-        Platform.windows.isSeparator(path[0]) and
-        Platform.windows.isSeparator(path[1]) and
-        !Platform.windows.isSeparator(path[2]) and
-        path[2] != '.')
-    {
-        if (strings.indexOfAny(path[3..], "/\\")) |idx| {
-            // TODO: handle input "//abc//def" should be picked up as a unc path
-            if (path.len > idx + 4 and !Platform.windows.isSeparator(path[idx + 4])) {
-                if (strings.indexOfAny(path[idx + 4 ..], "/\\")) |idx2| {
-                    return .{ idx + idx2 + 4, idx + 3 };
-                } else {
-                    return .{ path.len, idx + 3 };
-                }
-            }
-        }
-    }
-    return .{ 0, 0 };
+    return .{ parsed.disk_designator.len, 0 };
 }
 
 pub fn windowsVolumeName(path: []const u8) []const u8 {
     return path[0..@call(.always_inline, windowsVolumeNameLen, .{path})[0]];
 }
 
+pub fn getRootPosix(path: []const u8) []const u8 {
+    return path[0..1];
+}
+
 // path.relative lets you do relative across different share drives
-pub fn windowsFilesystemRoot(path: []const u8) []const u8 {
-    if (path.len < 3)
-        return if (isSepAny(path[0])) path[0..1] else path[0..0];
-    // with drive letter
-    const c = path[0];
-    if (path[1] == ':' and isSepAny(path[2])) {
-        if ('a' <= c and c <= 'z' or 'A' <= c and c <= 'Z') {
-            return path[0..3];
-        }
+pub fn getRootWindows(path: []const u8) []const u8 {
+    const parsed = std.fs.path.windowsParsePath(path);
+    const disk_designator = parsed.disk_designator;
+    switch (parsed.kind) {
+        WindowsPath.Kind.None => return path[0..0],
+        WindowsPath.Kind.Drive => return if (path.len > 3) path[0 .. disk_designator.len + 1] else path[0..0],
+        WindowsPath.Kind.NetworkShare => return if (path.len > 4) path[0 .. disk_designator.len + 1] else path[0..0],
     }
-    // UNC
-    if (path.len >= 5 and
-        Platform.windows.isSeparator(path[0]) and
-        Platform.windows.isSeparator(path[1]) and
-        !Platform.windows.isSeparator(path[2]) and
-        path[2] != '.')
-    {
-        if (strings.indexOfAny(path[3..], "/\\")) |idx| {
-            // TODO: handle input "//abc//def" should be picked up as a unc path
-            return path[0 .. idx + 4];
-        }
+}
+
+pub fn getRoot(path: []const u8) []const u8 {
+    if (comptime !bun.Environment.isWindows) {
+        return getRootPosix(path);
     }
-    if (isSepAny(path[0])) return path[0..1];
-    return path[0..0];
+
+    return getRootWindows(path);
 }
 
 // This function is based on Go's filepath.Clean function
@@ -571,9 +552,9 @@ pub fn normalizeStringGeneric(
     _: anytype,
     comptime preserve_trailing_slash: bool,
 ) []u8 {
-    const isWindows = comptime separator == std.fs.path.sep_windows;
+    const isWinSep = comptime separator == std.fs.path.sep_windows;
 
-    if (isWindows and bun.Environment.isDebug) {
+    if (isWinSep and bun.Environment.isDebug) {
         // this is here to catch a potential mistake by the caller
         //
         // since it is theoretically possible to get here in release
@@ -584,12 +565,12 @@ pub fn normalizeStringGeneric(
     var buf_i: usize = 0;
     var dotdot: usize = 0;
 
-    const volLen, const indexOfThirdUNCSlash = if (isWindows and !allow_above_root)
+    const volLen, const indexOfThirdUNCSlash = if (isWinSep and !allow_above_root)
         windowsVolumeNameLen(path_)
     else
         .{ 0, 0 };
 
-    if (isWindows and !allow_above_root) {
+    if (isWinSep and !allow_above_root) {
         if (volLen > 0) {
             if (path_[1] != ':') {
                 // UNC paths
@@ -619,7 +600,7 @@ pub fn normalizeStringGeneric(
             dotdot = 1;
         }
     }
-    if (isWindows and allow_above_root) {
+    if (isWinSep and allow_above_root) {
         if (path_.len >= 2 and path_[1] == ':') {
             buf[0] = path_[0];
             buf[1] = ':';
@@ -629,14 +610,14 @@ pub fn normalizeStringGeneric(
     }
 
     var r: usize = 0;
-    var path, const buf_start = if (isWindows)
+    var path, const buf_start = if (isWinSep)
         .{ path_[buf_i..], buf_i }
     else
         .{ path_, 0 };
 
     const n = path.len;
 
-    if (isWindows and (allow_above_root or volLen > 0)) {
+    if (isWinSep and (allow_above_root or volLen > 0)) {
         // consume leading slashes on windows
         if (r < n and isSeparator(path[r])) {
             r += 1;
@@ -704,16 +685,16 @@ pub fn normalizeStringGeneric(
         }
     }
 
-    if (isWindows and buf_i == 2 and buf[1] == ':') {
+    if (isWinSep and buf_i == 2 and buf[1] == ':') {
         // If the original path is just a relative path with a drive letter,
         // add .
-        buf[buf_i] = if (path.len > 0 and path[0] == '\\') '\\' else '.';
+        buf[buf_i] = if (path.len > 0 and path[0] == sep_windows) sep_windows else '.';
         buf_i += 1;
     }
 
     const result = buf[0..buf_i];
 
-    if (bun.Environment.allow_assert and isWindows) {
+    if (bun.Environment.allow_assert and isWinSep) {
         std.debug.assert(!strings.startsWith(result, "\\:\\"));
     }
 
@@ -726,100 +707,115 @@ pub const Platform = enum {
     windows,
     posix,
 
+    pub fn basename(comptime platform: Platform, path: []const u8) []const u8 {
+        return switch (comptime platform) {
+            .auto => (comptime platform.resolve()).basename(path),
+            .posix => basenamePosix(path),
+            .windows => basenameWindows(path),
+            .loose => basenameLoose(path),
+        };
+    }
+
+    pub fn dirname(comptime platform: Platform, path: []const u8) ?[]const u8 {
+        return switch (comptime platform) {
+            .auto => (comptime platform.resolve()).dirname(path),
+            .posix => dirnamePosix(path),
+            .windows => dirnameWindows(path),
+            .loose => dirnameLoose(path),
+        };
+    }
+
     pub fn isAbsolute(comptime platform: Platform, path: []const u8) bool {
         return switch (comptime platform) {
             .auto => (comptime platform.resolve()).isAbsolute(path),
-            .posix => path.len > 0 and path[0] == '/',
-            .windows,
-            .loose,
-            => std.fs.path.isAbsoluteWindows(path),
+            .posix => isAbsolutePosix(path),
+            .windows => isAbsoluteWindows(path),
+            .loose => isAbsoluteLoose(path),
         };
     }
 
     pub fn separator(comptime platform: Platform) u8 {
         return comptime switch (platform) {
-            .auto => platform.resolve().separator(),
-            .loose, .posix => std.fs.path.sep_posix,
-            .windows => std.fs.path.sep_windows,
+            .auto => (platform.resolve()).separator(),
+            .posix => sep_posix,
+            .windows => sep_windows,
+            .loose => sep_loose,
         };
     }
 
-    pub fn separatorString(comptime platform: Platform) []const u8 {
+    pub fn sepStr(comptime platform: Platform) []const u8 {
         return comptime switch (platform) {
-            .auto => platform.resolve().separatorString(),
-            .loose, .posix => std.fs.path.sep_str_posix,
-            .windows => std.fs.path.sep_str_windows,
+            .auto => (platform.resolve()).sepStr(),
+            .posix => sep_str_posix[0..1],
+            .windows => sep_str_windows[0..1],
+            .loose => sep_str_loose[0..1],
         };
     }
 
-    pub const current: Platform = switch (@import("builtin").target.os.tag) {
+    pub const current: Platform = switch (builtin.target.os.tag) {
         .windows => Platform.windows,
         else => Platform.posix,
     };
 
-    pub fn getSeparatorFunc(comptime _platform: Platform) IsSeparatorFunc {
-        switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
+    pub fn getIsSepFunc(comptime platform: Platform) IsSeparatorFunc {
+        comptime switch (platform.resolve()) {
+            .auto => unreachable,
+            inline .posix, .windows => {
+                return std_isSep;
+            },
             .loose => {
                 return isSepAny;
             },
-            .windows => {
-                return isSepAny;
-            },
-            .posix => {
-                return isSepPosix;
-            },
-        }
-    }
-
-    pub fn getLastSeparatorFunc(comptime _platform: Platform) LastSeparatorFunction {
-        switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
-            .loose => {
-                return lastIndexOfSeparatorLoose;
-            },
-            .windows => {
-                return lastIndexOfSeparatorWindows;
-            },
-            .posix => {
-                return lastIndexOfSeparatorPosix;
-            },
-        }
-    }
-
-    pub inline fn isSeparator(comptime _platform: Platform, char: u8) bool {
-        switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
-            .loose => {
-                return isSepAny(char);
-            },
-            .windows => {
-                return isSepAny(char);
-            },
-            .posix => {
-                return isSepPosix(char);
-            },
-        }
-    }
-
-    pub fn trailingSeparator(comptime _platform: Platform) [2]u8 {
-        return comptime switch (_platform) {
-            .auto => _platform.resolve().trailingSeparator(),
-            .windows => ".\\".*,
-            .posix, .loose => "./".*,
         };
     }
 
-    pub fn leadingSeparatorIndex(comptime _platform: Platform, path: anytype) ?usize {
-        switch (comptime _platform.resolve()) {
+    pub fn getLastIndexOfSepFunc(comptime platform: Platform) LastSeparatorFunction {
+        comptime switch (platform.resolve()) {
+            .auto => unreachable,
+            .loose => {
+                return lastIndexOfSepLoose;
+            },
             .windows => {
+                return lastIndexOfSepWindows;
+            },
+            .posix => {
+                return lastIndexOfSepPosix;
+            },
+        };
+    }
+
+    pub inline fn isSep(comptime platform: Platform, char: u8) bool {
+        switch (comptime platform.resolve()) {
+            .auto => unreachable,
+            inline .posix, .windows => {
+                return std_isSep(char);
+            },
+            .loose => {
+                return isSepAny(char);
+            },
+        }
+    }
+
+    pub fn trailingSeparator(comptime platform: Platform) [2]u8 {
+        return comptime switch (platform) {
+            .auto => (platform.resolve()).trailingSeparator(),
+            .windows => ".\\".*,
+            inline .posix, .loose => "./".*,
+        };
+    }
+
+    pub fn leadingSeparatorIndex(comptime platform: Platform, path: anytype) ?usize {
+        switch (comptime platform.resolve()) {
+            .windows => {
+                // Based on isAbsoluteWindowsImpl:
+                // https://github.com/ziglang/zig/blob/993a83081a975464d1201597cf6f4cb7f6735284/lib/std/fs/path.zig#L245
                 if (path.len < 1)
                     return null;
 
-                if (path[0] == '/')
+                if (path[0] == sep_posix)
                     return 0;
 
-                if (path[0] == '\\')
+                if (path[0] == sep_windows)
                     return 0;
 
                 if (path.len < 3)
@@ -827,10 +823,10 @@ pub const Platform = enum {
 
                 // C:\
                 // C:/
-                if (path[0] >= 'A' and path[0] <= 'Z' and path[1] == ':') {
-                    if (path[2] == '/')
+                if (path[1] == ':') {
+                    if (path[2] == sep_posix)
                         return 2;
-                    if (path[2] == '\\')
+                    if (path[2] == sep_windows)
                         return 2;
 
                     return 1;
@@ -839,7 +835,7 @@ pub const Platform = enum {
                 return null;
             },
             .posix => {
-                if (path.len > 0 and path[0] == '/') {
+                if (path.len > 0 and path[0] == sep_posix) {
                     return 0;
                 } else {
                     return null;
@@ -851,53 +847,48 @@ pub const Platform = enum {
         }
     }
 
-    pub fn resolve(comptime _platform: Platform) Platform {
-        if (comptime _platform == .auto) {
-            return switch (@import("builtin").target.os.tag) {
+    pub fn resolve(comptime platform: Platform) Platform {
+        if (comptime platform == .auto) {
+            return comptime switch (builtin.target.os.tag) {
                 .windows => Platform.windows,
-
-                .freestanding, .emscripten, .other => Platform.loose,
-
+                inline .freestanding, .emscripten, .other => Platform.loose,
                 else => Platform.posix,
             };
         }
 
-        return _platform;
+        return platform;
     }
 };
 
-pub fn normalizeString(str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) []u8 {
-    return normalizeStringBuf(str, &parser_buffer, allow_above_root, _platform, false);
+pub fn normalizeString(str: []const u8, comptime allow_above_root: bool, comptime platform: Platform) []u8 {
+    return normalizeStringBuf(str, &parser_buffer, allow_above_root, platform, false);
 }
 
-pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []u8 {
+pub fn normalizeBuf(str: []const u8, buf: []u8, comptime platform: Platform) []u8 {
     if (str.len == 0) {
         buf[0] = '.';
         return buf[0..1];
     }
 
-    const is_absolute = _platform.isAbsolute(str);
+    const is_absolute = platform.isAbsolute(str);
 
-    const trailing_separator = _platform.getLastSeparatorFunc()(str) == str.len - 1;
+    const trailing_separator = platform.lastIndexOfSep(str) == str.len - 1;
 
     if (is_absolute and trailing_separator)
-        return normalizeStringBuf(str, buf, true, _platform, true);
+        return normalizeStringBuf(str, buf, true, platform, true);
 
     if (is_absolute and !trailing_separator)
-        return normalizeStringBuf(str, buf, true, _platform, false);
+        return normalizeStringBuf(str, buf, true, platform, false);
 
     if (!is_absolute and !trailing_separator)
-        return normalizeStringBuf(str, buf, false, _platform, false);
+        return normalizeStringBuf(str, buf, false, platform, false);
 
-    return normalizeStringBuf(str, buf, false, _platform, true);
+    return normalizeStringBuf(str, buf, false, platform, true);
 }
 
-pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime _platform: Platform, comptime preserve_trailing_slash: anytype) []u8 {
-    const platform = comptime _platform.resolve();
-
-    switch (comptime platform) {
+pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root: bool, comptime platform: Platform, comptime preserve_trailing_slash: anytype) []u8 {
+    switch (comptime platform.resolve()) {
         .auto => @compileError("unreachable"),
-
         .windows => {
             return normalizeStringWindows(
                 str,
@@ -907,14 +898,13 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
             );
         },
         .posix => {
-            return normalizeStringLooseBuf(
+            return normalizeStringPosix(
                 str,
                 buf,
                 allow_above_root,
                 preserve_trailing_slash,
             );
         },
-
         .loose => {
             return normalizeStringLooseBuf(
                 str,
@@ -926,55 +916,55 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
     }
 }
 
-pub fn normalizeStringAlloc(allocator: std.mem.Allocator, str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) ![]const u8 {
-    return try allocator.dupe(u8, normalizeString(str, allow_above_root, _platform));
+pub fn normalizeStringAlloc(allocator: std.mem.Allocator, str: []const u8, comptime allow_above_root: bool, comptime platform: Platform) ![]const u8 {
+    return try allocator.dupe(u8, normalizeString(str, allow_above_root, platform));
 }
 
-pub fn joinAbs2(_cwd: []const u8, comptime _platform: Platform, part: anytype, part2: anytype) []const u8 {
+pub fn joinAbs2(_cwd: []const u8, comptime platform: Platform, part: anytype, part2: anytype) []const u8 {
     const parts = [_][]const u8{ part, part2 };
-    const slice = joinAbsString(_cwd, &parts, _platform);
+    const slice = joinAbsString(_cwd, &parts, platform);
     return slice;
 }
 
-pub fn joinAbs(_cwd: []const u8, comptime _platform: Platform, part: anytype) []const u8 {
+pub fn joinAbs(_cwd: []const u8, comptime platform: Platform, part: anytype) []const u8 {
     const parts = [_][]const u8{
         part,
     };
-    const slice = joinAbsString(_cwd, &parts, _platform);
+    const slice = joinAbsString(_cwd, &parts, platform);
     return slice;
 }
 
 // Convert parts of potentially invalid file paths into a single valid filpeath
 // without querying the filesystem
 // This is the equivalent of path.resolve
-pub fn joinAbsString(_cwd: []const u8, parts: anytype, comptime _platform: Platform) []const u8 {
+pub fn joinAbsString(_cwd: []const u8, parts: anytype, comptime platform: Platform) []const u8 {
     return joinAbsStringBuf(
         _cwd,
         &parser_join_input_buffer,
         parts,
-        _platform,
+        platform,
     );
 }
 
-pub fn joinAbsStringZ(_cwd: []const u8, parts: anytype, comptime _platform: Platform) [:0]const u8 {
+pub fn joinAbsStringZ(_cwd: []const u8, parts: anytype, comptime platform: Platform) [:0]const u8 {
     return joinAbsStringBufZ(
         _cwd,
         &parser_join_input_buffer,
         parts,
-        _platform,
+        platform,
     );
 }
 
 pub threadlocal var join_buf: [4096]u8 = undefined;
-pub fn join(_parts: anytype, comptime _platform: Platform) []const u8 {
-    return joinStringBuf(&join_buf, _parts, _platform);
+pub fn join(_parts: anytype, comptime platform: Platform) []const u8 {
+    return joinStringBuf(&join_buf, _parts, platform);
 }
-pub fn joinZ(_parts: anytype, comptime _platform: Platform) [:0]const u8 {
-    return joinZBuf(&join_buf, _parts, _platform);
+pub fn joinZ(_parts: anytype, comptime platform: Platform) [:0]const u8 {
+    return joinZBuf(&join_buf, _parts, platform);
 }
 
-pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
-    const joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, _platform);
+pub fn joinZBuf(buf: []u8, _parts: anytype, comptime platform: Platform) [:0]const u8 {
+    const joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, platform);
     std.debug.assert(bun.isSliceInBuffer(joined, buf));
     const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
     buf[joined.len + start_offset] = 0;
@@ -1027,18 +1017,18 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
     return normalizeStringNode(temp_buf[0..written], buf, platform);
 }
 
-pub fn joinAbsStringBuf(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
-    return _joinAbsStringBuf(false, []const u8, cwd, buf, _parts, _platform);
+pub fn joinAbsStringBuf(cwd: []const u8, buf: []u8, _parts: anytype, comptime platform: Platform) []const u8 {
+    return _joinAbsStringBuf(false, []const u8, cwd, buf, _parts, platform);
 }
 
-pub fn joinAbsStringBufZ(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
-    return _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
+pub fn joinAbsStringBufZ(cwd: []const u8, buf: []u8, _parts: anytype, comptime platform: Platform) [:0]const u8 {
+    return _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, platform);
 }
 
-pub fn joinAbsStringBufZTrailingSlash(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
-    const out = _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
-    if (out.len + 2 < buf.len and out.len > 0 and out[out.len - 1] != _platform.separator()) {
-        buf[out.len] = _platform.separator();
+pub fn joinAbsStringBufZTrailingSlash(cwd: []const u8, buf: []u8, _parts: anytype, comptime platform: Platform) [:0]const u8 {
+    const out = _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, platform);
+    if (out.len + 2 < buf.len and out.len > 0 and out[out.len - 1] != platform.separator()) {
+        buf[out.len] = platform.separator();
         buf[out.len + 1] = 0;
         return buf[0 .. out.len + 1 :0];
     }
@@ -1065,9 +1055,9 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
     if ((comptime platform == .loose or platform == .posix) and
         parts.len == 1 and
         parts[0].len == 1 and
-        parts[0][0] == std.fs.path.sep_posix)
+        parts[0][0] == sep_posix)
     {
-        return "/";
+        return sep_str_posix;
     }
 
     var out: usize = 0;
@@ -1116,14 +1106,14 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         const outdir = temp_buf[0 .. i + 1];
         if (platform == .loose) {
             for (outdir) |*c| {
-                if (c.* == '\\') {
-                    c.* = '/';
+                if (c.* == sep_windows) {
+                    c.* = sep_posix;
                 }
             }
         }
 
         break :brk outdir;
-    } else "/";
+    } else sep_str_posix;
 
     const result = normalizeStringBuf(
         temp_buf[leading_separator.len..out],
@@ -1150,7 +1140,7 @@ fn _joinAbsStringBufWindows(
     buf: []u8,
     parts: []const []const u8,
 ) ReturnType {
-    std.debug.assert(std.fs.path.isAbsoluteWindows(cwd));
+    std.debug.assert(isAbsoluteWindows(cwd));
 
     if (parts.len == 0) {
         if (comptime is_sentinel) {
@@ -1190,7 +1180,7 @@ fn _joinAbsStringBufWindows(
         var n = parts.len;
         while (n > 0) {
             n -= 1;
-            if (std.fs.path.isAbsoluteWindows(parts[n])) {
+            if (isAbsoluteWindows(parts[n])) {
                 const root_of_part = parts[n][0..windowsVolumeNameLen(parts[n])[0]];
                 if (root_of_part.len == 0 or strings.eql(root_of_part, root)) {
                     break :base .{ root, parts[n][root_of_part.len..], n + 1 };
@@ -1207,7 +1197,7 @@ fn _joinAbsStringBufWindows(
     };
 
     if (set_cwd.len > 0)
-        std.debug.assert(isSepAny(set_cwd[0]));
+        std.debug.assert(std_isSep(set_cwd[0]));
 
     var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
 
@@ -1217,15 +1207,15 @@ fn _joinAbsStringBufWindows(
 
     if (set_cwd.len == 0) {
         // when cwd is `//server/share` without a suffix `/`, the path is considered absolute
-        temp_buf[out] = '\\';
+        temp_buf[out] = sep_windows;
         out += 1;
     }
 
     for (parts[n_start..]) |part| {
         if (part.len == 0) continue;
 
-        if (out > 0 and temp_buf[out - 1] != '\\') {
-            temp_buf[out] = '\\';
+        if (out > 0 and temp_buf[out - 1] != sep_windows) {
+            temp_buf[out] = sep_windows;
             out += 1;
         }
 
@@ -1260,39 +1250,28 @@ fn _joinAbsStringBufWindows(
     }
 }
 
-pub fn isSepPosix(char: u8) bool {
-    return char == std.fs.path.sep_posix;
-}
-
-pub fn isSepWin32(char: u8) bool {
-    return char == std.fs.path.sep_windows;
-}
+pub const std_isSep = std.fs.path.isSep;
 
 pub fn isSepAny(char: u8) bool {
-    return @call(.always_inline, isSepPosix, .{char}) or @call(.always_inline, isSepWin32, .{char});
+    return char == sep_posix or char == sep_windows;
 }
 
-pub fn lastIndexOfSeparatorWindows(slice: []const u8) ?usize {
-    return std.mem.lastIndexOfAny(u8, slice, "\\/");
+pub fn lastIndexOfSepWindows(path: []const u8) ?usize {
+    return std.mem.lastIndexOfAny(u8, path, sep_index_of_windows);
 }
 
-pub fn lastIndexOfSeparatorPosix(slice: []const u8) ?usize {
-    return std.mem.lastIndexOfScalar(u8, slice, std.fs.path.sep_posix);
+pub fn lastIndexOfSepPosix(path: []const u8) ?usize {
+    return std.mem.lastIndexOfScalar(u8, path, sep_index_of_posix);
 }
 
-pub fn lastIndexOfNonSeparatorPosix(slice: []const u8) ?u32 {
-    var i: usize = slice.len;
-    while (i != 0) : (i -= 1) {
-        if (slice[i] != std.fs.path.sep_posix) {
-            return @as(u32, @intCast(i));
-        }
+pub const lastIndexOfSepLoose = lastIndexOfSepWindows;
+
+pub fn lastIndexOfSep(path: []const u8) ?usize {
+    if (comptime !bun.Environment.isWindows) {
+        return lastIndexOfSepPosix(path);
     }
 
-    return null;
-}
-
-pub fn lastIndexOfSeparatorLoose(slice: []const u8) ?usize {
-    return lastIndexOfSep(slice);
+    return lastIndexOfSepWindows(path);
 }
 
 pub fn normalizeStringLooseBuf(
@@ -1305,9 +1284,26 @@ pub fn normalizeStringLooseBuf(
         str,
         buf,
         allow_above_root,
-        std.fs.path.sep_posix,
+        sep_loose,
         isSepAny,
-        lastIndexOfSeparatorLoose,
+        lastIndexOfSepLoose,
+        preserve_trailing_slash,
+    );
+}
+
+pub fn normalizeStringPosix(
+    str: []const u8,
+    buf: []u8,
+    comptime allow_above_root: bool,
+    comptime preserve_trailing_slash: bool,
+) []u8 {
+    return normalizeStringGeneric(
+        str,
+        buf,
+        allow_above_root,
+        sep_posix,
+        std_isSep,
+        lastIndexOfSepWindows,
         preserve_trailing_slash,
     );
 }
@@ -1322,9 +1318,9 @@ pub fn normalizeStringWindows(
         str,
         buf,
         allow_above_root,
-        std.fs.path.sep_windows,
-        isSepAny,
-        lastIndexOfSeparatorWindows,
+        sep_windows,
+        std_isSep,
+        lastIndexOfSepWindows,
         preserve_trailing_slash,
     );
 }
@@ -1340,7 +1336,7 @@ pub fn normalizeStringNode(
     }
 
     const is_absolute = platform.isAbsolute(str);
-    const trailing_separator = platform.isSeparator(str[str.len - 1]);
+    const trailing_separator = platform.isSep(str[str.len - 1]);
 
     // `normalizeStringGeneric` handles absolute path cases for windows
     // we should not prefix with /
@@ -1351,16 +1347,16 @@ pub fn normalizeStringNode(
         buf_,
         true,
         comptime platform.resolve().separator(),
-        comptime platform.getSeparatorFunc(),
-        comptime platform.getLastSeparatorFunc(),
+        comptime platform.getIsSepFunc(),
+        comptime platform.getLastIndexOfSepFunc(),
         false,
     ) else normalizeStringGeneric(
         str,
         buf_,
         false,
         comptime platform.resolve().separator(),
-        comptime platform.getSeparatorFunc(),
-        comptime platform.getLastSeparatorFunc(),
+        comptime platform.getIsSepFunc(),
+        comptime platform.getLastIndexOfSepFunc(),
         false,
     );
 
@@ -1380,7 +1376,7 @@ pub fn normalizeStringNode(
     }
 
     if (trailing_separator) {
-        if (!platform.isSeparator(out[out.len - 1])) {
+        if (!platform.isSep(out[out.len - 1])) {
             buf_[out.len] = platform.separator();
             out = buf_[0 .. out.len + 1];
         }
@@ -1728,72 +1724,6 @@ test "longestCommonPath" {
     _ = t.expect("/app/public/", longestCommonPath(more[0..2]), @src());
 }
 
-pub fn basename(path: []const u8) []const u8 {
-    if (path.len == 0)
-        return &[_]u8{};
-
-    var end_index: usize = path.len - 1;
-    while (isSepAny(path[end_index])) {
-        if (end_index == 0)
-            return &[_]u8{};
-        end_index -= 1;
-    }
-    var start_index: usize = end_index;
-    end_index += 1;
-    while (!isSepAny(path[start_index])) {
-        if (start_index == 0)
-            return path[0..end_index];
-        start_index -= 1;
-    }
-
-    return path[start_index + 1 .. end_index];
-}
-pub fn lastIndexOfSep(path: []const u8) ?usize {
-    if (comptime !bun.Environment.isWindows) {
-        return strings.lastIndexOfChar(path, '/');
-    }
-
-    return std.mem.lastIndexOfAny(u8, path, "/\\");
-}
-
-pub fn nextDirname(path_: []const u8) ?[]const u8 {
-    var path = path_;
-    var root_prefix: []const u8 = "";
-    if (path.len > 3) {
-        // disk designator
-        if (path[1] == ':' and isSepAny(path[2])) {
-            root_prefix = path[0..3];
-        }
-
-        // TODO: unc path
-
-    }
-
-    if (path.len == 0)
-        return if (root_prefix.len > 0) root_prefix else null;
-
-    var end_index: usize = path.len - 1;
-    while (isSepAny(path[end_index])) {
-        if (end_index == 0)
-            return if (root_prefix.len > 0) root_prefix else null;
-        end_index -= 1;
-    }
-
-    while (!isSepAny(path[end_index])) {
-        if (end_index == 0)
-            return if (root_prefix.len > 0) root_prefix else null;
-        end_index -= 1;
-    }
-
-    if (end_index == 0 and isSepAny(path[0]))
-        return path[0..1];
-
-    if (end_index == 0)
-        return if (root_prefix.len > 0) root_prefix else null;
-
-    return path[0 .. end_index + 1];
-}
-
 /// The use case of this is when you do
 ///     "import '/hello/world'"
 /// The windows disk designator is missing!
@@ -1849,12 +1779,12 @@ pub const PosixToWinNormalizer = struct {
         source_dir: []const u8,
         maybe_posix_path: []const u8,
     ) []const u8 {
-        std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+        std.debug.assert(isAbsoluteWindows(maybe_posix_path));
         if (bun.Environment.isWindows) {
-            const root = windowsFilesystemRoot(maybe_posix_path);
+            const root = getRootWindows(maybe_posix_path);
             if (root.len == 1) {
                 std.debug.assert(isSepAny(root[0]));
-                const source_root = windowsFilesystemRoot(source_dir);
+                const source_root = getRootWindows(source_dir);
                 @memcpy(buf[0..source_root.len], source_root);
                 @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                 return buf[0 .. source_root.len + maybe_posix_path.len - 1];
@@ -1867,16 +1797,16 @@ pub const PosixToWinNormalizer = struct {
         buf: *Buf,
         maybe_posix_path: []const u8,
     ) ![]const u8 {
-        std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+        std.debug.assert(isAbsoluteWindows(maybe_posix_path));
 
         if (bun.Environment.isWindows) {
-            const root = windowsFilesystemRoot(maybe_posix_path);
+            const root = getRootWindows(maybe_posix_path);
             if (root.len == 1) {
-                std.debug.assert(isSepAny(root[0]));
+                std.debug.assert(std_isSep(root[0]));
                 // note: bun.getcwd will return forward slashes, not what we want.
                 const cwd = try std.os.getcwd(buf);
                 std.debug.assert(cwd.ptr == buf.ptr);
-                const source_root = windowsFilesystemRoot(cwd);
+                const source_root = getRootWindows(cwd);
                 std.debug.assert(source_root.ptr == source_root.ptr);
                 @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                 return buf[0 .. source_root.len + maybe_posix_path.len - 1];
@@ -1890,16 +1820,16 @@ pub const PosixToWinNormalizer = struct {
         buf: *bun.PathBuffer,
         maybe_posix_path: []const u8,
     ) ![:0]const u8 {
-        std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
+        std.debug.assert(isAbsoluteWindows(maybe_posix_path));
 
         if (bun.Environment.isWindows) {
-            const root = windowsFilesystemRoot(maybe_posix_path);
+            const root = getRootWindows(maybe_posix_path);
             if (root.len == 1) {
-                std.debug.assert(isSepAny(root[0]));
+                std.debug.assert(std_isSep(root[0]));
                 // note: bun.getcwd will return forward slashes, not what we want.
                 const cwd = try std.os.getcwd(buf);
                 std.debug.assert(cwd.ptr == buf.ptr);
-                const source_root = windowsFilesystemRoot(cwd);
+                const source_root = getRootWindows(cwd);
                 std.debug.assert(source_root.ptr == source_root.ptr);
                 @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                 buf[source_root.len + maybe_posix_path.len - 1] = 0;

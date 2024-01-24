@@ -234,7 +234,8 @@ pub fn build_(b: *Build) !void {
     const outfile_maybe = b.option([]const u8, "output-file", "target to install to");
 
     if (outfile_maybe) |outfile| {
-        output_dir = try pathRel(b.allocator, b.install_prefix, std.fs.path.dirname(outfile) orelse "");
+        const to_path = std.fs.path.dirname(outfile) orelse &([_]u8{});
+        output_dir = try pathRel(b.allocator, b.install_prefix, to_path);
     } else {
         const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
         output_dir = try pathRel(b.allocator, b.install_prefix, output_dir_base);

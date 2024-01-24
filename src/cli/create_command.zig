@@ -21,7 +21,7 @@ const linker = @import("../linker.zig");
 const allocators = @import("../allocators.zig");
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
-const resolve_path = @import("../resolver/resolve_path.zig");
+const path_handler = bun.path;
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
 const bundler = bun.bundler;
@@ -263,7 +263,7 @@ pub const CreateCommand = struct {
             break :brk positionals[1];
         };
 
-        const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
+        const destination = try filesystem.dirname_store.append([]const u8, path_handler.joinAbs(filesystem.top_level_dir, .auto, dirname));
 
         var progress = std.Progress{};
         var node = progress.start(try ProgressBuf.print("Loading {s}", .{template}), 0);
@@ -485,7 +485,7 @@ pub const CreateCommand = struct {
 
                             const createFile = if (comptime Environment.isWindows) std.fs.Dir.createFileW else std.fs.Dir.createFile;
                             var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
-                                if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                                if (std.fs.path.dirname(entry.path)) |entry_dirname| {
                                     bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                                 }
                                 break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {

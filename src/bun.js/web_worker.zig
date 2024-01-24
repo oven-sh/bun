@@ -5,6 +5,7 @@ const log = Output.scoped(.Worker, true);
 const std = @import("std");
 const JSValue = JSC.JSValue;
 const Async = bun.Async;
+const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 
 /// Shared implementation of Web and Node `Worker`
 pub const WebWorker = struct {
@@ -30,6 +31,9 @@ pub const WebWorker = struct {
     user_keep_alive: bool = false,
     worker_event_loop_running: bool = true,
     parent_poll_ref: Async.KeepAlive = .{},
+
+    argv: ?[]const WTFStringImpl,
+    execArgv: ?[]const WTFStringImpl,
 
     pub const Status = enum(u8) {
         start,
@@ -72,6 +76,10 @@ pub const WebWorker = struct {
         this_context_id: u32,
         mini: bool,
         default_unref: bool,
+        argv_ptr: ?[*]WTFStringImpl,
+        argv_len: u32,
+        execArgv_ptr: ?[*]WTFStringImpl,
+        execArgv_len: u32,
     ) callconv(.C) ?*WebWorker {
         JSC.markBinding(@src());
         log("[{d}] WebWorker.create", .{this_context_id});
@@ -84,8 +92,7 @@ pub const WebWorker = struct {
         defer temp_log.deinit();
 
         var resolved_entry_point = parent.bundler.resolveEntryPoint(spec_slice.slice()) catch {
-            var out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
-            out.ref();
+            const out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
             error_message.* = out;
             return null;
         };
@@ -112,6 +119,8 @@ pub const WebWorker = struct {
             },
             .user_keep_alive = !default_unref,
             .worker_event_loop_running = true,
+            .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else null,
+            .execArgv = if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else null,
         };
 
         worker.parent_poll_ref.refConcurrently(parent);
@@ -191,12 +200,15 @@ pub const WebWorker = struct {
         if (vm.log.msgs.items.len == 0) return;
         const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker");
         const str = err.toBunString(vm.global);
+        defer str.deref();
         WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
     }
 
-    fn onUnhandledRejection(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_instance: JSC.JSValue) void {
+    fn onUnhandledRejection(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_instance_or_exception: JSC.JSValue) void {
         // Prevent recursion
         vm.onUnhandledRejection = &JSC.VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
+
+        const error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
 
         var array = bun.MutableString.init(bun.default_allocator, 0) catch unreachable;
         defer array.deinit();
@@ -209,7 +221,7 @@ pub const WebWorker = struct {
         const Writer = @TypeOf(writer);
         // we buffer this because it'll almost always be < 4096
         // when it's under 4096, we want to avoid the dynamic allocation
-        bun.JSC.ZigConsoleClient.format(
+        bun.JSC.ConsoleObject.format(
             .Debug,
             globalObject,
             &[_]JSC.JSValue{error_instance},

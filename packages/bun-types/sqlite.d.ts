@@ -436,7 +436,7 @@ declare module "bun:sqlite" {
      * ```
      */
     static deserialize(
-      serialized: TypedArray | ArrayBufferLike,
+      serialized: NodeJS.TypedArray | ArrayBufferLike,
       isReadOnly?: boolean,
     ): Database;
   }
@@ -802,11 +802,50 @@ declare module "bun:sqlite" {
   export type SQLQueryBindings =
     | string
     | bigint
-    | TypedArray
+    | NodeJS.TypedArray
     | number
     | boolean
     | null
-    | Record<string, string | bigint | TypedArray | number | boolean | null>;
+    | Record<
+        string,
+        string | bigint | NodeJS.TypedArray | number | boolean | null
+      >;
 
   export default Database;
+
+  /**
+   * Errors from SQLite have a name `SQLiteError`.
+   *
+   */
+  export class SQLiteError extends Error {
+    readonly name: "SQLiteError";
+
+    /**
+     * The SQLite3 extended error code
+     *
+     * This corresponds to `sqlite3_extended_errcode`.
+     *
+     * @since v1.0.21
+     */
+    errno: number;
+
+    /**
+     * The name of the SQLite3 error code
+     *
+     * @example
+     * "SQLITE_CONSTRAINT_UNIQUE"
+     *
+     * @since v1.0.21
+     */
+    code?: string;
+
+    /**
+     * The UTF-8 byte offset of the sqlite3 query that failed, if known
+     *
+     * This corresponds to `sqlite3_error_offset`.
+     *
+     * @since v1.0.21
+     */
+    readonly byteOffset: number;
+  }
 }

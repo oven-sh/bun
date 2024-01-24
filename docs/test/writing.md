@@ -160,6 +160,69 @@ test.skipIf(macOS)("runs on non-macOS", () => {
 });
 ```
 
+## `test.each`
+
+To return a function for multiple cases in a table of tests, use `test.each`.
+
+```ts
+const cases = [[1, 2, 3], [3, 4, 5]];
+
+test.each(cases)("%p + %p should be %p", (a, b, expected) => {
+    // runs once for each test case provided
+})
+```
+
+There are a number of options available for formatting the case label depending on its type.
+
+{% table %}
+
+---
+
+- `%p`
+- [`pretty-format`](https://www.npmjs.com/package/pretty-format)
+
+---
+
+- `%s`
+- String
+
+---
+
+- `%d`
+- Number
+
+---
+
+- `%i`
+- Integer
+
+---
+
+- `%f`
+- Floating point
+
+---
+
+- `%j`
+- JSON
+
+---
+
+- `%o`
+- Object
+
+---
+
+- `%#`
+- Index of the test case
+
+---
+
+- `%%`
+- Single percent sign (`%`)
+
+{% /table %}
+
 ## Matchers
 
 Bun implements the following matchers. Full Jest compatibility is on the roadmap; track progress [here](https://github.com/oven-sh/bun/issues/1825).
@@ -253,7 +316,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.arrayContaining()`](https://jestjs.io/docs/expect#expectarraycontainingarray)
 
 ---
@@ -263,7 +326,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.closeTo()`](https://jestjs.io/docs/expect#expectclosetonumber-numdigits)
 
 ---
@@ -273,7 +336,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.objectContaining()`](https://jestjs.io/docs/expect#expectobjectcontainingobject)
 
 ---

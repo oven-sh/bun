@@ -25,6 +25,7 @@ pub inline fn contains(self: string, str: string) bool {
 }
 
 pub fn w(comptime str: []const u8) [:0]const u16 {
+    if (!@inComptime()) @compileError("strings.w() must be called in a comptime context");
     comptime var output: [str.len + 1]u16 = undefined;
 
     for (str, 0..) |c, i| {
@@ -199,84 +200,11 @@ pub fn repeatingBuf(self: []u8, char: u8) void {
 }
 
 pub fn indexOfCharNeg(self: string, char: u8) i32 {
-    var i: u32 = 0;
-    while (i < self.len) : (i += 1) {
-        if (self[i] == char) return @as(i32, @intCast(i));
+    for (self, 0..) |c, i| {
+        if (c == char) return @as(i32, @intCast(i));
     }
     return -1;
 }
-
-/// Format a string to an ECMAScript identifier.
-/// Unlike the string_mutable.zig version, this always allocate/copy
-pub fn fmtIdentifier(name: string) FormatValidIdentifier {
-    return FormatValidIdentifier{ .name = name };
-}
-
-/// Format a string to an ECMAScript identifier.
-/// Different implementation than string_mutable because string_mutable may avoid allocating
-/// This will always allocate
-pub const FormatValidIdentifier = struct {
-    name: string,
-    pub fn format(self: FormatValidIdentifier, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var iterator = strings.CodepointIterator.init(self.name);
-        var cursor = strings.CodepointIterator.Cursor{};
-
-        var has_needed_gap = false;
-        var needs_gap = false;
-        var start_i: usize = 0;
-
-        if (!iterator.next(&cursor)) {
-            try writer.writeAll("_");
-            return;
-        }
-
-        // Common case: no gap necessary. No allocation necessary.
-        needs_gap = !js_lexer.isIdentifierStart(cursor.c);
-        if (!needs_gap) {
-            // Are there any non-alphanumeric chars at all?
-            while (iterator.next(&cursor)) {
-                if (!js_lexer.isIdentifierContinue(cursor.c) or cursor.width > 1) {
-                    needs_gap = true;
-                    start_i = cursor.i;
-                    break;
-                }
-            }
-        }
-
-        if (needs_gap) {
-            needs_gap = false;
-            if (start_i > 0) try writer.writeAll(self.name[0..start_i]);
-            var slice = self.name[start_i..];
-            iterator = strings.CodepointIterator.init(slice);
-            cursor = strings.CodepointIterator.Cursor{};
-
-            while (iterator.next(&cursor)) {
-                if (js_lexer.isIdentifierContinue(cursor.c) and cursor.width == 1) {
-                    if (needs_gap) {
-                        try writer.writeAll("_");
-                        needs_gap = false;
-                        has_needed_gap = true;
-                    }
-                    try writer.writeAll(slice[cursor.i .. cursor.i + @as(u32, cursor.width)]);
-                } else if (!needs_gap) {
-                    needs_gap = true;
-                    // skip the code point, replace it with a single _
-                }
-            }
-
-            // If it ends with an emoji
-            if (needs_gap) {
-                try writer.writeAll("_");
-                needs_gap = false;
-                has_needed_gap = true;
-            }
-
-            return;
-        }
-
-        try writer.writeAll(self.name);
-    }
-};
 
 pub fn indexOfSigned(self: string, str: string) i32 {
     const i = std.mem.indexOf(u8, self, str) orelse return -1;
@@ -413,24 +341,31 @@ pub fn cat(allocator: std.mem.Allocator, first: string, second: string) !string 
     return out;
 }
 
-// 30 character string or a slice
+// 31 character string or a slice
 pub const StringOrTinyString = struct {
-    pub const Max = 30;
+    pub const Max = 31;
     const Buffer = [Max]u8;
 
     remainder_buf: Buffer = undefined,
-    remainder_len: u7 = 0,
-    is_tiny_string: u1 = 0,
+    meta: packed struct {
+        remainder_len: u7 = 0,
+        is_tiny_string: u1 = 0,
+    } = .{},
+
+    comptime {
+        std.debug.assert(@sizeOf(@This()) == 32);
+    }
+
     pub inline fn slice(this: *const StringOrTinyString) []const u8 {
         // This is a switch expression instead of a statement to make sure it uses the faster assembly
-        return switch (this.is_tiny_string) {
-            1 => this.remainder_buf[0..this.remainder_len],
+        return switch (this.meta.is_tiny_string) {
+            1 => this.remainder_buf[0..this.meta.remainder_len],
             0 => @as([*]const u8, @ptrFromInt(std.mem.readInt(usize, this.remainder_buf[0..@sizeOf(usize)], .little)))[0..std.mem.readInt(usize, this.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], .little)],
         };
     }
 
     pub fn deinit(this: *StringOrTinyString, _: std.mem.Allocator) void {
-        if (this.is_tiny_string == 1) return;
+        if (this.meta.is_tiny_string == 1) return;
 
         // var slice_ = this.slice();
         // allocator.free(slice_);
@@ -455,22 +390,25 @@ pub const StringOrTinyString = struct {
     pub fn init(stringy: string) StringOrTinyString {
         switch (stringy.len) {
             0 => {
-                return StringOrTinyString{ .is_tiny_string = 1, .remainder_len = 0 };
+                return StringOrTinyString{ .meta = .{
+                    .is_tiny_string = 1,
+                    .remainder_len = 0,
+                } };
             },
             1...(@sizeOf(Buffer)) => {
                 @setRuntimeSafety(false);
-                var tiny = StringOrTinyString{
+                var tiny = StringOrTinyString{ .meta = .{
                     .is_tiny_string = 1,
                     .remainder_len = @as(u7, @truncate(stringy.len)),
-                };
-                @memcpy(tiny.remainder_buf[0..tiny.remainder_len], stringy[0..tiny.remainder_len]);
+                } };
+                @memcpy(tiny.remainder_buf[0..tiny.meta.remainder_len], stringy[0..tiny.meta.remainder_len]);
                 return tiny;
             },
             else => {
-                var tiny = StringOrTinyString{
+                var tiny = StringOrTinyString{ .meta = .{
                     .is_tiny_string = 0,
                     .remainder_len = 0,
-                };
+                } };
                 std.mem.writeInt(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr), .little);
                 std.mem.writeInt(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len, .little);
                 return tiny;
@@ -481,22 +419,25 @@ pub const StringOrTinyString = struct {
     pub fn initLowerCase(stringy: string) StringOrTinyString {
         switch (stringy.len) {
             0 => {
-                return StringOrTinyString{ .is_tiny_string = 1, .remainder_len = 0 };
+                return StringOrTinyString{ .meta = .{
+                    .is_tiny_string = 1,
+                    .remainder_len = 0,
+                } };
             },
             1...(@sizeOf(Buffer)) => {
                 @setRuntimeSafety(false);
-                var tiny = StringOrTinyString{
+                var tiny = StringOrTinyString{ .meta = .{
                     .is_tiny_string = 1,
                     .remainder_len = @as(u7, @truncate(stringy.len)),
-                };
+                } };
                 _ = copyLowercase(stringy, &tiny.remainder_buf);
                 return tiny;
             },
             else => {
-                var tiny = StringOrTinyString{
+                var tiny = StringOrTinyString{ .meta = .{
                     .is_tiny_string = 0,
                     .remainder_len = 0,
-                };
+                } };
                 std.mem.writeInt(usize, tiny.remainder_buf[0..@sizeOf(usize)], @intFromPtr(stringy.ptr), .little);
                 std.mem.writeInt(usize, tiny.remainder_buf[@sizeOf(usize) .. @sizeOf(usize) * 2], stringy.len, .little);
                 return tiny;
@@ -757,6 +698,10 @@ pub fn withoutLeadingSlash(this: string) []const u8 {
     return std.mem.trimLeft(u8, this, "/");
 }
 
+pub fn withoutLeadingPathSeparator(this: string) []const u8 {
+    return std.mem.trimLeft(u8, this, &.{std.fs.path.sep});
+}
+
 pub fn endsWithAny(self: string, str: string) bool {
     const end = self[self.len - 1];
     for (str) |char| {
@@ -767,82 +712,6 @@ pub fn endsWithAny(self: string, str: string) bool {
 
     return false;
 }
-
-// Formats a string to be safe to output in a Github action.
-// - Encodes "\n" as "%0A" to support multi-line strings.
-//   https://github.com/actions/toolkit/issues/193#issuecomment-605394935
-// - Strips ANSI output as it will appear malformed.
-pub fn githubActionWriter(writer: anytype, self: string) !void {
-    var offset: usize = 0;
-    const end = @as(u32, @truncate(self.len));
-    while (offset < end) {
-        if (indexOfNewlineOrNonASCIIOrANSI(self, @as(u32, @truncate(offset)))) |i| {
-            const byte = self[i];
-            if (byte > 0x7F) {
-                offset += @max(wtf8ByteSequenceLength(byte), 1);
-                continue;
-            }
-            if (i > 0) {
-                try writer.writeAll(self[offset..i]);
-            }
-            var n: usize = 1;
-            if (byte == '\n') {
-                try writer.writeAll("%0A");
-            } else if (i + 1 < end) {
-                const next = self[i + 1];
-                if (byte == '\r' and next == '\n') {
-                    n += 1;
-                    try writer.writeAll("%0A");
-                } else if (byte == '\x1b' and next == '[') {
-                    n += 1;
-                    if (i + 2 < end) {
-                        const remain = self[(i + 2)..@min(i + 5, end)];
-                        if (indexOfChar(remain, 'm')) |j| {
-                            n += j + 1;
-                        }
-                    }
-                }
-            }
-            offset = i + n;
-        } else {
-            try writer.writeAll(self[offset..end]);
-            break;
-        }
-    }
-}
-
-pub const GithubActionFormatter = struct {
-    text: string,
-
-    pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try githubActionWriter(writer, this.text);
-    }
-};
-
-pub fn githubAction(self: string) strings.GithubActionFormatter {
-    return GithubActionFormatter{
-        .text = self,
-    };
-}
-
-pub fn quotedWriter(writer: anytype, self: string) !void {
-    const remain = self;
-    if (strings.containsNewlineOrNonASCIIOrQuote(remain)) {
-        try bun.js_printer.writeJSONString(self, @TypeOf(writer), writer, strings.Encoding.utf8);
-    } else {
-        try writer.writeAll("\"");
-        try writer.writeAll(self);
-        try writer.writeAll("\"");
-    }
-}
-
-pub const QuotedFormatter = struct {
-    text: []const u8,
-
-    pub fn format(this: QuotedFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try strings.quotedWriter(writer, this.text);
-    }
-};
 
 pub fn quotedAlloc(allocator: std.mem.Allocator, self: string) !string {
     var count: usize = 0;
@@ -955,6 +824,10 @@ pub fn hasPrefixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[0..alt.len], alt, false);
 }
 
+pub fn isBunStandaloneFilePath(self: string) bool {
+    return hasPrefixComptime(self, "/$bunfs/");
+}
+
 pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], comptime toUTF16Literal(alt), false);
 }
@@ -963,46 +836,32 @@ pub fn hasSuffixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[self.len - alt.len ..], alt, false);
 }
 
-inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type, comptime b: []const Type, comptime check_len: bool) bool {
+inline fn eqlComptimeCheckLenU8(a: []const u8, comptime b: []const u8, comptime check_len: bool) bool {
     @setEvalBranchQuota(9999);
     if (comptime check_len) {
-        if (comptime b.len == 0) {
-            return a.len == 0;
-        }
-
-        switch (a.len) {
-            b.len => {},
-            else => return false,
-        }
+        if (a.len != b.len) return false;
     }
-
-    const len = comptime b.len;
-    comptime var dword_length = b.len >> if (Environment.isNative) 3 else 2;
-    const slice = b;
-    const divisor = comptime @sizeOf(Type);
 
     comptime var b_ptr: usize = 0;
 
-    inline while (dword_length > 0) : (dword_length -= 1) {
-        if (@as(usize, @bitCast(a[b_ptr..][0 .. @sizeOf(usize) / divisor].*)) != comptime @as(usize, @bitCast((slice[b_ptr..])[0 .. @sizeOf(usize) / divisor].*)))
+    inline while (b.len - b_ptr >= @sizeOf(usize)) {
+        if (@as(usize, @bitCast(a[b_ptr..][0..@sizeOf(usize)].*)) != comptime @as(usize, @bitCast(b[b_ptr..][0..@sizeOf(usize)].*)))
             return false;
         comptime b_ptr += @sizeOf(usize);
         if (comptime b_ptr == b.len) return true;
     }
 
     if (comptime @sizeOf(usize) == 8) {
-        if (comptime (len & 4) != 0) {
-            if (@as(u32, @bitCast(a[b_ptr..][0 .. @sizeOf(u32) / divisor].*)) != comptime @as(u32, @bitCast((slice[b_ptr..])[0 .. @sizeOf(u32) / divisor].*)))
+        if (comptime (b.len & 4) != 0) {
+            if (@as(u32, @bitCast(a[b_ptr..][0..@sizeOf(u32)].*)) != comptime @as(u32, @bitCast(b[b_ptr..][0..@sizeOf(u32)].*)))
                 return false;
-
             comptime b_ptr += @sizeOf(u32);
-
             if (comptime b_ptr == b.len) return true;
         }
     }
 
-    if (comptime (len & 2) != 0) {
-        if (@as(u16, @bitCast(a[b_ptr..][0 .. @sizeOf(u16) / divisor].*)) != comptime @as(u16, @bitCast(slice[b_ptr .. b_ptr + (@sizeOf(u16) / divisor)].*)))
+    if (comptime (b.len & 2) != 0) {
+        if (@as(u16, @bitCast(a[b_ptr..][0..@sizeOf(u16)].*)) != comptime @as(u16, @bitCast(b[b_ptr..][0..@sizeOf(u16)].*)))
             return false;
 
         comptime b_ptr += @sizeOf(u16);
@@ -1010,9 +869,16 @@ inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type,
         if (comptime b_ptr == b.len) return true;
     }
 
-    if ((comptime (len & 1) != 0) and a[b_ptr] != comptime b[b_ptr]) return false;
+    if ((comptime (b.len & 1) != 0) and a[b_ptr] != comptime b[b_ptr]) return false;
 
     return true;
+}
+
+inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type, comptime b: []const Type, comptime check_len: bool) bool {
+    if (comptime Type != u8) {
+        return eqlComptimeCheckLenU8(std.mem.sliceAsBytes(a), comptime std.mem.sliceAsBytes(b), comptime check_len);
+    }
+    return eqlComptimeCheckLenU8(a, comptime b, comptime check_len);
 }
 
 /// Check if two strings are equal with one of the strings being a comptime-known value
@@ -1132,8 +998,7 @@ pub inline fn append3(allocator: std.mem.Allocator, self: string, other: string,
 pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8 {
     var remain = out;
     var count: usize = 0;
-    comptime var i: usize = 0;
-    inline while (i < parts_len) : (i += 1) {
+    inline for (0..parts_len) |i| {
         const part = parts[i];
         bun.copy(u8, remain, part);
         remain = remain[part.len..];
@@ -1159,7 +1024,7 @@ pub fn eqlUtf16(comptime self: string, other: []const u16) bool {
     return bun.C.memcmp(bun.cast([*]const u8, self.ptr), bun.cast([*]const u8, other.ptr), self.len * @sizeOf(u16)) == 0;
 }
 
-pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) !string {
+pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) ![]u8 {
     return try toUTF8AllocWithType(allocator, []const u16, js);
 }
 
@@ -1329,11 +1194,116 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
     }
 }
 
-const utf8_bom = [_]u8{ 0xef, 0xbb, 0xbf };
+/// It is common on Windows to find files that are not encoded in UTF8. Most of these include
+/// a 'byte-order mark' codepoint at the start of the file. The layout of this codepoint can
+/// determine the encoding.
+///
+/// https://en.wikipedia.org/wiki/Byte_order_mark
+pub const BOM = enum {
+    utf8,
+    utf16_le,
+    utf16_be,
+    utf32_le,
+    utf32_be,
 
+    pub const utf8_bytes = [_]u8{ 0xef, 0xbb, 0xbf };
+    pub const utf16_le_bytes = [_]u8{ 0xff, 0xfe };
+    pub const utf16_be_bytes = [_]u8{ 0xfe, 0xff };
+    pub const utf32_le_bytes = [_]u8{ 0xff, 0xfe, 0x00, 0x00 };
+    pub const utf32_be_bytes = [_]u8{ 0x00, 0x00, 0xfe, 0xff };
+
+    pub fn detect(bytes: []const u8) ?BOM {
+        if (bytes.len < 3) return null;
+        if (eqlComptimeIgnoreLen(bytes, utf8_bytes)) return .utf8;
+        if (eqlComptimeIgnoreLen(bytes, utf16_le_bytes)) {
+            // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes[2..], utf32_le_bytes[2..]))
+            //   return .utf32_le;
+            return .utf16_le;
+        }
+        // if (eqlComptimeIgnoreLen(bytes, utf16_be_bytes)) return .utf16_be;
+        // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes, utf32_le_bytes)) return .utf32_le;
+        return null;
+    }
+
+    pub fn detectAndSplit(bytes: []const u8) struct { ?BOM, []const u8 } {
+        const bom = detect(bytes);
+        if (bom == null) return .{ null, bytes };
+        return .{ bom, bytes[bom.?.length()..] };
+    }
+
+    pub fn getHeader(bom: BOM) []const u8 {
+        return switch (bom) {
+            inline else => |t| comptime &@field(BOM, @tagName(t) ++ "_bytes"),
+        };
+    }
+
+    pub fn length(bom: BOM) usize {
+        return switch (bom) {
+            inline else => |t| comptime (&@field(BOM, @tagName(t) ++ "_bytes")).len,
+        };
+    }
+
+    /// If an allocation is needed, free the input and the caller will
+    /// replace it with the new return
+    pub fn removeAndConvertToUTF8AndFree(bom: BOM, allocator: std.mem.Allocator, bytes: []u8) ![]u8 {
+        switch (bom) {
+            .utf8 => {
+                bun.C.memmove(bytes.ptr, bytes.ptr + utf8_bytes.len, bytes.len - utf8_bytes.len);
+                return bytes[0 .. bytes.len - utf8_bytes.len];
+            },
+            .utf16_le => {
+                const trimmed_bytes = bytes[utf16_le_bytes.len..];
+                const trimmed_bytes_u16: []const u16 = @alignCast(std.mem.bytesAsSlice(u16, trimmed_bytes));
+                const out = try toUTF8Alloc(allocator, trimmed_bytes_u16);
+                allocator.free(bytes);
+                return out;
+            },
+            else => {
+                // TODO: this needs to re-encode, for now we just remove the BOM
+                const bom_bytes = bom.getHeader();
+                bun.C.memmove(bytes.ptr, bytes.ptr + bom_bytes.len, bytes.len - bom_bytes.len);
+                return bytes[0 .. bytes.len - bom_bytes.len];
+            },
+        }
+    }
+
+    /// This is required for fs.zig's `use_shared_buffer` flag. we cannot free that pointer.
+    /// The returned slice will always point to the base of the input.
+    ///
+    /// Requires an arraylist in case it must be grown.
+    pub fn removeAndConvertToUTF8WithoutDealloc(bom: BOM, allocator: std.mem.Allocator, list: *std.ArrayListUnmanaged(u8)) ![]u8 {
+        const bytes = list.items;
+        switch (bom) {
+            .utf8 => {
+                bun.C.memmove(bytes.ptr, bytes.ptr + utf8_bytes.len, bytes.len - utf8_bytes.len);
+                return bytes[0 .. bytes.len - utf8_bytes.len];
+            },
+            .utf16_le => {
+                const trimmed_bytes = bytes[utf16_le_bytes.len..];
+                const trimmed_bytes_u16: []const u16 = @alignCast(std.mem.bytesAsSlice(u16, trimmed_bytes));
+                const out = try toUTF8Alloc(allocator, trimmed_bytes_u16);
+                if (list.capacity < out.len) {
+                    try list.ensureTotalCapacity(allocator, out.len);
+                }
+                list.items.len = out.len;
+                @memcpy(list.items, out);
+                return out;
+            },
+            else => {
+                // TODO: this needs to re-encode, for now we just remove the BOM
+                const bom_bytes = bom.getHeader();
+                bun.C.memmove(bytes.ptr, bytes.ptr + bom_bytes.len, bytes.len - bom_bytes.len);
+                return bytes[0 .. bytes.len - bom_bytes.len];
+            },
+        }
+    }
+};
+
+/// @deprecated. If you are using this, you likely will need to remove other BOMs and handle encoding.
+/// Use the BOM struct's `detect` and conversion functions instead.
 pub fn withoutUTF8BOM(bytes: []const u8) []const u8 {
-    if (strings.hasPrefixComptime(bytes, utf8_bom)) {
-        return bytes[utf8_bom.len..];
+    if (strings.hasPrefixComptime(bytes, BOM.utf8_bytes)) {
+        return bytes[BOM.utf8_bytes.len..];
     } else {
         return bytes;
     }
@@ -1358,22 +1328,21 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             var out = try allocator.alloc(u16, out_length);
             log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
 
-            // avoid `.with_errors.le()` due to https://github.com/simdutf/simdutf/issues/213
-            switch (bun.simdutf.convert.utf8.to.utf16.le(trimmed, out)) {
-                0 => {
-                    if (comptime fail_if_invalid) {
-                        allocator.free(out);
-                        return error.InvalidByteSequence;
-                    }
-
-                    break :simd .{
-                        .items = out[0..i],
-                        .capacity = out.len,
-                        .allocator = allocator,
-                    };
-                },
-                else => return out,
+            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out);
+            if (res.status == .success) {
+                return out;
             }
+
+            if (comptime fail_if_invalid) {
+                allocator.free(out);
+                return error.InvalidByteSequence;
+            }
+
+            break :simd .{
+                .items = out[0..i],
+                .capacity = out.len,
+                .allocator = allocator,
+            };
         } else null;
         var output = output_ orelse fallback: {
             var list = try std.ArrayList(u16).initCapacity(allocator, i + 2);
@@ -1473,22 +1442,21 @@ pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, compt
             var out = try allocator.alloc(u16, out_length);
             log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
 
-            // avoid `.with_errors.le()` due to https://github.com/simdutf/simdutf/issues/213
-            switch (bun.simdutf.convert.utf8.to.utf16.le(bytes, out)) {
-                0 => {
-                    if (comptime fail_if_invalid) {
-                        allocator.free(out);
-                        return error.InvalidByteSequence;
-                    }
-
-                    break :simd .{
-                        .items = out[0..i],
-                        .capacity = out.len,
-                        .allocator = allocator,
-                    };
-                },
-                else => return out,
+            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(bytes, out);
+            if (res.status == .success) {
+                return out;
             }
+
+            if (comptime fail_if_invalid) {
+                allocator.free(out);
+                return error.InvalidByteSequence;
+            }
+
+            break :simd .{
+                .items = out[0..i],
+                .capacity = out.len,
+                .allocator = allocator,
+            };
         } else null;
         var output = output_ orelse fallback: {
             var list = try std.ArrayList(u16).initCapacity(allocator, i + 2);
@@ -1769,11 +1737,26 @@ pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: 
     );
     if (result.status == .surrogate) {
         // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-        return toUTF8ListWithTypeBun(list, Type, utf16);
+        return toUTF8ListWithTypeBun(&list, Type, utf16);
     }
 
     list.items.len = result.count;
     return list;
+}
+
+pub fn convertUTF16ToUTF8Append(list: *std.ArrayList(u8), utf16: []const u16) !void {
+    const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(
+        utf16,
+        list.items.ptr[list.items.len..list.capacity],
+    );
+
+    if (result.status == .surrogate) {
+        // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
+        _ = try toUTF8ListWithTypeBun(list, []const u16, utf16);
+        return;
+    }
+
+    list.items.len = result.count;
 }
 
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
@@ -1796,16 +1779,27 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
         try list.ensureTotalCapacityPrecise(length + 16);
         const buf = try convertUTF16ToUTF8(list, Type, utf16);
+
         // Commenting out because `convertUTF16ToUTF8` may convert to WTF-8
         // which uses 3 bytes for invalid surrogates, causing the length to not
         // match from simdutf.
         // if (Environment.allow_assert) {
         //     std.debug.assert(buf.items.len == length);
         // }
+
         return buf;
     }
 
-    return toUTF8ListWithTypeBun(list_, Type, utf16);
+    @compileError("not implemented");
+}
+
+pub fn toUTF8AppendToList(list: *std.ArrayList(u8), utf16: []const u16) !void {
+    if (!bun.FeatureFlags.use_simdutf) {
+        @compileError("not implemented");
+    }
+    const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
+    try list.ensureUnusedCapacity(length + 16);
+    try convertUTF16ToUTF8Append(list, utf16);
 }
 
 pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.ArrayList(u8) {
@@ -1819,8 +1813,7 @@ pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.
     return try allocateLatin1IntoUTF8WithList(list, 0, []const u8, latin1);
 }
 
-pub fn toUTF8ListWithTypeBun(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
-    var list = list_;
+pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
     var utf16_remaining = utf16;
 
     while (firstNonASCII16(Type, utf16_remaining)) |i| {
@@ -1862,7 +1855,7 @@ pub fn toUTF8ListWithTypeBun(list_: std.ArrayList(u8), comptime Type: type, utf1
 
     log("UTF16 {d} -> {d} UTF8", .{ utf16.len, list.items.len });
 
-    return list;
+    return list.*;
 }
 
 pub const EncodeIntoResult = struct {
@@ -2525,8 +2518,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                         @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
                         buf.items.len = copy_len;
                         any_needs_escape = true;
-                        comptime var i: usize = 0;
-                        inline while (i < ascii_vector_size) : (i += 1) {
+                        inline for (0..ascii_vector_size) |i| {
                             switch (vec[i]) {
                                 '"' => {
                                     buf.ensureUnusedCapacity((ascii_vector_size - i) + "&quot;".len) catch unreachable;
@@ -2579,8 +2571,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                         @as(AsciiVectorU1, @bitCast((vec == vecs[4])))) == 1)
                     {
                         buf.ensureUnusedCapacity(ascii_vector_size + 6) catch unreachable;
-                        comptime var i: usize = 0;
-                        inline while (i < ascii_vector_size) : (i += 1) {
+                        inline for (0..ascii_vector_size) |i| {
                             switch (vec[i]) {
                                 '"' => {
                                     buf.ensureUnusedCapacity((ascii_vector_size - i) + "&quot;".len) catch unreachable;
@@ -3239,7 +3230,6 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
     var i: usize = 0;
     // TODO: is it safe to just make this u32 or u21?
     var r1: i32 = undefined;
-    var k: u4 = 0;
     while (i < n) : (i += 1) {
         r1 = text[i];
         if (r1 >= 0xD800 and r1 <= 0xDBFF and i + 1 < n) {
@@ -3254,8 +3244,7 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
         if (j + width > str.len) {
             return false;
         }
-        k = 0;
-        while (k < width) : (k += 1) {
+        for (0..width) |k| {
             if (temp[k] != str[j]) {
                 return false;
             }
@@ -3442,6 +3431,15 @@ pub fn isValidUTF8(slice: []const u8) bool {
 }
 
 pub fn isAllASCII(slice: []const u8) bool {
+    if (@inComptime()) {
+        for (slice) |char| {
+            if (char > 127) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     if (bun.FeatureFlags.use_simdutf)
         return bun.simdutf.validate.ascii(slice);
 
@@ -3479,15 +3477,6 @@ pub fn isAllASCII(slice: []const u8) bool {
         }
     }
 
-    return true;
-}
-
-pub fn isAllASCIISimple(comptime slice: []const u8) bool {
-    for (slice) |char| {
-        if (char > 127) {
-            return false;
-        }
-    }
     return true;
 }
 
@@ -3539,8 +3528,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                             const first_set_byte = @ctz(mask) / 8;
                             if (comptime Environment.allow_assert) {
                                 std.debug.assert(remaining[first_set_byte] > 127);
-                                var j: usize = 0;
-                                while (j < first_set_byte) : (j += 1) {
+                                for (0..first_set_byte) |j| {
                                     std.debug.assert(remaining[j] <= 127);
                                 }
                             }
@@ -3557,8 +3545,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                             const first_set_byte = @ctz(mask) / 8;
                             if (comptime Environment.allow_assert) {
                                 std.debug.assert(remaining[first_set_byte] > 127);
-                                var j: usize = 0;
-                                while (j < first_set_byte) : (j += 1) {
+                                for (0..first_set_byte) |j| {
                                     std.debug.assert(remaining[j] <= 127);
                                 }
                             }
@@ -3602,8 +3589,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                     const first_set_byte = @ctz(mask) / 8;
                     if (comptime Environment.allow_assert) {
                         std.debug.assert(remaining[first_set_byte] > 127);
-                        var j: usize = 0;
-                        while (j < first_set_byte) : (j += 1) {
+                        for (0..first_set_byte) |j| {
                             std.debug.assert(remaining[j] <= 127);
                         }
                     }
@@ -3825,6 +3811,10 @@ pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
     std.debug.assert(slice[i] == char);
 
     return i;
+}
+
+pub fn indexOfChar16Usize(slice: []const u16, char: u16) ?usize {
+    return std.mem.indexOfScalar(u16, slice, char);
 }
 
 test "indexOfChar" {
@@ -4347,8 +4337,7 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
 test "indexOfNotChar" {
     {
         var yes: [312]u8 = undefined;
-        var i: usize = 0;
-        while (i < yes.len) {
+        for (0..yes.len) |i| {
             @memset(yes, 'a');
             yes[i] = 'b';
             if (comptime Environment.allow_assert) std.debug.assert(indexOfNotChar(&yes, 'a').? == i);
@@ -4414,80 +4403,10 @@ test "firstNonASCII16" {
     }
 }
 
-fn getSharedBuffer() []u8 {
-    return std.mem.asBytes(shared_temp_buffer_ptr orelse brk: {
-        shared_temp_buffer_ptr = bun.default_allocator.create([32 * 1024]u8) catch unreachable;
-        break :brk shared_temp_buffer_ptr.?;
-    });
-}
-threadlocal var shared_temp_buffer_ptr: ?*[32 * 1024]u8 = null;
-
-pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !void {
-    var chunk = getSharedBuffer();
-    var slice = slice_;
-
-    while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice, true);
-        if (result.read == 0 or result.written == 0)
-            break;
-        try writer.writeAll(chunk[0..result.written]);
-        slice = slice[result.read..];
-    }
-}
-
-pub fn formatUTF16(slice_: []align(1) const u16, writer: anytype) !void {
-    return formatUTF16Type([]align(1) const u16, slice_, writer);
-}
-
-pub const FormatUTF16 = struct {
-    buf: []const u16,
-    pub fn format(self: @This(), comptime _: []const u8, opts: anytype, writer: anytype) !void {
-        _ = opts;
-        try formatUTF16Type([]const u16, self.buf, writer);
-    }
-};
-
-pub const FormatUTF8 = struct {
-    buf: []const u8,
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
-        try writer.writeAll(self.buf);
-    }
-};
-
-pub fn fmtUTF16(buf: []const u16) FormatUTF16 {
-    return FormatUTF16{ .buf = buf };
-}
-
-pub const FormatOSPath = if (Environment.isWindows) FormatUTF16 else FormatUTF8;
-
-pub fn fmtOSPath(buf: bun.OSPathSliceWithoutSentinel) FormatOSPath {
-    return FormatOSPath{ .buf = buf };
-}
-
-pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
-    var chunk = getSharedBuffer();
-    var slice = slice_;
-
-    while (strings.firstNonASCII(slice)) |i| {
-        if (i > 0) {
-            try writer.writeAll(slice[0..i]);
-            slice = slice[i..];
-        }
-        const result = strings.copyLatin1IntoUTF8(chunk, @TypeOf(slice), slice[0..@min(chunk.len, slice.len)]);
-        if (result.read == 0 or result.written == 0)
-            break;
-        try writer.writeAll(chunk[0..result.written]);
-        slice = slice[result.read..];
-    }
-
-    if (slice.len > 0)
-        try writer.writeAll(slice); // write the remaining bytes
-}
-
 test "print UTF16" {
     var err = std.io.getStdErr();
     const utf16 = comptime toUTF16Literal("❌ ✅ opkay ");
-    try formatUTF16(utf16, err.writer());
+    try bun.fmt.str.formatUTF16(utf16, err.writer());
     // std.unicode.fmtUtf16le(utf16le: []const u16)
 }
 
@@ -4970,8 +4889,7 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             defer it.i = original_i;
 
             var end_ix = original_i;
-            var found: usize = 0;
-            while (found < n) : (found += 1) {
+            for (0..n) |_| {
                 const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
                 end_ix += next_codepoint.len;
             }
@@ -5332,71 +5250,6 @@ pub fn concatIfNeeded(
     std.debug.assert(remain.len == 0);
 }
 
-pub const HostFormatter = struct {
-    host: string,
-    port: ?u16 = null,
-    is_https: bool = false,
-
-    pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (strings.indexOfChar(formatter.host, ':') != null) {
-            try writer.writeAll(formatter.host);
-            return;
-        }
-
-        try writer.writeAll(formatter.host);
-
-        const is_port_optional = formatter.port == null or (formatter.is_https and formatter.port == 443) or
-            (!formatter.is_https and formatter.port == 80);
-        if (!is_port_optional) {
-            try writer.print(":{d}", .{formatter.port.?});
-            return;
-        }
-    }
-};
-
-const Proto = enum {
-    http,
-    https,
-    unix,
-};
-
-pub const URLFormatter = struct {
-    proto: Proto = .http,
-    hostname: ?string = null,
-    port: ?u16 = null,
-
-    pub fn format(this: URLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("{s}://", .{switch (this.proto) {
-            .http => "http",
-            .https => "https",
-            .unix => "unix",
-        }});
-
-        if (this.hostname) |hostname| {
-            const needs_brackets = hostname[0] != '[' and strings.isIPV6Address(hostname);
-            if (needs_brackets) {
-                try writer.print("[{s}]", .{hostname});
-            } else {
-                try writer.writeAll(hostname);
-            }
-        } else {
-            try writer.writeAll("localhost");
-        }
-
-        if (this.proto == .unix) {
-            return;
-        }
-
-        const is_port_optional = this.port == null or (this.proto == .https and this.port == 443) or
-            (this.proto == .http and this.port == 80);
-        if (is_port_optional) {
-            try writer.writeAll("/");
-        } else {
-            try writer.print(":{d}/", .{this.port.?});
-        }
-    }
-};
-
 pub fn convertUTF8toUTF16InBuffer(
     buf: []u16,
     input: []const u8,
@@ -5452,3 +5305,539 @@ pub fn mustEscapeYAMLString(contents: []const u8) bool {
 pub fn pathContainsNodeModulesFolder(path: []const u8) bool {
     return strings.contains(path, comptime std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str);
 }
+
+pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
+    if (cp <= 0x1f) {
+        return true;
+    }
+
+    if (cp >= 0x7f and cp <= 0x9f) {
+        // C1 control characters
+        return true;
+    }
+
+    if (comptime @sizeOf(T) == 1) {
+        return false;
+    }
+
+    if (cp >= 0x300 and cp <= 0x36f) {
+        // Combining Diacritical Marks
+        return true;
+    }
+    if (cp >= 0x300 and cp <= 0x36f)
+        // Combining Diacritical Marks
+        return true;
+
+    if (cp >= 0x200b and cp <= 0x200f) {
+        // Modifying Invisible Characters
+        return true;
+    }
+
+    if (cp >= 0x20d0 and cp <= 0x20ff)
+        // Combining Diacritical Marks for Symbols
+        return true;
+
+    if (cp >= 0xfe00 and cp <= 0xfe0f)
+        // Variation Selectors
+        return true;
+    if (cp >= 0xfe20 and cp <= 0xfe2f)
+        // Combining Half Marks
+        return true;
+
+    if (cp == 0xfeff)
+        // Zero Width No-Break Space (BOM, ZWNBSP)
+        return true;
+
+    if (cp >= 0xe0100 and cp <= 0xe01ef)
+        // Variation Selectors
+        return true;
+
+    return false;
+}
+
+/// Official unicode reference: https://www.unicode.org/Public/UCD/latest/ucd/EastAsianWidth.txt
+/// Tag legend:
+///  - `W` (wide) -> true
+///  - `F` (full-width) -> true
+///  - `H` (half-width) -> false
+///  - `N` (neutral) -> false
+///  - `Na` (narrow) -> false
+///  - `A` (ambiguous) -> false?
+///
+/// To regenerate the switch body list, run:
+/// ```js
+///    [...(await (await fetch("https://www.unicode.org/Public/UCD/latest/ucd/EastAsianWidth.txt")).text()).matchAll(/^([\dA-F]{4,})(?:\.\.([\dA-F]{4,}))?\s+;\s+(\w+)\s+#\s+(.*?)\s*$/gm)].flatMap(([,start, end, type, comment]) => (
+///        (['W', 'F'].includes(type)) ? [`        ${(end ? `0x${start}...0x${end}` : `0x${start}`)}, // ${''.padStart(17 - start.length - (end ? end.length + 5 : 0))}[${type}] ${comment}`] : []
+///    )).join('\n')
+/// ```
+pub fn isFullWidthCodepointType(comptime T: type, cp: T) bool {
+    if (!(cp >= 0x1100)) {
+        return false;
+    }
+
+    return switch (cp) {
+        0x1100...0x115F, //     [W] Lo    [96] HANGUL CHOSEONG KIYEOK..HANGUL CHOSEONG FILLER
+        0x231A...0x231B, //     [W] So     [2] WATCH..HOURGLASS
+        0x2329, //              [W] Ps         LEFT-POINTING ANGLE BRACKET
+        0x232A, //              [W] Pe         RIGHT-POINTING ANGLE BRACKET
+        0x23E9...0x23EC, //     [W] So     [4] BLACK RIGHT-POINTING DOUBLE TRIANGLE..BLACK DOWN-POINTING DOUBLE TRIANGLE
+        0x23F0, //              [W] So         ALARM CLOCK
+        0x23F3, //              [W] So         HOURGLASS WITH FLOWING SAND
+        0x25FD...0x25FE, //     [W] Sm     [2] WHITE MEDIUM SMALL SQUARE..BLACK MEDIUM SMALL SQUARE
+        0x2614...0x2615, //     [W] So     [2] UMBRELLA WITH RAIN DROPS..HOT BEVERAGE
+        0x2648...0x2653, //     [W] So    [12] ARIES..PISCES
+        0x267F, //              [W] So         WHEELCHAIR SYMBOL
+        0x2693, //              [W] So         ANCHOR
+        0x26A1, //              [W] So         HIGH VOLTAGE SIGN
+        0x26AA...0x26AB, //     [W] So     [2] MEDIUM WHITE CIRCLE..MEDIUM BLACK CIRCLE
+        0x26BD...0x26BE, //     [W] So     [2] SOCCER BALL..BASEBALL
+        0x26C4...0x26C5, //     [W] So     [2] SNOWMAN WITHOUT SNOW..SUN BEHIND CLOUD
+        0x26CE, //              [W] So         OPHIUCHUS
+        0x26D4, //              [W] So         NO ENTRY
+        0x26EA, //              [W] So         CHURCH
+        0x26F2...0x26F3, //     [W] So     [2] FOUNTAIN..FLAG IN HOLE
+        0x26F5, //              [W] So         SAILBOAT
+        0x26FA, //              [W] So         TENT
+        0x26FD, //              [W] So         FUEL PUMP
+        0x2705, //              [W] So         WHITE HEAVY CHECK MARK
+        0x270A...0x270B, //     [W] So     [2] RAISED FIST..RAISED HAND
+        0x2728, //              [W] So         SPARKLES
+        0x274C, //              [W] So         CROSS MARK
+        0x274E, //              [W] So         NEGATIVE SQUARED CROSS MARK
+        0x2753...0x2755, //     [W] So     [3] BLACK QUESTION MARK ORNAMENT..WHITE EXCLAMATION MARK ORNAMENT
+        0x2757, //              [W] So         HEAVY EXCLAMATION MARK SYMBOL
+        0x2795...0x2797, //     [W] So     [3] HEAVY PLUS SIGN..HEAVY DIVISION SIGN
+        0x27B0, //              [W] So         CURLY LOOP
+        0x27BF, //              [W] So         DOUBLE CURLY LOOP
+        0x2B1B...0x2B1C, //     [W] So     [2] BLACK LARGE SQUARE..WHITE LARGE SQUARE
+        0x2B50, //              [W] So         WHITE MEDIUM STAR
+        0x2B55, //              [W] So         HEAVY LARGE CIRCLE
+        0x2E80...0x2E99, //     [W] So    [26] CJK RADICAL REPEAT..CJK RADICAL RAP
+        0x2E9B...0x2EF3, //     [W] So    [89] CJK RADICAL CHOKE..CJK RADICAL C-SIMPLIFIED TURTLE
+        0x2F00...0x2FD5, //     [W] So   [214] KANGXI RADICAL ONE..KANGXI RADICAL FLUTE
+        0x2FF0...0x2FFF, //     [W] So    [16] IDEOGRAPHIC DESCRIPTION CHARACTER LEFT TO RIGHT..IDEOGRAPHIC DESCRIPTION CHARACTER ROTATION
+        0x3000, //              [F] Zs         IDEOGRAPHIC SPACE
+        0x3001...0x3003, //     [W] Po     [3] IDEOGRAPHIC COMMA..DITTO MARK
+        0x3004, //              [W] So         JAPANESE INDUSTRIAL STANDARD SYMBOL
+        0x3005, //              [W] Lm         IDEOGRAPHIC ITERATION MARK
+        0x3006, //              [W] Lo         IDEOGRAPHIC CLOSING MARK
+        0x3007, //              [W] Nl         IDEOGRAPHIC NUMBER ZERO
+        0x3008, //              [W] Ps         LEFT ANGLE BRACKET
+        0x3009, //              [W] Pe         RIGHT ANGLE BRACKET
+        0x300A, //              [W] Ps         LEFT DOUBLE ANGLE BRACKET
+        0x300B, //              [W] Pe         RIGHT DOUBLE ANGLE BRACKET
+        0x300C, //              [W] Ps         LEFT CORNER BRACKET
+        0x300D, //              [W] Pe         RIGHT CORNER BRACKET
+        0x300E, //              [W] Ps         LEFT WHITE CORNER BRACKET
+        0x300F, //              [W] Pe         RIGHT WHITE CORNER BRACKET
+        0x3010, //              [W] Ps         LEFT BLACK LENTICULAR BRACKET
+        0x3011, //              [W] Pe         RIGHT BLACK LENTICULAR BRACKET
+        0x3012...0x3013, //     [W] So     [2] POSTAL MARK..GETA MARK
+        0x3014, //              [W] Ps         LEFT TORTOISE SHELL BRACKET
+        0x3015, //              [W] Pe         RIGHT TORTOISE SHELL BRACKET
+        0x3016, //              [W] Ps         LEFT WHITE LENTICULAR BRACKET
+        0x3017, //              [W] Pe         RIGHT WHITE LENTICULAR BRACKET
+        0x3018, //              [W] Ps         LEFT WHITE TORTOISE SHELL BRACKET
+        0x3019, //              [W] Pe         RIGHT WHITE TORTOISE SHELL BRACKET
+        0x301A, //              [W] Ps         LEFT WHITE SQUARE BRACKET
+        0x301B, //              [W] Pe         RIGHT WHITE SQUARE BRACKET
+        0x301C, //              [W] Pd         WAVE DASH
+        0x301D, //              [W] Ps         REVERSED DOUBLE PRIME QUOTATION MARK
+        0x301E...0x301F, //     [W] Pe     [2] DOUBLE PRIME QUOTATION MARK..LOW DOUBLE PRIME QUOTATION MARK
+        0x3020, //              [W] So         POSTAL MARK FACE
+        0x3021...0x3029, //     [W] Nl     [9] HANGZHOU NUMERAL ONE..HANGZHOU NUMERAL NINE
+        0x302A...0x302D, //     [W] Mn     [4] IDEOGRAPHIC LEVEL TONE MARK..IDEOGRAPHIC ENTERING TONE MARK
+        0x302E...0x302F, //     [W] Mc     [2] HANGUL SINGLE DOT TONE MARK..HANGUL DOUBLE DOT TONE MARK
+        0x3030, //              [W] Pd         WAVY DASH
+        0x3031...0x3035, //     [W] Lm     [5] VERTICAL KANA REPEAT MARK..VERTICAL KANA REPEAT MARK LOWER HALF
+        0x3036...0x3037, //     [W] So     [2] CIRCLED POSTAL MARK..IDEOGRAPHIC TELEGRAPH LINE FEED SEPARATOR SYMBOL
+        0x3038...0x303A, //     [W] Nl     [3] HANGZHOU NUMERAL TEN..HANGZHOU NUMERAL THIRTY
+        0x303B, //              [W] Lm         VERTICAL IDEOGRAPHIC ITERATION MARK
+        0x303C, //              [W] Lo         MASU MARK
+        0x303D, //              [W] Po         PART ALTERNATION MARK
+        0x303E, //              [W] So         IDEOGRAPHIC VARIATION INDICATOR
+        0x3041...0x3096, //     [W] Lo    [86] HIRAGANA LETTER SMALL A..HIRAGANA LETTER SMALL KE
+        0x3099...0x309A, //     [W] Mn     [2] COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK..COMBINING KATAKANA-HIRAGANA SEMI-VOICED SOUND MARK
+        0x309B...0x309C, //     [W] Sk     [2] KATAKANA-HIRAGANA VOICED SOUND MARK..KATAKANA-HIRAGANA SEMI-VOICED SOUND MARK
+        0x309D...0x309E, //     [W] Lm     [2] HIRAGANA ITERATION MARK..HIRAGANA VOICED ITERATION MARK
+        0x309F, //              [W] Lo         HIRAGANA DIGRAPH YORI
+        0x30A0, //              [W] Pd         KATAKANA-HIRAGANA DOUBLE HYPHEN
+        0x30A1...0x30FA, //     [W] Lo    [90] KATAKANA LETTER SMALL A..KATAKANA LETTER VO
+        0x30FB, //              [W] Po         KATAKANA MIDDLE DOT
+        0x30FC...0x30FE, //     [W] Lm     [3] KATAKANA-HIRAGANA PROLONGED SOUND MARK..KATAKANA VOICED ITERATION MARK
+        0x30FF, //              [W] Lo         KATAKANA DIGRAPH KOTO
+        0x3105...0x312F, //     [W] Lo    [43] BOPOMOFO LETTER B..BOPOMOFO LETTER NN
+        0x3131...0x318E, //     [W] Lo    [94] HANGUL LETTER KIYEOK..HANGUL LETTER ARAEAE
+        0x3190...0x3191, //     [W] So     [2] IDEOGRAPHIC ANNOTATION LINKING MARK..IDEOGRAPHIC ANNOTATION REVERSE MARK
+        0x3192...0x3195, //     [W] No     [4] IDEOGRAPHIC ANNOTATION ONE MARK..IDEOGRAPHIC ANNOTATION FOUR MARK
+        0x3196...0x319F, //     [W] So    [10] IDEOGRAPHIC ANNOTATION TOP MARK..IDEOGRAPHIC ANNOTATION MAN MARK
+        0x31A0...0x31BF, //     [W] Lo    [32] BOPOMOFO LETTER BU..BOPOMOFO LETTER AH
+        0x31C0...0x31E3, //     [W] So    [36] CJK STROKE T..CJK STROKE Q
+        0x31EF, //              [W] So         IDEOGRAPHIC DESCRIPTION CHARACTER SUBTRACTION
+        0x31F0...0x31FF, //     [W] Lo    [16] KATAKANA LETTER SMALL KU..KATAKANA LETTER SMALL RO
+        0x3200...0x321E, //     [W] So    [31] PARENTHESIZED HANGUL KIYEOK..PARENTHESIZED KOREAN CHARACTER O HU
+        0x3220...0x3229, //     [W] No    [10] PARENTHESIZED IDEOGRAPH ONE..PARENTHESIZED IDEOGRAPH TEN
+        0x322A...0x3247, //     [W] So    [30] PARENTHESIZED IDEOGRAPH MOON..CIRCLED IDEOGRAPH KOTO
+        0x3250, //              [W] So         PARTNERSHIP SIGN
+        0x3251...0x325F, //     [W] No    [15] CIRCLED NUMBER TWENTY ONE..CIRCLED NUMBER THIRTY FIVE
+        0x3260...0x327F, //     [W] So    [32] CIRCLED HANGUL KIYEOK..KOREAN STANDARD SYMBOL
+        0x3280...0x3289, //     [W] No    [10] CIRCLED IDEOGRAPH ONE..CIRCLED IDEOGRAPH TEN
+        0x328A...0x32B0, //     [W] So    [39] CIRCLED IDEOGRAPH MOON..CIRCLED IDEOGRAPH NIGHT
+        0x32B1...0x32BF, //     [W] No    [15] CIRCLED NUMBER THIRTY SIX..CIRCLED NUMBER FIFTY
+        0x32C0...0x32FF, //     [W] So    [64] IDEOGRAPHIC TELEGRAPH SYMBOL FOR JANUARY..SQUARE ERA NAME REIWA
+        0x3300...0x33FF, //     [W] So   [256] SQUARE APAATO..SQUARE GAL
+        0x3400...0x4DBF, //     [W] Lo  [6592] CJK UNIFIED IDEOGRAPH-3400..CJK UNIFIED IDEOGRAPH-4DBF
+        0x4E00...0x9FFF, //     [W] Lo [20992] CJK UNIFIED IDEOGRAPH-4E00..CJK UNIFIED IDEOGRAPH-9FFF
+        0xA000...0xA014, //     [W] Lo    [21] YI SYLLABLE IT..YI SYLLABLE E
+        0xA015, //              [W] Lm         YI SYLLABLE WU
+        0xA016...0xA48C, //     [W] Lo  [1143] YI SYLLABLE BIT..YI SYLLABLE YYR
+        0xA490...0xA4C6, //     [W] So    [55] YI RADICAL QOT..YI RADICAL KE
+        0xA960...0xA97C, //     [W] Lo    [29] HANGUL CHOSEONG TIKEUT-MIEUM..HANGUL CHOSEONG SSANGYEORINHIEUH
+        0xAC00...0xD7A3, //     [W] Lo [11172] HANGUL SYLLABLE GA..HANGUL SYLLABLE HIH
+        0xF900...0xFA6D, //     [W] Lo   [366] CJK COMPATIBILITY IDEOGRAPH-F900..CJK COMPATIBILITY IDEOGRAPH-FA6D
+        0xFA6E...0xFA6F, //     [W] Cn     [2] <reserved-FA6E>..<reserved-FA6F>
+        0xFA70...0xFAD9, //     [W] Lo   [106] CJK COMPATIBILITY IDEOGRAPH-FA70..CJK COMPATIBILITY IDEOGRAPH-FAD9
+        0xFADA...0xFAFF, //     [W] Cn    [38] <reserved-FADA>..<reserved-FAFF>
+        0xFE10...0xFE16, //     [W] Po     [7] PRESENTATION FORM FOR VERTICAL COMMA..PRESENTATION FORM FOR VERTICAL QUESTION MARK
+        0xFE17, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT WHITE LENTICULAR BRACKET
+        0xFE18, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT WHITE LENTICULAR BRAKCET
+        0xFE19, //              [W] Po         PRESENTATION FORM FOR VERTICAL HORIZONTAL ELLIPSIS
+        0xFE30, //              [W] Po         PRESENTATION FORM FOR VERTICAL TWO DOT LEADER
+        0xFE31...0xFE32, //     [W] Pd     [2] PRESENTATION FORM FOR VERTICAL EM DASH..PRESENTATION FORM FOR VERTICAL EN DASH
+        0xFE33...0xFE34, //     [W] Pc     [2] PRESENTATION FORM FOR VERTICAL LOW LINE..PRESENTATION FORM FOR VERTICAL WAVY LOW LINE
+        0xFE35, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT PARENTHESIS
+        0xFE36, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT PARENTHESIS
+        0xFE37, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT CURLY BRACKET
+        0xFE38, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT CURLY BRACKET
+        0xFE39, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT TORTOISE SHELL BRACKET
+        0xFE3A, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT TORTOISE SHELL BRACKET
+        0xFE3B, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT BLACK LENTICULAR BRACKET
+        0xFE3C, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT BLACK LENTICULAR BRACKET
+        0xFE3D, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT DOUBLE ANGLE BRACKET
+        0xFE3E, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT DOUBLE ANGLE BRACKET
+        0xFE3F, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT ANGLE BRACKET
+        0xFE40, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT ANGLE BRACKET
+        0xFE41, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT CORNER BRACKET
+        0xFE42, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT CORNER BRACKET
+        0xFE43, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT WHITE CORNER BRACKET
+        0xFE44, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT WHITE CORNER BRACKET
+        0xFE45...0xFE46, //     [W] Po     [2] SESAME DOT..WHITE SESAME DOT
+        0xFE47, //              [W] Ps         PRESENTATION FORM FOR VERTICAL LEFT SQUARE BRACKET
+        0xFE48, //              [W] Pe         PRESENTATION FORM FOR VERTICAL RIGHT SQUARE BRACKET
+        0xFE49...0xFE4C, //     [W] Po     [4] DASHED OVERLINE..DOUBLE WAVY OVERLINE
+        0xFE4D...0xFE4F, //     [W] Pc     [3] DASHED LOW LINE..WAVY LOW LINE
+        0xFE50...0xFE52, //     [W] Po     [3] SMALL COMMA..SMALL FULL STOP
+        0xFE54...0xFE57, //     [W] Po     [4] SMALL SEMICOLON..SMALL EXCLAMATION MARK
+        0xFE58, //              [W] Pd         SMALL EM DASH
+        0xFE59, //              [W] Ps         SMALL LEFT PARENTHESIS
+        0xFE5A, //              [W] Pe         SMALL RIGHT PARENTHESIS
+        0xFE5B, //              [W] Ps         SMALL LEFT CURLY BRACKET
+        0xFE5C, //              [W] Pe         SMALL RIGHT CURLY BRACKET
+        0xFE5D, //              [W] Ps         SMALL LEFT TORTOISE SHELL BRACKET
+        0xFE5E, //              [W] Pe         SMALL RIGHT TORTOISE SHELL BRACKET
+        0xFE5F...0xFE61, //     [W] Po     [3] SMALL NUMBER SIGN..SMALL ASTERISK
+        0xFE62, //              [W] Sm         SMALL PLUS SIGN
+        0xFE63, //              [W] Pd         SMALL HYPHEN-MINUS
+        0xFE64...0xFE66, //     [W] Sm     [3] SMALL LESS-THAN SIGN..SMALL EQUALS SIGN
+        0xFE68, //              [W] Po         SMALL REVERSE SOLIDUS
+        0xFE69, //              [W] Sc         SMALL DOLLAR SIGN
+        0xFE6A...0xFE6B, //     [W] Po     [2] SMALL PERCENT SIGN..SMALL COMMERCIAL AT
+        0xFF01...0xFF03, //     [F] Po     [3] FULLWIDTH EXCLAMATION MARK..FULLWIDTH NUMBER SIGN
+        0xFF04, //              [F] Sc         FULLWIDTH DOLLAR SIGN
+        0xFF05...0xFF07, //     [F] Po     [3] FULLWIDTH PERCENT SIGN..FULLWIDTH APOSTROPHE
+        0xFF08, //              [F] Ps         FULLWIDTH LEFT PARENTHESIS
+        0xFF09, //              [F] Pe         FULLWIDTH RIGHT PARENTHESIS
+        0xFF0A, //              [F] Po         FULLWIDTH ASTERISK
+        0xFF0B, //              [F] Sm         FULLWIDTH PLUS SIGN
+        0xFF0C, //              [F] Po         FULLWIDTH COMMA
+        0xFF0D, //              [F] Pd         FULLWIDTH HYPHEN-MINUS
+        0xFF0E...0xFF0F, //     [F] Po     [2] FULLWIDTH FULL STOP..FULLWIDTH SOLIDUS
+        0xFF10...0xFF19, //     [F] Nd    [10] FULLWIDTH DIGIT ZERO..FULLWIDTH DIGIT NINE
+        0xFF1A...0xFF1B, //     [F] Po     [2] FULLWIDTH COLON..FULLWIDTH SEMICOLON
+        0xFF1C...0xFF1E, //     [F] Sm     [3] FULLWIDTH LESS-THAN SIGN..FULLWIDTH GREATER-THAN SIGN
+        0xFF1F...0xFF20, //     [F] Po     [2] FULLWIDTH QUESTION MARK..FULLWIDTH COMMERCIAL AT
+        0xFF21...0xFF3A, //     [F] Lu    [26] FULLWIDTH LATIN CAPITAL LETTER A..FULLWIDTH LATIN CAPITAL LETTER Z
+        0xFF3B, //              [F] Ps         FULLWIDTH LEFT SQUARE BRACKET
+        0xFF3C, //              [F] Po         FULLWIDTH REVERSE SOLIDUS
+        0xFF3D, //              [F] Pe         FULLWIDTH RIGHT SQUARE BRACKET
+        0xFF3E, //              [F] Sk         FULLWIDTH CIRCUMFLEX ACCENT
+        0xFF3F, //              [F] Pc         FULLWIDTH LOW LINE
+        0xFF40, //              [F] Sk         FULLWIDTH GRAVE ACCENT
+        0xFF41...0xFF5A, //     [F] Ll    [26] FULLWIDTH LATIN SMALL LETTER A..FULLWIDTH LATIN SMALL LETTER Z
+        0xFF5B, //              [F] Ps         FULLWIDTH LEFT CURLY BRACKET
+        0xFF5C, //              [F] Sm         FULLWIDTH VERTICAL LINE
+        0xFF5D, //              [F] Pe         FULLWIDTH RIGHT CURLY BRACKET
+        0xFF5E, //              [F] Sm         FULLWIDTH TILDE
+        0xFF5F, //              [F] Ps         FULLWIDTH LEFT WHITE PARENTHESIS
+        0xFF60, //              [F] Pe         FULLWIDTH RIGHT WHITE PARENTHESIS
+        0xFFE0...0xFFE1, //     [F] Sc     [2] FULLWIDTH CENT SIGN..FULLWIDTH POUND SIGN
+        0xFFE2, //              [F] Sm         FULLWIDTH NOT SIGN
+        0xFFE3, //              [F] Sk         FULLWIDTH MACRON
+        0xFFE4, //              [F] So         FULLWIDTH BROKEN BAR
+        0xFFE5...0xFFE6, //     [F] Sc     [2] FULLWIDTH YEN SIGN..FULLWIDTH WON SIGN
+        0x16FE0...0x16FE1, //   [W] Lm     [2] TANGUT ITERATION MARK..NUSHU ITERATION MARK
+        0x16FE2, //             [W] Po         OLD CHINESE HOOK MARK
+        0x16FE3, //             [W] Lm         OLD CHINESE ITERATION MARK
+        0x16FE4, //             [W] Mn         KHITAN SMALL SCRIPT FILLER
+        0x16FF0...0x16FF1, //   [W] Mc     [2] VIETNAMESE ALTERNATE READING MARK CA..VIETNAMESE ALTERNATE READING MARK NHAY
+        0x17000...0x187F7, //   [W] Lo  [6136] TANGUT IDEOGRAPH-17000..TANGUT IDEOGRAPH-187F7
+        0x18800...0x18AFF, //   [W] Lo   [768] TANGUT COMPONENT-001..TANGUT COMPONENT-768
+        0x18B00...0x18CD5, //   [W] Lo   [470] KHITAN SMALL SCRIPT CHARACTER-18B00..KHITAN SMALL SCRIPT CHARACTER-18CD5
+        0x18D00...0x18D08, //   [W] Lo     [9] TANGUT IDEOGRAPH-18D00..TANGUT IDEOGRAPH-18D08
+        0x1AFF0...0x1AFF3, //   [W] Lm     [4] KATAKANA LETTER MINNAN TONE-2..KATAKANA LETTER MINNAN TONE-5
+        0x1AFF5...0x1AFFB, //   [W] Lm     [7] KATAKANA LETTER MINNAN TONE-7..KATAKANA LETTER MINNAN NASALIZED TONE-5
+        0x1AFFD...0x1AFFE, //   [W] Lm     [2] KATAKANA LETTER MINNAN NASALIZED TONE-7..KATAKANA LETTER MINNAN NASALIZED TONE-8
+        0x1B000...0x1B0FF, //   [W] Lo   [256] KATAKANA LETTER ARCHAIC E..HENTAIGANA LETTER RE-2
+        0x1B100...0x1B122, //   [W] Lo    [35] HENTAIGANA LETTER RE-3..KATAKANA LETTER ARCHAIC WU
+        0x1B132, //             [W] Lo         HIRAGANA LETTER SMALL KO
+        0x1B150...0x1B152, //   [W] Lo     [3] HIRAGANA LETTER SMALL WI..HIRAGANA LETTER SMALL WO
+        0x1B155, //             [W] Lo         KATAKANA LETTER SMALL KO
+        0x1B164...0x1B167, //   [W] Lo     [4] KATAKANA LETTER SMALL WI..KATAKANA LETTER SMALL N
+        0x1B170...0x1B2FB, //   [W] Lo   [396] NUSHU CHARACTER-1B170..NUSHU CHARACTER-1B2FB
+        0x1F004, //             [W] So         MAHJONG TILE RED DRAGON
+        0x1F0CF, //             [W] So         PLAYING CARD BLACK JOKER
+        0x1F18E, //             [W] So         NEGATIVE SQUARED AB
+        0x1F191...0x1F19A, //   [W] So    [10] SQUARED CL..SQUARED VS
+        0x1F200...0x1F202, //   [W] So     [3] SQUARE HIRAGANA HOKA..SQUARED KATAKANA SA
+        0x1F210...0x1F23B, //   [W] So    [44] SQUARED CJK UNIFIED IDEOGRAPH-624B..SQUARED CJK UNIFIED IDEOGRAPH-914D
+        0x1F240...0x1F248, //   [W] So     [9] TORTOISE SHELL BRACKETED CJK UNIFIED IDEOGRAPH-672C..TORTOISE SHELL BRACKETED CJK UNIFIED IDEOGRAPH-6557
+        0x1F250...0x1F251, //   [W] So     [2] CIRCLED IDEOGRAPH ADVANTAGE..CIRCLED IDEOGRAPH ACCEPT
+        0x1F260...0x1F265, //   [W] So     [6] ROUNDED SYMBOL FOR FU..ROUNDED SYMBOL FOR CAI
+        0x1F300...0x1F320, //   [W] So    [33] CYCLONE..SHOOTING STAR
+        0x1F32D...0x1F335, //   [W] So     [9] HOT DOG..CACTUS
+        0x1F337...0x1F37C, //   [W] So    [70] TULIP..BABY BOTTLE
+        0x1F37E...0x1F393, //   [W] So    [22] BOTTLE WITH POPPING CORK..GRADUATION CAP
+        0x1F3A0...0x1F3CA, //   [W] So    [43] CAROUSEL HORSE..SWIMMER
+        0x1F3CF...0x1F3D3, //   [W] So     [5] CRICKET BAT AND BALL..TABLE TENNIS PADDLE AND BALL
+        0x1F3E0...0x1F3F0, //   [W] So    [17] HOUSE BUILDING..EUROPEAN CASTLE
+        0x1F3F4, //             [W] So         WAVING BLACK FLAG
+        0x1F3F8...0x1F3FA, //   [W] So     [3] BADMINTON RACQUET AND SHUTTLECOCK..AMPHORA
+        0x1F3FB...0x1F3FF, //   [W] Sk     [5] EMOJI MODIFIER FITZPATRICK TYPE-1-2..EMOJI MODIFIER FITZPATRICK TYPE-6
+        0x1F400...0x1F43E, //   [W] So    [63] RAT..PAW PRINTS
+        0x1F440, //             [W] So         EYES
+        0x1F442...0x1F4FC, //   [W] So   [187] EAR..VIDEOCASSETTE
+        0x1F4FF...0x1F53D, //   [W] So    [63] PRAYER BEADS..DOWN-POINTING SMALL RED TRIANGLE
+        0x1F54B...0x1F54E, //   [W] So     [4] KAABA..MENORAH WITH NINE BRANCHES
+        0x1F550...0x1F567, //   [W] So    [24] CLOCK FACE ONE OCLOCK..CLOCK FACE TWELVE-THIRTY
+        0x1F57A, //             [W] So         MAN DANCING
+        0x1F595...0x1F596, //   [W] So     [2] REVERSED HAND WITH MIDDLE FINGER EXTENDED..RAISED HAND WITH PART BETWEEN MIDDLE AND RING FINGERS
+        0x1F5A4, //             [W] So         BLACK HEART
+        0x1F5FB...0x1F5FF, //   [W] So     [5] MOUNT FUJI..MOYAI
+        0x1F600...0x1F64F, //   [W] So    [80] GRINNING FACE..PERSON WITH FOLDED HANDS
+        0x1F680...0x1F6C5, //   [W] So    [70] ROCKET..LEFT LUGGAGE
+        0x1F6CC, //             [W] So         SLEEPING ACCOMMODATION
+        0x1F6D0...0x1F6D2, //   [W] So     [3] PLACE OF WORSHIP..SHOPPING TROLLEY
+        0x1F6D5...0x1F6D7, //   [W] So     [3] HINDU TEMPLE..ELEVATOR
+        0x1F6DC...0x1F6DF, //   [W] So     [4] WIRELESS..RING BUOY
+        0x1F6EB...0x1F6EC, //   [W] So     [2] AIRPLANE DEPARTURE..AIRPLANE ARRIVING
+        0x1F6F4...0x1F6FC, //   [W] So     [9] SCOOTER..ROLLER SKATE
+        0x1F7E0...0x1F7EB, //   [W] So    [12] LARGE ORANGE CIRCLE..LARGE BROWN SQUARE
+        0x1F7F0, //             [W] So         HEAVY EQUALS SIGN
+        0x1F90C...0x1F93A, //   [W] So    [47] PINCHED FINGERS..FENCER
+        0x1F93C...0x1F945, //   [W] So    [10] WRESTLERS..GOAL NET
+        0x1F947...0x1F9FF, //   [W] So   [185] FIRST PLACE MEDAL..NAZAR AMULET
+        0x1FA70...0x1FA7C, //   [W] So    [13] BALLET SHOES..CRUTCH
+        0x1FA80...0x1FA88, //   [W] So     [9] YO-YO..FLUTE
+        0x1FA90...0x1FABD, //   [W] So    [46] RINGED PLANET..WING
+        0x1FABF...0x1FAC5, //   [W] So     [7] GOOSE..PERSON WITH CROWN
+        0x1FACE...0x1FADB, //   [W] So    [14] MOOSE..PEA POD
+        0x1FAE0...0x1FAE8, //   [W] So     [9] MELTING FACE..SHAKING FACE
+        0x1FAF0...0x1FAF8, //   [W] So     [9] HAND WITH INDEX FINGER AND THUMB CROSSED..RIGHTWARDS PUSHING HAND
+        0x20000...0x2A6DF, //   [W] Lo [42720] CJK UNIFIED IDEOGRAPH-20000..CJK UNIFIED IDEOGRAPH-2A6DF
+        0x2A6E0...0x2A6FF, //   [W] Cn    [32] <reserved-2A6E0>..<reserved-2A6FF>
+        0x2A700...0x2B739, //   [W] Lo  [4154] CJK UNIFIED IDEOGRAPH-2A700..CJK UNIFIED IDEOGRAPH-2B739
+        0x2B73A...0x2B73F, //   [W] Cn     [6] <reserved-2B73A>..<reserved-2B73F>
+        0x2B740...0x2B81D, //   [W] Lo   [222] CJK UNIFIED IDEOGRAPH-2B740..CJK UNIFIED IDEOGRAPH-2B81D
+        0x2B81E...0x2B81F, //   [W] Cn     [2] <reserved-2B81E>..<reserved-2B81F>
+        0x2B820...0x2CEA1, //   [W] Lo  [5762] CJK UNIFIED IDEOGRAPH-2B820..CJK UNIFIED IDEOGRAPH-2CEA1
+        0x2CEA2...0x2CEAF, //   [W] Cn    [14] <reserved-2CEA2>..<reserved-2CEAF>
+        0x2CEB0...0x2EBE0, //   [W] Lo  [7473] CJK UNIFIED IDEOGRAPH-2CEB0..CJK UNIFIED IDEOGRAPH-2EBE0
+        0x2EBE1...0x2EBEF, //   [W] Cn    [15] <reserved-2EBE1>..<reserved-2EBEF>
+        0x2EBF0...0x2EE5D, //   [W] Lo   [622] CJK UNIFIED IDEOGRAPH-2EBF0..CJK UNIFIED IDEOGRAPH-2EE5D
+        0x2EE5E...0x2F7FF, //   [W] Cn  [2466] <reserved-2EE5E>..<reserved-2F7FF>
+        0x2F800...0x2FA1D, //   [W] Lo   [542] CJK COMPATIBILITY IDEOGRAPH-2F800..CJK COMPATIBILITY IDEOGRAPH-2FA1D
+        0x2FA1E...0x2FA1F, //   [W] Cn     [2] <reserved-2FA1E>..<reserved-2FA1F>
+        0x2FA20...0x2FFFD, //   [W] Cn  [1502] <reserved-2FA20>..<reserved-2FFFD>
+        0x30000...0x3134A, //   [W] Lo  [4939] CJK UNIFIED IDEOGRAPH-30000..CJK UNIFIED IDEOGRAPH-3134A
+        0x3134B...0x3134F, //   [W] Cn     [5] <reserved-3134B>..<reserved-3134F>
+        0x31350...0x323AF, //   [W] Lo  [4192] CJK UNIFIED IDEOGRAPH-31350..CJK UNIFIED IDEOGRAPH-323AF
+        0x323B0...0x3FFFD, //   [W] Cn [56398] <reserved-323B0>..<reserved-3FFFD>
+        => true,
+        else => false,
+    };
+}
+
+pub fn visibleCodepointWidth(cp: anytype) u3 {
+    return visibleCodepointWidthType(@TypeOf(cp), cp);
+}
+
+pub fn visibleCodepointWidthType(comptime T: type, cp: T) usize {
+    if (isZeroWidthCodepointType(T, cp)) {
+        return 0;
+    }
+
+    if (isFullWidthCodepointType(T, cp)) {
+        return 2;
+    }
+
+    return 1;
+}
+
+pub const visible = struct {
+    fn visibleASCIIWidth(input_: anytype) usize {
+        var length: usize = 0;
+        var input = input_;
+
+        if (comptime Environment.enableSIMD) {
+            // https://zig.godbolt.org/z/hxhjncvq7
+            const ElementType = std.meta.Child(@TypeOf(input_));
+            const simd = 16 / @sizeOf(ElementType);
+            if (input.len >= simd) {
+                const input_end = input.ptr + input.len - (input.len % simd);
+                while (input.ptr != input_end) {
+                    const chunk: @Vector(simd, ElementType) = input[0..simd].*;
+                    input = input[simd..];
+
+                    const cmp: @Vector(simd, ElementType) = @splat(0x1f);
+                    const match1: @Vector(simd, u1) = @bitCast(chunk >= cmp);
+                    const match: @Vector(simd, ElementType) = match1;
+
+                    length += @reduce(.Add, match);
+                }
+            }
+
+            // this is a deliberate compiler optimization
+            // it disables auto-vectorizing the "input" for loop.
+            if (!(input.len < simd)) unreachable;
+        }
+
+        for (input) |c| {
+            length += if (c > 0x1f) 1 else 0;
+        }
+
+        return length;
+    }
+
+    fn visibleASCIIWidthExcludeANSIColors(input_: anytype) usize {
+        var length: usize = 0;
+        var input = input_;
+
+        const ElementType = std.meta.Child(@TypeOf(input_));
+        const indexFn = if (comptime ElementType == u8) strings.indexOfCharUsize else strings.indexOfChar16Usize;
+
+        while (indexFn(input, '\x1b')) |i| {
+            length += visibleASCIIWidth(input[0..i]);
+            input = input[i..];
+
+            if (input.len < 3) return length;
+
+            if (input[1] == '[') {
+                const end = indexFn(input[2..], 'm') orelse return length;
+                input = input[end + 3 ..];
+            } else {
+                input = input[1..];
+            }
+        }
+
+        length += visibleASCIIWidth(input);
+
+        return length;
+    }
+
+    fn visibleUTF8WidthFn(input: []const u8, comptime asciiFn: anytype) usize {
+        var bytes = input;
+        var len: usize = 0;
+        while (bun.strings.firstNonASCII(bytes)) |i| {
+            len += asciiFn(bytes[0..i]);
+
+            const byte = bytes[i];
+            const skip = bun.strings.wtf8ByteSequenceLengthWithInvalid(byte);
+            const cp_bytes: [4]u8 = switch (skip) {
+                inline 1, 2, 3, 4 => |cp_len| .{
+                    byte,
+                    if (comptime cp_len > 1) bytes[1] else 0,
+                    if (comptime cp_len > 2) bytes[2] else 0,
+                    if (comptime cp_len > 3) bytes[3] else 0,
+                },
+                else => unreachable,
+            };
+
+            const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
+            len += visibleCodepointWidthType(u32, cp);
+
+            bytes = bytes[@min(i + skip, bytes.len)..];
+        }
+
+        len += asciiFn(bytes);
+
+        return len;
+    }
+
+    fn visibleUTF16WidthFn(input: []const u16, comptime asciiFn: anytype) usize {
+        var bytes = input;
+        var len: usize = 0;
+        while (bun.strings.firstNonASCII16CheckMin([]const u16, bytes, false)) |i| {
+            len += asciiFn(bytes[0..i]);
+            bytes = bytes[i..];
+
+            const utf8 = utf16CodepointWithFFFD([]const u16, bytes);
+            len += visibleCodepointWidthType(u32, utf8.code_point);
+            bytes = bytes[@min(@as(usize, utf8.len), bytes.len)..];
+        }
+
+        len += asciiFn(bytes);
+
+        return len;
+    }
+
+    fn visibleLatin1WidthFn(input: []const u8) usize {
+        return visibleASCIIWidth(input);
+    }
+
+    pub const width = struct {
+        pub fn ascii(input: []const u8) usize {
+            return visibleASCIIWidth(input);
+        }
+
+        pub fn utf8(input: []const u8) usize {
+            return visibleUTF8WidthFn(input, visibleASCIIWidth);
+        }
+
+        pub fn utf16(input: []const u16) usize {
+            return visibleUTF16WidthFn(input, visibleASCIIWidth);
+        }
+
+        pub const exclude_ansi_colors = struct {
+            pub fn ascii(input: []const u8) usize {
+                return visibleASCIIWidthExcludeANSIColors(input);
+            }
+
+            pub fn utf8(input: []const u8) usize {
+                return visibleUTF8WidthFn(input, visibleASCIIWidthExcludeANSIColors);
+            }
+
+            pub fn utf16(input: []const u16) usize {
+                return visibleUTF16WidthFn(input, visibleASCIIWidthExcludeANSIColors);
+            }
+        };
+    };
+};
+
+pub const QuoteEscapeFormat = struct {
+    data: []const u8,
+
+    pub fn format(self: QuoteEscapeFormat, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var i: usize = 0;
+        while (std.mem.indexOfAnyPos(u8, self.data, i, "\"\n\\")) |j| : (i = j + 1) {
+            try writer.writeAll(self.data[i..j]);
+            try writer.writeAll(switch (self.data[j]) {
+                '"' => "\\\"",
+                '\n' => "\\n",
+                '\\' => "\\\\",
+                else => unreachable,
+            });
+        }
+        if (i == self.data.len) return;
+        try writer.writeAll(self.data[i..]);
+    }
+};

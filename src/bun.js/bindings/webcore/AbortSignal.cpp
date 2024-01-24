@@ -102,8 +102,6 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     // 2. Set signal’s aborted flag.
     m_aborted = true;
 
-    // FIXME: This code is wrong: we should emit a write-barrier. Otherwise, GC can collect it.
-    // https://bugs.webkit.org/show_bug.cgi?id=236353
     ASSERT(reason);
     auto& vm = scriptExecutionContext()->vm();
     m_reason.set(vm, reason);

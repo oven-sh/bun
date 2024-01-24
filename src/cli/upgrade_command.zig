@@ -401,8 +401,8 @@ pub const UpgradeCommand = struct {
 
     const manual_upgrade_command = switch (Environment.os) {
         .linux, .mac => "curl -fsSL https://bun.sh/install | bash",
-        .windows => "TODO",
-        else => "TODO",
+        .windows => "powershell -c 'irm bun.sh/install.ps1|iex'",
+        else => "(TODO: Install script for " ++ Environment.os.displayString() ++ ")",
     };
 
     pub fn exec(ctx: Command.Context) !void {
@@ -821,9 +821,39 @@ pub const UpgradeCommand = struct {
                     current_executable_buf[target_dir_.len] = 0;
                 }
 
-                C.moveFileZ(save_dir.fd, exe, target_dir.fd, target_filename) catch |err| {
-                    save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of Bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
+                C.moveFileZ(bun.toFD(save_dir.fd), exe, bun.toFD(target_dir.fd), target_filename) catch |err| {
+                    defer save_dir_.deleteTree(version_name) catch {};
+
+                    if (comptime Environment.isWindows) {
+                        // Attempt to restore the old executable. If this fails, the user will be left without a working copy of bun.
+                        std.os.rename(outdated_filename.?, destination_executable_) catch {
+                            Output.errGeneric(
+                                \\Failed to move new version of Bun due to {s}
+                            ,
+                                .{@errorName(err)},
+                            );
+                            Output.errGeneric(
+                                \\Failed to restore the working copy of Bun. The installation is now corrupt.
+                                \\
+                                \\Please reinstall Bun manually with the following command:
+                                \\   {s}
+                                \\
+                            ,
+                                .{manual_upgrade_command},
+                            );
+                            Global.exit(1);
+                        };
+                    }
+
+                    Output.errGeneric(
+                        \\Failed to move new version of Bun due to {s}
+                        \\
+                        \\Please reinstall Bun manually with the following command:
+                        \\   {s}
+                        \\
+                    ,
+                        .{ @errorName(err), manual_upgrade_command },
+                    );
                     Global.exit(1);
                 };
             }

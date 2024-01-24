@@ -25,25 +25,6 @@ pub const TimeLike = if (Environment.isWindows) f64 else std.os.timespec;
 
 const Mode = bun.Mode;
 const heap_allocator = bun.default_allocator;
-pub fn DeclEnum(comptime T: type) type {
-    const fieldInfos = std.meta.declarations(T);
-    var enumFields: [fieldInfos.len]std.builtin.Type.EnumField = undefined;
-    var decls = [_]std.builtin.Type.Declaration{};
-    inline for (fieldInfos, 0..) |field, i| {
-        enumFields[i] = .{
-            .name = field.name,
-            .value = i,
-        };
-    }
-    return @Type(.{
-        .Enum = .{
-            .tag_type = std.math.IntFittingRange(0, fieldInfos.len - 1),
-            .fields = &enumFields,
-            .decls = &decls,
-            .is_exhaustive = true,
-        },
-    });
-}
 
 pub const Flavor = enum {
     sync,
@@ -96,6 +77,19 @@ pub fn Maybe(comptime ResultType: type) type {
                 .err => |err| bun.errnoToZigErr(err.errno),
                 .result => |result| result,
             };
+        }
+
+        pub inline fn initErr(e: Syscall.Error) Maybe(ReturnType) {
+            return .{ .err = e };
+        }
+
+        pub inline fn asErr(this: *const @This()) ?Syscall.Error {
+            if (this.* == .err) return this.err;
+            return null;
+        }
+
+        pub inline fn initResult(result: ReturnType) Maybe(ReturnType) {
+            return .{ .result = result };
         }
 
         pub fn toJS(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
@@ -155,7 +149,17 @@ pub fn Maybe(comptime ResultType: type) type {
             };
         }
 
-        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: anytype) ?@This() {
+        pub inline fn errno(err: anytype, syscall: Syscall.Tag) @This() {
+            return @This(){
+                // always truncate
+                .err = .{
+                    .errno = @truncate(@intFromEnum(err)),
+                    .syscall = syscall,
+                },
+            };
+        }
+
+        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
@@ -163,7 +167,7 @@ pub fn Maybe(comptime ResultType: type) type {
                     .err = .{
                         .errno = @truncate(@intFromEnum(err)),
                         .syscall = syscall,
-                        .fd = @intCast(bun.toFD(fd)),
+                        .fd = fd,
                     },
                 },
             };
@@ -188,247 +192,176 @@ pub fn Maybe(comptime ResultType: type) type {
     };
 }
 
-pub const StringOrBuffer = union(Tag) {
-    string: string,
-    buffer: Buffer,
+pub const BlobOrStringOrBuffer = union(enum) {
+    blob: JSC.WebCore.Blob,
+    string_or_buffer: StringOrBuffer,
 
-    pub const Tag = enum { string, buffer };
-
-    pub fn slice(this: StringOrBuffer) []const u8 {
-        return switch (this) {
-            .string => this.string,
-            .buffer => this.buffer.slice(),
-        };
-    }
-
-    pub export fn external_string_finalizer(_: ?*anyopaque, _: JSC.C.JSStringRef, buffer: *anyopaque, byteLength: usize) void {
-        bun.default_allocator.free(@as([*]const u8, @ptrCast(buffer))[0..byteLength]);
-    }
-
-    pub fn toJS(this: StringOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        return switch (this) {
-            .string => {
-                if (this.string.len == 0)
-                    return JSC.ZigString.Empty.toValue(ctx).asObjectRef();
-
-                const input = this.string;
-                if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
-                    bun.default_allocator.free(@constCast(input));
-                    return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, ctx.ptr()).asObjectRef();
+    pub fn deinit(this: *const BlobOrStringOrBuffer) void {
+        switch (this.*) {
+            .blob => |blob| {
+                if (blob.store) |store| {
+                    store.deref();
                 }
-
-                return JSC.ZigString.init(input).toExternalValue(ctx.ptr()).asObjectRef();
             },
-            .buffer => this.buffer.toJSObjectRef(ctx, exception),
+            .string_or_buffer => |*str| {
+                str.deinit();
+            },
+        }
+    }
+
+    pub fn slice(this: *const BlobOrStringOrBuffer) []const u8 {
+        return switch (this.*) {
+            .blob => |*blob| blob.sharedView(),
+            .string_or_buffer => |*str| str.slice(),
         };
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
-        _ = exception;
-        return switch (value.jsType()) {
-            JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
-                var zig_str = value.toSlice(global, allocator);
-                return StringOrBuffer{ .string = zig_str.slice() };
-            },
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?BlobOrStringOrBuffer {
+        if (value.as(JSC.WebCore.Blob)) |blob| {
+            if (blob.store) |store| {
+                store.ref();
+            }
 
-            .ArrayBuffer,
-            .Int8Array,
-            .Uint8Array,
-            .Uint8ClampedArray,
-            .Int16Array,
-            .Uint16Array,
-            .Int32Array,
-            .Uint32Array,
-            .Float32Array,
-            .Float64Array,
-            .BigInt64Array,
-            .BigUint64Array,
-            .DataView,
-            => StringOrBuffer{
-                .buffer = Buffer.fromArrayBuffer(global, value),
-            },
-            else => null,
-        };
+            return .{ .blob = blob.* };
+        }
+
+        return .{ .string_or_buffer = StringOrBuffer.fromJS(global, allocator, value) orelse return null };
+    }
+
+    pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?BlobOrStringOrBuffer {
+        if (value.as(JSC.WebCore.Blob)) |blob| {
+            if (blob.store) |store| {
+                store.ref();
+            }
+
+            return .{ .blob = blob.* };
+        }
+
+        return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValue(global, allocator, value, encoding_value) orelse return null };
     }
 };
 
-pub const StringOrBunStringOrBuffer = union(enum) {
-    BunString: bun.String,
-    string: string,
-    buffer: Buffer,
-
-    pub fn toJS(this: StringOrBunStringOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        return switch (this) {
-            .string => {
-                if (this.string.len == 0)
-                    return JSC.ZigString.Empty.toValue(ctx).asObjectRef();
-
-                const input = this.string;
-                if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
-                    bun.default_allocator.free(@constCast(input));
-                    return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, ctx.ptr()).asObjectRef();
-                }
-
-                return JSC.ZigString.init(input).toExternalValue(ctx.ptr()).asObjectRef();
-            },
-            .buffer => this.buffer.toJSObjectRef(ctx, exception),
-            .BunString => {
-                defer this.BunString.deref();
-                return this.BunString.toJS(ctx).asObjectRef();
-            },
-        };
-    }
-
-    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
-        _ = exception;
-        return switch (value.jsType()) {
-            JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
-                var zig_str = value.toSlice(global, allocator);
-                return StringOrBuffer{ .string = zig_str.slice() };
-            },
-
-            .ArrayBuffer,
-            .Int8Array,
-            .Uint8Array,
-            .Uint8ClampedArray,
-            .Int16Array,
-            .Uint16Array,
-            .Int32Array,
-            .Uint32Array,
-            .Float32Array,
-            .Float64Array,
-            .BigInt64Array,
-            .BigUint64Array,
-            .DataView,
-            => StringOrBuffer{
-                .buffer = Buffer.fromArrayBuffer(global, value),
-            },
-            else => null,
-        };
-    }
-};
-
-pub const SliceWithUnderlyingStringOrBuffer = union(enum) {
-    SliceWithUnderlyingString: bun.SliceWithUnderlyingString,
+pub const StringOrBuffer = union(enum) {
+    string: bun.SliceWithUnderlyingString,
+    threadsafe_string: bun.SliceWithUnderlyingString,
+    encoded_slice: JSC.ZigString.Slice,
     buffer: Buffer,
 
     pub fn toThreadSafe(this: *@This()) void {
         switch (this.*) {
-            .SliceWithUnderlyingString => this.SliceWithUnderlyingString.toThreadSafe(),
-            else => {},
+            .string => {
+                this.string.toThreadSafe();
+                this.* = .{
+                    .threadsafe_string = this.string,
+                };
+            },
+            .threadsafe_string => {},
+            .encoded_slice => {},
+            .buffer => {},
         }
     }
 
-    pub fn toJS(this: *SliceWithUnderlyingStringOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        return switch (this) {
-            .SliceWithUnderlyingStringOrBuffer => {
+    pub fn fromJSToOwnedSlice(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, allocator: std.mem.Allocator) ![]u8 {
+        if (value.asArrayBuffer(globalObject)) |array_buffer| {
+            defer globalObject.vm().reportExtraMemory(array_buffer.len);
+
+            return try allocator.dupe(u8, array_buffer.byteSlice());
+        }
+
+        const str = bun.String.tryFromJS(value, globalObject) orelse return error.JSError;
+        defer str.deref();
+
+        const result = try str.toOwnedSlice(allocator);
+        defer globalObject.vm().reportExtraMemory(result.len);
+        return result;
+    }
+
+    pub fn toJS(this: *StringOrBuffer, ctx: JSC.C.JSContextRef) JSC.JSValue {
+        return switch (this.*) {
+            inline .threadsafe_string, .string => |*str| {
                 defer {
-                    this.SliceWithUnderlyingString.deinit();
-                    this.SliceWithUnderlyingString.underlying = bun.String.empty;
-                    this.SliceWithUnderlyingString.utf8 = .{};
+                    str.deinit();
+                    str.* = .{};
                 }
 
-                return this.SliceWithUnderlyingString.underlying.toJS(ctx);
+                return str.toJS(ctx);
             },
-            .buffer => this.buffer.toJSObjectRef(ctx, exception),
+            .encoded_slice => {
+                defer {
+                    this.encoded_slice.deinit();
+                    this.encoded_slice = .{};
+                }
+
+                const str = bun.String.create(this.encoded_slice.slice());
+                defer str.deref();
+                return str.toJS(ctx);
+            },
+            .buffer => {
+                if (this.buffer.buffer.value != .zero) {
+                    return this.buffer.buffer.value;
+                }
+
+                return this.buffer.toNodeBuffer(ctx);
+            },
         };
     }
 
-    pub fn slice(this: *const SliceWithUnderlyingStringOrBuffer) []const u8 {
+    pub fn slice(this: *const StringOrBuffer) []const u8 {
         return switch (this.*) {
-            .SliceWithUnderlyingString => this.SliceWithUnderlyingString.slice(),
-            .buffer => this.buffer.slice(),
+            inline else => |*str| str.slice(),
         };
     }
 
-    pub fn deinit(this: *const SliceWithUnderlyingStringOrBuffer) void {
+    pub fn deinit(this: *const StringOrBuffer) void {
         switch (this.*) {
-            .SliceWithUnderlyingString => |*str| {
+            inline .threadsafe_string, .string => |*str| {
                 str.deinit();
+            },
+            .encoded_slice => |*encoded| {
+                encoded.deinit();
             },
             else => {},
         }
     }
 
-    pub fn deinitAndUnprotect(this: *const SliceWithUnderlyingStringOrBuffer) void {
+    pub fn deinitAndUnprotect(this: *const StringOrBuffer) void {
         switch (this.*) {
-            .SliceWithUnderlyingString => |*str| {
+            inline .threadsafe_string, .string => |*str| {
                 str.deinit();
             },
             .buffer => |buffer| {
                 buffer.buffer.value.unprotect();
             },
+            .encoded_slice => |*encoded| {
+                encoded.deinit();
+            },
         }
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SliceWithUnderlyingStringOrBuffer {
-        _ = exception;
+    pub fn fromJSMaybeAsync(
+        global: *JSC.JSGlobalObject,
+        allocator: std.mem.Allocator,
+        value: JSC.JSValue,
+        is_async: bool,
+    ) ?StringOrBuffer {
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
-                var str = bun.String.tryFromJS(value, global) orelse return null;
-                str.ref();
-                return SliceWithUnderlyingStringOrBuffer{ .SliceWithUnderlyingString = str.toSlice(allocator) };
-            },
+                const str = bun.String.tryFromJS(value, global) orelse return null;
 
-            .ArrayBuffer,
-            .Int8Array,
-            .Uint8Array,
-            .Uint8ClampedArray,
-            .Int16Array,
-            .Uint16Array,
-            .Int32Array,
-            .Uint32Array,
-            .Float32Array,
-            .Float64Array,
-            .BigInt64Array,
-            .BigUint64Array,
-            .DataView,
-            => SliceWithUnderlyingStringOrBuffer{
-                .buffer = Buffer.fromArrayBuffer(global, value),
-            },
-            else => null,
-        };
-    }
-};
+                if (is_async) {
+                    defer str.deref();
+                    var possible_clone = str;
+                    var sliced = possible_clone.toThreadSafeSlice(allocator);
+                    sliced.reportExtraMemory(global.vm());
 
-/// Like StringOrBuffer but actually returns a Node.js Buffer
-pub const StringOrNodeBuffer = union(Tag) {
-    string: string,
-    buffer: Buffer,
+                    if (sliced.underlying.isEmpty()) {
+                        return StringOrBuffer{ .encoded_slice = sliced.utf8 };
+                    }
 
-    pub const Tag = enum { string, buffer };
-
-    pub fn slice(this: StringOrNodeBuffer) []const u8 {
-        return switch (this) {
-            .string => this.string,
-            .buffer => this.buffer.slice(),
-        };
-    }
-
-    pub fn toJS(this: StringOrNodeBuffer, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        return switch (this) {
-            .string => {
-                const input = this.string;
-                if (this.string.len == 0)
-                    return JSC.ZigString.Empty.toValue(ctx).asObjectRef();
-
-                if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
-                    bun.default_allocator.free(@constCast(input));
-                    return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, ctx.ptr()).asObjectRef();
+                    return StringOrBuffer{ .threadsafe_string = sliced };
+                } else {
+                    return StringOrBuffer{ .string = str.toSlice(allocator) };
                 }
-
-                return JSC.ZigString.init(input).toExternalValue(ctx.ptr()).asObjectRef();
-            },
-            .buffer => this.buffer.toNodeBuffer(ctx),
-        };
-    }
-
-    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
-        _ = exception;
-        return switch (value.jsType()) {
-            JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
-                var zig_str = value.toSlice(global, allocator);
-                return StringOrNodeBuffer{ .string = zig_str.slice() };
             },
 
             .ArrayBuffer,
@@ -450,119 +383,49 @@ pub const StringOrNodeBuffer = union(Tag) {
             else => null,
         };
     }
-};
-
-pub const SliceOrBuffer = union(Tag) {
-    string: JSC.ZigString.Slice,
-    buffer: Buffer,
-
-    pub fn ensureCloned(this: *SliceOrBuffer, allocator: std.mem.Allocator) !void {
-        if (this.* == .string) {
-            this.string = try this.string.cloneIfNeeded(allocator);
-            return;
-        }
-
-        const bytes = this.buffer.buffer.byteSlice();
-        this.* = .{
-            .string = JSC.ZigString.Slice.from(try allocator.dupe(u8, bytes), allocator),
-        };
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?StringOrBuffer {
+        return fromJSMaybeAsync(global, allocator, value, false);
+    }
+    pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding) ?StringOrBuffer {
+        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, false);
     }
 
-    pub fn deinit(this: SliceOrBuffer) void {
-        switch (this) {
-            .string => {
-                this.string.deinit();
-            },
-            .buffer => {},
-        }
-    }
-
-    pub fn toThreadSafe(this: *SliceOrBuffer) void {
-        var buffer: ?Buffer = null;
-        if (this.* == .buffer) {
-            buffer = this.buffer;
-            this.buffer.buffer.value.ensureStillAlive();
-        }
-        defer {
-            if (buffer) |buf| {
-                buf.buffer.value.unprotect();
-            }
-        }
-        this.ensureCloned(bun.default_allocator) catch unreachable;
-    }
-
-    pub const Tag = enum { string, buffer };
-
-    pub fn slice(this: SliceOrBuffer) []const u8 {
-        return switch (this) {
-            .string => this.string.slice(),
-            .buffer => this.buffer.slice(),
-        };
-    }
-
-    pub fn toJS(this: SliceOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        return switch (this) {
-            string => {
-                const input = this.string.slice();
-                if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
-                    bun.default_allocator.free(@constCast(input));
-                    return JSC.ZigString.toExternalU16(utf16.p.tr, utf16.len, ctx.ptr()).asObjectRef();
-                }
-
-                return JSC.ZigString.init(input).toExternalValue(ctx.ptr()).asObjectRef();
-            },
-            .buffer => this.buffer.toJSObjectRef(ctx, exception),
-        };
-    }
-
-    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?SliceOrBuffer {
-        if (!value.isEmpty() and value.isCell() and value.jsType().isTypedArray()) {
-            return SliceOrBuffer{
-                .buffer = JSC.MarkedArrayBuffer{
-                    .buffer = value.asArrayBuffer(global) orelse return null,
-                    .allocator = null,
-                },
-            };
-        }
-
-        if (value.isEmpty()) {
-            return null;
-        }
-
-        var str = value.toStringOrNull(global) orelse return null;
-        return SliceOrBuffer{ .string = str.toSlice(global, allocator) };
-    }
-
-    pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?SliceOrBuffer {
+    pub fn fromJSWithEncodingMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding, is_async: bool) ?StringOrBuffer {
         if (value.isCell() and value.jsType().isTypedArray()) {
-            return SliceOrBuffer{
-                .buffer = JSC.MarkedArrayBuffer{
-                    .buffer = value.asArrayBuffer(global) orelse return null,
-                    .allocator = null,
-                },
+            return StringOrBuffer{
+                .buffer = Buffer.fromTypedArray(global, value),
             };
         }
 
+        if (encoding == .utf8) {
+            return fromJSMaybeAsync(global, allocator, value, is_async);
+        }
+
+        var str = bun.String.tryFromJS(value, global) orelse return null;
+        defer str.deref();
+        if (str.isEmpty()) {
+            return fromJSMaybeAsync(global, allocator, value, is_async);
+        }
+
+        const out = str.encode(encoding);
+        defer global.vm().reportExtraMemory(out.len);
+
+        return .{
+            .encoded_slice = JSC.ZigString.Slice.from(out, bun.default_allocator),
+        };
+    }
+
+    pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?StringOrBuffer {
         const encoding: Encoding = brk: {
-            if (encoding_value.isEmptyOrUndefinedOrNull())
+            if (!encoding_value.isCell())
                 break :brk .utf8;
             break :brk Encoding.fromJS(encoding_value, global) orelse .utf8;
         };
 
-        if (encoding == .utf8) {
-            return fromJS(global, allocator, value);
-        }
-
-        var zig_str = value.getZigString(global);
-        if (zig_str.len == 0) {
-            return fromJS(global, allocator, value);
-        }
-
-        const out = zig_str.encode(encoding);
-
-        return .{ .string = JSC.ZigString.Slice.from(out, allocator) };
+        return fromJSWithEncoding(global, allocator, value, encoding);
     }
 };
+
 pub const ErrorCode = @import("./nodejs_error_code.zig").Code;
 
 // We can't really use Zig's error handling for syscalls because Node.js expects the "real" errno to be returned
@@ -650,16 +513,18 @@ pub const Encoding = enum(u8) {
         }
     }
 
-    pub fn encodeWithMaxSize(encoding: Encoding, globalThis: *JSC.JSGlobalObject, size: usize, comptime max_size: usize, input: []const u8) JSC.JSValue {
+    pub fn encodeWithMaxSize(encoding: Encoding, globalThis: *JSC.JSGlobalObject, comptime max_size: usize, input: []const u8) JSC.JSValue {
         switch (encoding) {
             .base64 => {
-                var base64_buf: [std.base64.standard.Encoder.calcSize(max_size)]u8 = undefined;
-                const base64 = base64_buf[0..std.base64.standard.Encoder.calcSize(size)];
-                const result = JSC.ZigString.init(std.base64.standard.Encoder.encode(base64, input)).toValueGC(globalThis);
-                return result;
+                var base64_buf: [std.base64.standard.Encoder.calcSize(max_size * 4)]u8 = undefined;
+                const encoded_len = bun.base64.encode(&base64_buf, input);
+                const encoded, const bytes = bun.String.createUninitialized(.latin1, encoded_len);
+                defer encoded.deref();
+                @memcpy(@constCast(bytes), base64_buf[0..encoded_len]);
+                return encoded.toJS(globalThis);
             },
             .base64url => {
-                var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(max_size)]u8 = undefined;
+                var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(max_size * 4)]u8 = undefined;
                 const encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
 
                 return JSC.ZigString.init(buf[0..encoded.len]).toValueGC(globalThis);
@@ -711,40 +576,49 @@ pub fn CallbackTask(comptime Result: type) type {
     };
 }
 
-pub const PathLike = union(Tag) {
+pub const PathLike = union(enum) {
     string: bun.PathString,
     buffer: Buffer,
     slice_with_underlying_string: bun.SliceWithUnderlyingString,
-
-    pub const Tag = enum { string, buffer, slice_with_underlying_string };
+    threadsafe_string: bun.SliceWithUnderlyingString,
+    encoded_slice: JSC.ZigString.Slice,
 
     pub fn estimatedSize(this: *const PathLike) usize {
         return switch (this.*) {
             .string => this.string.estimatedSize(),
             .buffer => this.buffer.slice().len,
-            .slice_with_underlying_string => 0,
+            .threadsafe_string, .slice_with_underlying_string => 0,
+            .encoded_slice => this.encoded_slice.slice().len,
         };
     }
 
     pub fn deinit(this: *const PathLike) void {
-        if (this.* == .slice_with_underlying_string) {
-            this.slice_with_underlying_string.deinit();
+        switch (this.*) {
+            .string, .buffer => {},
+            inline else => |*str| {
+                str.deinit();
+            },
         }
     }
 
     pub fn toThreadSafe(this: *PathLike) void {
-        if (this.* == .slice_with_underlying_string) {
-            this.slice_with_underlying_string.toThreadSafe();
-        }
-
-        if (this.* == .buffer) {
-            this.buffer.buffer.value.protect();
+        switch (this.*) {
+            .slice_with_underlying_string => {
+                this.slice_with_underlying_string.toThreadSafe();
+                this.* = .{
+                    .threadsafe_string = this.slice_with_underlying_string,
+                };
+            },
+            .buffer => {
+                this.buffer.buffer.value.protect();
+            },
+            else => {},
         }
     }
 
     pub fn deinitAndUnprotect(this: *const PathLike) void {
         switch (this.*) {
-            .slice_with_underlying_string => |val| {
+            inline .encoded_slice, .threadsafe_string, .slice_with_underlying_string => |*val| {
                 val.deinit();
             },
             .buffer => |val| {
@@ -756,9 +630,7 @@ pub const PathLike = union(Tag) {
 
     pub inline fn slice(this: PathLike) string {
         return switch (this) {
-            .string => this.string.slice(),
-            .buffer => this.buffer.slice(),
-            .slice_with_underlying_string => this.slice_with_underlying_string.slice(),
+            inline else => |*str| str.slice(),
         };
     }
 
@@ -794,7 +666,7 @@ pub const PathLike = union(Tag) {
         return bun.strings.toWPath(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
     }
 
-    pub inline fn osPath(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) bun.OSPathSlice {
+    pub inline fn osPath(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             return sliceW(this, buf);
         }
@@ -802,18 +674,21 @@ pub const PathLike = union(Tag) {
         return sliceZWithForceCopy(this, buf, false);
     }
 
-    pub inline fn sliceZAssume(
-        this: PathLike,
-    ) [:0]const u8 {
-        var sliced = this.slice();
-        return sliced.ptr[0..sliced.len :0];
-    }
+    pub fn toJS(this: *const PathLike, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return switch (this.*) {
+            .string => this.string.toJS(globalObject, null),
+            .buffer => this.buffer.toJS(globalObject),
+            inline .threadsafe_string, .slice_with_underlying_string => |*str| str.toJS(globalObject),
+            .encoded_slice => |encoded| {
+                if (this.encoded_slice.allocator.get()) |allocator| {
+                    // Is this a globally-allocated slice?
+                    if (allocator.vtable == bun.default_allocator.vtable) {}
+                }
 
-    pub fn toJS(this: PathLike, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        return switch (this) {
-            .string => this.string.toJS(ctx, exception),
-            .buffer => this.buffer.toJSObjectRef(ctx, exception),
-            .slice_with_underlying_string => this.slice_with_underlying_string.toJS(ctx).asObjectRef(),
+                const str = bun.String.create(encoded.slice());
+                defer str.deref();
+                return str.toJS(globalObject);
+            },
             else => unreachable,
         };
     }
@@ -850,6 +725,7 @@ pub const PathLike = union(Tag) {
             JSC.JSValue.JSType.DerivedStringObject,
             => {
                 var str = arg.toBunString(ctx);
+                defer str.deref();
 
                 arguments.eat();
 
@@ -857,27 +733,67 @@ pub const PathLike = union(Tag) {
                     return null;
                 }
 
-                str.ref();
+                if (arguments.will_be_async) {
+                    var sliced = str.toThreadSafeSlice(allocator);
+                    sliced.reportExtraMemory(ctx.vm());
 
-                return PathLike{ .slice_with_underlying_string = str.toSlice(allocator) };
+                    if (sliced.underlying.isEmpty()) {
+                        return PathLike{ .encoded_slice = sliced.utf8 };
+                    }
+
+                    return PathLike{ .threadsafe_string = sliced };
+                } else {
+                    var sliced = str.toSlice(allocator);
+
+                    // Costs nothing to keep both around.
+                    if (sliced.isWTFAllocated()) {
+                        str.ref();
+                        return PathLike{ .slice_with_underlying_string = sliced };
+                    }
+
+                    sliced.reportExtraMemory(ctx.vm());
+
+                    // It is expensive to keep both around.
+                    return PathLike{ .encoded_slice = sliced.utf8 };
+                }
             },
             else => {
                 if (arg.as(JSC.DOMURL)) |domurl| {
-                    const path_str: bun.String = domurl.fileSystemPath();
-                    defer path_str.deref();
-                    if (path_str.isEmpty()) {
+                    var str: bun.String = domurl.fileSystemPath();
+                    defer str.deref();
+                    if (str.isEmpty()) {
                         JSC.throwInvalidArguments("URL must be a non-empty \"file:\" path", .{}, ctx, exception);
                         return null;
                     }
                     arguments.eat();
 
-                    if (!Valid.pathStringLength(path_str.length(), ctx, exception)) {
+                    if (!Valid.pathStringLength(str.length(), ctx, exception)) {
                         return null;
                     }
 
-                    return PathLike{
-                        .slice_with_underlying_string = path_str.toSlice(allocator),
-                    };
+                    if (arguments.will_be_async) {
+                        var sliced = str.toThreadSafeSlice(allocator);
+                        sliced.reportExtraMemory(ctx.vm());
+
+                        if (sliced.underlying.isEmpty()) {
+                            return PathLike{ .encoded_slice = sliced.utf8 };
+                        }
+
+                        return PathLike{ .threadsafe_string = sliced };
+                    } else {
+                        var sliced = str.toSlice(allocator);
+
+                        // Costs nothing to keep both around.
+                        if (sliced.isWTFAllocated()) {
+                            str.ref();
+                            return PathLike{ .slice_with_underlying_string = sliced };
+                        }
+
+                        sliced.reportExtraMemory(ctx.vm());
+
+                        // It is expensive to keep both around.
+                        return PathLike{ .encoded_slice = sliced.utf8 };
+                    }
                 }
 
                 return null;
@@ -1010,6 +926,7 @@ pub const ArgumentsSlice = struct {
     all: []const JSC.JSValue,
     threw: bool = false,
     protected: std.bit_set.IntegerBitSet(32) = std.bit_set.IntegerBitSet(32).initEmpty(),
+    will_be_async: bool = false,
 
     pub fn unprotect(this: *ArgumentsSlice) void {
         var iter = this.protected.iterator(.{});
@@ -1410,11 +1327,10 @@ pub fn StatType(comptime Big: bool) type {
 
     const Date = packed struct {
         value: Float,
-        pub inline fn toJS(this: @This(), ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        pub inline fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
             const milliseconds = JSC.JSValue.jsNumber(this.value);
             const array: [1]JSC.C.JSValueRef = .{milliseconds.asObjectRef()};
-            const obj = JSC.C.JSObjectMakeDate(ctx, 1, &array, exception);
-            return obj;
+            return JSC.JSValue.c(JSC.C.JSObjectMakeDate(globalObject, 1, &array, null));
         }
     };
 
@@ -1468,25 +1384,27 @@ pub fn StatType(comptime Big: bool) type {
             }
         }
 
-        fn getter(comptime field: std.meta.FieldEnum(This)) JSC.To.Cpp.PropertyGetter(This) {
+        const PropertyGetter = fn (this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+
+        fn getter(comptime field: std.meta.FieldEnum(This)) PropertyGetter {
             return struct {
                 pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                     const value = @field(this, @tagName(field));
                     if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {
                         return JSC.JSValue.fromInt64NoTruncate(globalThis, @intCast(value));
                     }
-                    return JSC.toJS(globalThis, value, null);
+                    return globalThis.toJS(value, .temporary);
                 }
             }.callback;
         }
 
-        fn dateGetter(comptime field: std.meta.FieldEnum(This)) JSC.To.Cpp.PropertyGetter(This) {
+        fn dateGetter(comptime field: std.meta.FieldEnum(This)) PropertyGetter {
             return struct {
                 pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                     const value = @field(this, @tagName(field));
                     // Doing `Date{ ... }` here shouldn't actually change the memory layout of `value`
                     // but it will tell comptime code how to convert the i64/f64 to a JS Date.
-                    return JSC.toJS(globalThis, Date{ .value = value }, null);
+                    return globalThis.toJS(Date{ .value = value }, .temporary);
                 }
             }.callback;
         }
@@ -1549,7 +1467,7 @@ pub fn StatType(comptime Big: bool) type {
             return @truncate(this.mode);
         }
 
-        const S = if (!Environment.isWindows) os.system.S else bun.windows.libuv.S;
+        const S = if (!Environment.isWindows) os.system.S else bun.C.S;
 
         pub fn isBlockDevice(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(S.ISBLK(@intCast(this.modeInternal())));
@@ -1587,7 +1505,7 @@ pub fn StatType(comptime Big: bool) type {
         // TODO: BigIntStats includes a `_checkModeProperty` but I dont think anyone actually uses it.
 
         pub fn finalize(this: *This) callconv(.C) void {
-            bun.default_allocator.destroy(this);
+            bun.destroy(this);
         }
 
         pub fn init(stat_: bun.Stat) This {
@@ -1635,16 +1553,12 @@ pub fn StatType(comptime Big: bool) type {
             // dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs
             var args = callFrame.argumentsPtr()[0..@min(callFrame.argumentsCount(), 14)];
 
-            const this = globalThis.allocator().create(This) catch {
-                globalThis.throwOutOfMemory();
-                return null;
-            };
-
             const atime_ms: f64 = if (args.len > 10 and args[10].isNumber()) args[10].asNumber() else 0;
             const mtime_ms: f64 = if (args.len > 11 and args[11].isNumber()) args[11].asNumber() else 0;
             const ctime_ms: f64 = if (args.len > 12 and args[12].isNumber()) args[12].asNumber() else 0;
             const birthtime_ms: f64 = if (args.len > 13 and args[13].isNumber()) args[13].asNumber() else 0;
-            this.* = .{
+
+            const this = bun.new(This, .{
                 .dev = if (args.len > 0 and args[0].isNumber()) @intCast(args[0].toInt32()) else 0,
                 .mode = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
                 .nlink = if (args.len > 2 and args[2].isNumber()) args[2].toInt32() else 0,
@@ -1659,7 +1573,8 @@ pub fn StatType(comptime Big: bool) type {
                 .mtime_ms = mtime_ms,
                 .ctime_ms = ctime_ms,
                 .birthtime_ms = birthtime_ms,
-            };
+            });
+
             return this;
         }
 
@@ -1691,11 +1606,18 @@ pub const Stats = union(enum) {
         }
     }
 
-    pub inline fn toJS(this: *Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSNewlyCreated(this: *const Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this.*) {
-            .big => this.big.toJS(globalObject),
-            .small => this.small.toJS(globalObject),
+            .big => bun.new(StatsBig, this.big).toJS(globalObject),
+            .small => bun.new(StatsSmall, this.small).toJS(globalObject),
         };
+    }
+
+    pub inline fn toJS(this: *Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        _ = this;
+        _ = globalObject;
+
+        @compileError("Only use Stats.toJSNewlyCreated() or Stats.toJS() directly on a StatsBig or StatsSmall");
     }
 };
 
@@ -1729,6 +1651,11 @@ pub const Dirent = struct {
     pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Dirent {
         globalObject.throw("Dirent is not a constructor", .{});
         return null;
+    }
+
+    pub fn toJSNewlyCreated(this: *const Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        var out = bun.new(Dirent, this.*);
+        return out.toJS(globalObject);
     }
 
     pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
@@ -1787,7 +1714,7 @@ pub const Dirent = struct {
 
     pub fn finalize(this: *Dirent) callconv(.C) void {
         this.name.deref();
-        bun.default_allocator.destroy(this);
+        bun.destroy(this);
     }
 };
 
@@ -2503,6 +2430,18 @@ pub const Process = struct {
     pub fn getExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         const allocator = globalObject.allocator();
         const vm = globalObject.bunVM();
+
+        if (vm.worker) |worker| {
+            // was explicitly overridden for the worker?
+            if (worker.execArgv) |execArgv| {
+                const array = JSC.JSValue.createEmptyArray(globalObject, execArgv.len);
+                for (0..execArgv.len) |i| {
+                    array.putIndex(globalObject, @intCast(i), bun.String.init(execArgv[i]).toJS(globalObject));
+                }
+                return array;
+            }
+        }
+
         var args = allocator.alloc(
             JSC.ZigString,
             // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
@@ -2542,42 +2481,53 @@ pub const Process = struct {
         );
         var allocator = stack_fallback_allocator.get();
 
+        var args_count: usize = vm.argv.len;
+        if (vm.worker) |worker| {
+            args_count = if (worker.argv) |argv| argv.len else 0;
+        }
+
         const args = allocator.alloc(
-            JSC.ZigString,
+            bun.String,
             // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
             // argv also omits the script name
-            vm.argv.len + 2,
+            args_count + 2,
         ) catch unreachable;
-        var args_list = std.ArrayListUnmanaged(JSC.ZigString){ .items = args, .capacity = args.len };
+        var args_list = std.ArrayListUnmanaged(bun.String){ .items = args, .capacity = args.len };
         args_list.items.len = 0;
 
         if (vm.standalone_module_graph != null) {
             // Don't break user's code because they did process.argv.slice(2)
-            // Even if they didn't type "bun", we still want to add it
+            // Even if they didn't type "bun", we still want to add it as argv[0]
             args_list.appendAssumeCapacity(
-                JSC.ZigString.init("bun"),
+                bun.String.static("bun"),
             );
         } else {
+            const exe_path = std.fs.selfExePathAlloc(allocator) catch null;
             args_list.appendAssumeCapacity(
-                JSC.ZigString.init(
-                    std.fs.selfExePathAlloc(allocator) catch "bun",
-                ).withEncoding(),
+                if (exe_path) |str| bun.String.fromUTF8(str) else bun.String.static("bun"),
             );
         }
 
         if (vm.main.len > 0)
-            args_list.appendAssumeCapacity(JSC.ZigString.init(vm.main).withEncoding());
+            args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
 
         defer allocator.free(args);
-        {
-            for (vm.argv) |arg0| {
-                const argv0 = JSC.ZigString.init(arg0).withEncoding();
+
+        if (vm.worker) |worker| {
+            if (worker.argv) |argv| {
+                for (argv) |arg| {
+                    args_list.appendAssumeCapacity(bun.String.init(arg));
+                }
+            }
+        } else {
+            for (vm.argv) |arg| {
+                const str = bun.String.fromUTF8(arg);
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
-                args_list.appendAssumeCapacity(argv0);
+                args_list.appendAssumeCapacity(str);
             }
         }
 
-        return JSC.JSValue.createStringArray(globalObject, args_list.items.ptr, args_list.items.len, true);
+        return bun.String.toJSArray(globalObject, args_list.items);
     }
 
     pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {

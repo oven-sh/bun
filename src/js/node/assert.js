@@ -99,8 +99,8 @@ var require_errors = __commonJS({
           len > 2
             ? "one of ".concat(thing, " ").concat(expected.slice(0, len - 1).join(", "), ", or ") + expected[len - 1]
             : len === 2
-            ? "one of ".concat(thing, " ").concat(expected[0], " or ").concat(expected[1])
-            : "of ".concat(thing, " ").concat(expected[0])
+              ? "one of ".concat(thing, " ").concat(expected[0], " or ").concat(expected[1])
+              : "of ".concat(thing, " ").concat(expected[0])
         );
       } else return "of ".concat(thing, " ").concat(String(expected));
     }
@@ -996,17 +996,25 @@ var require_assert = __commonJS({
           stackStartFn: notStrictEqual,
         });
     };
-    assert.match = function match(actual, expected, message) {
+    var internalMatch = function (actual, expected, message, fn) {
       if (arguments.length < 2) throw new ERR_MISSING_ARGS("actual", "expected");
+      if (typeof actual !== "string") throw new ERR_INVALID_ARG_TYPE("actual", "string", actual);
       if (!isRegExp(expected)) throw new ERR_INVALID_ARG_TYPE("expected", "RegExp", expected);
-      expected.test(actual) ||
+      var match = fn === assert.match;
+      expected.test(actual) === match ||
         innerFail({
           actual,
           expected,
           message,
-          operator: "match",
-          stackStartFn: match,
+          operator: fn.name,
+          stackStartFn: fn,
         });
+    };
+    assert.doesNotMatch = function doesNotMatch(actual, expected, message) {
+      internalMatch(actual, expected, message, doesNotMatch);
+    };
+    assert.match = function match(actual, expected, message) {
+      internalMatch(actual, expected, message, match);
     };
     var Comparison = function Comparison2(obj, keys, actual) {
       var _this = this;
@@ -1018,6 +1026,7 @@ var require_assert = __commonJS({
               : (_this[key] = obj[key]));
         });
     };
+    Comparison.prototype = {};
     function compareExceptionKey(actual, expected, key, message, keys, fn) {
       if (!(key in actual) || !isDeepEqual(actual[key], expected[key], true)) {
         if (!message) {
@@ -1070,8 +1079,8 @@ var require_assert = __commonJS({
       return expected.prototype !== void 0 && actual instanceof expected
         ? !0
         : Error.isPrototypeOf(expected)
-        ? !1
-        : expected.$call({}, actual) === !0;
+          ? !1
+          : expected.$call({}, actual) === !0;
     }
     function getActual(fn) {
       if (typeof fn != "function") throw new ERR_INVALID_ARG_TYPE("fn", "Function", fn);

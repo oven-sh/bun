@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { it, expect, describe } from "bun:test";
 import util from "util";
 
@@ -283,6 +284,15 @@ it("inspect", () => {
 </div>`.trim(),
   );
   expect(Bun.inspect(BigInt(32))).toBe("32n");
+  expect(Bun.inspect({ call: 1, not_call: 2, prototype: 4 })).toBe(
+    `
+{
+  call: 1,
+  not_call: 2,
+  prototype: 4,
+}
+    `.trim(),
+  );
 });
 
 describe("latin1 supplemental", () => {

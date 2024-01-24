@@ -449,7 +449,7 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
             const separator = lastIndexOfSeparatorWindows(str) orelse return std.fs.path.diskDesignatorWindows(str);
             return str[0..separator];
         },
-        else => unreachable,
+        else => @compileError("unreachable"),
     }
 }
 
@@ -572,6 +572,14 @@ pub fn normalizeStringGeneric(
     comptime preserve_trailing_slash: bool,
 ) []u8 {
     const isWindows = comptime separator == std.fs.path.sep_windows;
+
+    if (isWindows and bun.Environment.isDebug) {
+        // this is here to catch a potential mistake by the caller
+        //
+        // since it is theoretically possible to get here in release
+        // we will not do this check in release.
+        std.debug.assert(!strings.startsWith(path_, ":\\"));
+    }
 
     var buf_i: usize = 0;
     var dotdot: usize = 0;
@@ -703,7 +711,13 @@ pub fn normalizeStringGeneric(
         buf_i += 1;
     }
 
-    return buf[0..buf_i];
+    const result = buf[0..buf_i];
+
+    if (bun.Environment.allow_assert and isWindows) {
+        std.debug.assert(!strings.startsWith(result, "\\:\\"));
+    }
+
+    return result;
 }
 
 pub const Platform = enum {
@@ -857,7 +871,7 @@ pub fn normalizeString(str: []const u8, comptime allow_above_root: bool, comptim
 }
 
 pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []u8 {
-    if (buf.len == 0) {
+    if (str.len == 0) {
         buf[0] = '.';
         return buf[0..1];
     }
@@ -882,7 +896,7 @@ pub fn normalizeStringBuf(str: []const u8, buf: []u8, comptime allow_above_root:
     const platform = comptime _platform.resolve();
 
     switch (comptime platform) {
-        .auto => unreachable,
+        .auto => @compileError("unreachable"),
 
         .windows => {
             return normalizeStringWindows(
@@ -951,7 +965,7 @@ pub fn joinAbsStringZ(_cwd: []const u8, parts: anytype, comptime _platform: Plat
     );
 }
 
-threadlocal var join_buf: [4096]u8 = undefined;
+pub threadlocal var join_buf: [4096]u8 = undefined;
 pub fn join(_parts: anytype, comptime _platform: Platform) []const u8 {
     return joinStringBuf(&join_buf, _parts, _platform);
 }
@@ -1021,8 +1035,23 @@ pub fn joinAbsStringBufZ(cwd: []const u8, buf: []u8, _parts: anytype, comptime _
     return _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
 }
 
-fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) ReturnType {
-    if (_platform.resolve() == .windows) return _joinAbsStringBufWindows(is_sentinel, ReturnType, _cwd, buf, _parts);
+pub fn joinAbsStringBufZTrailingSlash(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
+    const out = _joinAbsStringBuf(true, [:0]const u8, cwd, buf, _parts, _platform);
+    if (out.len + 2 < buf.len and out.len > 0 and out[out.len - 1] != _platform.separator()) {
+        buf[out.len] = _platform.separator();
+        buf[out.len + 1] = 0;
+        return buf[0 .. out.len + 1 :0];
+    }
+
+    return out;
+}
+
+fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime platform: Platform) ReturnType {
+    if (platform.resolve() == .windows or
+        (bun.Environment.os == .windows and platform == .loose))
+    {
+        return _joinAbsStringBufWindows(is_sentinel, ReturnType, _cwd, buf, _parts);
+    }
 
     var parts: []const []const u8 = _parts;
     var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
@@ -1033,7 +1062,7 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         return _cwd;
     }
 
-    if ((comptime _platform == .loose or _platform == .posix) and
+    if ((comptime platform == .loose or platform == .posix) and
         parts.len == 1 and
         parts[0].len == 1 and
         parts[0][0] == std.fs.path.sep_posix)
@@ -1052,7 +1081,7 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         var part_len: u16 = @as(u16, @truncate(parts.len));
 
         while (part_i < part_len) {
-            if (_platform.isAbsolute(parts[part_i])) {
+            if (platform.isAbsolute(parts[part_i])) {
                 cwd = parts[part_i];
                 parts = parts[part_i + 1 ..];
 
@@ -1074,8 +1103,8 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
 
         const part = _part;
 
-        if (out > 0 and temp_buf[out - 1] != _platform.separator()) {
-            temp_buf[out] = _platform.separator();
+        if (out > 0 and temp_buf[out - 1] != platform.separator()) {
+            temp_buf[out] = platform.separator();
             out += 1;
         }
 
@@ -1083,9 +1112,9 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         out += part.len;
     }
 
-    const leading_separator: []const u8 = if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i| brk: {
+    const leading_separator: []const u8 = if (platform.leadingSeparatorIndex(temp_buf[0..out])) |i| brk: {
         const outdir = temp_buf[0 .. i + 1];
-        if (_platform == .windows or _platform == .loose) {
+        if (platform == .loose) {
             for (outdir) |*c| {
                 if (c.* == '\\') {
                     c.* = '/';
@@ -1100,7 +1129,7 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         temp_buf[leading_separator.len..out],
         buf[leading_separator.len..],
         false,
-        _platform,
+        platform,
         true,
     );
 
@@ -1810,12 +1839,7 @@ pub const PosixToWinNormalizer = struct {
         this: *PosixToWinNormalizer,
         maybe_posix_path: []const u8,
     ) ![:0]const u8 {
-        _ = this;
-        _ = maybe_posix_path;
-        // problem: the buffer does not exist on posix, but we need to convert []const u8 to [:0]const u8
-        // maybe we just take [:0]const u8 in?
-        @compileError("TODO: fix resolveCWDZ on posix");
-        // return resolveCWDWithExternalBufZ(&this._raw_bytes, maybe_posix_path);
+        return resolveCWDWithExternalBufZ(&this._raw_bytes, maybe_posix_path);
     }
 
     // underlying implementation:

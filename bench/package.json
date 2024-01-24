@@ -5,11 +5,15 @@
     "@babel/preset-react": "^7.16.7",
     "@swc/core": "^1.2.133",
     "benchmark": "^2.1.4",
+    "braces": "^3.0.2",
     "esbuild": "^0.14.12",
     "eventemitter3": "^5.0.0",
+    "execa": "^8.0.1",
     "fast-glob": "3.3.1",
     "fdir": "^6.1.0",
-    "mitata": "^0.1.6"
+    "mitata": "^0.1.6",
+    "string-width": "^7.0.0",
+    "zx": "^7.2.3"
   },
   "scripts": {
     "ffi": "cd ffi && bun run deps && bun run build && bun run bench",

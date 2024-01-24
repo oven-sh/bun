@@ -1,5 +1,5 @@
 ---
-name: Convert a ReadableStream to a JSON
+name: Convert a ReadableStream to JSON
 ---
 
 Bun provides a number of convenience functions for reading the contents of a [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) into different formats.

@@ -207,7 +207,7 @@ pub const INotify = struct {
 
     pub fn stop() void {
         if (inotify_fd != 0) {
-            _ = bun.sys.close(inotify_fd);
+            _ = bun.sys.close(bun.toFD(inotify_fd));
             inotify_fd = 0;
         }
     }
@@ -251,6 +251,12 @@ pub const Placeholder = struct {
 
     pub var eventlist: [WATCHER_MAX_LIST]EventListIndex = undefined;
     pub var eventlist_index: EventListIndex = 0;
+
+    pub fn isRunning() bool {
+        return true;
+    }
+
+    pub fn init() !void {}
 };
 
 const PlatformWatcher = if (Environment.isMac)
@@ -385,17 +391,13 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const watcher = try allocator.create(Watcher);
             errdefer allocator.destroy(watcher);
 
-            if (comptime bun.Environment.isWindows) {
-                @panic("TODO on Windows");
-            }
-
             if (!PlatformWatcher.isRunning()) {
                 try PlatformWatcher.init();
             }
 
             watcher.* = Watcher{
                 .fs = fs,
-                .fd = 0,
+                .fd = .zero,
                 .allocator = allocator,
                 .watched_count = 0,
                 .ctx = ctx,
@@ -408,8 +410,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         pub fn start(this: *Watcher) !void {
-            std.debug.assert(this.watchloop_handle == null);
-            this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
+            if (!Environment.isWindows) {
+                std.debug.assert(this.watchloop_handle == null);
+                this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
+            }
         }
 
         pub fn deinit(this: *Watcher, close_descriptors: bool) void {
@@ -436,6 +440,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         // This must only be called from the watcher thread
         pub fn watchLoop(this: *Watcher) !void {
+            if (Environment.isWindows) {
+                @compileError("watchLoop should not be used on Windows");
+            }
+
             this.watchloop_handle = std.Thread.getCurrentId();
             Output.Source.configureNamedThread("File Watcher");
 
@@ -676,6 +684,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         remaining_events -= slice.len;
                     }
                 }
+            } else if (Environment.isWindows) {
+                @compileError("watchLoop should not be used on Windows");
             }
         }
 
@@ -705,7 +715,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (this.indexOf(hash)) |index| {
                 if (comptime FeatureFlags.atomic_file_watcher) {
                     // On Linux, the file descriptor might be out of date.
-                    if (fd > 0) {
+                    if (fd.int() > 0) {
                         var fds = this.watchlist.items(.fd);
                         fds[index] = fd;
                     }
@@ -747,7 +757,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
 
                 // id
-                event.ident = @as(usize, @intCast(fd));
+                event.ident = @intCast(fd.int());
 
                 // Store the hash for fast filtering later
                 event.udata = @as(usize, @intCast(watchlist_id));
@@ -796,7 +806,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             comptime copy_file_path: bool,
         ) !WatchItemIndex {
             const fd = brk: {
-                if (stored_fd > 0) break :brk stored_fd;
+                if (stored_fd.int() > 0) break :brk stored_fd;
                 const dir = try std.fs.cwd().openDir(file_path, .{});
                 break :brk bun.toFD(dir.fd);
             };
@@ -828,7 +838,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
 
                 // id
-                event.ident = @as(usize, @intCast(fd));
+                event.ident = @intCast(fd.int());
 
                 // Store the hash for fast filtering later
                 event.udata = @as(usize, @intCast(watchlist_id));
@@ -916,7 +926,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (autowatch_parent_dir) {
                 var watchlist_slice = this.watchlist.slice();
 
-                if (dir_fd > 0) {
+                if (dir_fd.int() > 0) {
                     const fds = watchlist_slice.items(.fd);
                     if (std.mem.indexOfScalar(StoredFileDescriptorType, fds, dir_fd)) |i| {
                         parent_watch_item = @as(WatchItemIndex, @truncate(i));

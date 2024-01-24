@@ -577,11 +577,9 @@ pub fn toAST(
                     return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
                 }
 
-                var exprs = try allocator.alloc(Expr, value.len);
-                var i: usize = 0;
-                while (i < exprs.len) : (i += 1) {
-                    exprs[i] = try toAST(allocator, @TypeOf(value[i]), value[i]);
-                }
+                const exprs = try allocator.alloc(Expr, value.len);
+                for (exprs, 0..) |*ex, i| ex.* = try toAST(allocator, @TypeOf(value[i]), value[i]);
+
                 return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
             },
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
@@ -591,11 +589,9 @@ pub fn toAST(
                 return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
             }
 
-            var exprs = try allocator.alloc(Expr, value.len);
-            var i: usize = 0;
-            while (i < exprs.len) : (i += 1) {
-                exprs[i] = try toAST(allocator, @TypeOf(value[i]), value[i]);
-            }
+            const exprs = try allocator.alloc(Expr, value.len);
+            for (exprs, 0..) |*ex, i| ex.* = try toAST(allocator, @TypeOf(value[i]), value[i]);
+
             return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
         },
         .Struct => |Struct| {

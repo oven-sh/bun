@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
@@ -7,16 +8,12 @@ import { bunExe, bunEnv } from "harness";
 // import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
-import { constants } from "bun:sqlite";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
 
-console.log("started");
-
 type Handler = (req: Request) => Response;
 afterEach(() => {
-  console.log("afterEach");
   gc(true);
 });
 
@@ -24,8 +21,6 @@ const count = 200;
 let server: Server | undefined;
 
 async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Server) => Promise<void> | void) {
-  console.trace("runTest");
-  console.log("server:", server);
   if (server) {
     server.reload({ ...serverOptions, port: 0 });
   } else {
@@ -1355,6 +1350,59 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
 
   server.stop(true);
 });
+
+it("should support promise returned from error", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      throw new Error(req.url);
+    },
+    async error(e) {
+      if (e.message.endsWith("/async-fulfilled")) {
+        return new Response("OK");
+      }
+
+      if (e.message.endsWith("/async-rejected")) {
+        throw new Error("");
+      }
+
+      if (e.message.endsWith("/async-rejected-pending")) {
+        await Bun.sleep(100);
+        throw new Error("");
+      }
+
+      if (e.message.endsWith("/async-pending")) {
+        await Bun.sleep(100);
+        return new Response("OK");
+      }
+    },
+  });
+
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}/async-fulfilled`);
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("OK");
+  }
+
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}/async-pending`);
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("OK");
+  }
+
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}/async-rejected`);
+    expect(resp.status).toBe(500);
+  }
+
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}/async-rejected-pending`);
+    expect(resp.status).toBe(500);
+  }
+
+  server.stop(true);
+});
+
 if (process.platform === "linux")
   it("should use correct error when using a root range port(#7187)", () => {
     expect(() => {

@@ -678,8 +678,8 @@ const lib_path =
   platform() === "darwin"
     ? "/usr/lib/libSystem.B.dylib"
     : existsSync("/lib/x86_64-linux-gnu/libc.so.6")
-    ? "/lib/x86_64-linux-gnu/libc.so.6"
-    : null;
+      ? "/lib/x86_64-linux-gnu/libc.so.6"
+      : null;
 const test = lib_path ? it : it.skip;
 test("can open more than 63 symbols", () => {
   const lib = dlopen(lib_path, {

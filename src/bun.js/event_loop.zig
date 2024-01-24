@@ -13,8 +13,8 @@ const typeBaseName = @import("../meta.zig").typeBaseName;
 const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
 const CopyFilePromiseTask = WebCore.Blob.Store.CopyFile.CopyFilePromiseTask;
 const AsyncTransformTask = JSC.API.JSTranspiler.TransformTask.AsyncTransformTask;
-const ReadFileTask = WebCore.Blob.Store.ReadFile.ReadFileTask;
-const WriteFileTask = WebCore.Blob.Store.WriteFile.WriteFileTask;
+const ReadFileTask = WebCore.Blob.ReadFile.ReadFileTask;
+const WriteFileTask = WebCore.Blob.WriteFile.WriteFileTask;
 const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
 const JSValue = JSC.JSValue;
@@ -42,13 +42,12 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         ref: Async.KeepAlive = .{},
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
-            var this = try allocator.create(This);
-            this.* = .{
+            var this = bun.new(This, .{
                 .event_loop = VirtualMachine.get().event_loop,
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
-            };
+            });
             var promise = JSC.JSPromise.create(globalThis);
             this.promise.strong.set(globalThis, promise.asValue(globalThis));
             this.ref.ref(this.event_loop.virtual_machine);
@@ -80,7 +79,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            this.allocator.destroy(this);
+            bun.destroy(this);
         }
     };
 }
@@ -102,15 +101,14 @@ pub fn WorkTask(comptime Context: type) type {
         ref: Async.KeepAlive = .{},
 
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
-            var this = try allocator.create(This);
             var vm = globalThis.bunVM();
-            this.* = .{
+            var this = bun.new(This, .{
                 .event_loop = vm.eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
                 .async_task_tracker = JSC.AsyncTaskTracker.init(vm),
-            };
+            });
             this.ref.ref(this.event_loop.virtual_machine);
 
             return this;
@@ -146,10 +144,9 @@ pub fn WorkTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            var allocator = this.allocator;
             this.ref.unref(this.event_loop.virtual_machine);
 
-            allocator.destroy(this);
+            bun.destroyWithAlloc(this.allocator, this);
         }
     };
 }
@@ -220,9 +217,21 @@ pub const ManagedTask = struct {
 };
 
 pub const AnyTaskWithExtraContext = struct {
-    ctx: ?*anyopaque,
-    callback: *const (fn (*anyopaque, *anyopaque) void),
+    ctx: ?*anyopaque = undefined,
+    callback: *const (fn (*anyopaque, *anyopaque) void) = undefined,
     next: ?*AnyTaskWithExtraContext = null,
+
+    pub fn from(this: *@This(), of: anytype, comptime field: []const u8) *@This() {
+        // this.* = .{
+        //     .ctx = of,
+        //     .callback = @field(std.meta.Child(@TypeOf(of)), field),
+        //     .next = null,
+        // };
+        // return this;
+        const TheTask = New(std.meta.Child(@TypeOf(of)), void, @field(std.meta.Child(@TypeOf(of)), field));
+        this.* = TheTask.init(of);
+        return this;
+    }
 
     pub fn run(this: *AnyTaskWithExtraContext, extra: *anyopaque) void {
         @setRuntimeSafety(false);
@@ -339,6 +348,14 @@ const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
 const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
+const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
+const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
+const ShellRmDirTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask.DirTask;
+const ShellRmDirTaskMini = bun.shell.InterpreterMini.Builtin.Rm.ShellRmTask.DirTask;
+const ShellLsTask = bun.shell.Interpreter.Builtin.Ls.ShellLsTask;
+const ShellMvCheckTargetTask = bun.shell.Interpreter.Builtin.Mv.ShellMvCheckTargetTask;
+const ShellMvBatchedTask = bun.shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
+const ShellSubprocessResultTask = JSC.Subprocess.WaiterThread.ShellSubprocessQueue.ResultTask;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
@@ -398,7 +415,17 @@ pub const Task = TaggedPointerUnion(.{
     Lchmod,
     Lchown,
     Unlink,
-    WaitPidResultTask,
+    // WaitPidResultTask,
+    // These need to be referenced like this so they both don't become `WaitPidResultTask`
+    JSC.Subprocess.WaiterThread.WaitPidResultTask,
+    ShellSubprocessResultTask,
+    ShellGlobTask,
+    ShellRmTask,
+    ShellRmDirTask,
+    ShellRmDirTaskMini,
+    ShellMvCheckTargetTask,
+    ShellMvBatchedTask,
+    ShellLsTask,
     TimerReference,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
@@ -626,13 +653,13 @@ pub const EventLoop = struct {
     deferred_microtask_map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
     uws_loop: if (Environment.isWindows) *uws.Loop else void = undefined,
 
-    timer_reference_pool: if (Environment.isPosix) ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool else void = if (Environment.isPosix) null else undefined,
+    timer_reference_pool: ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool = null,
+
+    pub inline fn getVmImpl(this: *EventLoop) *JSC.VirtualMachine {
+        return this.virtual_machine;
+    }
 
     pub fn timerReferencePool(this: *EventLoop) *bun.JSC.BunTimer.Timeout.TimerReference.Pool {
-        if (comptime !Environment.isPosix) {
-            @compileError("This function is only available on POSIX platforms");
-        }
-
         return this.timer_reference_pool orelse brk: {
             const _pool = bun.default_allocator.create(bun.JSC.BunTimer.Timeout.TimerReference.Pool) catch bun.outOfMemory();
             _pool.* = bun.JSC.BunTimer.Timeout.TimerReference.Pool.init(bun.default_allocator);
@@ -697,6 +724,39 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
+                @field(Task.Tag, typeBaseName(@typeName(ShellLsTask))) => {
+                    var shell_ls_task: *ShellLsTask = task.get(ShellLsTask).?;
+                    shell_ls_task.runFromMainThread();
+                    // shell_ls_task.deinit();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellMvBatchedTask))) => {
+                    var shell_mv_batched_task: *ShellMvBatchedTask = task.get(ShellMvBatchedTask).?;
+                    shell_mv_batched_task.task.runFromMainThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellMvCheckTargetTask))) => {
+                    var shell_mv_check_target_task: *ShellMvCheckTargetTask = task.get(ShellMvCheckTargetTask).?;
+                    shell_mv_check_target_task.task.runFromMainThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellRmTask))) => {
+                    var shell_rm_task: *ShellRmTask = task.get(ShellRmTask).?;
+                    shell_rm_task.runFromMainThread();
+                    // shell_rm_task.deinit();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTask))) => {
+                    var shell_rm_task: *ShellRmDirTask = task.get(ShellRmDirTask).?;
+                    shell_rm_task.runFromMainThread();
+                    // shell_rm_task.deinit();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTaskMini))) => {
+                    var shell_rm_task: *ShellRmDirTaskMini = task.get(ShellRmDirTaskMini).?;
+                    shell_rm_task.runFromMainThread();
+                    // shell_rm_task.deinit();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellGlobTask))) => {
+                    var shell_glob_task: *ShellGlobTask = task.get(ShellGlobTask).?;
+                    shell_glob_task.runFromMainThread();
+                    shell_glob_task.deinit();
+                },
                 .FetchTasklet => {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onProgressUpdate();
@@ -937,7 +997,14 @@ pub const EventLoop = struct {
                     var any: *WaitPidResultTask = task.get(WaitPidResultTask).?;
                     any.runFromJSThread();
                 },
+                @field(Task.Tag, typeBaseName(@typeName(ShellSubprocessResultTask))) => {
+                    var any: *ShellSubprocessResultTask = task.get(ShellSubprocessResultTask).?;
+                    any.runFromJSThread();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
+                    if (Environment.isWindows) {
+                        @panic("This should not be reachable on Windows");
+                    }
                     var any: *TimerReference = task.get(TimerReference).?;
                     any.runFromJSThread();
                 },
@@ -1338,15 +1405,166 @@ pub const EventLoop = struct {
     }
 };
 
+pub const JsVM = struct {
+    vm: *JSC.VirtualMachine,
+
+    pub inline fn init(inner: *JSC.VirtualMachine) JsVM {
+        return .{
+            .vm = inner,
+        };
+    }
+
+    pub inline fn loop(this: @This()) *JSC.EventLoop {
+        return this.vm.event_loop;
+    }
+
+    pub inline fn allocFilePoll(this: @This()) *bun.Async.FilePoll {
+        return this.vm.rareData().filePolls(this.vm).get();
+    }
+
+    pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
+        return this.vm.event_loop_handle.?;
+    }
+
+    pub inline fn incrementPendingUnrefCounter(this: @This()) void {
+        this.vm.pending_unref_counter +|= 1;
+    }
+
+    pub inline fn filePolls(this: @This()) *Async.FilePoll.Store {
+        return this.vm.rareData().filePolls(this.vm);
+    }
+};
+
+pub const MiniVM = struct {
+    mini: *JSC.MiniEventLoop,
+
+    pub fn init(inner: *JSC.MiniEventLoop) MiniVM {
+        return .{
+            .mini = inner,
+        };
+    }
+
+    pub inline fn loop(this: @This()) *JSC.MiniEventLoop {
+        return this.mini;
+    }
+
+    pub inline fn allocFilePoll(this: @This()) *bun.Async.FilePoll {
+        return this.mini.filePolls().get();
+    }
+
+    pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
+        if (comptime Environment.isWindows) {
+            return this.mini.loop.uv_loop;
+        }
+        return this.mini.loop;
+    }
+
+    pub inline fn incrementPendingUnrefCounter(this: @This()) void {
+        _ = this; // autofix
+
+        @panic("FIXME TODO");
+    }
+
+    pub inline fn filePolls(this: @This()) *Async.FilePoll.Store {
+        return this.mini.filePolls();
+    }
+};
+
+pub const EventLoopKind = enum {
+    js,
+    mini,
+
+    pub fn refType(comptime this: EventLoopKind) type {
+        return switch (this) {
+            .js => *JSC.VirtualMachine,
+            .mini => *JSC.MiniEventLoop,
+        };
+    }
+
+    pub fn getVm(comptime this: EventLoopKind) EventLoopKind.refType(this) {
+        return switch (this) {
+            .js => JSC.VirtualMachine.get(),
+            .mini => JSC.MiniEventLoop.global,
+        };
+    }
+};
+
+pub fn AbstractVM(inner: anytype) brk: {
+    if (@TypeOf(inner) == *JSC.VirtualMachine) {
+        break :brk JsVM;
+    } else if (@TypeOf(inner) == *JSC.MiniEventLoop) {
+        break :brk MiniVM;
+    }
+    @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
+} {
+    if (comptime @TypeOf(inner) == *JSC.VirtualMachine) return JsVM.init(inner);
+    if (comptime @TypeOf(inner) == *JSC.MiniEventLoop) return MiniVM.init(inner);
+    @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
+}
+
+// pub const EventLoopRefImpl = struct {
+//     fn enqueueTask(ref: anytype) {
+//         const event_loop_ctx =
+//     }
+// };
+
 pub const MiniEventLoop = struct {
     tasks: Queue,
     concurrent_tasks: UnboundedQueue(AnyTaskWithExtraContext, .next) = .{},
     loop: *uws.Loop,
     allocator: std.mem.Allocator,
+    file_polls_: ?*Async.FilePoll.Store = null,
+    env: ?*bun.DotEnv.Loader = null,
+    top_level_dir: []const u8 = "",
+    after_event_loop_callback_ctx: ?*anyopaque = null,
+    after_event_loop_callback: ?JSC.OpaqueCallback = null,
+
+    pub threadlocal var global: *MiniEventLoop = undefined;
+
+    pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
+        const loop = MiniEventLoop.init(bun.default_allocator);
+        global = bun.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
+        global.* = loop;
+        global.env = env orelse bun.DotEnv.instance orelse env_loader: {
+            const map = bun.default_allocator.create(bun.DotEnv.Map) catch bun.outOfMemory();
+            map.* = bun.DotEnv.Map.init(bun.default_allocator);
+
+            const loader = bun.default_allocator.create(bun.DotEnv.Loader) catch bun.outOfMemory();
+            loader.* = bun.DotEnv.Loader.init(map, bun.default_allocator);
+            break :env_loader loader;
+        };
+        return global;
+    }
 
     const Queue = std.fifo.LinearFifo(*AnyTaskWithExtraContext, .Dynamic);
 
     pub const Task = AnyTaskWithExtraContext;
+
+    pub inline fn getVmImpl(this: *MiniEventLoop) *MiniEventLoop {
+        return this;
+    }
+
+    pub fn throwError(_: *MiniEventLoop, err: bun.sys.Error) void {
+        bun.Output.prettyErrorln("{}", .{err});
+        bun.Output.flush();
+    }
+
+    pub fn onAfterEventLoop(this: *MiniEventLoop) void {
+        if (this.after_event_loop_callback) |cb| {
+            const ctx = this.after_event_loop_callback_ctx;
+            this.after_event_loop_callback = null;
+            this.after_event_loop_callback_ctx = null;
+            cb(ctx);
+        }
+    }
+
+    pub fn filePolls(this: *MiniEventLoop) *Async.FilePoll.Store {
+        return this.file_polls_ orelse {
+            this.file_polls_ = this.allocator.create(Async.FilePoll.Store) catch bun.outOfMemory();
+            this.file_polls_.?.* = Async.FilePoll.Store.init(this.allocator);
+            return this.file_polls_.?;
+        };
+    }
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -1394,6 +1612,7 @@ pub const MiniEventLoop = struct {
     ) void {
         while (!isDone(context)) {
             if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
+                defer this.onAfterEventLoop();
                 this.loop.inc();
                 this.loop.tick();
                 this.loop.dec();
@@ -1417,7 +1636,12 @@ pub const MiniEventLoop = struct {
         this.enqueueJSCTask(&@field(ctx, @tagName(field)));
     }
 
-    pub fn enqueueTaskConcurrent(
+    pub fn enqueueTaskConcurrent(this: *MiniEventLoop, task: *AnyTaskWithExtraContext) void {
+        this.concurrent_tasks.push(task);
+        this.loop.wakeup();
+    }
+
+    pub fn enqueueTaskConcurrentWithExtraCtx(
         this: *MiniEventLoop,
         comptime Context: type,
         comptime ParentContext: type,
@@ -1489,7 +1713,7 @@ pub const AnyEventLoop = union(enum) {
                 // this.virtual_machine.jsc.enqueueTaskConcurrent(concurrent);
             },
             .mini => {
-                this.mini.enqueueTaskConcurrent(Context, ParentContext, ctx, Callback, field);
+                this.mini.enqueueTaskConcurrentWithExtraCtx(Context, ParentContext, ctx, Callback, field);
             },
         }
     }

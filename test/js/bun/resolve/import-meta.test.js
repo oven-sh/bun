@@ -1,12 +1,16 @@
+// @known-failing-on-windows: 1 failing
 import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import * as Module from "node:module";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import sync from "./require-json.json";
+import { tmpdir } from "node:os";
 
-const { path, dir } = import.meta;
+const { path, dir, dirname, filename } = import.meta;
+
+const tmpbase = tmpdir() + sep;
 
 it("import.meta.main", () => {
   const { exitCode } = spawnSync({
@@ -65,27 +69,27 @@ it("Module.createRequire does not use file url as the referrer (err message chec
 });
 
 it("require with a query string works on dynamically created content", () => {
-  rmSync("/tmp/bun-test-import-meta-dynamic-dir", {
+  rmSync(tmpbase + "bun-test-import-meta-dynamic-dir", {
     recursive: true,
     force: true,
   });
   try {
-    const require = Module.createRequire("/tmp/bun-test-import-meta-dynamic-dir/foo.js");
+    const require = Module.createRequire(tmpbase + "bun-test-import-meta-dynamic-dir/foo.js");
     try {
       require("./bar.js?query=123.js");
     } catch (e) {
       expect(e.name).toBe("ResolveMessage");
     }
 
-    mkdirSync("/tmp/bun-test-import-meta-dynamic-dir", { recursive: true });
+    mkdirSync(tmpbase + "bun-test-import-meta-dynamic-dir", { recursive: true });
 
-    writeFileSync("/tmp/bun-test-import-meta-dynamic-dir/bar.js", "export default 'hello';", "utf8");
+    writeFileSync(tmpbase + "bun-test-import-meta-dynamic-dir/bar.js", "export default 'hello';", "utf8");
 
     expect(require("./bar.js?query=123.js").default).toBe("hello");
   } catch (e) {
     throw e;
   } finally {
-    rmSync("/tmp/bun-test-import-meta-dynamic-dir", {
+    rmSync(tmpbase + "bun-test-import-meta-dynamic-dir", {
       recursive: true,
       force: true,
     });
@@ -187,11 +191,19 @@ it("import.meta.require (javascript, live bindings)", () => {
 });
 
 it("import.meta.dir", () => {
-  expect(dir.endsWith("/bun/test/js/bun/resolve")).toBe(true);
+  expect(dir.replaceAll("\\", "/").endsWith("/bun/test/js/bun/resolve")).toBe(true);
+});
+
+it("import.meta.dirname", () => {
+  expect(dirname).toBe(dir);
+});
+
+it("import.meta.filename", () => {
+  expect(filename).toBe(import.meta.path);
 });
 
 it("import.meta.path", () => {
-  expect(path.endsWith("/bun/test/js/bun/resolve/import-meta.test.js")).toBe(true);
+  expect(path.replaceAll("\\", "/").endsWith("/bun/test/js/bun/resolve/import-meta.test.js")).toBe(true);
 });
 
 it('require("bun") works', () => {

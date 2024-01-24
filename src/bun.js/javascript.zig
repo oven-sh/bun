@@ -60,7 +60,7 @@ const NewClass = @import("./base.zig").NewClass;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
 const Node = @import("root").bun.JSC.Node;
 const ZigException = @import("root").bun.JSC.ZigException;
 const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
@@ -89,7 +89,7 @@ const FetchFlags = JSC.FetchFlags;
 
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const Task = JSC.Task;
-const Blob = @import("../blob.zig");
+
 pub const Buffer = MarkedArrayBuffer;
 const Lock = @import("../lock.zig").Lock;
 const BuildMessage = JSC.BuildMessage;
@@ -107,6 +107,8 @@ pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context)
 }
 
 pub const bun_file_import_path = "/node_modules.server.bun";
+
+export var has_bun_garbage_collector_flag_enabled = false;
 
 const SourceMap = @import("../sourcemap/sourcemap.zig");
 const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
@@ -304,8 +306,8 @@ pub export fn Bun__Process__send(
     }
 }
 
-pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, input_ptr: [*]const u8, input_len: usize) bool {
-    return strings.eql(globalObject.bunVM().main, input_ptr[0..input_len]);
+pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.String) bool {
+    return str.eqlUTF8(globalObject.bunVM().main);
 }
 
 pub export fn Bun__Process__disconnect(
@@ -465,7 +467,7 @@ pub const ImportWatcher = union(enum) {
     }
 };
 
-const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
+pub const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
 
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
@@ -477,12 +479,11 @@ pub const VirtualMachine = struct {
     has_loaded_constructors: bool = false,
     bundler: Bundler,
     bun_watcher: ImportWatcher = .{ .none = {} },
-    console: *ZigConsoleClient,
+    console: *ConsoleObject,
     log: *logger.Log,
     main: string = "",
     main_hash: u32 = 0,
     process: js.JSObjectRef = null,
-    blobs: ?*Blob.Group = null,
     flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
@@ -563,7 +564,6 @@ pub const VirtualMachine = struct {
 
     ref_strings: JSC.RefString.Map = undefined,
     ref_strings_mutex: Lock = undefined,
-    file_blobs: JSC.WebCore.Blob.Store.Map,
 
     source_mappings: SavedSourceMap = undefined,
 
@@ -655,9 +655,9 @@ pub const VirtualMachine = struct {
     }
 
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
-        return vm.event_loop_handle.?.isActive() or (vm.active_tasks +
-            vm.event_loop.tasks.count +
-            vm.event_loop.immediate_tasks.count + vm.event_loop.next_immediate_tasks.count > 0);
+        return vm.unhandled_error_counter == 0 and
+            (vm.event_loop_handle.?.isActive() or
+            vm.active_tasks + vm.event_loop.tasks.count + vm.event_loop.immediate_tasks.count + vm.event_loop.next_immediate_tasks.count > 0);
     }
 
     pub fn wakeup(this: *VirtualMachine) void {
@@ -762,7 +762,7 @@ pub const VirtualMachine = struct {
 
         if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
             if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
-                this.initIPCInstance(fd);
+                this.initIPCInstance(bun.toFD(fd));
             } else {
                 Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
             }
@@ -778,8 +778,10 @@ pub const VirtualMachine = struct {
 
             if (strings.eqlComptime(gc_level, "1")) {
                 this.aggressive_garbage_collection = .mild;
+                has_bun_garbage_collector_flag_enabled = true;
             } else if (strings.eqlComptime(gc_level, "2")) {
                 this.aggressive_garbage_collection = .aggressive;
+                has_bun_garbage_collector_flag_enabled = true;
             }
         }
     }
@@ -1156,8 +1158,8 @@ pub const VirtualMachine = struct {
         JSC.markBinding(@src());
         const allocator = opts.allocator;
         VMHolder.vm = try allocator.create(VirtualMachine);
-        const console = try allocator.create(ZigConsoleClient);
-        console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
+        const console = try allocator.create(ConsoleObject);
+        console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
         const log = opts.log.?;
         const bundler = try Bundler.init(
             allocator,
@@ -1176,7 +1178,6 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1186,7 +1187,6 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
-            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = opts.graph.?,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
@@ -1255,6 +1255,8 @@ pub const VirtualMachine = struct {
         debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
     };
 
+    pub var is_smol_mode = false;
+
     pub fn init(opts: Options) !*VirtualMachine {
         JSC.markBinding(@src());
         const allocator = opts.allocator;
@@ -1267,8 +1269,8 @@ pub const VirtualMachine = struct {
         }
 
         VMHolder.vm = try allocator.create(VirtualMachine);
-        const console = try allocator.create(ZigConsoleClient);
-        console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
+        const console = try allocator.create(ConsoleObject);
+        console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
         const bundler = try Bundler.init(
             allocator,
             log,
@@ -1286,7 +1288,6 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1296,7 +1297,6 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
-            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
@@ -1342,6 +1342,9 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.smol = opts.smol;
+
+        if (opts.smol)
+            is_smol_mode = opts.smol;
 
         if (source_code_printer == null) {
             const writer = try js_printer.BufferWriter.init(allocator);
@@ -1412,8 +1415,8 @@ pub const VirtualMachine = struct {
         }
 
         VMHolder.vm = try allocator.create(VirtualMachine);
-        const console = try allocator.create(ZigConsoleClient);
-        console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
+        const console = try allocator.create(ConsoleObject);
+        console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
         const bundler = try Bundler.init(
             allocator,
             log,
@@ -1431,7 +1434,6 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1441,7 +1443,6 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
-            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
@@ -1555,21 +1556,6 @@ pub const VirtualMachine = struct {
         std.debug.assert(input_.len > 0);
         var _was_new = false;
         return this.refCountedStringWithWasNew(&_was_new, input_, hash_, comptime dupe);
-    }
-
-    pub fn preflush(this: *VirtualMachine) void {
-        // We flush on the next tick so that if there were any errors you can still see them
-        this.blobs.?.temporary.reset() catch {};
-    }
-
-    pub fn flush(this: *VirtualMachine) void {
-        this.had_errors = false;
-        for (this.flush_list.items) |item| {
-            this.allocator.free(item);
-        }
-        this.flush_list.shrinkRetainingCapacity(0);
-        this.transpiled_count = 0;
-        this.resolved_count = 0;
     }
 
     pub fn fetchWithoutOnLoadPlugins(
@@ -1708,7 +1694,7 @@ pub const VirtualMachine = struct {
                     source_to_use,
                     normalized_specifier,
                     if (is_esm) .stmt else .require,
-                    .read_only,
+                    if (jsc_vm.standalone_module_graph == null) .read_only else .disable,
                 )) {
                     .success => |r| r,
                     .failure => |e| e,
@@ -2086,7 +2072,7 @@ pub const VirtualMachine = struct {
                 this.bundler.fs.top_level_dir,
                 normalizeSource(preload),
                 .stmt,
-                .read_only,
+                if (this.standalone_module_graph == null) .read_only else .disable,
             )) {
                 .success => |r| r,
                 .failure => |e| {
@@ -2520,12 +2506,10 @@ pub const VirtualMachine = struct {
         const stack = trace.frames();
         if (stack.len > 0) {
             var vm = VirtualMachine.get();
-            var i: i16 = 0;
             const origin: ?*const URL = if (vm.is_from_devserver) &vm.origin else null;
             const dir = vm.bundler.fs.top_level_dir;
 
-            while (i < stack.len) : (i += 1) {
-                const frame = stack[@as(usize, @intCast(i))];
+            for (stack) |frame| {
                 const file_slice = frame.source_url.toUTF8(bun.default_allocator);
                 defer file_slice.deinit();
                 const func_slice = frame.function_name.toUTF8(bun.default_allocator);
@@ -2615,6 +2599,14 @@ pub const VirtualMachine = struct {
             }
         }
 
+        const NoisyBuiltinFunctionMap = bun.ComptimeStringMap(void, .{
+            .{"asyncModuleEvaluation"},
+            .{"link"},
+            .{"linkAndEvaluateModule"},
+            .{"moduleEvaluation"},
+            .{"processTicksAndRejections"},
+        });
+
         var frames: []JSC.ZigStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
         if (this.hide_bun_stackframes) {
             var start_index: ?usize = null;
@@ -2627,7 +2619,7 @@ pub const VirtualMachine = struct {
                 }
 
                 // Workaround for being unable to hide that specific frame without also hiding the frame before it
-                if (frame.source_url.isEmpty() and frame.function_name.eqlComptime("moduleEvaluation")) {
+                if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
                     start_index = 0;
                     break;
                 }
@@ -2635,9 +2627,7 @@ pub const VirtualMachine = struct {
 
             if (start_index) |k| {
                 var j = k;
-                var i: usize = k;
-                while (i < frames.len) : (i += 1) {
-                    const frame = frames[i];
+                for (frames[k..]) |frame| {
                     if (frame.source_url.eqlComptime("bun:wrap") or
                         frame.function_name.eqlComptime("::bunternal::"))
                     {
@@ -2645,8 +2635,9 @@ pub const VirtualMachine = struct {
                     }
 
                     // Workaround for being unable to hide that specific frame without also hiding the frame before it
-                    if (frame.source_url.isEmpty() and frame.function_name.eqlComptime("moduleEvaluation"))
+                    if (frame.source_url.isEmpty() and NoisyBuiltinFunctionMap.getWithEql(frame.function_name, String.eqlComptime) != null) {
                         continue;
+                    }
 
                     frames[j] = frame;
                     j += 1;
@@ -2661,7 +2652,11 @@ pub const VirtualMachine = struct {
         var top = &frames[0];
         if (this.hide_bun_stackframes) {
             for (frames) |*frame| {
-                if (frame.source_url.hasPrefixComptime("bun:") or frame.source_url.hasPrefixComptime("node:") or frame.source_url.isEmpty()) {
+                if (frame.source_url.hasPrefixComptime("bun:") or
+                    frame.source_url.hasPrefixComptime("node:") or
+                    frame.source_url.isEmpty() or
+                    frame.source_url.eqlComptime("native"))
+                {
                     continue;
                 }
 
@@ -2878,7 +2873,7 @@ pub const VirtualMachine = struct {
         const show = Show{
             .system_code = !exception.system_code.eql(name) and !exception.system_code.isEmpty(),
             .syscall = !exception.syscall.isEmpty(),
-            .errno = exception.errno < 0,
+            .errno = exception.errno != 0,
             .path = !exception.path.isEmpty(),
             .fd = exception.fd != -1,
         };
@@ -3042,7 +3037,7 @@ pub const VirtualMachine = struct {
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
     };
 
-    pub fn initIPCInstance(this: *VirtualMachine, fd: i32) void {
+    pub fn initIPCInstance(this: *VirtualMachine, fd: bun.FileDescriptor) void {
         if (Environment.isWindows) {
             Output.warn("IPC is not supported on Windows", .{});
             return;
@@ -3051,18 +3046,16 @@ pub const VirtualMachine = struct {
         const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
         IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
 
-        const socket = uws.newSocketFromFd(context, @sizeOf(*IPCInstance), fd) orelse {
-            uws.us_socket_context_free(0, context);
-            Output.warn("Failed to initialize IPC connection to parent", .{});
-            return;
-        };
-
         var instance = bun.default_allocator.create(IPCInstance) catch @panic("OOM");
         instance.* = .{
             .globalThis = this.global,
             .uws_context = context,
-            .ipc = .{ .socket = socket },
+            .ipc = undefined,
         };
+        const socket = IPC.Socket.fromFd(context, fd, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
+        socket.setTimeout(0);
+        instance.ipc = .{ .socket = socket };
+
         const ptr = socket.ext(*IPCInstance);
         ptr.?.* = instance;
         this.ipc = instance;
@@ -3388,13 +3381,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     const abs_path: string = brk: {
                                         if (dir_ent.entries.get(@as([]const u8, @ptrCast(changed_name)))) |file_ent| {
                                             // reset the file descriptor
-                                            file_ent.entry.cache.fd = 0;
+                                            file_ent.entry.cache.fd = .zero;
                                             file_ent.entry.need_stat = true;
                                             path_string = file_ent.entry.abs_path;
                                             file_hash = @This().Watcher.getHash(path_string.slice());
                                             for (hashes, 0..) |hash, entry_id| {
                                                 if (hash == file_hash) {
-                                                    if (file_descriptors[entry_id] != 0) {
+                                                    if (file_descriptors[entry_id] != .zero) {
                                                         if (prev_entry_id != entry_id) {
                                                             current_task.append(@as(u32, @truncate(entry_id)));
                                                             ctx.removeAtIndex(

@@ -89,9 +89,9 @@ export interface BundlerTestInput {
   todo?: boolean;
 
   // file options
-  files: Record<string, string>;
+  files: Record<string, string | Buffer>;
   /** Files to be written only after the bundle is done. */
-  runtimeFiles?: Record<string, string>;
+  runtimeFiles?: Record<string, string | Buffer>;
   /** Defaults to the first item in `files` */
   entryPoints?: string[];
   /** ??? */
@@ -376,7 +376,7 @@ function expectBundled(
 
   // TODO: Remove this check once all options have been implemented
   if (Object.keys(unknownProps).length > 0) {
-    throw new Error("expectBundled recieved unexpected options: " + Object.keys(unknownProps).join(", "));
+    throw new Error("expectBundled received unexpected options: " + Object.keys(unknownProps).join(", "));
   }
 
   // This is a sanity check that protects against bad copy pasting.
@@ -498,7 +498,9 @@ function expectBundled(
     for (const [file, contents] of Object.entries(files)) {
       const filename = path.join(root, file);
       mkdirSync(path.dirname(filename), { recursive: true });
-      writeFileSync(filename, dedent(contents).replace(/\{\{root\}\}/g, root));
+      const formattedContents =
+        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+      writeFileSync(filename, formattedContents);
     }
 
     if (useDefineForClassFields !== undefined) {
@@ -704,8 +706,11 @@ function expectBundled(
                     }
                     return { error, file: "<bun>" };
                   }
-                  const [_str2, fullFilename, line, col] = source?.match?.(/bun-build-tests\/(.*):(\d+):(\d+)/) ?? [];
-                  const file = fullFilename?.slice?.(id.length + path.basename(outBase).length + 1);
+                  const [_str2, fullFilename, line, col] =
+                    source?.match?.(/bun-build-tests[\/\\](.*):(\d+):(\d+)/) ?? [];
+                  const file = fullFilename
+                    ?.slice?.(id.length + path.basename(outBase).length + 1)
+                    .replaceAll("\\", "/");
 
                   return { error, file, line, col };
                 })
@@ -1159,7 +1164,9 @@ for (const [key, blob] of build.outputs) {
     // Write runtime files to disk as well as run the post bundle hook.
     for (const [file, contents] of Object.entries(runtimeFiles ?? {})) {
       mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-      writeFileSync(path.join(root, file), dedent(contents).replace(/\{\{root\}\}/g, root));
+      const formattedContents =
+        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+      writeFileSync(path.join(root, file), formattedContents);
     }
 
     if (onAfterBundle) {
@@ -1236,7 +1243,7 @@ for (const [key, blob] of build.outputs) {
 
           if (run.errorLineMatch) {
             // in order to properly analyze the error, we have to look backwards on stderr. this approach
-            // most definetly can be improved but it works fine here.
+            // most definitely can be improved but it works fine here.
             const stack = [];
             let error;
             const lines = stderr!

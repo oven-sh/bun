@@ -830,6 +830,22 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         return false;
     }
+    case ErrorInstanceType: {
+        if (c2Type != ErrorInstanceType) {
+            return false;
+        }
+
+        if (JSC::ErrorInstance* left = jsDynamicCast<JSC::ErrorInstance*>(v1)) {
+            JSC::ErrorInstance* right = jsDynamicCast<JSC::ErrorInstance*>(v2);
+
+            if (UNLIKELY(!right)) {
+                return false;
+            }
+
+            return (
+                left->sanitizedNameString(globalObject) == right->sanitizedNameString(globalObject) && left->sanitizedMessageString(globalObject) == right->sanitizedMessageString(globalObject));
+        }
+    }
     case Int8ArrayType:
     case Uint8ArrayType:
     case Uint8ClampedArrayType:
@@ -1489,7 +1505,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, void* arg1)
 {
     uWS::HttpRequest req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
-    size_t i = 0;
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
@@ -1499,8 +1514,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
     for (const auto& header : req) {
         StringView nameView = StringView(reinterpret_cast<const LChar*>(header.first.data()), header.first.length());
         size_t name_len = nameView.length();
-
         LChar* data = nullptr;
+
         auto value = String::createUninitialized(header.second.length(), data);
         memcpy(data, header.second.data(), header.second.length());
 
@@ -1511,11 +1526,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
         } else {
             map.setUncommonHeader(nameView.toString().isolatedCopy(), WTFMove(value));
         }
-
-        // seenHeaderSizes[name_len] = true;
-
-        if (i > 56)
-            __builtin_unreachable();
     }
     headers->setInternalHeaders(WTFMove(map));
     return headers;
@@ -1708,7 +1718,7 @@ JSC__JSValue
 JSC__JSObject__create(JSC__JSGlobalObject* globalObject, size_t initialCapacity, void* arg2,
     void (*ArgFn3)(void* arg0, JSC__JSObject* arg1, JSC__JSGlobalObject* arg2))
 {
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity);
+    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned>(initialCapacity), JSFinalObject::maxInlineCapacity));
 
     ArgFn3(arg2, object, globalObject);
 
@@ -2436,7 +2446,7 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
     JSC::JSObject* object = nullptr;
     {
         JSC::ObjectInitializationScope initializationScope(vm);
-        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity);
+        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity));
 
         if (!clone) {
             for (size_t i = 0; i < initialCapacity; ++i) {
@@ -2453,6 +2463,26 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
     }
 
     return JSC::JSValue::encode(object);
+}
+
+JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue objectValue)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSObject* object = JSC::JSValue::decode(objectValue).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
+}
+
+bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSValue value = JSC::JSValue::decode(jsValue);
+    return value.toObject(globalObject)->hasOwnProperty(globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(key))));
 }
 
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
@@ -3367,6 +3397,33 @@ uint8_t JSC__JSValue__asBigIntCompare(JSC__JSValue JSValue0, JSC__JSGlobalObject
 JSC__JSValue JSC__JSValue__fromInt64NoTruncate(JSC__JSGlobalObject* globalObject, int64_t val)
 {
     return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));
+}
+
+JSC__JSValue JSC__JSValue__fromTimevalNoTruncate(JSC__JSGlobalObject* globalObject, int64_t nsec, int64_t sec)
+{
+    auto big_nsec = JSC::JSBigInt::createFrom(globalObject, nsec);
+    auto big_sec = JSC::JSBigInt::createFrom(globalObject, sec);
+    auto big_1e6 = JSC::JSBigInt::createFrom(globalObject, 1e6);
+    auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject, big_1e6, big_sec);
+    ASSERT(sec_as_nsec.isHeapBigInt());
+    auto* big_sec_as_nsec = sec_as_nsec.asHeapBigInt();
+    ASSERT(big_sec_as_nsec);
+    return JSC::JSValue::encode(JSC::JSBigInt::add(globalObject, big_sec_as_nsec, big_nsec));
+}
+
+JSC__JSValue JSC__JSValue__bigIntSum(JSC__JSGlobalObject* globalObject, JSC__JSValue a, JSC__JSValue b)
+{
+    JSC::JSValue a_value = JSC::JSValue::decode(a);
+    JSC::JSValue b_value = JSC::JSValue::decode(b);
+
+    ASSERT(a_value.isHeapBigInt());
+    auto* big_a = a_value.asHeapBigInt();
+    ASSERT(big_a);
+
+    ASSERT(b_value.isHeapBigInt());
+    auto* big_b = b_value.asHeapBigInt();
+    ASSERT(big_b);
+    return JSC::JSValue::encode(JSC::JSBigInt::add(globalObject, big_a, big_b));
 }
 
 JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* globalObject, uint64_t val)
@@ -4757,10 +4814,6 @@ restart:
             visitedProperties.append(Identifier::fromUid(vm, prop));
 
             ZigString key = toZigString(prop);
-
-            if (key.len == 0)
-                return true;
-
             JSC::JSValue propertyValue = JSValue();
 
             if (objectToUse == object) {

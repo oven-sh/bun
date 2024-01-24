@@ -2284,6 +2284,13 @@ pub const union_uv_any_req = extern union {
 pub extern fn uv_loop_get_data([*c]const uv_loop_t) ?*anyopaque;
 pub extern fn uv_loop_set_data(*uv_loop_t, data: ?*anyopaque) void;
 
+pub const UV_HANDLE_CLOSED: c_int = 0x00000002;
+
+// uv_is_closing checks for closing or closed, we need to know if is indeed closed so we can deinit without call uv_close
+pub fn uv_is_closed(handle: *const uv_handle_t) bool {
+    return (handle.flags & UV_HANDLE_CLOSED != 0);
+}
+
 pub fn translateUVErrorToE(code: anytype) bun.C.E {
     return switch (code) {
         UV_EPERM => bun.C.E.PERM,

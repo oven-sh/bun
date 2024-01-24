@@ -2049,8 +2049,31 @@ pub const UVStreamSink = struct {
     signal: Signal = .{},
     next: ?Sink = null,
     buffer: bun.ByteList = .{},
+    closeCallback: CloseCallbackHandler = CloseCallbackHandler.Empty,
+    deinit_onclose: bool = false,
     pub const name = "UVStreamSink";
-    const StreamType = if(Environment.isWindows) *uv.uv_stream_t else *anyopaque;
+    const StreamType = if (Environment.isWindows) ?*uv.uv_stream_t else ?*anyopaque;
+
+    pub const CloseCallbackHandler = struct {
+        ctx: ?*anyopaque = null,
+        callback: ?*const fn (ctx: ?*anyopaque) void = null,
+
+        pub const Empty: CloseCallbackHandler = .{};
+
+        pub fn init(ctx: *anyopaque, callback: *const fn (ctx: ?*anyopaque) void) CloseCallbackHandler {
+            return CloseCallbackHandler{
+                .ctx = ctx,
+                .callback = callback,
+            };
+        }
+
+        pub fn run(this: *const CloseCallbackHandler) void {
+            if (this.callback) |callback| {
+                callback(this.ctx);
+            }
+        }
+    };
+
     const AsyncWriteInfo = struct {
         sink: *UVStreamSink,
         input_buffer: uv.uv_buf_t = std.mem.zeroes(uv.uv_buf_t),
@@ -2073,9 +2096,11 @@ pub const UVStreamSink = struct {
         }
 
         pub fn run(this: *AsyncWriteInfo) void {
-            if (uv.uv_write(&this.req, @ptrCast(this.sink.stream), @ptrCast(&this.input_buffer), 1, AsyncWriteInfo.uvWriteCallback).errEnum()) |err| {
-                _ = this.sink.end(bun.sys.Error.fromCode(err, .write));
-                this.deinit();
+            if (this.sink.stream) |stream| {
+                if (uv.uv_write(&this.req, @ptrCast(stream), @ptrCast(&this.input_buffer), 1, AsyncWriteInfo.uvWriteCallback).errEnum()) |err| {
+                    _ = this.sink.end(bun.sys.Error.fromCode(err, .write));
+                    this.deinit();
+                }
             }
         }
 
@@ -2087,20 +2112,21 @@ pub const UVStreamSink = struct {
 
     fn writeAsync(this: *UVStreamSink, data: []const u8) void {
         if (this.done) return;
-        if(!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
+        if (!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
 
         AsyncWriteInfo.init(this, data).run();
     }
 
     fn writeMaybeSync(this: *UVStreamSink, data: []const u8) void {
-        if(!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
+        if (!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
 
         if (this.done) return;
 
         var to_write = data;
         while (to_write.len > 0) {
+            const stream = this.stream orelse return;
             var input_buffer = uv.uv_buf_t.init(to_write);
-            const status = uv.uv_try_write(@ptrCast(this.stream), @ptrCast(&input_buffer), 1);
+            const status = uv.uv_try_write(@ptrCast(stream), @ptrCast(&input_buffer), 1);
             if (status.errEnum()) |err| {
                 if (err == bun.C.E.AGAIN) {
                     this.writeAsync(to_write);
@@ -2133,18 +2159,52 @@ pub const UVStreamSink = struct {
         return .{ .result = JSValue.jsNumber(0) };
     }
 
-    pub fn close(this: *UVStreamSink) void {
-        if(!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
-        _ = uv.uv_close(@ptrCast(this.stream), null);
+    fn uvCloseCallback(handler: *anyopaque) callconv(.C) void {
+        const event = bun.cast(*uv.uv_pipe_t, handler);
+        var this = bun.cast(*UVStreamSink, event.data);
+        this.stream = null;
+        if (this.deinit_onclose) {
+            this._destroy();
+        }
     }
 
-    pub fn finalize(this: *UVStreamSink) void {
+    pub fn isClosed(this: *UVStreamSink) bool {
+        const stream = this.stream orelse return true;
+        return uv.uv_is_closed(@ptrCast(stream));
+    }
+
+    pub fn close(this: *UVStreamSink) void {
+        if (!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
+        const stream = this.stream orelse return;
+        stream.data = this;
+        if (this.isClosed()) {
+            this.stream = null;
+            if (this.deinit_onclose) {
+                this._destroy();
+            }
+        } else {
+            _ = uv.uv_close(@ptrCast(stream), UVStreamSink.uvCloseCallback);
+        }
+    }
+
+    fn _destroy(this: *UVStreamSink) void {
+        const callback = this.closeCallback;
+        defer callback.run();
+        this.stream = null;
         if (this.buffer.cap > 0) {
             this.buffer.listManaged(this.allocator).deinit();
             this.buffer = bun.ByteList.init("");
         }
-        this.close();
         this.allocator.destroy(this);
+    }
+
+    pub fn finalize(this: *UVStreamSink) void {
+        if (this.stream == null) {
+            this._destroy();
+        } else {
+            this.deinit_onclose = true;
+            this.close();
+        }
     }
 
     pub fn init(allocator: std.mem.Allocator, stream: StreamType, next: ?Sink) !*UVStreamSink {
@@ -2208,15 +2268,16 @@ pub const UVStreamSink = struct {
         this.signal.close(err);
         return .{ .result = {} };
     }
+
     pub fn destroy(this: *UVStreamSink) void {
-        if (this.buffer.cap > 0) {
-            this.buffer.listManaged(this.allocator).deinit();
-            this.buffer = bun.ByteList.init("");
-            this.head = 0;
+        if (this.stream == null) {
+            this._destroy();
+        } else {
+            this.deinit_onclose = true;
+            this.close();
         }
-        this.close();
-        this.allocator.destroy(this);
     }
+
     pub fn toJS(this: *UVStreamSink, globalThis: *JSGlobalObject) JSValue {
         return JSSink.createObject(globalThis, this);
     }

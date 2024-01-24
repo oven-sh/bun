@@ -68,7 +68,7 @@ class BunWebSocket extends EventEmitter {
       } else if (event === "message") {
         this.#ws.addEventListener("message", ({ data }) => {
           const isBinary = typeof data !== "string";
-          if (!isBinary) {
+          if (isBinary) {
             this.emit("message", this.#fragments ? [data] : data, isBinary);
           } else {
             let encoded = encoder.encode(data);

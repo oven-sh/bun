@@ -188,7 +188,7 @@ it("import.meta.require (javascript, live bindings)", () => {
 });
 
 it("import.meta.dir", () => {
-  expect(dir.endsWith("/bun/test/js/bun/resolve")).toBe(true);
+  expect(dir.replaceAll("\\", "/").endsWith("/bun/test/js/bun/resolve")).toBe(true);
 });
 
 it("import.meta.dirname", () => {
@@ -200,7 +200,7 @@ it("import.meta.filename", () => {
 });
 
 it("import.meta.path", () => {
-  expect(path.endsWith("/bun/test/js/bun/resolve/import-meta.test.js")).toBe(true);
+  expect(path.replaceAll("\\", "/").endsWith("/bun/test/js/bun/resolve/import-meta.test.js")).toBe(true);
 });
 
 it('require("bun") works', () => {

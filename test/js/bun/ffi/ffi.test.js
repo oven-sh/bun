@@ -607,6 +607,27 @@ function ffiRunner(fast) {
       }
     });
 
+    describe("Floating point identities for all valid exponents", () => {
+      const cases = [
+        { type: "float", min: -149, max: 128, fn: identity_float },
+        { type: "double", min: -1075, max: 1024, fn: identity_double },
+      ];
+
+      for (const { type, min, max, fn } of cases) {
+        it(type, () => {
+          let previous = -1;
+
+          for (let i = min; i <= max; i++) {
+            const val = i < max ? Math.pow(2, i) : +Infinity;
+
+            expect(fn(val)).toBe(val);
+            expect(val).not.toEqual(previous);
+            previous = val;
+          }
+        });
+      }
+    });
+
     afterAll(() => {
       close();
     });

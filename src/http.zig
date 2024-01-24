@@ -41,7 +41,6 @@ pub var http_thread: HTTPThread = undefined;
 const HiveArray = @import("./hive_array.zig").HiveArray;
 const Batch = bun.ThreadPool.Batch;
 const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
-const uv = bun.windows.libuv;
 
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
@@ -126,7 +125,6 @@ pub const Sendfile = struct {
     content_size: usize = 0,
 
     transmitFileContext: if (Environment.isWindows) ?TransmitFileContext else u0 = if (Environment.isWindows) null else 0,
-    const sendFileLog = Output.scoped(.Sendfile, false);
 
     pub fn isEligible(url: bun.URL) bool {
         return url.isHTTP() and url.href.len > 0 and FeatureFlags.streaming_file_uploads_for_http_client;

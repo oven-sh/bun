@@ -594,7 +594,7 @@ async function connect(server: Server): Promise<void> {
   const pathname = path.resolve(import.meta.dir, "./websocket-client-echo.mjs");
   // @ts-ignore
   const client = spawn({
-    cmd: [bunExe(), pathname, url],
+    cmd: [nodeExe() ?? bunExe(), pathname, url],
     cwd: import.meta.dir,
     env: bunEnv,
     stdio: ["pipe", "pipe", "ignore"],

@@ -2,12 +2,11 @@
 // Definitions by: Jarred Sumner <https://github.com/Jarred-Sumner>
 // Definitions: https://github.com/DefinitelyTyped/DefinitelyTyped
 
+/// <reference lib="dom" />
 /// <reference lib="esnext" />
+
 /// <reference types="node" />
 /// <reference types="ws" />
-
-// contributors: uncomment this to detect conflicts with lib.dom.d.ts
-/// <reference lib="dom" />
 
 /// <reference path="./globals.d.ts" />
 /// <reference path="./bun.d.ts" />

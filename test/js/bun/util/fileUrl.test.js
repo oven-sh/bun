@@ -1,6 +1,6 @@
-// @known-failing-on-windows: 1 failing
 import { expect, it, describe } from "bun:test";
 import { pathToFileURL, fileURLToPath } from "bun";
+
 describe("pathToFileURL", () => {
   it("should convert a path to a file url", () => {
     expect(pathToFileURL("/path/to/file.js").href).toBe("file:///path/to/file.js");
@@ -9,10 +9,19 @@ describe("pathToFileURL", () => {
 
 describe("fileURLToPath", () => {
   it("should convert a file url to a path", () => {
-    expect(fileURLToPath("file:///path/to/file.js")).toBe("/path/to/file.js");
+    if (process.platform === "win32") {
+      expect(() => fileURLToPath("file:///path/to/file.js")).toThrow("File URL path must be absolute");
+    } else {
+      expect(fileURLToPath("file:///path/to/file.js")).toBe("/path/to/file.js");
+    }
   });
+
   it("should convert a URL to a path", () => {
-    expect(fileURLToPath(new URL("file:///path/to/file.js"))).toBe("/path/to/file.js");
+    if (process.platform === "win32") {
+      expect(() => fileURLToPath(new URL("file:///path/to/file.js"))).toThrow("File URL path must be absolute");
+    } else {
+      expect(fileURLToPath(new URL("file:///path/to/file.js"))).toBe("/path/to/file.js");
+    }
   });
 
   it("should fail on non-file: URLs", () => {
@@ -26,5 +35,10 @@ describe("fileURLToPath", () => {
         expect(() => fileURLToPath(value)).toThrow();
       });
     });
+  });
+
+  it("should add absolute part to relative file (#6456)", () => {
+    const url = pathToFileURL("foo.txt");
+    expect(url.href).toBe(`${pathToFileURL(process.cwd())}/foo.txt`);
   });
 });

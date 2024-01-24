@@ -1086,7 +1086,6 @@ if(APPLE)
     target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicudata.a")
     target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicui18n.a")
     target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicuuc.a")
-    include_directories(${ICU4C_DIR}/include)
 endif()
 
 # --- Stripped Binary "bun"

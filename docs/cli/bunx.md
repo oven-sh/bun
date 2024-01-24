@@ -63,6 +63,8 @@ $ bunx --bun my-cli # good
 $ bunx my-cli --bun # bad
 ```
 
+Of course, you can also use the `#!/usr/bin/env bun` to execute scripts with bun.
+
 <!-- ## Environment variables
 
 Bun automatically loads environment variables from `.env` files before running a file, script, or executable. The following files are checked, in order:

@@ -1314,7 +1314,6 @@ pub fn withoutUTF8BOM(bytes: []const u8) []const u8 {
 /// This is intended to be used for strings that go to JavaScript
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
-        var start: ?usize = null;
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
             const trimmed = bun.simdutf.trim.utf8(bytes);
 
@@ -1339,10 +1338,8 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
                 return error.InvalidByteSequence;
             }
 
-            start = res.count;
-
             break :simd .{
-                .items = out[0..res.count -| 1],
+                .items = out[0..i],
                 .capacity = out.len,
                 .allocator = allocator,
             };
@@ -1355,7 +1352,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
         };
         errdefer output.deinit();
 
-        var remaining = bytes[start orelse i ..];
+        var remaining = bytes[i..];
 
         {
             const sequence: [4]u8 = switch (remaining.len) {
@@ -1436,7 +1433,6 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
 
 pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
-        var start: ?usize = null;
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
             const out_length = bun.simdutf.length.utf16.from.utf8.le(bytes);
 
@@ -1456,10 +1452,8 @@ pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, compt
                 return error.InvalidByteSequence;
             }
 
-            start = res.count;
-
             break :simd .{
-                .items = out[0..res.count -| 1],
+                .items = out[0..i],
                 .capacity = out.len,
                 .allocator = allocator,
             };
@@ -1472,7 +1466,7 @@ pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, compt
         };
         errdefer output.deinit();
 
-        var remaining = bytes[start orelse i ..];
+        var remaining = bytes[i..];
 
         {
             const sequence: [4]u8 = switch (remaining.len) {

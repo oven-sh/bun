@@ -3041,13 +3041,13 @@ pub const TransmitFileContext = struct {
     }
 
     pub fn sendfile(this: *TransmitFileContext, socket: bun.FileDescriptor, file: bun.FileDescriptor) Maybe(u32) {
-        // if is done, we dont have nothing todo here
-        if (this.status == .fail) return .{ .result = 0 };
+        // if we already fail, we dont have nothing todo here
+        if (this.status == .fail) return .{ .err = bun.sys.Error.fromCodeInt(@intFromEnum(bun.windows.Win32Error.WSA_OPERATION_ABORTED), .sendfile) };
 
         const wsocket = bun.socketcast(socket);
         const file_handle = libuv.uv_get_osfhandle(bun.uvfdcast(file));
         const overlapped_ptr = &this.overlapped;
-        // we are still waiting for OverlappedResult
+        // we are still waiting for OverlappedResult?
         if (this.status == .ready) {
             if (std.os.windows.ws2_32.TransmitFile(wsocket, file_handle, 0, 64 * 1024, overlapped_ptr, null, 0) == 0) {
                 const err = bun.windows.Win32Error.get();
@@ -3066,10 +3066,10 @@ pub const TransmitFileContext = struct {
                 this.status = .fail;
                 return .{ .err = bun.sys.Error.fromCodeInt(@intFromEnum(err), .sendfile) };
             }
-            // still need to wait more before continue sending
+            // still need to wait more before continue
             this.status = .incomplete;
         } else {
-            // ready for the next call TransmitFile
+            // ready for the next TransmitFile call
             this.status = .ready;
         }
 

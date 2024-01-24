@@ -2214,7 +2214,7 @@ pub const Blob = struct {
                 const globalThis = this.globalThis;
                 var system_error: SystemError = this.system_error orelse SystemError{};
                 if (this.source_file_store.pathlike == .path and system_error.path.isEmpty()) {
-                    system_error.path = bun.String.create(this.source_file_store.pathlike.path.slice());
+                    system_error.path = bun.String.createUTF8(this.source_file_store.pathlike.path.slice());
                 }
 
                 if (system_error.message.isEmpty()) {
@@ -3187,7 +3187,7 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
         if (this.getFileName()) |path| {
-            var str = bun.String.create(path);
+            var str = bun.String.createUTF8(path);
             return str.toJS(globalThis);
         }
 

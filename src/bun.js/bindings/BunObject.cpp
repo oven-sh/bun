@@ -30,6 +30,7 @@
 #include "JSDOMException.h"
 #include "JSDOMConvert.h"
 #include "wtf/Compiler.h"
+#include "PathInlines.h"
 
 namespace Bun {
 
@@ -485,12 +486,14 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     auto& globalObject = *reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto& vm = globalObject.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto path = JSC::JSValue::encode(callFrame->argument(0));
+    auto pathValue = callFrame->argument(0);
 
-    JSC::JSString* pathString = JSC::JSValue::decode(path).toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+    WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode({}));
 
-    auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString->value(lexicalGlobalObject));
+    pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
+
+    auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
     auto object = WebCore::DOMURL::create(fileURL.string(), String());
     auto jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
@@ -501,29 +504,37 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue arg0 = callFrame->argument(0);
+    WTF::URL url;
+
     auto path = JSC::JSValue::encode(arg0);
     auto* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(path);
     if (!domURL) {
         if (arg0.isString()) {
-            auto url = WTF::URL(arg0.toWTFString(globalObject));
-            if (UNLIKELY(!url.protocolIsFile())) {
-                throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
-                return JSC::JSValue::encode(JSC::JSValue {});
-            }
+            url = WTF::URL(arg0.toWTFString(globalObject));
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-            RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.fileSystemPath())));
+        } else {
+            throwTypeError(globalObject, scope, "Argument must be a URL"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
         }
-        throwTypeError(globalObject, scope, "Argument must be a URL"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+    } else {
+        url = domURL->href();
     }
 
-    auto& url = domURL->href();
     if (UNLIKELY(!url.protocolIsFile())) {
         throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    return JSC::JSValue::encode(JSC::jsString(vm, url.fileSystemPath()));
+    auto fileSystemPath = url.fileSystemPath();
+
+#if OS(WINDOWS)
+    if (!isAbsolutePath(fileSystemPath)) {
+        throwTypeError(globalObject, scope, "File URL path must be absolute"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+#endif
+
+    return JSC::JSValue::encode(JSC::jsString(vm, fileSystemPath));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionHashCode,

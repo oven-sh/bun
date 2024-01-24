@@ -391,7 +391,7 @@ pub const Request = struct {
                             }
                         } else {
                             // TODO: what is the right thing to do for invalid URLS?
-                            this.url = bun.String.create(url);
+                            this.url = bun.String.createUTF8(url);
                         }
 
                         return;
@@ -414,7 +414,7 @@ pub const Request = struct {
                             req_url,
                         }) catch bun.outOfMemory();
                         defer bun.default_allocator.free(temp_url);
-                        this.url = bun.String.create(temp_url);
+                        this.url = bun.String.createUTF8(temp_url);
                     }
 
                     const href = bun.JSC.URL.hrefFromString(this.url);
@@ -430,7 +430,7 @@ pub const Request = struct {
             if (comptime Environment.allow_assert) {
                 std.debug.assert(this.sizeOfURL() == req_url.len);
             }
-            this.url = bun.String.create(req_url);
+            this.url = bun.String.createUTF8(req_url);
         }
     }
 

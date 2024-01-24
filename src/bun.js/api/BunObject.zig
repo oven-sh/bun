@@ -549,7 +549,7 @@ pub fn shellEscape(
                 globalThis.throwOutOfMemory();
                 return .undefined;
             };
-            return bun.String.create(outbuf.items[0..]).toJS(globalThis);
+            return bun.String.createUTF8(outbuf.items[0..]).toJS(globalThis);
         }
         return jsval;
     }
@@ -559,7 +559,7 @@ pub fn shellEscape(
             globalThis.throwOutOfMemory();
             return .undefined;
         };
-        return bun.String.create(outbuf.items[0..]).toJS(globalThis);
+        return bun.String.createUTF8(outbuf.items[0..]).toJS(globalThis);
     }
 
     return jsval;
@@ -5364,7 +5364,7 @@ const InternalTestingAPIs = struct {
             return .zero;
         };
 
-        var str = bun.String.create(buffer.list.items);
+        var str = bun.String.createUTF8(buffer.list.items);
         defer str.deref();
         return str.toJS(globalThis);
     }

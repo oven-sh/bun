@@ -362,7 +362,7 @@ pub const String = extern struct {
         return BunString__fromLatin1(bytes.ptr, bytes.len);
     }
 
-    pub fn create(bytes: []const u8) String {
+    pub fn createUTF8(bytes: []const u8) String {
         JSC.markBinding(@src());
         if (bytes.len == 0) return String.empty;
         return BunString__fromBytes(bytes.ptr, bytes.len);
@@ -378,7 +378,7 @@ pub const String = extern struct {
 
     pub fn createFromOSPath(os_path: bun.OSPathSlice) String {
         return switch (@TypeOf(os_path)) {
-            []const u8 => create(os_path),
+            []const u8 => createUTF8(os_path),
             []const u16 => createUTF16(os_path),
             else => comptime unreachable,
         };
@@ -408,7 +408,7 @@ pub const String = extern struct {
             return new;
         }
 
-        return create(this.byteSlice());
+        return createUTF8(this.byteSlice());
     }
 
     extern fn BunString__createAtom(bytes: [*]const u8, len: usize) String;
@@ -435,7 +435,7 @@ pub const String = extern struct {
             }
         }
 
-        return create(bytes);
+        return createUTF8(bytes);
     }
 
     pub fn utf8ByteLength(this: String) usize {
@@ -1141,7 +1141,7 @@ pub const String = extern struct {
             inline for (0..n) |i| {
                 slices_holded[i].deinit();
             }
-            return create(result);
+            return createUTF8(result);
         }
     }
 
@@ -1283,7 +1283,7 @@ pub const SliceWithUnderlyingString = struct {
                 }
             }
 
-            const out = bun.String.create(this.utf8.slice());
+            const out = bun.String.createUTF8(this.utf8.slice());
             defer out.deref();
             return out.toJS(globalObject);
         }

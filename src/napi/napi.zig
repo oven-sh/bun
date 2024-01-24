@@ -319,7 +319,7 @@ pub export fn napi_create_string_utf8(env: napi_env, str: ?[*]const u8, length: 
 
     log("napi_create_string_utf8: {s}", .{slice});
 
-    var string = bun.String.create(slice);
+    var string = bun.String.createUTF8(slice);
     if (string.tag == .Dead) {
         return .generic_failure;
     }

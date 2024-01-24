@@ -4717,7 +4717,7 @@ pub const NodeFS = struct {
                 switch (ExpectedType) {
                     Dirent => {
                         entries.append(.{
-                            .name = bun.String.create(utf8_name),
+                            .name = bun.String.createUTF8(utf8_name),
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -4725,7 +4725,7 @@ pub const NodeFS = struct {
                         entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                     },
                     bun.String => {
-                        entries.append(bun.String.create(utf8_name)) catch bun.outOfMemory();
+                        entries.append(bun.String.createUTF8(utf8_name)) catch bun.outOfMemory();
                     },
                     else => @compileError("unreachable"),
                 }
@@ -4851,7 +4851,7 @@ pub const NodeFS = struct {
             switch (comptime ExpectedType) {
                 Dirent => {
                     entries.append(.{
-                        .name = bun.String.create(name_to_copy),
+                        .name = bun.String.createUTF8(name_to_copy),
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -4859,7 +4859,7 @@ pub const NodeFS = struct {
                     entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                 },
                 bun.String => {
-                    entries.append(bun.String.create(name_to_copy)) catch bun.outOfMemory();
+                    entries.append(bun.String.createUTF8(name_to_copy)) catch bun.outOfMemory();
                 },
                 else => bun.outOfMemory(),
             }
@@ -4980,7 +4980,7 @@ pub const NodeFS = struct {
                 switch (comptime ExpectedType) {
                     Dirent => {
                         entries.append(.{
-                            .name = bun.String.create(name_to_copy),
+                            .name = bun.String.createUTF8(name_to_copy),
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -4988,7 +4988,7 @@ pub const NodeFS = struct {
                         entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                     },
                     bun.String => {
-                        entries.append(bun.String.create(name_to_copy)) catch bun.outOfMemory();
+                        entries.append(bun.String.createUTF8(name_to_copy)) catch bun.outOfMemory();
                     },
                     else => @compileError("Impossible"),
                 }
@@ -5397,7 +5397,7 @@ pub const NodeFS = struct {
                     }
                 else
                     .{
-                        .string = .{ .utf8 = .{}, .underlying = bun.String.create(outbuf[0..len]) },
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(outbuf[0..len]) },
                     },
             },
         };
@@ -5436,7 +5436,7 @@ pub const NodeFS = struct {
                         }
                     else
                         .{
-                            .string = .{ .utf8 = .{}, .underlying = bun.String.create(buf) },
+                            .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(buf) },
                         },
                 },
             };
@@ -5485,7 +5485,7 @@ pub const NodeFS = struct {
                     }
                 else
                     .{
-                        .string = .{ .utf8 = .{}, .underlying = bun.String.create(buf) },
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(buf) },
                     },
             },
         };

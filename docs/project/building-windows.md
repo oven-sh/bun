@@ -6,8 +6,7 @@ The following document is not yet complete, please join the [#windows channel on
 
 Here are the extra steps I ran on my fresh windows machine (some of these are a little opiniated)
 
-- Change user to a local account (set username to `window` and empty password)
-  - (Empty password will disable the password and auto-login on boot)
+- Change user to a local account (set username to `window` and 'bun!')
 - Set Windows Terminal as default terminal
 - Install latest version of Powershell
 - Display scale to 100%
@@ -85,18 +84,6 @@ To verify, you can check for an MSVC-only command line such as `mt.exe`
 ```ps1
 Get-Command mt
 ```
-
-### Zig
-
-Bun pins a version of Zig. As the compiler is still in development, breaking changes happen often that will break the build. It is recommended to use [Zigup](https://github.com/marler8997/zigup/releases) as it can quickly switch to any version by name, but you can also [manually download Zig](https://ziglang.org/download/).
-
-```bash
-$ zigup 0.12.0-dev.1604+caae40c21
-```
-
-{% callout %}
-We last updated Zig on **October 26th, 2023**
-{% /callout %}
 
 ### Codegen
 

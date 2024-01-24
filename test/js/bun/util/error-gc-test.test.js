@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { test, expect } from "bun:test";
 import { readFileSync } from "fs";
 // This test checks that printing stack traces increments and decrements

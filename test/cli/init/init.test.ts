@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import fs from "fs";
 import path from "path";
 import os from "os";

@@ -457,8 +457,8 @@ pub const Action = union(enum) {
     };
 };
 
-const ReadFile = bun.JSC.WebCore.Blob.Store.ReadFile;
-const WriteFile = bun.JSC.WebCore.Blob.Store.WriteFile;
+const ReadFile = bun.JSC.WebCore.Blob.ReadFile;
+const WriteFile = bun.JSC.WebCore.Blob.WriteFile;
 
 const Pollable = struct {
     const Tag = enum(bun.TaggedPointer.Tag) {

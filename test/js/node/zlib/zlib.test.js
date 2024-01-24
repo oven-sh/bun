@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, it, expect } from "bun:test";
 import { gzipSync, deflateSync, inflateSync, gunzipSync } from "bun";
 

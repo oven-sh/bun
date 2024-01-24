@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, it, expect } from "bun:test";
 import type { SocketId } from "socket.io-adapter";
 import { Server, Namespace, Socket } from "socket.io";

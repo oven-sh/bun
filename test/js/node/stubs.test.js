@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { expect, test } from "bun:test";
 
 const weirdInternalSpecifiers = [

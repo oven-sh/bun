@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 "use strict";
 
 /** This file is meant to be runnable in both Jest and Bun.
@@ -361,34 +360,36 @@ describe("jest-extended", () => {
     expect(5 / Number.NEGATIVE_INFINITY).toBeEven();
     expect(-7 / Number.NEGATIVE_INFINITY).toBeEven(); // as in IEEE-754: - / -inf => zero
     expect(-8 / Number.NEGATIVE_INFINITY).toBeEven();
-    expect(new WebAssembly.Global({ value: "i32", mutable: false }, 4).value).toBeEven();
-    expect(new WebAssembly.Global({ value: "i32", mutable: false }, 3).value).not.toBeEven();
-    expect(new WebAssembly.Global({ value: "i32", mutable: true }, 2).value).toBeEven();
-    expect(new WebAssembly.Global({ value: "i32", mutable: true }, 1).value).not.toBeEven();
-    if (isBun) {
-      expect(new WebAssembly.Global({ value: "i64", mutable: true }, -9223372036854775808n).value).toBeEven();
-      expect(new WebAssembly.Global({ value: "i64", mutable: false }, -9223372036854775808n).value).toBeEven();
-      expect(new WebAssembly.Global({ value: "i64", mutable: true }, 9223372036854775807n).value).not.toBeEven();
-      expect(new WebAssembly.Global({ value: "i64", mutable: false }, 9223372036854775807n).value).not.toBeEven();
+    if (typeof WebAssembly !== "undefined") {
+      expect(new WebAssembly.Global({ value: "i32", mutable: false }, 4).value).toBeEven();
+      expect(new WebAssembly.Global({ value: "i32", mutable: false }, 3).value).not.toBeEven();
+      expect(new WebAssembly.Global({ value: "i32", mutable: true }, 2).value).toBeEven();
+      expect(new WebAssembly.Global({ value: "i32", mutable: true }, 1).value).not.toBeEven();
+      if (isBun) {
+        expect(new WebAssembly.Global({ value: "i64", mutable: true }, -9223372036854775808n).value).toBeEven();
+        expect(new WebAssembly.Global({ value: "i64", mutable: false }, -9223372036854775808n).value).toBeEven();
+        expect(new WebAssembly.Global({ value: "i64", mutable: true }, 9223372036854775807n).value).not.toBeEven();
+        expect(new WebAssembly.Global({ value: "i64", mutable: false }, 9223372036854775807n).value).not.toBeEven();
+      }
+      expect(new WebAssembly.Global({ value: "f32", mutable: true }, 42.0).value).toBeEven();
+      expect(new WebAssembly.Global({ value: "f32", mutable: false }, 42.0).value).toBeEven();
+      expect(new WebAssembly.Global({ value: "f64", mutable: true }, 42.0).value).toBeEven();
+      expect(new WebAssembly.Global({ value: "f64", mutable: false }, 42.0).value).toBeEven();
+      expect(new WebAssembly.Global({ value: "f32", mutable: true }, 43.0).value).not.toBeEven();
+      expect(new WebAssembly.Global({ value: "f32", mutable: false }, 43.0).value).not.toBeEven();
+      expect(new WebAssembly.Global({ value: "f64", mutable: true }, 43.0).value).not.toBeEven();
+      expect(new WebAssembly.Global({ value: "f64", mutable: false }, 43.0).value).not.toBeEven();
+      expect(new WebAssembly.Global({ value: "f32", mutable: true }, 4.3).value).not.toBeEven();
+      expect(new WebAssembly.Global({ value: "f32", mutable: false }, 4.3).value).not.toBeEven();
+      expect(new WebAssembly.Global({ value: "f64", mutable: true }, 4.3).value).not.toBeEven();
+      expect(new WebAssembly.Global({ value: "f64", mutable: false }, 4.3).value).not.toBeEven();
+      // did not seem to support SIMD v128 type yet (which is not in W3C specs for JS but is a valid global type)
+      // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:false}, -170141183460469231731687303715884105728n).value).toBeEven();
+      // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, -170141183460469231731687303715884105728n).value).toBeEven();
+      // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, 170141183460469231731687303715884105727n).value).not.toBeEven();
+      // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:false}, 170141183460469231731687303715884105727n).value).not.toBeEven();
+      // FUTURE: with uintv128: expect(new WebAssembly.Global({value:'v128', mutable:false}, 340282366920938463463374607431768211456n).value).toThrow();
     }
-    expect(new WebAssembly.Global({ value: "f32", mutable: true }, 42.0).value).toBeEven();
-    expect(new WebAssembly.Global({ value: "f32", mutable: false }, 42.0).value).toBeEven();
-    expect(new WebAssembly.Global({ value: "f64", mutable: true }, 42.0).value).toBeEven();
-    expect(new WebAssembly.Global({ value: "f64", mutable: false }, 42.0).value).toBeEven();
-    expect(new WebAssembly.Global({ value: "f32", mutable: true }, 43.0).value).not.toBeEven();
-    expect(new WebAssembly.Global({ value: "f32", mutable: false }, 43.0).value).not.toBeEven();
-    expect(new WebAssembly.Global({ value: "f64", mutable: true }, 43.0).value).not.toBeEven();
-    expect(new WebAssembly.Global({ value: "f64", mutable: false }, 43.0).value).not.toBeEven();
-    expect(new WebAssembly.Global({ value: "f32", mutable: true }, 4.3).value).not.toBeEven();
-    expect(new WebAssembly.Global({ value: "f32", mutable: false }, 4.3).value).not.toBeEven();
-    expect(new WebAssembly.Global({ value: "f64", mutable: true }, 4.3).value).not.toBeEven();
-    expect(new WebAssembly.Global({ value: "f64", mutable: false }, 4.3).value).not.toBeEven();
-    // did not seem to support SIMD v128 type yet (which is not in W3C specs for JS but is a valid global type)
-    // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:false}, -170141183460469231731687303715884105728n).value).toBeEven();
-    // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, -170141183460469231731687303715884105728n).value).toBeEven();
-    // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, 170141183460469231731687303715884105727n).value).not.toBeEven();
-    // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:false}, 170141183460469231731687303715884105727n).value).not.toBeEven();
-    // FUTURE: with uintv128: expect(new WebAssembly.Global({value:'v128', mutable:false}, 340282366920938463463374607431768211456n).value).toThrow();
   });
 
   test("toBeOdd()", () => {
@@ -443,32 +444,34 @@ describe("jest-extended", () => {
     expect(5 / Number.NEGATIVE_INFINITY).not.toBeOdd();
     expect(-7 / Number.NEGATIVE_INFINITY).not.toBeOdd(); // in IEEE-754: - / -inf => zero
     expect(-8 / Number.NEGATIVE_INFINITY).not.toBeOdd();
-    expect(new WebAssembly.Global({ value: "i32", mutable: false }, 4).value).not.toBeOdd();
-    expect(new WebAssembly.Global({ value: "i32", mutable: false }, 3).value).toBeOdd();
-    expect(new WebAssembly.Global({ value: "i32", mutable: true }, 2).value).not.toBeOdd();
-    expect(new WebAssembly.Global({ value: "i32", mutable: true }, 1).value).toBeOdd();
-    if (isBun) {
-      expect(new WebAssembly.Global({ value: "i64", mutable: true }, -9223372036854775808n).value).not.toBeOdd();
-      expect(new WebAssembly.Global({ value: "i64", mutable: false }, -9223372036854775808n).value).not.toBeOdd();
-      expect(new WebAssembly.Global({ value: "i64", mutable: true }, 9223372036854775807n).value).toBeOdd();
-      expect(new WebAssembly.Global({ value: "i64", mutable: false }, 9223372036854775807n).value).toBeOdd();
+    if (typeof WebAssembly !== "undefined") {
+      expect(new WebAssembly.Global({ value: "i32", mutable: false }, 4).value).not.toBeOdd();
+      expect(new WebAssembly.Global({ value: "i32", mutable: false }, 3).value).toBeOdd();
+      expect(new WebAssembly.Global({ value: "i32", mutable: true }, 2).value).not.toBeOdd();
+      expect(new WebAssembly.Global({ value: "i32", mutable: true }, 1).value).toBeOdd();
+      if (isBun) {
+        expect(new WebAssembly.Global({ value: "i64", mutable: true }, -9223372036854775808n).value).not.toBeOdd();
+        expect(new WebAssembly.Global({ value: "i64", mutable: false }, -9223372036854775808n).value).not.toBeOdd();
+        expect(new WebAssembly.Global({ value: "i64", mutable: true }, 9223372036854775807n).value).toBeOdd();
+        expect(new WebAssembly.Global({ value: "i64", mutable: false }, 9223372036854775807n).value).toBeOdd();
+      }
+      expect(new WebAssembly.Global({ value: "f32", mutable: true }, 42.0).value).not.toBeOdd();
+      expect(new WebAssembly.Global({ value: "f32", mutable: false }, 42.0).value).not.toBeOdd();
+      expect(new WebAssembly.Global({ value: "f64", mutable: true }, 42.0).value).not.toBeOdd();
+      expect(new WebAssembly.Global({ value: "f64", mutable: false }, 42.0).value).not.toBeOdd();
+      expect(new WebAssembly.Global({ value: "f32", mutable: true }, 43.0).value).toBeOdd();
+      expect(new WebAssembly.Global({ value: "f32", mutable: false }, 43.0).value).toBeOdd();
+      expect(new WebAssembly.Global({ value: "f64", mutable: true }, 43.0).value).toBeOdd();
+      expect(new WebAssembly.Global({ value: "f64", mutable: false }, 43.0).value).toBeOdd();
+      expect(new WebAssembly.Global({ value: "f32", mutable: true }, 4.3).value).not.toBeOdd();
+      expect(new WebAssembly.Global({ value: "f32", mutable: false }, 4.3).value).not.toBeOdd();
+      expect(new WebAssembly.Global({ value: "f64", mutable: true }, 4.3).value).not.toBeOdd();
+      expect(new WebAssembly.Global({ value: "f64", mutable: false }, 4.3).value).not.toBeOdd();
+      // did not seem to support SIMD v128 type yet
+      // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:false}, 42).value).not.toBeOdd();
+      // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, 42).value).not.toBeOdd();
+      // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, 43).value).toBeOdd();
     }
-    expect(new WebAssembly.Global({ value: "f32", mutable: true }, 42.0).value).not.toBeOdd();
-    expect(new WebAssembly.Global({ value: "f32", mutable: false }, 42.0).value).not.toBeOdd();
-    expect(new WebAssembly.Global({ value: "f64", mutable: true }, 42.0).value).not.toBeOdd();
-    expect(new WebAssembly.Global({ value: "f64", mutable: false }, 42.0).value).not.toBeOdd();
-    expect(new WebAssembly.Global({ value: "f32", mutable: true }, 43.0).value).toBeOdd();
-    expect(new WebAssembly.Global({ value: "f32", mutable: false }, 43.0).value).toBeOdd();
-    expect(new WebAssembly.Global({ value: "f64", mutable: true }, 43.0).value).toBeOdd();
-    expect(new WebAssembly.Global({ value: "f64", mutable: false }, 43.0).value).toBeOdd();
-    expect(new WebAssembly.Global({ value: "f32", mutable: true }, 4.3).value).not.toBeOdd();
-    expect(new WebAssembly.Global({ value: "f32", mutable: false }, 4.3).value).not.toBeOdd();
-    expect(new WebAssembly.Global({ value: "f64", mutable: true }, 4.3).value).not.toBeOdd();
-    expect(new WebAssembly.Global({ value: "f64", mutable: false }, 4.3).value).not.toBeOdd();
-    // did not seem to support SIMD v128 type yet
-    // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:false}, 42).value).not.toBeOdd();
-    // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, 42).value).not.toBeOdd();
-    // FUTURE: expect(new WebAssembly.Global({value:'v128', mutable:true}, 43).value).toBeOdd();
   });
 
   test("toBeInteger()", () => {

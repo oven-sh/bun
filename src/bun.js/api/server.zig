@@ -2115,7 +2115,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.blob.Blob.doReadFileInternal(*RequestContext, this, onReadFile, this.server.globalThis);
         }
 
-        pub fn onReadFile(this: *RequestContext, result: Blob.Store.ReadFile.ResultType) void {
+        pub fn onReadFile(this: *RequestContext, result: Blob.ReadFile.ResultType) void {
             if (this.flags.aborted or this.resp == null) {
                 this.finalizeForAbort();
                 return;

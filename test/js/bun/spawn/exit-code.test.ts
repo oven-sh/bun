@@ -1,7 +1,6 @@
-// @known-failing-on-windows: 1 failing
-import { describe, expect, it, test } from "bun:test";
-import { bunExe } from "harness";
 import { spawnSync } from "bun";
+import { expect, it } from "bun:test";
+import { bunExe } from "harness";
 
 it("process.exit(1) works", () => {
   const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/exit-code-1.js"]);

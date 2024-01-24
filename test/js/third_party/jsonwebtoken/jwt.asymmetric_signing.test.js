@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 const PS_SUPPORTED = true;
 import jwt from "jsonwebtoken";
 import { expect, describe, it } from "bun:test";

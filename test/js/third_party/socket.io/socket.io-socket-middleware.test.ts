@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 // TODO: uncomment when Blob bug in isBinary is fixed
 
 import { Server } from "socket.io";

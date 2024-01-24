@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 // https://github.com/oven-sh/bun/issues/3216
 import { test, expect } from "bun:test";
 import { tmpdir } from "os";

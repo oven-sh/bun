@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { it, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";

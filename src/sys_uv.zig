@@ -37,9 +37,12 @@ pub const mkdirOSPath = bun.sys.mkdirOSPath;
 
 // Note: `req = undefined; req.deinit()` has a saftey-check in a debug build
 
-pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn open(file_path: [:0]const u8, c_flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
+
+    const flags = uv.O.fromStd(c_flags);
+
     const rc = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);
     log("uv open({s}, {d}, {d}) = {d}", .{ file_path, flags, perm, rc.int() });
     return if (rc.errno()) |errno|

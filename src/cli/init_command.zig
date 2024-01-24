@@ -332,7 +332,7 @@ pub const InitCommand = struct {
 
         write_package_json: {
             if (package_json_file == null) {
-                package_json_file = try std.fs.cwd().createFileZ("package.json", .{});
+                package_json_file = try destination_dir.createFileZ("package.json", .{});
             }
             const package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
 
@@ -356,14 +356,13 @@ pub const InitCommand = struct {
         }
 
         if (fields.entry_point.len > 0 and !exists(fields.entry_point)) {
-            const cwd = std.fs.cwd();
             if (std.fs.path.dirname(fields.entry_point)) |dirname| {
                 if (!strings.eqlComptime(dirname, ".")) {
-                    cwd.makePath(dirname) catch {};
+                    destination_dir.makePath(dirname) catch {};
                 }
             }
 
-            var entry = try cwd.createFile(fields.entry_point, .{ .truncate = true });
+            var entry = try destination_dir.createFile(fields.entry_point, .{ .truncate = true });
             entry.writeAll("console.log(\"Hello via Bun!\");") catch {};
             entry.close();
             Output.prettyln(" + <r><d>{s}<r>", .{fields.entry_point});
@@ -372,7 +371,7 @@ pub const InitCommand = struct {
 
         if (steps.write_gitignore) {
             brk: {
-                var file = std.fs.cwd().createFileZ(".gitignore", .{ .truncate = true }) catch break :brk;
+                var file = destination_dir.createFileZ(".gitignore", .{ .truncate = true }) catch break :brk;
                 defer file.close();
                 file.writeAll(default_gitignore) catch break :brk;
                 Output.prettyln(" + <r><d>.gitignore<r>", .{});
@@ -382,12 +381,11 @@ pub const InitCommand = struct {
 
         if (steps.write_gitattributes) {
             brk: {
-                const cwd = std.fs.cwd();
                 const filename = ".gitattributes";
                 var file = if (exists(filename))
-                    openFileForAppendZ(cwd, filename, .{ .mode = .write_only }) catch break :brk
+                    openFileForAppendZ(destination_dir, filename, .{ .mode = .write_only }) catch break :brk
                 else
-                    cwd.createFileZ(filename, .{ .truncate = true }) catch break :brk;
+                    destination_dir.createFileZ(filename, .{ .truncate = true }) catch break :brk;
 
                 file.writeAll(default_gitattributes) catch break :brk;
                 Output.prettyln(" + <r><d>{s}<r>", .{filename});
@@ -397,15 +395,14 @@ pub const InitCommand = struct {
 
         if (steps.write_gitconfig) {
             brk: {
-                const cwd = std.fs.cwd();
                 if (!exists(".git")) {
-                    cwd.makeDirZ(".git") catch break :brk;
+                    destination_dir.makeDirZ(".git") catch break :brk;
                 }
                 const filename = ".git/config";
                 var file = if (exists(filename))
-                    openFileForAppendZ(cwd, filename, .{ .mode = .write_only }) catch break :brk
+                    openFileForAppendZ(destination_dir, filename, .{ .mode = .write_only }) catch break :brk
                 else
-                    cwd.createFileZ(filename, .{ .truncate = true }) catch break :brk;
+                    destination_dir.createFileZ(filename, .{ .truncate = true }) catch break :brk;
                 defer file.close();
 
                 file.writeAll(default_gitconfig) catch break :brk;
@@ -422,7 +419,7 @@ pub const InitCommand = struct {
                     "tsconfig.json"
                 else
                     "jsconfig.json";
-                var file = std.fs.cwd().createFileZ(filename, .{ .truncate = true }) catch break :brk;
+                var file = destination_dir.createFileZ(filename, .{ .truncate = true }) catch break :brk;
                 defer file.close();
                 file.writeAll(default_tsconfig) catch break :brk;
                 Output.prettyln(" + <r><d>{s}<r><d> (for editor auto-complete)<r>", .{filename});
@@ -433,7 +430,7 @@ pub const InitCommand = struct {
         if (steps.write_readme) {
             brk: {
                 const filename = "README.md";
-                var file = std.fs.cwd().createFileZ(filename, .{ .truncate = true }) catch break :brk;
+                var file = destination_dir.createFileZ(filename, .{ .truncate = true }) catch break :brk;
                 defer file.close();
                 file.writer().print(README, .{
                     .name = fields.name,

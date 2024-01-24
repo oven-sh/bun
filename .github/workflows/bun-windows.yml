@@ -426,7 +426,7 @@ jobs:
         run: |
           try {
             $ErrorActionPreference = "SilentlyContinue"
-            $null = node packages/bun-internal-test/src/runner.node.mjs ${{runner.temp}}/release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}/bun.exe || $true
+            $null = node packages/bun-internal-test/src/runner.node.mjs ${{runner.temp}}/release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile/bun.exe || $true
           } catch {}
           $ErrorActionPreference = "Stop"
       - uses: sarisia/actions-status-discord@v1

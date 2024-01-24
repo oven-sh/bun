@@ -41,6 +41,8 @@ pub var http_thread: HTTPThread = undefined;
 const HiveArray = @import("./hive_array.zig").HiveArray;
 const Batch = bun.ThreadPool.Batch;
 const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
+const uv = bun.windows.libuv;
+
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
@@ -115,11 +117,16 @@ pub const HTTPRequestBody = union(enum) {
     }
 };
 
+const TransmitFileContext = bun.windows.TransmitFileContext;
+
 pub const Sendfile = struct {
     fd: bun.FileDescriptor,
     remain: usize = 0,
     offset: usize = 0,
     content_size: usize = 0,
+
+    transmitFileContext: if (Environment.isWindows) ?TransmitFileContext else u0 = if (Environment.isWindows) null else 0,
+    const sendFileLog = Output.scoped(.Sendfile, false);
 
     pub fn isEligible(url: bun.URL) bool {
         return url.isHTTP() and url.href.len > 0 and FeatureFlags.streaming_file_uploads_for_http_client;
@@ -153,17 +160,23 @@ pub const Sendfile = struct {
                 return .{ .err = bun.errnoToZigErr(errcode) };
             }
         } else if (Environment.isWindows) {
-            const win = std.os.windows;
-            const uv = bun.windows.libuv;
-            const wsocket = bun.socketcast(socket.fd());
-            const file_handle = uv.uv_get_osfhandle(bun.uvfdcast(this.fd));
-            if (win.ws2_32.TransmitFile(wsocket, file_handle, 0, 0, null, null, 0) == 1) {
+            if (this.transmitFileContext == null) {
+                this.transmitFileContext = TransmitFileContext.init();
+            }
+
+            const transmitFileContext = &(this.transmitFileContext.?);
+
+            const sended = transmitFileContext.sendfile(socket.fd(), this.fd).unwrap() catch |err| {
+                return .{ .err = err };
+            };
+
+            const begin = this.offset;
+            this.offset += sended;
+            this.remain -|= @as(u64, @intCast(this.offset -| begin));
+
+            if (this.remain == 0) {
                 return .{ .done = {} };
             }
-            this.offset += this.remain;
-            this.remain = 0;
-            const errorno = win.ws2_32.WSAGetLastError();
-            return .{ .err = bun.errnoToZigErr(errorno) };
         } else if (Environment.isPosix) {
             var sbytes: std.os.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
@@ -186,7 +199,6 @@ pub const Sendfile = struct {
                 return .{ .err = bun.errnoToZigErr(errcode) };
             }
         }
-
         return .{ .again = {} };
     }
 

@@ -64,7 +64,7 @@ pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
 
 const std = @import("std");
 pub const HANDLE = win32.HANDLE;
-
+const Maybe = @import("./bun.js/node/types.zig").Maybe;
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilevaliddata
 pub extern "kernel32" fn SetFileValidData(
     hFile: win32.HANDLE,
@@ -3016,3 +3016,63 @@ pub extern "kernel32" fn GetTempPath2W(
     nBufferLength: DWORD, // [in]
     lpBuffer: LPCWSTR, // [out]
 ) DWORD;
+
+pub const TransmitFileContext = struct {
+    overlapped: std.os.windows.OVERLAPPED,
+    status: WindowsSendFileStatus,
+    const WindowsSendFileStatus = enum {
+        ready,
+        incomplete,
+        fail,
+    };
+    const log = bun.Output.scoped(.TransmitFile, false);
+
+    pub fn init() TransmitFileContext {
+        if (!bun.Environment.isWindows) {
+            @compileError("TransmitFileContext can only be used on windows");
+        }
+
+        var this = TransmitFileContext{
+            .overlapped = std.mem.zeroes(std.os.windows.OVERLAPPED),
+            .status = .ready,
+        };
+        this.overlapped.hEvent = std.os.windows.ws2_32.WSACreateEvent();
+        return this;
+    }
+
+    pub fn sendfile(this: *TransmitFileContext, socket: bun.FileDescriptor, file: bun.FileDescriptor) Maybe(u32) {
+        // if is done, we dont have nothing todo here
+        if (this.status == .fail) return .{ .result = 0 };
+
+        const wsocket = bun.socketcast(socket);
+        const file_handle = libuv.uv_get_osfhandle(bun.uvfdcast(file));
+        const overlapped_ptr = &this.overlapped;
+        // we are still waiting for OverlappedResult
+        if (this.status == .ready) {
+            if (std.os.windows.ws2_32.TransmitFile(wsocket, file_handle, 0, 64 * 1024, overlapped_ptr, null, 0) == 0) {
+                const err = bun.windows.Win32Error.get();
+                if (err != bun.windows.Win32Error.WSA_IO_PENDING) {
+                    this.status = .fail;
+                    return .{ .err = bun.sys.Error.fromCodeInt(@intFromEnum(err), .sendfile) };
+                }
+            }
+        }
+
+        var sended: u32 = 0;
+        // check the overlapped status
+        if (std.os.windows.kernel32.GetOverlappedResult(wsocket, overlapped_ptr, &sended, 0) == 0) {
+            const err = bun.windows.Win32Error.get();
+            if (err != bun.windows.Win32Error.WSA_IO_INCOMPLETE) {
+                this.status = .fail;
+                return .{ .err = bun.sys.Error.fromCodeInt(@intFromEnum(err), .sendfile) };
+            }
+            // still need to wait more before continue sending
+            this.status = .incomplete;
+        } else {
+            // ready for the next call TransmitFile
+            this.status = .ready;
+        }
+
+        return .{ .result = sended };
+    }
+};

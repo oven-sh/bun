@@ -1314,6 +1314,7 @@ pub fn withoutUTF8BOM(bytes: []const u8) []const u8 {
 /// This is intended to be used for strings that go to JavaScript
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
+        var start: ?usize = null;
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
             const trimmed = bun.simdutf.trim.utf8(bytes);
 
@@ -1329,21 +1330,39 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
 
             // avoid `.with_errors.le()` due to https://github.com/simdutf/simdutf/issues/213
-            switch (bun.simdutf.convert.utf8.to.utf16.le(trimmed, out)) {
-                0 => {
-                    if (comptime fail_if_invalid) {
-                        allocator.free(out);
-                        return error.InvalidByteSequence;
-                    }
+            // switch (bun.simdutf.convert.utf8.to.utf16.le(trimmed, out)) {
+            //     0 => {
+            //         if (comptime fail_if_invalid) {
+            //             allocator.free(out);
+            //             return error.InvalidByteSequence;
+            //         }
 
-                    break :simd .{
-                        .items = out[0..i],
-                        .capacity = out.len,
-                        .allocator = allocator,
-                    };
-                },
-                else => return out,
+            //         break :simd .{
+            //             .items = out[0..i],
+            //             .capacity = out.len,
+            //             .allocator = allocator,
+            //         };
+            //     },
+            //     else => return out,
+            // }
+
+            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out);
+            if (res.status == .success) {
+                return out;
             }
+
+            if (comptime fail_if_invalid) {
+                allocator.free(out);
+                return error.InvalidByteSequence;
+            }
+
+            start = res.count;
+
+            break :simd .{
+                .items = out[0..res.count -| 1],
+                .capacity = out.len,
+                .allocator = allocator,
+            };
         } else null;
         var output = output_ orelse fallback: {
             var list = try std.ArrayList(u16).initCapacity(allocator, i + 2);
@@ -1353,7 +1372,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
         };
         errdefer output.deinit();
 
-        var remaining = bytes[i..];
+        var remaining = bytes[start orelse i ..];
 
         {
             const sequence: [4]u8 = switch (remaining.len) {
@@ -1434,6 +1453,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
 
 pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
+        var start: ?usize = null;
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
             const out_length = bun.simdutf.length.utf16.from.utf8.le(bytes);
 
@@ -1443,22 +1463,23 @@ pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, compt
             var out = try allocator.alloc(u16, out_length);
             log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
 
-            // avoid `.with_errors.le()` due to https://github.com/simdutf/simdutf/issues/213
-            switch (bun.simdutf.convert.utf8.to.utf16.le(bytes, out)) {
-                0 => {
-                    if (comptime fail_if_invalid) {
-                        allocator.free(out);
-                        return error.InvalidByteSequence;
-                    }
-
-                    break :simd .{
-                        .items = out[0..i],
-                        .capacity = out.len,
-                        .allocator = allocator,
-                    };
-                },
-                else => return out,
+            const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(bytes, out);
+            if (res.status == .success) {
+                return out;
             }
+
+            if (comptime fail_if_invalid) {
+                allocator.free(out);
+                return error.InvalidByteSequence;
+            }
+
+            start = res.count;
+
+            break :simd .{
+                .items = out[0..res.count -| 1],
+                .capacity = out.len,
+                .allocator = allocator,
+            };
         } else null;
         var output = output_ orelse fallback: {
             var list = try std.ArrayList(u16).initCapacity(allocator, i + 2);
@@ -1468,7 +1489,7 @@ pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, compt
         };
         errdefer output.deinit();
 
-        var remaining = bytes[i..];
+        var remaining = bytes[start orelse i ..];
 
         {
             const sequence: [4]u8 = switch (remaining.len) {

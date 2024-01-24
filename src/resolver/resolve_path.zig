@@ -1914,7 +1914,7 @@ pub const PosixToWinNormalizer = struct {
 };
 
 /// Used in PathInlines.h
-/// Overwrites the `len` input with the len of the returned pointer.
+/// gets cwd off of the global object
 export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     globalObject: *bun.JSC.JSGlobalObject,
     in: bun.String,

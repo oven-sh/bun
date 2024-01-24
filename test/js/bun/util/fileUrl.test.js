@@ -1,5 +1,6 @@
 import { expect, it, describe } from "bun:test";
 import { pathToFileURL, fileURLToPath } from "bun";
+
 describe("pathToFileURL", () => {
   it("should convert a path to a file url", () => {
     expect(pathToFileURL("/path/to/file.js").href).toBe("file:///path/to/file.js");
@@ -34,5 +35,10 @@ describe("fileURLToPath", () => {
         expect(() => fileURLToPath(value)).toThrow();
       });
     });
+  });
+
+  it("should add absolute part to relative file (#6456)", () => {
+    const url = pathToFileURL("foo.txt");
+    expect(url.href).toBe(`${pathToFileURL(process.cwd())}/foo.txt`);
   });
 });

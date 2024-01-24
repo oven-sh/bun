@@ -1816,6 +1816,11 @@ pub const posix = struct {
     pub const STDOUT_FD = toFD(1);
     pub const STDERR_FD = toFD(2);
 
+    pub inline fn initArgv(allocator: std.mem.Allocator) !void {
+        _ = allocator;
+        // do nothing, as we can just use std.os.argv
+    }
+
     pub inline fn argv() [][*:0]u8 {
         return std.os.argv;
     }
@@ -1839,11 +1844,9 @@ pub const win32 = struct {
 
     var _argv: [][*:0]u8 = &[_][*:0]u8{};
 
+    // convert the command line arguments from UTF-16 to UTF-8 (this requires allocations)
     pub fn initArgv(allocator: std.mem.Allocator) !void {
         var iter = try std.process.ArgIterator.initWithAllocator(allocator);
-        defer iter.deinit();
-        // const cmd_line_w = std.os.windows.kernel32.GetCommandLineW();
-        // var iter = try ArgIteratorWindows.init(allocator, cmd_line_w);
         defer iter.deinit();
         var args = std.ArrayList([*:0]u8).init(allocator);
         while (iter.next()) |arg| {

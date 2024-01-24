@@ -1271,11 +1271,11 @@ pub const PackageInstall = struct {
                     defer in_file.close();
 
                     if (comptime Environment.isWindows) {
-                        const in_path = bun.getFdPathW(in_file.handle, &in_buf) catch unreachable;
+                        const in_path = bun.getFdPathW(in_file.handle, &in_buf) catch @panic("Failed to copyfile");
                         in_buf[in_path.len] = 0;
                         const in = in_buf[0..in_path.len :0];
 
-                        const out_path = bun.getFdPathW(outfile.handle, &out_buf) catch unreachable;
+                        const out_path = bun.getFdPathW(outfile.handle, &out_buf) catch @panic("Failed to copyfile");
                         out_buf[out_path.len] = 0;
                         const out = out_buf[0..out_path.len :0];
 

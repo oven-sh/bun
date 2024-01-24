@@ -37,6 +37,10 @@ pub fn main() void {
 
         // This fixes printing unicode characters
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
+        // on windows argv is passed in UTF-16, so we need to convert it to UTF-8
+        bun.win32.initArgv(bun.default_allocator) catch |err| {
+            Output.panic("Failed to initialize argv: {s}\n", .{@errorName(err)});
+        };
     }
 
     bun.start_time = std.time.nanoTimestamp();

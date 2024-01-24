@@ -175,16 +175,16 @@ console.log(hole([1, 2, 3], 0));
 console.log({ "": "" });
 
 {
-class FooBar {
-  constructor() {
-    this.abc = () => {};
+  class FooBar {
+    constructor() {
+      this.abc = () => {};
+    }
+
+    method() {
+      return 123;
+    }
   }
 
-  method() {
-    return 123;
-  }
-}
-
-const f = new FooBar();
-console.log(f);
+  const f = new FooBar();
+  console.log(f);
 }

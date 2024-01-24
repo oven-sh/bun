@@ -408,3 +408,34 @@ pub const Waker = struct {
         this.loop.wakeup();
     }
 };
+
+pub const Closer = struct {
+    io_request: uv.fs_t = std.mem.zeroes(uv.fs_t),
+    pub usingnamespace bun.New(@This());
+
+    pub fn close(fd: uv.uv_file, loop: *uv.Loop) void {
+        var closer = Closer.new(.{});
+
+        if (uv.uv_fs_close(loop, &closer.io_request, fd, &onClose).errEnum()) |err| {
+            Output.debugWarn("libuv close() failed = {}", .{err});
+            closer.destroy();
+        }
+
+        closer.io_request.data = closer;
+    }
+
+    fn onClose(req: *uv.fs_t) callconv(.C) void {
+        var closer = @fieldParentPtr(Closer, "io_request", req);
+        std.debug.assert(closer == @as(*Closer, @alignCast(@ptrCast(req.data.?))));
+        bun.sys.syslog("uv_fs_close() = {}", .{req.result});
+
+        if (comptime Environment.allow_assert) {
+            if (closer.io_request.result.errEnum()) |err| {
+                Output.debugWarn("libuv close() failed = {}", .{err});
+            }
+        }
+
+        uv.uv_fs_req_cleanup(req);
+        closer.destroy();
+    }
+};

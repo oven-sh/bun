@@ -421,7 +421,7 @@ if (ci) {
   if (truncated_report.length > 512 * 1000) {
     truncated_report = truncated_report.slice(0, 512 * 1000) + "\n\n...truncated...";
   }
-  action.summary.addRaw(report);
+  action.summary.addRaw(truncated_report);
   await action.summary.write();
 } else {
   if (windows && (regressions.length > 0 || fixes.length > 0)) {

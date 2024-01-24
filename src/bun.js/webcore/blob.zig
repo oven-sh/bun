@@ -2038,7 +2038,7 @@ pub const Blob = struct {
                                     this.system_error = err.toSystemError();
                                     if (this.system_error.?.path.isEmpty()) {
                                         this.system_error.?.path = if (this.file_store.pathlike == .path)
-                                            bun.String.create(this.file_store.pathlike.path.slice())
+                                            bun.String.createUTF8(this.file_store.pathlike.path.slice())
                                         else
                                             bun.String.empty;
                                     }
@@ -2152,7 +2152,7 @@ pub const Blob = struct {
                     this.system_error = JSC.SystemError{
                         .code = bun.String.static("EISDIR"),
                         .path = if (this.file_store.pathlike == .path)
-                            bun.String.create(this.file_store.pathlike.path.slice())
+                            bun.String.createUTF8(this.file_store.pathlike.path.slice())
                         else
                             bun.String.empty,
                         .message = bun.String.static("Directories cannot be read like files"),
@@ -2453,7 +2453,7 @@ pub const Blob = struct {
                         this.system_error = JSC.SystemError{
                             .code = bun.String.static("EISDIR"),
                             .path = if (this.file_store.pathlike == .path)
-                                bun.String.create(this.file_store.pathlike.path.slice())
+                                bun.String.createUTF8(this.file_store.pathlike.path.slice())
                             else
                                 bun.String.empty,
                             .message = bun.String.static("Directories cannot be read like files"),
@@ -2993,7 +2993,7 @@ pub const Blob = struct {
                 const globalThis = this.globalThis;
                 var system_error: SystemError = this.system_error orelse SystemError{};
                 if (this.source_file_store.pathlike == .path and system_error.path.isEmpty()) {
-                    system_error.path = bun.String.create(this.source_file_store.pathlike.path.slice());
+                    system_error.path = bun.String.createUTF8(this.source_file_store.pathlike.path.slice());
                 }
 
                 if (system_error.message.isEmpty()) {
@@ -3966,7 +3966,7 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
         if (this.getFileName()) |path| {
-            var str = bun.String.create(path);
+            var str = bun.String.createUTF8(path);
             return str.toJS(globalThis);
         }
 

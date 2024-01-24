@@ -486,12 +486,14 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     auto& globalObject = *reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto& vm = globalObject.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto path = JSC::JSValue::encode(callFrame->argument(0));
+    auto pathValue = callFrame->argument(0);
 
-    JSC::JSString* pathString = JSC::JSValue::decode(path).toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+    WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode({}));
 
-    auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString->value(lexicalGlobalObject));
+    pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
+
+    auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
     auto object = WebCore::DOMURL::create(fileURL.string(), String());
     auto jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));

@@ -1586,7 +1586,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         this.terminate(ErrorCode.invalid_utf8);
                         return;
                     }
-                    reason = bun.String.create(body_slice);
+                    reason = bun.String.createUTF8(body_slice);
                     @memcpy(final_body_bytes[8..][0..body_len], body_slice);
                 }
             }

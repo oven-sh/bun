@@ -85,18 +85,6 @@ To verify, you can check for an MSVC-only command line such as `mt.exe`
 Get-Command mt
 ```
 
-### Zig
-
-Bun pins a version of Zig. As the compiler is still in development, breaking changes happen often that will break the build. It is recommended to use [Zigup](https://github.com/marler8997/zigup/releases) as it can quickly switch to any version by name, but you can also [manually download Zig](https://ziglang.org/download/).
-
-```bash
-$ zigup 0.12.0-dev.1604+caae40c21
-```
-
-{% callout %}
-We last updated Zig on **October 26th, 2023**
-{% /callout %}
-
 ### Codegen
 
 On Unix platforms, we depend on an existing build of Bun to generate code for itself. Since the Windows build is not stable enough for this to run the code generators, you currently need to use another computer or WSL to generate this:

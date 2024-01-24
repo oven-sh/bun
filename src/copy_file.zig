@@ -52,10 +52,9 @@ pub fn copyFile(in: InputType, out: InputType) CopyFileError!void {
                 .NOMEM => return error.OutOfMemory,
                 .NOSPC => return error.NoSpaceLeft,
                 .OVERFLOW => return error.Unseekable,
-                .PERM => return error.PermissionDenied,
                 .TXTBSY => return error.FileBusy,
                 .XDEV => {},
-                .BADF, .INVAL, .OPNOTSUPP, .NOSYS => {
+                .ACCES, .BADF, .INVAL, .OPNOTSUPP, .NOSYS, .PERM => {
                     bun.Output.debug("ioctl_ficlonerange is NOT supported", .{});
                     can_use_ioctl_ficlone_.store(-1, .Monotonic);
                 },

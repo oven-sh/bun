@@ -601,7 +601,7 @@ function ffiRunner(fast) {
           expect(bigint ? BigInt(fn(0n)) : fn(0)).toBe(bigint ? 0n : 0);
 
           for (let i = min; i <= max; i += inc) {
-            // expect(bigint ? BigInt(fn(i)) : fn(i)).toBe(i);
+            expect(bigint ? BigInt(fn(i)) : fn(i)).toBe(i);
           }
         });
       }

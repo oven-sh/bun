@@ -1,7 +1,7 @@
 // @known-failing-on-windows: 1 failing
 import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, ospath } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import * as Module from "node:module";
 import { join, sep } from "node:path";
@@ -191,7 +191,7 @@ it("import.meta.require (javascript, live bindings)", () => {
 });
 
 it("import.meta.dir", () => {
-  expect(dir.replaceAll("\\", "/").endsWith("/bun/test/js/bun/resolve")).toBe(true);
+  expect(dir).toEndWith(ospath("/bun/test/js/bun/resolve"));
 });
 
 it("import.meta.dirname", () => {
@@ -203,7 +203,7 @@ it("import.meta.filename", () => {
 });
 
 it("import.meta.path", () => {
-  expect(path.replaceAll("\\", "/").endsWith("/bun/test/js/bun/resolve/import-meta.test.js")).toBe(true);
+  expect(path).toEndWith(ospath("/bun/test/js/bun/resolve/import-meta.test.js"));
 });
 
 it('require("bun") works', () => {
@@ -238,4 +238,20 @@ it("import non exist error code", async () => {
   } catch (e) {
     expect(e.code).toBe("ERR_MODULE_NOT_FOUND");
   }
+});
+
+it("import.meta paths have the correct slash", () => {
+  const correct_sep = sep;
+  const wrong_sep = correct_sep === "/" ? "\\" : "/";
+
+  expect(import.meta.path).toInclude(correct_sep);
+  expect(import.meta.path).not.toInclude(wrong_sep);
+  expect(import.meta.dir).toInclude(correct_sep);
+  expect(import.meta.dir).not.toInclude(wrong_sep);
+
+  expect(import.meta.file).not.toInclude(sep);
+  expect(import.meta.file).not.toInclude(sep);
+
+  expect(import.meta.url).toStartWith("file:///");
+  expect(import.meta.url).not.toInclude("\\");
 });

@@ -312,8 +312,8 @@ pub const RuntimeTranspilerStore = struct {
             const promise = this.promise.swap();
             const globalThis = this.globalThis;
             this.poll_ref.unref(vm);
-            var specifier = if (this.parse_error == null) this.resolved_source.specifier else bun.String.create(this.path.text);
-            const referrer = bun.String.create(this.referrer);
+            var specifier = if (this.parse_error == null) this.resolved_source.specifier else bun.String.createUTF8(this.path.text);
+            const referrer = bun.String.createUTF8(this.referrer);
             var log = this.log;
             this.log = logger.Log.init(bun.default_allocator);
             var resolved_source = this.resolved_source;
@@ -516,7 +516,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (cache.entry) |*entry| {
-                const duped = String.create(specifier);
+                const duped = String.createUTF8(specifier);
                 vm.source_mappings.putMappings(parse_result.source, .{
                     .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
                     .allocator = bun.default_allocator,
@@ -531,7 +531,7 @@ pub const RuntimeTranspilerStore = struct {
                     .source_code = switch (entry.output_code) {
                         .string => entry.output_code.string,
                         .utf8 => brk: {
-                            const result = bun.String.create(entry.output_code.utf8);
+                            const result = bun.String.createUTF8(entry.output_code.utf8);
                             cache.output_code_allocator.free(entry.output_code.utf8);
                             entry.output_code.utf8 = "";
                             break :brk result;
@@ -547,7 +547,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (parse_result.already_bundled) {
-                const duped = String.create(specifier);
+                const duped = String.createUTF8(specifier);
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
@@ -624,7 +624,7 @@ pub const RuntimeTranspilerStore = struct {
                 dumpSource(specifier, &printer);
             }
 
-            const duped = String.create(specifier);
+            const duped = String.createUTF8(specifier);
             this.resolved_source = ResolvedSource{
                 .allocator = null,
                 .source_code = brk: {
@@ -640,7 +640,7 @@ pub const RuntimeTranspilerStore = struct {
                     break :brk result;
                 },
                 .specifier = duped,
-                .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.create(path.text),
+                .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.createUTF8(path.text),
                 .commonjs_exports = null,
                 .commonjs_exports_len = if (parse_result.ast.exports_kind == .cjs)
                     std.math.maxInt(u32)
@@ -1651,7 +1651,7 @@ pub const ModuleLoader = struct {
                 if (loader == .json and !path.isJSONCFile()) {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = bun.String.create(parse_result.source.contents),
+                        .source_code = bun.String.createUTF8(parse_result.source.contents),
                         .specifier = input_specifier,
                         .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
 
@@ -1700,7 +1700,7 @@ pub const ModuleLoader = struct {
                         .source_code = switch (entry.output_code) {
                             .string => entry.output_code.string,
                             .utf8 => brk: {
-                                const result = bun.String.create(entry.output_code.utf8);
+                                const result = bun.String.createUTF8(entry.output_code.utf8);
                                 cache.output_code_allocator.free(entry.output_code.utf8);
                                 entry.output_code.utf8 = "";
                                 break :brk result;
@@ -1994,7 +1994,7 @@ pub const ModuleLoader = struct {
 
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.create(sqlite_module_source_code_string),
+                    .source_code = bun.String.createUTF8(sqlite_module_source_code_string),
                     .specifier = input_specifier,
                     .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
                     .tag = .esm,
@@ -2020,7 +2020,7 @@ pub const ModuleLoader = struct {
                     writer.writeAll(";\n") catch unreachable;
                 }
 
-                const public_url = bun.String.create(buf.toOwnedSliceLeaky());
+                const public_url = bun.String.createUTF8(buf.toOwnedSliceLeaky());
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
                     .source_code = public_url,
@@ -2259,7 +2259,7 @@ pub const ModuleLoader = struct {
                 .@"bun:main" => {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = bun.String.create(jsc_vm.entry_point.source.contents),
+                        .source_code = bun.String.createUTF8(jsc_vm.entry_point.source.contents),
                         .specifier = specifier,
                         .source_url = specifier,
                         .hash = 0,
@@ -2342,7 +2342,7 @@ pub const ModuleLoader = struct {
             if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(spec.slice()))) |entry| {
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.create(entry.source.contents),
+                    .source_code = bun.String.createUTF8(entry.source.contents),
                     .specifier = specifier,
                     .source_url = specifier.dupeRef(),
                     .hash = 0,
@@ -2862,6 +2862,6 @@ export fn Bun__resolveEmbeddedNodeFile(vm: *JSC.VirtualMachine, in_out_str: *bun
         else => {},
     }
 
-    in_out_str.* = bun.String.create(bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename));
+    in_out_str.* = bun.String.createUTF8(bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename));
     return true;
 }

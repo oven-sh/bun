@@ -1019,12 +1019,12 @@ pub const VirtualMachine = struct {
             const debugger = other_vm.debugger.?;
 
             if (debugger.unix.len > 0) {
-                var url = bun.String.create(debugger.unix);
+                var url = bun.String.createUTF8(debugger.unix);
                 Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
             }
 
             if (debugger.path_or_port) |path_or_port| {
-                var url = bun.String.create(path_or_port);
+                var url = bun.String.createUTF8(path_or_port);
                 Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
             }
 

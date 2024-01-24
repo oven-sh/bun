@@ -128,7 +128,6 @@ NestedClass {
   foo: FooWithProp {
     a: 1,
   },
-  test: [Function: test],
 }
 myCustomName {
   [Symbol(Symbol.toStringTag)]: "myCustomName",
@@ -243,6 +242,7 @@ myCustomName {
 }
 {
   "": "",
-{
-  abc: [Function]
+}
+FooBar {
+  abc: [Function],
 }

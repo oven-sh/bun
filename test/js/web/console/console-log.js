@@ -174,6 +174,7 @@ console.log(hole([1, 2, 3], 0));
 
 console.log({ "": "" });
 
+{
 class FooBar {
   constructor() {
     this.abc = () => {};
@@ -186,3 +187,4 @@ class FooBar {
 
 const f = new FooBar();
 console.log(f);
+}

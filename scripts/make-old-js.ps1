@@ -1,23 +1,20 @@
 $npm_client = "npm"
 
-& ${npm_client} i
+# & ${npm_client} i
 
 $root = Join-Path (Split-Path -Path $MyInvocation.MyCommand.Definition -Parent) "..\"
-$esbuild = Join-Path $root "node_modules\.bin\esbuild"
+$esbuild = Join-Path $root "node_modules\.bin\esbuild.cmd"
 
 $env:NODE_ENV = "production"
 
 # runtime.js
-& ${esbuild} "--define:process.env.NODE_ENV=`"production`"" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js
-Add-Content src/runtime.out.js (Get-Content src/runtime.footer.js)
-& ${esbuild} "--define:process.env.NODE_ENV=`"production`"" --target=esnext  --bundle src/runtime/index-with-refresh.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.refresh.js
-Add-Content src/runtime.out.refresh.js (Get-Content src/runtime.footer.with-refresh.js)
-& ${esbuild} "--define:process.env.NODE_ENV=`"production`"" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.node.pre.out.js
-Add-Content src/runtime.node.out.js (Get-Content src/runtime.node.pre.out.js)
-Add-Content src/runtime.node.out.js (Get-Content src/runtime.footer.node.js)
-& ${esbuild} "--define:process.env.NODE_ENV=`"production`"" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.bun.pre.out.js
-Add-Content src/runtime.bun.out.js (Get-Content src/runtime.node.pre.out.js)
-Add-Content src/runtime.bun.out.js (Get-Content src/runtime.footer.node.js)
+echo $esbuild
+& ${esbuild} `
+    "--target=esnext" "--bundle" `
+    "src/runtime.bun.js" `
+    "--format=esm" "--platform=node" "--minify" "--external:/bun:*" `
+    "--outfile=src/runtime.out.js"
+if ($LASTEXITCODE -ne 0) { throw "esbuild failed with exit code $LASTEXITCODE" }
 
 # fallback_decoder
 & ${esbuild} --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js

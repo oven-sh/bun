@@ -157,7 +157,7 @@ fn dumpSource(specifier: string, printer: anytype) void {
 }
 
 fn dumpSourceString(specifier: string, written: []const u8) void {
-    if (Environment.isWindows or !Environment.isDebug) return;
+    if (!Environment.isDebug) return;
 
     const BunDebugHolder = struct {
         pub var dir: ?std.fs.Dir = null;
@@ -168,15 +168,40 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
     defer BunDebugHolder.lock.unlock();
 
     const dir = BunDebugHolder.dir orelse dir: {
-        const dir = std.fs.cwd().makeOpenPath("/tmp/bun-debug-src/", .{}) catch return;
+        const base_name = switch (Environment.os) {
+            else => "/tmp/bun-debug-src/",
+            .windows => brk: {
+                const temp = bun.fs.FileSystem.RealFS.platformTempDir();
+                var win_temp_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+                @memcpy(win_temp_buffer[0..temp.len], temp);
+                const suffix = "\\bun-debug-src";
+                @memcpy(win_temp_buffer[temp.len .. temp.len + suffix.len], suffix);
+                win_temp_buffer[temp.len + suffix.len] = 0;
+                break :brk win_temp_buffer[0 .. temp.len + suffix.len :0];
+            },
+        };
+        const dir = std.fs.cwd().makeOpenPath(base_name, .{}) catch |e| {
+            Output.debug("Failed to dump source string: {}", .{e});
+            return;
+        };
         BunDebugHolder.dir = dir;
         break :dir dir;
     };
 
     if (std.fs.path.dirname(specifier)) |dir_path| {
-        var parent = dir.makeOpenPath(dir_path[1..], .{}) catch return;
+        const root_len = switch (Environment.os) {
+            else => "/".len,
+            .windows => bun.path.windowsFilesystemRoot(dir_path).len,
+        };
+        var parent = dir.makeOpenPath(dir_path[root_len..], .{}) catch |e| {
+            Output.debug("Failed to dump source string: makeOpenPath({s}[{d}..]) {}", .{ dir_path, root_len, e });
+            return;
+        };
         defer parent.close();
-        parent.writeFile(std.fs.path.basename(specifier), written) catch return;
+        parent.writeFile(std.fs.path.basename(specifier), written) catch |e| {
+            Output.debug("Failed to dump source string: writeFile {}", .{e});
+            return;
+        };
     } else {
         dir.writeFile(std.fs.path.basename(specifier), written) catch return;
     }
@@ -497,7 +522,7 @@ pub const RuntimeTranspilerStore = struct {
                     .allocator = bun.default_allocator,
                 }) catch {};
 
-                if (comptime Environment.allow_assert) {
+                if (comptime Environment.dump_source) {
                     dumpSourceString(specifier, entry.output_code.byteSlice());
                 }
 

@@ -252,6 +252,6 @@ it("import.meta paths have the correct slash", () => {
   expect(import.meta.file).not.toInclude(sep);
   expect(import.meta.file).not.toInclude(sep);
 
-  expect(import.meta.url).toStartWith('file:///');
-  expect(import.meta.url).not.toInclude('\\');
-})
+  expect(import.meta.url).toStartWith("file:///");
+  expect(import.meta.url).not.toInclude("\\");
+});

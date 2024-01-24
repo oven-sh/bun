@@ -9,7 +9,7 @@ describe("pathToFileURL", () => {
 
 describe("fileURLToPath", () => {
   it("should convert a file url to a path", () => {
-    if(process.platform === "win32") {
+    if (process.platform === "win32") {
       expect(() => fileURLToPath("file:///path/to/file.js")).toThrow("File URL path must be absolute");
     } else {
       expect(fileURLToPath("file:///path/to/file.js")).toBe("/path/to/file.js");
@@ -17,7 +17,7 @@ describe("fileURLToPath", () => {
   });
 
   it("should convert a URL to a path", () => {
-    if(process.platform === "win32") {
+    if (process.platform === "win32") {
       expect(() => fileURLToPath(new URL("file:///path/to/file.js"))).toThrow("File URL path must be absolute");
     } else {
       expect(fileURLToPath(new URL("file:///path/to/file.js"))).toBe("/path/to/file.js");

@@ -6,8 +6,7 @@ The following document is not yet complete, please join the [#windows channel on
 
 Here are the extra steps I ran on my fresh windows machine (some of these are a little opiniated)
 
-- Change user to a local account (set username to `window` and empty password)
-  - (Empty password will disable the password and auto-login on boot)
+- Change user to a local account (set username to `window` and 'bun!')
 - Set Windows Terminal as default terminal
 - Install latest version of Powershell
 - Display scale to 100%

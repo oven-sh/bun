@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { expect, it, describe } from "bun:test";
 import { pathToFileURL, fileURLToPath } from "bun";
 describe("pathToFileURL", () => {
@@ -9,10 +8,19 @@ describe("pathToFileURL", () => {
 
 describe("fileURLToPath", () => {
   it("should convert a file url to a path", () => {
-    expect(fileURLToPath("file:///path/to/file.js")).toBe("/path/to/file.js");
+    if(process.platform === "win32") {
+      expect(() => fileURLToPath("file:///path/to/file.js")).toThrow("File URL path must be absolute");
+    } else {
+      expect(fileURLToPath("file:///path/to/file.js")).toBe("/path/to/file.js");
+    }
   });
+
   it("should convert a URL to a path", () => {
-    expect(fileURLToPath(new URL("file:///path/to/file.js"))).toBe("/path/to/file.js");
+    if(process.platform === "win32") {
+      expect(() => fileURLToPath(new URL("file:///path/to/file.js"))).toThrow("File URL path must be absolute");
+    } else {
+      expect(fileURLToPath(new URL("file:///path/to/file.js"))).toBe("/path/to/file.js");
+    }
   });
 
   it("should fail on non-file: URLs", () => {

@@ -759,6 +759,8 @@ pub const Blob = struct {
                         result.err.errno = @intCast(@intFromEnum(bun.C.E.NOENT));
                     }
 
+                    result.err = result.err.withPathLike(destination_blob.store.?.data.file.pathlike);
+
                     return JSC.JSPromise.rejectedPromiseValue(ctx, result.toJS(ctx));
                 }
             }

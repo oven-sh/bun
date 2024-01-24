@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, it, expect, afterEach } from "bun:test";
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";

@@ -23,75 +23,9 @@ const Body = JSC.WebCore.Body;
 
 const PosixSpawn = bun.posix.spawn;
 const CloseCallbackHandler = JSC.WebCore.UVStreamSink.CloseCallbackHandler;
-
-const win_rusage = struct {
-    utime: struct {
-        tv_sec: i64 = 0,
-        tv_usec: i64 = 0,
-    },
-    stime: struct {
-        tv_sec: i64 = 0,
-        tv_usec: i64 = 0,
-    },
-    maxrss: u64 = 0,
-    ixrss: u0 = 0,
-    idrss: u0 = 0,
-    isrss: u0 = 0,
-    minflt: u0 = 0,
-    majflt: u0 = 0,
-    nswap: u0 = 0,
-    inblock: u64 = 0,
-    oublock: u64 = 0,
-    msgsnd: u0 = 0,
-    msgrcv: u0 = 0,
-    nsignals: u0 = 0,
-    nvcsw: u0 = 0,
-    nivcsw: u0 = 0,
-};
-
-const IO_COUNTERS = extern struct {
-    ReadOperationCount: u64 = 0,
-    WriteOperationCount: u64 = 0,
-    OtherOperationCount: u64 = 0,
-    ReadTransferCount: u64 = 0,
-    WriteTransferCount: u64 = 0,
-    OtherTransferCount: u64 = 0,
-};
-
-extern "kernel32" fn GetProcessIoCounters(handle: std.os.windows.HANDLE, counters: *IO_COUNTERS) callconv(std.os.windows.WINAPI) c_int;
-
-fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
-    var usage_info: Rusage = .{ .utime = .{}, .stime = .{} };
-    const process_pid: *anyopaque = process.process_handle;
-    const WinTime = std.os.windows.FILETIME;
-    var starttime: WinTime = undefined;
-    var exittime: WinTime = undefined;
-    var kerneltime: WinTime = undefined;
-    var usertime: WinTime = undefined;
-    // We at least get process times
-    if (std.os.windows.kernel32.GetProcessTimes(process_pid, &starttime, &exittime, &kerneltime, &usertime) == 1) {
-        var temp: u64 = (@as(u64, kerneltime.dwHighDateTime) << 32) | kerneltime.dwLowDateTime;
-        if (temp > 0) {
-            usage_info.stime.tv_sec = @intCast(temp / 10000000);
-            usage_info.stime.tv_usec = @intCast(temp % 1000000);
-        }
-        temp = (@as(u64, usertime.dwHighDateTime) << 32) | usertime.dwLowDateTime;
-        if (temp > 0) {
-            usage_info.utime.tv_sec = @intCast(temp / 10000000);
-            usage_info.utime.tv_usec = @intCast(temp % 1000000);
-        }
-    }
-    var counters: IO_COUNTERS = .{};
-    _ = GetProcessIoCounters(process_pid, &counters);
-    usage_info.inblock = counters.ReadOperationCount;
-    usage_info.oublock = counters.WriteOperationCount;
-
-    const memory = std.os.windows.GetProcessMemoryInfo(process_pid) catch return usage_info;
-    usage_info.maxrss = memory.PeakWorkingSetSize / 1024;
-
-    return usage_info;
-}
-const Rusage = if (Environment.isWindows) win_rusage else std.os.rusage;
+const Rusage = bun.posix.spawn.Rusage;
+const Process = bun.posix.spawn.Process;
+const WaiterThread = bun.posix.spawn.WaiterThread;
 
 pub const ResourceUsage = struct {
     pub usingnamespace JSC.Codegen.JSResourceUsage;
@@ -188,26 +122,18 @@ pub const Subprocess = struct {
     const log = Output.scoped(.Subprocess, false);
     pub usingnamespace JSC.Codegen.JSSubprocess;
     const default_max_buffer_size = 1024 * 1024 * 4;
-
-    pid: if (Environment.isWindows) uv.uv_process_t else std.os.pid_t,
-    // on macOS, this is nothing
-    // on linux, it's a pidfd
-    pidfd: if (Environment.isLinux) std.os.fd_t else u0 = std.math.maxInt(if (Environment.isLinux) std.os.fd_t else u0),
+    process: *Process = undefined,
     pipes: if (Environment.isWindows) [3]uv.uv_pipe_t else u0 = if (Environment.isWindows) std.mem.zeroes([3]uv.uv_pipe_t) else 0,
     closed_streams: u8 = 0,
     deinit_onclose: bool = false,
     stdin: Writable,
     stdout: Readable,
     stderr: Readable,
-    poll: Poll = Poll{ .poll_ref = null },
     stdio_pipes: std.ArrayListUnmanaged(Stdio.PipeExtra) = .{},
+    pid_rusage: ?Rusage = null,
 
     exit_promise: JSC.Strong = .{},
     on_exit_callback: JSC.Strong = .{},
-
-    exit_code: ?u8 = null,
-    signal_code: ?SignalCode = null,
-    waitpid_err: ?bun.sys.Error = null,
 
     globalThis: *JSC.JSGlobalObject,
     observable_getters: std.enums.EnumSet(enum {
@@ -227,7 +153,6 @@ pub const Subprocess = struct {
     ipc_callback: JSC.Strong = .{},
     ipc: IPC.IPCData,
     flags: Flags = .{},
-    pid_rusage: if (Environment.isWindows) ?win_rusage else ?Rusage = null,
 
     pub const Flags = packed struct(u3) {
         is_sync: bool = false,
@@ -236,16 +161,6 @@ pub const Subprocess = struct {
     };
 
     pub const SignalCode = bun.SignalCode;
-
-    pub const Poll = union(enum) {
-        poll_ref: ?*Async.FilePoll,
-        wait_thread: WaitThreadPoll,
-    };
-
-    pub const WaitThreadPoll = struct {
-        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-        poll_ref: Async.KeepAlive = .{},
-    };
 
     pub const IPCMode = enum {
         none,
@@ -267,7 +182,7 @@ pub const Subprocess = struct {
     ) JSValue {
         if (Environment.isWindows) {
             if (this.pid_rusage == null) {
-                this.pid_rusage = uv_getrusage(&this.pid);
+                this.pid_rusage = PosixSpawn.uv_getrusage(&this.pid);
                 if (this.pid_rusage == null) {
                     return JSValue.jsUndefined();
                 }
@@ -291,7 +206,7 @@ pub const Subprocess = struct {
     }
 
     pub fn hasExited(this: *const Subprocess) bool {
-        return this.exit_code != null or this.waitpid_err != null or this.signal_code != null;
+        return this.process.hasExited();
     }
 
     pub fn hasPendingActivityNonThreadsafe(this: *const Subprocess) bool {
@@ -303,18 +218,7 @@ pub const Subprocess = struct {
             return true;
         }
 
-        if (this.poll == .poll_ref) {
-            if (this.poll.poll_ref) |poll| {
-                if (poll.isActive() or poll.isRegistered()) {
-                    return true;
-                }
-            }
-        }
-        if (this.poll == .wait_thread and this.poll.wait_thread.ref_count.load(.Monotonic) > 0) {
-            return true;
-        }
-
-        return false;
+        return this.process.hasRef();
     }
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
@@ -339,14 +243,7 @@ pub const Subprocess = struct {
     pub fn ref(this: *Subprocess) void {
         const vm = this.globalThis.bunVM();
 
-        switch (this.poll) {
-            .poll_ref => if (this.poll.poll_ref) |poll| {
-                poll.ref(vm);
-            },
-            .wait_thread => |*wait_thread| {
-                wait_thread.poll_ref.ref(vm);
-            },
-        }
+        this.process.enableKeepingEventLoopAlive(vm);
 
         if (!this.hasCalledGetter(.stdin)) {
             this.stdin.ref();
@@ -362,21 +259,11 @@ pub const Subprocess = struct {
     }
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
-    pub fn unref(this: *Subprocess, comptime deactivate_poll_ref: bool) void {
+    pub fn unref(this: *Subprocess, comptime _: bool) void {
         const vm = this.globalThis.bunVM();
 
-        switch (this.poll) {
-            .poll_ref => if (this.poll.poll_ref) |poll| {
-                if (deactivate_poll_ref) {
-                    poll.onEnded(vm);
-                } else {
-                    poll.unref(vm);
-                }
-            },
-            .wait_thread => |*wait_thread| {
-                wait_thread.poll_ref.unref(vm);
-            },
-        }
+        this.process.disableKeepingEventLoopAlive(vm.eventLoop());
+
         if (!this.hasCalledGetter(.stdin)) {
             this.stdin.unref();
         }
@@ -644,7 +531,7 @@ pub const Subprocess = struct {
         globalThis: *JSGlobalObject,
     ) callconv(.C) JSValue {
         this.observable_getters.insert(.stderr);
-        return this.stderr.toJS(globalThis, this.exit_code != null);
+        return this.stderr.toJS(globalThis, this.hasExited());
     }
 
     pub fn getStdin(
@@ -660,7 +547,7 @@ pub const Subprocess = struct {
         globalThis: *JSGlobalObject,
     ) callconv(.C) JSValue {
         this.observable_getters.insert(.stdout);
-        return this.stdout.toJS(globalThis, this.exit_code != null);
+        return this.stdout.toJS(globalThis, this.hasExited());
     }
 
     pub fn kill(
@@ -696,7 +583,7 @@ pub const Subprocess = struct {
     }
 
     pub fn hasKilled(this: *const Subprocess) bool {
-        return this.exit_code != null or this.signal_code != null;
+        return this.process.hasKilled();
     }
 
     pub fn tryKill(this: *Subprocess, sig: i32) JSC.Node.Maybe(void) {
@@ -704,51 +591,7 @@ pub const Subprocess = struct {
             return .{ .result = {} };
         }
 
-        send_signal: {
-            if (comptime Environment.isLinux) {
-                // if these are the same, it means the pidfd is invalid.
-                if (!WaiterThread.shouldUseWaiterThread()) {
-                    // should this be handled differently?
-                    // this effectively shouldn't happen
-                    if (this.pidfd == bun.invalid_fd.int()) {
-                        return .{ .result = {} };
-                    }
-
-                    // first appeared in Linux 5.1
-                    const rc = std.os.linux.pidfd_send_signal(this.pidfd, @as(u8, @intCast(sig)), null, 0);
-
-                    if (rc != 0) {
-                        const errno = std.os.linux.getErrno(rc);
-
-                        // if the process was already killed don't throw
-                        if (errno != .SRCH and errno != .NOSYS)
-                            return .{ .err = bun.sys.Error.fromCode(errno, .kill) };
-                    } else {
-                        break :send_signal;
-                    }
-                }
-            }
-            if (comptime Environment.isWindows) {
-                if (std.os.windows.kernel32.TerminateProcess(this.pid.process_handle, @intCast(sig)) == 0) {
-                    const err = @as(bun.C.E, @enumFromInt(@intFromEnum(bun.windows.GetLastError())));
-                    if (err != .SRCH)
-                        return .{ .err = bun.sys.Error.fromCode(err, .kill) };
-                }
-
-                return .{ .result = {} };
-            }
-
-            const err = std.c.kill(this.pid, sig);
-            if (err != 0) {
-                const errno = bun.C.getErrno(err);
-
-                // if the process was already killed don't throw
-                if (errno != .SRCH)
-                    return .{ .err = bun.sys.Error.fromCode(errno, .kill) };
-            }
-        }
-
-        return .{ .result = {} };
+        return this.process.kill(@intCast(sig));
     }
 
     fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.EnumLiteral)) bool {
@@ -760,13 +603,7 @@ pub const Subprocess = struct {
             return;
         }
 
-        const pidfd = this.pidfd;
-
-        this.pidfd = bun.invalid_fd.int();
-
-        if (pidfd != bun.invalid_fd.int()) {
-            _ = bun.sys.close(bun.toFD(pidfd));
-        }
+        this.process.close();
     }
 
     pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
@@ -804,11 +641,15 @@ pub const Subprocess = struct {
         this.ipc_mode = .none;
     }
 
+    pub fn pid(this: *const Subprocess) i32 {
+        return @intCast(this.process.pid);
+    }
+
     pub fn getPid(
         this: *Subprocess,
         _: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        return JSValue.jsNumber(if (Environment.isWindows) this.pid.pid else this.pid);
+        return JSValue.jsNumber(this.pid());
     }
 
     pub fn getKilled(
@@ -1810,6 +1651,87 @@ pub const Subprocess = struct {
         }
     };
 
+    pub fn onProcessExit(this: *Subprocess, _: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
+        log("onProcessExit()", .{});
+        const this_jsvalue = this.this_jsvalue;
+        const globalThis = this.globalThis;
+        defer this.updateHasPendingActivity();
+        this_jsvalue.ensureStillAlive();
+        this.pid_rusage = rusage.*;
+        const is_sync = this.flags.is_sync;
+        defer {
+            if (!is_sync)
+                globalThis.bunVM().drainMicrotasks();
+        }
+
+        if (this.hasExited()) {
+            this.flags.waiting_for_onexit = true;
+
+            const Holder = struct {
+                process: *Subprocess,
+                task: JSC.AnyTask,
+
+                pub fn unref(self: *@This()) void {
+                    // this calls disableKeepingProcessAlive on pool_ref and stdin, stdout, stderr
+                    self.process.flags.waiting_for_onexit = false;
+                    self.process.unref(true);
+                    self.process.updateHasPendingActivity();
+                    bun.default_allocator.destroy(self);
+                }
+            };
+
+            var holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
+
+            holder.* = .{
+                .process = this,
+                .task = JSC.AnyTask.New(Holder, Holder.unref).init(holder),
+            };
+
+            globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
+        }
+
+        if (this.exit_promise.trySwap()) |promise| {
+            switch (status) {
+                .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
+                .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis)),
+                .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
+                else => {
+                    // crash in debug mode
+                    if (comptime Environment.allow_assert)
+                        unreachable;
+                },
+            }
+        }
+
+        if (this.on_exit_callback.trySwap()) |callback| {
+            const waitpid_value: JSValue =
+                if (status == .err)
+                status.err.toJSC(globalThis)
+            else
+                JSC.JSValue.jsUndefined();
+
+            const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) JSC.JSValue.jsUndefined() else this_jsvalue;
+            this_value.ensureStillAlive();
+
+            const args = [_]JSValue{
+                this_value,
+                this.getExitCode(globalThis),
+                this.getSignalCode(globalThis),
+                waitpid_value,
+            };
+
+            const result = callback.callWithThis(
+                globalThis,
+                this_value,
+                &args,
+            );
+
+            if (result.isAnyError()) {
+                globalThis.bunVM().onUnhandledError(globalThis, result);
+            }
+        }
+    }
+
     fn closeIOCallback(this: *Subprocess) void {
         log("closeIOCallback", .{});
         this.closed_streams += 1;
@@ -1864,13 +1786,11 @@ pub const Subprocess = struct {
     pub fn finalize(this: *Subprocess) callconv(.C) void {
         log("finalize", .{});
         std.debug.assert(!this.hasPendingActivity());
-        if (this.closed_streams == @TypeOf(this.closed).len) {
-            log("destroy", .{});
-            bun.default_allocator.destroy(this);
-        } else {
-            this.deinit_onclose = true;
-            this.finalizeStreams();
-        }
+        this.finalizeStreams();
+
+        this.process.detach();
+        this.process.deref();
+        bun.default_allocator.destroy(this);
     }
 
     pub fn getExited(
@@ -1878,15 +1798,19 @@ pub const Subprocess = struct {
         globalThis: *JSGlobalObject,
     ) callconv(.C) JSValue {
         if (this.hasExited()) {
-            const waitpid_error = this.waitpid_err;
-            if (this.exit_code) |code| {
-                return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(code));
-            } else if (waitpid_error) |err| {
-                return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
-            } else if (this.signal_code != null) {
-                return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(128 +% @intFromEnum(this.signal_code.?)));
-            } else {
-                @panic("Subprocess.getExited() has exited but has no exit code or signal code. This is a bug.");
+            switch (this.process.status) {
+                .exited => |exit| {
+                    return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(exit.code));
+                },
+                .signaled => |signal| {
+                    return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(signal.toExitCode() orelse 254));
+                },
+                .err => |err| {
+                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                },
+                else => {
+                    @panic("Subprocess.getExited() has exited but has no exit code or signal code. This is a bug.");
+                },
             }
         }
 
@@ -1901,8 +1825,8 @@ pub const Subprocess = struct {
         this: *Subprocess,
         _: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        if (this.exit_code) |code| {
-            return JSC.JSValue.jsNumber(code);
+        if (this.process.status == .exited) {
+            return JSC.JSValue.jsNumber(this.process.status.exited.code);
         }
         return JSC.JSValue.jsNull();
     }
@@ -1911,7 +1835,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         global: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        if (this.signal_code) |signal| {
+        if (this.process.signalCode()) |signal| {
             if (signal.name()) |name|
                 return JSC.ZigString.init(name).toValueGC(global)
             else
@@ -2213,150 +2137,7 @@ pub const Subprocess = struct {
 
         // WINDOWS:
         if (Environment.isWindows) {
-            argv.append(allocator, null) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
-            };
-
-            if (!override_env and env_array.items.len == 0) {
-                env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err| return globalThis.handleError(err, "in posix_spawn");
-                env_array.capacity = env_array.items.len;
-            }
-
-            env_array.append(allocator, null) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
-            };
-            const env: [*:null]?[*:0]const u8 = @ptrCast(env_array.items.ptr);
-
-            const alloc = globalThis.allocator();
-            var subprocess = alloc.create(Subprocess) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
-            };
-
-            var uv_stdio = [3]uv.uv_stdio_container_s{
-                stdio[0].setUpChildIoUvSpawn(0, &subprocess.pipes[0], true, bun.invalid_fd) catch |err| {
-                    alloc.destroy(subprocess);
-                    return globalThis.handleError(err, "in setting up uv_process stdin");
-                },
-                stdio[1].setUpChildIoUvSpawn(1, &subprocess.pipes[1], false, bun.invalid_fd) catch |err| {
-                    alloc.destroy(subprocess);
-                    return globalThis.handleError(err, "in setting up uv_process stdout");
-                },
-                stdio[2].setUpChildIoUvSpawn(2, &subprocess.pipes[2], false, bun.invalid_fd) catch |err| {
-                    alloc.destroy(subprocess);
-                    return globalThis.handleError(err, "in setting up uv_process stderr");
-                },
-            };
-
-            var cwd_resolver = bun.path.PosixToWinNormalizer{};
-
-            const options = uv.uv_process_options_t{
-                .exit_cb = uvExitCallback,
-                .args = @ptrCast(argv.items[0 .. argv.items.len - 1 :null]),
-                .cwd = cwd_resolver.resolveCWDZ(cwd) catch |err| {
-                    alloc.destroy(subprocess);
-                    return globalThis.handleError(err, "in uv_spawn");
-                },
-                .env = env,
-                .file = argv.items[0].?,
-                .gid = 0,
-                .uid = 0,
-                .stdio = &uv_stdio,
-                .stdio_count = uv_stdio.len,
-                .flags = if (windows_hide == 1) uv.UV_PROCESS_WINDOWS_HIDE else 0,
-            };
-
-            if (uv.uv_spawn(jsc_vm.uvLoop(), &subprocess.pid, &options).errEnum()) |errno| {
-                alloc.destroy(subprocess);
-                globalThis.throwValue(bun.sys.Error.fromCode(errno, .uv_spawn).toJSC(globalThis));
-                return .zero;
-            }
-
-            // When run synchronously, subprocess isn't garbage collected
-            subprocess.* = Subprocess{
-                .pipes = subprocess.pipes,
-                .globalThis = globalThis,
-                .pid = subprocess.pid,
-                .pidfd = 0,
-                .stdin = Writable.initWithPipe(stdio[0], &subprocess.pipes[0], globalThis) catch {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
-                },
-                // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
-                .stdout = Readable.initWithPipe(stdio[1], &subprocess.pipes[1], jsc_vm.allocator, default_max_buffer_size),
-                .stderr = Readable.initWithPipe(stdio[2], &subprocess.pipes[2], jsc_vm.allocator, default_max_buffer_size),
-                .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
-
-                .ipc_mode = ipc_mode,
-                .ipc = undefined,
-                .ipc_callback = undefined,
-
-                .flags = .{
-                    .is_sync = is_sync,
-                },
-            };
-            subprocess.pid.data = subprocess;
-            std.debug.assert(ipc_mode == .none); //TODO:
-
-            const out = if (comptime !is_sync) subprocess.toJS(globalThis) else .zero;
-            subprocess.this_jsvalue = out;
-
-            if (subprocess.stdin == .buffered_input) {
-                subprocess.stdin.buffered_input.remain = switch (subprocess.stdin.buffered_input.source) {
-                    .blob => subprocess.stdin.buffered_input.source.blob.slice(),
-                    .array_buffer => |array_buffer| array_buffer.slice(),
-                };
-                subprocess.stdin.buffered_input.writeIfPossible(is_sync);
-            }
-
-            if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
-                if (is_sync or !lazy) {
-                    subprocess.stdout.pipe.buffer.readAll();
-                }
-            }
-
-            if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
-                if (is_sync or !lazy) {
-                    subprocess.stderr.pipe.buffer.readAll();
-                }
-            }
-
-            if (comptime !is_sync) {
-                return out;
-            }
-
-            // sync
-
-            while (!subprocess.hasExited()) {
-                uv.Loop.get().tickWithTimeout(0);
-
-                if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
-                    subprocess.stderr.pipe.buffer.readAll();
-                }
-
-                if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
-                    subprocess.stdout.pipe.buffer.readAll();
-                }
-
-                jsc_vm.tick();
-                jsc_vm.eventLoop().autoTick();
-            }
-
-            const exitCode = subprocess.exit_code orelse 1;
-            const stdout = subprocess.stdout.toBufferedValue(globalThis);
-            const stderr = subprocess.stderr.toBufferedValue(globalThis);
-            const resource_usage = subprocess.createResourceUsageObject(globalThis);
-            subprocess.finalizeStreams();
-
-            const sync_value = JSC.JSValue.createEmptyObject(globalThis, 5);
-            sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@as(i32, @intCast(exitCode))));
-            sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
-            sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
-            sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
-            sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
-            return sync_value;
+            @panic("TODO");
         }
         // POSIX:
 
@@ -2533,7 +2314,7 @@ pub const Subprocess = struct {
         };
         const env: [*:null]?[*:0]const u8 = @ptrCast(env_array.items.ptr);
 
-        const pid = brk: {
+        const raw_pid = brk: {
             defer {
                 if (stdio[0].isPiped()) {
                     _ = bun.sys.close(bun.toFD(stdin_pipe[0]));
@@ -2565,13 +2346,13 @@ pub const Subprocess = struct {
         var has_rusage = false;
         const pidfd: std.os.fd_t = brk: {
             if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
-                break :brk pid;
+                break :brk raw_pid;
             }
 
             var pidfd_flags = pidfdFlagsForLinux();
 
             var rc = std.os.linux.pidfd_open(
-                @intCast(pid),
+                @intCast(raw_pid),
                 pidfd_flags,
             );
             while (true) {
@@ -2579,7 +2360,7 @@ pub const Subprocess = struct {
                     .SUCCESS => break :brk @as(std.os.fd_t, @intCast(rc)),
                     .INTR => {
                         rc = std.os.linux.pidfd_open(
-                            @intCast(pid),
+                            @intCast(raw_pid),
                             pidfd_flags,
                         );
                         continue;
@@ -2588,7 +2369,7 @@ pub const Subprocess = struct {
                         if (err == .INVAL) {
                             if (pidfd_flags != 0) {
                                 rc = std.os.linux.pidfd_open(
-                                    @intCast(pid),
+                                    @intCast(raw_pid),
                                     0,
                                 );
                                 pidfd_flags = 0;
@@ -2599,7 +2380,7 @@ pub const Subprocess = struct {
                         const error_instance = brk2: {
                             if (err == .NOSYS) {
                                 WaiterThread.setShouldUseWaiterThread();
-                                break :brk pid;
+                                break :brk raw_pid;
                             }
 
                             break :brk2 bun.sys.Error.fromCode(err, .open).toJSC(globalThis);
@@ -2607,7 +2388,7 @@ pub const Subprocess = struct {
                         globalThis.throwValue(error_instance);
                         var status: u32 = 0;
                         // ensure we don't leak the child process on error
-                        _ = std.os.linux.wait4(pid, &status, 0, &rusage_result);
+                        _ = std.os.linux.wait4(raw_pid, &status, 0, &rusage_result);
                         has_rusage = true;
                         return .zero;
                     },
@@ -2622,9 +2403,13 @@ pub const Subprocess = struct {
         // When run synchronously, subprocess isn't garbage collected
         subprocess.* = Subprocess{
             .globalThis = globalThis,
-            .pid = pid,
+            .process = Process.initPosix(
+                @intCast(raw_pid),
+                if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd.int()) else @truncate(pidfd),
+                jsc_vm.eventLoop(),
+                is_sync,
+            ),
             .pid_rusage = if (has_rusage) rusage_result else null,
-            .pidfd = if (WaiterThread.shouldUseWaiterThread()) @truncate(bun.invalid_fd.int()) else @truncate(pidfd),
             .stdin = Writable.init(stdio[0], bun.toFD(stdin_pipe[1]), globalThis) catch {
                 globalThis.throwOutOfMemory();
                 return .zero;
@@ -2642,6 +2427,8 @@ pub const Subprocess = struct {
                 .is_sync = is_sync,
             },
         };
+        subprocess.process.setExitHandler(subprocess);
+
         if (ipc_mode != .none) {
             const ptr = socket.ext(*Subprocess);
             ptr.?.* = subprocess;
@@ -2659,31 +2446,14 @@ pub const Subprocess = struct {
         subprocess.this_jsvalue = out;
 
         var send_exit_notification = false;
-        const watchfd = if (comptime Environment.isLinux) pidfd else pid;
 
         if (comptime !is_sync) {
-            if (!WaiterThread.shouldUseWaiterThread()) {
-                const poll = Async.FilePoll.init(jsc_vm, bun.toFD(watchfd), .{}, Subprocess, subprocess);
-                subprocess.poll = .{ .poll_ref = poll };
-                switch (subprocess.poll.poll_ref.?.register(
-                    jsc_vm.event_loop_handle.?,
-                    .process,
-                    true,
-                )) {
-                    .result => {
-                        subprocess.poll.poll_ref.?.enableKeepingProcessAlive(jsc_vm);
-                    },
-                    .err => |err| {
-                        if (err.getErrno() != .SRCH) {
-                            @panic("This shouldn't happen");
-                        }
-
-                        send_exit_notification = true;
-                        lazy = false;
-                    },
-                }
-            } else {
-                WaiterThread.append(subprocess);
+            switch (subprocess.process.watch(jsc_vm)) {
+                .result => {},
+                .err => {
+                    send_exit_notification = true;
+                    lazy = false;
+                },
             }
         }
 
@@ -2691,7 +2461,8 @@ pub const Subprocess = struct {
             if (send_exit_notification) {
                 // process has already exited
                 // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                subprocess.wait(subprocess.flags.is_sync);
+                subprocess.process.unref(); // from the watch
+                subprocess.process.wait(is_sync);
             }
         }
 
@@ -2729,29 +2500,13 @@ pub const Subprocess = struct {
 
         subprocess.closeIO(.stdin);
 
-        if (!WaiterThread.shouldUseWaiterThread()) {
-            const poll = Async.FilePoll.init(jsc_vm, bun.toFD(watchfd), .{}, Subprocess, subprocess);
-            subprocess.poll = .{ .poll_ref = poll };
-            switch (subprocess.poll.poll_ref.?.register(
-                jsc_vm.event_loop_handle.?,
-                .process,
-                true,
-            )) {
-                .result => {
-                    subprocess.poll.poll_ref.?.enableKeepingProcessAlive(jsc_vm);
-                },
-                .err => |err| {
-                    if (err.getErrno() != .SRCH) {
-                        @panic("This shouldn't happen");
-                    }
-
-                    // process has already exited
-                    // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                    subprocess.onExitNotification();
+        if (comptime is_sync) {
+            switch (subprocess.process.watch(jsc_vm)) {
+                .result => {},
+                .err => {
+                    subprocess.process.wait(true);
                 },
             }
-        } else {
-            WaiterThread.append(subprocess);
         }
 
         while (!subprocess.hasExited()) {
@@ -2767,249 +2522,20 @@ pub const Subprocess = struct {
             jsc_vm.eventLoop().autoTick();
         }
 
-        const exitCode = subprocess.exit_code orelse 1;
+        const exitCode = subprocess.getExitCode(globalThis);
         const stdout = subprocess.stdout.toBufferedValue(globalThis);
         const stderr = subprocess.stderr.toBufferedValue(globalThis);
         const resource_usage = subprocess.createResourceUsageObject(globalThis);
-        subprocess.finalizeStreams();
+        subprocess.finalize();
 
         const sync_value = JSC.JSValue.createEmptyObject(globalThis, 5);
-        sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@as(i32, @intCast(exitCode))));
+        sync_value.put(globalThis, JSC.ZigString.static("exitCode"), exitCode);
         sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
         sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
-        sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
+        sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
         sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
 
         return sync_value;
-    }
-
-    pub fn onExitNotificationTask(this: *Subprocess) void {
-        var vm = this.globalThis.bunVM();
-        const is_sync = this.flags.is_sync;
-
-        defer {
-            if (!is_sync)
-                vm.drainMicrotasks();
-        }
-        this.wait(false);
-    }
-
-    pub fn onExitNotification(
-        this: *Subprocess,
-    ) void {
-        std.debug.assert(this.flags.is_sync);
-
-        this.wait(this.flags.is_sync);
-    }
-
-    pub fn wait(this: *Subprocess, sync: bool) void {
-        if (Environment.isWindows) {
-            @panic("TODO: Windows");
-        }
-        return this.waitWithJSValue(sync, this.this_jsvalue);
-    }
-
-    pub fn watch(this: *Subprocess) JSC.Maybe(void) {
-        if (WaiterThread.shouldUseWaiterThread()) {
-            WaiterThread.append(this);
-            return JSC.Maybe(void){ .result = {} };
-        }
-
-        if (this.poll.poll_ref) |poll| {
-            const registration = poll.register(
-                this.globalThis.bunVM().event_loop_handle.?,
-                .process,
-                true,
-            );
-
-            return registration;
-        } else {
-            @panic("Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.");
-        }
-    }
-
-    pub fn waitWithJSValue(
-        this: *Subprocess,
-        sync: bool,
-        this_jsvalue: JSC.JSValue,
-    ) void {
-        var rusage_result: Rusage = std.mem.zeroes(Rusage);
-        this.onWaitPid(sync, this_jsvalue, PosixSpawn.wait4(this.pid, if (sync) 0 else std.os.W.NOHANG, &rusage_result), rusage_result);
-    }
-
-    pub fn onWaitPid(this: *Subprocess, sync: bool, this_jsvalue: JSC.JSValue, waitpid_result_: JSC.Maybe(PosixSpawn.WaitPidResult), pid_rusage: Rusage) void {
-        if (Environment.isWindows) {
-            @panic("TODO: Windows");
-        }
-        defer if (sync) this.updateHasPendingActivity();
-
-        const pid = this.pid;
-
-        var waitpid_result = waitpid_result_;
-        var rusage_result = pid_rusage;
-
-        while (true) {
-            switch (waitpid_result) {
-                .err => |err| {
-                    this.waitpid_err = err;
-                },
-                .result => |result| {
-                    if (result.pid == pid) {
-                        this.pid_rusage = rusage_result;
-                        if (std.os.W.IFEXITED(result.status)) {
-                            this.exit_code = @as(u8, @truncate(std.os.W.EXITSTATUS(result.status)));
-                        }
-
-                        // True if the process terminated due to receipt of a signal.
-                        if (std.os.W.IFSIGNALED(result.status)) {
-                            this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.TERMSIG(result.status)))));
-                        } else if (
-                        // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/waitpid.2.html
-                        // True if the process has not terminated, but has stopped and can
-                        // be restarted.  This macro can be true only if the wait call spec-ified specified
-                        // ified the WUNTRACED option or if the child process is being
-                        // traced (see ptrace(2)).
-                        std.os.W.IFSTOPPED(result.status)) {
-                            this.signal_code = @as(SignalCode, @enumFromInt(@as(u8, @truncate(std.os.W.STOPSIG(result.status)))));
-                        }
-                    }
-
-                    if (!this.hasExited()) {
-                        switch (this.watch()) {
-                            .result => {},
-                            .err => |err| {
-                                if (comptime Environment.isMac) {
-                                    if (err.getErrno() == .SRCH) {
-                                        waitpid_result = PosixSpawn.wait4(pid, if (sync) 0 else std.os.W.NOHANG, &rusage_result);
-                                        continue;
-                                    }
-                                }
-                            },
-                        }
-                    }
-                },
-            }
-            break;
-        }
-
-        if (!sync and this.hasExited()) {
-            const vm = this.globalThis.bunVM();
-
-            // prevent duplicate notifications
-            switch (this.poll) {
-                .poll_ref => |poll_| {
-                    if (poll_) |poll| {
-                        this.poll.poll_ref = null;
-                        poll.deinitWithVM(vm);
-                    }
-                },
-                .wait_thread => {
-                    this.poll.wait_thread.poll_ref.deactivate(vm.event_loop_handle.?);
-                },
-            }
-
-            this.onExit(this.globalThis, this_jsvalue);
-        }
-    }
-
-    fn uvExitCallback(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.C) void {
-        const subprocess: *Subprocess = @alignCast(@ptrCast(process.data.?));
-        subprocess.globalThis.assertOnJSThread();
-        subprocess.exit_code = @as(u8, @truncate(@as(u64, @intCast(exit_status))));
-        subprocess.signal_code = if (term_signal > 0 and term_signal < @intFromEnum(SignalCode.SIGSYS)) @enumFromInt(term_signal) else null;
-        subprocess.pid_rusage = uv_getrusage(process);
-        subprocess.onExit(subprocess.globalThis, subprocess.this_jsvalue);
-    }
-
-    fn runOnExit(this: *Subprocess, globalThis: *JSC.JSGlobalObject, this_jsvalue: JSC.JSValue) void {
-        const waitpid_error = this.waitpid_err;
-        this.waitpid_err = null;
-
-        if (this.exit_promise.trySwap()) |promise| {
-            if (this.exit_code) |code| {
-                promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(code));
-            } else if (waitpid_error) |err| {
-                promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis));
-            } else if (this.signal_code != null) {
-                promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(this.signal_code.?)));
-            } else {
-                // crash in debug mode
-                if (comptime Environment.allow_assert)
-                    unreachable;
-            }
-        }
-
-        if (this.on_exit_callback.trySwap()) |callback| {
-            const waitpid_value: JSValue =
-                if (waitpid_error) |err|
-                err.toJSC(globalThis)
-            else
-                JSC.JSValue.jsUndefined();
-
-            const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) JSC.JSValue.jsUndefined() else this_jsvalue;
-            this_value.ensureStillAlive();
-
-            const args = [_]JSValue{
-                this_value,
-                this.getExitCode(globalThis),
-                this.getSignalCode(globalThis),
-                waitpid_value,
-            };
-
-            const result = callback.callWithThis(
-                globalThis,
-                this_value,
-                &args,
-            );
-
-            if (result.isAnyError()) {
-                globalThis.bunVM().onUnhandledError(globalThis, result);
-            }
-        }
-    }
-
-    fn onExit(
-        this: *Subprocess,
-        globalThis: *JSC.JSGlobalObject,
-        this_jsvalue: JSC.JSValue,
-    ) void {
-        log("onExit({d}) = {d}, \"{s}\"", .{
-            if (Environment.isWindows) this.pid.pid else this.pid,
-            if (this.exit_code) |e| @as(i32, @intCast(e)) else -1,
-            if (this.signal_code) |code| @tagName(code) else "",
-        });
-        defer this.updateHasPendingActivity();
-        this_jsvalue.ensureStillAlive();
-
-        if (this.hasExited()) {
-            {
-                this.flags.waiting_for_onexit = true;
-
-                const Holder = struct {
-                    process: *Subprocess,
-                    task: JSC.AnyTask,
-
-                    pub fn unref(self: *@This()) void {
-                        // this calls disableKeepingProcessAlive on pool_ref and stdin, stdout, stderr
-                        self.process.flags.waiting_for_onexit = false;
-                        self.process.unref(true);
-                        self.process.updateHasPendingActivity();
-                        bun.default_allocator.destroy(self);
-                    }
-                };
-
-                var holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
-
-                holder.* = .{
-                    .process = this,
-                    .task = JSC.AnyTask.New(Holder, Holder.unref).init(holder),
-                };
-
-                this.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
-            }
-
-            this.runOnExit(globalThis, this_jsvalue);
-        }
     }
 
     const os = std.os;
@@ -3408,384 +2934,4 @@ pub const Subprocess = struct {
     }
 
     pub const IPCHandler = IPC.NewIPCHandler(Subprocess);
-    const ShellSubprocess = bun.shell.Subprocess;
-    const ShellSubprocessMini = bun.shell.SubprocessMini;
-
-    // Machines which do not support pidfd_open (GVisor, Linux Kernel < 5.6)
-    // use a thread to wait for the child process to exit.
-    // We use a single thread to call waitpid() in a loop.
-    pub const WaiterThread = struct {
-        concurrent_queue: Queue = .{},
-        lifecycle_script_concurrent_queue: LifecycleScriptTaskQueue = .{},
-        queue: std.ArrayList(*Subprocess) = std.ArrayList(*Subprocess).init(bun.default_allocator),
-        shell: struct {
-            jsc: ShellSubprocessQueue = .{},
-            mini: ShellSubprocessMiniQueue = .{},
-        } = .{},
-        lifecycle_script_queue: std.ArrayList(*LifecycleScriptSubprocess) = std.ArrayList(*LifecycleScriptSubprocess).init(bun.default_allocator),
-        started: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-        signalfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
-        eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
-
-        pub const ShellSubprocessQueue = NewShellQueue(ShellSubprocess);
-        pub const ShellSubprocessMiniQueue = NewShellQueue(ShellSubprocessMini);
-
-        fn NewShellQueue(comptime T: type) type {
-            return struct {
-                queue: ConcurrentQueue = .{},
-                active: std.ArrayList(*T) = std.ArrayList(*T).init(bun.default_allocator),
-
-                pub const ShellTask = struct {
-                    shell: *T,
-                    next: ?*ShellTask = null,
-
-                    pub usingnamespace bun.New(@This());
-                };
-                pub const ConcurrentQueue = bun.UnboundedQueue(ShellTask, .next);
-
-                pub const ResultTask = struct {
-                    result: JSC.Maybe(PosixSpawn.WaitPidResult),
-                    subprocess: *T,
-
-                    pub usingnamespace bun.New(@This());
-
-                    pub const runFromJSThread = runFromMainThread;
-
-                    pub fn runFromMainThread(self: *@This()) void {
-                        const result = self.result;
-                        var subprocess = self.subprocess;
-                        _ = subprocess.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
-                        self.destroy();
-                        subprocess.onWaitPid(false, result);
-                    }
-
-                    pub fn runFromMainThreadMini(self: *@This(), _: *void) void {
-                        self.runFromMainThread();
-                    }
-                };
-
-                pub fn append(self: *@This(), shell: *T) void {
-                    self.queue.push(
-                        ShellTask.new(.{
-                            .shell = shell,
-                        }),
-                    );
-                }
-
-                pub fn loop(this: *@This()) void {
-                    {
-                        var batch = this.queue.popBatch();
-                        var iter = batch.iterator();
-                        this.active.ensureUnusedCapacity(batch.count) catch unreachable;
-                        while (iter.next()) |task| {
-                            this.active.appendAssumeCapacity(task.shell);
-                            task.destroy();
-                        }
-                    }
-
-                    var queue: []*T = this.active.items;
-                    var i: usize = 0;
-                    while (queue.len > 0 and i < queue.len) {
-                        var process = queue[i];
-
-                        // this case shouldn't really happen
-                        if (process.pid == bun.invalid_fd.int()) {
-                            _ = this.active.orderedRemove(i);
-                            _ = process.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
-                            queue = this.active.items;
-                            continue;
-                        }
-
-                        const result = PosixSpawn.wait4(process.pid, std.os.W.NOHANG, null);
-                        if (result == .err or (result == .result and result.result.pid == process.pid)) {
-                            _ = this.active.orderedRemove(i);
-                            queue = this.active.items;
-
-                            T.GlobalHandle.init(process.globalThis).enqueueTaskConcurrentWaitPid(ResultTask.new(.{
-                                .result = result,
-                                .subprocess = process,
-                            }));
-                        }
-
-                        i += 1;
-                    }
-                }
-            };
-        }
-
-        pub fn setShouldUseWaiterThread() void {
-            @atomicStore(bool, &should_use_waiter_thread, true, .Monotonic);
-        }
-
-        pub fn shouldUseWaiterThread() bool {
-            return @atomicLoad(bool, &should_use_waiter_thread, .Monotonic);
-        }
-
-        pub const WaitTask = struct {
-            subprocess: *Subprocess,
-            next: ?*WaitTask = null,
-        };
-
-        pub fn appendShell(comptime Type: type, process: *Type) void {
-            const GlobalHandle = Type.GlobalHandle;
-
-            if (process.poll == .wait_thread) {
-                process.poll.wait_thread.poll_ref.activate(GlobalHandle.init(process.globalThis).platformEventLoop());
-                _ = process.poll.wait_thread.ref_count.fetchAdd(1, .Monotonic);
-            } else {
-                process.poll = .{
-                    .wait_thread = .{
-                        .poll_ref = .{},
-                        .ref_count = std.atomic.Value(u32).init(1),
-                    },
-                };
-                process.poll.wait_thread.poll_ref.activate(GlobalHandle.init(process.globalThis).platformEventLoop());
-            }
-
-            switch (comptime Type) {
-                ShellSubprocess => instance.shell.jsc.append(process),
-                ShellSubprocessMini => instance.shell.mini.append(process),
-                else => @compileError("Unknown ShellSubprocess type"),
-            }
-            // if (comptime is_js) {
-            //     process.updateHasPendingActivity();
-            // }
-
-            init() catch @panic("Failed to start WaiterThread");
-
-            if (comptime Environment.isLinux) {
-                const one = @as([8]u8, @bitCast(@as(usize, 1)));
-                _ = std.os.write(instance.eventfd.cast(), &one) catch @panic("Failed to write to eventfd");
-            }
-        }
-
-        pub const LifecycleScriptWaitTask = struct {
-            lifecycle_script_subprocess: *bun.install.LifecycleScriptSubprocess,
-            next: ?*LifecycleScriptWaitTask = null,
-        };
-
-        var should_use_waiter_thread = false;
-
-        const stack_size = 512 * 1024;
-        pub const Queue = bun.UnboundedQueue(WaitTask, .next);
-        pub const LifecycleScriptTaskQueue = bun.UnboundedQueue(LifecycleScriptWaitTask, .next);
-        pub var instance: WaiterThread = .{};
-        pub fn init() !void {
-            std.debug.assert(should_use_waiter_thread);
-
-            if (instance.started.fetchMax(1, .Monotonic) > 0) {
-                return;
-            }
-
-            var thread = try std.Thread.spawn(.{ .stack_size = stack_size }, loop, .{});
-            thread.detach();
-
-            if (comptime Environment.isLinux) {
-                const linux = std.os.linux;
-                var mask = std.os.empty_sigset;
-                linux.sigaddset(&mask, std.os.SIG.CHLD);
-                instance.signalfd = bun.toFD(try std.os.signalfd(-1, &mask, linux.SFD.CLOEXEC | linux.SFD.NONBLOCK));
-                instance.eventfd = bun.toFD(try std.os.eventfd(0, linux.EFD.NONBLOCK | linux.EFD.CLOEXEC | 0));
-            }
-        }
-
-        pub const WaitPidResultTask = struct {
-            result: JSC.Maybe(PosixSpawn.WaitPidResult),
-            rusage: Rusage,
-            subprocess: *Subprocess,
-
-            pub fn runFromJSThread(self: *@This()) void {
-                const result = self.result;
-                var subprocess = self.subprocess;
-                _ = subprocess.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
-                bun.default_allocator.destroy(self);
-                subprocess.onWaitPid(false, subprocess.this_jsvalue, result, self.rusage);
-            }
-        };
-
-        pub fn append(process: *Subprocess) void {
-            if (process.poll == .wait_thread) {
-                process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
-                _ = process.poll.wait_thread.ref_count.fetchAdd(1, .Monotonic);
-            } else {
-                process.poll = .{
-                    .wait_thread = .{
-                        .poll_ref = .{},
-                        .ref_count = std.atomic.Value(u32).init(1),
-                    },
-                };
-                process.poll.wait_thread.poll_ref.activate(process.globalThis.bunVM().event_loop_handle.?);
-            }
-
-            const task = bun.default_allocator.create(WaitTask) catch unreachable;
-            task.* = WaitTask{
-                .subprocess = process,
-            };
-            instance.concurrent_queue.push(task);
-            process.updateHasPendingActivity();
-
-            init() catch @panic("Failed to start WaiterThread");
-
-            if (comptime Environment.isLinux) {
-                const one = @as([8]u8, @bitCast(@as(usize, 1)));
-                _ = std.os.write(instance.eventfd.cast(), &one) catch @panic("Failed to write to eventfd");
-            }
-        }
-
-        pub fn appendLifecycleScriptSubprocess(lifecycle_script: *LifecycleScriptSubprocess) void {
-            const task = bun.default_allocator.create(LifecycleScriptWaitTask) catch unreachable;
-            task.* = LifecycleScriptWaitTask{
-                .lifecycle_script_subprocess = lifecycle_script,
-            };
-            instance.lifecycle_script_concurrent_queue.push(task);
-
-            init() catch @panic("Failed to start WaiterThread");
-
-            if (comptime Environment.isLinux) {
-                const one = @as([8]u8, @bitCast(@as(usize, 1)));
-                _ = std.os.write(instance.eventfd.cast(), &one) catch @panic("Failed to write to eventfd");
-            }
-        }
-
-        fn loopSubprocess(this: *WaiterThread) void {
-            {
-                var batch = this.concurrent_queue.popBatch();
-                var iter = batch.iterator();
-                this.queue.ensureUnusedCapacity(batch.count) catch unreachable;
-                while (iter.next()) |task| {
-                    this.queue.appendAssumeCapacity(task.subprocess);
-                    bun.default_allocator.destroy(task);
-                }
-            }
-
-            var queue: []*Subprocess = this.queue.items;
-            var i: usize = 0;
-            while (queue.len > 0 and i < queue.len) {
-                var process = queue[i];
-
-                // this case shouldn't really happen
-                if (process.pid == bun.invalid_fd.int()) {
-                    _ = this.queue.orderedRemove(i);
-                    _ = process.poll.wait_thread.ref_count.fetchSub(1, .Monotonic);
-                    queue = this.queue.items;
-                    continue;
-                }
-
-                var rusage_result: Rusage = std.mem.zeroes(Rusage);
-
-                const result = PosixSpawn.wait4(process.pid, std.os.W.NOHANG, &rusage_result);
-                if (result == .err or (result == .result and result.result.pid == process.pid)) {
-                    _ = this.queue.orderedRemove(i);
-                    process.pid_rusage = rusage_result;
-                    queue = this.queue.items;
-
-                    const task = bun.default_allocator.create(WaitPidResultTask) catch unreachable;
-                    task.* = WaitPidResultTask{
-                        .result = result,
-                        .subprocess = process,
-                        .rusage = rusage_result,
-                    };
-
-                    process.globalThis.bunVMConcurrently().enqueueTaskConcurrent(
-                        JSC.ConcurrentTask.create(
-                            JSC.Task.init(task),
-                        ),
-                    );
-                }
-
-                i += 1;
-            }
-        }
-
-        fn loopLifecycleScriptsSubprocess(this: *WaiterThread) void {
-            {
-                var batch = this.lifecycle_script_concurrent_queue.popBatch();
-                var iter = batch.iterator();
-                this.lifecycle_script_queue.ensureUnusedCapacity(batch.count) catch unreachable;
-                while (iter.next()) |task| {
-                    this.lifecycle_script_queue.appendAssumeCapacity(task.lifecycle_script_subprocess);
-                    bun.default_allocator.destroy(task);
-                }
-            }
-
-            var queue: []*LifecycleScriptSubprocess = this.lifecycle_script_queue.items;
-            var i: usize = 0;
-            while (queue.len > 0 and i < queue.len) {
-                var lifecycle_script_subprocess = queue[i];
-
-                if (lifecycle_script_subprocess.pid == bun.invalid_fd.int()) {
-                    _ = this.lifecycle_script_queue.orderedRemove(i);
-                    queue = this.lifecycle_script_queue.items;
-                }
-
-                // const result = PosixSpawn.waitpid(lifecycle_script_subprocess.pid, std.os.W.NOHANG);
-                switch (PosixSpawn.waitpid(lifecycle_script_subprocess.pid, std.os.W.NOHANG)) {
-                    .err => |err| {
-                        std.debug.print("waitpid error: {s}\n", .{@tagName(err.getErrno())});
-                        Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                            lifecycle_script_subprocess.scriptName(),
-                            lifecycle_script_subprocess.package_name,
-                            err.errno,
-                            @tagName(err.getErrno()),
-                        });
-                        Output.flush();
-                        _ = lifecycle_script_subprocess.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
-                        _ = LifecycleScriptSubprocess.alive_count.fetchSub(1, .Monotonic);
-                    },
-                    .result => |result| {
-                        if (result.pid == lifecycle_script_subprocess.pid) {
-                            _ = this.lifecycle_script_queue.orderedRemove(i);
-                            queue = this.lifecycle_script_queue.items;
-
-                            lifecycle_script_subprocess.onResult(.{
-                                .pid = result.pid,
-                                .status = result.status,
-                            });
-                        }
-                    },
-                }
-
-                i += 1;
-            }
-        }
-
-        pub fn loop() void {
-            Output.Source.configureNamedThread("Waitpid");
-
-            var this = &instance;
-
-            while (true) {
-                this.loopSubprocess();
-                this.loopLifecycleScriptsSubprocess();
-                this.shell.jsc.loop();
-                this.shell.mini.loop();
-
-                if (comptime Environment.isLinux) {
-                    var polls = [_]std.os.pollfd{
-                        .{
-                            .fd = this.signalfd.cast(),
-                            .events = std.os.POLL.IN | std.os.POLL.ERR,
-                            .revents = 0,
-                        },
-                        .{
-                            .fd = this.eventfd.cast(),
-                            .events = std.os.POLL.IN | std.os.POLL.ERR,
-                            .revents = 0,
-                        },
-                    };
-
-                    _ = std.os.poll(&polls, std.math.maxInt(i32)) catch 0;
-
-                    // Make sure we consume any pending signals
-                    var buf: [1024]u8 = undefined;
-                    _ = std.os.read(this.signalfd.cast(), &buf) catch 0;
-                } else {
-                    var mask = std.os.empty_sigset;
-                    var signal: c_int = std.os.SIG.CHLD;
-                    const rc = std.c.sigwait(&mask, &signal);
-                    _ = rc;
-                }
-            }
-        }
-    };
 };

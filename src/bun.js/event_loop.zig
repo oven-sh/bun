@@ -347,7 +347,6 @@ const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
-const WaitPidResultTask = JSC.Subprocess.WaiterThread.WaitPidResultTask;
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
 const ShellRmDirTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask.DirTask;
@@ -357,6 +356,8 @@ const ShellMvCheckTargetTask = bun.shell.Interpreter.Builtin.Mv.ShellMvCheckTarg
 const ShellMvBatchedTask = bun.shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
 const ShellSubprocessResultTask = JSC.Subprocess.WaiterThread.ShellSubprocessQueue.ResultTask;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
+const ProcessWaiterThreadTask = bun.spawn.WaiterThread.ProcessQueue.ResultTask;
+const ProcessMiniEventLoopWaiterThreadTask = bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -415,10 +416,6 @@ pub const Task = TaggedPointerUnion(.{
     Lchmod,
     Lchown,
     Unlink,
-    // WaitPidResultTask,
-    // These need to be referenced like this so they both don't become `WaitPidResultTask`
-    JSC.Subprocess.WaiterThread.WaitPidResultTask,
-    ShellSubprocessResultTask,
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
@@ -427,6 +424,8 @@ pub const Task = TaggedPointerUnion(.{
     ShellMvBatchedTask,
     ShellLsTask,
     TimerReference,
+
+    ProcessWaiterThreadTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -993,12 +992,8 @@ pub const EventLoop = struct {
                     var any: *Unlink = task.get(Unlink).?;
                     any.runFromJSThread();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(WaitPidResultTask))) => {
-                    var any: *WaitPidResultTask = task.get(WaitPidResultTask).?;
-                    any.runFromJSThread();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellSubprocessResultTask))) => {
-                    var any: *ShellSubprocessResultTask = task.get(ShellSubprocessResultTask).?;
+                @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {
+                    var any: *ProcessWaiterThreadTask = task.get(ProcessWaiterThreadTask).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
@@ -1474,6 +1469,13 @@ pub const EventLoopKind = enum {
     js,
     mini,
 
+    pub fn Type(comptime this: EventLoopKind) type {
+        return switch (this) {
+            .js => EventLoop,
+            .mini => MiniEventLoop,
+        };
+    }
+
     pub fn refType(comptime this: EventLoopKind) type {
         return switch (this) {
             .js => *JSC.VirtualMachine,
@@ -1660,7 +1662,7 @@ pub const MiniEventLoop = struct {
 };
 
 pub const AnyEventLoop = union(enum) {
-    jsc: *EventLoop,
+    js: *EventLoop,
     mini: MiniEventLoop,
 
     pub const Task = AnyTaskWithExtraContext;
@@ -1669,7 +1671,7 @@ pub const AnyEventLoop = union(enum) {
         this: *AnyEventLoop,
         jsc: *EventLoop,
     ) void {
-        this.* = .{ .jsc = jsc };
+        this.* = .{ .js = jsc };
     }
 
     pub fn init(
@@ -1684,9 +1686,9 @@ pub const AnyEventLoop = union(enum) {
         comptime isDone: fn (*anyopaque) bool,
     ) void {
         switch (this.*) {
-            .jsc => {
-                this.jsc.tick();
-                this.jsc.autoTick();
+            .js => {
+                this.js.tick();
+                this.js.autoTick();
             },
             .mini => {
                 this.mini.tick(context, isDone);
@@ -1703,7 +1705,7 @@ pub const AnyEventLoop = union(enum) {
         comptime field: std.meta.FieldEnum(Context),
     ) void {
         switch (this.*) {
-            .jsc => {
+            .js => {
                 unreachable; // TODO:
                 // const TaskType = AnyTask.New(Context, Callback);
                 // @field(ctx, field) = TaskType.init(ctx);

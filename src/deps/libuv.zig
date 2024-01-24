@@ -303,7 +303,7 @@ pub const uv_pipe_s = struct_uv_pipe_s;
 pub const uv_tty_s = struct_uv_tty_s;
 pub const uv_poll_s = struct_uv_poll_s;
 pub const uv_process_exit_s = struct_uv_process_exit_s;
-pub const uv_process_s = struct_uv_process_s;
+pub const uv_process_s = uv_process;
 pub const uv_fs_event_req_s = struct_uv_fs_event_req_s;
 pub const uv_fs_event_s = struct_uv_fs_event_s;
 pub const uv_fs_poll_s = struct_uv_fs_poll_s;
@@ -1312,7 +1312,7 @@ const union_unnamed_424 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
 };
-pub const uv_process_t = struct_uv_process_s;
+pub const uv_process_t = uv_process;
 pub const uv_exit_cb = ?*const fn (*uv_process_t, i64, c_int) callconv(.C) void;
 const struct_unnamed_426 = extern struct {
     overlapped: OVERLAPPED,
@@ -1335,7 +1335,7 @@ pub const struct_uv_process_exit_s = extern struct {
     u: union_unnamed_425,
     next_req: [*c]struct_uv_req_s,
 };
-pub const struct_uv_process_s = extern struct {
+pub const uv_process = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
     type: uv_handle_type,
@@ -1344,7 +1344,7 @@ pub const struct_uv_process_s = extern struct {
     u: union_unnamed_424,
     endgame_next: [*c]uv_handle_t,
     flags: c_uint,
-    exit_cb: ?*const fn ([*c]struct_uv_process_s, i64, c_int) callconv(.C) void,
+    exit_cb: ?*const fn ([*c]uv_process, i64, c_int) callconv(.C) void,
     pid: c_int,
     exit_req: struct_uv_process_exit_s,
     unused: ?*anyopaque,
@@ -1352,6 +1352,42 @@ pub const struct_uv_process_s = extern struct {
     wait_handle: HANDLE,
     process_handle: HANDLE,
     exit_cb_pending: u8,
+
+    pub fn isActive(this: *const @This()) bool {
+        return uv_is_active(@as(*const uv_handle_t, @alignCast(@ptrCast(this)))) != 0;
+    }
+
+    pub fn isClosing(this: *const @This()) bool {
+        return uv_is_closing(@as(*const uv_handle_t, @alignCast(@ptrCast(this)))) != 0;
+    }
+
+    pub fn isClosed(this: *const @This()) bool {
+        return uv_is_closed(@as(*const uv_handle_t, @alignCast(@ptrCast(this)))) != 0;
+    }
+
+    pub fn close(this: *@This(), cb: *const fn (*uv_process_t) callconv(.C) void) void {
+        uv_close(@alignCast(@ptrCast(this)), @alignCast(@ptrCast(cb)));
+    }
+
+    pub fn ref(this: *@This()) void {
+        uv_ref(@alignCast(@ptrCast(this)));
+    }
+
+    pub fn unref(this: *@This()) void {
+        uv_unref(@alignCast(@ptrCast(this)));
+    }
+
+    pub fn hasRef(this: *const @This()) bool {
+        return uv_has_ref(@alignCast(@ptrCast(this))) != 0;
+    }
+
+    pub fn kill(this: *@This(), signum: c_int) ReturnCode {
+        return uv_process_kill(@alignCast(@ptrCast(this)), signum);
+    }
+
+    pub fn getPid(this: *const @This()) c_int {
+        return uv_process_get_pid(@alignCast(@ptrCast(this)));
+    }
 };
 const union_unnamed_428 = extern union {
     fd: c_int,
@@ -1813,9 +1849,9 @@ pub extern fn uv_loop_configure(loop: *uv_loop_t, option: uv_loop_option, ...) c
 pub extern fn uv_loop_fork(loop: *uv_loop_t) c_int;
 pub extern fn uv_run(*uv_loop_t, mode: RunMode) c_int;
 pub extern fn uv_stop(*uv_loop_t) void;
-pub extern fn uv_ref([*c]uv_handle_t) void;
-pub extern fn uv_unref([*c]uv_handle_t) void;
-pub extern fn uv_has_ref([*c]const uv_handle_t) c_int;
+pub extern fn uv_ref(*uv_handle_t) void;
+pub extern fn uv_unref(*uv_handle_t) void;
+pub extern fn uv_has_ref(*const uv_handle_t) c_int;
 pub extern fn uv_update_time(*uv_loop_t) void;
 pub extern fn uv_now([*c]const uv_loop_t) u64;
 pub extern fn uv_backend_fd([*c]const uv_loop_t) c_int;
@@ -2058,9 +2094,9 @@ pub const UV_PROCESS_WINDOWS_HIDE_CONSOLE: c_int = 32;
 pub const UV_PROCESS_WINDOWS_HIDE_GUI: c_int = 64;
 pub const enum_uv_process_flags = c_uint;
 pub extern fn uv_spawn(loop: *uv_loop_t, handle: *uv_process_t, options: *const uv_process_options_t) ReturnCode;
-pub extern fn uv_process_kill([*c]uv_process_t, signum: c_int) ReturnCode;
+pub extern fn uv_process_kill(*uv_process_t, signum: c_int) ReturnCode;
 pub extern fn uv_kill(pid: c_int, signum: c_int) ReturnCode;
-pub extern fn uv_process_get_pid([*c]const uv_process_t) uv_pid_t;
+pub extern fn uv_process_get_pid(*const uv_process_t) uv_pid_t;
 pub extern fn uv_queue_work(loop: *uv_loop_t, req: [*c]uv_work_t, work_cb: uv_work_cb, after_work_cb: uv_after_work_cb) c_int;
 pub extern fn uv_cancel(req: [*c]uv_req_t) c_int;
 pub const UV_DIRENT_UNKNOWN: c_int = 0;
@@ -2432,6 +2468,18 @@ pub const ReturnCode = enum(c_int) {
     pub inline fn int(this: ReturnCode) c_int {
         return @intFromEnum(this);
     }
+
+    pub fn toError(this: ReturnCode, syscall: bun.sys.Tag) ?bun.sys.Error {
+        if (this.errno()) |e| {
+            return .{
+                .errno = @intFromEnum(e),
+                .syscall = syscall,
+            };
+        }
+
+        return null;
+    }
+
     pub inline fn errno(this: ReturnCode) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
         return if (this.int() < 0)
             switch (this.int()) {

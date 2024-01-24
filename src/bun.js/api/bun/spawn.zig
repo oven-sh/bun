@@ -2,7 +2,7 @@ const JSC = @import("root").bun.JSC;
 const bun = @import("root").bun;
 const string = bun.string;
 const std = @import("std");
-
+const Output = bun.Output;
 fn _getSystem() type {
     // this is a workaround for a Zig stage1 bug
     // the "usingnamespace" is evaluating in dead branches
@@ -412,8 +412,8 @@ pub const PosixSpawn = struct {
     /// See also `std.os.waitpid` for an alternative if your child process was spawned via `fork` and
     /// `execve` method.
     pub fn waitpid(pid: pid_t, flags: u32) Maybe(WaitPidResult) {
-        const Status = c_int;
-        var status: Status = 0;
+        const PidStatus = c_int;
+        var status: PidStatus = 0;
         while (true) {
             const rc = system.waitpid(pid, &status, @as(c_int, @intCast(flags)));
             switch (errno(rc)) {
@@ -432,8 +432,8 @@ pub const PosixSpawn = struct {
 
     /// Same as waitpid, but also returns resource usage information.
     pub fn wait4(pid: pid_t, flags: u32, usage: ?*std.os.rusage) Maybe(WaitPidResult) {
-        const Status = c_int;
-        var status: Status = 0;
+        const PidStatus = c_int;
+        var status: PidStatus = 0;
         while (true) {
             const rc = system.wait4(pid, &status, @as(c_int, @intCast(flags)), usage);
             switch (errno(rc)) {
@@ -449,4 +449,6 @@ pub const PosixSpawn = struct {
             }
         }
     }
+
+    pub usingnamespace @import("./process.zig");
 };

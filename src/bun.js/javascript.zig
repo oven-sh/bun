@@ -773,7 +773,7 @@ pub const VirtualMachine = struct {
             // lookups on start for obscure flags which we do not want others to
             // depend on.
             if (map.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
-                JSC.Subprocess.WaiterThread.setShouldUseWaiterThread();
+                bun.spawn.WaiterThread.setShouldUseWaiterThread();
             }
 
             if (strings.eqlComptime(gc_level, "1")) {

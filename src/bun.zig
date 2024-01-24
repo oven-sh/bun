@@ -45,9 +45,9 @@ pub const fmt = @import("./fmt.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
+    pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
+    pub const ShellSubprocessMini = @import("./shell/subproc.zig").ShellSubprocessMini;
 };
-
-pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./__global.zig");
@@ -913,6 +913,13 @@ pub const SignalCode = enum(u8) {
         }
 
         return null;
+    }
+
+    pub fn toExitCode(value: SignalCode) ?u8 {
+        return switch (@intFromEnum(value)) {
+            1...31 => 128 +% @intFromEnum(value),
+            else => null,
+        };
     }
 
     pub fn description(signal: SignalCode) ?[]const u8 {

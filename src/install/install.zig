@@ -1990,7 +1990,9 @@ pub const PackageManager = struct {
     peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
 
     /// Do not use directly outside of wait or wake
-    uws_event_loop: *uws.Loop,
+    event_loop: *uws.Loop,
+
+    concurrent_tasks:
 
     file_poll_store: bun.Async.FilePoll.Store,
 
@@ -6291,7 +6293,7 @@ pub const PackageManager = struct {
         }
 
         if (env.map.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
-            JSC.Subprocess.WaiterThread.setShouldUseWaiterThread();
+            bun.spawn.WaiterThread.setShouldUseWaiterThread();
         }
 
         if (PackageManager.verbose_install) {

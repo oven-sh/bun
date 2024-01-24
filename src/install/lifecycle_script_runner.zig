@@ -8,9 +8,10 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 const Global = bun.Global;
 const JSC = bun.JSC;
-const WaiterThread = JSC.Subprocess.WaiterThread;
+const WaiterThread = bun.spawn.WaiterThread;
 const Timer = std.time.Timer;
 
+const Process = bun.spawn.ProcessMiniEventLoop;
 pub const LifecycleScriptSubprocess = struct {
     package_name: []const u8,
 
@@ -18,11 +19,7 @@ pub const LifecycleScriptSubprocess = struct {
     current_script_index: u8 = 0,
 
     finished_fds: u8 = 0,
-
-    pid: std.os.pid_t = bun.invalid_fd,
-
-    pid_poll: *Async.FilePoll,
-    waitpid_result: ?PosixSpawn.WaitPidResult,
+    process: ?*Process = null,
     stdout: OutputReader = .{},
     stderr: OutputReader = .{},
     manager: *PackageManager,
@@ -33,10 +30,6 @@ pub const LifecycleScriptSubprocess = struct {
     pub const min_milliseconds_to_log = 500;
 
     pub var alive_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
-
-    /// A "nothing" struct that lets us reuse the same pointer
-    /// but with a different tag for the file poll
-    pub const PidPollData = struct { process: LifecycleScriptSubprocess };
 
     pub const OutputReader = struct {
         poll: *Async.FilePoll = undefined,
@@ -122,12 +115,7 @@ pub const LifecycleScriptSubprocess = struct {
         std.debug.assert(this.finished_fds < 2);
         this.finished_fds += 1;
 
-        if (this.waitpid_result) |result| {
-            if (this.finished_fds == 2) {
-                // potential free()
-                this.onResult(result);
-            }
-        }
+        this.maybeFinished();
     }
 
     pub fn onOutputError(this: *LifecycleScriptSubprocess, err: bun.sys.Error) void {
@@ -141,10 +129,15 @@ pub const LifecycleScriptSubprocess = struct {
             @tagName(err.getErrno()),
         });
         Output.flush();
-        if (this.waitpid_result) |result| {
-            if (this.finished_fds == 2) {
-                // potential free()
-                this.onResult(result);
+        this.maybeFinished();
+    }
+
+    fn maybeFinished(this: *LifecycleScriptSubprocess) void {
+        if (this.process) |process| {
+            if (process.hasExited()) {
+                if (this.finished_fds == 2) {
+                    this.onProcessExit(process, process.status, undefined);
+                }
             }
         }
     }
@@ -177,7 +170,6 @@ pub const LifecycleScriptSubprocess = struct {
 
         this.package_name = original_script.package_name;
         this.current_script_index = next_script_index;
-        this.waitpid_result = null;
         this.finished_fds = 0;
 
         const shell_bin = bun.CLI.RunCommand.findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
@@ -269,8 +261,6 @@ pub const LifecycleScriptSubprocess = struct {
             }
         };
 
-        this.pid = pid;
-
         const pid_fd: std.os.fd_t = brk: {
             if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
                 break :brk pid;
@@ -340,33 +330,15 @@ pub const LifecycleScriptSubprocess = struct {
             try this.stderr.start().unwrap();
         }
 
-        if (WaiterThread.shouldUseWaiterThread()) {
-            WaiterThread.appendLifecycleScriptSubprocess(this);
-        } else {
-            this.pid_poll = Async.FilePoll.initWithPackageManager(
-                manager,
-                bun.toFD(pid_fd),
-                .{},
-                @as(*PidPollData, @ptrCast(this)),
-            );
-            switch (this.pid_poll.register(
-                this.manager.uws_event_loop,
-                .process,
-                true,
-            )) {
-                .result => {},
-                .err => |err| {
-                    // Sometimes the pid poll can fail to register if the process exits
-                    // between posix_spawn() and pid_poll.register(), but it is unlikely.
-                    // Any other error is unexpected here.
-                    if (err.getErrno() != .SRCH) {
-                        @panic("This shouldn't happen. Could not register pid poll");
-                    }
-
-                    this.onProcessUpdate(0);
-                },
-            }
+        const event_loop = this.manager.;
+        var process = Process.initPosix(pid, @intCast(pid_fd), event_loop, false);
+        if (this.process) |proc| {
+            proc.detach();
+            proc.deref();
         }
+        process.setExitHandler(this);
+        this.process = process;
+        try process.watch(event_loop).unwrap();
     }
 
     pub fn printOutput(this: *LifecycleScriptSubprocess) void {
@@ -392,159 +364,112 @@ pub const LifecycleScriptSubprocess = struct {
         }
     }
 
-    pub fn onProcessUpdate(this: *LifecycleScriptSubprocess, _: i64) void {
-        while (true) {
-            switch (PosixSpawn.waitpid(this.pid, std.os.W.NOHANG)) {
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
+    /// This function may free the *LifecycleScriptSubprocess
+    pub fn onProcessExit(this: *LifecycleScriptSubprocess, _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
+        switch (status) {
+            .exited => |exit| {
+                const maybe_duration = if (this.timer) |*t| t.read() else null;
+                if (!this.manager.options.log_level.isVerbose()) {
+                    std.debug.assert(this.finished_fds <= 2);
+                    if (this.finished_fds < 2) {
+                        return;
+                    }
+                }
+
+                if (exit.code > 0) {
+                    this.printOutput();
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {d}<r>", .{
                         this.scriptName(),
                         this.package_name,
-                        err.errno,
-                        @tagName(err.getErrno()),
+                        exit.code,
                     });
+                    this.deinit();
                     Output.flush();
-                    _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
-                    _ = alive_count.fetchSub(1, .Monotonic);
-                    return;
-                },
-                .result => |result| {
-                    if (result.pid != this.pid) {
-                        continue;
-                    }
-                    this.onResult(result);
-                    return;
-                },
-            }
-        }
-    }
-
-    /// This function may free the *LifecycleScriptSubprocess
-    pub fn onResult(this: *LifecycleScriptSubprocess, result: PosixSpawn.WaitPidResult) void {
-        _ = alive_count.fetchSub(1, .Monotonic);
-        if (result.pid == 0) {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                this.scriptName(),
-                this.package_name,
-                0,
-                "Unknown",
-            });
-            this.deinit();
-            Output.flush();
-            Global.exit(1);
-            return;
-        }
-        if (std.os.W.IFEXITED(result.status)) {
-            const maybe_duration = if (this.timer) |*t| t.read() else null;
-            if (!this.manager.options.log_level.isVerbose()) {
-                std.debug.assert(this.finished_fds <= 2);
-                if (this.finished_fds < 2) {
-                    this.waitpid_result = result;
-                    return;
+                    Global.exit(exit.code);
                 }
-            }
 
-            const code = std.os.W.EXITSTATUS(result.status);
-            if (code > 0) {
+                if (this.manager.scripts_node) |scripts_node| {
+                    if (this.manager.finished_installing.load(.Monotonic)) {
+                        scripts_node.completeOne();
+                    } else {
+                        _ = @atomicRmw(usize, &scripts_node.unprotected_completed_items, .Add, 1, .Monotonic);
+                    }
+                }
+
+                if (maybe_duration) |nanos| {
+                    if (nanos > min_milliseconds_to_log * std.time.ns_per_ms) {
+                        this.manager.lifecycle_script_time_log.appendConcurrent(
+                            this.manager.lockfile.allocator,
+                            .{
+                                .package_name = this.package_name,
+                                .script_id = this.current_script_index,
+                                .duration = nanos,
+                            },
+                        );
+                    }
+                }
+
+                for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
+                    if (this.scripts[new_script_index] != null) {
+                        this.resetPolls();
+                        this.spawnNextScript(@intCast(new_script_index)) catch |err| {
+                            Output.errGeneric("Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
+                                Lockfile.Scripts.names[new_script_index],
+                                @errorName(err),
+                            });
+                            Global.exit(1);
+                        };
+                        return;
+                    }
+                }
+
+                // the last script finished
+                _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
+
+                if (!this.manager.options.log_level.isVerbose()) {
+                    if (this.finished_fds == 2) {
+                        this.deinit();
+                    }
+                } else {
+                    this.deinit();
+                }
+            },
+            .signaled => |signal| {
+                if (!this.manager.options.log_level.isVerbose()) {
+                    if (this.finished_fds < 2) {
+                        return;
+                    }
+                }
                 this.printOutput();
-                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" exited with {any}<r>", .{
+                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {}<r>", .{
                     this.scriptName(),
                     this.package_name,
-                    code,
+
+                    bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
+                });
+                Global.raiseIgnoringPanicHandler(@intFromEnum(signal));
+
+                return;
+            },
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to\n{}", .{
+                    this.scriptName(),
+                    this.package_name,
+                    err,
                 });
                 this.deinit();
                 Output.flush();
-                Global.exit(code);
-            }
-
-            if (this.manager.scripts_node) |scripts_node| {
-                if (this.manager.finished_installing.load(.Monotonic)) {
-                    scripts_node.completeOne();
-                } else {
-                    _ = @atomicRmw(usize, &scripts_node.unprotected_completed_items, .Add, 1, .Monotonic);
-                }
-            }
-
-            if (maybe_duration) |nanos| {
-                if (nanos > min_milliseconds_to_log * std.time.ns_per_ms) {
-                    this.manager.lifecycle_script_time_log.appendConcurrent(
-                        this.manager.lockfile.allocator,
-                        .{
-                            .package_name = this.package_name,
-                            .script_id = this.current_script_index,
-                            .duration = nanos,
-                        },
-                    );
-                }
-            }
-
-            for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
-                if (this.scripts[new_script_index] != null) {
-                    this.resetPolls();
-                    this.spawnNextScript(@intCast(new_script_index)) catch |err| {
-                        Output.errGeneric("Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
-                            Lockfile.Scripts.names[new_script_index],
-                            @errorName(err),
-                        });
-                        Global.exit(1);
-                    };
-                    return;
-                }
-            }
-
-            // the last script finished
-            _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
-
-            if (!this.manager.options.log_level.isVerbose()) {
-                if (this.finished_fds == 2) {
-                    this.deinit();
-                }
-            } else {
-                this.deinit();
-            }
-
-            return;
+                Global.exit(1);
+                return;
+            },
+            else => {
+                Output.panic("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to unexpected status\n{any}", .{
+                    this.scriptName(),
+                    this.package_name,
+                    status,
+                });
+            },
         }
-        if (std.os.W.IFSIGNALED(result.status)) {
-            const signal = std.os.W.TERMSIG(result.status);
-
-            if (!this.manager.options.log_level.isVerbose()) {
-                if (this.finished_fds < 2) {
-                    this.waitpid_result = result;
-                    return;
-                }
-            }
-            this.printOutput();
-            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {}<r>", .{
-                this.scriptName(),
-                this.package_name,
-                bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
-            });
-            Global.raiseIgnoringPanicHandler(signal);
-        }
-        if (std.os.W.IFSTOPPED(result.status)) {
-            const signal = std.os.W.STOPSIG(result.status);
-
-            if (!this.manager.options.log_level.isVerbose()) {
-                if (this.finished_fds < 2) {
-                    this.waitpid_result = result;
-                    return;
-                }
-            }
-            this.printOutput();
-            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" was stopped by {}<r>", .{
-                this.scriptName(),
-                this.package_name,
-                bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
-            });
-            Global.raiseIgnoringPanicHandler(signal);
-        }
-
-        std.debug.panic("{s} script from \"<b>{s}<r>\" hit unexpected state {{ .pid = {d}, .status = {d} }}", .{
-            this.scriptName(),
-            this.package_name,
-            result.pid,
-            result.status,
-        });
     }
 
     pub fn resetPolls(this: *LifecycleScriptSubprocess) void {
@@ -552,16 +477,21 @@ pub const LifecycleScriptSubprocess = struct {
             std.debug.assert(this.finished_fds == 2);
         }
 
-        const loop = this.manager.uws_event_loop;
-
-        if (!WaiterThread.shouldUseWaiterThread()) {
-            _ = this.pid_poll.unregister(loop, false);
-            // FD is already closed
+        if (this.process) |process| {
+            this.process = null;
+            process.close();
+            process.deref();
         }
     }
 
     pub fn deinit(this: *LifecycleScriptSubprocess) void {
         this.resetPolls();
+        if (this.process) |process| {
+            this.process = null;
+            process.detach();
+            process.deref();
+        }
+
         if (!this.manager.options.log_level.isVerbose()) {
             this.stdout.buffer.clearAndFree();
             this.stderr.buffer.clearAndFree();

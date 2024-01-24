@@ -131,24 +131,30 @@ pub const FilePoll = struct {
     generation_number: KQueueGenerationNumber = 0,
     next_to_free: ?*FilePoll = null,
 
-    event_loop_kind: JSC.EventLoopKind = .js,
+    allocator_type: AllocatorType = .js,
+
+    pub const AllocatorType = enum {
+        js,
+        mini,
+        install,
+    };
 
     const FileReader = JSC.WebCore.FileReader;
     const FileSink = JSC.WebCore.FileSink;
     const FileSinkMini = JSC.WebCore.FileSinkMini;
     const FIFO = JSC.WebCore.FIFO;
     const FIFOMini = JSC.WebCore.FIFOMini;
-    const ShellSubprocess = bun.ShellSubprocess;
-    const ShellSubprocessMini = bun.shell.SubprocessMini;
+
     const ShellBufferedWriter = bun.shell.Interpreter.BufferedWriter;
     const ShellBufferedWriterMini = bun.shell.InterpreterMini.BufferedWriter;
-    const ShellBufferedInput = bun.ShellSubprocess.BufferedInput;
+    const ShellBufferedInput = bun.shell.ShellSubprocess.BufferedInput;
     const ShellBufferedInputMini = bun.shell.SubprocessMini.BufferedInput;
-    const ShellSubprocessCapturedBufferedWriter = bun.ShellSubprocess.BufferedOutput.CapturedBufferedWriter;
+    const ShellSubprocessCapturedBufferedWriter = bun.shell.ShellSubprocess.BufferedOutput.CapturedBufferedWriter;
     const ShellSubprocessCapturedBufferedWriterMini = bun.shell.SubprocessMini.BufferedOutput.CapturedBufferedWriter;
     const ShellBufferedOutput = bun.shell.Subprocess.BufferedOutput;
     const ShellBufferedOutputMini = bun.shell.SubprocessMini.BufferedOutput;
-
+    const Process = bun.spawn.Process;
+    const ProcessMiniEventLoop = bun.spawn.ProcessMiniEventLoop;
     const Subprocess = JSC.Subprocess;
     const BufferedInput = Subprocess.BufferedInput;
     const BufferedOutput = Subprocess.BufferedOutput;
@@ -159,16 +165,12 @@ pub const FilePoll = struct {
     };
 
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
-    const LifecycleScriptSubprocessPid = bun.install.LifecycleScriptSubprocess.PidPollData;
 
     pub const Owner = bun.TaggedPointerUnion(.{
         FileReader,
         FileSink,
         FileSinkMini,
-        Subprocess,
 
-        ShellSubprocess,
-        ShellSubprocessMini,
         ShellBufferedWriter,
         ShellBufferedWriterMini,
         ShellBufferedInput,
@@ -185,7 +187,8 @@ pub const FilePoll = struct {
         DNSResolver,
         GetAddrInfoRequest,
         LifecycleScriptSubprocessOutputReader,
-        LifecycleScriptSubprocessPid,
+        Process,
+        ProcessMiniEventLoop,
     });
 
     fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
@@ -243,7 +246,7 @@ pub const FilePoll = struct {
     }
 
     pub fn deinit(this: *FilePoll) void {
-        switch (this.event_loop_kind) {
+        switch (this.allocator_type) {
             .js => {
                 const vm = JSC.VirtualMachine.get();
                 const handle = JSC.AbstractVM(vm);
@@ -260,11 +263,14 @@ pub const FilePoll = struct {
                 const file_polls = handle.filePolls();
                 this.deinitPossiblyDefer(vm, loop, file_polls, false);
             },
+            .install => {
+                Output.debugWarn("leaked FilePoll", .{});
+            },
         }
     }
 
     pub fn deinitForceUnregister(this: *FilePoll) void {
-        switch (this.event_loop_kind) {
+        switch (this.allocator_type) {
             .js => {
                 var vm = JSC.VirtualMachine.get();
                 const loop = vm.event_loop_handle.?;
@@ -274,6 +280,9 @@ pub const FilePoll = struct {
                 var vm = JSC.MiniEventLoop.global;
                 const loop = vm.loop;
                 this.deinitPossiblyDefer(vm, loop, vm.filePolls(), true);
+            },
+            .install => {
+                Output.debugWarn("leaked FilePoll", .{});
             },
         }
     }
@@ -316,12 +325,7 @@ pub const FilePoll = struct {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedInput", .{poll.fd});
                 ptr.as(ShellBufferedInput).onPoll(size_or_offset, 0);
             },
-            @field(Owner.Tag, "Subprocess") => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Subprocess", .{poll.fd});
-                var loader = ptr.as(JSC.Subprocess);
 
-                loader.onExitNotificationTask();
-            },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriter))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedWriter", .{poll.fd});
                 var loader = ptr.as(ShellBufferedWriter);
@@ -342,17 +346,17 @@ pub const FilePoll = struct {
                 var loader = ptr.as(ShellSubprocessCapturedBufferedWriterMini);
                 loader.onPoll(size_or_offset, 0);
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocess))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocess", .{poll.fd});
-                var loader = ptr.as(ShellSubprocess);
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(Process))) => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Process", .{poll.fd});
+                var loader = ptr.as(Process);
 
-                loader.onExitNotificationTask();
+                loader.onWaitPidFromEventLoopTask();
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocessMini))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocessMini", .{poll.fd});
-                var loader = ptr.as(ShellSubprocessMini);
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ProcessMiniEventLoop))) => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ProcessMini", .{poll.fd});
+                var loader = ptr.as(ProcessMiniEventLoop);
 
-                loader.onExitNotificationTask();
+                loader.onWaitPidFromEventLoopTask();
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(JSC.WebCore.FileSink))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FileSink", .{poll.fd});
@@ -380,11 +384,6 @@ pub const FilePoll = struct {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) OutputReader", .{poll.fd});
                 var output: *LifecycleScriptSubprocessOutputReader = ptr.as(LifecycleScriptSubprocessOutputReader);
                 output.onPoll(size_or_offset);
-            },
-            @field(Owner.Tag, "PidPollData") => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) LifecycleScriptSubprocess Pid", .{poll.fd});
-                var loader: *bun.install.LifecycleScriptSubprocess = @ptrCast(ptr.as(LifecycleScriptSubprocessPid));
-                loader.onProcessUpdate(size_or_offset);
             },
 
             else => {
@@ -620,6 +619,10 @@ pub const FilePoll = struct {
     }
 
     pub fn init(vm: anytype, fd: bun.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
+        if (comptime @TypeOf(vm) == *bun.install.PackageManager) {
+            return initWithPackageManager(vm, fd, flags, owner);
+        }
+
         return initWithOwner(vm, fd, flags, Owner.init(owner));
     }
 
@@ -630,7 +633,7 @@ pub const FilePoll = struct {
         poll.flags = Flags.Set.init(flags);
         poll.owner = owner;
         poll.next_to_free = null;
-        poll.event_loop_kind = if (comptime @TypeOf(vm_) == *JSC.VirtualMachine) .js else .mini;
+        poll.allocator_type = if (comptime @TypeOf(vm_) == *JSC.VirtualMachine) .js else .mini;
 
         if (KQueueGenerationNumber != u0) {
             max_generation_number +%= 1;
@@ -650,7 +653,7 @@ pub const FilePoll = struct {
         poll.owner = owner;
         poll.next_to_free = null;
         // Well I'm not sure what to put here because it looks bun install doesn't use JSC event loop or mini event loop
-        poll.event_loop_kind = .js;
+        poll.allocator_type = .install;
 
         if (KQueueGenerationNumber != u0) {
             max_generation_number +%= 1;

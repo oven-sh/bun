@@ -395,13 +395,13 @@ jobs:
         name: Download Release
         uses: actions/download-artifact@v3
         with:
-          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
+          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile
           path: ${{runner.temp}}/release
       - name: Install Bun
         run: |
           cd ${{runner.temp}}/release
-          unzip ${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip
-          cd ${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
+          unzip ${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile.zip
+          cd ${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile
           pwd >> $env:GITHUB_PATH
       - name: Install Node
         uses: actions/setup-node@v4

@@ -11,7 +11,7 @@ declare module "bun" {
   }
 
   interface ShellPromise {
-    json(): Promise<unknown>
+    json(): Promise<unknown>;
   }
 
   /**
@@ -23,12 +23,10 @@ declare module "bun" {
    * @returns A promise that resolves with the concatenated chunks as a {@link String}.
    */
   function readableStreamToJSON(stream: ReadableStream): Promise<unknown>;
-
 }
 
-
 interface Blob {
-  json(): Promise<unknown>
+  json(): Promise<unknown>;
 }
 
 interface JSON {
@@ -37,8 +35,11 @@ interface JSON {
    * @param text A valid JSON string.
    * @param reviver A function that transforms the results. This function is called for each member of the object.
    * If a member contains nested objects, the nested objects are transformed before the parent object is.
-  */
-  parse(text: string, reviver?: (this: any, key: string, value: any) => any): unknown;
+   */
+  parse(
+    text: string,
+    reviver?: (this: any, key: string, value: any) => any,
+  ): unknown;
 }
 
 // Allow `<Array>.filter(Boolean)` to properly reflect

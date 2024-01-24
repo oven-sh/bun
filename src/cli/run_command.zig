@@ -501,56 +501,111 @@ pub const RunCommand = struct {
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
 
     pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
-        if (Environment.isWindows) return bun.todo(@src(), {});
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
 
-        var argv0 = @as([*:0]const u8, @ptrCast(optional_bun_path.ptr));
+        if (Environment.isPosix) {
+            var argv0 = @as([*:0]const u8, @ptrCast(optional_bun_path.ptr));
 
-        // if we are already an absolute path, use that
-        // if the user started the application via a shebang, it's likely that the path is absolute already
-        if (bun.argv()[0][0] == '/') {
-            optional_bun_path.* = bun.span(bun.argv()[0]);
-            argv0 = bun.argv()[0];
-        } else if (optional_bun_path.len == 0) {
-            // otherwise, ask the OS for the absolute path
-            var self = try std.fs.selfExePath(&self_exe_bin_path_buf);
-            if (self.len > 0) {
-                self.ptr[self.len] = 0;
-                argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
-                optional_bun_path.* = self;
+            // if we are already an absolute path, use that
+            // if the user started the application via a shebang, it's likely that the path is absolute already
+            if (bun.argv()[0][0] == '/') {
+                optional_bun_path.* = bun.span(bun.argv()[0]);
+                argv0 = bun.argv()[0];
+            } else if (optional_bun_path.len == 0) {
+                // otherwise, ask the OS for the absolute path
+                var self = try std.fs.selfExePath(&self_exe_bin_path_buf);
+                if (self.len > 0) {
+                    self.ptr[self.len] = 0;
+                    argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
+                    optional_bun_path.* = self;
+                }
             }
-        }
 
-        if (optional_bun_path.len == 0) {
-            argv0 = bun.argv()[0];
-        }
-
-        var retried = false;
-        while (true) {
-            inner: {
-                std.os.symlinkZ(argv0, bun_node_dir ++ "/node") catch |err| {
-                    if (err == error.PathAlreadyExists) break :inner;
-                    if (retried)
-                        return;
-
-                    std.fs.makeDirAbsoluteZ(bun_node_dir) catch {};
-
-                    retried = true;
-                    continue;
-                };
+            if (optional_bun_path.len == 0) {
+                argv0 = bun.argv()[0];
             }
-            break;
-        }
 
-        if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+            var retried = false;
+            while (true) {
+                inner: {
+                    std.os.symlinkZ(argv0, bun_node_dir ++ "/node") catch |err| {
+                        if (err == error.PathAlreadyExists) break :inner;
+                        if (retried)
+                            return;
+
+                        std.fs.makeDirAbsoluteZ(bun_node_dir) catch {};
+
+                        retried = true;
+                        continue;
+                    };
+                }
+                break;
+            }
+
+            if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+                try PATH.append(std.fs.path.delimiter);
+            }
+
+            // The reason for the extra delim is because we are going to append the system PATH
+            // later on. this is done by the caller, and explains why we are adding bun_node_dir
+            // to the end of the path slice rather than the start.
+            try PATH.appendSlice(bun_node_dir ++ .{std.fs.path.delimiter});
+        } else if (Environment.isWindows) {
+            var target_path_buffer: bun.WPathBuffer = undefined;
+
+            const prefix = comptime bun.strings.w("\\??\\");
+
+            const len = bun.windows.GetTempPath2W(
+                target_path_buffer.len - prefix.len,
+                @ptrCast(&target_path_buffer[prefix.len]),
+            );
+            if (len == 0) {
+                Output.debug("Failed to create temporary node dir: {s}", .{@tagName(std.os.windows.kernel32.GetLastError())});
+                return;
+            }
+
+            @memcpy(target_path_buffer[0..prefix.len], prefix);
+
+            const dir_name = "bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else "";
+            const file_name = dir_name ++ "\\node.exe\x00";
+            @memcpy(target_path_buffer[len + prefix.len ..][0..file_name.len], comptime bun.strings.w(file_name));
+
+            const file_slice = target_path_buffer[0 .. prefix.len + len + file_name.len - "\x00".len];
+            const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
+
+            const ImagePathName = std.os.windows.peb().ProcessParameters.ImagePathName;
+            std.debug.assert(ImagePathName.Buffer[ImagePathName.Length / 2] == 0); // trust windows
+
+            if (Environment.isDebug) {
+                // the link becomes out of date on rebuild
+                std.os.unlinkW(file_slice) catch {};
+            }
+
+            if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), @ptrCast(ImagePathName.Buffer), null) == 0) {
+                switch (std.os.windows.kernel32.GetLastError()) {
+                    .ALREADY_EXISTS => {},
+                    else => {
+                        {
+                            std.debug.assert(target_path_buffer[dir_slice.len] == '\\');
+                            target_path_buffer[dir_slice.len] = 0;
+                            std.os.mkdirW(target_path_buffer[0..dir_slice.len :0], 0) catch {};
+                            target_path_buffer[dir_slice.len] = '\\';
+                        }
+
+                        if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), @ptrCast(ImagePathName.Buffer), null) == 0) {
+                            return;
+                        }
+                    },
+                }
+            }
+
+            // The reason for the extra delim is because we are going to append the system PATH
+            // later on. this is done by the caller, and explains why we are adding bun_node_dir
+            // to the end of the path slice rather than the start.
+            try bun.strings.toUTF8AppendToList(PATH, dir_slice[prefix.len..]);
             try PATH.append(std.fs.path.delimiter);
         }
-
-        // The reason for the extra delim is because we are going to append the system PATH
-        // later on. this is done by the caller, and explains why we are adding bun_node_dir
-        // to the end of the path slice rather than the start.
-        try PATH.appendSlice(bun_node_dir ++ .{std.fs.path.delimiter});
     }
 
     pub const Filter = enum { script, bin, all, bun_js, all_plus_bun_js, script_and_descriptions, script_exclude };

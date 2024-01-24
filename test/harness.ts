@@ -1,5 +1,6 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { expect } from "bun:test";
+import { platform } from "os";
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,

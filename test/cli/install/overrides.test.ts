@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { mkdtempSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";

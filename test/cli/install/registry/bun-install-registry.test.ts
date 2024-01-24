@@ -1,7 +1,7 @@
 // @known-failing-on-windows: 1 failing
 import { file, spawn } from "bun";
 import { bunExe, bunEnv as env } from "harness";
-import { join } from "path";
+import { join, sep } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp, readdir } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
@@ -1306,8 +1306,8 @@ describe("workspaces", async () => {
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          " + pkg1@workspace:packages/pkg1",
-          " + pkg2@workspace:packages/pkg2",
+          ` + pkg1@workspace:packages${sep}pkg1`,
+          ` + pkg2@workspace:packages${sep}pkg2`,
           "",
           " 2 packages installed",
         ]);
@@ -1329,8 +1329,8 @@ describe("workspaces", async () => {
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          " + pkg1@workspace:packages/pkg1",
-          " + pkg2@workspace:packages/pkg2",
+          ` + pkg1@workspace:packages${sep}pkg1`,
+          ` + pkg2@workspace:packages${sep}pkg2`,
           "",
           " 2 packages installed",
         ]);
@@ -1355,8 +1355,8 @@ describe("workspaces", async () => {
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          " + pkg1@workspace:packages/pkg1",
-          " + pkg2@workspace:packages/pkg2",
+          ` + pkg1@workspace:packages${sep}pkg1`,
+          ` + pkg2@workspace:packages${sep}pkg2`,
           "",
           " 2 packages installed",
         ]);
@@ -1378,8 +1378,8 @@ describe("workspaces", async () => {
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          " + pkg1@workspace:packages/pkg1",
-          " + pkg2@workspace:packages/pkg2",
+          ` + pkg1@workspace:packages${sep}pkg1`,
+          ` + pkg2@workspace:packages${sep}pkg2`,
           "",
           " 2 packages installed",
         ]);
@@ -1428,7 +1428,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + workspace-1@workspace:packages/workspace-1",
+        ` + workspace-1@workspace:packages${sep}workspace-1`,
         "",
         " 1 package installed",
       ]);
@@ -1453,7 +1453,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + workspace-1@workspace:packages/workspace-1",
+        ` + workspace-1@workspace:packages${sep}workspace-1`,
         "",
         " 1 package installed",
       ]);
@@ -1482,7 +1482,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + workspace-1@workspace:packages/workspace-1",
+        ` + workspace-1@workspace:packages${sep}workspace-1`,
         "",
         " 1 package installed",
       ]);
@@ -1507,7 +1507,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + workspace-1@workspace:packages/workspace-1",
+        ` + workspace-1@workspace:packages${sep}workspace-1`,
         "",
         " 1 package installed",
       ]);
@@ -1705,9 +1705,9 @@ for (const forceWaiterThread of [false, true]) {
         const contents = `
       import { writeFileSync, existsSync, rmSync } from "fs";
       import { join } from "path";
-      
+
       const file = join(import.meta.dir, "${name}.txt");
-      
+
       if (existsSync(file)) {
         rmSync(file);
         writeFileSync(file, "${name} exists!");
@@ -1950,8 +1950,8 @@ for (const forceWaiterThread of [false, true]) {
       var out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + pkg1@workspace:packages/pkg1",
-        " + pkg2@workspace:packages/pkg2",
+        ` + pkg1@workspace:packages${sep}pkg1`,
+        ` + pkg2@workspace:packages${sep}pkg2`,
         "",
         " 2 packages installed",
       ]);
@@ -2346,7 +2346,7 @@ for (const forceWaiterThread of [false, true]) {
         `
       const fs = require("fs");
       const path = require("path");
-      
+
       fs.writeFileSync(
       path.join(__dirname, "test.txt"),
       process.env.INIT_CWD || "does not exist"
@@ -3806,8 +3806,8 @@ describe("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + a@workspace:packages/a",
-      " + b@workspace:packages/b",
+      ` + a@workspace:packages${sep}a`,
+      ` + b@workspace:packages${sep}b`,
       "",
       " 5 packages installed",
     ]);

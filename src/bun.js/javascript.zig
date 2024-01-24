@@ -89,7 +89,7 @@ const FetchFlags = JSC.FetchFlags;
 
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const Task = JSC.Task;
-const Blob = @import("../blob.zig");
+
 pub const Buffer = MarkedArrayBuffer;
 const Lock = @import("../lock.zig").Lock;
 const BuildMessage = JSC.BuildMessage;
@@ -484,7 +484,6 @@ pub const VirtualMachine = struct {
     main: string = "",
     main_hash: u32 = 0,
     process: js.JSObjectRef = null,
-    blobs: ?*Blob.Group = null,
     flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
@@ -565,7 +564,6 @@ pub const VirtualMachine = struct {
 
     ref_strings: JSC.RefString.Map = undefined,
     ref_strings_mutex: Lock = undefined,
-    file_blobs: JSC.WebCore.Blob.Store.Map,
 
     source_mappings: SavedSourceMap = undefined,
 
@@ -1180,7 +1178,6 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1190,7 +1187,6 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
-            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = opts.graph.?,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
@@ -1292,7 +1288,6 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1302,7 +1297,6 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
-            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
@@ -1440,7 +1434,6 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1450,7 +1443,6 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
-            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
@@ -1564,21 +1556,6 @@ pub const VirtualMachine = struct {
         std.debug.assert(input_.len > 0);
         var _was_new = false;
         return this.refCountedStringWithWasNew(&_was_new, input_, hash_, comptime dupe);
-    }
-
-    pub fn preflush(this: *VirtualMachine) void {
-        // We flush on the next tick so that if there were any errors you can still see them
-        this.blobs.?.temporary.reset() catch {};
-    }
-
-    pub fn flush(this: *VirtualMachine) void {
-        this.had_errors = false;
-        for (this.flush_list.items) |item| {
-            this.allocator.free(item);
-        }
-        this.flush_list.shrinkRetainingCapacity(0);
-        this.transpiled_count = 0;
-        this.resolved_count = 0;
     }
 
     pub fn fetchWithoutOnLoadPlugins(

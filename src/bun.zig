@@ -100,9 +100,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     }
 
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt_;
-        _ = options_;
-        try writer.print("{d}", .{@intFromEnum(fd)});
+        try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
     }
 };
 
@@ -180,7 +178,7 @@ pub fn len(value: anytype) usize {
         .Array => |info| info.len,
         .Vector => |info| info.len,
         .Pointer => |info| switch (info.size) {
-            .One => switch (@as(@import("builtin").TypeInfo, @typeInfo(info.child))) {
+            .One => switch (@typeInfo(info.child)) {
                 .Array => |array| brk: {
                     if (array.sentinel != null) {
                         @compileError("use bun.sliceTo");
@@ -1079,17 +1077,7 @@ fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     return std.os.getcwd(buf);
 }
 
-pub fn getcwd(buf_: []u8) ![]u8 {
-    if (comptime !Environment.isWindows) {
-        return std.os.getcwd(buf_);
-    }
-
-    var temp: [MAX_PATH_BYTES]u8 = undefined;
-    const temp_slice = try std.os.getcwd(&temp);
-    // Paths are normalized to use / to make more things reliable, but eventually this will have to change to be the true file sep
-    // It is possible to expose this value to JS land
-    return path.normalizeBuf(temp_slice, buf_, .auto);
-}
+pub const getcwd = std.os.getcwd;
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
     var temp: [MAX_PATH_BYTES]u8 = undefined;

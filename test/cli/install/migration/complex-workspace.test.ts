@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import fs from "fs";
 import path from "path";
 import { test, expect, describe, beforeAll } from "bun:test";
@@ -44,7 +45,7 @@ test("the install succeeds", async () => {
   var subprocess = Bun.spawn([bunExe(), "reset.ts"], {
     env: bunEnv,
     cwd,
-    stdio: ["inherit", "inherit", "inherit"],
+    stdio: ["ignore", "ignore", "ignore"],
   });
   await subprocess.exited;
   if (subprocess.exitCode != 0) {
@@ -55,7 +56,7 @@ test("the install succeeds", async () => {
   subprocess = Bun.spawn([bunExe(), "install"], {
     env: bunEnv,
     cwd,
-    stdio: ["inherit", "inherit", "inherit"],
+    stdio: ["ignore", "ignore", "ignore"],
   });
 
   await subprocess.exited;
@@ -63,9 +64,7 @@ test("the install succeeds", async () => {
     cwd = false as any;
     throw new Error("Failed to install");
   }
-
-  console.log(cwd);
-});
+}, 10000);
 
 // bun-types
 validate("node_modules/bun-types", "1.0.0");

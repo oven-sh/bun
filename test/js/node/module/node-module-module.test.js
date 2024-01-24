@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "module";
@@ -6,7 +7,7 @@ import path from "path";
 
 test("builtinModules exists", () => {
   expect(Array.isArray(builtinModules)).toBe(true);
-  expect(builtinModules).toHaveLength(76);
+  expect(builtinModules).toHaveLength(77);
 });
 
 test("isBuiltin() works", () => {

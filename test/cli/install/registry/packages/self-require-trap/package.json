@@ -1,0 +1,64 @@
+{
+	"name": "self-require-trap",
+	"versions": {
+		"1.0.0": {
+			"name": "self-require-trap",
+			"version": "1.0.0",
+			"dependencies": {
+				"self-require-trap": "2.0.0"
+			},
+			"bin": {
+				"self-require-trap": "bin"
+			},
+			"_id": "self-require-trap@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Q5ViMUPIed479MJZLvr23h5iWJ6uPy/bbhmeafOiMkGsVSRa+AmW2ZlmPnvoxH6X89y9yT2h3/76NvOkWujs9g==",
+				"shasum": "35d599201220c9215bd0dc0c0b3777ceeecdb577",
+				"tarball": "http://localhost:4873/self-require-trap/-/self-require-trap-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.0": {
+			"name": "self-require-trap",
+			"version": "2.0.0",
+			"_id": "self-require-trap@2.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Fakasti0nVMF2+jXeMC+LGFOQckcZzrHuHa62SG3H90YoC2YJAJhvs/wrhbJ4ceWlwwnJmpYDNxdkmVfJ0Ve+g==",
+				"shasum": "8f696e12a0720eaa9964aee35743c73e79991c3e",
+				"tarball": "http://localhost:4873/self-require-trap/-/self-require-trap-2.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:32.748Z",
+		"created": "2023-11-01T22:05:32.460Z",
+		"1.0.0": "2023-11-01T22:05:32.460Z",
+		"2.0.0": "2023-11-01T22:05:32.748Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "2.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"self-require-trap-1.0.0.tgz": {
+			"shasum": "35d599201220c9215bd0dc0c0b3777ceeecdb577",
+			"version": "1.0.0"
+		},
+		"self-require-trap-2.0.0.tgz": {
+			"shasum": "8f696e12a0720eaa9964aee35743c73e79991c3e",
+			"version": "2.0.0"
+		}
+	},
+	"_rev": "6-751727430d76ca86",
+	"_id": "self-require-trap",
+	"readme": "ERROR: No README data found!"
+}

@@ -9,39 +9,46 @@ const bun = @import("root").bun;
 
 const version_string = Environment.version_string;
 
+/// Does not have the canary tag, because it is exposed in `Bun.version`
+/// "1.0.0" or "1.0.0-debug"
 pub const package_json_version = if (Environment.isDebug)
-    version_string ++ "_debug"
+    version_string ++ "-debug"
 else
     version_string;
 
+/// This is used for `bun` without any arguments, it `package_json_version` but with canary if it is a canary build.
+/// like "1.0.0-canary.12"
+pub const package_json_version_with_canary = if (Environment.isDebug)
+    version_string ++ "-debug"
+else if (Environment.is_canary)
+    std.fmt.comptimePrint("{s}-canary.{d}", .{ version_string, Environment.canary_revision })
+else
+    version_string;
+
+/// The version and a short hash in parenthesis.
 pub const package_json_version_with_sha = if (Environment.git_sha.len == 0)
     package_json_version
 else if (Environment.isDebug)
-    std.fmt.comptimePrint("{s}_debug ({s})", .{ version_string, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
+    std.fmt.comptimePrint("{s} ({s})", .{ version_string, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
+else if (Environment.is_canary)
+    std.fmt.comptimePrint("{s}-canary.{d} ({s})", .{ version_string, Environment.canary_revision, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
 else
     std.fmt.comptimePrint("{s} ({s})", .{ version_string, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] });
 
+/// What is printed by `bun --revision`
+/// "1.0.0+abcdefghi" or "1.0.0-canary.12+abcdefghi"
 pub const package_json_version_with_revision = if (Environment.git_sha.len == 0)
     package_json_version
 else if (Environment.isDebug)
-    std.fmt.comptimePrint(version_string ++ "-debug+{s}", .{Environment.git_sha})
+    std.fmt.comptimePrint(version_string ++ "-debug+{s}", .{Environment.git_sha_short})
 else if (Environment.is_canary)
-    std.fmt.comptimePrint(version_string ++ "-canary+{s}", .{Environment.git_sha})
+    std.fmt.comptimePrint(version_string ++ "-canary.{d}+{s}", .{ Environment.canary_revision, Environment.git_sha_short })
 else if (Environment.isTest)
-    std.fmt.comptimePrint(version_string ++ "-test+{s}", .{Environment.git_sha})
+    std.fmt.comptimePrint(version_string ++ "-test+{s}", .{Environment.git_sha_short})
 else
-    std.fmt.comptimePrint(version_string ++ "+{s}", .{Environment.git_sha});
+    std.fmt.comptimePrint(version_string ++ "+{s}", .{Environment.git_sha_short});
 
-pub const os_name = if (Environment.isWindows)
-    "win32"
-else if (Environment.isMac)
-    "darwin"
-else if (Environment.isLinux)
-    "linux"
-else if (Environment.isWasm)
-    "wasm"
-else
-    "unknown";
+pub const os_name = Environment.os.nameString();
 
 pub const arch_name = if (Environment.isX64)
     "x64"
@@ -65,10 +72,47 @@ pub fn setThreadName(name: StringTypes.stringZ) void {
     }
 }
 
+const ExitFn = *const fn () callconv(.C) void;
+
+var on_exit_callbacks = std.ArrayListUnmanaged(ExitFn){};
+export fn Bun__atexit(function: ExitFn) void {
+    if (std.mem.indexOfScalar(ExitFn, on_exit_callbacks.items, function) == null) {
+        on_exit_callbacks.append(bun.default_allocator, function) catch {};
+    }
+}
+
+pub fn runExitCallbacks() void {
+    for (on_exit_callbacks.items) |callback| {
+        callback();
+    }
+    on_exit_callbacks.items.len = 0;
+}
+
 /// Flushes stdout and stderr and exits with the given code.
 pub fn exit(code: u8) noreturn {
+    runExitCallbacks();
     Output.flush();
-    std.c._exit(code);
+    std.mem.doNotOptimizeAway(&Bun__atexit);
+    std.c.exit(code);
+}
+
+pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
+    Output.flush();
+    @import("./crash_reporter.zig").on_error = null;
+    if (!Environment.isWindows) {
+        if (sig >= 1 and sig != std.os.SIG.STOP and sig != std.os.SIG.KILL) {
+            const act = std.os.Sigaction{
+                .handler = .{ .sigaction = @ptrCast(@alignCast(std.os.SIG.DFL)) },
+                .mask = std.os.empty_sigset,
+                .flags = 0,
+            };
+            std.os.sigaction(@intCast(sig), &act, null) catch {};
+        }
+    }
+    // TODO(@paperdave): report a bug that this intcast shouldnt be needed. signals are i32 not u32
+    // after that is fixed we can make this function take i32
+    _ = std.c.raise(@intCast(sig));
+    std.c.abort();
 }
 
 pub const AllocatorConfiguration = struct {
@@ -144,7 +188,7 @@ const string = @import("root").bun.string;
 
 pub const BunInfo = struct {
     bun_version: string,
-    platform: Analytics.GenerateHeader.GeneratePlatform.Platform = undefined,
+    platform: Analytics.GenerateHeader.GeneratePlatform.Platform,
     framework: string = "",
     framework_version: string = "",
 

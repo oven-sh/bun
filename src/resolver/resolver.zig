@@ -26,7 +26,6 @@ const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
 const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
-const HTTPWatcher = if (Environment.isTest or Environment.isWasm) void else @import("../bun_dev_http_server.zig").Watcher;
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
@@ -48,8 +47,26 @@ const Semver = @import("../install/semver.zig");
 const DotEnv = @import("../env_loader.zig");
 
 pub fn isPackagePath(path: string) bool {
-    // this could probably be flattened into something more optimized
-    return path.len > 0 and path[0] != '/' and !strings.startsWith(path, "./") and !strings.startsWith(path, "../") and !strings.eql(path, ".") and !strings.eql(path, "..");
+    // Always check for posix absolute paths (starts with "/")
+    // But don't check window's style on posix
+    // For a more in depth explanation, look above where `isPackagePathNotAbsolute` is used.
+    return !std.fs.path.isAbsolute(path) and @call(.always_inline, isPackagePathNotAbsolute, .{path});
+}
+
+pub fn isPackagePathNotAbsolute(non_absolute_path: string) bool {
+    if (Environment.allow_assert) {
+        std.debug.assert(!std.fs.path.isAbsolute(non_absolute_path));
+        std.debug.assert(!strings.startsWith(non_absolute_path, "/"));
+    }
+
+    return !strings.startsWith(non_absolute_path, "./") and
+        !strings.startsWith(non_absolute_path, "../") and
+        !strings.eql(non_absolute_path, ".") and
+        !strings.eql(non_absolute_path, "..") and if (Environment.isWindows)
+        (!strings.startsWith(non_absolute_path, ".\\") and
+            !strings.startsWith(non_absolute_path, "..\\"))
+    else
+        true;
 }
 
 pub const SideEffectsData = struct {
@@ -71,13 +88,14 @@ const bufs = struct {
     pub threadlocal var extension_path: [512]u8 = undefined;
     pub threadlocal var tsconfig_match_full_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     pub threadlocal var tsconfig_match_full_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var tsconfig_match_full_buf3: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     pub threadlocal var esm_subpath: [512]u8 = undefined;
     pub threadlocal var esm_absolute_package_path: [bun.MAX_PATH_BYTES]u8 = undefined;
     pub threadlocal var esm_absolute_package_path_joined: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     pub threadlocal var dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
-    pub threadlocal var open_dirs: [256]std.fs.IterableDir = undefined;
+    pub threadlocal var open_dirs: [256]std.fs.Dir = undefined;
     pub threadlocal var resolve_without_remapping: [bun.MAX_PATH_BYTES]u8 = undefined;
     pub threadlocal var index: [bun.MAX_PATH_BYTES]u8 = undefined;
     pub threadlocal var dir_info_uncached_filename: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -168,6 +186,8 @@ pub const Result = struct {
 
     is_external: bool = false,
 
+    is_external_and_rewrite_import_path: bool = false,
+
     is_standalone_module: bool = false,
 
     // This is true when the package was loaded from within the node_modules directory.
@@ -191,8 +211,8 @@ pub const Result = struct {
 
     debug_meta: ?DebugMeta = null,
 
-    dirname_fd: StoredFileDescriptorType = 0,
-    file_fd: StoredFileDescriptorType = 0,
+    dirname_fd: StoredFileDescriptorType = .zero,
+    file_fd: StoredFileDescriptorType = .zero,
     import_kind: ast.ImportKind = undefined,
 
     pub const Union = union(enum) {
@@ -284,7 +304,7 @@ pub const Result = struct {
         const module = this.path_pair.primary.text;
         const node_module_root = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
         if (strings.lastIndexOf(module, node_module_root)) |end_| {
-            var end: usize = end_ + node_module_root.len;
+            const end: usize = end_ + node_module_root.len;
 
             return @as(u32, @truncate(bun.hash(module[end..])));
         }
@@ -297,7 +317,7 @@ pub const DirEntryResolveQueueItem = struct {
     result: allocators.Result,
     unsafe_path: string,
     safe_path: string = "",
-    fd: StoredFileDescriptorType = 0,
+    fd: StoredFileDescriptorType = .zero,
 };
 
 pub const DebugLogs = struct {
@@ -308,7 +328,7 @@ pub const DebugLogs = struct {
     pub const FlushMode = enum { fail, success };
 
     pub fn init(allocator: std.mem.Allocator) !DebugLogs {
-        var mutable = try MutableString.init(allocator, 0);
+        const mutable = try MutableString.init(allocator, 0);
         return DebugLogs{
             .indent = mutable,
             .notes = std.ArrayList(logger.Data).init(allocator),
@@ -353,13 +373,14 @@ pub const DebugLogs = struct {
 
 pub const MatchResult = struct {
     path_pair: PathPair,
-    dirname_fd: StoredFileDescriptorType = 0,
-    file_fd: StoredFileDescriptorType = 0,
+    dirname_fd: StoredFileDescriptorType = .zero,
+    file_fd: StoredFileDescriptorType = .zero,
     is_node_module: bool = false,
     package_json: ?*PackageJSON = null,
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
     dir_info: ?*DirInfo = null,
     module_type: options.ModuleType = .unknown,
+    is_external: bool = false,
 
     pub const Union = union(enum) {
         not_found: void,
@@ -382,8 +403,8 @@ pub const PendingResolution = struct {
 
     pub fn deinitListItems(list_: List, allocator: std.mem.Allocator) void {
         var list = list_;
-        var dependencies = list.items(.dependency);
-        var string_bufs = list.items(.string_buf);
+        const dependencies = list.items(.dependency);
+        const string_bufs = list.items(.string_buf);
         for (dependencies) |*dependency| {
             dependency.deinit();
         }
@@ -421,8 +442,8 @@ pub const PendingResolution = struct {
 pub const LoadResult = struct {
     path: string,
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase,
-    dirname_fd: StoredFileDescriptorType = 0,
-    file_fd: StoredFileDescriptorType = 0,
+    dirname_fd: StoredFileDescriptorType = .zero,
+    file_fd: StoredFileDescriptorType = .zero,
     dir_info: ?*DirInfo = null,
 };
 
@@ -545,7 +566,10 @@ pub const Resolver = struct {
             const pm = PackageManager.initWithRuntime(
                 this.log,
                 this.opts.install,
-                this.allocator,
+
+                // This cannot be the threadlocal allocator. It goes to the HTTP thread.
+                bun.default_allocator,
+
                 .{},
                 this.env_loader.?,
             ) catch @panic("Failed to initialize package manager");
@@ -556,6 +580,24 @@ pub const Resolver = struct {
     }
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
+        // TODO: enable auto-install on Windows
+        if (Environment.isWindows) return false;
+
+        // TODO(@paperdave): make this configurable. the rationale for disabling
+        // auto-install in standalone mode is that such executable must either:
+        //
+        // - bundle the dependency itself. dynamic `require`/`import` could be
+        //   changed to bundle potential dependencies specified in package.json
+        //
+        // - want to load the user's node_modules, which is what currently happens.
+        //
+        // auto install, as of writing, is also quite buggy and untested, it always
+        // installs the latest version regardless of a user's package.json or specifier.
+        // in addition to being not fully stable, it is completely unexpected to invoke
+        // a package manager after bundling an executable. if enough people run into
+        // this, we could implement point 1
+        if (self.standalone_module_graph) |_| return false;
+
         return self.opts.global_cache.isEnabled();
     }
 
@@ -579,22 +621,12 @@ pub const Resolver = struct {
             .timer = Timer.start() catch @panic("Timer fail"),
             .fs = _fs,
             .log = log,
-            .extension_order = opts.extension_order,
+            .extension_order = opts.extension_order.default.default,
             .care_about_browser_field = opts.target.isWebLike(),
         };
     }
 
     pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
-        if (r.opts.mark_builtins_as_external) {
-            if (strings.hasPrefixComptime(import_path, "node:") or strings.hasPrefixComptime(import_path, "bun:")) {
-                return true;
-            }
-
-            if (bun.JSC.HardcodedModule.Aliases.has(import_path, r.opts.target)) {
-                return true;
-            }
-        }
-
         for (r.opts.external.patterns) |pattern| {
             if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
                 import_path,
@@ -759,7 +791,7 @@ pub const Resolver = struct {
 
     pub fn resolveAndAutoInstall(
         r: *ThisResolver,
-        source_dir: string,
+        source_dir_: string,
         import_path: string,
         kind: ast.ImportKind,
         global_cache: GlobalCache,
@@ -771,8 +803,8 @@ pub const Resolver = struct {
         defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
             .url, .at_conditional, .at => options.BundleOptions.Defaults.CSSExtensionOrder[0..],
-            .entry_point, .stmt, .dynamic => r.opts.esm_extension_order,
-            else => r.opts.extension_order,
+            .entry_point, .stmt, .dynamic => r.opts.extension_order.default.esm,
+            else => r.opts.extension_order.default.default,
         };
 
         if (FeatureFlags.tracing) {
@@ -793,6 +825,25 @@ pub const Resolver = struct {
         }
 
         if (import_path.len == 0) return .{ .not_found = {} };
+
+        if (r.opts.mark_builtins_as_external) {
+            if (strings.hasPrefixComptime(import_path, "node:") or
+                strings.hasPrefixComptime(import_path, "bun:") or
+                bun.JSC.HardcodedModule.Aliases.has(import_path, r.opts.target))
+            {
+                return .{
+                    .success = Result{
+                        .import_kind = kind,
+                        .path_pair = PathPair{
+                            .primary = Path.init(import_path),
+                        },
+                        .is_external = true,
+                        .module_type = .cjs,
+                        .primary_side_effects_data = .no_side_effects__pure_data,
+                    },
+                };
+            }
+        }
 
         // Certain types of URLs default to being external for convenience
         if (r.isExternalPattern(import_path) or
@@ -825,22 +876,34 @@ pub const Resolver = struct {
             };
         }
 
-        if (r.standalone_module_graph) |graph| {
-            if (strings.hasPrefixComptime(import_path, "compiled://")) {
-                if (graph.files.contains(import_path)) {
-                    return .{
-                        .success = Result{
-                            .import_kind = kind,
-                            .path_pair = PathPair{
-                                .primary = Path.init(import_path),
+        // When using `bun build --compile`, module resolution is never relative
+        // to our special /$bunfs/ directory.
+        //
+        // It's always relative to the current working directory of the project
+        // root.
+        const source_dir = brk: {
+            if (r.standalone_module_graph) |graph| {
+                if (strings.isBunStandaloneFilePath(import_path)) {
+                    if (graph.files.contains(import_path)) {
+                        return .{
+                            .success = Result{
+                                .import_kind = kind,
+                                .path_pair = PathPair{
+                                    .primary = Path.init(import_path),
+                                },
+                                .is_standalone_module = true,
+                                .module_type = .esm,
                             },
-                            .is_standalone_module = true,
-                            .module_type = .esm,
-                        },
-                    };
+                        };
+                    }
+
+                    return .{ .not_found = {} };
+                } else if (strings.isBunStandaloneFilePath(source_dir_)) {
+                    break :brk Fs.FileSystem.instance.top_level_dir;
                 }
             }
-        }
+            break :brk source_dir_;
+        };
 
         if (DataURL.parse(import_path) catch {
             return .{ .failure = error.InvalidDataURL };
@@ -982,7 +1045,7 @@ pub const Resolver = struct {
                     const symlink_path = query.entry.symlink(&r.fs.fs, r.store_fd);
                     if (symlink_path.len > 0) {
                         path.setRealpath(symlink_path);
-                        if (result.file_fd == 0) result.file_fd = query.entry.cache.fd;
+                        if (result.file_fd == .zero) result.file_fd = query.entry.cache.fd;
 
                         if (r.debug_logs) |*debug| {
                             debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ path.text, symlink_path });
@@ -995,7 +1058,7 @@ pub const Resolver = struct {
 
                         const store_fd = r.store_fd;
 
-                        if (query.entry.cache.fd == 0) {
+                        if (query.entry.cache.fd == .zero) {
                             buf[out.len] = 0;
                             const span = buf[0..out.len :0];
                             var file = try if (store_fd)
@@ -1007,7 +1070,7 @@ pub const Resolver = struct {
                                 std.debug.assert(bun.FDTag.get(file.handle) == .none);
                                 out = try bun.getFdPath(file.handle, &buf);
                                 file.close();
-                                query.entry.cache.fd = 0;
+                                query.entry.cache.fd = .zero;
                             } else {
                                 query.entry.cache.fd = bun.toFD(file.handle);
                                 Fs.FileSystem.setMaxFd(file.handle);
@@ -1016,10 +1079,10 @@ pub const Resolver = struct {
 
                         defer {
                             if (r.fs.fs.needToCloseFiles()) {
-                                if (query.entry.cache.fd != 0) {
-                                    var file = std.fs.File{ .handle = bun.fdcast(query.entry.cache.fd) };
+                                if (query.entry.cache.fd != .zero) {
+                                    var file = query.entry.cache.fd.asFile();
                                     file.close();
-                                    query.entry.cache.fd = 0;
+                                    query.entry.cache.fd = .zero;
                                 }
                             }
                         }
@@ -1033,7 +1096,7 @@ pub const Resolver = struct {
                             debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ symlink, path.text });
                         }
                         query.entry.cache.symlink = PathString.init(symlink);
-                        if (result.file_fd == 0 and store_fd) result.file_fd = query.entry.cache.fd;
+                        if (result.file_fd == .zero and store_fd) result.file_fd = query.entry.cache.fd;
 
                         path.setRealpath(symlink);
                     }
@@ -1077,7 +1140,9 @@ pub const Resolver = struct {
         // experience unexpected build failures later on other operating systems.
         // Treating these paths as absolute paths on all platforms means Windows
         // users will not be able to accidentally make use of these paths.
-        if (strings.startsWith(import_path, "/") or std.fs.path.isAbsolutePosix(import_path)) {
+        if (std.fs.path.isAbsolutePosix(import_path) or
+            (if (Environment.isWindows) std.fs.path.isAbsoluteWindows(import_path) else false))
+        {
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("The import \"{s}\" is being treated as an absolute path", .{import_path});
             }
@@ -1123,7 +1188,8 @@ pub const Resolver = struct {
             }
 
             // Run node's resolution rules (e.g. adding ".js")
-            if (r.loadAsFileOrDirectory(import_path, kind)) |entry| {
+            var normalizer = ResolvePath.PosixToWinNormalizer{};
+            if (r.loadAsFileOrDirectory(normalizer.resolve(source_dir, import_path), kind)) |entry| {
                 return .{
                     .success = Result{
                         .dirname_fd = entry.dirname_fd,
@@ -1141,7 +1207,7 @@ pub const Resolver = struct {
 
         // Check both relative and package paths for CSS URL tokens, with relative
         // paths taking precedence over package paths to match Webpack behavior.
-        const is_package_path = isPackagePath(import_path);
+        const is_package_path = isPackagePathNotAbsolute(import_path);
         var check_relative = !is_package_path or kind == .url;
         var check_package = is_package_path;
 
@@ -1199,6 +1265,8 @@ pub const Resolver = struct {
                                         .package_json = pkg,
                                         .jsx = r.opts.jsx,
                                         .module_type = _result.module_type,
+                                        .is_external = _result.is_external,
+                                        .is_external_and_rewrite_import_path = _result.is_external,
                                     };
                                     check_relative = false;
                                     check_package = false;
@@ -1211,6 +1279,13 @@ pub const Resolver = struct {
             }
 
             if (check_relative) {
+                const prev_extension_order = r.extension_order;
+                defer {
+                    r.extension_order = prev_extension_order;
+                }
+                if (strings.pathContainsNodeModulesFolder(abs_path)) {
+                    r.extension_order = r.opts.extension_order.kind(kind, true);
+                }
                 if (r.loadAsFileOrDirectory(abs_path, kind)) |res| {
                     check_package = false;
                     result = Result{
@@ -1252,6 +1327,7 @@ pub const Resolver = struct {
                     result.module_type = .cjs;
                     result.path_pair.primary.is_disabled = true;
                     result.is_from_node_modules = true;
+                    result.primary_side_effects_data = .no_side_effects__pure_data;
                     return .{ .success = result };
                 }
 
@@ -1266,6 +1342,7 @@ pub const Resolver = struct {
                     result.module_type = .cjs;
                     result.path_pair.primary.is_disabled = true;
                     result.is_from_node_modules = true;
+                    result.primary_side_effects_data = .no_side_effects__pure_data;
                     return .{ .success = result };
                 }
             }
@@ -1288,7 +1365,7 @@ pub const Resolver = struct {
 
                     // If the module "foo" has been marked as external, we also want to treat
                     // paths into that module such as "foo/bar" as external too.
-                    var slash = strings.lastIndexOfChar(query, '/') orelse break;
+                    const slash = strings.lastIndexOfChar(query, '/') orelse break;
                     query = query[0..slash];
                 }
             }
@@ -1358,6 +1435,10 @@ pub const Resolver = struct {
                     result.is_from_node_modules = result.is_from_node_modules or res.is_node_module;
                     result.jsx = r.opts.jsx;
                     result.module_type = res.module_type;
+                    result.is_external = res.is_external;
+                    // Potentially rewrite the import path if it's external that
+                    // was remapped to a different path
+                    result.is_external_and_rewrite_import_path = result.is_external;
 
                     if (res.path_pair.primary.is_disabled and res.path_pair.secondary == null) {
                         return .{ .success = result };
@@ -1383,6 +1464,11 @@ pub const Resolver = struct {
                                             result.package_json = remapped.package_json;
                                             result.diff_case = remapped.diff_case;
                                             result.module_type = remapped.module_type;
+                                            result.is_external = remapped.is_external;
+
+                                            // Potentially rewrite the import path if it's external that
+                                            // was remapped to a different path
+                                            result.is_external_and_rewrite_import_path = result.is_external;
 
                                             result.is_from_node_modules = result.is_from_node_modules or remapped.is_node_module;
                                             return .{ .success = result };
@@ -1487,7 +1573,7 @@ pub const Resolver = struct {
         }
 
         {
-            var dir_info = (r.dirInfoCached(slice) catch null) orelse return null;
+            const dir_info = (r.dirInfoCached(slice) catch null) orelse return null;
             return RootPathPair{
                 .base_path = slice,
                 .package_json = dir_info.package_json orelse return null,
@@ -1548,16 +1634,21 @@ pub const Resolver = struct {
 
         // Find the parent directory with the "package.json" file
         var dir_info_package_json: ?*DirInfo = dir_info;
-        while (dir_info_package_json != null and dir_info_package_json.?.package_json == null) : (dir_info_package_json = dir_info_package_json.?.getParent()) {}
+        while (dir_info_package_json != null and dir_info_package_json.?.package_json == null)
+            dir_info_package_json = dir_info_package_json.?.getParent();
 
         // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
-        if (dir_info_package_json != null and strings.hasPrefix(import_path, "#") and !forbid_imports and dir_info_package_json.?.package_json.?.imports != null) {
+        if (dir_info_package_json != null and
+            strings.hasPrefixComptime(import_path, "#") and
+            !forbid_imports and
+            dir_info_package_json.?.package_json.?.imports != null)
+        {
             return r.loadPackageImports(import_path, dir_info_package_json.?, kind, global_cache);
         }
 
         const esm_ = ESModule.Package.parse(import_path, bufs(.esm_subpath));
 
-        var source_dir_info = dir_info;
+        const source_dir_info = dir_info;
         var any_node_modules_folder = false;
         const use_node_module_resolver = global_cache != .force;
 
@@ -1572,6 +1663,8 @@ pub const Resolver = struct {
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path});
                 }
+                const prev_extension_order = r.extension_order;
+                defer r.extension_order = prev_extension_order;
 
                 if (esm_) |esm| {
                     const abs_package_path = brk: {
@@ -1580,6 +1673,11 @@ pub const Resolver = struct {
                     };
 
                     if (r.dirInfoCached(abs_package_path) catch null) |pkg_dir_info| {
+                        r.extension_order = switch (kind) {
+                            .url, .at_conditional, .at => options.BundleOptions.Defaults.CSSExtensionOrder[0..],
+                            else => r.opts.extension_order.kind(kind, true),
+                        };
+
                         if (pkg_dir_info.package_json) |package_json| {
                             if (package_json.exports) |exports_map| {
 
@@ -1645,7 +1743,7 @@ pub const Resolver = struct {
                                         .success = .{
                                             .path_pair = .{ .primary = package_json.source.path },
                                             .dirname_fd = pkg_dir_info.getFileDescriptor(),
-                                            .file_fd = 0,
+                                            .file_fd = .zero,
                                             .is_node_module = package_json.source.path.isNodeModule(),
                                             .package_json = package_json,
                                             .dir_info = dir_info,
@@ -1909,7 +2007,7 @@ pub const Resolver = struct {
                                         .success = .{
                                             .path_pair = .{ .primary = package_json.source.path },
                                             .dirname_fd = pkg_dir_info.getFileDescriptor(),
-                                            .file_fd = 0,
+                                            .file_fd = .zero,
                                             .is_node_module = package_json.source.path.isNodeModule(),
                                             .package_json = package_json,
                                             .dir_info = dir_info,
@@ -1961,15 +2059,16 @@ pub const Resolver = struct {
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
         var needs_iter = true;
         var in_place: ?*Fs.FileSystem.DirEntry = null;
-        var open_dir = std.fs.cwd().openIterableDir(dir_path, .{}) catch |err| {
-            switch (err) {
-                error.FileNotFound => unreachable,
-                else => {
-                    // TODO: handle this error better
-                    r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Unable to open directory: {s}", .{bun.asByteSlice(@errorName(err))}) catch unreachable;
-                    return err;
-                },
-            }
+        const open_dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
+            // TODO: handle this error better
+            r.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                r.allocator,
+                "Unable to open directory: {s}",
+                .{bun.asByteSlice(@errorName(err))},
+            ) catch unreachable;
+            return err;
         };
 
         if (rfs.entries.atIndex(cached_dir_entry_result.index)) |cached_entry| {
@@ -1990,11 +2089,11 @@ pub const Resolver = struct {
                 r.generation,
             );
 
-            var dir_iterator = open_dir.iterate();
-            while (dir_iterator.next() catch null) |_value| {
+            var dir_iterator = bun.iterateDir(open_dir);
+            while (dir_iterator.next().unwrap() catch null) |_value| {
                 new_entry.addEntry(
                     if (in_place) |existing| &existing.data else null,
-                    _value,
+                    &_value,
                     allocator,
                     void,
                     {},
@@ -2008,11 +2107,11 @@ pub const Resolver = struct {
             dir_entries_ptr.* = new_entry;
 
             if (r.store_fd) {
-                Fs.FileSystem.setMaxFd(open_dir.dir.fd);
-                dir_entries_ptr.fd = bun.toFD(open_dir.dir.fd);
+                Fs.FileSystem.setMaxFd(open_dir.fd);
+                dir_entries_ptr.fd = bun.toFD(open_dir.fd);
             }
 
-            bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.dir.fd), dir_path, dir_entries_ptr.data.count() });
+            bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2021,7 +2120,7 @@ pub const Resolver = struct {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        var dir_info_ptr = r.dir_cache.put(&dir_cache_info_result, .{}) catch unreachable;
+        const dir_info_ptr = r.dir_cache.put(&dir_cache_info_result, .{}) catch unreachable;
 
         try r.dirInfoUncached(
             dir_info_ptr,
@@ -2033,7 +2132,7 @@ pub const Resolver = struct {
             // to check for a parent package.json
             null,
             allocators.NotFound,
-            bun.toFD(open_dir.dir.fd),
+            bun.toFD(open_dir.fd),
             package_id,
         );
         return dir_info_ptr;
@@ -2152,18 +2251,18 @@ pub const Resolver = struct {
     fn handleESMResolution(r: *ThisResolver, esm_resolution_: ESModule.Resolution, abs_package_path: string, kind: ast.ImportKind, package_json: *PackageJSON, package_subpath: string) ?MatchResult {
         var esm_resolution = esm_resolution_;
         if (!((esm_resolution.status == .Inexact or esm_resolution.status == .Exact or esm_resolution.status == .ExactEndsWithStar) and
-            esm_resolution.path.len > 0 and esm_resolution.path[0] == '/'))
+            esm_resolution.path.len > 0 and esm_resolution.path[0] == std.fs.path.sep))
             return null;
 
         const abs_esm_path: string = brk: {
             var parts = [_]string{
                 abs_package_path,
-                strings.withoutLeadingSlash(esm_resolution.path),
+                strings.withoutLeadingPathSeparator(esm_resolution.path),
             };
             break :brk r.fs.absBuf(&parts, bufs(.esm_absolute_package_path_joined));
         };
 
-        var missing_suffix: string = undefined;
+        var missing_suffix: string = "";
 
         switch (esm_resolution.status) {
             .Exact, .ExactEndsWithStar => {
@@ -2175,11 +2274,12 @@ pub const Resolver = struct {
                     esm_resolution.status = .ModuleNotFound;
                     return null;
                 };
-                const base = std.fs.path.basename(abs_esm_path);
                 const extension_order = if (kind == .at or kind == .at_conditional)
                     r.extension_order
                 else
-                    r.opts.extension_order;
+                    r.opts.extension_order.kind(kind, resolved_dir_info.isInsideNodeModules());
+
+                const base = std.fs.path.basename(abs_esm_path);
                 const entry_query = entries.get(base) orelse {
                     const ends_with_star = esm_resolution.status == .ExactEndsWithStar;
                     esm_resolution.status = .ModuleNotFound;
@@ -2219,9 +2319,9 @@ pub const Resolver = struct {
                                     bun.copy(u8, file_name[index.len..], ext);
                                     const index_query = dir_entries.get(file_name);
                                     if (index_query != null and index_query.?.entry.kind(&r.fs.fs, r.store_fd) == .file) {
-                                        missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
-                                        // defer r.allocator.free(missing_suffix);
                                         if (r.debug_logs) |*debug| {
+                                            missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
+                                            defer r.allocator.free(missing_suffix);
                                             const parts = [_]string{ package_json.name, package_subpath };
                                             debug.addNoteFmt("The import {s} is missing the suffix {s}", .{ ResolvePath.join(parts, .auto), missing_suffix });
                                         }
@@ -2283,7 +2383,7 @@ pub const Resolver = struct {
             return r.loadNodeModules(import_path, kind, source_dir_info, global_cache, false);
         } else {
             const paths = [_]string{ source_dir_info.abs_path, import_path };
-            var resolved = r.fs.absBuf(&paths, bufs(.resolve_without_remapping));
+            const resolved = r.fs.absBuf(&paths, bufs(.resolve_without_remapping));
             if (r.loadAsFileOrDirectory(resolved, kind)) |result| {
                 return .{ .success = result };
             }
@@ -2376,7 +2476,7 @@ pub const Resolver = struct {
             ) orelse return null;
         }
 
-        var _pkg = try bun.default_allocator.create(PackageJSON);
+        const _pkg = try bun.default_allocator.create(PackageJSON);
         _pkg.* = pkg;
         return _pkg;
     }
@@ -2410,12 +2510,25 @@ pub const Resolver = struct {
         return r.dir_cache.get(path);
     }
 
+    inline fn isDotSlash(path: string) bool {
+        return switch (Environment.os) {
+            else => strings.eqlComptime(path, "./"),
+            .windows => path.len == 2 and path[0] == '.' and strings.charIsAnySlash(path[1]),
+        };
+    }
+
+    threadlocal var win32_normalized_dir_info_cache_buf: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined;
     fn dirInfoCachedMaybeLog(r: *ThisResolver, __path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
         r.mutex.lock();
         defer r.mutex.unlock();
         var _path = __path;
-        if (strings.eqlComptime(_path, "./") or strings.eqlComptime(_path, "."))
+
+        if (isDotSlash(_path) or strings.eqlComptime(_path, "."))
             _path = r.fs.top_level_dir;
+
+        if (comptime Environment.isWindows) {
+            _path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, _path);
+        }
 
         const top_result = try r.dir_cache.getOrPut(_path);
         if (top_result.status != .unknown) {
@@ -2437,8 +2550,7 @@ pub const Resolver = struct {
             .status = .not_found,
         };
         const root_path = if (comptime Environment.isWindows)
-            // std.fs.path.diskDesignator(path)
-            path[0..3]
+            ResolvePath.windowsFilesystemRoot(path)
         else
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer
@@ -2449,7 +2561,7 @@ pub const Resolver = struct {
         defer rfs.entries_mutex.unlock();
 
         while (!strings.eql(top, root_path)) : (top = Dirname.dirname(top)) {
-            var result = try r.dir_cache.getOrPut(top);
+            const result = try r.dir_cache.getOrPut(top);
 
             if (result.status != .unknown) {
                 top_parent = result;
@@ -2458,7 +2570,7 @@ pub const Resolver = struct {
             bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))] = DirEntryResolveQueueItem{
                 .unsafe_path = top,
                 .result = result,
-                .fd = 0,
+                .fd = .zero,
             };
 
             if (rfs.entries.get(top)) |top_entry| {
@@ -2469,14 +2581,14 @@ pub const Resolver = struct {
         }
 
         if (strings.eql(top, root_path)) {
-            var result = try r.dir_cache.getOrPut(root_path);
+            const result = try r.dir_cache.getOrPut(root_path);
             if (result.status != .unknown) {
                 top_parent = result;
             } else {
                 bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))] = DirEntryResolveQueueItem{
                     .unsafe_path = root_path,
                     .result = result,
-                    .fd = 0,
+                    .fd = .zero,
                 };
                 if (rfs.entries.get(top)) |top_entry| {
                     bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))].safe_path = top_entry.entries.dir;
@@ -2496,9 +2608,9 @@ pub const Resolver = struct {
 
             // Anything
             if (open_dir_count > 0 and (!r.store_fd or r.fs.fs.needToCloseFiles())) {
-                var open_dirs: []std.fs.IterableDir = bufs(.open_dirs)[0..open_dir_count];
+                const open_dirs: []std.fs.Dir = bufs(.open_dirs)[0..open_dir_count];
                 for (open_dirs) |*open_dir| {
-                    _ = bun.sys.close(bun.toFD(open_dir.dir.fd));
+                    _ = bun.sys.close(bun.toFD(open_dir.fd));
                 }
             }
         }
@@ -2523,39 +2635,33 @@ pub const Resolver = struct {
             defer top_parent = queue_top.result;
             queue_slice.len -= 1;
 
-            var _open_dir: anyerror!std.fs.IterableDir = undefined;
-            if (queue_top.fd == 0) {
-
+            const open_dir = if (queue_top.fd != .zero)
+                queue_top.fd.asDir()
+            else open_dir: {
                 // This saves us N copies of .toPosixPath
                 // which was likely the perf gain from resolving directories relative to the parent directory, anyway.
                 const prev_char = path.ptr[queue_top.unsafe_path.len];
                 path.ptr[queue_top.unsafe_path.len] = 0;
                 defer path.ptr[queue_top.unsafe_path.len] = prev_char;
-                var sentinel = path.ptr[0..queue_top.unsafe_path.len :0];
+                const sentinel = path.ptr[0..queue_top.unsafe_path.len :0];
 
-                if (comptime Environment.isPosix) {
-                    _open_dir = std.fs.openIterableDirAbsoluteZ(
+                const open_req = if (comptime Environment.isPosix)
+                    std.fs.openDirAbsoluteZ(
                         sentinel,
-                        .{
-                            .no_follow = !follow_symlinks,
-                        },
-                    );
-                } else if (comptime Environment.isWindows) {
+                        .{ .no_follow = !follow_symlinks, .iterate = true },
+                    )
+                else if (comptime Environment.isWindows) open_req: {
                     const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, true, !follow_symlinks);
                     if (dirfd_result.unwrap()) |result| {
-                        _open_dir = std.fs.IterableDir{ .dir = .{ .fd = bun.fdcast(result) } };
+                        break :open_req result.asDir();
                     } else |err| {
-                        _open_dir = err;
+                        break :open_req err;
                     }
-                }
+                };
 
-                bun.fs.debug("open({s}) = {any}", .{ sentinel, _open_dir });
-            }
+                bun.fs.debug("open({s}) = {any}", .{ sentinel, open_req });
 
-            const open_dir = if (queue_top.fd != 0) std.fs.IterableDir{ .dir = .{ .fd = bun.fdcast(queue_top.fd) } } else (_open_dir catch |err| {
-                switch (err) {
-                    error.EACCESS => {},
-
+                break :open_dir open_req catch |err| switch (@as(anyerror, err)) {
                     // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
                     // as if there is nothing there at all instead of causing an error due to
                     // the directory actually being a file. This is a workaround for situations
@@ -2568,12 +2674,10 @@ pub const Resolver = struct {
                     error.IsDir,
                     error.NotDir,
                     error.FileNotFound,
-                    => {
-                        return null;
-                    },
+                    => return null,
 
                     else => {
-                        var cached_dir_entry_result = rfs.entries.getOrPut(queue_top.unsafe_path) catch unreachable;
+                        const cached_dir_entry_result = rfs.entries.getOrPut(queue_top.unsafe_path) catch unreachable;
                         r.dir_cache.markNotFound(queue_top.result);
                         rfs.entries.markNotFound(cached_dir_entry_result);
                         if (comptime enable_logging) {
@@ -2590,14 +2694,13 @@ pub const Resolver = struct {
                                 },
                             ) catch {};
                         }
+                        return null;
                     },
-                }
+                };
+            };
 
-                return null;
-            });
-
-            if (queue_top.fd == 0) {
-                Fs.FileSystem.setMaxFd(open_dir.dir.fd);
+            if (queue_top.fd == .zero) {
+                Fs.FileSystem.setMaxFd(open_dir.fd);
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 bufs(.open_dirs)[open_dir_count] = open_dir;
                 open_dir_count += 1;
@@ -2609,7 +2712,7 @@ pub const Resolver = struct {
                 if (_safe_path == null) {
                     // Now that we've opened the topmost directory successfully, it's reasonable to store the slice.
                     if (path[path.len - 1] != std.fs.path.sep) {
-                        var parts = [_]string{ path, std.fs.path.sep_str };
+                        const parts = [_]string{ path, std.fs.path.sep_str };
                         _safe_path = try r.fs.dirname_store.append(@TypeOf(parts), parts);
                     } else {
                         _safe_path = try r.fs.dirname_store.append(string, path);
@@ -2618,7 +2721,7 @@ pub const Resolver = struct {
 
                 const safe_path = _safe_path.?;
 
-                var dir_path_i = std.mem.indexOf(u8, safe_path, queue_top.unsafe_path) orelse unreachable;
+                const dir_path_i = std.mem.indexOf(u8, safe_path, queue_top.unsafe_path) orelse unreachable;
                 var end = dir_path_i +
                     queue_top.unsafe_path.len;
 
@@ -2650,11 +2753,11 @@ pub const Resolver = struct {
                     r.generation,
                 );
 
-                var dir_iterator = open_dir.iterate();
-                while (dir_iterator.next() catch null) |_value| {
+                var dir_iterator = bun.iterateDir(open_dir);
+                while (dir_iterator.next().unwrap() catch null) |_value| {
                     new_entry.addEntry(
                         if (in_place) |existing| &existing.data else null,
-                        _value,
+                        &_value,
                         allocator,
                         void,
                         {},
@@ -2663,18 +2766,18 @@ pub const Resolver = struct {
                 if (in_place) |existing| {
                     existing.data.clearAndFree(allocator);
                 }
-                new_entry.fd = if (r.store_fd) bun.toFD(open_dir.dir.fd) else 0;
+                new_entry.fd = if (r.store_fd) bun.toFD(open_dir.fd) else .zero;
                 var dir_entries_ptr = in_place orelse allocator.create(Fs.FileSystem.DirEntry) catch unreachable;
                 dir_entries_ptr.* = new_entry;
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = dir_entries_ptr,
                 });
-                bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.dir.fd), dir_path, dir_entries_ptr.data.count() });
+                bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
-            var dir_info_ptr = try r.dir_cache.put(&queue_top.result, DirInfo{});
+            const dir_info_ptr = try r.dir_cache.put(&queue_top.result, DirInfo{});
 
             try r.dirInfoUncached(
                 dir_info_ptr,
@@ -2684,7 +2787,7 @@ pub const Resolver = struct {
                 cached_dir_entry_result.index,
                 r.dir_cache.atIndex(top_parent.index),
                 top_parent.index,
-                bun.toFD(open_dir.dir.fd),
+                bun.toFD(open_dir.fd),
                 null,
             );
 
@@ -2798,18 +2901,27 @@ pub const Resolver = struct {
                 const total_length: ?u32 = strings.indexOfChar(original_path, '*');
                 var prefix_parts = [_]string{ abs_base_url, original_path[0 .. total_length orelse original_path.len] };
 
+                // Concatenate the matched text with the suffix from the wildcard path
+                var matched_text_with_suffix = bufs(.tsconfig_match_full_buf3);
+                var matched_text_with_suffix_len: usize = 0;
+                if (total_length != null) {
+                    const suffix = std.mem.trimLeft(u8, original_path[total_length orelse original_path.len ..], "*");
+                    matched_text_with_suffix_len = matched_text.len + suffix.len;
+                    bun.concat(u8, matched_text_with_suffix, &.{ matched_text, suffix });
+                }
+
                 // 1. Normalize the base path
                 // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
-                var prefix = r.fs.absBuf(&prefix_parts, bufs(.tsconfig_match_full_buf2));
+                const prefix = r.fs.absBuf(&prefix_parts, bufs(.tsconfig_match_full_buf2));
 
                 // 2. Join the new base path with the matched result
                 // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
                 var parts = [_]string{
                     prefix,
-                    if (total_length != null) std.mem.trimLeft(u8, matched_text, "/") else "",
+                    if (matched_text_with_suffix_len > 0) std.mem.trimLeft(u8, matched_text_with_suffix[0..matched_text_with_suffix_len], "/") else "",
                     std.mem.trimLeft(u8, longest_match.suffix, "/"),
                 };
-                var absolute_original_path = r.fs.absBuf(
+                const absolute_original_path = r.fs.absBuf(
                     &parts,
                     bufs(.tsconfig_match_full_buf),
                 );
@@ -2842,7 +2954,9 @@ pub const Resolver = struct {
 
         const esmodule = ESModule{
             .conditions = switch (kind) {
-                ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                ast.ImportKind.require,
+                ast.ImportKind.require_resolve,
+                => r.opts.conditions.require,
                 else => r.opts.conditions.import,
             },
             .allocator = r.allocator,
@@ -2852,7 +2966,31 @@ pub const Resolver = struct {
 
         const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);
 
-        if (esm_resolution.status == .PackageResolve)
+        if (esm_resolution.status == .PackageResolve) {
+            // https://github.com/oven-sh/bun/issues/4972
+            // Resolve a subpath import to a Bun or Node.js builtin
+            //
+            // Code example:
+            //
+            //     import { readFileSync } from '#fs';
+            //
+            // package.json:
+            //
+            //     "imports": {
+            //       "#fs": "node:fs"
+            //     }
+            //
+            if (r.opts.mark_builtins_as_external or r.opts.target.isBun()) {
+                if (JSC.HardcodedModule.Aliases.has(esm_resolution.path, r.opts.target)) {
+                    return .{
+                        .success = .{
+                            .path_pair = .{ .primary = bun.fs.Path.init(esm_resolution.path) },
+                            .is_external = true,
+                        },
+                    };
+                }
+            }
+
             return r.loadNodeModules(
                 esm_resolution.path,
                 kind,
@@ -2860,6 +2998,7 @@ pub const Resolver = struct {
                 global_cache,
                 true,
             );
+        }
 
         if (r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json, "")) |result| {
             return .{ .success = result };
@@ -2973,7 +3112,7 @@ pub const Resolver = struct {
         }
 
         // Normalize the path so we can compare against it without getting confused by "./"
-        var cleaned = r.fs.normalizeBuf(bufs(.check_browser_map), input_path);
+        const cleaned = r.fs.normalizeBuf(bufs(.check_browser_map), input_path);
 
         if (cleaned.len == 1 and cleaned[0] == '.') {
             // No bundler supports remapping ".", so we don't either
@@ -3113,15 +3252,16 @@ pub const Resolver = struct {
         }
 
         const in_str = argument.toBunString(globalThis);
-        var r = &globalThis.bunVM().bundler.resolver;
+        defer in_str.deref();
+        const r = &globalThis.bunVM().bundler.resolver;
         return nodeModulePathsJSValue(r, in_str, globalThis);
     }
 
     pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) bun.JSC.JSValue {
         bun.JSC.markBinding(@src());
 
-        const in_str = bun.String.create(".");
-        var r = &globalThis.bunVM().bundler.resolver;
+        const in_str = bun.String.createUTF8(".");
+        const r = &globalThis.bunVM().bundler.resolver;
         return nodeModulePathsJSValue(r, in_str, globalThis);
     }
 
@@ -3138,7 +3278,7 @@ pub const Resolver = struct {
 
         const str = brk: {
             if (std.fs.path.isAbsolute(sliced.slice())) break :brk sliced.slice();
-            var dir_path_buf = bufs(.node_modules_paths_buf);
+            const dir_path_buf = bufs(.node_modules_paths_buf);
             break :brk r.fs.joinBuf(&[_]string{ r.fs.top_level_dir, sliced.slice() }, dir_path_buf);
         };
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -3158,7 +3298,7 @@ pub const Resolver = struct {
                     break :brk [2]string{ path_without_trailing_slash, "/node_modules" };
                 };
                 list.append(
-                    bun.String.create(
+                    bun.String.createUTF8(
                         bun.strings.concat(stack_fallback_allocator.get(), &path_parts) catch unreachable,
                     ),
                 ) catch unreachable;
@@ -3172,7 +3312,7 @@ pub const Resolver = struct {
                 const path_without_trailing_slash = strings.withoutTrailingSlash(path);
 
                 list.append(
-                    bun.String.create(
+                    bun.String.createUTF8(
                         bun.strings.concat(
                             stack_fallback_allocator.get(),
                             &[_]string{
@@ -3191,7 +3331,7 @@ pub const Resolver = struct {
     }
 
     pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, extension_order: []const string) ?MatchResult {
-        var rfs = &r.fs.fs;
+        const rfs = &r.fs.fs;
         // Try the "index" file with extensions
         for (extension_order) |ext| {
             var ext_buf = bufs(.extension_path);
@@ -3327,6 +3467,10 @@ pub const Resolver = struct {
                         }
                     }
                 }
+            }
+
+            if (Environment.allow_assert) {
+                std.debug.assert(std.fs.path.isAbsolute(file.path));
             }
 
             return MatchResult{
@@ -3586,7 +3730,7 @@ pub const Resolver = struct {
         // https://github.com/microsoft/TypeScript/issues/4595
         if (strings.lastIndexOfChar(base, '.')) |last_dot| {
             const ext = base[last_dot..base.len];
-            if (strings.eqlComptime(ext, ".js") or strings.eqlComptime(ext, ".jsx")) {
+            if ((strings.eqlComptime(ext, ".js") or strings.eqlComptime(ext, ".jsx") and (!FeatureFlags.disable_auto_js_to_ts_in_node_modules or !strings.pathContainsNodeModulesFolder(path)))) {
                 const segment = base[0..last_dot];
                 var tail = bufs(.load_as_file)[path.len - base.len ..];
                 bun.copy(u8, tail, segment);
@@ -3607,11 +3751,11 @@ pub const Resolver = struct {
                                 .path = brk: {
                                     if (query.entry.abs_path.isEmpty()) {
                                         if (query.entry.dir.len > 0 and query.entry.dir[query.entry.dir.len - 1] == std.fs.path.sep) {
-                                            var parts = [_]string{ query.entry.dir, buffer };
+                                            const parts = [_]string{ query.entry.dir, buffer };
                                             query.entry.abs_path = PathString.init(r.fs.filename_store.append(@TypeOf(parts), parts) catch unreachable);
                                             // the trailing path CAN be missing here
                                         } else {
-                                            var parts = [_]string{ query.entry.dir, "/", buffer };
+                                            const parts = [_]string{ query.entry.dir, "/", buffer };
                                             query.entry.abs_path = PathString.init(r.fs.filename_store.append(@TypeOf(parts), parts) catch unreachable);
                                         }
                                     }
@@ -3657,9 +3801,9 @@ pub const Resolver = struct {
         fd: FileDescriptorType,
         package_id: ?Install.PackageID,
     ) anyerror!void {
-        var result = _result;
+        const result = _result;
 
-        var rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
+        const rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
         var entries = _entries.entries;
 
         info.* = DirInfo{
@@ -3693,10 +3837,10 @@ pub const Resolver = struct {
                             bin_folders = BinFolderArray.init(0) catch unreachable;
                         }
 
-                        const this_dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-                        var file = this_dir.openDirZ("node_modules/.bin", .{}, true) catch break :append_bin_dir;
+                        const this_dir = fd.asDir();
+                        var file = this_dir.openDirZ(bun.pathLiteral("node_modules/.bin"), .{ .iterate = true }) catch break :append_bin_dir;
                         defer file.close();
-                        var bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;
+                        const bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;
                         bin_folders_lock.lock();
                         defer bin_folders_lock.unlock();
 
@@ -3718,10 +3862,10 @@ pub const Resolver = struct {
                                 bin_folders = BinFolderArray.init(0) catch unreachable;
                             }
 
-                            const this_dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-                            var file = this_dir.openDirZ(".bin", .{}, false) catch break :append_bin_dir;
+                            const this_dir = fd.asDir();
+                            var file = this_dir.openDirZ(".bin", .{}) catch break :append_bin_dir;
                             defer file.close();
-                            var bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;
+                            const bin_path = bun.getFdPath(file.fd, bufs(.node_bin_path)) catch break :append_bin_dir;
                             bin_folders_lock.lock();
                             defer bin_folders_lock.unlock();
 
@@ -3739,14 +3883,14 @@ pub const Resolver = struct {
         }
         // }
 
-        if (parent != null) {
+        if (parent) |parent_| {
 
             // Propagate the browser scope into child directories
-            info.enclosing_browser_scope = parent.?.enclosing_browser_scope;
-            info.package_json_for_browser_field = parent.?.package_json_for_browser_field;
-            info.enclosing_tsconfig_json = parent.?.enclosing_tsconfig_json;
+            info.enclosing_browser_scope = parent_.enclosing_browser_scope;
+            info.package_json_for_browser_field = parent_.package_json_for_browser_field;
+            info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
 
-            if (parent.?.package_json) |parent_package_json| {
+            if (parent_.package_json) |parent_package_json| {
                 // https://github.com/oven-sh/bun/issues/229
                 if (parent_package_json.name.len > 0 or r.care_about_bin_folder) {
                     info.enclosing_package_json = parent_package_json;
@@ -3757,14 +3901,14 @@ pub const Resolver = struct {
                 }
             }
 
-            info.enclosing_package_json = info.enclosing_package_json orelse parent.?.enclosing_package_json;
-            info.package_json_for_dependencies = info.package_json_for_dependencies orelse parent.?.package_json_for_dependencies;
+            info.enclosing_package_json = info.enclosing_package_json orelse parent_.enclosing_package_json;
+            info.package_json_for_dependencies = info.package_json_for_dependencies orelse parent_.package_json_for_dependencies;
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if (!r.opts.preserve_symlinks) {
-                if (parent.?.getEntries(r.generation)) |parent_entries| {
+                if (parent_.getEntries(r.generation)) |parent_entries| {
                     if (parent_entries.get(base)) |lookup| {
-                        if (entries.fd != 0 and lookup.entry.cache.fd == 0 and r.store_fd) lookup.entry.cache.fd = entries.fd;
+                        if (entries.fd != .zero and lookup.entry.cache.fd == .zero and r.store_fd) lookup.entry.cache.fd = entries.fd;
                         const entry = lookup.entry;
 
                         var symlink = entry.symlink(rfs, r.store_fd);
@@ -3773,7 +3917,7 @@ pub const Resolver = struct {
                                 logs.addNote(std.fmt.allocPrint(r.allocator, "Resolved symlink \"{s}\" to \"{s}\"", .{ path, symlink }) catch unreachable);
                             }
                             info.abs_real_path = symlink;
-                        } else if (parent.?.abs_real_path.len > 0) {
+                        } else if (parent_.abs_real_path.len > 0) {
                             // this might leak a little i'm not sure
                             const parts = [_]string{ parent.?.abs_real_path, base };
                             symlink = r.fs.dirname_store.append(string, r.fs.absBuf(&parts, bufs(.dir_info_uncached_filename))) catch unreachable;
@@ -3787,6 +3931,10 @@ pub const Resolver = struct {
                     }
                 }
             }
+
+            if (parent_.isNodeModules() or parent_.isInsideNodeModules()) {
+                info.flags.setPresent(.inside_node_modules, true);
+            }
         }
 
         // Record if this directory has a package.json file
@@ -3794,9 +3942,9 @@ pub const Resolver = struct {
             const entry = lookup.entry;
             if (entry.kind(rfs, r.store_fd) == .file) {
                 info.package_json = if (r.usePackageManager() and !info.hasNodeModules() and !info.isNodeModules())
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0, package_id, true) catch null
+                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .zero, package_id, true) catch null
                 else
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0, null, false) catch null;
+                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .zero, null, false) catch null;
 
                 if (info.package_json) |pkg| {
                     if (pkg.browser_map.count() > 0) {
@@ -3847,14 +3995,14 @@ pub const Resolver = struct {
             if (tsconfig_path) |tsconfigpath| {
                 info.tsconfig_json = r.parseTSConfig(
                     tsconfigpath,
-                    if (FeatureFlags.store_file_descriptors) fd else 0,
+                    if (FeatureFlags.store_file_descriptors) fd else .zero,
                 ) catch |err| brk: {
                     const pretty = r.prettyPath(Path.init(tsconfigpath));
 
                     if (err == error.ENOENT or err == error.FileNotFound) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {}", .{bun.strings.QuotedFormatter{ .text = pretty }}) catch {};
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};
                     } else if (err != error.ParseErrorAlreadyLogged and err != error.IsDir and err != error.EISDIR) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {}: {s}", .{ bun.strings.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {}: {s}", .{ bun.fmt.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
                     }
                     break :brk null;
                 };
@@ -3863,13 +4011,12 @@ pub const Resolver = struct {
                     try parent_configs.append(tsconfig_json);
                     var current = tsconfig_json;
                     while (current.extends.len > 0) {
-                        var ts_dir_name = Dirname.dirname(current.abs_path);
-                        // not sure why this needs cwd but we'll just pass in the dir of the tsconfig...
-                        var abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
-                        var parent_config_maybe = r.parseTSConfig(abs_path, 0) catch |err| {
+                        const ts_dir_name = Dirname.dirname(current.abs_path);
+                        const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
+                        const parent_config_maybe = r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
                             r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{
                                 @errorName(err),
-                                strings.QuotedFormatter{
+                                bun.fmt.QuotedFormatter{
                                     .text = abs_path,
                                 },
                             }) catch {};
@@ -3914,27 +4061,18 @@ pub const Resolver = struct {
 };
 
 pub const Dirname = struct {
-    pub fn dirname(path_: string) string {
-        var path = path_;
+    pub fn dirname(path: string) string {
+        if (path.len == 0)
+            return std.fs.path.sep_str;
+
         const root = brk: {
             if (Environment.isWindows) {
-                if (path.len > 1 and path[1] == ':' and switch (path[0]) {
-                    'A'...'Z', 'a'...'z' => true,
-                    else => false,
-                }) {
-                    break :brk path[0..2];
-                }
-
-                // TODO: UNC paths
-                // TODO: NT paths
-                break :brk "/c/";
+                const root = ResolvePath.windowsFilesystemRoot(path);
+                std.debug.assert(root.len > 0);
+                break :brk root;
             }
-
             break :brk "/";
         };
-
-        if (path.len == 0)
-            return root;
 
         var end_index: usize = path.len - 1;
         while (bun.path.isSepAny(path[end_index])) {

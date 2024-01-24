@@ -15,7 +15,7 @@ const primes = [_]u64{
 
 fn read_bytes(comptime bytes: u8, data: []const u8) u64 {
     const T = std.meta.Int(.unsigned, 8 * bytes);
-    return mem.readIntLittle(T, data[0..bytes]);
+    return mem.readInt(T, data[0..bytes], .little);
 }
 
 fn read_8bytes_swapped(data: []const u8) u64 {
@@ -154,7 +154,7 @@ pub const Wyhash = struct {
 
         if (self.buf_len != 0 and self.buf_len + b.len >= 32) {
             off += 32 - self.buf_len;
-            mem.copy(u8, self.buf[self.buf_len..], b[0..off]);
+            mem.copyForwards(u8, self.buf[self.buf_len..], b[0..off]);
             self.state.update(self.buf[0..]);
             self.buf_len = 0;
         }
@@ -163,7 +163,7 @@ pub const Wyhash = struct {
         const aligned_len = remain_len - (remain_len % 32);
         self.state.update(b[off .. off + aligned_len]);
 
-        mem.copy(u8, self.buf[self.buf_len..], b[off + aligned_len ..]);
+        mem.copyForwards(u8, self.buf[self.buf_len..], b[off + aligned_len ..]);
         self.buf_len += @as(u8, @intCast(b[off + aligned_len ..].len));
     }
 

@@ -1,6 +1,7 @@
+// @known-failing-on-windows: 1 failing
 import { spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
 import { readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 

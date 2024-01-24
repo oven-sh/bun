@@ -6,8 +6,6 @@ const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.Encoder;
 const Mutex = @import("../../lock.zig").Lock;
 
-const PathWatcher = @import("./path_watcher.zig");
-
 const VirtualMachine = JSC.VirtualMachine;
 const EventLoop = JSC.EventLoop;
 const PathLike = JSC.Node.PathLike;
@@ -18,6 +16,7 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Environment = bun.Environment;
 const Async = bun.Async;
 
+const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else @import("./path_watcher.zig");
 pub const FSWatcher = struct {
     ctx: *VirtualMachine,
     verbose: bool = false,
@@ -34,10 +33,11 @@ pub const FSWatcher = struct {
     // user can call close and pre-detach so we need to track this
     closed: bool,
     // counts pending tasks so we only deinit after all tasks are done
-    task_count: u32,
-    has_pending_activity: std.atomic.Atomic(bool),
+    task_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    has_pending_activity: std.atomic.Value(bool),
     current_task: FSWatchTask = undefined,
     pub usingnamespace JSC.Codegen.JSFSWatcher;
+    pub usingnamespace bun.New(@This());
 
     pub fn eventLoop(this: FSWatcher) *EventLoop {
         return this.ctx.eventLoop();
@@ -50,7 +50,7 @@ pub const FSWatcher = struct {
     pub fn deinit(this: *FSWatcher) void {
         // stop all managers and signals
         this.detach();
-        bun.default_allocator.destroy(this);
+        this.destroy();
     }
 
     pub const FSWatchTask = struct {
@@ -76,7 +76,7 @@ pub const FSWatcher = struct {
         pub fn append(this: *FSWatchTask, file_path: string, event_type: EventType, needs_free: bool) void {
             if (this.count == 8) {
                 this.enqueue();
-                var ctx = this.ctx;
+                const ctx = this.ctx;
                 this.* = .{
                     .ctx = ctx,
                     .count = 0,
@@ -121,9 +121,7 @@ pub const FSWatcher = struct {
 
             // if false is closed or detached (can still contain valid refs but will not create a new one)
             if (this.ctx.refTask()) {
-                var that = bun.default_allocator.create(FSWatchTask) catch unreachable;
-
-                that.* = this.*;
+                var that = FSWatchTask.new(this.*);
                 this.count = 0;
                 that.concurrent_task.task = JSC.Task.init(that);
                 this.ctx.enqueueTaskConcurrent(&that.concurrent_task);
@@ -141,9 +139,14 @@ pub const FSWatcher = struct {
             this.count = 0;
         }
 
+        pub usingnamespace bun.New(@This());
+
         pub fn deinit(this: *FSWatchTask) void {
             this.cleanEntries();
-            bun.default_allocator.destroy(this);
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(&this.ctx.current_task != this);
+            }
+            this.destroy();
         }
     };
 
@@ -470,7 +473,7 @@ pub const FSWatcher = struct {
         defer this.mutex.unlock();
         // stop new references
         if (this.closed) return false;
-        this.task_count += 1;
+        _ = this.task_count.fetchAdd(1, .Monotonic);
         return true;
     }
 
@@ -488,8 +491,9 @@ pub const FSWatcher = struct {
     pub fn unrefTask(this: *FSWatcher) void {
         this.mutex.lock();
         defer this.mutex.unlock();
-        this.task_count -= 1;
-        if (this.closed and this.task_count == 0) {
+
+        const new_count = this.task_count.fetchSub(1, .Monotonic);
+        if (this.closed and new_count == 0) {
             this.updateHasPendingActivity();
         }
     }
@@ -509,7 +513,7 @@ pub const FSWatcher = struct {
             this.detach();
 
             // no need to lock again, because ref checks closed and unref is only called on main thread
-            if (this.task_count == 0) {
+            if (this.task_count.load(.Monotonic) == 0) {
                 this.updateHasPendingActivity();
             }
         } else {
@@ -551,26 +555,31 @@ pub const FSWatcher = struct {
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];
         }
+
         var parts = [_]string{
             slice,
         };
 
-        var file_path = Path.joinAbsStringBuf(
-            Fs.FileSystem.instance.top_level_dir,
-            &buf,
+        const cwd = try bun.getcwd(&buf);
+        buf[cwd.len] = std.fs.path.sep;
+
+        var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+        const file_path = Path.joinAbsStringBuf(
+            buf[0 .. cwd.len + 1],
+            &joined_buf,
             &parts,
             .auto,
         );
 
-        buf[file_path.len] = 0;
-        var file_path_z = buf[0..file_path.len :0];
+        joined_buf[file_path.len] = 0;
+        const file_path_z = joined_buf[0..file_path.len :0];
 
-        var ctx = try bun.default_allocator.create(FSWatcher);
         const vm = args.global_this.bunVM();
-        ctx.* = .{
+
+        var ctx = FSWatcher.new(.{
             .ctx = vm,
             .current_task = .{
-                .ctx = ctx,
+                .ctx = undefined,
                 .count = 0,
             },
             .mutex = Mutex.init(),
@@ -581,10 +590,10 @@ pub const FSWatcher = struct {
             .js_this = .zero,
             .encoding = args.encoding,
             .closed = false,
-            .task_count = 0,
-            .has_pending_activity = std.atomic.Atomic(bool).init(true),
+            .has_pending_activity = std.atomic.Value(bool).init(true),
             .verbose = args.verbose,
-        };
+        });
+        ctx.current_task.ctx = ctx;
 
         errdefer ctx.deinit();
 

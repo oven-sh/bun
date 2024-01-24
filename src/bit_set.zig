@@ -460,7 +460,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
                 mask2 = std.math.boolMask(MaskInt, value) >> (mask_len - 1) - (end_bit - 1);
                 self.masks[start_mask_index] |= mask1 & mask2;
             } else {
-                var bulk_mask_index: usize = undefined;
+                var bulk_mask_index: usize = 0;
                 if (start_bit > 0) {
                     self.masks[start_mask_index] =
                         (self.masks[start_mask_index] & ~(std.math.boolMask(MaskInt, true) << start_bit)) |
@@ -687,6 +687,63 @@ pub const DynamicBitSetUnmanaged = struct {
     var empty_masks_data = [_]MaskInt{ 0, undefined };
     const empty_masks_ptr = empty_masks_data[1..2];
 
+    /// Do not resize the bitsets!
+    ///
+    /// Single buffer for multiple bitsets of equal length. Does not
+    /// implement all methods of DynamicBitSetUnmanaged and should
+    /// be used carefully.
+    pub const List = struct {
+        buf: []MaskInt,
+        n: usize,
+        bit_length: usize,
+
+        pub fn initEmpty(allocator: Allocator, n: usize, bit_length: usize) !List {
+            const masks = numMasks(bit_length);
+            const single_bitset_buf_size = masks + 1;
+
+            const buf = try allocator.alloc(MaskInt, single_bitset_buf_size * n);
+
+            const fill_value = std.math.boolMask(MaskInt, false);
+            @memset(buf, fill_value);
+
+            for (0..n) |i| {
+                buf[i * single_bitset_buf_size] = single_bitset_buf_size;
+            }
+
+            return List{
+                .buf = buf,
+                .n = n,
+                .bit_length = bit_length,
+            };
+        }
+
+        pub fn deinit(this: List, allocator: Allocator) void {
+            allocator.free(this.buf);
+        }
+
+        pub fn at(this: List, i: usize) Self {
+            const num_masks = numMasks(this.bit_length);
+            const single_bitset_buf_size = num_masks + 1;
+
+            const offset = (single_bitset_buf_size * i);
+
+            return Self{
+                .bit_length = this.bit_length,
+                .masks = this.buf[offset..].ptr + 1,
+            };
+        }
+
+        pub fn set(this: List, i: usize, j: usize) void {
+            var bitset = this.at(i);
+            bitset.set(j);
+        }
+
+        pub fn setUnion(this: List, i: usize, other: Self) void {
+            var bitset = this.at(i);
+            bitset.setUnion(other);
+        }
+    };
+
     /// Creates a bit set with no elements present.
     /// If bit_length is not zero, deinit must eventually be called.
     pub fn initEmpty(allocator: Allocator, bit_length: usize) !Self {
@@ -856,7 +913,7 @@ pub const DynamicBitSetUnmanaged = struct {
             mask2 = std.math.boolMask(MaskInt, value) >> (@bitSizeOf(MaskInt) - 1) - (end_bit - 1);
             self.masks[start_mask_index] |= mask1 & mask2;
         } else {
-            var bulk_mask_index: usize = undefined;
+            var bulk_mask_index: usize = 0;
             if (start_bit > 0) {
                 self.masks[start_mask_index] =
                     (self.masks[start_mask_index] & ~(std.math.boolMask(MaskInt, true) << start_bit)) |
@@ -1545,8 +1602,7 @@ fn testBitSet(a: anytype, b: anytype, len: usize) !void {
     const needs_ptr = @hasField(std.meta.Child(@TypeOf(a)), "masks") and @typeInfo(@TypeOf(@field(a, "masks"))) != .Pointer;
 
     {
-        var i: usize = 0;
-        while (i < len) : (i += 1) {
+        for (0..len) |i| {
             a.setValue(i, i & 1 == 0);
             b.setValue(i, i & 2 == 0);
         }
@@ -1592,8 +1648,7 @@ fn testBitSet(a: anytype, b: anytype, len: usize) !void {
     }
 
     {
-        var i: usize = 0;
-        while (i < len) : (i += 1) {
+        for (0..len) |i| {
             try testing.expectEqual(i & 1 != 0, a.isSet(i));
             try testing.expectEqual(i & 2 == 0, b.isSet(i));
         }
@@ -1639,8 +1694,7 @@ fn testBitSet(a: anytype, b: anytype, len: usize) !void {
     {
         try testing.expectEqual(len / 4, a.count());
 
-        var i: usize = 0;
-        while (i < len) : (i += 1) {
+        for (0..len) |i| {
             try testing.expectEqual(i & 1 != 0 and i & 2 != 0, a.isSet(i));
             try testing.expectEqual(i & 2 == 0, b.isSet(i));
             if (i & 1 == 0) {
@@ -1659,8 +1713,7 @@ fn testBitSet(a: anytype, b: anytype, len: usize) !void {
     {
         try testing.expectEqual((len + 3) / 4, a.count());
 
-        var i: usize = 0;
-        while (i < len) : (i += 1) {
+        for (0..len) |i| {
             try testing.expectEqual(i & 1 == 0 and i & 2 == 0, a.isSet(i));
             try testing.expectEqual(i & 2 == 0, b.isSet(i));
         }
@@ -1756,15 +1809,13 @@ fn testBitSet(a: anytype, b: anytype, len: usize) !void {
 }
 
 fn fillEven(set: anytype, len: usize) void {
-    var i: usize = 0;
-    while (i < len) : (i += 1) {
+    for (0..len) |i| {
         set.setValue(i, i & 1 == 0);
     }
 }
 
 fn fillOdd(set: anytype, len: usize) void {
-    var i: usize = 0;
-    while (i < len) : (i += 1) {
+    for (0..len) |i| {
         set.setValue(i, i & 1 == 1);
     }
 }
@@ -1880,8 +1931,7 @@ test "DynamicBitSetUnmanaged" {
         var empty = try a.clone(allocator);
         defer empty.deinit(allocator);
         try testing.expectEqual(old_len, empty.capacity());
-        var i: usize = 0;
-        while (i < old_len) : (i += 1) {
+        for (0..old_len) |i| {
             try testing.expectEqual(a.isSet(i), empty.isSet(i));
         }
 
@@ -1933,8 +1983,7 @@ test "DynamicBitSet" {
         var tmp = try a.clone(allocator);
         defer tmp.deinit();
         try testing.expectEqual(old_len, tmp.capacity());
-        var i: usize = 0;
-        while (i < old_len) : (i += 1) {
+        for (0..old_len) |i| {
             try testing.expectEqual(a.isSet(i), tmp.isSet(i));
         }
 

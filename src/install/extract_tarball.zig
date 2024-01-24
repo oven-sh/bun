@@ -15,6 +15,9 @@ const Semver = @import("./semver.zig");
 const std = @import("std");
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
+const Path = @import("../resolver/resolve_path.zig");
+const Environment = bun.Environment;
+
 const ExtractTarball = @This();
 
 name: strings.StringOrTinyString,
@@ -149,13 +152,13 @@ pub fn buildURLWithPrinter(
     }
 }
 
-threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var final_path_buf: bun.PathBuffer = undefined;
+threadlocal var folder_name_buf: bun.PathBuffer = undefined;
+threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     var tmpdir = this.temp_dir;
-    var tmpname_buf: [256]u8 = undefined;
+    var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     const name = this.name.slice();
     const basename = brk: {
         if (name[0] == '@') {
@@ -167,9 +170,9 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     };
 
     var resolved: string = "";
-    var tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
+    const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
     {
-        var extract_destination = tmpdir.makeOpenPathIterable(std.mem.span(tmpname), .{}) catch |err| {
+        var extract_destination = tmpdir.makeOpenPath(std.mem.span(tmpname), .{}) catch |err| {
             this.package_manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -235,10 +238,10 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 // installed from GitHub. package.json version becomes sort of
                 // meaningless in cases like this.
                 if (resolved.len > 0) insert_tag: {
-                    const gh_tag = extract_destination.dir.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
+                    const gh_tag = extract_destination.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
                     defer gh_tag.close();
                     gh_tag.writeAll(resolved) catch {
-                        extract_destination.dir.deleteFileZ(".bun-tag") catch {};
+                        extract_destination.deleteFileZ(".bun-tag") catch {};
                     };
                 }
             },
@@ -279,20 +282,54 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     }
 
     // Now that we've extracted the archive, we rename.
-    std.os.renameatZ(tmpdir.fd, tmpname, cache_dir.fd, folder_name) catch |err| {
-        this.package_manager.log.addErrorFmt(
-            null,
-            logger.Loc.Empty,
-            this.package_manager.allocator,
-            "moving \"{s}\" to cache dir failed: {s}\n  From: {s}\n    To: {s}",
-            .{ name, @errorName(err), tmpname, folder_name },
-        ) catch unreachable;
-        return error.InstallFailed;
-    };
+    if (comptime Environment.isWindows) {
+        // TODO(dylan-conway) make this less painful
+        var from_buf: bun.PathBuffer = undefined;
+        const tmpdir_path = try bun.getFdPath(tmpdir.fd, &from_buf);
+        const from_path = Path.joinAbsStringZ(tmpdir_path, &.{bun.sliceTo(tmpname, 0)}, .auto);
+
+        var to_buf: bun.PathBuffer = undefined;
+        const cache_dir_path = try bun.getFdPath(cache_dir.fd, &to_buf);
+        const to_path = Path.joinAbsStringBufZ(cache_dir_path, &to_buf, &.{folder_name}, .auto);
+
+        var from_path_buf_w: bun.WPathBuffer = undefined;
+        const from_path_w = bun.strings.toWPath(&from_path_buf_w, from_path);
+        var to_path_buf_w: bun.WPathBuffer = undefined;
+        const to_path_w = bun.strings.toWPath(&to_path_buf_w, to_path);
+
+        if (bun.windows.MoveFileExW(
+            from_path_w,
+            to_path_w,
+            bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH,
+        ) == bun.windows.FALSE) {
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "moving \"{s}\" to cache dir failed:  From: {s}\n    To: {s}",
+                .{ name, tmpname, folder_name },
+            ) catch unreachable;
+            return error.InstallFailed;
+        }
+    } else {
+        switch (bun.sys.renameat(bun.toFD(tmpdir.fd), bun.sliceTo(tmpname, 0), bun.toFD(cache_dir.fd), folder_name)) {
+            .err => |err| {
+                this.package_manager.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.package_manager.allocator,
+                    "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                    .{ name, err, tmpname, folder_name },
+                ) catch unreachable;
+                return error.InstallFailed;
+            },
+            .result => {},
+        }
+    }
 
     // We return a resolved absolute absolute file path to the cache dir.
     // To get that directory, we open the directory again.
-    var final_dir = cache_dir.openDirZ(folder_name, .{}, true) catch |err| {
+    var final_dir = cache_dir.openDirZ(folder_name, .{}) catch |err| {
         this.package_manager.log.addErrorFmt(
             null,
             logger.Loc.Empty,
@@ -305,7 +342,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     defer final_dir.close();
     // and get the fd path
-    var final_path = bun.getFdPath(
+    const final_path = bun.getFdPath(
         final_dir.fd,
         &final_path_buf,
     ) catch |err| {
@@ -321,9 +358,9 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     // create an index storing each version of a package installed
     if (strings.indexOfChar(basename, '/') == null) create_index: {
-        var index_dir = cache_dir.makeOpenPathIterable(name, .{}) catch break :create_index;
+        var index_dir = cache_dir.makeOpenPath(name, .{}) catch break :create_index;
         defer index_dir.close();
-        index_dir.dir.symLink(
+        index_dir.symLink(
             final_path,
             switch (this.resolution.tag) {
                 .github => folder_name["@GH@".len..],

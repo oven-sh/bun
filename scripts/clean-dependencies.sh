@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 FORCE=
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
@@ -24,3 +25,4 @@ git_reset $BUN_DEPS_DIR/picohttpparser
 git_reset $BUN_DEPS_DIR/tinycc
 git_reset $BUN_DEPS_DIR/zlib
 git_reset $BUN_DEPS_DIR/zstd
+git_reset $BUN_DEPS_DIR/ls-hpack

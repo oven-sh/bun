@@ -14,6 +14,39 @@ import * as esbuild from "esbuild";
 
 let currentFile: string | undefined;
 
+function errorOrWarnParser(isError = true) {
+  const prefix = isError ? "error: " : "warn: ";
+  return function (text: string) {
+    var i = 0;
+    var list = [];
+    while (i < text.length) {
+      let errorLineI = text.indexOf(prefix, i);
+      if (errorLineI === -1) {
+        return list;
+      }
+      const message = text.slice(errorLineI + prefix.length, text.indexOf("\n", errorLineI + 1));
+      i = errorLineI + 1;
+      const fileLineI = text.indexOf(" at ", errorLineI + message.length);
+
+      let fileLine = "";
+      if (fileLineI !== -1) {
+        const fileLineEnd = text.indexOf("\n", fileLineI + 1);
+        fileLine = text.slice(fileLineI + "\n    at ".length, fileLineEnd);
+        i = fileLineEnd;
+      }
+      list.push([message, fileLine]);
+
+      if (i === -1) {
+        break;
+      }
+    }
+    return list;
+  };
+}
+
+const errorParser = errorOrWarnParser(true);
+const warnParser = errorOrWarnParser(false);
+
 type BunTestExports = typeof import("bun:test");
 export function testForFile(file: string): BunTestExports {
   if (file.startsWith("file://")) {
@@ -56,9 +89,9 @@ export interface BundlerTestInput {
   todo?: boolean;
 
   // file options
-  files: Record<string, string>;
+  files: Record<string, string | Buffer>;
   /** Files to be written only after the bundle is done. */
-  runtimeFiles?: Record<string, string>;
+  runtimeFiles?: Record<string, string | Buffer>;
   /** Defaults to the first item in `files` */
   entryPoints?: string[];
   /** ??? */
@@ -236,6 +269,8 @@ export interface BundlerTestRunOptions {
   errorLineMatch?: RegExp;
 
   runtime?: "bun" | "node";
+
+  setCwd?: boolean;
 }
 
 /** given when you do itBundled('id', (this object) => BundlerTestInput) */
@@ -341,7 +376,7 @@ function expectBundled(
 
   // TODO: Remove this check once all options have been implemented
   if (Object.keys(unknownProps).length > 0) {
-    throw new Error("expectBundled recieved unexpected options: " + Object.keys(unknownProps).join(", "));
+    throw new Error("expectBundled received unexpected options: " + Object.keys(unknownProps).join(", "));
   }
 
   // This is a sanity check that protects against bad copy pasting.
@@ -463,7 +498,9 @@ function expectBundled(
     for (const [file, contents] of Object.entries(files)) {
       const filename = path.join(root, file);
       mkdirSync(path.dirname(filename), { recursive: true });
-      writeFileSync(filename, dedent(contents).replace(/\{\{root\}\}/g, root));
+      const formattedContents =
+        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+      writeFileSync(filename, formattedContents);
     }
 
     if (useDefineForClassFields !== undefined) {
@@ -653,28 +690,31 @@ function expectBundled(
       if (!success) {
         if (!ESBUILD) {
           const errorText = stderr.toString("utf-8");
-          const errorRegex = /^error: (.*?)\n(?:.*?\n\s*\^\s*\n(.*?)\n)?/gms;
+
           var skip = false;
           if (errorText.includes("----- bun meta -----")) {
             skip = true;
           }
+
           const allErrors = skip
             ? []
-            : ([...errorText.matchAll(errorRegex)]
-                .map(([_str1, error, source]) => {
+            : (errorParser(errorText)
+                .map(([error, source]) => {
                   if (!source) {
                     if (error === "FileNotFound") {
                       return null;
                     }
                     return { error, file: "<bun>" };
                   }
-                  const [_str2, fullFilename, line, col] = source?.match?.(/bun-build-tests\/(.*):(\d+):(\d+)/) ?? [];
-                  const file = fullFilename?.slice?.(id.length + path.basename(outBase).length + 1);
+                  const [_str2, fullFilename, line, col] =
+                    source?.match?.(/bun-build-tests[\/\\](.*):(\d+):(\d+)/) ?? [];
+                  const file = fullFilename
+                    ?.slice?.(id.length + path.basename(outBase).length + 1)
+                    .replaceAll("\\", "/");
 
                   return { error, file, line, col };
                 })
                 .filter(Boolean) as any[]);
-
           if (allErrors.length === 0) {
             console.log(errorText);
           }
@@ -746,8 +786,8 @@ function expectBundled(
 
       // Check for warnings
       if (!ESBUILD) {
-        const warningRegex = /^warn: (.*?)\n.*?\n\s*\^\s*\n(.*?)\n/gms;
-        const allWarnings = [...stderr!.toString("utf-8").matchAll(warningRegex)].map(([_str1, error, source]) => {
+        const warningText = stderr!.toString("utf-8");
+        const allWarnings = warnParser(warningText).map(([error, source]) => {
           const [_str2, fullFilename, line, col] = source.match(/bun-build-tests\/(.*):(\d+):(\d+)/)!;
           const file = fullFilename.slice(id.length + path.basename(outBase).length + 1);
           return { error, file, line, col };
@@ -1124,7 +1164,9 @@ for (const [key, blob] of build.outputs) {
     // Write runtime files to disk as well as run the post bundle hook.
     for (const [file, contents] of Object.entries(runtimeFiles ?? {})) {
       mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-      writeFileSync(path.join(root, file), dedent(contents).replace(/\{\{root\}\}/g, root));
+      const formattedContents =
+        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+      writeFileSync(path.join(root, file), formattedContents);
     }
 
     if (onAfterBundle) {
@@ -1185,6 +1227,7 @@ for (const [key, blob] of build.outputs) {
             IS_TEST_RUNNER: "1",
           },
           stdio: ["ignore", "pipe", "pipe"],
+          cwd: run.setCwd ? root : undefined,
         });
 
         if (run.error) {
@@ -1200,7 +1243,7 @@ for (const [key, blob] of build.outputs) {
 
           if (run.errorLineMatch) {
             // in order to properly analyze the error, we have to look backwards on stderr. this approach
-            // most definetly can be improved but it works fine here.
+            // most definitely can be improved but it works fine here.
             const stack = [];
             let error;
             const lines = stderr!

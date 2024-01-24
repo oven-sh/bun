@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { ChildProcess, spawn, exec, fork } from "node:child_process";
 import { createTest } from "node-harness";
 import { tmpdir } from "node:os";
@@ -200,7 +201,7 @@ describe("ChildProcess spawn bad stdio", () => {
     });
   }
 
-  it.todo("should handle normal execution of child process", async () => {
+  it("should handle normal execution of child process", async () => {
     await createChild({}, (err, stdout, stderr) => {
       strictEqual(err, null);
       strictEqual(stdout, "");
@@ -386,7 +387,7 @@ describe("child_process default options", () => {
 });
 
 describe("child_process double pipe", () => {
-  it.skip("should allow two pipes to be used at once", done => {
+  it.skipIf(process.platform === "linux")("should allow two pipes to be used at once", done => {
     // const { mustCallAtLeast, mustCall } = createCallCheckCtx(done);
     const mustCallAtLeast = fn => fn;
     const mustCall = fn => fn;

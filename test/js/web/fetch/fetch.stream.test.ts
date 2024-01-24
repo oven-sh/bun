@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { Socket, Server, TCPSocketListener } from "bun";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -28,47 +29,59 @@ const smallText = Buffer.from("Hello".repeat(16));
 const empty = Buffer.alloc(0);
 
 describe("fetch() with streaming", () => {
-  it(`should be able to fail properly when reading from readable stream`, async () => {
-    let server: Server | null = null;
-    try {
-      server = Bun.serve({
-        port: 0,
-        async fetch(req) {
-          return new Response(
-            new ReadableStream({
-              async start(controller) {
-                controller.enqueue("Hello, World!");
-                await Bun.sleep(1000);
-                controller.enqueue("Hello, World!");
-                controller.close();
-              },
-            }),
-            {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-              },
-            },
-          );
-        },
-      });
-
-      const server_url = `http://${server.hostname}:${server.port}`;
+  [-1, 0, 20, 50, 100].forEach(timeout => {
+    it(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {
+      let server: Server | null = null;
       try {
-        const res = await fetch(server_url, { signal: AbortSignal.timeout(20) });
-        const reader = res.body?.getReader();
-        while (true) {
-          const { done } = await reader?.read();
-          if (done) break;
+        server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            return new Response(
+              new ReadableStream({
+                async start(controller) {
+                  controller.enqueue("Hello, World!");
+                  await Bun.sleep(1000);
+                  controller.enqueue("Hello, World!");
+                  controller.close();
+                },
+              }),
+              {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/plain",
+                },
+              },
+            );
+          },
+        });
+
+        const server_url = `http://${server.hostname}:${server.port}`;
+        try {
+          const res = await fetch(server_url, {
+            signal: timeout < 0 ? AbortSignal.abort() : AbortSignal.timeout(timeout),
+          });
+
+          const reader = res.body?.getReader();
+          let results = [];
+          while (true) {
+            const { done, data } = await reader?.read();
+            if (data) results.push(data);
+            if (done) break;
+          }
+          expect.unreachable();
+        } catch (err: any) {
+          if (timeout < 0) {
+            if (err.name !== "AbortError") throw err;
+            expect(err.message).toBe("The operation was aborted.");
+          } else {
+            if (err.name !== "TimeoutError") throw err;
+            expect(err.message).toBe("The operation timed out.");
+          }
         }
-        expect(true).toBe("unreachable");
-      } catch (err: any) {
-        if (err.name !== "TimeoutError") throw err;
-        expect(err.message).toBe("The operation timed out.");
+      } finally {
+        server?.stop();
       }
-    } finally {
-      server?.stop();
-    }
+    });
   });
 
   it(`should be locked after start buffering`, async () => {
@@ -107,7 +120,7 @@ describe("fetch() with streaming", () => {
         const promise = res.text(); // start buffering
         res.body?.getReader(); // get a reader
         const result = await promise; // should throw the right error
-        expect(result).toBe("unreachable");
+        expect.unreachable();
       } catch (err: any) {
         if (err.name !== "TypeError") throw err;
         expect(err.message).toBe("ReadableStream is locked");
@@ -154,7 +167,7 @@ describe("fetch() with streaming", () => {
         const promise = res.text(); // start buffering
         body.getReader(); // get a reader
         const result = await promise; // should throw the right error
-        expect(result).toBe("unreachable");
+        expect.unreachable();
       } catch (err: any) {
         if (err.name !== "TypeError") throw err;
         expect(err.message).toBe("ReadableStream is locked");

@@ -1,16 +1,14 @@
 cmake_minimum_required(VERSION 3.22)
-
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.8")
-set(WEBKIT_TAG 46689737b98c78e48d9eb6885f0b3e8365d79310)
+set(Bun_VERSION "1.0.25")
+set(WEBKIT_TAG 9c501b9aa712b7959f80dc99491e8758c151c20e)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
 
 # --- Build Type ---
-# This is done at the start simply so this is the first message printed
 if(NOT CMAKE_BUILD_TYPE)
     message(WARNING "No CMAKE_BUILD_TYPE value specified, defaulting to Debug.\nSet a build type with -DCMAKE_BUILD_TYPE=<Debug|Release>")
     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build (Debug, Release)" FORCE)
@@ -26,12 +24,22 @@ endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEBUG ON)
-    set(ZIG_OPTIMIZE "Debug")
+    set(DEFAULT_ZIG_OPTIMIZE "Debug")
     set(bun "bun-debug")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(DEBUG OFF)
-    set(ZIG_OPTIMIZE "ReleaseFast")
-    set(bun "bun-profile")
+    set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")
+
+    if(WIN32)
+        # lld-link will strip it for you, so we can build directly to bun.exe
+        set(bun "bun")
+
+        # TODO(@paperdave): Remove this
+        # it is enabled for the time being to make sure to catch more bugs in the experimental windows builds
+        set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
+    else()
+        set(bun "bun-profile")
+    endif()
 endif()
 
 # --- LLVM ---
@@ -138,6 +146,14 @@ if(UNIX)
 else()
     # Windows uses Clang-CL
     # TODO: good configuration in this regard. -G Ninja will pick clang-cl if possible, which should be fine for most users.
+    if(NOT CMAKE_C_COMPILER)
+        set(CMAKE_C_COMPILER "clang-cl")
+    endif()
+
+    if(NOT CMAKE_CXX_COMPILER)
+        set(CMAKE_CXX_COMPILER "clang-cl")
+    endif()
+
     find_program(
         STRIP
         NAMES llvm-strip
@@ -160,6 +176,10 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 project(Bun VERSION "${Bun_VERSION}")
 
+# if(MSVC)
+# message(FATAL_ERROR "Bun does not support building with MSVC. Please use `cmake -G Ninja` with LLVM ${LLVM_VERSION} and Ninja.")
+# endif()
+
 # More effort to prevent using the wrong C++ compiler
 if(UNIX)
     if((NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR(NOT CMAKE_CXX_COMPILER_VERSION MATCHES "^${LLVM_VERSION}\."))
@@ -177,22 +197,18 @@ endif()
 message(STATUS "C++ Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}")
 
 # --- End LLVM ---
-set(SHELL "bash")
-set(SCRIPT_EXTENSION "sh")
-
-if(WIN32)
+if(NOT WIN32)
+    set(SHELL "bash")
+    set(SCRIPT_EXTENSION "sh")
+else()
     set(SCRIPT_EXTENSION "ps1")
+
+    # pwsh is the new powershell, powershell is the old one.
+    find_program(SHELL NAMES pwsh powershell)
 endif()
 
 set(DEFAULT_ON_UNLESS_APPLE ON)
 
-set(DEFAULT_USE_STATIC_LIBATOMIC ON)
-if(UNIX AND NOT APPLE)
-    execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
-    if(${LINUX_DISTRO} STREQUAL "NAME=\"Arch Linux\"\n")
-        set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
-    endif()
-endif()
 if(APPLE)
     set(DEFAULT_ON_UNLESS_APPLE OFF)
 endif()
@@ -201,6 +217,25 @@ set(CI OFF)
 
 if(DEFINED ENV{CI} OR DEFINED ENV{GITHUB_ACTIONS})
     set(CI ON)
+endif()
+
+set(DEFAULT_USE_STATIC_LIBATOMIC ON)
+set(DEFAULT_USE_DEBUG_JSC, OFF)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(DEFAULT_USE_DEBUG_JSC ON)
+endif()
+
+if(WIN32)
+    set(DEFAULT_USE_DEBUG_JSC OFF)
+endif()
+
+if(UNIX AND NOT APPLE)
+    execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
+
+    if(${LINUX_DISTRO} MATCHES "NAME=\"(Arch|Manjaro) Linux\"\n")
+        set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
+    endif()
 endif()
 
 # -- Build Flags --
@@ -215,13 +250,35 @@ option(USE_CUSTOM_BASE64 "Use Bun's recommended version of libbase64" ON)
 option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
+option(USE_CUSTOM_LSHPACK "Use Bun's recommended version of ls-hpack" ON)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
 
-option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" OFF)
-option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
+option(USE_VALGRIND "Build Bun with Valgrind support (Linux only)" OFF)
 
-option(CANARY "Make `bun --revision` report a canary release" OFF)
-option(USE_STATIC_LIBATOMIC "statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
+option(ZIG_OPTIMIZE "Optimization level for Zig" ${DEFAULT_ZIG_OPTIMIZE})
+option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" ${DEFAULT_USE_DEBUG_JSC})
+option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
+option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
+
+if(USE_VALGRIND)
+    # Disable SIMD
+    set(USE_BASELINE_BUILD ON)
+
+    if(ARCH STREQUAL "x86_64")
+        # This is for picohttpparser
+        # Valgrind cannot handle SSE4.2 instructions
+        add_compile_definitions("__SSE4_2__=0")
+    endif()
+endif()
+
+if(NOT CANARY)
+    set(CANARY 0)
+endif()
+
+if(NOT ZIG_OPTIMIZE)
+    set(ZIG_OPTIMIZE ${DEFAULT_ZIG_OPTIMIZE})
+endif()
+
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
 
 set(ARCH x86_64)
@@ -231,18 +288,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
 endif()
 
 if(NOT CPU_TARGET)
-    if(ENV{CPU_TARGET})
+    if(DEFINED ENV{CPU_TARGET})
         set(CPU_TARGET $ENV{CPU_TARGET})
     else()
         set(CPU_TARGET "native" CACHE STRING "CPU target for the compiler" FORCE)
 
         if(ARCH STREQUAL "x86_64")
-            if(NOT MSVC)
-                if(USE_BASELINE_BUILD)
-                    set(CPU_TARGET "nehalem")
-                else()
-                    set(CPU_TARGET "haswell")
-                endif()
+            if(USE_BASELINE_BUILD)
+                set(CPU_TARGET "nehalem")
+            else()
+                set(CPU_TARGET "haswell")
             endif()
         endif()
     endif()
@@ -286,8 +341,34 @@ function(validate_zig validator_result_var item)
     endif()
 endfunction()
 
-find_program(ZIG_COMPILER zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
-message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
+if(ZIG_COMPILER)
+    if(ZIG_COMPILER STREQUAL "system")
+        message(STATUS "Using system Zig compiler")
+        unset(ZIG_COMPILER_)
+    endif()
+
+    find_program(ZIG_COMPILER_ zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
+    set(ZIG_COMPILER "${ZIG_COMPILER_}")
+    message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
+elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
+    execute_process(
+        COMMAND "${SHELL}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-zig.${SCRIPT_EXTENSION}"
+    )
+    set(ZIG_COMPILER "${CMAKE_CURRENT_SOURCE_DIR}/.cache/zig/zig")
+
+    if(WIN32)
+        set(ZIG_COMPILER "${ZIG_COMPILER}.exe")
+    endif()
+
+    if(NOT EXISTS "${ZIG_COMPILER}")
+        unset(ZIG_COMPILER)
+        message(FATAL_ERROR "Auto-installation of Zig failed. Please pass -DZIG_COMPILER=system or a path to the Zig")
+    endif()
+
+    message(STATUS "Installed Zig Compiler: ${ZIG_COMPILER}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
+endif()
 
 # Bun
 if(NOT WIN32)
@@ -310,6 +391,7 @@ if(USE_UNIFIED_SOURCES)
 endif()
 
 # CCache
+find_program(CCACHE_PROGRAM sccache)
 find_program(CCACHE_PROGRAM ccache)
 
 if(CCACHE_PROGRAM)
@@ -338,6 +420,7 @@ if(NOT WEBKIT_DIR)
     set(ASSERT_ENABLED "0")
 
     if(USE_DEBUG_JSC)
+        add_compile_definitions("BUN_DEBUG=1")
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
         set(ASSERT_ENABLED "1")
     elseif(NOT DEBUG AND NOT WIN32)
@@ -380,34 +463,23 @@ if(NOT WEBKIT_DIR)
 elseif(WEBKIT_DIR STREQUAL "omit")
     message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
 else()
-    # Setting WEBKIT_DIR means you either have a path to the WebKit repo, or you have a path to packaged webkit
-    # Non-packaged webkit has CMakeLists.txt
-    if(EXISTS "${WEBKIT_DIR}/CMakeLists.txt")
-        # Since we may be doing a Debug build of Bun but with a Release build of JSC, we can't
-        # include their CMakeLists directly here, but rather we need to run `cmake` as a dependency
-        # of our build. It'll still have decent caching which is what really matters.
+    # Expected to be WebKit/WebKitBuild/${CMAKE_BUILD_TYPE}
+    if(EXISTS "${WEBKIT_DIR}/cmakeconfig.h")
+        # You may need to run:
+        # make jsc-compile-debug jsc-copy-headers
+        include_directories(
+            "${WEBKIT_DIR}/"
+            "${WEBKIT_DIR}/JavaScriptCore/Headers/JavaScriptCore"
+            "${WEBKIT_DIR}/JavaScriptCore/PrivateHeaders"
+            "${WEBKIT_DIR}/bmalloc/Headers"
+            "${WEBKIT_DIR}/WTF/Headers"
+        )
+        set(WEBKIT_LIB_DIR "${WEBKIT_DIR}/lib")
 
-        # cmake WEBKIT_DIR -B WEBKIT_DIR/WebKitBuild/WEBKIT_BUILD_TYPE
-        # -DPORT=JSCOnly
-        # -DENABLE_STATIC_JSC=ON
-        # -DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON
-        # -DCMAKE_BUILD_TYPE=Debug
-        # -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON
-        # -DUSE_THIN_ARCHIVES=OFF
-        # -DENABLE_FTL_JIT=ON
-        # -DCMAKE_C_COMPILER=(which clang-16)
-        # -DDCMAKE_CXX_COMPILER=(which clang++-16)
-        # -DDUSE_BUN_JSC_ADDITIONS=1
-        # -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld"
-        # -DCMAKE_AR=$(which llvm-ar)
-        # -DCMAKE_RANLIB=$(which llvm-ranlib)
-        # -DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON
-        # -G Ninja
-        # -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
-        # -DPTHREAD_JIT_PERMISSIONS_API=1
-        # -DUSE_PTHREAD_JIT_PERMISSIONS_API=ON
-        # -DENABLE_REMOTE_INSPECTOR=ON
-        message(FATAL_ERROR "TODO: Setting WEBKIT_DIR to the WebKit repository to enable automatic builds. For now you need to run the release script, and point to the packaged directory.")
+        if(USE_DEBUG_JSC)
+            add_compile_definitions("BUN_DEBUG=1")
+            set(ASSERT_ENABLED "1")
+        endif()
     else()
         if(NOT EXISTS "${WEBKIT_DIR}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_DIR}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
             if(WEBKIT_DIR MATCHES "src/bun.js/WebKit$")
@@ -470,6 +542,17 @@ file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
 )
 list(APPEND BUN_RAW_SOURCES ${BUN_CPP})
 
+# -- Brotli --
+set(BROTLI_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/brotli")
+file(GLOB BROTLI_FILES ${CONFIGURE_DEPENDS}
+    "${BROTLI_SRC}/common/*.c"
+    "${BROTLI_SRC}/enc/*.c"
+    "${BROTLI_SRC}/dec/*.c"
+)
+list(APPEND BUN_RAW_SOURCES ${BROTLI_FILES})
+include_directories("${BUN_DEPS_DIR}/brotli/include")
+
+# -- uSockets --
 set(USOCKETS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src")
 file(GLOB USOCKETS_FILES ${CONFIGURE_DEPENDS}
     "${USOCKETS_SRC}/*.c"
@@ -580,7 +663,6 @@ if(NOT NO_CODEGEN)
         COMMAND ${ZIG_COMPILER} run "${BUN_SRC}/js_lexer/identifier_data.zig"
         VERBATIM
         COMMENT "Building Identifier Cache"
-        DEPENDS_EXPLICIT_ONLY
     )
 endif()
 
@@ -675,18 +757,20 @@ endif()
 # --- Zig Object ---
 file(GLOB ZIG_FILES
     "${BUN_SRC}/*.zig"
-    "${BUN_SRC}/**/*.zig"
-    "${BUN_SRC}/**/**/*.zig"
-    "${BUN_SRC}/**/**/**/*.zig"
+    "${BUN_SRC}/*/*.zig"
+    "${BUN_SRC}/*/*/*.zig"
+    "${BUN_SRC}/*/*/*/*.zig"
+    "${BUN_SRC}/*/*/*/*/*.zig"
 )
 
 if(NOT BUN_ZIG_OBJ)
     set(BUN_ZIG_OBJ "${BUN_WORKDIR}/CMakeFiles/bun-zig.o")
-else()
-    get_filename_component(BUN_ZIG_OBJ "${BUN_ZIG_OBJ}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
 endif()
 
+get_filename_component(BUN_ZIG_OBJ "${BUN_ZIG_OBJ}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
+
 set(USES_TERMINAL_NOT_IN_CI "")
+
 if(NOT CI)
     set(USES_TERMINAL_NOT_IN_CI "USES_TERMINAL")
 endif()
@@ -699,7 +783,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Doutput-file=${BUN_ZIG_OBJ}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
         "-Dversion=${Bun_VERSION}"
-        "-Dcanary=$<IF:$<BOOL:${CANARY}>,true,false>"
+        "-Dcanary=${CANARY}"
         "-Doptimize=${ZIG_OPTIMIZE}"
         "-Dcpu=${CPU_TARGET}"
         "-Dtarget=${ZIG_TARGET}"
@@ -718,7 +802,6 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         ${USES_TERMINAL_NOT_IN_CI}
     )
 endif()
-add_custom_target(zig DEPENDS "${BUN_ZIG_OBJ}")
 
 if(WIN32)
     list(APPEND BUN_RAW_SOURCES "${BUN_SRC}/bun.js/bindings/windows/musl-memmem.c")
@@ -731,7 +814,20 @@ if(NOT BUN_CPP_ARCHIVE)
 else()
     # used by ci
     set(BUN_SOURCES "")
-    link_libraries(${BUN_CPP_ARCHIVE})
+    add_link_options("${BUN_CPP_ARCHIVE}")
+endif()
+
+# -- Windows resources (app icon) --
+if(CANARY GREATER 0)
+    set(Bun_VERSION_WITH_TAG "${Bun_VERSION}-canary.${CANARY}")
+else()
+    set(Bun_VERSION_WITH_TAG "${Bun_VERSION}")
+endif()
+
+if(WIN32)
+    set(BUN_ICO_PATH "${BUN_SRC}/bun.ico")
+    configure_file("${BUN_SRC}/windows-app-info.rc" "${BUN_WORKDIR}/CMakeFiles/windows-app-info.rc")
+    list(APPEND BUN_SOURCES "${BUN_WORKDIR}/CMakeFiles/windows-app-info.rc")
 endif()
 
 # -- The Buntime™️ ---
@@ -751,39 +847,6 @@ set_target_properties(${bun} PROPERTIES
     VISIBILITY_INLINES_HIDDEN YES
 )
 
-if(NOT BUN_CPP_ARCHIVE)
-    if(NOT WIN32)
-        string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
-        string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-        string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-        write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
-            "#!/usr/bin/env bash\n"
-            "set -e\n"
-            "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
-            "ninja \${OBJ_LIST[@]} $@\n"
-            "${AR} rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
-            "echo '-> bun-cpp-objects.a'\n"
-        )
-    else()
-        string(REPLACE ";" ".obj\",\n  \"" BUN_OBJECT_LIST "\"${BUN_SOURCES}.obj\"")
-        string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-        string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
-        write_file("${BUN_WORKDIR}/compile-cpp-only.ps1"
-            "$ErrorActionPreference = \"Stop\"\n"
-            "OBJ_LIST=@(\n  ${BUN_OBJECT_LIST}\n)\n"
-            "ninja @OBJ_LIST\n"
-            "Write-Host \"TODO: AR\"\n"
-        )
-    endif()
-else()
-    set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
-endif()
-
-# Set /subsystem:console on bun for windows
-if(WIN32)
-    set_target_properties(${bun} PROPERTIES LINK_FLAGS " /SUBSYSTEM:CONSOLE ")
-endif()
-
 add_compile_definitions(
 
     # TODO: are all of these variables strictly necessary?
@@ -802,12 +865,13 @@ add_compile_definitions(
     "NOMINMAX"
     "IS_BUILD"
     "BUILDING_JSCONLY__"
-    "ASSERT_ENABLED=$<IF:$<CONFIG:ASSERT_ENABLED>,1,0>"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
 )
 
 if(NOT ASSERT_ENABLED)
     add_compile_definitions("NDEBUG=1")
+else()
+    add_compile_definitions("ASSERT_ENABLED=1")
 endif()
 
 include_directories(
@@ -827,28 +891,102 @@ include_directories(
     "${BUN_WORKDIR}/codegen"
 )
 
+# -- BUN_CPP_ONLY Target
+if(NOT BUN_CPP_ARCHIVE)
+    if(BUN_CPP_ONLY)
+        if(NOT WIN32)
+            string(REPLACE ";" ".o\n  " BUN_OBJECT_LIST "${BUN_SOURCES}.o")
+            string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+            string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+            write_file("${BUN_WORKDIR}/compile-cpp-only.sh"
+                "#!/usr/bin/env bash\n"
+                "# this file is generated in CMakeLists.txt\n"
+                "set -ex\n"
+                "OBJ_LIST=(\n  ${BUN_OBJECT_LIST}\n)\n"
+                "ninja \${OBJ_LIST[@]} $@\n"
+                "\"${AR}\" rcvs bun-cpp-objects.a \${OBJ_LIST[@]}\n"
+                "echo '-> bun-cpp-objects.a'\n"
+            )
+        else()
+            string(REPLACE ";" ".obj\",\n  \"" BUN_OBJECT_LIST "\"${BUN_SOURCES}.obj\"")
+            string(REPLACE "rc.obj" "rc.res" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+            string(REPLACE "${BUN_WORKDIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+            string(REPLACE "${CMAKE_CURRENT_SOURCE_DIR}/" "CMakeFiles/${bun}.dir/" BUN_OBJECT_LIST "${BUN_OBJECT_LIST}")
+            write_file("${BUN_WORKDIR}/compile-cpp-only.ps1"
+                "# this file is generated in CMakeLists.txt\n"
+                "$ErrorActionPreference = \"Stop\"\n"
+                "$ObjectFiles=@(\n  ${BUN_OBJECT_LIST}\n)\n"
+                "ninja @ObjectFiles @args\n"
+                "& \"${AR}\" rcvs bun-cpp-objects.a @ObjectFiles\n"
+                "Write-Host '-> bun-cpp-objects.a'\n"
+            )
+        endif()
+    endif()
+else()
+    set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
+endif()
+
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    if(NOT MSVC)
-        target_compile_options(${bun} PUBLIC -g3 -O1)
+    if(NOT WIN32)
+        target_compile_options(${bun} PUBLIC -g3 -O0 -gdwarf-4
+            -Werror=return-type
+            -Werror=return-stack-address
+            -Werror=implicit-function-declaration
+        )
+    else()
+        target_compile_options(${bun} PUBLIC /Od /Z7)
     endif()
 
     add_compile_definitions("BUN_DEBUG=1")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-    if(MSVC)
-        target_compile_options(${bun} PUBLIC /O2)
+    if(NOT WIN32)
+        target_compile_options(${bun} PUBLIC -O3 -flto=full -emit-llvm -g1
+            -Werror=return-type
+            -Werror=return-stack-address
+            -Werror=implicit-function-declaration
+        )
     else()
-        target_compile_options(${bun} PUBLIC -O3 -flto=full -emit-llvm)
+        target_compile_options(${bun} PUBLIC /O2 -flto=full /DEBUG /Z7)
+        target_link_options(${bun} PUBLIC /LTCG /DEBUG)
     endif()
 endif()
 
-if(NOT MSVC)
-    if(NOT CI)
-        target_compile_options(${bun} PRIVATE -fdiagnostics-color=always)
-    endif()
+if(NOT CI AND NOT WIN32)
+    target_compile_options(${bun} PRIVATE -fdiagnostics-color=always)
+endif()
 
+if(NOT CPU_TARGET STREQUAL "native")
+    # passing -march=native to clang will break older systems
+    # by default on x64, CPU_TARGET is set to "haswell" or "nehalem" depending on baseline
+    # on arm, this argument will not be passed.
+    target_compile_options(${bun} PUBLIC "-march=${CPU_TARGET}")
+else()
+    if(APPLE AND ARCH STREQUAL "aarch64")
+        # On arm macOS, we can set it to a minimum of the M1 cpu set. this might be the default already.
+        target_compile_options(${bun} PUBLIC "-mcpu=apple-m1")
+    endif()
+endif()
+
+target_compile_options(${bun} PUBLIC -ferror-limit=${ERROR_LIMIT})
+
+if(WIN32)
+    add_compile_definitions(
+        "WIN32"
+        "_WINDOWS"
+        "WIN32_LEAN_AND_MEAN=1"
+        "_CRT_SECURE_NO_WARNINGS"
+        "BORINGSSL_NO_CXX=1" # lol
+    )
+
+    # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+
+    target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
+    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000")
+else()
     target_compile_options(${bun} PUBLIC
-        -march=${CPU_TARGET}
+        -fPIC
         -mtune=${CPU_TARGET}
         -fconstexpr-steps=1271242
         -fconstexpr-depth=27
@@ -856,31 +994,9 @@ if(NOT MSVC)
         -fvisibility=hidden
         -fvisibility-inlines-hidden
         -fno-rtti
-        -ferror-limit=${ERROR_LIMIT}
         -fno-omit-frame-pointer
     )
-
-    if(NOT WIN32)
-        target_compile_options(${bun} PUBLIC -fPIC)
-    endif()
-
-    if(NOT APPLE)
-        target_link_options(${bun} PUBLIC -fuse-ld=lld)
-    endif()
-
-    string(APPEND CMAKE_CXX_FLAGS " -std=c++2a ")
-else() # MSVC
-    string(APPEND SUPPRESS_WARNING_NUMBERS
-
-        # JSC deletes operator delete to prevent accidental use
-        "/wd4291 "
-
-        # we use #pragma mark in some places
-        "/wd4068"
-    )
-    string(APPEND CMAKE_CXX_FLAGS " /EHsc /GR-")
-    string(APPEND CMAKE_C_FLAGS " /EHsc /GR- ${SUPPRESS_WARNING_NUMBERS} /experimental:c11atomics /std:c17")
-    string(APPEND CMAKE_CXX_FLAGS " /Zc:__cplusplus /Zc:inline /bigobj ${SUPPRESS_WARNING_NUMBERS}")
+    string(APPEND CMAKE_CXX_FLAGS " -std=c++2a")
 endif()
 
 if(APPLE)
@@ -892,12 +1008,7 @@ if(APPLE)
 
     target_link_options(${bun} PUBLIC "-dead_strip")
     target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
-
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        # bun install will stack overflow on start in debug builds if the stack size isn't at least 12 MB
-        target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
-    endif()
-
+    target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
     target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
 
@@ -907,6 +1018,7 @@ endif()
 
 if(UNIX AND NOT APPLE)
     target_link_options(${bun} PUBLIC
+        "-fuse-ld=lld"
         "-static-libstdc++"
         "-static-libgcc"
         "-fuse-ld=lld"
@@ -931,7 +1043,7 @@ if(UNIX AND NOT APPLE)
         "-Wl,--wrap=fstatat64"
         "-Wl,--wrap=mknod"
         "-Wl,--wrap=mknodat"
-        "-Wl,--wrap=statx "
+        "-Wl,--wrap=statx"
         "-Wl,--compress-debug-sections=zlib"
         "-Bsymbolics-functions"
         "-rdynamic"
@@ -957,17 +1069,6 @@ if(UNIX AND NOT APPLE)
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.dyn")
 endif()
 
-if(WIN32)
-    add_compile_definitions(
-        "WIN32"
-        "_WINDOWS"
-        "_CRT_SECURE_NO_WARNINGS"
-        "WIN32_LEAN_AND_MEAN=1"
-    )
-
-    set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
-endif()
-
 # --- ICU ---
 if(APPLE)
     # TODO: a much better check can be done to find this path
@@ -985,11 +1086,10 @@ if(APPLE)
     target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicudata.a")
     target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicui18n.a")
     target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicuuc.a")
-    include_directories(${ICU4C_DIR}/include)
 endif()
 
 # --- Stripped Binary "bun"
-if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32)
+if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
     # add_custom_command(
     # TARGET ${bun}
     # POST_BUILD
@@ -1004,12 +1104,24 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32)
     )
 endif()
 
+if(WIN32)
+    # Kill all instances of bun before linking.
+    add_custom_command(
+        TARGET ${bun}
+        PRE_BUILD
+        COMMAND
+        "powershell"
+        "/C"
+        "Stop-Process -Name '${bun}' -Force -ErrorAction SilentlyContinue; exit 0"
+    )
+endif()
+
 # --- Dependencies ---
 if(USE_CUSTOM_ZLIB)
     include_directories(${BUN_DEPS_DIR}/zlib)
 
     if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/zlibstatic.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/zlib.lib")
     else()
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libz.a")
     endif()
@@ -1056,13 +1168,23 @@ if(USE_CUSTOM_MIMALLOC)
     include_directories(${BUN_DEPS_DIR}/mimalloc/include)
 
     if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/mimalloc-static.lib")
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/mimalloc.lib")
     elseif(APPLE)
-        # https://github.com/microsoft/mimalloc/issues/512
-        # Linking mimalloc via object file on macOS x64 can cause heap corruption
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
+        if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+            message(STATUS "Using debug mimalloc")
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.a")
+        else()
+            # https://github.com/microsoft/mimalloc/issues/512
+            # Linking mimalloc via object file on macOS x64 can cause heap corruption
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
+        endif()
     else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.o")
+        if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+            message(STATUS "Using debug mimalloc")
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.a")
+        else()
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.o")
+        endif()
     endif()
 else()
     find_package(mimalloc REQUIRED)
@@ -1108,18 +1230,15 @@ else()
     target_link_libraries(${bun} PRIVATE base64::base64)
 endif()
 
-if(NOT WIN32)
-    if(USE_CUSTOM_TINYCC)
-        if(WIN32)
-            # target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/tcc.lib")
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/tcc.lib")
-        else()
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libtcc.a")
-        endif()
+if(USE_CUSTOM_TINYCC)
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/tcc.lib")
     else()
-        find_package(tinycc REQUIRED)
-        target_link_libraries(${bun} PRIVATE tinycc::tinycc)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libtcc.a")
     endif()
+else()
+    find_package(tinycc REQUIRED)
+    target_link_libraries(${bun} PRIVATE tinycc::tinycc)
 endif()
 
 if(USE_CUSTOM_LOLHTML)
@@ -1136,6 +1255,7 @@ endif()
 if(WIN32)
     if(USE_CUSTOM_LIBUV)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libuv.lib")
+        include_directories(${bun} PRIVATE "${BUN_DEPS_DIR}/libuv/include")
     else()
         find_package(libuv CONFIG REQUIRED)
         target_link_libraries(${bun} PRIVATE $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
@@ -1162,28 +1282,51 @@ else()
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
 endif()
 
-if(NOT MSVC)
+if(USE_CUSTOM_LSHPACK)
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/lshpack.lib")
+    else()
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/liblshpack.a")
+    endif()
+else()
+    find_package(lshpack REQUIRED)
+    target_link_libraries(${bun} PRIVATE lshpack)
+endif()
+
+if(NOT WIN32)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libWTF.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libbmalloc.a")
 else()
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/WTF.lib")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/JavaScriptCore.lib")
-
-    if(WIN32)
-        set_target_properties(${bun} PROPERTIES LINK_FLAGS " /SUBSYSTEM:CONSOLE /STACK:4194304,2097152")
-    endif()
-
-    # include_directories(C:/Users/windo/Build/WebKit/WebKitBuild/WTF/DerivedSources)
-    # include_directories(C:/Users/windo/Build/WebKit/WebKitBuild/WTF/Headers)
-    target_include_directories(${bun} PUBLIC C:/Users/windo/Code/WebKit/WebKitLibraries/win/include)
-    target_link_directories(${bun} PUBLIC C:/Users/windo/Code/WebKit/WebKitLibraries/win/lib64)
-    target_link_directories(${bun} PUBLIC C:/Users/windo/Code/lib64)
-
-    target_link_libraries(${bun} PUBLIC icuuc icudt icutu icuio icuin icutest)
-    target_link_libraries(${bun} PUBLIC winmm ws2_32 bcrypt ntdll kernel32 shell32 shlwapi advapi32 vcruntime ucrt legacy_stdio_definitions)
+    target_link_options(${bun} PRIVATE "-static")
+    target_link_libraries(${bun} PRIVATE
+        "${WEBKIT_LIB_DIR}/WTF.lib"
+        "${WEBKIT_LIB_DIR}/JavaScriptCore.lib"
+        "${WEBKIT_LIB_DIR}/sicudt.lib"
+        "${WEBKIT_LIB_DIR}/sicuin.lib"
+        "${WEBKIT_LIB_DIR}/sicuuc.lib"
+        winmm
+        bcrypt
+        ntdll
+        ucrt
+        userenv
+        dbghelp
+        wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
+    )
 endif()
 
-if(NO_CODEGEN AND NOT CODEGEN)
-    message(STATUS "NO_CODEGEN is ON, a handful of build steps will not run.")
+if(WIN32)
+    # delayimp -delayload:shell32.dll -delayload:ole32.dll
+endif()
+
+if(BUN_LINK_ONLY)
+    message(STATUS "NOTE: BUN_LINK_ONLY is ON, this build config will only link the Bun executable")
+endif()
+
+if(BUN_CPP_ONLY)
+    message(STATUS "NOTE: BUN_CPP_ONLY is ON, this build will only work with 'compile-cpp-only.${SCRIPT_EXTENSION}'")
+endif()
+
+if(NO_CODEGEN)
+    message(STATUS "NOTE: NO_CODEGEN is ON, this build expects ./codegen to exist")
 endif()

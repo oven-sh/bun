@@ -1,5 +1,5 @@
+// @known-failing-on-windows: 1 failing
 import { describe, it, expect } from "bun:test";
-import { unsafe, spawn, readableStreamToText } from "bun";
 import { bunExe, bunEnv, gc } from "harness";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -170,7 +170,7 @@ describe("WebSocket", () => {
         const client = WebSocket(url, { tls: { rejectUnauthorized: false } });
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).toEqual(messages);
-        expect(result.code).toBe(1001);
+        expect(result.code).toBe(1000);
       }
     } finally {
       server.stop(true);
@@ -259,11 +259,10 @@ describe("WebSocket", () => {
     });
   });
 
-  it("should connect over http", done => {
+  it("should FAIL to connect over http when the status code is invalid", done => {
     const server = Bun.serve({
       port: 0,
       fetch(req, server) {
-        done();
         server.stop();
         return new Response();
       },
@@ -272,9 +271,45 @@ describe("WebSocket", () => {
         message(ws) {
           ws.close();
         },
+        close() {},
       },
     });
-    new WebSocket(`http://${server.hostname}:${server.port}`, {});
+    var ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+    ws.onopen = () => {
+      ws.send("Hello World!");
+    };
+
+    ws.onclose = e => {
+      expect(e.code).toBe(1002);
+      done();
+    };
+  });
+
+  it("should connect over http ", done => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        server.upgrade(req);
+        server.stop();
+
+        return new Response();
+      },
+      websocket: {
+        open(ws) {},
+        message(ws) {
+          ws.close();
+        },
+        close() {},
+      },
+    });
+    var ws = new WebSocket(`http://${server.hostname}:${server.port}`, {});
+    ws.onopen = () => {
+      ws.send("Hello World!");
+    };
+
+    ws.onclose = () => {
+      done();
+    };
   });
   describe("nodebuffer", () => {
     it("should support 'nodebuffer' binaryType", done => {
@@ -394,6 +429,35 @@ describe("WebSocket", () => {
     ws.close();
     gc(true);
   });
+
+  it("should report failing websocket construction to onerror/onclose", async () => {
+    let did_report_error = false;
+    let did_report_close = false;
+
+    try {
+      const url = `wss://some-random-domain.smth`;
+      await new Promise((resolve, reject) => {
+        const ws = new WebSocket(url, {});
+        let timeout = setTimeout(() => {
+          reject.call();
+        }, 500);
+
+        ws.onclose = () => {
+          did_report_close = true;
+          clearTimeout(timeout);
+          resolve.call();
+        };
+
+        ws.onerror = () => {
+          did_report_error = true;
+        };
+      });
+    } finally {
+    }
+
+    expect(did_report_error).toBe(true);
+    expect(did_report_close).toBe(true);
+  });
 });
 
 describe("websocket in subprocess", () => {
@@ -443,7 +507,7 @@ describe("websocket in subprocess", () => {
 
     subprocess.kill();
 
-    expect(await subprocess.exited).toBe("SIGHUP");
+    expect(await subprocess.exited).toBe(129);
   });
 
   it("should exit with invalid url", async () => {

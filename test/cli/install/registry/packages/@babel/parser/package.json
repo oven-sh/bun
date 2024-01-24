@@ -1,0 +1,39 @@
+{
+	"name": "@babel/parser",
+	"versions": {
+		"7.23.0": {
+			"name": "@babel/parser",
+			"version": "7.23.0",
+			"_id": "@babel/parser@7.23.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-kWyQsJ8VvyZkwtphAwOa6dmN9mLtIQGT3KQyqlUVM1tZpDQhpeHzzLwdzHSY5ZVN3JPuT2l+Onv+V8vu6XTgrw==",
+				"shasum": "3521d639dd2ff0ec1d3ab20dbce74d8b74fdb8fd",
+				"tarball": "http://localhost:4873/@babel/parser/-/@babel/parser-7.23.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:04:56.448Z",
+		"created": "2023-11-01T22:04:56.448Z",
+		"7.23.0": "2023-11-01T22:04:56.448Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "7.23.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"parser-7.23.0.tgz": {
+			"shasum": "3521d639dd2ff0ec1d3ab20dbce74d8b74fdb8fd",
+			"version": "7.23.0"
+		}
+	},
+	"_rev": "3-6e2d63bfe3070f10",
+	"_id": "@babel/parser",
+	"readme": "ERROR: No README data found!"
+}

@@ -9,7 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-
+const Command = @import("../cli.zig").Command;
 const Run = @import("./run_command.zig").RunCommand;
 
 pub const BunxCommand = struct {
@@ -23,11 +23,27 @@ pub const BunxCommand = struct {
 
         var new_str = try allocator.allocSentinel(u8, input.len + prefixLength, 0);
         if (input[0] == '@') {
-            if (strings.indexAnyComptime(input, "/")) |slashIndex| {
-                const index = slashIndex + 1;
+            // @org/some -> @org/create-some
+            // @org/some@v -> @org/create-some@v
+            if (strings.indexOfChar(input, '/')) |slash_i| {
+                const index = slash_i + 1;
                 @memcpy(new_str[0..index], input[0..index]);
                 @memcpy(new_str[index .. index + prefixLength], "create-");
                 @memcpy(new_str[index + prefixLength ..], input[index..]);
+                return new_str;
+            }
+            // @org@v -> @org/create@v
+            else if (strings.indexOfChar(input[1..], '@')) |at_i| {
+                const index = at_i + 1;
+                @memcpy(new_str[0..index], input[0..index]);
+                @memcpy(new_str[index .. index + prefixLength], "/create");
+                @memcpy(new_str[index + prefixLength ..], input[index..]);
+                return new_str;
+            }
+            // @org -> @org/create
+            else {
+                @memcpy(new_str[0..input.len], input);
+                @memcpy(new_str[input.len..], "/create");
                 return new_str;
             }
         }
@@ -38,8 +54,8 @@ pub const BunxCommand = struct {
         return new_str;
     }
 
-    fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: std.os.fd_t, subpath_z: [:0]const u8) ![]const u8 {
-        const target_package_json_fd = try std.os.openatZ(dir_fd, subpath_z, std.os.O.RDONLY, 0);
+    fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {
+        const target_package_json_fd = try std.os.openatZ(dir_fd.cast(), subpath_z, std.os.O.RDONLY, 0);
         const target_package_json = std.fs.File{ .handle = target_package_json_fd };
         defer target_package_json.close();
 
@@ -78,10 +94,10 @@ pub const BunxCommand = struct {
         if (expr.asProperty("directories")) |dirs| {
             if (dirs.expr.asProperty("bin")) |bin_prop| {
                 if (bin_prop.expr.asString(bundler.allocator)) |dir_name| {
-                    const bin_dir = try std.os.openat(dir_fd, dir_name, std.os.O.RDONLY, 0);
+                    const bin_dir = try std.os.openat(dir_fd.cast(), dir_name, std.os.O.RDONLY, 0);
                     defer std.os.close(bin_dir);
-                    var dir = std.fs.Dir{ .fd = bin_dir };
-                    var iterator = @import("../bun.js/node/dir_iterator.zig").iterate(dir);
+                    const dir = std.fs.Dir{ .fd = bin_dir };
+                    var iterator = bun.DirIterator.iterate(dir, .u8);
                     var entry = iterator.next();
                     while (true) : (entry = iterator.next()) {
                         const current = switch (entry) {
@@ -101,7 +117,7 @@ pub const BunxCommand = struct {
         return error.NoBinFound;
     }
 
-    fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: std.os.fd_t, package_name: []const u8) ![]const u8 {
+    fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, package_name: []const u8) ![]const u8 {
         var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
         subpath[0.."node_modules/".len].* = "node_modules/".*;
         @memcpy(subpath["node_modules/".len..][0..package_name.len], package_name);
@@ -109,23 +125,23 @@ pub const BunxCommand = struct {
         subpath["node_modules/".len + package_name.len + 1 ..][0.."package.json".len].* = "package.json".*;
         subpath["node_modules/".len + package_name.len + 1 + "package.json".len] = 0;
 
-        var subpath_z: [:0]const u8 = subpath[0 .. "node_modules/".len + package_name.len + 1 + "package.json".len :0];
+        const subpath_z: [:0]const u8 = subpath[0 .. "node_modules/".len + package_name.len + 1 + "package.json".len :0];
         return try getBinNameFromSubpath(bundler, dir_fd, subpath_z);
     }
 
     fn getBinNameFromTempDirectory(bundler: *bun.Bundler, tempdir_name: []const u8, package_name: []const u8) ![]const u8 {
         var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var subpath_z = std.fmt.bufPrintZ(
+        const subpath_z = std.fmt.bufPrintZ(
             &subpath,
             "{s}/node_modules/{s}/package.json",
             .{ tempdir_name, package_name },
         ) catch unreachable;
-        return try getBinNameFromSubpath(bundler, std.fs.cwd().fd, subpath_z);
+        return try getBinNameFromSubpath(bundler, bun.toFD(std.fs.cwd().fd), subpath_z);
     }
 
     /// Check the enclosing package.json for a matching "bin"
     /// If not found, check bunx cache dir
-    fn getBinName(bundler: *bun.Bundler, toplevel_fd: std.os.fd_t, tempdir_name: []const u8, package_name: []const u8) error{ NoBinFound, NeedToInstall }![]const u8 {
+    fn getBinName(bundler: *bun.Bundler, toplevel_fd: bun.FileDescriptor, tempdir_name: []const u8, package_name: []const u8) error{ NoBinFound, NeedToInstall }![]const u8 {
         return getBinNameFromProjectDirectory(bundler, toplevel_fd, package_name) catch |err| {
             if (err == error.NoBinFound) {
                 return error.NoBinFound;
@@ -142,21 +158,7 @@ pub const BunxCommand = struct {
     }
 
     fn exit_with_usage() noreturn {
-        Output.prettyErrorln(
-            \\usage<r><d>:<r> <cyan>bunx <r><d>[<r><blue>--bun<r><d>]<r><cyan> package<r><d>[@version] [...flags or arguments to pass through]<r>
-            \\
-            \\bunx runs an npm package executable, automatically installing into a global shared cache if not installed in node_modules.
-            \\
-            \\example<d>:<r>
-            \\
-            \\  <cyan>bunx bun-repl<r>
-            \\  <cyan>bunx prettier foo.js<r>
-            \\
-            \\The <blue>--bun<r> flag forces the package to run in Bun's JavaScript runtime, even when it tries to use Node.js.
-            \\
-            \\  <cyan>bunx <r><blue>--bun<r><cyan> tsc --version<r>
-            \\
-        , .{});
+        Command.Tag.printHelp(.BunxCommand, false);
         Global.exit(1);
     }
 
@@ -204,7 +206,7 @@ pub const BunxCommand = struct {
             exit_with_usage();
         }
 
-        var update_requests = bun.PackageManager.UpdateRequest.parse(
+        const update_requests = bun.PackageManager.UpdateRequest.parse(
             ctx.allocator,
             ctx.log,
             &package_name_for_update_request,
@@ -243,7 +245,7 @@ pub const BunxCommand = struct {
         else
             update_request.name;
 
-        // fast path: they're actually using this interchangably with `bun run`
+        // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
         var this_bundler: bun.Bundler = undefined;
         var ORIGINAL_PATH: string = "";
@@ -253,10 +255,23 @@ pub const BunxCommand = struct {
             ctx,
             &this_bundler,
             null,
-            &ORIGINAL_PATH,
             true,
+        );
+
+        try Run.configurePathForRun(
+            ctx,
+            root_dir_info,
+            &this_bundler,
+            &ORIGINAL_PATH,
+            root_dir_info.abs_path,
             force_using_bun,
         );
+
+        const ignore_cwd = this_bundler.env.map.get("BUN_WHICH_IGNORE_CWD") orelse "";
+
+        if (ignore_cwd.len > 0) {
+            _ = this_bundler.env.map.map.swapRemove("BUN_WHICH_IGNORE_CWD");
+        }
 
         var PATH = this_bundler.env.map.get("PATH").?;
         const display_version = if (update_request.version.literal.isEmpty())
@@ -279,25 +294,52 @@ pub const BunxCommand = struct {
             );
         };
 
-        const PATH_FOR_BIN_DIRS = PATH;
+        const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
+
+        const PATH_FOR_BIN_DIRS = brk: {
+            if (ignore_cwd.len == 0) break :brk PATH;
+
+            // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
+            var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, PATH.len);
+            var path_iter = std.mem.tokenizeScalar(u8, PATH, std.fs.path.delimiter);
+            if (path_iter.next()) |segment| {
+                if (!strings.eqlLong(strings.withoutTrailingSlash(segment), strings.withoutTrailingSlash(ignore_cwd), true)) {
+                    try new_path.appendSlice(segment);
+                }
+            }
+            while (path_iter.next()) |segment| {
+                if (!strings.eqlLong(strings.withoutTrailingSlash(segment), strings.withoutTrailingSlash(ignore_cwd), true)) {
+                    try new_path.append(std.fs.path.delimiter);
+                    try new_path.appendSlice(segment);
+                }
+            }
+
+            break :brk new_path.items;
+        };
+
+        defer {
+            if (ignore_cwd.len > 0) {
+                ctx.allocator.free(PATH_FOR_BIN_DIRS);
+            }
+        }
         if (PATH.len > 0) {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx/node_modules/.bin:{s}",
-                .{ package_fmt, PATH },
+                "{s}/{s}--bunx/node_modules/.bin:{s}",
+                .{ temp_dir, package_fmt, PATH },
             );
         } else {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx/node_modules/.bin",
-                .{package_fmt},
+                "{s}/{s}--bunx/node_modules/.bin",
+                .{ temp_dir, package_fmt },
             );
         }
         try this_bundler.env.map.put("PATH", PATH);
-        const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx".len + package_fmt.len];
+        const bunx_cache_dir = PATH[0 .. temp_dir.len + "/--bunx".len + package_fmt.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "/{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         const passthrough = passthrough_list.items;
 
@@ -309,7 +351,7 @@ pub const BunxCommand = struct {
                 destination_ = bun.which(
                     &path_buf,
                     PATH_FOR_BIN_DIRS,
-                    this_bundler.fs.top_level_dir,
+                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     initial_bin_name,
                 );
             }
@@ -320,7 +362,7 @@ pub const BunxCommand = struct {
             if (destination_ orelse bun.which(
                 &path_buf,
                 bunx_cache_dir,
-                this_bundler.fs.top_level_dir,
+                if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                 absolute_in_cache_dir,
             )) |destination| {
                 const out = bun.asByteSlice(destination);
@@ -330,13 +372,14 @@ pub const BunxCommand = struct {
                     this_bundler.fs.top_level_dir,
                     this_bundler.env,
                     passthrough,
+                    null,
                 );
                 // we are done!
                 Global.exit(0);
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-            if (getBinName(&this_bundler, bun.fdcast(root_dir_info.getFileDescriptor()), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+            if (getBinName(&this_bundler, root_dir_info.getFileDescriptor(), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
                 // if we check the bin name and its actually the same, we don't need to check $PATH here again
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                     absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
@@ -346,7 +389,7 @@ pub const BunxCommand = struct {
                         destination_ = bun.which(
                             &path_buf,
                             PATH_FOR_BIN_DIRS,
-                            this_bundler.fs.top_level_dir,
+                            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                             package_name_for_bin,
                         );
                     }
@@ -354,7 +397,7 @@ pub const BunxCommand = struct {
                     if (destination_ orelse bun.which(
                         &path_buf,
                         bunx_cache_dir,
-                        this_bundler.fs.top_level_dir,
+                        if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                         absolute_in_cache_dir,
                     )) |destination| {
                         const out = bun.asByteSlice(destination);
@@ -364,6 +407,7 @@ pub const BunxCommand = struct {
                             this_bundler.fs.top_level_dir,
                             this_bundler.env,
                             passthrough,
+                            null,
                         );
                         // we are done!
                         Global.exit(0);
@@ -377,15 +421,15 @@ pub const BunxCommand = struct {
             }
         }
 
-        var bunx_install_dir_path = try std.fmt.allocPrint(
+        const bunx_install_dir_path = try std.fmt.allocPrint(
             ctx.allocator,
-            bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR ++ "/{s}--bunx",
-            .{package_fmt},
+            "{s}/{s}--bunx",
+            .{ temp_dir, package_fmt },
         );
 
         // TODO: fix this after zig upgrade
-        var bunx_install_iterable_dir = try std.fs.cwd().makeOpenPathIterable(bunx_install_dir_path, .{});
-        var bunx_install_dir = bunx_install_iterable_dir.dir;
+        const bunx_install_iterable_dir = try std.fs.cwd().makeOpenPath(bunx_install_dir_path, .{});
+        var bunx_install_dir = bunx_install_iterable_dir;
 
         create_package_json: {
             // create package.json, but only if it doesn't exist
@@ -441,7 +485,7 @@ pub const BunxCommand = struct {
         if (bun.which(
             &path_buf,
             bunx_cache_dir,
-            this_bundler.fs.top_level_dir,
+            if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
             absolute_in_cache_dir,
         )) |destination| {
             const out = bun.asByteSlice(destination);
@@ -451,6 +495,7 @@ pub const BunxCommand = struct {
                 this_bundler.fs.top_level_dir,
                 this_bundler.env,
                 passthrough,
+                null,
             );
             // we are done!
             Global.exit(0);
@@ -464,7 +509,7 @@ pub const BunxCommand = struct {
                 if (bun.which(
                     &path_buf,
                     bunx_cache_dir,
-                    this_bundler.fs.top_level_dir,
+                    if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                     absolute_in_cache_dir,
                 )) |destination| {
                     const out = bun.asByteSlice(destination);
@@ -474,6 +519,7 @@ pub const BunxCommand = struct {
                         this_bundler.fs.top_level_dir,
                         this_bundler.env,
                         passthrough,
+                        null,
                     );
                     // we are done!
                     Global.exit(0);

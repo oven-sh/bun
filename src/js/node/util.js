@@ -16,6 +16,8 @@ const deepEquals = Bun.deepEquals;
 const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
 var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 
+const { parseArgs } = $lazy("util");
+
 const inspect = utl.inspect;
 const formatWithOptions = utl.formatWithOptions;
 const format = utl.format;
@@ -270,4 +272,5 @@ export default Object.assign(cjs_exports, {
   isDeepStrictEqual,
   TextDecoder,
   TextEncoder,
+  parseArgs,
 });

@@ -78,6 +78,9 @@ subcommands:
       - name: server-bunfile
         type: string
         summary: "Use a specific .bun file for SSR in bun dev (default: node_modules.server.bun)"
+      - name: env-file
+        type: string
+        summary: "Load environment variables from the specified file(s)"
       - name: extension-order
         type: string
         summary: "defaults to: .tsx,.ts,.jsx,.js,.json"
@@ -118,7 +121,7 @@ subcommands:
       - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
-      - force -- "Always request the latest versions from the registry & reinstall all dependenices"
+      - force -- "Always request the latest versions from the registry & reinstall all dependencies"
       - name: cache-dir
         type: string
         summary: "Store & load cached data from a specific directory path"
@@ -153,7 +156,7 @@ subcommands:
       - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
-      - force -- "Always request the latest versions from the registry & reinstall all dependenices"
+      - force -- "Always request the latest versions from the registry & reinstall all dependencies"
       - no-cache -- "Ignore manifest cache entirely"
       - silent -- "Don't output anything"
       - verbose -- "Excessively verbose logging"
@@ -191,7 +194,7 @@ subcommands:
       - frozen-lockfile -- "Disallow changes to lockfile"
       - no-save --
       - dry-run -- "Don't install anything"
-      - force -- "Always request the latest versions from the registry & reinstall all dependenices"
+      - force -- "Always request the latest versions from the registry & reinstall all dependencies"
       - name: cache-dir
         type: string
         summary: "Store & load cached data from a specific directory path"

@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { Buffer, SlowBuffer, isAscii, isUtf8 } from "buffer";
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { gc } from "harness";
@@ -1361,6 +1362,32 @@ it("Buffer.concat", () => {
   );
 });
 
+it("Buffer.concat huge", () => {
+  // largest page size of any supported platform.
+  const PAGE = 64 * 1024;
+
+  var array1 = Buffer.allocUnsafe(PAGE);
+  array1.fill("a");
+  var array2 = Buffer.allocUnsafe(PAGE);
+  array2.fill("b");
+  var array3 = Buffer.allocUnsafe(PAGE);
+  array3.fill("c");
+
+  const complete = array1.toString("hex") + array2.toString("hex") + array3.toString("hex");
+  const out = Buffer.concat([array1, array2, array3]);
+  expect(out.toString("hex")).toBe(complete);
+
+  const out2 = Buffer.concat([array1, array2, array3], PAGE);
+  expect(out2.toString("hex")).toBe(array1.toString("hex"));
+
+  const out3 = Buffer.concat([array1, array2, array3], PAGE * 1.5);
+  const out3hex = out3.toString("hex");
+  expect(out3hex).toBe(array1.toString("hex") + array2.slice(0, PAGE * 0.5).toString("hex"));
+
+  array1.fill("d");
+  expect(out3.toString("hex")).toBe(out3hex);
+});
+
 it("read", () => {
   var buf = new Buffer(1024);
   var data = new DataView(buf.buffer);
@@ -1691,7 +1718,7 @@ it("Buffer.swap16", () => {
   const buf = Buffer.from("123", "utf-8");
   try {
     buf.swap16();
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (exception) {
     expect(exception.message).toBe("Buffer size must be a multiple of 16-bits");
   }
@@ -1717,7 +1744,7 @@ it("Buffer.swap32", () => {
   const buf = Buffer.from("12345", "utf-8");
   try {
     buf.swap32();
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (exception) {
     expect(exception.message).toBe("Buffer size must be a multiple of 32-bits");
   }
@@ -1743,7 +1770,7 @@ it("Buffer.swap64", () => {
   const buf = Buffer.from("123456789", "utf-8");
   try {
     buf.swap64();
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (exception) {
     expect(exception.message).toBe("Buffer size must be a multiple of 64-bits");
   }

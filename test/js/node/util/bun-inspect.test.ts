@@ -18,6 +18,6 @@ describe("Bun.inspect", () => {
     expect(Bun.inspect(obj, { depth: 0x0fff0000 })).toContain("hi");
   });
   it("depth = 0", () => {
-    expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 0 })).toEqual("{\n  a: [Object ...]\n}");
+    expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 0 })).toEqual("{\n  a: [Object ...],\n}");
   });
 });

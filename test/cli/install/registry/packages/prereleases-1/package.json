@@ -1,0 +1,110 @@
+{
+	"name": "prereleases-1",
+	"versions": {
+		"1.0.0-future.0": {
+			"name": "prereleases-1",
+			"version": "1.0.0-future.0",
+			"_id": "prereleases-1@1.0.0-future.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-rt+d/f9SZQ4pLIjuv7+mvt9Il8zokfdbdxrOzXCRsEGyS7j/c8N7vCNSN8cq/4gLUK50geMyqIklyWgAwfbHpA==",
+				"shasum": "2810e1d631ea30f74fb7451148b67fd7d44e6218",
+				"tarball": "http://localhost:4873/prereleases-1/-/prereleases-1-1.0.0-future.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-future.1": {
+			"name": "prereleases-1",
+			"version": "1.0.0-future.1",
+			"_id": "prereleases-1@1.0.0-future.1",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-BoPLa8TDI1haqHESRZapuSE0Zjxvp0c1yW/6Y1lzD6UsOaa9AzviNTzStIGE9d8ajbhOrftJPLTaLzhb+p+JGA==",
+				"shasum": "d9439f3d16deca9fa7a2d04b795d173716cc7ed3",
+				"tarball": "http://localhost:4873/prereleases-1/-/prereleases-1-1.0.0-future.1.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-future.7": {
+			"name": "prereleases-1",
+			"version": "1.0.0-future.7",
+			"_id": "prereleases-1@1.0.0-future.7",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-5McWqxVwq4fW6gWayciHHzx11PkiEfaHc9QFfi+pq9vHczlGofQSwEcoDui73wkd1kav3NJkJIgVX6WcnC61Lg==",
+				"shasum": "f4feaed5261292cad9c110b7d02f522e0688c7fb",
+				"tarball": "http://localhost:4873/prereleases-1/-/prereleases-1-1.0.0-future.7.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-future.5": {
+			"name": "prereleases-1",
+			"version": "1.0.0-future.5",
+			"_id": "prereleases-1@1.0.0-future.5",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-jnn0Eyk2e1seoG+T9ziZnYt+DGd3Ct3ujYtNUc55rahHlMwTYdhnuEjc7yxyzzrxlCO/EdSdbSegfnMABwkf7Q==",
+				"shasum": "52dfd870c46926a0c430ce777003df90651f081d",
+				"tarball": "http://localhost:4873/prereleases-1/-/prereleases-1-1.0.0-future.5.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-future.4": {
+			"name": "prereleases-1",
+			"version": "1.0.0-future.4",
+			"_id": "prereleases-1@1.0.0-future.4",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-EEjNyXWDolcPkfJKHbxhrmvMnL6Z+Vp306NVxnS3aIfJd4l3QMSBtOisWrTdiMYqZG8HLjJ2boYEnlcaFhZ9Mw==",
+				"shasum": "52999769473965e22c20971fedab2c0896df2702",
+				"tarball": "http://localhost:4873/prereleases-1/-/prereleases-1-1.0.0-future.4.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-02T18:57:40.030Z",
+		"created": "2023-11-02T18:56:46.557Z",
+		"1.0.0-future.0": "2023-11-02T18:56:46.557Z",
+		"1.0.0-future.1": "2023-11-02T18:56:56.104Z",
+		"1.0.0-future.7": "2023-11-02T18:57:22.609Z",
+		"1.0.0-future.5": "2023-11-02T18:57:36.484Z",
+		"1.0.0-future.4": "2023-11-02T18:57:40.030Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0-future.4"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"prereleases-1-1.0.0-future.0.tgz": {
+			"shasum": "2810e1d631ea30f74fb7451148b67fd7d44e6218",
+			"version": "1.0.0-future.0"
+		},
+		"prereleases-1-1.0.0-future.1.tgz": {
+			"shasum": "d9439f3d16deca9fa7a2d04b795d173716cc7ed3",
+			"version": "1.0.0-future.1"
+		},
+		"prereleases-1-1.0.0-future.7.tgz": {
+			"shasum": "f4feaed5261292cad9c110b7d02f522e0688c7fb",
+			"version": "1.0.0-future.7"
+		},
+		"prereleases-1-1.0.0-future.5.tgz": {
+			"shasum": "52dfd870c46926a0c430ce777003df90651f081d",
+			"version": "1.0.0-future.5"
+		},
+		"prereleases-1-1.0.0-future.4.tgz": {
+			"shasum": "52999769473965e22c20971fedab2c0896df2702",
+			"version": "1.0.0-future.4"
+		}
+	},
+	"_rev": "",
+	"_id": "prereleases-1",
+	"readme": "ERROR: No README data found!"
+}

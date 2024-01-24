@@ -1,0 +1,64 @@
+{
+	"name": "vulnerable-peer-deps",
+	"versions": {
+		"1.0.0": {
+			"name": "vulnerable-peer-deps",
+			"version": "1.0.0",
+			"peerDependencies": {
+				"no-deps": "*"
+			},
+			"_id": "vulnerable-peer-deps@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-LROCpcc2gm3I38ACSqow6wkKpu15GhmhGYzRjTzdS7pwhrxcY1XzsqEOJon58B9UGcmsmh2Pre+mfP1ZPElW3A==",
+				"shasum": "7cb81867480b46f588632316c6eb9f18199101cd",
+				"tarball": "http://localhost:4873/vulnerable-peer-deps/-/vulnerable-peer-deps-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.1.0": {
+			"name": "vulnerable-peer-deps",
+			"version": "1.1.0",
+			"peerDependencies": {
+				"no-deps": "*"
+			},
+			"_id": "vulnerable-peer-deps@1.1.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-qzgF/YYpYfxpbpvVrnievzfxpIghbyPq8uJFp3VVdIecLITkkCrxBRSBn4jOssRuuK9DyAl1bgEiEQGVra9Q4Q==",
+				"shasum": "b22cf51957122fa567d4e57590f7e56ad9661225",
+				"tarball": "http://localhost:4873/vulnerable-peer-deps/-/vulnerable-peer-deps-1.1.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:35.846Z",
+		"created": "2023-11-01T22:05:35.523Z",
+		"1.0.0": "2023-11-01T22:05:35.523Z",
+		"1.1.0": "2023-11-01T22:05:35.846Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.1.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"vulnerable-peer-deps-1.0.0.tgz": {
+			"shasum": "7cb81867480b46f588632316c6eb9f18199101cd",
+			"version": "1.0.0"
+		},
+		"vulnerable-peer-deps-1.1.0.tgz": {
+			"shasum": "b22cf51957122fa567d4e57590f7e56ad9661225",
+			"version": "1.1.0"
+		}
+	},
+	"_rev": "6-c0324da93dd7a1ae",
+	"_id": "vulnerable-peer-deps",
+	"readme": "ERROR: No README data found!"
+}

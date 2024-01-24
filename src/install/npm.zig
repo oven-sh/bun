@@ -18,7 +18,7 @@ const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
 const Environment = @import("root").bun.Environment;
 const Aligner = @import("./install.zig").Aligner;
-const HTTPClient = @import("root").bun.HTTP;
+const HTTPClient = @import("root").bun.http;
 const json_parser = bun.JSON;
 const default_allocator = @import("root").bun.default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
@@ -102,7 +102,7 @@ pub const Registry = struct {
                             }
 
                             const eql_i = strings.indexOfChar(segment, '=') orelse continue;
-                            var value = segment[eql_i + 1 ..];
+                            const value = segment[eql_i + 1 ..];
                             segment = segment[0..eql_i];
 
                             // https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364
@@ -134,7 +134,7 @@ pub const Registry = struct {
                                 var remain = pathname[last_slash + 1 ..];
                                 if (strings.indexOfChar(remain, '=')) |eql_i| {
                                     const segment = remain[0..eql_i];
-                                    var value = remain[eql_i + 1 ..];
+                                    const value = remain[eql_i + 1 ..];
 
                                     // https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364
                                     // Bearer Token
@@ -482,13 +482,6 @@ pub const PackageVersion = extern struct {
     os: OperatingSystem = OperatingSystem.all,
     /// `"cpu"` field in package.json
     cpu: Architecture = Architecture.all,
-
-    pub fn verify(this: *const PackageVersion) void {
-        if (comptime !Environment.allow_assert)
-            return;
-
-        this.man_dir.value.assertDefined();
-    }
 };
 
 pub const NpmPackage = extern struct {
@@ -522,23 +515,6 @@ pub const PackageManifest = struct {
     package_versions: []const PackageVersion = &[_]PackageVersion{},
     extern_strings_bin_entries: []const ExternalString = &[_]ExternalString{},
 
-    pub fn verify(this: *const PackageManifest) void {
-        if (comptime !Environment.allow_assert)
-            return;
-
-        for (this.extern_strings_bin_entries) |*entry| {
-            entry.value.assertDefined();
-        }
-
-        for (this.external_strings_for_versions) |entry| {
-            entry.value.assertDefined();
-        }
-
-        for (this.package_versions) |package| {
-            package.tarball_url.value.assertDefined();
-        }
-    }
-
     pub inline fn name(this: *const PackageManifest) string {
         return this.pkg.name.slice(this.string_buf);
     }
@@ -565,13 +541,11 @@ pub const PackageManifest = struct {
                 };
             }
             const Sort = struct {
-                fn lessThan(trash: *i32, lhs: Data, rhs: Data) bool {
-                    _ = trash;
+                fn lessThan(_: void, lhs: Data, rhs: Data) bool {
                     return lhs.alignment > rhs.alignment;
                 }
             };
-            var trash: i32 = undefined; // workaround for stage1 compiler bug
-            std.sort.block(Data, &data, &trash, Sort.lessThan);
+            std.sort.pdq(Data, &data, {}, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var names: [fields.len][]const u8 = undefined;
             for (data, 0..) |elem, i| {
@@ -587,12 +561,12 @@ pub const PackageManifest = struct {
         pub fn writeArray(comptime Writer: type, writer: Writer, comptime Type: type, array: []const Type, pos: *u64) !void {
             const bytes = std.mem.sliceAsBytes(array);
             if (bytes.len == 0) {
-                try writer.writeIntNative(u64, 0);
+                try writer.writeInt(u64, 0, .little);
                 pos.* += 8;
                 return;
             }
 
-            try writer.writeIntNative(u64, bytes.len);
+            try writer.writeInt(u64, bytes.len, .little);
             pos.* += 8;
             pos.* += try Aligner.write(Type, Writer, writer, pos.*);
 
@@ -604,7 +578,7 @@ pub const PackageManifest = struct {
 
         pub fn readArray(stream: *std.io.FixedBufferStream([]const u8), comptime Type: type) ![]const Type {
             var reader = stream.reader();
-            const byte_len = try reader.readIntNative(u64);
+            const byte_len = try reader.readInt(u64, .little);
             if (byte_len == 0) {
                 return &[_]Type{};
             }
@@ -636,16 +610,16 @@ pub const PackageManifest = struct {
             }
         }
 
-        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.IterableDir) !void {
-            var tmpfile = try tmpdir.dir.createFileZ(tmp_path, .{
+        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir) !void {
+            var tmpfile = try tmpdir.createFileZ(tmp_path, .{
                 .truncate = true,
             });
             defer tmpfile.close();
-            var writer = tmpfile.writer();
+            const writer = tmpfile.writer();
             try Serializer.write(this, @TypeOf(writer), writer);
         }
 
-        pub fn save(this: *const PackageManifest, tmpdir: std.fs.IterableDir, cache_dir: std.fs.IterableDir) !void {
+        pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
             const file_id = bun.Wyhash.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
@@ -656,18 +630,18 @@ pub const PackageManifest = struct {
             const hex_timestamp_fmt = bun.fmt.hexIntLower(hex_timestamp);
             try dest_path_stream_writer.print("{any}.npm-{any}", .{ hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
-            var tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
+            const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             try writeFile(this, tmp_path, tmpdir);
-            var out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
-            try std.os.renameatZ(tmpdir.dir.fd, tmp_path, cache_dir.dir.fd, out_path);
+            const out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
+            try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
         }
 
-        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.IterableDir, package_name: string) !?PackageManifest {
+        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
             const file_id = bun.Wyhash.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
             const hex_fmt = bun.fmt.hexIntLower(file_id);
-            var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
-            var cache_file = cache_dir.dir.openFileZ(
+            const file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
+            var cache_file = cache_dir.openFileZ(
                 file_path,
                 .{ .mode = .read_only },
             ) catch return null;
@@ -676,7 +650,7 @@ pub const PackageManifest = struct {
                 timer = std.time.Timer.start() catch @panic("timer fail");
             }
             defer cache_file.close();
-            var bytes = try cache_file.readToEndAllocOptions(
+            const bytes = try cache_file.readToEndAllocOptions(
                 allocator,
                 std.math.maxInt(u32),
                 cache_file.getEndPos() catch null,
@@ -715,8 +689,6 @@ pub const PackageManifest = struct {
                     );
                 }
             }
-
-            package_manifest.verify();
 
             return package_manifest;
         }
@@ -768,7 +740,7 @@ pub const PackageManifest = struct {
                     version,
                     version,
                 )) catch return null;
-                return this.findBestVersion(group);
+                return this.findBestVersion(group, version);
             },
             .dist_tag => {
                 return this.findByDistTag(version);
@@ -801,7 +773,7 @@ pub const PackageManifest = struct {
         return null;
     }
 
-    pub fn findBestVersion(this: *const PackageManifest, group: Semver.Query.Group) ?FindResult {
+    pub fn findBestVersion(this: *const PackageManifest, group: Semver.Query.Group, group_buf: string) ?FindResult {
         const left = group.head.head.range.left;
         // Fast path: exact version
         if (left.op == .eql) {
@@ -809,9 +781,9 @@ pub const PackageManifest = struct {
         }
 
         if (this.findByDistTag("latest")) |result| {
-            if (group.satisfies(result.version, this.string_buf)) {
+            if (group.satisfies(result.version, group_buf, this.string_buf)) {
                 if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
-                    if (left.version.order(result.version, this.string_buf, this.string_buf) == .eq) {
+                    if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
                         // if prerelease, use latest if semver+tag match range exactly
                         return result;
                     }
@@ -829,8 +801,11 @@ pub const PackageManifest = struct {
             while (i > 0) : (i -= 1) {
                 const version = releases[i - 1];
 
-                if (group.satisfies(version, this.string_buf)) {
-                    return .{ .version = version, .package = &this.pkg.releases.values.get(this.package_versions)[i - 1] };
+                if (group.satisfies(version, group_buf, this.string_buf)) {
+                    return .{
+                        .version = version,
+                        .package = &this.pkg.releases.values.get(this.package_versions)[i - 1],
+                    };
                 }
             }
         }
@@ -842,9 +817,12 @@ pub const PackageManifest = struct {
                 const version = prereleases[i - 1];
 
                 // This list is sorted at serialization time.
-                if (group.satisfies(version, this.string_buf)) {
+                if (group.satisfies(version, group_buf, this.string_buf)) {
                     const packages = this.pkg.prereleases.values.get(this.package_versions);
-                    return .{ .version = version, .package = &packages[i - 1] };
+                    return .{
+                        .version = version,
+                        .package = &packages[i - 1],
+                    };
                 }
             }
         }
@@ -1045,7 +1023,7 @@ pub const PackageManifest = struct {
         }
 
         var versioned_packages = try allocator.alloc(PackageVersion, release_versions_len + pre_versions_len);
-        var all_semver_versions = try allocator.alloc(Semver.Version, release_versions_len + pre_versions_len + dist_tags_count);
+        const all_semver_versions = try allocator.alloc(Semver.Version, release_versions_len + pre_versions_len + dist_tags_count);
         var all_extern_strings = try allocator.alloc(ExternalString, extern_string_count + tarball_urls_count);
         var version_extern_strings = try allocator.alloc(ExternalString, dependency_sum);
         var extern_strings_bin_entries = try allocator.alloc(ExternalString, extern_string_count_bin);
@@ -1054,30 +1032,30 @@ pub const PackageManifest = struct {
         var tarball_url_strings = all_tarball_url_strings;
 
         if (versioned_packages.len > 0) {
-            var versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
+            const versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
             @memset(versioned_packages_bytes, 0);
         }
         if (all_semver_versions.len > 0) {
-            var all_semver_versions_bytes = std.mem.sliceAsBytes(all_semver_versions);
+            const all_semver_versions_bytes = std.mem.sliceAsBytes(all_semver_versions);
             @memset(all_semver_versions_bytes, 0);
         }
         if (all_extern_strings.len > 0) {
-            var all_extern_strings_bytes = std.mem.sliceAsBytes(all_extern_strings);
+            const all_extern_strings_bytes = std.mem.sliceAsBytes(all_extern_strings);
             @memset(all_extern_strings_bytes, 0);
         }
         if (version_extern_strings.len > 0) {
-            var version_extern_strings_bytes = std.mem.sliceAsBytes(version_extern_strings);
+            const version_extern_strings_bytes = std.mem.sliceAsBytes(version_extern_strings);
             @memset(version_extern_strings_bytes, 0);
         }
 
         var versioned_package_releases = versioned_packages[0..release_versions_len];
-        var all_versioned_package_releases = versioned_package_releases;
+        const all_versioned_package_releases = versioned_package_releases;
         var versioned_package_prereleases = versioned_packages[release_versions_len..][0..pre_versions_len];
-        var all_versioned_package_prereleases = versioned_package_prereleases;
+        const all_versioned_package_prereleases = versioned_package_prereleases;
         var _versions_open = all_semver_versions;
-        var all_release_versions = _versions_open[0..release_versions_len];
+        const all_release_versions = _versions_open[0..release_versions_len];
         _versions_open = _versions_open[release_versions_len..];
-        var all_prerelease_versions = _versions_open[0..pre_versions_len];
+        const all_prerelease_versions = _versions_open[0..pre_versions_len];
         _versions_open = _versions_open[pre_versions_len..];
         var dist_tag_versions = _versions_open[0..dist_tags_count];
         var release_versions = all_release_versions;
@@ -1108,7 +1086,7 @@ pub const PackageManifest = struct {
 
                 const versions = versions_q.expr.data.e_object.properties.slice();
 
-                var all_dependency_names_and_values = all_extern_strings[0..dependency_sum];
+                const all_dependency_names_and_values = all_extern_strings[0..dependency_sum];
 
                 // versions change more often than names
                 // so names go last because we are better able to dedupe at the end
@@ -1432,7 +1410,7 @@ pub const PackageManifest = struct {
                                     const name_map_hash = name_hasher.final();
                                     const version_map_hash = version_hasher.final();
 
-                                    var name_entry = try external_string_maps.getOrPut(name_map_hash);
+                                    const name_entry = try external_string_maps.getOrPut(name_map_hash);
                                     if (name_entry.found_existing) {
                                         name_list = name_entry.value_ptr.*;
                                         this_names = name_list.mut(all_extern_strings);
@@ -1441,7 +1419,7 @@ pub const PackageManifest = struct {
                                         dependency_names = dependency_names[count..];
                                     }
 
-                                    var version_entry = try external_string_maps.getOrPut(version_map_hash);
+                                    const version_entry = try external_string_maps.getOrPut(version_map_hash);
                                     if (version_entry.found_existing) {
                                         version_list = version_entry.value_ptr.*;
                                         this_versions = version_list.mut(version_extern_strings);
@@ -1513,12 +1491,12 @@ pub const PackageManifest = struct {
                     }
 
                     if (!parsed_version.version.tag.hasPre()) {
-                        release_versions[0] = parsed_version.version.fill();
+                        release_versions[0] = parsed_version.version.min();
                         versioned_package_releases[0] = package_version;
                         release_versions = release_versions[1..];
                         versioned_package_releases = versioned_package_releases[1..];
                     } else {
-                        prerelease_versions[0] = parsed_version.version.fill();
+                        prerelease_versions[0] = parsed_version.version.min();
                         versioned_package_prereleases[0] = package_version;
                         prerelease_versions = prerelease_versions[1..];
                         versioned_package_prereleases = versioned_package_prereleases[1..];
@@ -1546,7 +1524,7 @@ pub const PackageManifest = struct {
 
                         const sliced_string = dist_tag_value_literal.value.sliced(string_buf);
 
-                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string).version.fill();
+                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string).version.min();
                         dist_tag_i += 1;
                     }
                 }
@@ -1624,7 +1602,7 @@ pub const PackageManifest = struct {
 
                 var all_indices = try bun.default_allocator.alloc(Int, max_versions_count);
                 defer bun.default_allocator.free(all_indices);
-                var releases_list = .{ &result.pkg.releases, &result.pkg.prereleases };
+                const releases_list = .{ &result.pkg.releases, &result.pkg.prereleases };
 
                 var all_cloned_versions = try bun.default_allocator.alloc(Semver.Version, max_versions_count);
                 defer bun.default_allocator.free(all_cloned_versions);
@@ -1634,11 +1612,11 @@ pub const PackageManifest = struct {
 
                 inline for (0..2) |release_i| {
                     var release = releases_list[release_i];
-                    var indices = all_indices[0..release.keys.len];
-                    var cloned_packages = all_cloned_packages[0..release.keys.len];
-                    var cloned_versions = all_cloned_versions[0..release.keys.len];
-                    var versioned_packages_ = @constCast(release.values.get(versioned_packages));
-                    var semver_versions_ = @constCast(release.keys.get(all_semver_versions));
+                    const indices = all_indices[0..release.keys.len];
+                    const cloned_packages = all_cloned_packages[0..release.keys.len];
+                    const cloned_versions = all_cloned_versions[0..release.keys.len];
+                    const versioned_packages_ = @constCast(release.values.get(versioned_packages));
+                    const semver_versions_ = @constCast(release.keys.get(all_semver_versions));
                     @memcpy(cloned_packages, versioned_packages_);
                     @memcpy(cloned_versions, semver_versions_);
 
@@ -1646,12 +1624,12 @@ pub const PackageManifest = struct {
                         dest.* = @truncate(i);
                     }
 
-                    var sorter = ExternVersionSorter{
+                    const sorter = ExternVersionSorter{
                         .string_bytes = string_buf,
                         .all_versions = semver_versions_,
                         .all_versioned_packages = versioned_packages_,
                     };
-                    std.sort.block(Int, indices, sorter, ExternVersionSorter.isLessThan);
+                    std.sort.pdq(Int, indices, sorter, ExternVersionSorter.isLessThan);
 
                     for (indices, versioned_packages_, semver_versions_) |i, *pkg, *version| {
                         pkg.* = cloned_packages[i];
@@ -1678,7 +1656,7 @@ pub const PackageManifest = struct {
         }
 
         if (extern_strings.len + tarball_urls_count > 0) {
-            var src = std.mem.sliceAsBytes(all_tarball_url_strings[0 .. all_tarball_url_strings.len - tarball_url_strings.len]);
+            const src = std.mem.sliceAsBytes(all_tarball_url_strings[0 .. all_tarball_url_strings.len - tarball_url_strings.len]);
             if (src.len > 0) {
                 var dst = std.mem.sliceAsBytes(all_extern_strings[all_extern_strings.len - extern_strings.len ..]);
                 std.debug.assert(dst.len >= src.len);

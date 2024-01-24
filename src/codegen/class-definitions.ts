@@ -1,6 +1,12 @@
 interface PropertyAttribute {
   enumerable?: boolean;
   configurable?: boolean;
+  /**
+   * The name for a private symbol to use as the property name. The value should
+   * be a private symbol from `BunBuiltinNames.h`. This will omit the property
+   * from the prototype hash table, instead setting it using `putDirect()`.
+   */
+  privateSymbol?: string;
 }
 
 export type Field =
@@ -21,7 +27,16 @@ export type Field =
         pure?: boolean;
       };
     } & PropertyAttribute)
-  | { internal: true };
+  | { internal: true }
+  | {
+      /**
+       * The function is a builtin (its implementation is defined in
+       * src/js/builtins/), this value is the name of the code generator
+       * function: `camelCase(fileName + functionName + "CodeGenerator"`)
+       */
+      builtin: string;
+      length?: number;
+    };
 
 export interface ClassDefinition {
   name: string;
@@ -36,6 +51,7 @@ export interface ClassDefinition {
   estimatedSize?: boolean;
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
+  supportsObjectCreate?: boolean;
 
   getInternalProperties?: boolean;
 
@@ -44,6 +60,8 @@ export interface ClassDefinition {
   configurable?: boolean;
   enumerable?: boolean;
   structuredClone?: boolean | { transferable: boolean; tag: number };
+
+  callbacks?: Record<string, string>;
 }
 
 export interface CustomField {

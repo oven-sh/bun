@@ -17,7 +17,7 @@ extern "C" void ByteRangeMapping__generate(BunString sourceURL, BunString code, 
 
 static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 {
-#ifdef BUN_DEBUG
+#if ASSERT_ENABLED
     bool isCodeCoverageEnabled = !!vm.controlFlowProfiler();
     bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && BunTest__shouldGenerateCodeCoverage(Bun::toString(code.provider()->sourceURL()));
     if (shouldGenerateCodeCoverage) {
@@ -45,7 +45,8 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
                 Identifier(),                                                               \
                 ImplementationVisibility::Public,                                           \
                 ConstructorKind::None,                                                      \
-                ConstructAbility::CannotConstruct)                                          \
+                ConstructAbility::CannotConstruct,                                          \
+                InlineAttribute::None)                                                      \
                 ->link(vm, nullptr, source),                                                \
             static_cast<JSC::JSGlobalObject*>(globalObject));                               \
                                                                                             \

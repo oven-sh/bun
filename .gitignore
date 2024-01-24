@@ -136,6 +136,7 @@ make-dev-stats.csv
 .uuid
 tsconfig.tsbuildinfo
 
+test/js/bun/glob/fixtures
 *.lib
 *.pdb
 CMakeFiles
@@ -154,5 +155,12 @@ x64
 **/*.pdb
 
 /.webkit-cache
+/.cache
 /src/deps/libuv
 /build-*/
+
+.vs
+
+**/.verdaccio-db.json
+/test-report.md
+/test-report.json

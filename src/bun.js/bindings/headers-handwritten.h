@@ -6,6 +6,10 @@ typedef struct VirtualMachine VirtualMachine;
 // exists to make headers.h happy
 typedef struct CppWebSocket CppWebSocket;
 
+namespace WTF {
+class String;
+}
+
 typedef struct ZigString {
     const unsigned char* ptr;
     size_t len;
@@ -42,8 +46,26 @@ typedef struct BunString {
     BunStringTag tag;
     BunStringImpl impl;
 
+    enum ZeroCopyTag { ZeroCopy };
+
+    // If it's not a WTFStringImpl, this does nothing
     inline void ref();
+
+    // If it's not a WTFStringImpl, this does nothing
     inline void deref();
+
+    static size_t utf8ByteLength(const WTF::String&);
+
+    // Zero copy is kind of a lie.
+    // We clone it if it's non-ASCII UTF-8.
+    // We don't clone it if it was marked as static
+    // if it was a ZigString, it still allocates a WTF::StringImpl.
+    // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use ZigString)
+    WTF::String toWTFString(ZeroCopyTag) const;
+
+    // This one usually will clone the raw bytes.
+    WTF::String toWTFString() const;
+
 } BunString;
 
 typedef struct ZigErrorType {
@@ -240,14 +262,13 @@ typedef struct Uint8Array_alias Uint8Array_alias;
 extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl);
 extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl);
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
-extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, BunString*);
+extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
 extern "C" void BunString__toWTFString(BunString*);
 
 namespace Bun {
 JSC::JSValue toJS(JSC::JSGlobalObject*, BunString);
 BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 BunString toString(const char* bytes, size_t length);
-WTF::String toWTFString(const BunString& bunString);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);
@@ -295,6 +316,7 @@ extern "C" void* Bun__transpileFile(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
+    const BunString* typeAttribute,
     ErrorableResolvedSource* result, bool allowPromise);
 
 extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -338,10 +360,10 @@ extern "C" int64_t Bun__encoding__constructFromLatin1(void*, const unsigned char
 extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, size_t len, Encoding encoding);
 
 template<bool isStrict, bool enableAsymmetricMatchers>
-bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
+bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
 
 template<bool enableAsymmetricMatchers>
-bool Bun__deepMatch(JSC::JSValue object, JSC::JSValue subset, JSC::JSGlobalObject* globalObject, JSC::ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers);
+bool Bun__deepMatch(JSC::JSValue object, JSC::JSValue subset, JSC::JSGlobalObject* globalObject, JSC::ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers, bool isMatchingObjectContaining);
 
 extern "C" void Bun__remapStackFramePositions(JSC::JSGlobalObject*, ZigStackFrame*, size_t);
 

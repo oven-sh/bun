@@ -1,0 +1,58 @@
+{
+	"name": "is-number",
+	"versions": {
+		"1.0.0": {
+			"name": "is-number",
+			"version": "1.0.0",
+			"_id": "is-number@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-PWbU1PO3loy/91zx8zOoQ37b8UWuu64eJONVIObQSlUUrYag+zy562vmZuRwRcv2hDhgK1Dc9qkJVS954CB1Nw==",
+				"shasum": "603e9bb25bc9898d9a93826d4b71d1312fb42dee",
+				"tarball": "http://localhost:4873/is-number/-/is-number-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.0": {
+			"name": "is-number",
+			"version": "2.0.0",
+			"_id": "is-number@2.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-BUFNwemjM+kyrOa4KeXh4B3ay3Sh7HnmxWp+uRrGMJXuzc8vp/MsCyPX08NxfZvWWy0pOTj6tkJ3kgTqUUkN3w==",
+				"shasum": "3629daf37818492754092c6841e1c1f998121a39",
+				"tarball": "http://localhost:4873/is-number/-/is-number-2.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:11.310Z",
+		"created": "2023-11-01T22:05:11.019Z",
+		"1.0.0": "2023-11-01T22:05:11.019Z",
+		"2.0.0": "2023-11-01T22:05:11.310Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "2.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"is-number-1.0.0.tgz": {
+			"shasum": "603e9bb25bc9898d9a93826d4b71d1312fb42dee",
+			"version": "1.0.0"
+		},
+		"is-number-2.0.0.tgz": {
+			"shasum": "3629daf37818492754092c6841e1c1f998121a39",
+			"version": "2.0.0"
+		}
+	},
+	"_rev": "6-70ca3e89c4763da3",
+	"_id": "is-number",
+	"readme": "ERROR: No README data found!"
+}

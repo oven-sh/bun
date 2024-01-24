@@ -1,0 +1,58 @@
+{
+	"name": "vulnerable",
+	"versions": {
+		"1.0.0": {
+			"name": "vulnerable",
+			"version": "1.0.0",
+			"_id": "vulnerable@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-cIpYosbMB7Fg87KtmQLVvsUrWo/NwEWmwkJ25FTK723yDqXDDKMCTzrfzW64WNiz/2MHruzm62Vl6InsCbvNPQ==",
+				"shasum": "17c47f6f195065001c632ad89e683bacc46724ad",
+				"tarball": "http://localhost:4873/vulnerable/-/vulnerable-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.1.0": {
+			"name": "vulnerable",
+			"version": "1.1.0",
+			"_id": "vulnerable@1.1.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-2uxgeZ/5+b1yYXrtw19QjLC3UF2K+1p7CjmnpTLcN2SMBkfX39zfi0XcABs6AysRvFNIRAaRTroiIkMeNVwpcw==",
+				"shasum": "52818a617582e0a57776613326813dfb57d64990",
+				"tarball": "http://localhost:4873/vulnerable/-/vulnerable-1.1.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:34.319Z",
+		"created": "2023-11-01T22:05:34.010Z",
+		"1.0.0": "2023-11-01T22:05:34.010Z",
+		"1.1.0": "2023-11-01T22:05:34.319Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.1.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"vulnerable-1.0.0.tgz": {
+			"shasum": "17c47f6f195065001c632ad89e683bacc46724ad",
+			"version": "1.0.0"
+		},
+		"vulnerable-1.1.0.tgz": {
+			"shasum": "52818a617582e0a57776613326813dfb57d64990",
+			"version": "1.1.0"
+		}
+	},
+	"_rev": "6-281d0a00b87ec07c",
+	"_id": "vulnerable",
+	"readme": "ERROR: No README data found!"
+}

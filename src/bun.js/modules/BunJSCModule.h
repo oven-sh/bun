@@ -1,6 +1,8 @@
 #include "_NativeModule.h"
 
 #include "ExceptionOr.h"
+#include "MessagePort.h"
+#include "SerializedScriptValue.h"
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/BytecodeIndex.h>
@@ -21,8 +23,6 @@
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <JavaScriptCore/TestRunnerUtils.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-#include "MessagePort.h"
-#include "SerializedScriptValue.h"
 #include <wtf/FileSystem.h>
 #include <wtf/MemoryFootprint.h>
 #include <wtf/text/WTFString.h>
@@ -194,7 +194,6 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
                          (JSGlobalObject * globalObject, CallFrame *)) {
 
   auto &vm = globalObject->vm();
-  JSC::DisallowGC disallowGC;
 
   // this is a C API function
   auto *stats = toJS(JSGetMemoryUsageStatistics(toRef(globalObject)));
@@ -204,6 +203,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     ASSERT(heapSizeValue.isNumber());
     if (heapSizeValue.toInt32(globalObject) == 0) {
       vm.heap.collectNow(Sync, CollectionScope::Full);
+      JSC::DisallowGC disallowGC;
       stats = toJS(JSGetMemoryUsageStatistics(toRef(globalObject)));
     }
   }

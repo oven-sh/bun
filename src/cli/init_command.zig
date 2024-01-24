@@ -39,7 +39,10 @@ pub const InitCommand = struct {
 
         Output.flush();
 
-        const input = try std.io.getStdIn().reader().readUntilDelimiterAlloc(alloc, '\n', 1024);
+        var input = try std.io.getStdIn().reader().readUntilDelimiterAlloc(alloc, '\n', 1024);
+        if (strings.endsWithChar(input, '\r')) {
+            input = input[0 .. input.len - 1];
+        }
         if (input.len > 0) {
             return input;
         } else {
@@ -87,6 +90,21 @@ pub const InitCommand = struct {
     };
 
     pub fn exec(alloc: std.mem.Allocator, argv: [][*:0]u8) !void {
+        const print_help = brk: {
+            for (argv) |arg_| {
+                const arg = bun.span(arg_);
+                if (strings.eqlComptime(arg, "--help")) {
+                    break :brk true;
+                }
+            }
+            break :brk false;
+        };
+
+        if (print_help) {
+            CLI.Command.Tag.printHelp(.InitCommand, true);
+            Global.exit(0);
+        }
+
         var fs = try Fs.FileSystem.init(null);
         const pathname = Fs.PathName.init(fs.topLevelDirWithoutTrailingSlash());
         const destination_dir = std.fs.cwd();
@@ -299,7 +317,7 @@ pub const InitCommand = struct {
 
             if (needs_dev_dependencies) {
                 var dev_dependencies = fields.object.get("devDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
-                try dev_dependencies.data.e_object.putString(alloc, "bun-types", "latest");
+                try dev_dependencies.data.e_object.putString(alloc, "@types/bun", "latest");
                 try fields.object.put(alloc, "devDependencies", dev_dependencies);
             }
 
@@ -314,7 +332,7 @@ pub const InitCommand = struct {
             if (package_json_file == null) {
                 package_json_file = try std.fs.cwd().createFileZ("package.json", .{});
             }
-            var package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
+            const package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
 
             const written = JSPrinter.printJSON(
                 @TypeOf(package_json_writer),

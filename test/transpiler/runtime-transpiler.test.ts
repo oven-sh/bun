@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
@@ -167,5 +168,20 @@ describe("json imports", () => {
   test("should handle duplicate keys", async () => {
     // @ts-ignore
     expect((await import("./runtime-transpiler-fixture-duplicate-keys.json")).a).toBe("4");
+  });
+});
+
+describe("with statement", () => {
+  test("works", () => {
+    const { exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), require.resolve("./with-statement-works.js")],
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stderr: "inherit",
+      stdout: "inherit",
+      stdin: "inherit",
+    });
+
+    expect(exitCode).toBe(0);
   });
 });

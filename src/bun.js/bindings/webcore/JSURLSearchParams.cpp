@@ -212,7 +212,9 @@ void JSURLSearchParams::finishCreation(VM& vm)
 
 JSObject* JSURLSearchParams::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSURLSearchParamsPrototype::create(vm, &globalObject, JSURLSearchParamsPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSURLSearchParamsPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSURLSearchParamsPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSURLSearchParams::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -404,7 +406,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* obj;
-    if (impl.size() + 1 < 64) {
+    if (impl.size() + 1 <= JSFinalObject::maxInlineCapacity) {
         obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), impl.size() + 1);
     } else {
         obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype());

@@ -8,7 +8,7 @@ param (
 $ErrorActionPreference = "Stop"
 
 $Url = "https://github.com/oven-sh/WebKit/releases/download/autobuild-$Tag/$PackageName.tar.gz"
-$CacheDir = (mkdir -Force (Join-Path $PSScriptRoot "../.webkit-cache"))
+$CacheDir = (mkdir -Force (Join-Path $PSScriptRoot "../.cache"))
 $TarPath = Join-Path $CacheDir "$PackageName-$Tag.tar.gz"
 
 if (Test-Path $OutDir\.tag) {

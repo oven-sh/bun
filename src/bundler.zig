@@ -76,6 +76,8 @@ pub const ParseResult = struct {
     empty: bool = false,
     pending_imports: _resolver.PendingResolution.List = .{},
 
+    runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+
     pub fn isPendingImport(this: *const ParseResult, id: u32) bool {
         const import_record_ids = this.pending_imports.items(.import_record_id);
 
@@ -89,7 +91,7 @@ pub const ParseResult = struct {
         _resolver.PendingResolution.deinitListItems(this.pending_imports, bun.default_allocator);
         this.pending_imports.deinit(bun.default_allocator);
         this.ast.deinit();
-        bun.default_allocator.free(bun.constStrToU8(this.source.contents));
+        bun.default_allocator.free(@constCast(this.source.contents));
     }
 };
 
@@ -143,7 +145,8 @@ pub const PluginRunner = struct {
             return null;
         }
 
-        var file_path = path_value.toBunString(global);
+        const file_path = path_value.toBunString(global);
+        defer file_path.deref();
 
         if (file_path.length() == 0) {
             log.addError(
@@ -176,18 +179,22 @@ pub const PluginRunner = struct {
 
                 const namespace_str = namespace_value.toBunString(global);
                 if (namespace_str.length() == 0) {
+                    namespace_str.deref();
                     break :brk bun.String.init("file");
                 }
 
                 if (namespace_str.eqlComptime("file")) {
+                    namespace_str.deref();
                     break :brk bun.String.init("file");
                 }
 
                 if (namespace_str.eqlComptime("bun")) {
+                    namespace_str.deref();
                     break :brk bun.String.init("bun");
                 }
 
                 if (namespace_str.eqlComptime("node")) {
+                    namespace_str.deref();
                     break :brk bun.String.init("node");
                 }
 
@@ -198,6 +205,7 @@ pub const PluginRunner = struct {
 
             break :brk bun.String.init("file");
         };
+        defer user_namespace.deref();
 
         if (static_namespace) {
             return Fs.Path.initWithNamespace(
@@ -273,14 +281,17 @@ pub const PluginRunner = struct {
                 }
 
                 if (namespace_str.eqlComptime("file")) {
+                    defer namespace_str.deref();
                     break :brk bun.String.static("file");
                 }
 
                 if (namespace_str.eqlComptime("bun")) {
+                    defer namespace_str.deref();
                     break :brk bun.String.static("bun");
                 }
 
                 if (namespace_str.eqlComptime("node")) {
+                    defer namespace_str.deref();
                     break :brk bun.String.static("node");
                 }
 
@@ -291,9 +302,10 @@ pub const PluginRunner = struct {
 
             break :brk bun.String.static("file");
         };
+        defer user_namespace.deref();
 
         // Our super slow way of cloning the string into memory owned by JSC
-        var combined_string = std.fmt.allocPrint(
+        const combined_string = std.fmt.allocPrint(
             this.allocator,
             "{any}:{any}",
             .{ user_namespace, file_path },
@@ -309,7 +321,7 @@ pub const Bundler = struct {
     options: options.BundleOptions,
     log: *logger.Log,
     allocator: std.mem.Allocator,
-    result: options.TransformResult = undefined,
+    result: options.TransformResult,
     resolver: Resolver,
     fs: *Fs.FileSystem,
     output_files: std.ArrayList(options.OutputFile),
@@ -321,7 +333,7 @@ pub const Bundler = struct {
     source_map: options.SourceMapOption = .none,
 
     linker: Linker,
-    timer: SystemTimer = undefined,
+    timer: SystemTimer,
     env: *DotEnv.Loader,
 
     macro_context: ?js_ast.Macro.MacroContext = null,
@@ -375,7 +387,7 @@ pub const Bundler = struct {
     ) !Bundler {
         js_ast.Expr.Data.Store.create(allocator);
         js_ast.Stmt.Data.Store.create(allocator);
-        var fs = try Fs.FileSystem.init(
+        const fs = try Fs.FileSystem.init(
             opts.absolute_working_dir,
         );
         const bundle_options = try options.BundleOptions.fromApi(
@@ -386,10 +398,10 @@ pub const Bundler = struct {
         );
 
         var env_loader: *DotEnv.Loader = env_loader_ orelse DotEnv.instance orelse brk: {
-            var map = try allocator.create(DotEnv.Map);
+            const map = try allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(allocator);
 
-            var loader = try allocator.create(DotEnv.Loader);
+            const loader = try allocator.create(DotEnv.Loader);
             loader.* = DotEnv.Loader.init(map, allocator);
             break :brk loader;
         };
@@ -405,7 +417,7 @@ pub const Bundler = struct {
         // try pool.init(ThreadPool.InitConfig{
         //     .allocator = allocator,
         // });
-        var resolve_results = try allocator.create(ResolveResults);
+        const resolve_results = try allocator.create(ResolveResults);
         resolve_results.* = ResolveResults.init(allocator);
         return Bundler{
             .options = bundle_options,
@@ -455,7 +467,7 @@ pub const Bundler = struct {
 
     pub fn runEnvLoader(this: *Bundler) !void {
         switch (this.options.env.behavior) {
-            .prefix, .load_all => {
+            .prefix, .load_all, .load_all_without_inlining => {
                 // Step 1. Load the project root.
                 const dir_info = this.resolver.readDirInfo(this.fs.top_level_dir) catch return orelse return;
 
@@ -463,7 +475,7 @@ pub const Bundler = struct {
                     this.options.jsx = tsconfig.mergeJSX(this.options.jsx);
                 }
 
-                var dir = dir_info.getEntries(this.resolver.generation) orelse return;
+                const dir = dir_info.getEntries(this.resolver.generation) orelse return;
 
                 // Process always has highest priority.
                 const was_production = this.options.production;
@@ -474,11 +486,11 @@ pub const Bundler = struct {
                 }
 
                 if (!has_production_env and this.options.isTest()) {
-                    try this.env.load(dir, .@"test");
+                    try this.env.load(dir, this.options.env.files, .@"test");
                 } else if (this.options.production) {
-                    try this.env.load(dir, .production);
+                    try this.env.load(dir, this.options.env.files, .production);
                 } else {
-                    try this.env.load(dir, .development);
+                    try this.env.load(dir, this.options.env.files, .development);
                 }
             },
             .disable => {
@@ -620,8 +632,8 @@ pub const Bundler = struct {
         }
 
         if (this.options.routes.routes_enabled) {
-            var dir_info_ = try this.resolver.readDirInfo(this.options.routes.dir);
-            var dir_info = dir_info_ orelse return error.MissingRoutesDir;
+            const dir_info_ = try this.resolver.readDirInfo(this.options.routes.dir);
+            const dir_info = dir_info_ orelse return error.MissingRoutesDir;
 
             this.options.routes.dir = dir_info.abs_path;
 
@@ -706,10 +718,10 @@ pub const Bundler = struct {
             file_path.pretty = allocator.dupe(u8, bundler.fs.relativeTo(file_path.text)) catch unreachable;
         }
 
-        var old_bundler_allocator = bundler.allocator;
+        const old_bundler_allocator = bundler.allocator;
         bundler.allocator = allocator;
         defer bundler.allocator = old_bundler_allocator;
-        var old_linker_allocator = bundler.linker.allocator;
+        const old_linker_allocator = bundler.linker.allocator;
         defer bundler.linker.allocator = old_linker_allocator;
         bundler.linker.allocator = allocator;
 
@@ -813,6 +825,7 @@ pub const Bundler = struct {
                                 .esm_ascii,
                                 is_source_map,
                                 source_map_handler,
+                                null,
                             ),
                             .cjs => try bundler.printWithSourceMapMaybe(
                                 result.ast,
@@ -822,6 +835,7 @@ pub const Bundler = struct {
                                 .cjs,
                                 is_source_map,
                                 source_map_handler,
+                                null,
                             ),
                             else => unreachable,
                         },
@@ -843,6 +857,7 @@ pub const Bundler = struct {
                             .esm,
                             is_source_map,
                             source_map_handler,
+                            null,
                         ),
                         .cjs => try bundler.printWithSourceMapMaybe(
                             result.ast,
@@ -852,6 +867,7 @@ pub const Bundler = struct {
                             .cjs,
                             is_source_map,
                             source_map_handler,
+                            null,
                         ),
                         else => unreachable,
                     },
@@ -929,7 +945,7 @@ pub const Bundler = struct {
                         );
                 }
 
-                var buffer_writer = try js_printer.BufferWriter.init(bundler.allocator);
+                const buffer_writer = try js_printer.BufferWriter.init(bundler.allocator);
                 var writer = js_printer.BufferPrinter.init(buffer_writer);
 
                 output_file.size = switch (bundler.options.target) {
@@ -973,9 +989,9 @@ pub const Bundler = struct {
                 const CSSBuildContext = struct {
                     origin: URL,
                 };
-                var build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
+                const build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
 
-                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8096, std.fs.File.Writer));
+                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, std.fs.File.Writer));
                 const CSSWriter = Css.NewWriter(
                     BufferedWriter.Writer,
                     @TypeOf(&bundler.linker),
@@ -1021,18 +1037,19 @@ pub const Bundler = struct {
 
                     if (bundler.fs.fs.needToCloseFiles()) {
                         file.close();
-                        file_op.fd = 0;
+                        file_op.fd = .zero;
                     }
                 }
 
                 output_file.value = .{ .move = file_op };
             },
-            .wasm, .file, .napi => {
-                var hashed_name = try bundler.linker.getHashedFilename(file_path, null);
+
+            .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
+                const hashed_name = try bundler.linker.getHashedFilename(file_path, null);
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);
                 bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
-                const dir = if (bundler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else 0;
+                const dir = if (bundler.options.output_dir_handle) |output_handle| bun.toFD(output_handle.fd) else .zero;
 
                 output_file.value = .{
                     .copy = options.OutputFile.FileOperation{
@@ -1059,11 +1076,12 @@ pub const Bundler = struct {
         comptime format: js_printer.Format,
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
+        runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache,
     ) !usize {
         const tracer = bun.tracy.traceNamed(@src(), if (enable_source_map) "JSPrinter.printWithSourceMap" else "JSPrinter.print");
         defer tracer.end();
 
-        var symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
+        const symbols = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{ast.symbols});
 
         return switch (format) {
             .cjs => try js_printer.printCommonJS(
@@ -1079,11 +1097,11 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
-                    .rewrite_require_resolve = bundler.options.target != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
+                    .runtime_transpiler_cache = runtime_transpiler_cache,
                 },
                 enable_source_map,
             ),
@@ -1101,12 +1119,12 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .source_map_handler = source_map_context,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
-                    .rewrite_require_resolve = bundler.options.target != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
                     .import_meta_ref = ast.import_meta_ref,
+                    .runtime_transpiler_cache = runtime_transpiler_cache,
                 },
                 enable_source_map,
             ),
@@ -1128,9 +1146,17 @@ pub const Bundler = struct {
                         .minify_syntax = bundler.options.minify_syntax,
                         .minify_identifiers = bundler.options.minify_identifiers,
                         .transform_only = bundler.options.transform_only,
-                        .module_type = if (ast.exports_kind == .cjs) .cjs else .esm,
+                        .module_type = if (is_bun and bundler.options.transform_only)
+                            // this is for when using `bun build --no-bundle`
+                            // it should copy what was passed for the cli
+                            bundler.options.output_format
+                        else if (ast.exports_kind == .cjs)
+                            .cjs
+                        else
+                            .esm,
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
+                        .runtime_transpiler_cache = runtime_transpiler_cache,
                     },
                     enable_source_map,
                 ),
@@ -1154,6 +1180,7 @@ pub const Bundler = struct {
             format,
             false,
             null,
+            null,
         );
     }
 
@@ -1173,6 +1200,7 @@ pub const Bundler = struct {
             format,
             true,
             handler,
+            result.runtime_transpiler_cache,
         );
     }
 
@@ -1198,6 +1226,8 @@ pub const Bundler = struct {
 
         dont_bundle_twice: bool = false,
         allow_commonjs: bool = false,
+
+        runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
     };
 
     pub fn parse(
@@ -1314,8 +1344,9 @@ pub const Bundler = struct {
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or target.isBun() or bundler.options.minify_syntax;
-                opts.features.dynamic_require = target.isBun();
+                opts.features.use_import_meta_require = target.isBun();
                 opts.features.no_macros = bundler.options.no_macros;
+                opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
                 opts.transform_only = bundler.options.transform_only;
 
                 // @bun annotation
@@ -1374,6 +1405,14 @@ pub const Bundler = struct {
                         .source = source,
                         .loader = loader,
                         .input_fd = input_fd,
+                        .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
+                    },
+                    .cached => ParseResult{
+                        .ast = undefined,
+                        .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
+                        .source = source,
+                        .loader = loader,
+                        .input_fd = input_fd,
                     },
                     .already_bundled => ParseResult{
                         .ast = undefined,
@@ -1400,9 +1439,9 @@ pub const Bundler = struct {
 
                 var symbols: []js_ast.Symbol = &.{};
 
-                var parts = brk: {
+                const parts = brk: {
                     if (expr.data == .e_object) {
-                        var properties: []js_ast.G.Property = expr.data.e_object.properties.slice();
+                        const properties: []js_ast.G.Property = expr.data.e_object.properties.slice();
                         if (properties.len > 0) {
                             var stmts = allocator.alloc(js_ast.Stmt, 3) catch return null;
                             var decls = allocator.alloc(js_ast.G.Decl, properties.len) catch return null;
@@ -1417,7 +1456,7 @@ pub const Bundler = struct {
                                 if (strings.eqlComptime(name, "default"))
                                     continue;
 
-                                var visited = duplicate_key_checker.getOrPut(name) catch continue;
+                                const visited = duplicate_key_checker.getOrPut(name) catch continue;
                                 if (visited.found_existing) {
                                     decls[visited.value_ptr.*].value = prop.value.?;
                                     continue;
@@ -1513,10 +1552,10 @@ pub const Bundler = struct {
             },
             // TODO: use lazy export AST
             .text => {
-                var expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
+                const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
                     .data = source.contents,
                 }, logger.Loc.Empty);
-                var stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
+                const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{
                         .loc = logger.Loc{},
@@ -1576,7 +1615,7 @@ pub const Bundler = struct {
         path_to_use_: string,
         comptime client_entry_point_enabled: bool,
     ) !ServeResult {
-        var old_log = bundler.log;
+        const old_log = bundler.log;
 
         bundler.setLog(log);
         defer bundler.setLog(old_log);
@@ -1655,7 +1694,7 @@ pub const Bundler = struct {
                 };
             },
             else => {
-                var abs_path = path.text;
+                const abs_path = path.text;
                 const file = try std.fs.openFileAbsolute(abs_path, .{ .mode = .read_only });
                 const size = try file.getEndPos();
                 return ServeResult{
@@ -1705,7 +1744,7 @@ pub const Bundler = struct {
         var entry_point_i: usize = 0;
 
         for (bundler.options.entry_points) |_entry| {
-            var entry: string = if (comptime normalize_entry_point) bundler.normalizeEntryPointPath(_entry) else _entry;
+            const entry: string = if (comptime normalize_entry_point) bundler.normalizeEntryPointPath(_entry) else _entry;
 
             defer {
                 js_ast.Expr.Data.Store.reset();
@@ -1743,11 +1782,11 @@ pub const Bundler = struct {
         var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
         entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, true)];
 
-        if (log.level == .verbose) {
+        if (log.level.atLeast(.debug)) {
             bundler.resolver.debug_logs = try DebugLogs.init(allocator);
         }
         bundler.options.transform_only = true;
-        var did_start = false;
+        const did_start = false;
 
         if (bundler.options.output_dir_handle == null) {
             const outstream = std.io.getStdOut();
@@ -1783,16 +1822,16 @@ pub const Bundler = struct {
         // }
 
         if (bundler.linker.any_needs_runtime) {
-            try bundler.output_files.append(
-                options.OutputFile.initBuf(
-                    runtime.Runtime.sourceContent(false),
-                    bun.default_allocator,
-                    Linker.runtime_source_path,
-                    .js,
-                    null,
-                    null,
-                ),
-            );
+            // try bundler.output_files.append(
+            //     options.OutputFile.initBuf(
+            //         runtime.Runtime.source_code,
+            //         bun.default_allocator,
+            //         Linker.runtime_source_path,
+            //         .js,
+            //         null,
+            //         null,
+            //     ),
+            // );
         }
 
         if (FeatureFlags.tracing and bundler.options.log.level.atLeast(.info)) {
@@ -1827,7 +1866,7 @@ pub const Bundler = struct {
             // defer count += 1;
 
             if (comptime wrap_entry_point) {
-                var path = item.pathConst() orelse unreachable;
+                const path = item.pathConst() orelse unreachable;
                 const loader = bundler.options.loader(path.name.ext);
 
                 if (item.import_kind == .entry_point and loader.supportsClientEntryPoint()) {

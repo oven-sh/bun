@@ -1,0 +1,38 @@
+{
+	"name": "prereleases-4",
+	"versions": {
+		"2.0.0-pre.0": {
+			"name": "prereleases-4",
+			"version": "2.0.0-pre.0",
+			"_id": "prereleases-4@2.0.0-pre.0",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-5QkrWaZHwJPwNGhZ0ivZYuHut9q9FiNOvVwyVOnPjNbJlY6GznY2LGBiTbjAVgui2g41n2A1K8+7z9/tji4Fmg==",
+				"shasum": "5f0d4d22e529c9c029a244e3bab088991604bbbc",
+				"tarball": "http://localhost:4873/prereleases-4/-/prereleases-4-2.0.0-pre.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-08T09:06:06.000Z",
+		"created": "2023-11-08T09:06:06.000Z",
+		"2.0.0-pre.0": "2023-11-08T09:06:06.000Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "2.0.0-pre.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"prereleases-4-2.0.0-pre.0.tgz": {
+			"shasum": "5f0d4d22e529c9c029a244e3bab088991604bbbc",
+			"version": "2.0.0-pre.0"
+		}
+	},
+	"_rev": "",
+	"_id": "prereleases-4",
+	"readme": "ERROR: No README data found!"
+}

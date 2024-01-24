@@ -197,8 +197,18 @@ static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
    return res;
 }
 
-
-
+static EncodedJSValue UINT32_TO_JSVALUE(uint32_t val) {
+  EncodedJSValue res;
+  if(val <= MAX_INT32) {
+    res.asInt64 = NumberTag | val;
+    return res;
+  } else {
+    EncodedJSValue res;
+    res.asDouble = val;
+    res.asInt64 += DoubleEncodeOffset;
+    return res;
+  }
+}
 
 static EncodedJSValue FLOAT_TO_JSVALUE(float val) {
   return DOUBLE_TO_JSVALUE((double)val);
@@ -286,9 +296,6 @@ ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
 bool my_callback_function(void* arg0);
 
 bool my_callback_function(void* arg0) {
-#ifdef INJECT_BEFORE
-INJECT_BEFORE;
-#endif
  ZIG_REPR_TYPE arguments[1];
 arguments[0] = PTR_TO_JSVALUE(arg0).asZigRepr;
   return (bool)JSVALUE_TO_BOOL(_FFI_Callback_call((void*)0x0000000000000000ULL, 1, arguments));

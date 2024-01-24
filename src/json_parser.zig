@@ -68,7 +68,7 @@ const HashMapPool = struct {
             }
         }
 
-        var new_node = default_allocator.create(LinkedList.Node) catch unreachable;
+        const new_node = default_allocator.create(LinkedList.Node) catch unreachable;
         new_node.* = LinkedList.Node{ .data = HashMap.initContext(default_allocator, IdentityContext{}) };
         return new_node;
     }
@@ -369,6 +369,8 @@ pub const PackageJSONVersionChecker = struct {
     has_found_name: bool = false,
     has_found_version: bool = false,
 
+    name_loc: logger.Loc = logger.Loc.Empty,
+
     const opts = if (LEXER_DEBUGGER_WORKAROUND) js_lexer.JSONOptions{} else js_lexer.JSONOptions{
         .is_json = true,
         .json_warn_duplicate_keys = false,
@@ -409,7 +411,7 @@ pub const PackageJSONVersionChecker = struct {
                 return newExpr(E.Null{}, loc);
             },
             .t_string_literal => {
-                var str: E.String = p.lexer.toEString();
+                const str: E.String = p.lexer.toEString();
 
                 try p.lexer.next();
                 return newExpr(str, loc);
@@ -463,6 +465,7 @@ pub const PackageJSONVersionChecker = struct {
                     try p.lexer.expect(.t_string_literal);
 
                     try p.lexer.expect(.t_colon);
+
                     const value = try p.parseExpr();
 
                     if (p.depth == 1) {
@@ -478,6 +481,7 @@ pub const PackageJSONVersionChecker = struct {
                                 bun.copy(u8, &p.found_name_buf, value.data.e_string.data[0..len]);
                                 p.found_name = p.found_name_buf[0..len];
                                 p.has_found_name = true;
+                                p.name_loc = value.loc;
                             } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.data, "version")) {
                                 const len = @min(
                                     value.data.e_string.data.len,
@@ -573,11 +577,9 @@ pub fn toAST(
                     return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
                 }
 
-                var exprs = try allocator.alloc(Expr, value.len);
-                var i: usize = 0;
-                while (i < exprs.len) : (i += 1) {
-                    exprs[i] = try toAST(allocator, @TypeOf(value[i]), value[i]);
-                }
+                const exprs = try allocator.alloc(Expr, value.len);
+                for (exprs, 0..) |*ex, i| ex.* = try toAST(allocator, @TypeOf(value[i]), value[i]);
+
                 return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
             },
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
@@ -587,11 +589,9 @@ pub fn toAST(
                 return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
             }
 
-            var exprs = try allocator.alloc(Expr, value.len);
-            var i: usize = 0;
-            while (i < exprs.len) : (i += 1) {
-                exprs[i] = try toAST(allocator, @TypeOf(value[i]), value[i]);
-            }
+            const exprs = try allocator.alloc(Expr, value.len);
+            for (exprs, 0..) |*ex, i| ex.* = try toAST(allocator, @TypeOf(value[i]), value[i]);
+
             return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
         },
         .Struct => |Struct| {
@@ -937,7 +937,7 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
         Global.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }
 
-    var buffer_writer = try js_printer.BufferWriter.init(default_allocator);
+    const buffer_writer = try js_printer.BufferWriter.init(default_allocator);
     var writer = js_printer.BufferPrinter.init(buffer_writer);
     const written = try js_printer.printJSON(@TypeOf(&writer), &writer, expr, &source);
     var js = writer.ctx.buffer.list.items.ptr[0 .. written + 1];

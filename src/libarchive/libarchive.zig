@@ -375,12 +375,12 @@ pub const Archive = struct {
         contents: MutableString,
         filename_hash: u64 = 0,
         found: bool = false,
-        fd: FileDescriptorType = 0,
+        fd: FileDescriptorType = .zero,
         pub fn init(filepath: string, estimated_size: usize, allocator: std.mem.Allocator) !Plucker {
             return Plucker{
                 .contents = try MutableString.init(allocator, estimated_size),
                 .filename_hash = bun.hash(filepath),
-                .fd = 0,
+                .fd = .zero,
                 .found = false,
             };
         }
@@ -400,15 +400,15 @@ pub const Archive = struct {
         stream.init(file_buffer);
         defer stream.deinit();
         _ = stream.openRead();
-        var archive = stream.archive;
-        const dir: std.fs.IterableDir = brk: {
+        const archive = stream.archive;
+        const dir: std.fs.Dir = brk: {
             const cwd = std.fs.cwd();
 
             // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
             if (std.fs.path.isAbsolute(root)) {
-                break :brk std.fs.openIterableDirAbsolute(root, .{}) catch return;
+                break :brk std.fs.openDirAbsolute(root, .{}) catch return;
             } else {
-                break :brk cwd.openIterableDir(root, .{}) catch return;
+                break :brk cwd.openDir(root, .{}) catch return;
             }
         };
 
@@ -436,7 +436,7 @@ pub const Archive = struct {
 
                     const size = @as(usize, @intCast(@max(lib.archive_entry_size(entry), 0)));
                     if (size > 0) {
-                        var opened = dir.dir.openFileZ(pathname, .{ .mode = .write_only }) catch continue :loop;
+                        var opened = dir.openFileZ(pathname, .{ .mode = .write_only }) catch continue :loop;
                         defer opened.close();
                         const stat_size = try opened.getEndPos();
 
@@ -458,7 +458,7 @@ pub const Archive = struct {
                                 path_to_use = temp_buf[0 .. path_to_use_.len + 1];
                             }
 
-                            var overwrite_entry = try ctx.overwrite_list.getOrPut(path_to_use);
+                            const overwrite_entry = try ctx.overwrite_list.getOrPut(path_to_use);
                             if (!overwrite_entry.found_existing) {
                                 overwrite_entry.key_ptr.* = try appender.append(@TypeOf(path_to_use), path_to_use);
                             }
@@ -471,7 +471,7 @@ pub const Archive = struct {
 
     pub fn extractToDir(
         file_buffer: []const u8,
-        dir_: std.fs.IterableDir,
+        dir_: std.fs.Dir,
         ctx: ?*Archive.Context,
         comptime ContextType: type,
         appender: ContextType,
@@ -485,9 +485,9 @@ pub const Archive = struct {
         stream.init(file_buffer);
         defer stream.deinit();
         _ = stream.openRead();
-        var archive = stream.archive;
+        const archive = stream.archive;
         var count: u32 = 0;
-        const dir = dir_.dir;
+        const dir = dir_;
         const dir_fd = dir.fd;
 
         loop: while (true) {
@@ -506,14 +506,18 @@ pub const Archive = struct {
                         }
                     }
 
-                    var tokenizer = std.mem.tokenize(u8, bun.asByteSlice(pathname), std.fs.path.sep_str);
+                    var tokenizer = if (comptime Environment.isWindows)
+                        // TODO(dylan-conway): I think this should only be '/'
+                        std.mem.tokenizeAny(u8, bun.asByteSlice(pathname), "/\\")
+                    else
+                        std.mem.tokenizeScalar(u8, bun.asByteSlice(pathname), '/');
                     comptime var depth_i: usize = 0;
 
                     inline while (depth_i < depth_to_skip) : (depth_i += 1) {
                         if (tokenizer.next() == null) continue :loop;
                     }
 
-                    var pathname_ = tokenizer.rest();
+                    const pathname_ = tokenizer.rest();
                     pathname = @as([*]const u8, @ptrFromInt(@intFromPtr(pathname_.ptr)))[0..pathname_.len :0];
                     if (pathname.len == 0) continue;
 
@@ -557,23 +561,22 @@ pub const Archive = struct {
                         Kind.sym_link => {
                             const link_target = lib.archive_entry_symlink(entry).?;
                             if (comptime Environment.isWindows) {
-                                bun.todo(@src(), {});
-                            } else {
-                                std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
-                                    switch (err) {
-                                        error.AccessDenied, error.FileNotFound => {
-                                            dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
-                                            break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
-                                        },
-                                        else => {
-                                            return err;
-                                        },
-                                    }
-                                };
+                                @panic("TODO on Windows");
                             }
+                            std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
+                                switch (err) {
+                                    error.AccessDenied, error.FileNotFound => {
+                                        dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
+                                        break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
+                                    },
+                                    else => {
+                                        return err;
+                                    },
+                                }
+                            };
                         },
                         Kind.file => {
-                            const mode = @as(std.os.mode_t, @intCast(lib.archive_entry_perm(entry)));
+                            const mode: bun.Mode = if (comptime Environment.isWindows) 0 else @intCast(lib.archive_entry_perm(entry));
                             const file = dir.createFileZ(pathname, .{ .truncate = true, .mode = mode }) catch |err| brk: {
                                 switch (err) {
                                     error.AccessDenied, error.FileNotFound => {
@@ -588,7 +591,11 @@ pub const Archive = struct {
                                     },
                                 }
                             };
-                            defer if (comptime close_handles) file.close();
+                            const file_handle = bun.toLibUVOwnedFD(file.handle);
+
+                            defer {
+                                if (comptime close_handles) _ = bun.sys.close(file_handle);
+                            }
 
                             const entry_size = @max(lib.archive_entry_size(entry), 0);
                             const size = @as(usize, @intCast(entry_size));
@@ -600,7 +607,7 @@ pub const Archive = struct {
                                         @as(u64, 0);
 
                                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "appendMutable")) {
-                                        var result = ctx.?.all_files.getOrPutAdapted(hash, Context.U64Context{}) catch unreachable;
+                                        const result = ctx.?.all_files.getOrPutAdapted(hash, Context.U64Context{}) catch unreachable;
                                         if (!result.found_existing) {
                                             result.value_ptr.* = (try appender.appendMutable(@TypeOf(slice), slice)).ptr;
                                         }
@@ -610,27 +617,29 @@ pub const Archive = struct {
                                         if (plucker_.filename_hash == hash) {
                                             try plucker_.contents.inflate(size);
                                             plucker_.contents.list.expandToCapacity();
-                                            var read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
+                                            const read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
                                             try plucker_.contents.inflate(@as(usize, @intCast(read)));
                                             plucker_.found = read > 0;
-                                            plucker_.fd = bun.toFD(file.handle);
+                                            plucker_.fd = file_handle;
                                             continue :loop;
                                         }
                                     }
                                 }
                                 // archive_read_data_into_fd reads in chunks of 1 MB
                                 // #define	MAX_WRITE	(1024 * 1024)
-                                if (size > 1_000_000) {
-                                    C.preallocate_file(
-                                        file.handle,
-                                        0,
-                                        entry_size,
-                                    ) catch {};
+                                if (comptime Environment.isLinux) {
+                                    if (size > 1_000_000) {
+                                        C.preallocate_file(
+                                            file_handle.cast(),
+                                            0,
+                                            entry_size,
+                                        ) catch {};
+                                    }
                                 }
 
                                 var retries_remaining: u8 = 5;
                                 possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
-                                    switch (lib.archive_read_data_into_fd(archive, bun.fdi32(file.handle))) {
+                                    switch (lib.archive_read_data_into_fd(archive, bun.uvfdcast(file_handle))) {
                                         lib.ARCHIVE_EOF => break :loop,
                                         lib.ARCHIVE_OK => break :possibly_retry,
                                         lib.ARCHIVE_RETRY => {
@@ -668,16 +677,16 @@ pub const Archive = struct {
         comptime close_handles: bool,
         comptime log: bool,
     ) !u32 {
-        var dir: std.fs.IterableDir = brk: {
+        var dir: std.fs.Dir = brk: {
             const cwd = std.fs.cwd();
             cwd.makePath(
                 root,
             ) catch {};
 
             if (std.fs.path.isAbsolute(root)) {
-                break :brk try std.fs.openIterableDirAbsolute(root, .{});
+                break :brk try std.fs.openDirAbsolute(root, .{});
             } else {
-                break :brk try cwd.openIterableDir(root, .{});
+                break :brk try cwd.openDir(root, .{});
             }
         };
 

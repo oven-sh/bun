@@ -55,11 +55,18 @@ pub inline fn isNodeModules(this: *const DirInfo) bool {
     return this.flags.contains(.is_node_modules);
 }
 
+/// Is this inside a "node_modules" directory?
+pub inline fn isInsideNodeModules(this: *const DirInfo) bool {
+    return this.flags.contains(.inside_node_modules);
+}
+
 pub const Flags = enum {
     /// This directory is a node_modules directory
     is_node_modules,
     /// This directory has a node_modules subdirectory
     has_node_modules,
+
+    inside_node_modules,
 
     pub const Set = std.enums.EnumSet(Flags);
 };
@@ -71,18 +78,18 @@ pub fn hasParentPackage(this: *const DirInfo) bool {
 
 pub fn getFileDescriptor(dirinfo: *const DirInfo) StoredFileDescriptorType {
     if (!FeatureFlags.store_file_descriptors) {
-        return 0;
+        return .zero;
     }
 
     if (dirinfo.getEntries(0)) |entries| {
         return entries.fd;
     } else {
-        return 0;
+        return .zero;
     }
 }
 
 pub fn getEntries(dirinfo: *const DirInfo, generation: bun.Generation) ?*Fs.FileSystem.DirEntry {
-    var entries_ptr = Fs.FileSystem.instance.fs.entriesAt(dirinfo.entries, generation) orelse return null;
+    const entries_ptr = Fs.FileSystem.instance.fs.entriesAt(dirinfo.entries, generation) orelse return null;
     switch (entries_ptr.*) {
         .entries => {
             return entries_ptr.entries;

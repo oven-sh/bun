@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { test, expect, describe } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
@@ -257,7 +258,7 @@ describe("Bun.build", () => {
     expect(x.success).toBe(true);
     expect(x.logs).toHaveLength(1);
     expect(x.logs[0].message).toBe(
-      '"key" prop before a {...spread} is deprecated in JSX. Falling back to classic runtime.',
+      '"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.',
     );
     expect(x.logs[0].name).toBe("BuildMessage");
     expect(x.logs[0].position).toBeTruthy();

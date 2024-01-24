@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { bunExe, bunEnv as env } from "harness";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { join, relative } from "path";
@@ -99,7 +100,10 @@ it("should remove existing package", async () => {
   expect(await removeExited1).toBe(0);
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
+  const err1 = await new Response(stderr1).text();
+
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([
+    "",
     ` + pkg2@${pkg2_path}`,
     "",
     " 1 package installed",
@@ -107,7 +111,6 @@ it("should remove existing package", async () => {
     "",
   ]);
   expect(stderr1).toBeDefined();
-  const err1 = await new Response(stderr1).text();
   expect(err1.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun remove", " Saved lockfile", ""]);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
     JSON.stringify(
@@ -138,12 +141,14 @@ it("should remove existing package", async () => {
   expect(await removeExited2).toBe(0);
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
-  expect(out2.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([" done", ""]);
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
+
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual(["", " - pkg2", " 1 package removed", ""]);
+  expect(stderr2).toBeDefined();
   expect(err2.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
     "bun remove",
-    "No packages! Deleted empty lockfile",
+    "",
+    "package.json has no dependencies! Deleted empty lockfile",
     "",
   ]);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(
@@ -158,7 +163,7 @@ it("should remove existing package", async () => {
   );
 });
 
-it("should reject missing package", async () => {
+it("should not reject missing package", async () => {
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -184,7 +189,7 @@ it("should reject missing package", async () => {
   });
   expect(await addExited).toBe(0);
 
-  const { stdout, stderr, exited } = spawn({
+  const { exited: rmExited } = spawn({
     cmd: [bunExe(), "remove", "pkg2"],
     cwd: package_dir,
     stdout: null,
@@ -192,18 +197,7 @@ it("should reject missing package", async () => {
     stderr: "pipe",
     env,
   });
-  expect(await exited).toBe(1);
-  expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
-  expect(out).toEqual("");
-  expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
-  expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
-    "bun remove",
-    "",
-    `error: "pkg2" is not in a package.json file`,
-    "",
-  ]);
+  expect(await rmExited).toBe(0);
 });
 
 it("should not affect if package is not installed", async () => {

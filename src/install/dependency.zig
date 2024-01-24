@@ -603,6 +603,11 @@ pub const Version = struct {
                     if (dependency.len == 1) return .npm;
                     if (dependency[1] == '.') return .npm;
                 },
+                'p' => {
+                    // TODO(dylan-conway): apply .patch files on packages. In the future this could
+                    // return `Tag.git` or `Tag.npm`.
+                    if (strings.hasPrefixComptime(dependency, "patch:")) return .npm;
+                },
                 else => {},
             }
 
@@ -615,7 +620,12 @@ pub const Version = struct {
             // git@example.com:path/to/repo.git
             if (isSCPLikePath(dependency)) return .git;
             // beta
-            return .dist_tag;
+
+            if (!strings.containsChar(dependency, '|')) {
+                return .dist_tag;
+            }
+
+            return .npm;
         }
     };
 
@@ -715,8 +725,6 @@ pub fn parseWithTag(
     sliced: *const SlicedString,
     log_: ?*logger.Log,
 ) ?Version {
-    alias.assertDefined();
-
     switch (tag) {
         .npm => {
             var input = dependency;
@@ -757,7 +765,16 @@ pub fn parseWithTag(
                 input,
                 sliced.sub(input),
             ) catch |err| {
-                if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "{s} parsing dependency \"{s}\"", .{ @errorName(err), dependency }) catch unreachable;
+                if (log_) |log| log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "{s} parsing version \"{s}\"",
+                    .{
+                        @errorName(err),
+                        dependency,
+                    },
+                ) catch unreachable;
                 return null;
             };
 

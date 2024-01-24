@@ -1,5 +1,28 @@
+// @known-failing-on-windows: 1 failing
 import { it, expect, describe } from "bun:test";
 import util from "util";
+
+it("prototype", () => {
+  const prototypes = [
+    Request.prototype,
+    Response.prototype,
+    Blob.prototype,
+    Headers.prototype,
+    URL.prototype,
+    URLSearchParams.prototype,
+    ReadableStream.prototype,
+    WritableStream.prototype,
+    TransformStream.prototype,
+    MessageEvent.prototype,
+    CloseEvent.prototype,
+    WebSocket.prototype,
+  ];
+
+  for (let prototype of prototypes) {
+    for (let i = 0; i < 10; i++) expect(Bun.inspect(prototype).length > 0).toBeTrue();
+  }
+  Bun.gc(true);
+});
 
 it("getters", () => {
   const obj = {
@@ -8,7 +31,7 @@ it("getters", () => {
     },
   };
 
-  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Getter]" + "\n" + "}");
+  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Getter]," + "\n" + "}");
   var called = false;
   const objWithThrowingGetter = {
     get foo() {
@@ -21,7 +44,7 @@ it("getters", () => {
     },
   };
 
-  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter]" + "\n" + "}");
+  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter]," + "\n" + "}");
   expect(called).toBe(false);
 });
 
@@ -40,7 +63,7 @@ it("when prototype defines the same property, don't print the same property twic
   };
   var obj = Object.create(base);
   obj.foo = "456";
-  expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456"\n}'.trim());
+  expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456",\n}'.trim());
 });
 
 it("Blob inspect", () => {
@@ -82,7 +105,7 @@ it("utf16 property name", () => {
   // latin1 escaping identifier issue
   expect(Object.keys({ 笑: "hey" })[0].codePointAt(0)).toBe(31505);
 
-  const output = JSON.stringify(
+  const output = Bun.inspect(
     [
       {
         笑: "😀",
@@ -221,10 +244,10 @@ it("inspect", () => {
   expect(Bun.inspect(-Infinity)).toBe("-Infinity");
   expect(Bun.inspect([])).toBe("[]");
   expect(Bun.inspect({})).toBe("{}");
-  expect(Bun.inspect({ hello: 1 })).toBe("{\n  hello: 1\n}");
-  expect(Bun.inspect({ hello: 1, there: 2 })).toBe("{\n  hello: 1,\n  there: 2\n}");
-  expect(Bun.inspect({ hello: "1", there: 2 })).toBe('{\n  hello: "1",\n  there: 2\n}');
-  expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe('{\n  "hello-\\"there": "1",\n  there: 2\n}');
+  expect(Bun.inspect({ hello: 1 })).toBe("{\n  hello: 1,\n}");
+  expect(Bun.inspect({ hello: 1, there: 2 })).toBe("{\n  hello: 1,\n  there: 2,\n}");
+  expect(Bun.inspect({ hello: "1", there: 2 })).toBe('{\n  hello: "1",\n  there: 2,\n}');
+  expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe('{\n  "hello-\\"there": "1",\n  there: 2,\n}');
   var str = "123";
   while (str.length < 4096) {
     str += "123";
@@ -261,6 +284,15 @@ it("inspect", () => {
 </div>`.trim(),
   );
   expect(Bun.inspect(BigInt(32))).toBe("32n");
+  expect(Bun.inspect({ call: 1, not_call: 2, prototype: 4 })).toBe(
+    `
+{
+  call: 1,
+  not_call: 2,
+  prototype: 4,
+}
+    `.trim(),
+  );
 });
 
 describe("latin1 supplemental", () => {

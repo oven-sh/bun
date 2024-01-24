@@ -44,9 +44,8 @@ void *sni_find(void *sni, const char *hostname);
 #endif
 
 #include "./root_certs.h"
-static const size_t root_certs_size =
-    sizeof(root_certs) / sizeof(root_certs[0]);
-static X509 *root_cert_instances[root_certs_size] = {NULL};
+static X509 *root_cert_instances[sizeof(root_certs) / sizeof(root_certs[0])] = {
+    NULL};
 
 /* These are in root_certs.cpp */
 extern X509_STORE *us_get_default_ca_store();
@@ -241,7 +240,10 @@ void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *)loop->data.ssl_data;
 
+  loop_ssl_data->ssl_read_input_length = 0;
+  loop_ssl_data->ssl_read_input_offset = 0;
   loop_ssl_data->ssl_socket = &s->s;
+  loop_ssl_data->msg_more = 0;
 
   if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
     s->pending_handshake = 0;
@@ -304,6 +306,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
                              void *reason) {
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
+
   if (s->pending_handshake) {
     s->pending_handshake = 0;
     if (context->on_handshake != NULL) {
@@ -311,6 +314,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
       context->on_handshake(s, 0, verify_error, context->handshake_data);
     }
   }
+
   return (struct us_internal_ssl_socket_t *)us_socket_close(
       0, (struct us_socket_t *)s, code, reason);
 }
@@ -329,7 +333,7 @@ ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
 
 struct us_internal_ssl_socket_t *
 ssl_on_end(struct us_internal_ssl_socket_t *s) {
-  if (&s->s && s->pending_handshake) {
+  if (s && s->pending_handshake) {
     s->pending_handshake = 0;
   }
   // whatever state we are in, a TCP FIN is always an answered shutdown
@@ -353,7 +357,6 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   if (s->pending_handshake) {
     us_internal_ssl_handshake(s);
   }
-
   // note: if we put data here we should never really clear it (not in write
   // either, it still should be available for SSL_write to read from!)
   loop_ssl_data->ssl_read_input = data;
@@ -399,7 +402,6 @@ restart:
                              loop_ssl_data->ssl_read_output +
                                  LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
-
     if (just_read <= 0) {
       int err = SSL_get_error(s->ssl, just_read);
 
@@ -427,7 +429,6 @@ restart:
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
           // clear per thread error queue if it may contain something
-
           ERR_clear_error();
         }
 
@@ -498,7 +499,7 @@ restart:
     s = (struct us_internal_ssl_socket_t *)context->sc.on_writable(
         &s->s); // cast here!
     // if we are closed here, then exit
-    if (us_socket_is_closed(0, &s->s)) {
+    if (!s || us_socket_is_closed(0, &s->s)) {
       return s;
     }
   }
@@ -543,8 +544,13 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
                                                                0); // cast here!
   }
 
-  // should this one come before we have read? should it come always? spurious
-  // on_writable is okay
+
+  // Do not call on_writable if the socket is closed.
+  // on close means the socket data is no longer accessible
+  if (!s || us_socket_is_closed(0, &s->s)) {
+    return 0;
+  }
+
   s = context->on_writable(s);
 
   return s;
@@ -812,8 +818,8 @@ int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
 
   int count = 0;
 
-  while (x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
-                               SSL_CTX_get_default_passwd_cb_userdata(ctx))) {
+  while ((x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
+                                SSL_CTX_get_default_passwd_cb_userdata(ctx)))) {
 
     X509_STORE_add_cert(store, x);
 
@@ -1214,13 +1220,16 @@ void us_internal_ssl_socket_context_add_server_name(
   /* Try and construct an SSL_CTX from options */
   SSL_CTX *ssl_context = create_ssl_context_from_options(options);
 
-  /* Attach the user data to this context */
-  if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
-    printf("CANNOT SET EX DATA!\n");
-  }
-
-  /* We do not want to hold any nullptr's in our SNI tree */
   if (ssl_context) {
+    /* Attach the user data to this context */
+    if (1 != SSL_CTX_set_ex_data(ssl_context, 0, user)) {
+      #if BUN_DEBUG
+        printf("CANNOT SET EX DATA!\n");
+        abort();
+      #endif
+    }
+
+    /* * We do not want to hold any nullptr's in our SNI tree */
     if (sni_add(context->sni, hostname_pattern, ssl_context)) {
       /* If we already had that name, ignore */
       free_ssl_context(ssl_context);

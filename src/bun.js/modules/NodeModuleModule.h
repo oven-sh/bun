@@ -2,10 +2,10 @@
 
 #include "CommonJSModuleRecord.h"
 #include "ImportMetaObject.h"
-#include <JavaScriptCore/JSBoundFunction.h>
-#include <JavaScriptCore/ObjectConstructor.h>
 #include "_NativeModule.h"
 #include "isBuiltinModule.h"
+#include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 
 using namespace Zig;
 using namespace JSC;
@@ -35,6 +35,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "bun:ffi"_s,
     "bun:jsc"_s,
     "bun:sqlite"_s,
+    "bun:test"_s,
     "bun:wrap"_s,
     "child_process"_s,
     "cluster"_s,
@@ -179,17 +180,35 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
   if (callFrame->argumentCount() < 1) {
     throwTypeError(globalObject, scope,
                    "createRequire() requires at least one argument"_s);
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode({}));
   }
 
   auto val = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+
+  if (val.startsWith("file://"_s)) {
+    WTF::URL url(val);
+    if (!url.isValid()) {
+      throwTypeError(globalObject, scope,
+                     makeString("createRequire() was given an invalid URL '"_s,
+                                url.string(), "'"_s));
+      ;
+      RELEASE_AND_RETURN(scope, JSValue::encode({}));
+    }
+    if (!url.protocolIsFile()) {
+      throwTypeError(globalObject, scope,
+                     "createRequire() does not support non-file URLs"_s);
+      RELEASE_AND_RETURN(scope, JSValue::encode({}));
+    }
+    val = url.fileSystemPath();
+  }
+
   RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
   RELEASE_AND_RETURN(
       scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(
                  vm, globalObject, val)));
 }
 extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *,
-                                                         CallFrame *);
+                                                              CallFrame *);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
                          (JSGlobalObject * globalObject,
@@ -233,6 +252,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
   }
   default: {
     JSC::JSValue moduleName = callFrame->argument(0);
+    JSC::JSValue fromValue = callFrame->argument(1);
 
     if (moduleName.isUndefinedOrNull()) {
       auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -242,9 +262,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
       return JSC::JSValue::encode(JSC::JSValue{});
     }
 
+    if (
+        // fast path: it's a real CommonJS module object.
+        auto *cjs = jsDynamicCast<Bun::JSCommonJSModule *>(fromValue)) {
+      fromValue = cjs->id();
+    } else if
+        // slow path: userland code did something weird. lets let them do that
+        // weird thing.
+        (fromValue.isObject()) {
+
+      if (auto idValue = fromValue.getObject()->getIfPropertyExists(
+              globalObject, Identifier::fromString(vm, "filename"_s))) {
+        if (idValue.isString()) {
+          fromValue = idValue;
+        }
+      }
+    }
+
     auto result =
         Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName),
-                         JSValue::encode(callFrame->argument(1)), false);
+                         JSValue::encode(fromValue), false);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     if (!JSC::JSValue::decode(result).isString()) {

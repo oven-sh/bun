@@ -1,0 +1,42 @@
+{
+	"name": "dep-loop-exit",
+	"versions": {
+		"1.0.0": {
+			"name": "dep-loop-exit",
+			"version": "1.0.0",
+			"dependencies": {
+				"dep-loop-entry": "1.0.0"
+			},
+			"_id": "dep-loop-exit@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-iI3zFvAvGK76XyH346CHeM7KqzhY46zMZ28P7VmsIgAeYKFK7wR/zTtl4sP8ETW4cF+3SCJWD58pm30VQHtDgQ==",
+				"shasum": "8b6f2999349db115846fa3d954766d2cf51b37dc",
+				"tarball": "http://localhost:4873/dep-loop-exit/-/dep-loop-exit-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:01.128Z",
+		"created": "2023-11-01T22:05:01.128Z",
+		"1.0.0": "2023-11-01T22:05:01.128Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"dep-loop-exit-1.0.0.tgz": {
+			"shasum": "8b6f2999349db115846fa3d954766d2cf51b37dc",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-623e2cce43746901",
+	"_id": "dep-loop-exit",
+	"readme": "ERROR: No README data found!"
+}

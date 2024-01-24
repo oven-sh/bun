@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import fs from "fs";
 import { describe, test, expect, jest } from "bun:test";
 import { tempDirWithFiles } from "harness";
@@ -286,3 +287,10 @@ for (const [name, copy] of impls) {
     });
   });
 }
+
+test("cp with missing callback throws", () => {
+  expect(() => {
+    // @ts-expect-error
+    fs.cp("a", "b" as any);
+  }).toThrow(/Callback/);
+});

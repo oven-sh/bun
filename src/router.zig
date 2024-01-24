@@ -38,7 +38,7 @@ pub const Param = struct {
     pub const List = std.MultiArrayList(Param);
 };
 
-dir: StoredFileDescriptorType = 0,
+dir: StoredFileDescriptorType = .zero,
 routes: Routes,
 loaded_routes: bool = false,
 allocator: std.mem.Allocator,
@@ -204,12 +204,9 @@ pub const Routes = struct {
 
     fn matchDynamic(this: *Routes, allocator: std.mem.Allocator, path: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
         // its cleaned, so now we search the big list of strings
-        var i: usize = 0;
-        while (i < this.dynamic_names.len) : (i += 1) {
-            const name = this.dynamic_match_names[i];
-            const case_sensitive_name_without_leading_slash = this.dynamic_names[i][1..];
-            if (Pattern.match(path, case_sensitive_name_without_leading_slash, name, allocator, *@TypeOf(ctx.params), &ctx.params, true)) {
-                return this.dynamic[i];
+        for (this.dynamic_names, this.dynamic_match_names, this.dynamic) |case_sensitive_name, name, route| {
+            if (Pattern.match(path, case_sensitive_name[1..], name, allocator, *@TypeOf(ctx.params), &ctx.params, true)) {
+                return route;
             }
         }
 
@@ -243,7 +240,7 @@ const RouteLoader = struct {
     pub fn appendRoute(this: *RouteLoader, route: Route) void {
         // /index.js
         if (route.full_hash == index_route_hash) {
-            var new_route = this.allocator.create(Route) catch unreachable;
+            const new_route = this.allocator.create(Route) catch unreachable;
             this.index = new_route;
             new_route.* = route;
             this.all_routes.append(this.allocator, new_route) catch unreachable;
@@ -252,7 +249,7 @@ const RouteLoader = struct {
 
         // static route
         if (route.param_count == 0) {
-            var entry = this.static_list.getOrPut(route.match_name.slice()) catch unreachable;
+            const entry = this.static_list.getOrPut(route.match_name.slice()) catch unreachable;
 
             if (entry.found_existing) {
                 const source = Logger.Source.initEmptyFile(route.abs_path.slice());
@@ -266,7 +263,7 @@ const RouteLoader = struct {
                 return;
             }
 
-            var new_route = this.allocator.create(Route) catch unreachable;
+            const new_route = this.allocator.create(Route) catch unreachable;
             new_route.* = route;
 
             // Handle static routes with uppercase characters by ensuring exact case still matches
@@ -277,7 +274,7 @@ const RouteLoader = struct {
             // This hack is below the engineering quality bar I'm happy with.
             // It will cause unexpected behavior.
             if (route.has_uppercase) {
-                var static_entry = this.static_list.getOrPut(route.name[1..]) catch unreachable;
+                const static_entry = this.static_list.getOrPut(route.name[1..]) catch unreachable;
                 if (static_entry.found_existing) {
                     const source = Logger.Source.initEmptyFile(route.abs_path.slice());
                     this.log.addErrorFmt(
@@ -316,7 +313,7 @@ const RouteLoader = struct {
         }
 
         {
-            var new_route = this.allocator.create(Route) catch unreachable;
+            const new_route = this.allocator.create(Route) catch unreachable;
             new_route.* = route;
             this.all_routes.append(this.allocator, new_route) catch unreachable;
         }
@@ -356,7 +353,7 @@ const RouteLoader = struct {
             .allocator = allocator,
         };
 
-        std.sort.block(*Route, this.all_routes.items, Route.Sorter{}, Route.Sorter.sortByName);
+        std.sort.pdq(*Route, this.all_routes.items, Route.Sorter{}, Route.Sorter.sortByName);
 
         var route_list = RouteIndex.List{};
         route_list.setCapacity(allocator, this.all_routes.items.len) catch unreachable;
@@ -569,11 +566,8 @@ pub const Route = struct {
     pub const Sorter = struct {
         const sort_table: [std.math.maxInt(u8)]u8 = brk: {
             var table: [std.math.maxInt(u8)]u8 = undefined;
-            var i: u16 = 0;
-            while (i < @as(u16, table.len)) {
-                table[i] = @as(u8, @intCast(i));
-                i += 1;
-            }
+            for (&table, 0..) |*t, i| t.* = @as(u8, @intCast(i));
+
             // move dynamic routes to the bottom
             table['['] = 252;
             table[']'] = 253;
@@ -586,9 +580,8 @@ pub const Route = struct {
             const math = std.math;
 
             const n = @min(lhs.len, rhs.len);
-            var i: usize = 0;
-            while (i < n) : (i += 1) {
-                switch (math.order(sort_table[lhs[i]], sort_table[rhs[i]])) {
+            for (lhs[0..n], rhs[0..n]) |lhs_i, rhs_i| {
+                switch (math.order(sort_table[lhs_i], sort_table[rhs_i])) {
                     .eq => continue,
                     .lt => return true,
                     .gt => return false,
@@ -652,9 +645,9 @@ pub const Route = struct {
         else
             entry.abs_path.slice();
 
-        var base = base_[0 .. base_.len - extname.len];
+        const base = base_[0 .. base_.len - extname.len];
 
-        var public_dir = std.mem.trim(u8, public_dir_, "/");
+        const public_dir = std.mem.trim(u8, public_dir_, "/");
 
         // this is a path like
         // "/pages/index.js"
@@ -736,13 +729,13 @@ pub const Route = struct {
             var file: std.fs.File = undefined;
             var needs_close = false;
             defer if (needs_close) file.close();
-            if (entry.cache.fd != 0) {
-                file = std.fs.File{ .handle = bun.fdcast(entry.cache.fd) };
+            if (entry.cache.fd != .zero) {
+                file = entry.cache.fd.asFile();
             } else {
                 var parts = [_]string{ entry.dir, entry.base() };
                 abs_path_str = FileSystem.instance.absBuf(&parts, &route_file_buf);
                 route_file_buf[abs_path_str.len] = 0;
-                var buf = route_file_buf[0..abs_path_str.len :0];
+                const buf = route_file_buf[0..abs_path_str.len :0];
                 file = std.fs.openFileAbsoluteZ(buf, .{ .mode = .read_only }) catch |err| {
                     log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} opening route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
                     return null;
@@ -753,7 +746,7 @@ pub const Route = struct {
                 if (!needs_close) entry.cache.fd = bun.toFD(file.handle);
             }
 
-            var _abs = bun.getFdPath(file.handle, &route_file_buf) catch |err| {
+            const _abs = bun.getFdPath(file.handle, &route_file_buf) catch |err| {
                 log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} resolving route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
                 return null;
             };
@@ -906,10 +899,10 @@ pub const MockServer = struct {
 fn makeTest(cwd_path: string, data: anytype) !void {
     Output.initTest();
     std.debug.assert(cwd_path.len > 1 and !strings.eql(cwd_path, "/") and !strings.endsWith(cwd_path, "bun"));
-    const bun_tests_dir = try std.fs.cwd().makeOpenPathIterable("bun-test-scratch", .{});
+    const bun_tests_dir = try std.fs.cwd().makeOpenPath("bun-test-scratch", .{});
     bun_tests_dir.deleteTree(cwd_path) catch {};
 
-    const cwd = try bun_tests_dir.makeOpenPathIterable(cwd_path, .{});
+    const cwd = try bun_tests_dir.makeOpenPath(cwd_path, .{});
     try cwd.setAsCwd();
 
     const Data = @TypeOf(data);
@@ -941,15 +934,15 @@ pub const Test = struct {
         const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
-        var fs = try FileSystem.init(null);
-        var top_level_dir = fs.top_level_dir;
+        const fs = try FileSystem.init(null);
+        const top_level_dir = fs.top_level_dir;
 
         var pages_parts = [_]string{ top_level_dir, "pages" };
-        var pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
+        const pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
         // _ = try std.fs.makeDirAbsolute(
         //     pages_dir,
         // );
-        var router = try Router.init(&FileSystem.instance, default_allocator, Options.RouteConfig{
+        const router = try Router.init(&FileSystem.instance, default_allocator, Options.RouteConfig{
             .dir = pages_dir,
             .routes_enabled = true,
             .extensions = &.{"js"},
@@ -961,7 +954,7 @@ pub const Test = struct {
             logger.printForLogLevel(Output.errorWriter()) catch {};
         }
 
-        var opts = Options.BundleOptions{
+        const opts = Options.BundleOptions{
             .resolve_mode = .lazy,
             .target = .browser,
             .loaders = undefined,
@@ -983,7 +976,7 @@ pub const Test = struct {
 
         var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
 
-        var root_dir = (try resolver.readDirInfo(pages_dir)).?;
+        const root_dir = (try resolver.readDirInfo(pages_dir)).?;
         return RouteLoader.loadAll(default_allocator, opts.routes, &logger, Resolver, &resolver, root_dir);
         // try router.loadRoutes(root_dir, Resolver, &resolver, 0, true);
         // var entry_points = try router.getEntryPoints(default_allocator);
@@ -998,11 +991,11 @@ pub const Test = struct {
         const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
-        var fs = try FileSystem.initWithForce(null, true);
-        var top_level_dir = fs.top_level_dir;
+        const fs = try FileSystem.initWithForce(null, true);
+        const top_level_dir = fs.top_level_dir;
 
         var pages_parts = [_]string{ top_level_dir, "pages" };
-        var pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
+        const pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
         // _ = try std.fs.makeDirAbsolute(
         //     pages_dir,
         // );
@@ -1018,7 +1011,7 @@ pub const Test = struct {
             logger.printForLogLevel(Output.errorWriter()) catch {};
         }
 
-        var opts = Options.BundleOptions{
+        const opts = Options.BundleOptions{
             .resolve_mode = .lazy,
             .target = .browser,
             .loaders = undefined,
@@ -1040,7 +1033,7 @@ pub const Test = struct {
 
         var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
 
-        var root_dir = (try resolver.readDirInfo(pages_dir)).?;
+        const root_dir = (try resolver.readDirInfo(pages_dir)).?;
         try router.loadRoutes(
             &logger,
             root_dir,
@@ -1048,7 +1041,7 @@ pub const Test = struct {
             &resolver,
             FileSystem.instance.top_level_dir,
         );
-        var entry_points = try router.getEntryPoints();
+        const entry_points = try router.getEntryPoints();
 
         try expectEqual(std.meta.fieldNames(@TypeOf(data)).len, entry_points.len);
         return router;

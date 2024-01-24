@@ -14,6 +14,7 @@ smol Loader {
     base64 = 11;
     dataurl = 12;
     text = 13;
+    sqlite = 14;
 }
 
 smol FrameworkEntryPointType {
@@ -241,6 +242,7 @@ enum DotEnvBehavior {
   disable = 1;
   prefix = 2;
   load_all = 3;
+  load_all_without_inlining = 4;
 }
 
 message EnvConfig {
@@ -334,18 +336,19 @@ message TransformOptions {
   Target target = 15;
 
   bool serve = 16;
+  string[] env_files = 17;
 
-  string[] extension_order = 17;
+  string[] extension_order = 18;
 
-  FrameworkConfig framework = 18;
-  RouteConfig router = 19;
-  bool no_summary = 20;
+  FrameworkConfig framework = 19;
+  RouteConfig router = 20;
+  bool no_summary = 21;
 
-  bool disable_hmr = 21;
+  bool disable_hmr = 22;
 
-  uint16 port = 22;
-  MessageLevel logLevel = 23;
-  SourceMapMode source_map = 24;
+  uint16 port = 23;
+  MessageLevel logLevel = 24;
+  SourceMapMode source_map = 25;
 }
 
 smol SourceMapMode {
@@ -588,6 +591,7 @@ message BunInstall {
   string global_bin_dir = 18;
   bool frozen_lockfile = 19;
   bool exact = 20;
+  uint32 concurrent_scripts = 21;
 }
 
 struct ClientServerModule {

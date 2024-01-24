@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/env.sh"
 FORCE=
@@ -61,6 +62,7 @@ dep mimalloc libmimalloc.a libmimalloc.o
 dep tinycc libtcc.a
 dep zlib libz.a
 dep zstd libzstd.a
+dep lshpack liblshpack.a
 
 if [ "$BUILT_ANY" -eq 0 ]; then
     printf "(run with -f to rebuild)\n"

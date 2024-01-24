@@ -28,7 +28,7 @@ const bundler = bun.bundler;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = @import("root").bun.JSC;
-const AsyncHTTP = @import("root").bun.HTTP.AsyncHTTP;
+const AsyncHTTP = @import("root").bun.http.AsyncHTTP;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;
@@ -39,7 +39,7 @@ pub const Run = struct {
     ctx: Command.Context,
     vm: *VirtualMachine,
     entry_path: string,
-    arena: Arena = undefined,
+    arena: Arena,
     any_unhandled: bool = false,
 
     pub fn bootStandalone(ctx_: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
@@ -47,7 +47,7 @@ pub const Run = struct {
         JSC.markBinding(@src());
         bun.JSC.initialize();
 
-        var graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
+        const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
 
         js_ast.Expr.Data.Store.create(default_allocator);
@@ -62,6 +62,7 @@ pub const Run = struct {
             .vm = try VirtualMachine.initWithModuleGraph(.{
                 .allocator = arena.allocator(),
                 .log = ctx.log,
+                .args = ctx.args,
                 .graph = graph_ptr,
             }),
             .arena = arena,
@@ -103,6 +104,8 @@ pub const Run = struct {
             .unspecified => {},
         }
 
+        b.options.env.behavior = .load_all_without_inlining;
+
         b.configureRouter(false) catch {
             if (Output.enable_ansi_colors_stderr) {
                 vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
@@ -128,14 +131,37 @@ pub const Run = struct {
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
-        var callback = OpaqueWrap(Run, Run.start);
+        const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
+    }
+
+    fn bootBunShell(ctx: *const Command.Context, entry_path: []const u8) !void {
+        @setCold(true);
+
+        // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
+        var bundle = try bun.Bundler.init(
+            ctx.allocator,
+            ctx.log,
+            try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
+            null,
+        );
+        try bundle.runEnvLoader();
+        const mini = JSC.MiniEventLoop.initGlobal(bundle.env);
+        mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
+        try bun.shell.InterpreterMini.initAndRunFromFile(mini, entry_path);
+        return;
     }
 
     pub fn boot(ctx_: Command.Context, entry_path: string) !void {
         var ctx = ctx_;
         JSC.markBinding(@src());
         bun.JSC.initialize();
+
+        if (strings.endsWithComptime(entry_path, ".bun.sh")) {
+            try bootBunShell(&ctx, entry_path);
+            Global.exit(0);
+            return;
+        }
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
@@ -168,6 +194,14 @@ pub const Run = struct {
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
 
+        if (ctx.runtime_options.eval_script.len > 0) {
+            vm.module_loader.eval_script = ptr: {
+                const v = try bun.default_allocator.create(logger.Source);
+                v.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval_script);
+                break :ptr v;
+            };
+        }
+
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
@@ -183,6 +217,7 @@ pub const Run = struct {
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
+        b.options.env.behavior = .load_all_without_inlining;
         // b.options.minify_syntax = ctx.bundler_options.minify_syntax;
 
         switch (ctx.debug.macros) {
@@ -193,6 +228,16 @@ pub const Run = struct {
                 b.options.macro_remap = macros;
             },
             .unspecified => {},
+        }
+
+        // Set NODE_ENV to a value if something else hadn't already set it
+        const node_env_entry = try b.env.map.getOrPutWithoutValue("NODE_ENV");
+        if (!node_env_entry.found_existing) {
+            node_env_entry.key_ptr.* = try b.env.allocator.dupe(u8, node_env_entry.key_ptr.*);
+            node_env_entry.value_ptr.* = .{
+                .value = try b.env.allocator.dupe(u8, "development"),
+                .conditional = false,
+            };
         }
 
         b.configureRouter(false) catch {
@@ -229,7 +274,7 @@ pub const Run = struct {
 
         vm.bundler.env.loadTracy();
 
-        var callback = OpaqueWrap(Run, Run.start);
+        const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
     }
 
@@ -238,10 +283,16 @@ pub const Run = struct {
         run.any_unhandled = true;
     }
 
+    extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
+
     pub fn start(this: *Run) void {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
+
+        if (this.ctx.runtime_options.eval_script.len > 0) {
+            Bun__ExposeNodeModuleGlobals(vm.global);
+        }
 
         switch (this.ctx.debug.hot_reload) {
             .hot => JSC.HotReloader.enableHotModuleReloading(vm),
@@ -347,6 +398,7 @@ pub const Run = struct {
                     vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
                 }
             } else {
+                //
                 while (vm.isEventLoopAlive()) {
                     vm.tick();
                     vm.eventLoop().autoTickActive();

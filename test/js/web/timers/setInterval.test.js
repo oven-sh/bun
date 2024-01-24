@@ -1,5 +1,7 @@
+// @known-failing-on-windows: 1 failing
 import { it, expect } from "bun:test";
-
+import { join } from "path";
+import "harness";
 it("setInterval", async () => {
   var counter = 0;
   var start;
@@ -33,7 +35,7 @@ it("clearInterval", async () => {
   var called = false;
   const id = setInterval(() => {
     called = true;
-    expect(false).toBe(true);
+    expect.unreachable();
   }, 1);
   clearInterval(id);
   await new Promise((resolve, reject) => {
@@ -73,3 +75,15 @@ it("setInterval if refreshed before run, should reschedule to run later", done =
     timer.refresh();
   }, 50);
 });
+
+it("setInterval runs with at least the delay time", () => {
+  expect([`run`, join(import.meta.dir, "setInterval-fixture.js")]).toRun();
+});
+
+it("setInterval doesn't leak memory", () => {
+  expect([`run`, join(import.meta.dir, "setInterval-leak-fixture.js")]).toRun();
+}, 30_000);
+
+it("setInterval doesn't run when cancelled after being scheduled", () => {
+  expect([`run`, join(import.meta.dir, "setInterval-cancel-fixture.js")]).toRun();
+}, 30_000);

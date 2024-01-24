@@ -1,7 +1,7 @@
 import { bench, run } from "mitata";
 import { groupForEmitter } from "./implementations.mjs";
 
-// Psuedo RNG is derived from https://stackoverflow.com/a/424445
+// Pseudo RNG is derived from https://stackoverflow.com/a/424445
 let rngState = 123456789;
 function nextInt() {
   const m = 0x80000000; // 2**31;

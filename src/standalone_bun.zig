@@ -4,6 +4,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
 const Schema = bun.Schema.Api;
+const strings = bun.strings;
 
 const Environment = bun.Environment;
 
@@ -19,7 +20,7 @@ pub const StandaloneModuleGraph = struct {
     }
 
     pub fn find(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
-        if (!bun.strings.hasPrefixComptime(name, "compiled://root/")) {
+        if (!bun.strings.isBunStandaloneFilePath(name)) {
             return null;
         }
 
@@ -50,7 +51,7 @@ pub const StandaloneModuleGraph = struct {
                 blob_.* = bun.JSC.WebCore.Blob.initWithStore(store, globalObject);
                 blob_.allocator = bun.default_allocator;
 
-                if (bun.HTTP.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
+                if (bun.http.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
                     store.mime_type = mime;
                     blob_.content_type = mime.value;
                     blob_.content_type_was_set = true;
@@ -74,14 +75,14 @@ pub const StandaloneModuleGraph = struct {
             if (this.* == .decompressed) return &this.decompressed;
 
             var decompressed = try allocator.alloc(u8, bun.zstd.getDecompressedSize(this.compressed));
-            var result = bun.zstd.decompress(decompressed, this.compressed);
+            const result = bun.zstd.decompress(decompressed, this.compressed);
             if (result == .err) {
                 allocator.free(decompressed);
                 log.addError(null, bun.logger.Loc.Empty, bun.span(result.err)) catch unreachable;
                 return error.@"Failed to decompress sourcemap";
             }
             errdefer allocator.free(decompressed);
-            var bytes = decompressed[0..result.success];
+            const bytes = decompressed[0..result.success];
 
             this.* = .{ .decompressed = try bun.sourcemap.parse(allocator, &bun.logger.Source.initPathString("sourcemap.json", bytes), log) };
             return &this.decompressed;
@@ -200,7 +201,7 @@ pub const StandaloneModuleGraph = struct {
                 .contents = string_builder.appendCount(output_file.value.buffer.bytes),
             };
             if (output_file.source_map_index != std.math.maxInt(u32)) {
-                var remaining_slice = string_builder.allocatedSlice()[string_builder.len..];
+                const remaining_slice = string_builder.allocatedSlice()[string_builder.len..];
                 const compressed_result = bun.zstd.compress(remaining_slice, output_files[output_file.source_map_index].value.buffer.bytes, 1);
                 if (compressed_result == .err) {
                     bun.Output.panic("Unexpected error compressing sourcemap: {s}", .{bun.span(compressed_result.err)});
@@ -233,7 +234,6 @@ pub const StandaloneModuleGraph = struct {
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
             Global.exit(1);
-            return -1;
         });
 
         const cleanup = struct {
@@ -245,13 +245,12 @@ pub const StandaloneModuleGraph = struct {
 
         const cloned_executable_fd: bun.FileDescriptor = brk: {
             var self_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-            var self_exe = std.fs.selfExePath(&self_buf) catch |err| {
+            const self_exe = std.fs.selfExePath(&self_buf) catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get self executable path: {s}", .{@errorName(err)});
                 Global.exit(1);
-                return -1;
             };
             self_buf[self_exe.len] = 0;
-            var self_exeZ = self_buf[0..self_exe.len :0];
+            const self_exeZ = self_buf[0..self_exe.len :0];
 
             if (comptime Environment.isMac) {
                 // if we're on a mac, use clonefile() if we can
@@ -287,6 +286,7 @@ pub const StandaloneModuleGraph = struct {
                                     tried_changing_abs_dir = true;
                                     const zname_z = bun.strings.concat(bun.default_allocator, &.{
                                         bun.fs.FileSystem.instance.fs.tmpdirPath(),
+                                        std.fs.path.sep_str,
                                         zname,
                                         &.{0},
                                     }) catch @panic("OOM");
@@ -330,11 +330,27 @@ pub const StandaloneModuleGraph = struct {
             };
 
             defer _ = Syscall.close(self_fd);
-            bun.copyFile(bun.fdcast(self_fd), bun.fdcast(fd)) catch |err| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
-                cleanup(zname, fd);
-                Global.exit(1);
-            };
+
+            if (comptime Environment.isWindows) {
+                var in_buf: bun.WPathBuffer = undefined;
+                strings.copyU8IntoU16(&in_buf, self_exeZ);
+                const in = in_buf[0..self_exe.len :0];
+                var out_buf: bun.WPathBuffer = undefined;
+                strings.copyU8IntoU16(&out_buf, zname);
+                const out = out_buf[0..zname.len :0];
+
+                bun.copyFile(in, out) catch |err| {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
+                    cleanup(zname, fd);
+                    Global.exit(1);
+                };
+            } else {
+                bun.copyFile(self_fd.cast(), fd.cast()) catch |err| {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
+                    cleanup(zname, fd);
+                    Global.exit(1);
+                };
+            }
             break :brk fd;
         };
 
@@ -359,6 +375,7 @@ pub const StandaloneModuleGraph = struct {
         //  file (but this does not change the size of the file).  If data is
         //  later written at this point, subsequent reads of the data in the
         //  gap (a "hole") return null bytes ('\0') until data is actually
+
         //  written into the gap.
         //
         switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
@@ -392,23 +409,17 @@ pub const StandaloneModuleGraph = struct {
         // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
         _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
         if (comptime !Environment.isWindows) {
-            _ = bun.C.fchmod(cloned_executable_fd, 0o777);
+            _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
         }
 
         return cloned_executable_fd;
     }
 
-    pub fn toExecutable(allocator: std.mem.Allocator, output_files: []const bun.options.OutputFile, root_dir: std.fs.IterableDir, module_prefix: []const u8, outfile: []const u8) !void {
+    pub fn toExecutable(allocator: std.mem.Allocator, output_files: []const bun.options.OutputFile, root_dir: std.fs.Dir, module_prefix: []const u8, outfile: []const u8) !void {
         const bytes = try toBytes(allocator, module_prefix, output_files);
         if (bytes.len == 0) return;
 
         const fd = inject(bytes);
-        if (fd == -1) {
-            // TODO: remove this
-            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to inject into file", .{});
-            Global.exit(1);
-        }
-
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const temp_location = bun.getFdPath(fd, &buf) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get path for fd: {s}", .{@errorName(err)});
@@ -445,10 +456,10 @@ pub const StandaloneModuleGraph = struct {
 
         bun.C.moveFileZWithHandle(
             fd,
-            std.fs.cwd().fd,
-            &(try std.os.toPosixPath(temp_location)),
-            root_dir.dir.fd,
-            &(try std.os.toPosixPath(std.fs.path.basename(outfile))),
+            bun.toFD(std.fs.cwd().fd),
+            bun.sliceTo(&(try std.os.toPosixPath(temp_location)), 0),
+            bun.toFD(root_dir.fd),
+            bun.sliceTo(&(try std.os.toPosixPath(std.fs.path.basename(outfile))), 0),
         ) catch |err| {
             if (err == error.IsDir) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> {} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});
@@ -468,7 +479,8 @@ pub const StandaloneModuleGraph = struct {
         defer _ = Syscall.close(self_exe);
 
         var trailer_bytes: [4096]u8 = undefined;
-        std.os.lseek_END(bun.fdcast(self_exe), -4096) catch return null;
+        std.os.lseek_END(self_exe.cast(), -4096) catch return null;
+
         var read_amount: usize = 0;
         while (read_amount < trailer_bytes.len) {
             switch (Syscall.read(self_exe, trailer_bytes[read_amount..])) {
@@ -520,7 +532,7 @@ pub const StandaloneModuleGraph = struct {
         // if you have not a ton of code, we only do a single read() call
         if (Environment.allow_assert or offsets.byte_count > 1024 * 3) {
             const offset_from_end = trailer_bytes.len - (@intFromPtr(end) - @intFromPtr(@as([]u8, &trailer_bytes).ptr));
-            std.os.lseek_END(bun.fdcast(self_exe), -@as(i64, @intCast(offset_from_end + offsets.byte_count))) catch return null;
+            std.os.lseek_END(self_exe.cast(), -@as(i64, @intCast(offset_from_end + offsets.byte_count))) catch return null;
 
             if (comptime Environment.allow_assert) {
                 // actually we just want to verify this logic is correct in development
@@ -562,27 +574,32 @@ pub const StandaloneModuleGraph = struct {
         // heuristic: `bun build --compile` won't be supported if the name is "bun" or "bunx".
         // this is a cheap way to avoid the extra overhead of opening the executable
         // and also just makes sense.
-        if (bun.argv().len > 0) {
-            const argv0_len = bun.len(bun.argv()[0]);
-            if (argv0_len == 3) {
-                if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bun")) {
-                    return null;
-                }
+        const argv = bun.argv();
+        if (argv.len > 0) {
+            const argv0_len = bun.len(argv[0]);
+            if (argv0_len > 0) {
+                const argv0 = argv[0][0..argv0_len];
 
-                if (comptime Environment.isDebug) {
-                    if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bun-debug")) {
+                if (argv0_len == 3) {
+                    if (bun.strings.eqlComptimeIgnoreLen(argv0, "bun")) {
                         return null;
                     }
                 }
-            }
 
-            if (argv0_len == 4) {
-                if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bunx")) {
-                    return null;
+                if (comptime Environment.isDebug) {
+                    if (bun.strings.eqlComptime(argv0, "bun-debug")) {
+                        return null;
+                    }
+                }
+
+                if (argv0_len == 4) {
+                    if (bun.strings.eqlComptimeIgnoreLen(argv0, "bunx")) {
+                        return null;
+                    }
                 }
 
                 if (comptime Environment.isDebug) {
-                    if (bun.strings.eqlComptimeIgnoreLen(bun.argv()[0][0..argv0_len], "bun-debugx")) {
+                    if (bun.strings.eqlComptime(argv0, "bun-debugx")) {
                         return null;
                     }
                 }
@@ -591,7 +608,7 @@ pub const StandaloneModuleGraph = struct {
 
         if (comptime Environment.isLinux) {
             if (std.fs.openFileAbsoluteZ("/proc/self/exe", flags)) |easymode| {
-                return easymode.handle;
+                return bun.toFD(easymode.handle);
             } else |_| {
                 if (bun.argv().len > 0) {
                     // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
@@ -602,7 +619,7 @@ pub const StandaloneModuleGraph = struct {
                         "",
                         bun.span(bun.argv()[0]),
                     )) |path| {
-                        return (try std.fs.cwd().openFileZ(path, flags)).handle;
+                        return bun.toFD((try std.fs.cwd().openFileZ(path, flags)).handle);
                     }
                 }
 
@@ -619,7 +636,7 @@ pub const StandaloneModuleGraph = struct {
         const self_exe_path = try std.fs.selfExePath(&buf);
         buf[self_exe_path.len] = 0;
         const file = try std.fs.openFileAbsoluteZ(buf[0..self_exe_path.len :0].ptr, flags);
-        return file.handle;
+        return @enumFromInt(file.handle);
     }
 };
 

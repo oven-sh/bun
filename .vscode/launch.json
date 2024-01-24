@@ -3,9 +3,22 @@
   // It will force the garbage collector to run after every test and every call to expect()
   // it makes our tests very slow
   // But it helps catch memory bugs
-
   "version": "0.2.0",
   "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "sharp",
+      "program": "bun-debug",
+      "args": ["install", "sharp"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "/tmp/scratchpad_20230911T213851",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      },
+      "console": "internalConsole"
+    },
     {
       "type": "lldb",
       "request": "launch",
@@ -15,9 +28,9 @@
       // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
       "cwd": "${workspaceFolder}/test",
       "env": {
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
         "FORCE_COLOR": "1",
-        "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+        "BUN_DEBUG_QUIET_LOGS": "1"
       },
       "console": "internalConsole"
     },
@@ -35,7 +48,6 @@
       },
       "console": "internalConsole"
     },
-
     {
       "type": "lldb",
       "request": "launch",
@@ -122,9 +134,29 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "ZACK",
+      "program": "bun-debug",
+      "args": ["run", "./wtf"],
+      // "args": ["test", "bunshell.test.ts", "-t", "cd"],
+      // "args": ["test", "lex.test.ts"],
+      // "args": ["test", "bunshell.test.ts", "-t", "invalid surrogates"],
+      // "args": ["test", "bunshell.test.ts"],
+      // "args": ["test", "bunshell.test.ts", "-t", "recursive"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "bun run [file]",
       "program": "bun-debug",
-      "args": ["run", "${file}", "${file}"],
+      "args": ["run", "${file}"],
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "1",
@@ -307,7 +339,7 @@
       "name": "bun install",
       "program": "bun-debug",
       "args": ["install"],
-      "cwd": "/Users/jarred/Build/worky",
+      "cwd": "${fileDirname}",
       "console": "internalConsole",
       "env": {}
     },
@@ -337,6 +369,35 @@
       "args": ["abc"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
-    }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug REPL",
+      "program": "${workspaceFolder}/build/bun-debug",
+      "args": ["/Users/dave/.bun/bin/bun-repl"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      },
+      "terminal": "integrated"
+    },
+    {
+      "type": "cppvsdbg",
+      "request": "launch",
+      "name": "Windows: bun run [file]",
+      "program": "${workspaceFolder}/build/bun-debug.exe",
+      "args": ["run", "${file}"],
+      "cwd": "${fileDirname}"
+    },
+    {
+      "type": "cppvsdbg",
+      "request": "launch",
+      "name": "Windows: bun test [file]",
+      "program": "${workspaceFolder}/build/bun-debug.exe",
+      "args": ["test", "${file}"],
+      "cwd": "${fileDirname}"
+    },
   ]
 }

@@ -3,11 +3,14 @@ export function main() {
   return $requireMap.$get(Bun.main);
 }
 
+$visibility = "Private";
 export function require(this: CommonJSModuleRecord, id: string) {
-  return $overridableRequire.$call(this, id);
+  return $tailCallForwardArguments($overridableRequire, this);
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`
+$overriddenName = "require";
+$visibility = "Private";
 export function overridableRequire(this: CommonJSModuleRecord, id: string) {
   const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.path, false)));
   if (existing) {
@@ -47,7 +50,15 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
   // Note: we do not need to wrap this in a try/catch, if it throws the C++ code will
   // clear the module from the map.
   //
-  var out = this.$require(id, mod);
+  var out = this.$require(
+    id,
+    mod,
+    // did they pass a { type } object?
+    $argumentCount(),
+    // the object containing a "type" attribute, if they passed one
+    // maybe this will be "paths" in the future too.
+    arguments[1],
+  );
 
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
@@ -74,10 +85,12 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
   return mod.exports;
 }
 
+$visibility = "Private";
 export function requireResolve(this: string | { path: string }, id: string) {
   return $resolveSync(id, typeof this === "string" ? this : this?.path, false);
 }
 
+$visibility = "Private";
 export function requireNativeModule(id: string) {
   let esm = Loader.registry.$get(id);
   if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {

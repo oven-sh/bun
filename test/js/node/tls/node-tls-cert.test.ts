@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { expect, it } from "bun:test";
 import tls from "tls";
 import type { Server, TLSSocket } from "node:tls";
@@ -155,7 +156,7 @@ it.todo("Request cert from TLS1.2 client that doesn't have one.", async () => {
         requestCert: true,
       },
     });
-    expect(true).toBe("unreachable");
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE");
   }
@@ -224,7 +225,7 @@ it("Fail to complete server's chain", async () => {
         cert: server.single,
       },
     });
-    expect(true).toBe("unreachable");
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
   }
@@ -246,7 +247,7 @@ it("Fail to complete client's chain.", async () => {
         requestCert: true,
       },
     });
-    expect(true).toBe("unreachable");
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
   }
@@ -263,7 +264,7 @@ it("Fail to find CA for server.", async () => {
         cert: server.cert,
       },
     });
-    expect(true).toBe("unreachable");
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
   }
@@ -280,7 +281,7 @@ it("Server sent their CA, but CA cannot be trusted if it is not locally known.",
         cert: server.cert + "\n" + server.ca,
       },
     });
-    expect(true).toBe("unreachable");
+    expect.unreachable();
   } catch (err: any) {
     expect(err.code).toBe("SELF_SIGNED_CERT_IN_CHAIN");
   }

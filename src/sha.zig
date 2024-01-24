@@ -1,6 +1,7 @@
 const BoringSSL = @import("root").bun.BoringSSL;
 const std = @import("std");
-pub const bun = @import("./bun.zig");
+
+pub const bun = if (@import("build_options").project.len == 0) @import("./bun.zig") else @import("root").bun;
 
 fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, comptime Full: anytype, comptime Init: anytype, comptime Update: anytype, comptime Final: anytype) type {
     return struct {
@@ -50,9 +51,7 @@ fn NewEVP(
             BoringSSL.load();
 
             const md = @call(.auto, @field(BoringSSL, MDName), .{});
-            var this: @This() = .{
-                .ctx = undefined,
-            };
+            var this = @This(){};
 
             BoringSSL.EVP_MD_CTX_init(&this.ctx);
 
@@ -201,9 +200,9 @@ const labels = [_][]const u8{
 };
 pub fn main() anyerror!void {
     var file = try std.fs.cwd().openFileZ(bun.argv()[bun.argv().len - 1], .{});
-    var bytes = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
+    const bytes = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
 
-    var engine = BoringSSL.ENGINE_new().?;
+    const engine = BoringSSL.ENGINE_new().?;
 
     std.debug.print(
         "Hashing {any:3}\n\n",
@@ -222,7 +221,7 @@ pub fn main() anyerror!void {
 
     {
         var clock1 = try std.time.Timer.start();
-        std.mem.doNotOptimizeAway(std.hash.XxHash64.hash(bytes));
+        std.mem.doNotOptimizeAway(std.hash.XxHash64.hash(0, bytes));
         const zig_time = clock1.read();
         std.debug.print(
             "xxhash:\n\n     zig: {any}\n\n",
@@ -247,14 +246,10 @@ pub fn main() anyerror!void {
             .{},
         );
         const DigestType = if (BoringHasher != void) BoringHasher.Digest else [32]u8;
-        var digest1: DigestType = undefined;
-        var digest2: DigestType = undefined;
-        var digest3: DigestType = undefined;
-        var digest4: DigestType = undefined;
-        @memset(@as([*]u8, @ptrCast(&digest1))[0..@sizeOf(DigestType)], 0);
-        @memset(@as([*]u8, @ptrCast(&digest2))[0..@sizeOf(DigestType)], 0);
-        @memset(@as([*]u8, @ptrCast(&digest3))[0..@sizeOf(DigestType)], 0);
-        @memset(@as([*]u8, @ptrCast(&digest4))[0..@sizeOf(DigestType)], 0);
+        var digest1 = std.mem.zeroes(DigestType);
+        var digest2 = std.mem.zeroes(DigestType);
+        var digest3 = std.mem.zeroes(DigestType);
+        var digest4 = std.mem.zeroes(DigestType);
         defer {
             std.mem.doNotOptimizeAway(&digest1);
             std.mem.doNotOptimizeAway(&digest2);

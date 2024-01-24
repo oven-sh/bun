@@ -12,6 +12,7 @@ pub const LPCWSTR = windows.LPCWSTR;
 pub const LPSTR = windows.LPSTR;
 pub const WCHAR = windows.WCHAR;
 pub const LPCSTR = windows.LPCSTR;
+pub const PWSTR = windows.PWSTR;
 pub const FALSE = windows.FALSE;
 pub const TRUE = windows.TRUE;
 pub const INVALID_HANDLE_VALUE = windows.INVALID_HANDLE_VALUE;
@@ -31,6 +32,7 @@ pub const DUPLICATE_SAME_ACCESS = windows.DUPLICATE_SAME_ACCESS;
 pub const OBJECT_ATTRIBUTES = windows.OBJECT_ATTRIBUTES;
 pub const kernel32 = windows.kernel32;
 pub const IO_STATUS_BLOCK = windows.IO_STATUS_BLOCK;
+pub const FILE_INFO_BY_HANDLE_CLASS = windows.FILE_INFO_BY_HANDLE_CLASS;
 pub const FILE_SHARE_READ = windows.FILE_SHARE_READ;
 pub const FILE_SHARE_WRITE = windows.FILE_SHARE_WRITE;
 pub const FILE_SHARE_DELETE = windows.FILE_SHARE_DELETE;
@@ -57,6 +59,8 @@ pub const ntdll = windows.ntdll;
 pub usingnamespace ntdll;
 pub const user32 = windows.user32;
 pub const advapi32 = windows.advapi32;
+
+pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
 
 const std = @import("std");
 pub const HANDLE = win32.HANDLE;
@@ -2948,13 +2952,56 @@ pub extern fn LoadLibraryA(
 ) ?*anyopaque;
 
 pub extern "kernel32" fn CreateHardLinkW(
-    newFileName: [*:0]const u16,
-    existingFileName: [*:0]const u16,
+    newFileName: LPCWSTR,
+    existingFileName: LPCWSTR,
     securityAttributes: ?*win32.SECURITY_ATTRIBUTES,
-) win32.BOOL;
+) BOOL;
 
 pub extern "kernel32" fn CopyFileW(
-    source: [*:0]const u16,
-    dest: [*:0]const u16,
-    bFailIfExists: win32.BOOL,
-) win32.BOOL;
+    source: LPCWSTR,
+    dest: LPCWSTR,
+    bFailIfExists: BOOL,
+) BOOL;
+
+pub extern "kernel32" fn SetFileInformationByHandle(
+    file: HANDLE,
+    fileInformationClass: FILE_INFO_BY_HANDLE_CLASS,
+    fileInformation: LPVOID,
+    bufferSize: DWORD,
+) BOOL;
+
+pub fn getLastErrno() bun.C.E {
+    return translateWinErrorToErrno(bun.windows.kernel32.GetLastError());
+}
+
+pub fn translateWinErrorToErrno(err: win32.Win32Error) bun.C.E {
+    return switch (err) {
+        .SUCCESS => .SUCCESS,
+        .FILE_NOT_FOUND => .NOENT,
+        .PATH_NOT_FOUND => .NOENT,
+        .TOO_MANY_OPEN_FILES => .NOMEM,
+        .ACCESS_DENIED => .PERM,
+        .INVALID_HANDLE => .BADF,
+        .NOT_ENOUGH_MEMORY => .NOMEM,
+        .OUTOFMEMORY => .NOMEM,
+        .INVALID_PARAMETER => .INVAL,
+
+        else => |t| {
+            // if (bun.Environment.isDebug) {
+            bun.Output.warn("Called getLastErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
+            // }
+            return .UNKNOWN;
+        },
+    };
+}
+
+pub extern "kernel32" fn GetHostNameW(
+    lpBuffer: PWSTR,
+    nSize: c_int,
+) BOOL;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppatha
+pub extern "kernel32" fn GetTempPath2W(
+    nBufferLength: DWORD, // [in]
+    lpBuffer: LPCWSTR, // [out]
+) DWORD;

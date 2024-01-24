@@ -21,6 +21,12 @@ test("exists", () => {
   expect(typeof FormData !== "undefined").toBe(true);
   expect(typeof Worker !== "undefined").toBe(true);
   expect(typeof File !== "undefined").toBe(true);
+  expect(typeof Performance !== "undefined").toBe(true);
+  expect(typeof PerformanceEntry !== "undefined").toBe(true);
+  expect(typeof PerformanceMark !== "undefined").toBe(true);
+  expect(typeof PerformanceMeasure !== "undefined").toBe(true);
+  expect(typeof PerformanceObserver !== "undefined").toBe(true);
+  expect(typeof PerformanceObserverEntryList !== "undefined").toBe(true);
 });
 
 const globalSetters = [
@@ -122,7 +128,7 @@ it("crypto.getRandomValues", () => {
   });
 
   // run it on a large input
-  expect(!!crypto.getRandomValues(new Uint8Array(8096)).find(a => a > 0)).toBe(true);
+  expect(!!crypto.getRandomValues(new Uint8Array(8192)).find(a => a > 0)).toBe(true);
 
   {
     // any additional input into getRandomValues() makes it unbuffered
@@ -147,19 +153,19 @@ it("crypto.timingSafeEqual", () => {
   expect(crypto.timingSafeEqual(uuid, uuid.slice())).toBe(true);
   try {
     crypto.timingSafeEqual(uuid, uuid.slice(1));
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (e) {}
 
   try {
     crypto.timingSafeEqual(uuid, uuid.slice(0, uuid.length - 2));
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (e) {
     expect(e.message).toBe("Input buffers must have the same length");
   }
 
   try {
     expect(crypto.timingSafeEqual(uuid, crypto.randomUUID())).toBe(false);
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (e) {
     expect(e.name).toBe("TypeError");
   }
@@ -237,9 +243,7 @@ test("navigator", () => {
 test("confirm (yes)", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
-    stderr: "pipe",
-    stdin: "pipe",
-    stdout: "pipe",
+    stdio: ["pipe", "pipe", "pipe"],
     env: bunEnv,
   });
 
@@ -257,9 +261,7 @@ test("confirm (yes)", async () => {
 test("confirm (no)", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
-    stderr: "pipe",
-    stdin: "pipe",
-    stdout: "pipe",
+    stdio: ["pipe", "pipe", "pipe"],
     env: bunEnv,
   });
 
@@ -268,4 +270,20 @@ test("confirm (no)", async () => {
   await proc.exited;
 
   expect(await new Response(proc.stderr).text()).toBe("No\n");
+});
+
+test("globalThis.self = 123 works", () => {
+  expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
+    configurable: true,
+    enumerable: true,
+    get: expect.any(Function),
+    set: expect.any(Function),
+  });
+  const original = Object.getOwnPropertyDescriptor(globalThis, "self");
+  try {
+    globalThis.self = 123;
+    expect(globalThis.self).toBe(123);
+  } finally {
+    Object.defineProperty(globalThis, "self", original);
+  }
 });

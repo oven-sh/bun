@@ -173,7 +173,9 @@ void JSWritableStream::finishCreation(VM& vm)
 
 JSObject* JSWritableStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSWritableStreamPrototype::create(vm, &globalObject, JSWritableStreamPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSWritableStreamPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSWritableStreamPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSWritableStream::prototype(VM& vm, JSDOMGlobalObject& globalObject)

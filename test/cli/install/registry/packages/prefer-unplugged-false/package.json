@@ -1,0 +1,43 @@
+{
+	"name": "prefer-unplugged-false",
+	"versions": {
+		"1.0.0": {
+			"name": "prefer-unplugged-false",
+			"version": "1.0.0",
+			"preferUnplugged": false,
+			"scripts": {
+				"postinstall": "echo hello"
+			},
+			"_id": "prefer-unplugged-false@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-KRUF5h929vb8I9LI8X9ffy0DOiWorosRE8k+GnBk1Bs+9D/PodCHxfmzxp/65/PkoNicIYMjvN7Y4Iq9ZPGN0A==",
+				"shasum": "aa40758eecd4f28e6f430634a4e425bc3d44cb93",
+				"tarball": "http://localhost:4873/prefer-unplugged-false/-/prefer-unplugged-false-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:29.851Z",
+		"created": "2023-11-01T22:05:29.851Z",
+		"1.0.0": "2023-11-01T22:05:29.851Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"prefer-unplugged-false-1.0.0.tgz": {
+			"shasum": "aa40758eecd4f28e6f430634a4e425bc3d44cb93",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-df188b7dc564c12a",
+	"_id": "prefer-unplugged-false",
+	"readme": "ERROR: No README data found!"
+}

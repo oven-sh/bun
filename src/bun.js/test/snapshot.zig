@@ -38,7 +38,7 @@ pub const Snapshots = struct {
     };
 
     pub fn getOrPut(this: *Snapshots, expect: *Expect, value: JSValue, hint: string, globalObject: *JSC.JSGlobalObject) !?string {
-        switch (try this.getSnapshotFile(expect.scope.file_id)) {
+        switch (try this.getSnapshotFile(expect.testScope().?.describe.file_id)) {
             .result => {},
             .err => |err| {
                 return switch (err.syscall) {
@@ -52,7 +52,7 @@ pub const Snapshots = struct {
         const snapshot_name = try expect.getSnapshotName(this.allocator, hint);
         this.total += 1;
 
-        var count_entry = try this.counts.getOrPut(snapshot_name);
+        const count_entry = try this.counts.getOrPut(snapshot_name);
         const counter = brk: {
             if (count_entry.found_existing) {
                 this.allocator.free(snapshot_name);
@@ -66,7 +66,7 @@ pub const Snapshots = struct {
         const name = count_entry.key_ptr.*;
 
         var counter_string_buf = [_]u8{0} ** 32;
-        var counter_string = try std.fmt.bufPrint(&counter_string_buf, "{d}", .{counter});
+        const counter_string = try std.fmt.bufPrint(&counter_string_buf, "{d}", .{counter});
 
         var name_with_counter = try this.allocator.alloc(u8, name.len + 1 + counter_string.len);
         defer this.allocator.free(name_with_counter);
@@ -100,7 +100,7 @@ pub const Snapshots = struct {
         if (this.file_buf.items.len == 0) return;
 
         const vm = VirtualMachine.get();
-        var opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
+        const opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
         var temp_log = logger.Log.init(this.allocator);
 
         const test_file = Jest.runner.?.files.get(this._current_file.?.id);
@@ -130,7 +130,7 @@ pub const Snapshots = struct {
             this.allocator,
         );
 
-        var parse_result = try parser.parse();
+        const parse_result = try parser.parse();
         var ast = if (parse_result == .ast) parse_result.ast else return error.ParseError;
         defer ast.deinit();
 
@@ -258,7 +258,7 @@ pub const Snapshots = struct {
 
             var file: File = .{
                 .id = file_id,
-                .file = .{ .handle = bun.fdcast(fd) },
+                .file = fd.asFile(),
             };
 
             if (this.update_snapshots) {

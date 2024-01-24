@@ -247,7 +247,7 @@ void *us_timer_ext(struct us_timer_t *timer) {
          sizeof(uv_timer_t);
 }
 
-void us_timer_close(struct us_timer_t *t) {
+void us_timer_close(struct us_timer_t *t, int fallthrough) {
   struct us_internal_callback_t *cb = (struct us_internal_callback_t *)t;
 
   uv_timer_t *uv_timer = (uv_timer_t *)(cb + 1);
@@ -325,6 +325,16 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
 
   uv_async_t *uv_async = (uv_async_t *)(internal_cb + 1);
   uv_async_send(uv_async);
+}
+
+int us_socket_get_error(int ssl, struct us_socket_t* s)
+{
+  int error = 0;
+  socklen_t len = sizeof(error);
+  if (getsockopt(us_poll_fd((struct us_poll_t*)s), SOL_SOCKET, SO_ERROR, (char*)&error, &len) == -1) {
+    return errno;
+  }
+  return error;
 }
 
 #endif

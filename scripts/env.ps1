@@ -1,3 +1,6 @@
+param(
+  [switch]$Baseline = $False
+)
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
 
 # this is the environment script for building bun's dependencies
@@ -10,7 +13,7 @@ if ($env:VSINSTALLDIR -eq $null) {
   if ($vsDir -eq $null) {
       throw "Visual Studio directory not found."
   } 
-  Push-Location $vsDir
+  Push-Location $vsDir.FullName
   try {
     . (Join-Path -Path $vsDir.FullName -ChildPath "Common7\Tools\Launch-VsDevShell.ps1") -Arch amd64 -HostArch amd64
   } finally { Pop-Location }
@@ -31,7 +34,14 @@ $CC = "clang-cl"
 $CXX = "clang-cl"
 
 $CFLAGS = '/O2'
+# $CFLAGS = '/O2 /MT'
 $CXXFLAGS = '/O2'
+# $CXXFLAGS = '/O2 /MT'
+
+if ($Baseline) {
+  $CFLAGS += ' -march=nehalem'
+  $CXXFLAGS += ' -march=nehalem'
+}
 
 $CMAKE_FLAGS = @(
   "-GNinja",
@@ -41,12 +51,15 @@ $CMAKE_FLAGS = @(
   "-DCMAKE_C_FLAGS=`"$CFLAGS`"",
   "-DCMAKE_CXX_FLAGS=`"$CXXFLAGS`""
 )
-
 $env:CC = "clang-cl"
 $env:CXX = "clang-cl"
 $env:CFLAGS = $CFLAGS
 $env:CXXFLAGS = $CXXFLAGS
 $env:CPUS = $CPUS
+
+if ($Baseline) {
+  $CMAKE_FLAGS += "-DUSE_BASELINE_BUILD=ON"
+}
 
 $null = New-Item -ItemType Directory -Force -Path $BUN_DEPS_OUT_DIR
 

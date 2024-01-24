@@ -23,6 +23,10 @@ pub const Resolution = extern struct {
         };
     }
 
+    pub fn isGit(this: *const Resolution) bool {
+        return this.tag.isGit();
+    }
+
     pub fn order(
         lhs: *const Resolution,
         rhs: *const Resolution,
@@ -46,23 +50,6 @@ pub const Resolution = extern struct {
             .gitlab => lhs.value.gitlab.order(&rhs.value.gitlab, lhs_buf, rhs_buf),
             else => .eq,
         };
-    }
-
-    pub fn verify(this: *const Resolution) void {
-        switch (this.tag) {
-            .npm => {
-                this.value.npm.url.assertDefined();
-            },
-            .local_tarball => this.value.local_tarball.assertDefined(),
-            .folder => this.value.folder.assertDefined(),
-            .remote_tarball => this.value.remote_tarball.assertDefined(),
-            .workspace => this.value.workspace.assertDefined(),
-            .symlink => this.value.symlink.assertDefined(),
-            .git => this.value.git.verify(),
-            .github => this.value.github.verify(),
-            .gitlab => this.value.gitlab.verify(),
-            else => {},
-        }
     }
 
     pub fn count(this: *const Resolution, buf: []const u8, comptime Builder: type, builder: Builder) void {
@@ -332,5 +319,9 @@ pub const Resolution = extern struct {
         single_file_module = 100,
 
         _,
+
+        pub fn isGit(this: Tag) bool {
+            return this == .git or this == .github or this == .gitlab;
+        }
     };
 };

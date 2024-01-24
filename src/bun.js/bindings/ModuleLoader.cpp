@@ -74,11 +74,10 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
         GlobalObject* globalObject = jsCast<GlobalObject*>(lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-        auto* object = jsCast<JSObject*>(globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId));
-        if (!object) {
-            return;
-        }
+        JSValue requireResult = globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId);
         RETURN_IF_EXCEPTION(throwScope, void());
+        auto* object = requireResult.getObject();
+        ASSERT(object);
 
         JSC::EnsureStillAliveScope stillAlive(object);
 
@@ -352,7 +351,7 @@ static JSValue handleVirtualModuleResult(
             object);
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(WTFMove(function),
-                JSC::SourceOrigin(), Bun::toWTFString(*specifier)));
+                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         JSC::ensureStillAliveHere(object);
         return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
     }
@@ -362,8 +361,8 @@ static JSValue handleVirtualModuleResult(
         JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
         auto callData = JSC::getCallData(performPromiseThenFunction);
         ASSERT(callData.type != CallData::Type::None);
-        auto specifierString = Bun::toWTFString(*specifier);
-        auto referrerString = Bun::toWTFString(*referrer);
+        auto specifierString = specifier->toWTFString(BunString::ZeroCopy);
+        auto referrerString = referrer->toWTFString(BunString::ZeroCopy);
         PendingVirtualModuleResult* pendingModule = PendingVirtualModuleResult::create(globalObject, specifierString, referrerString);
         JSC::JSInternalPromise* internalPromise = pendingModule->internalPromise();
         MarkedArgumentBuffer arguments;
@@ -424,7 +423,8 @@ JSValue fetchCommonJSModule(
     JSCommonJSModule* target,
     JSValue specifierValue,
     BunString* specifier,
-    BunString* referrer)
+    BunString* referrer,
+    BunString* typeAttribute)
 {
     void* bunVM = globalObject->bunVM();
     auto& vm = globalObject->vm();
@@ -449,7 +449,7 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
-                JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, Bun::toWTFString(*specifier), "\" is unsupported. use \"await import()\" instead."_s));
+                JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifier->toWTFString(BunString::ZeroCopy), "\" is unsupported. use \"await import()\" instead."_s));
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Fulfilled: {
@@ -477,11 +477,11 @@ JSValue fetchCommonJSModule(
         auto tag = res->result.value.tag;
         switch (tag) {
 // Generated native module cases
-#define CASE(str, name)                                                                            \
-    case SyntheticModuleType::name: {                                                              \
-        target->evaluate(globalObject, Bun::toWTFString(*specifier), generateNativeModule_##name); \
-        RETURN_IF_EXCEPTION(scope, {});                                                            \
-        RELEASE_AND_RETURN(scope, target);                                                         \
+#define CASE(str, name)                                                                                           \
+    case SyntheticModuleType::name: {                                                                             \
+        target->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), generateNativeModule_##name); \
+        RETURN_IF_EXCEPTION(scope, {});                                                                           \
+        RELEASE_AND_RETURN(scope, target);                                                                        \
     }
             BUN_FOREACH_NATIVE_MODULE(CASE)
 #undef CASE
@@ -521,7 +521,7 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
-                JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, Bun::toWTFString(*specifier), "\" is unsupported. use \"await import()\" instead."_s));
+                JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifier->toWTFString(BunString::ZeroCopy), "\" is unsupported. use \"await import()\" instead."_s));
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Fulfilled: {
@@ -540,8 +540,7 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    auto* loader = globalObject->moduleLoader();
-    JSMap* registry = jsCast<JSMap*>(loader->getDirect(vm, Identifier::fromString(vm, "registry"_s)));
+    JSMap* registry = globalObject->esmRegistryMap();
 
     auto hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
         JSValue entry = registry->get(globalObject, specifierValue);
@@ -558,10 +557,10 @@ JSValue fetchCommonJSModule(
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
 
-    Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
+    Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false);
 
     if (res->success && res->result.value.commonJSExportsLen) {
-        target->evaluate(globalObject, Bun::toWTFString(*specifier), res->result.value);
+        target->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), res->result.value);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
     }
@@ -583,7 +582,7 @@ JSValue fetchCommonJSModule(
     // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
     // parser instead to support comments and trailing commas.
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
-        JSC::JSValue value = JSC::JSONParse(globalObject, Bun::toWTFString(res->result.value.source_code));
+        JSC::JSValue value = JSC::JSONParse(globalObject, res->result.value.source_code.toWTFString(BunString::ZeroCopy));
         if (!value) {
             JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Failed to parse JSON"_s));
             RELEASE_AND_RETURN(scope, {});
@@ -607,7 +606,8 @@ static JSValue fetchESMSourceCode(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
     BunString* specifier,
-    BunString* referrer)
+    BunString* referrer,
+    BunString* typeAttribute)
 {
     void* bunVM = globalObject->bunVM();
     auto& vm = globalObject->vm();
@@ -670,7 +670,7 @@ static JSValue fetchESMSourceCode(
             return reject(exception);
         }
 
-        auto moduleKey = Bun::toWTFString(*specifier);
+        auto moduleKey = specifier->toWTFString(BunString::ZeroCopy);
 
         auto tag = res->result.value.tag;
         switch (tag) {
@@ -709,12 +709,12 @@ static JSValue fetchESMSourceCode(
     }
 
     if constexpr (allowPromise) {
-        void* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, true);
+        void* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true);
         if (pendingCtx) {
             return reinterpret_cast<JSC::JSInternalPromise*>(pendingCtx);
         }
     } else {
-        Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
+        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false);
     }
 
     if (res->success && res->result.value.commonJSExportsLen) {
@@ -752,7 +752,7 @@ static JSValue fetchESMSourceCode(
     // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
     // parser instead to support comments and trailing commas.
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
-        JSC::JSValue value = JSC::JSONParse(globalObject, Bun::toWTFString(res->result.value.source_code));
+        JSC::JSValue value = JSC::JSONParse(globalObject, res->result.value.source_code.toWTFString(BunString::ZeroCopy));
         if (!value) {
             return reject(JSC::JSValue(JSC::createSyntaxError(globalObject, "Failed to parse JSON"_s)));
         }
@@ -763,7 +763,7 @@ static JSValue fetchESMSourceCode(
             value);
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(WTFMove(function),
-                JSC::SourceOrigin(), Bun::toWTFString(*specifier)));
+                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         JSC::ensureStillAliveHere(value);
         return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
     }
@@ -834,17 +834,19 @@ JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
     BunString* specifier,
-    BunString* referrer)
+    BunString* referrer,
+    BunString* typeAttribute)
 {
-    return fetchESMSourceCode<false>(globalObject, res, specifier, referrer);
+    return fetchESMSourceCode<false>(globalObject, res, specifier, referrer, typeAttribute);
 }
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
     BunString* specifier,
-    BunString* referrer)
+    BunString* referrer,
+    BunString* typeAttribute)
 {
-    return fetchESMSourceCode<true>(globalObject, res, specifier, referrer);
+    return fetchESMSourceCode<true>(globalObject, res, specifier, referrer, typeAttribute);
 }
 }

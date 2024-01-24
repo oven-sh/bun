@@ -8,6 +8,8 @@ const JSC = @import("root").bun.JSC;
 const std = @import("std");
 const BoringSSL = @import("root").bun.BoringSSL;
 const bun = @import("root").bun;
+const FDImpl = bun.FDImpl;
+const Environment = bun.Environment;
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 const UUID = @import("./uuid.zig");
 const Async = bun.Async;
@@ -36,7 +38,7 @@ global_dns_data: ?*JSC.DNS.GlobalData = null,
 
 spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
-mime_types: ?bun.HTTP.MimeType.Map = null,
+mime_types: ?bun.http.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 
@@ -74,9 +76,9 @@ pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
     return &this.hot_map.?;
 }
 
-pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []const u8) ?bun.HTTP.MimeType {
+pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []const u8) ?bun.http.MimeType {
     if (this.mime_types == null) {
-        this.mime_types = bun.HTTP.MimeType.createHashTable(
+        this.mime_types = bun.http.MimeType.createHashTable(
             allocator,
         ) catch @panic("Out of memory");
     }
@@ -120,7 +122,7 @@ pub const HotMap = struct {
     }
 
     pub fn insert(this: *HotMap, key: []const u8, ptr: anytype) void {
-        var entry = this._map.getOrPut(key) catch @panic("Out of memory");
+        const entry = this._map.getOrPut(key) catch @panic("Out of memory");
         if (entry.found_existing) {
             @panic("HotMap already contains key");
         }
@@ -130,7 +132,7 @@ pub const HotMap = struct {
     }
 
     pub fn remove(this: *HotMap, key: []const u8) void {
-        var entry = this._map.getEntry(key) orelse return;
+        const entry = this._map.getEntry(key) orelse return;
         bun.default_allocator.free(entry.key_ptr.*);
         _ = this._map.orderedRemove(key);
     }
@@ -238,7 +240,7 @@ pub fn pushCleanupHook(
     ctx: ?*anyopaque,
     func: CleanupHook.Function,
 ) void {
-    var hook = JSC.VirtualMachine.get().allocator.create(CleanupHook) catch unreachable;
+    const hook = JSC.VirtualMachine.get().allocator.create(CleanupHook) catch unreachable;
     hook.* = CleanupHook.from(globalThis, ctx, func);
     if (this.cleanup_hook == null) {
         this.cleanup_hook = hook;
@@ -257,11 +259,13 @@ pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
 
 pub fn stderr(rare: *RareData) *Blob.Store {
     return rare.stderr_store orelse brk: {
-        var store = default_allocator.create(Blob.Store) catch unreachable;
+        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        switch (Syscall.fstat(bun.STDERR_FD)) {
+        const fd = if (Environment.isWindows) FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+
+        switch (Syscall.fstat(fd)) {
             .result => |stat| {
-                mode = stat.mode;
+                mode = @intCast(stat.mode);
             },
             .err => {},
         }
@@ -272,7 +276,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = bun.STDERR_FD,
+                        .fd = fd,
                     },
                     .is_atty = Output.stderr_descriptor_type == .terminal,
                     .mode = mode,
@@ -287,11 +291,13 @@ pub fn stderr(rare: *RareData) *Blob.Store {
 
 pub fn stdout(rare: *RareData) *Blob.Store {
     return rare.stdout_store orelse brk: {
-        var store = default_allocator.create(Blob.Store) catch unreachable;
+        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        switch (Syscall.fstat(bun.STDOUT_FD)) {
+        const fd = if (Environment.isWindows) FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+
+        switch (Syscall.fstat(fd)) {
             .result => |stat| {
-                mode = stat.mode;
+                mode = @intCast(stat.mode);
             },
             .err => {},
         }
@@ -301,7 +307,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = bun.STDOUT_FD,
+                        .fd = fd,
                     },
                     .is_atty = Output.stdout_descriptor_type == .terminal,
                     .mode = mode,
@@ -315,11 +321,13 @@ pub fn stdout(rare: *RareData) *Blob.Store {
 
 pub fn stdin(rare: *RareData) *Blob.Store {
     return rare.stdin_store orelse brk: {
-        var store = default_allocator.create(Blob.Store) catch unreachable;
+        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
-        switch (Syscall.fstat(bun.STDIN_FD)) {
+        const fd = if (Environment.isWindows) FDImpl.fromUV(0).encode() else bun.STDIN_FD;
+
+        switch (Syscall.fstat(fd)) {
             .result => |stat| {
-                mode = stat.mode;
+                mode = @intCast(stat.mode);
             },
             .err => {},
         }
@@ -329,9 +337,9 @@ pub fn stdin(rare: *RareData) *Blob.Store {
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
-                        .fd = bun.STDIN_FD,
+                        .fd = fd,
                     },
-                    .is_atty = std.os.isatty(bun.fdcast(bun.STDIN_FD)),
+                    .is_atty = std.os.isatty(bun.STDIN_FD.cast()),
                     .mode = mode,
                 },
             },
@@ -348,7 +356,7 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
         return ctx;
     }
 
-    var opts: uws.us_socket_context_options_t = .{};
+    const opts: uws.us_socket_context_options_t = .{};
     const ctx = uws.us_create_socket_context(0, vm.event_loop_handle.?, @sizeOf(usize), opts).?;
     IPC.Socket.configure(ctx, true, *Subprocess, Subprocess.IPCHandler);
     rare.spawn_ipc_usockets_context = ctx;

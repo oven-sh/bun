@@ -3,28 +3,34 @@ const Allocator = std.mem.Allocator;
 const Walker = @This();
 const bun = @import("root").bun;
 const path = std.fs.path;
+const DirIterator = bun.DirIterator;
+const Environment = bun.Environment;
+const OSPathSlice = bun.OSPathSlice;
 
 stack: std.ArrayList(StackItem),
-name_buffer: std.ArrayList(u8),
+name_buffer: NameBufferList,
 skip_filenames: []const u64 = &[_]u64{},
 skip_dirnames: []const u64 = &[_]u64{},
 skip_all: []const u64 = &[_]u64{},
 seed: u64 = 0,
 
-const Dir = std.fs.IterableDir;
+const NameBufferList = std.ArrayList(bun.OSPathChar);
+
+const Dir = std.fs.Dir;
+const WrappedIterator = DirIterator.NewWrappedIterator(if (Environment.isWindows) .u16 else .u8);
 
 pub const WalkerEntry = struct {
     /// The containing directory. This can be used to operate directly on `basename`
     /// rather than `path`, avoiding `error.NameTooLong` for deeply nested paths.
     /// The directory remains open until `next` or `deinit` is called.
     dir: Dir,
-    basename: []const u8,
-    path: []const u8,
+    basename: OSPathSlice,
+    path: OSPathSlice,
     kind: Dir.Entry.Kind,
 };
 
 const StackItem = struct {
-    iter: Dir.Iterator,
+    iter: WrappedIterator,
     dirname_len: usize,
 };
 
@@ -36,73 +42,81 @@ pub fn next(self: *Walker) !?WalkerEntry {
         // `top` becomes invalid after appending to `self.stack`
         var top = &self.stack.items[self.stack.items.len - 1];
         var dirname_len = top.dirname_len;
-        if (try top.iter.next()) |base| {
-            switch (base.kind) {
-                .directory => {
-                    if (std.mem.indexOfScalar(
-                        u64,
-                        self.skip_dirnames,
-                        // avoid hashing if there will be 0 results
-                        if (self.skip_dirnames.len > 0) bun.hashWithSeed(self.seed, base.name) else 0,
-                    ) != null) continue;
-                },
-                .file => {
-                    if (std.mem.indexOfScalar(
-                        u64,
-                        self.skip_filenames,
-                        // avoid hashing if there will be 0 results
-                        if (self.skip_filenames.len > 0) bun.hashWithSeed(self.seed, base.name) else 0,
-                    ) != null) continue;
-                },
+        switch (top.iter.next()) {
+            .err => |err| return bun.errnoToZigErr(err.errno),
+            .result => |res| {
+                if (res) |base| {
+                    switch (base.kind) {
+                        .directory => {
+                            if (std.mem.indexOfScalar(
+                                u64,
+                                self.skip_dirnames,
+                                // avoid hashing if there will be 0 results
+                                if (self.skip_dirnames.len > 0) bun.hashWithSeed(self.seed, std.mem.sliceAsBytes(base.name.slice())) else 0,
+                            ) != null) continue;
+                        },
+                        .file => {
+                            if (std.mem.indexOfScalar(
+                                u64,
+                                self.skip_filenames,
+                                // avoid hashing if there will be 0 results
+                                if (self.skip_filenames.len > 0) bun.hashWithSeed(self.seed, std.mem.sliceAsBytes(base.name.slice())) else 0,
+                            ) != null) continue;
+                        },
 
-                // we don't know what it is for a symlink
-                .sym_link => {
-                    if (std.mem.indexOfScalar(
-                        u64,
-                        self.skip_all,
-                        // avoid hashing if there will be 0 results
-                        if (self.skip_all.len > 0) bun.hashWithSeed(self.seed, base.name) else 0,
-                    ) != null) continue;
-                },
+                        // we don't know what it is for a symlink
+                        .sym_link => {
+                            if (std.mem.indexOfScalar(
+                                u64,
+                                self.skip_all,
+                                // avoid hashing if there will be 0 results
+                                if (self.skip_all.len > 0) bun.hashWithSeed(self.seed, std.mem.sliceAsBytes(base.name.slice())) else 0,
+                            ) != null) continue;
+                        },
 
-                else => {},
-            }
+                        else => {},
+                    }
 
-            self.name_buffer.shrinkRetainingCapacity(dirname_len);
-            if (self.name_buffer.items.len != 0) {
-                try self.name_buffer.append(path.sep);
-                dirname_len += 1;
-            }
-            try self.name_buffer.appendSlice(base.name);
-            const cur_len = self.name_buffer.items.len;
-            try self.name_buffer.append(0);
-            self.name_buffer.shrinkRetainingCapacity(cur_len);
+                    self.name_buffer.shrinkRetainingCapacity(dirname_len);
+                    if (self.name_buffer.items.len != 0) {
+                        try self.name_buffer.append(path.sep);
+                        dirname_len += 1;
+                    }
+                    try self.name_buffer.appendSlice(base.name.slice());
+                    const cur_len = self.name_buffer.items.len;
+                    try self.name_buffer.append(0);
+                    self.name_buffer.shrinkRetainingCapacity(cur_len);
 
-            if (base.kind == .directory) {
-                var new_dir = top.iter.dir.openIterableDir(base.name, .{}) catch |err| switch (err) {
-                    error.NameTooLong => unreachable, // no path sep in base.name
-                    else => |e| return e,
-                };
-                {
-                    errdefer new_dir.close();
-                    try self.stack.append(StackItem{
-                        .iter = new_dir.iterate(),
-                        .dirname_len = self.name_buffer.items.len,
-                    });
-                    top = &self.stack.items[self.stack.items.len - 1];
+                    if (base.kind == .directory) {
+                        var new_dir = (if (Environment.isWindows)
+                            top.iter.iter.dir.openDirW(base.name.sliceAssumeZ(), .{ .iterate = true })
+                        else
+                            top.iter.iter.dir.openDir(base.name.slice(), .{ .iterate = true })) catch |err| switch (err) {
+                            error.NameTooLong => unreachable, // no path sep in base.name
+                            else => |e| return e,
+                        };
+                        {
+                            errdefer new_dir.close();
+                            try self.stack.append(StackItem{
+                                .iter = DirIterator.iterate(new_dir, if (Environment.isWindows) .u16 else .u8),
+                                .dirname_len = self.name_buffer.items.len,
+                            });
+                            top = &self.stack.items[self.stack.items.len - 1];
+                        }
+                    }
+                    return WalkerEntry{
+                        .dir = top.iter.iter.dir,
+                        .basename = self.name_buffer.items[dirname_len..],
+                        .path = self.name_buffer.items,
+                        .kind = base.kind,
+                    };
+                } else {
+                    var item = self.stack.pop();
+                    if (self.stack.items.len != 0) {
+                        item.iter.iter.dir.close();
+                    }
                 }
-            }
-            return WalkerEntry{
-                .dir = .{ .dir = top.iter.dir },
-                .basename = self.name_buffer.items[dirname_len..],
-                .path = self.name_buffer.items,
-                .kind = base.kind,
-            };
-        } else {
-            var item = self.stack.pop();
-            if (self.stack.items.len != 0) {
-                item.iter.dir.close();
-            }
+            },
         }
     }
     return null;
@@ -112,7 +126,7 @@ pub fn deinit(self: *Walker) void {
     if (self.stack.items.len > 0) {
         for (self.stack.items[1..]) |*item| {
             if (self.stack.items.len != 0) {
-                item.iter.dir.close();
+                item.iter.iter.dir.close();
             }
         }
         self.stack.deinit();
@@ -130,10 +144,10 @@ pub fn deinit(self: *Walker) void {
 pub fn walk(
     self: Dir,
     allocator: Allocator,
-    skip_filenames: []const []const u8,
-    skip_dirnames: []const []const u8,
+    skip_filenames: []const OSPathSlice,
+    skip_dirnames: []const OSPathSlice,
 ) !Walker {
-    var name_buffer = std.ArrayList(u8).init(allocator);
+    var name_buffer = NameBufferList.init(allocator);
     errdefer name_buffer.deinit();
 
     var stack = std.ArrayList(Walker.StackItem).init(allocator);
@@ -144,18 +158,18 @@ pub fn walk(
     var skip_name_i: usize = 0;
 
     for (skip_filenames) |name| {
-        skip_names[skip_name_i] = bun.hashWithSeed(seed, name);
+        skip_names[skip_name_i] = bun.hashWithSeed(seed, std.mem.sliceAsBytes(name));
         skip_name_i += 1;
     }
-    var skip_filenames_ = skip_names[0..skip_name_i];
+    const skip_filenames_ = skip_names[0..skip_name_i];
     var skip_dirnames_ = skip_names[skip_name_i..];
 
     for (skip_dirnames, 0..) |name, i| {
-        skip_dirnames_[i] = bun.hashWithSeed(seed, name);
+        skip_dirnames_[i] = bun.hashWithSeed(seed, std.mem.sliceAsBytes(name));
     }
 
     try stack.append(Walker.StackItem{
-        .iter = self.iterate(),
+        .iter = DirIterator.iterate(self, if (Environment.isWindows) .u16 else .u8),
         .dirname_len = 0,
     });
 

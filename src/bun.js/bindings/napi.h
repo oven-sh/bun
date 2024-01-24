@@ -61,7 +61,7 @@ public:
     void call(JSC::JSGlobalObject* globalObject, void* data);
 };
 
-class NapiRef : public RefCounted<NapiRef>, public CanMakeWeakPtr<NapiRef> {
+class NapiRef {
     WTF_MAKE_ISO_ALLOCATED(NapiRef);
 
 public:
@@ -101,6 +101,8 @@ public:
     ~NapiRef()
     {
         strongRef.clear();
+        // The weak ref can lead to calling the destructor
+        // so we must first clear the weak ref before we call the finalizer
         weakValueRef.clear();
     }
 
@@ -155,8 +157,6 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
-    static CallData getConstructData(JSCell* cell);
-
     FFIFunction constructor()
     {
         return m_constructor;
@@ -194,17 +194,11 @@ public:
 
     DECLARE_INFO;
 
-    static NapiPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
+    static NapiPrototype* create(VM& vm, Structure* structure)
     {
         NapiPrototype* footprint = new (NotNull, allocateCell<NapiPrototype>(vm)) NapiPrototype(vm, structure);
         footprint->finishCreation(vm);
         return footprint;
-    }
-
-    static NapiPrototype* create(VM& vm, JSGlobalObject* globalObject)
-    {
-        Structure* structure = createStructure(vm, globalObject, globalObject->objectPrototype());
-        return create(vm, globalObject, structure);
     }
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -221,7 +215,13 @@ public:
         FunctionRareData* rareData = targetFunction->ensureRareData(vm);
         auto* prototype = newTarget->get(globalObject, vm.propertyNames->prototype).getObject();
         RETURN_IF_EXCEPTION(scope, nullptr);
-        auto* structure = rareData->createInternalFunctionAllocationStructureFromBase(vm, globalObject, prototype, this->structure());
+
+        // This must be kept in-sync with InternalFunction::createSubclassStructure
+        Structure* structure = rareData->internalFunctionAllocationStructure();
+        if (UNLIKELY(!(structure && structure->classInfoForCells() == this->structure()->classInfoForCells() && structure->globalObject() == globalObject))) {
+            structure = rareData->createInternalFunctionAllocationStructureFromBase(vm, globalObject, prototype, this->structure());
+        }
+
         RETURN_IF_EXCEPTION(scope, nullptr);
         NapiPrototype* footprint = new (NotNull, allocateCell<NapiPrototype>(vm)) NapiPrototype(vm, structure);
         footprint->finishCreation(vm);
@@ -241,5 +241,7 @@ static inline NapiRef* toJS(napi_ref val)
 {
     return reinterpret_cast<NapiRef*>(val);
 }
+
+Structure* createNAPIFunctionStructure(VM& vm, JSC::JSGlobalObject* globalObject);
 
 }

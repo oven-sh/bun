@@ -2,6 +2,30 @@ Configuring a development environment for Bun can take 10-30 minutes depending o
 
 If you are using Windows, you must use a WSL environment as Bun does not yet compile on Windows natively.
 
+## Install Dependencies
+
+Using your system's package manager, install Bun's dependencies:
+
+{% codetabs %}
+
+```bash#macOS (Homebrew)
+$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby
+```
+
+```bash#Ubuntu/Debian
+$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
+```
+
+```bash#Arch
+$ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
+```
+
+```bash#Fedora
+$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+```
+
+{% /codetabs %}
+
 Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
 
 {% codetabs %}
@@ -71,7 +95,7 @@ If not, run this to manually link it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:$(brew --prefix llvm@16)/bin"
+$ export PATH="$(brew --prefix llvm@16)/bin:$PATH"
 ```
 
 ```bash#Arch
@@ -80,43 +104,6 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 ```
 
 {% /codetabs %}
-
-## Install Dependencies
-
-Using your system's package manager, install the rest of Bun's dependencies:
-
-{% codetabs %}
-
-```bash#macOS (Homebrew)
-$ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja pkg-config rust
-```
-
-```bash#Ubuntu/Debian
-$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full
-```
-
-```bash#Arch
-$ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
-```
-
-```bash#Fedora
-$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc libatomic-static libstdc++-static sed unzip
-```
-
-{% /codetabs %}
-
-## Install Zig
-
-Zig can be installed either with our npm package [`@oven/zig`](https://www.npmjs.com/package/@oven/zig), or by using [zigup](https://github.com/marler8997/zigup).
-
-```bash
-$ bun install -g @oven/zig
-$ zigup 0.12.0-dev.1297+a9e66ed73
-```
-
-{% callout %}
-We last updated Zig on **October 26th, 2023**
-{% /callout %}
 
 ## Building Bun
 
@@ -143,7 +130,7 @@ These two scripts, `setup` and `build`, are aliases to do roughly the following:
 
 ```bash
 $ ./scripts/setup.sh
-$ cmake -S . -G Ninja -B build -DCMAKE_BUILD_TYPE=Debug
+$ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 $ ninja -C build # 'bun run build' runs just this
 ```
 
@@ -300,12 +287,13 @@ If you see this error when compiling, run:
 $ xcode-select --install
 ```
 
-## Arch Linux / Cannot find `libatomic.a`
+## Cannot find `libatomic.a`
 
-Bun requires `libatomic` to be statically linked. On Arch Linux, it is only given as a shared library, but as a workaround you can symlink it to get the build working locally.
+Bun defaults to linking `libatomic` statically, as not all systems have it. If you are building on a distro that does not have a static libatomic available, you can run the following command to enable dynamic linking:
 
 ```bash
-$ sudo ln -s /lib/libatomic.so /lib/libatomic.a
+$ cmake -Bbuild -GNinja -DUSE_STATIC_LIBATOMIC=ON
+$ ninja -Cbuild
 ```
 
 The built version of Bun may not work on other systems if compiled this way.

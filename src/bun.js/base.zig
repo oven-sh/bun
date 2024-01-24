@@ -1736,3 +1736,13 @@ pub const MemoryReportingAllocator = struct {
         .free = @ptrCast(&MemoryReportingAllocator.free),
     };
 };
+
+/// According to https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date,
+/// maximum Date in JavaScript is less than Number.MAX_SAFE_INTEGER (u52).
+pub const init_timestamp = std.math.maxInt(JSC.JSTimeType);
+pub const JSTimeType = u52;
+
+pub fn toJSTime(sec: isize, nsec: isize) JSTimeType {
+    const millisec = @as(u64, @intCast(@divTrunc(nsec, std.time.ns_per_ms)));
+    return @as(JSTimeType, @truncate(@as(u64, @intCast(sec * std.time.ms_per_s)) + millisec));
+}

@@ -417,6 +417,10 @@ if (ci) {
     action.setOutput("failing_tests", failingTestDisplay);
     action.setOutput("failing_tests_count", failing_tests.length);
   }
+  let truncated_report = report;
+  if (truncated_report.length > 512 * 1000) {
+    truncated_report = truncated_report.slice(0, 512 * 1000) + "\n\n...truncated...";
+  }
   action.summary.addRaw(report);
   await action.summary.write();
 } else {

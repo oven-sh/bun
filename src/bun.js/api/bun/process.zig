@@ -139,10 +139,7 @@ pub const Process = NewProcess(JSC.EventLoopKind.js);
 pub const ProcessMiniEventLoop = NewProcess(JSC.EventLoopKind.mini);
 
 pub const ProcessEventLoop = struct {
-    uws_loop: *bun.uws.Loop,
-
-    ctx: *anyopaque,
-    enqueueTaskConcurrent: *const fn (*anyopaque, JSC.ConcurrentTask) void = @ptrCast(&JSC.EventLoop.enqueueTaskConcurrent),
+    
 };
 
 fn NewProcess(comptime EventLoopKind: JSC.EventLoopKind) type {

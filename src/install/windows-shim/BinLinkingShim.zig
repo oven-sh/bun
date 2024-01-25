@@ -246,3 +246,40 @@ pub fn encodeInto(options: @This(), buf: []u8) !void {
         if (wbuf.len != 0) std.debug.panic("wbuf.len != 0, got {d}", .{wbuf.len});
     }
 }
+
+const Decoded = struct {
+    bin_path: []const u16,
+    flags: Flags,
+};
+
+pub fn looseDecode(input: []const u8) ?Decoded {
+    if (input.len < @sizeOf(Flags) + 2 * @sizeOf(u32) + 8) {
+        return null;
+    }
+    const flags = @as(*align(1) const Flags, @ptrCast(&input[input.len - @sizeOf(Flags)])).*;
+    if (!flags.isValid()) {
+        return null;
+    }
+
+    const bin_path_u8 = if (flags.has_shebang) bin_path_u8: {
+        const bin_path_byte_len = @as(*align(1) const u32, @ptrCast(&input[input.len - @sizeOf(Flags) - 2 * @sizeOf(u32)])).*;
+        if (bin_path_byte_len % 2 != 0) {
+            return null;
+        }
+        if (bin_path_byte_len > (input.len - 8)) {
+            return null;
+        }
+        break :bin_path_u8 input[0..bin_path_byte_len];
+    } else (
+    // path slice is 0..flags-2
+        input[0 .. input.len - @sizeOf(Flags)]);
+
+    if (bin_path_u8.len % 2 != 0) {
+        return null;
+    }
+
+    return .{
+        .bin_path = bun.reinterpretSlice(u16, bin_path_u8),
+        .flags = flags,
+    };
+}

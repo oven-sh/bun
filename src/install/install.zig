@@ -1627,6 +1627,25 @@ pub const PackageInstall = struct {
         }
     }
 
+    pub fn isDanglingWindowsBinLink(node_mod_fd: bun.FileDescriptor, path: []const u16, temp_buffer: []u8) bool {
+        const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
+        const bin_path = bin_path: {
+            const fd = bun.sys.openatWindows(node_mod_fd, path, std.os.O.RDONLY).unwrap() catch return true;
+            defer _ = bun.sys.close(fd);
+            const size = fd.asFile().readAll(temp_buffer) catch return true;
+            const decoded = WinBinLinkingShim.looseDecode(temp_buffer[0..size]) orelse return true;
+            std.debug.assert(decoded.flags.isValid()); // looseDecode ensures valid flags
+            break :bin_path decoded.bin_path;
+        };
+
+        {
+            const fd = bun.sys.openatWindows(node_mod_fd, bin_path, std.os.O.RDONLY).unwrap() catch return true;
+            _ = bun.sys.close(fd);
+        }
+
+        return false;
+    }
+
     pub fn installFromLink(this: *PackageInstall, skip_delete: bool) Result {
         const dest_path = this.destination_dir_subpath;
         // If this fails, we don't care.

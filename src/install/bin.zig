@@ -356,63 +356,77 @@ pub const Bin = extern struct {
                 const target_wpath = bun.strings.toWPathNormalized(&filename1_buf, target_path[3..]);
                 var destination_wpath: []u16 = bun.strings.convertUTF8toUTF16InBuffer(&filename2_buf, dest_path);
 
-                const first_content_chunk = contents: {
-                    const fd = bun.sys.openatWindows(
-                        this.package_installed_node_modules,
-                        target_wpath,
-                        std.os.O.RDONLY,
-                    ).unwrap() catch |err| {
-                        this.err = err;
-                        return;
-                    };
-                    defer _ = bun.sys.close(fd);
-                    const reader = fd.asFile().reader();
-                    const read = reader.read(&read_in_buf) catch |err| {
-                        this.err = err;
-                        return;
-                    };
-                    if (read == 0) {
-                        this.err = error.FileNotFound;
-                        return;
-                    }
-                    break :contents read_in_buf[0..read];
-                };
-
-                const shim = WinBinLinkingShim{
-                    .bin_path = target_wpath,
-                    .shebang = WinBinLinkingShim.Shebang.parse(first_content_chunk, target_wpath) catch {
-                        this.err = error.InvalidBinContent;
-                        return;
-                    },
-                };
-
-                const len = shim.encodedLength();
-                if (len > shim_buf.len) {
-                    this.err = error.InvalidBinContent;
-                    return;
-                }
-                const metadata = shim_buf[0..len];
-                shim.encodeInto(metadata) catch {
-                    this.err = error.InvalidBinContent;
-                    return;
-                };
-
                 destination_wpath.len += 5;
                 @memcpy(destination_wpath[destination_wpath.len - 5 ..], &[_]u16{ '.', 'b', 'u', 'n', 'x' });
+                {
+                    const file = node_modules.createFileW(destination_wpath, .{
+                        .truncate = true,
+                        .exclusive = true,
+                    }) catch |open_err| fd: {
+                        if (open_err == error.PathAlreadyExists) {
+                            // we need to verify this link is valid, otherwise regenerate it
+                            if (PackageInstall.isDanglingWindowsBinLink(bun.toFD(node_modules.fd), destination_wpath, &shim_buf)) {
+                                break :fd node_modules.createFileW(destination_wpath, .{
+                                    .truncate = true,
+                                }) catch |second_open_err| {
+                                    this.err = second_open_err;
+                                    return;
+                                };
+                            }
 
-                if (node_modules.createFileW(destination_wpath, .{
-                    .truncate = true,
-                })) |file| {
+                            // otherwise it is ok to skip the rest
+                            return;
+                        }
+                        this.err = open_err;
+                        return;
+                    };
                     defer file.close();
+
+                    const first_content_chunk = contents: {
+                        const fd = bun.sys.openatWindows(
+                            this.package_installed_node_modules,
+                            target_wpath,
+                            std.os.O.RDONLY,
+                        ).unwrap() catch |err| {
+                            this.err = err;
+                            return;
+                        };
+                        defer _ = bun.sys.close(fd);
+                        const reader = fd.asFile().reader();
+                        const read = reader.read(&read_in_buf) catch |err| {
+                            this.err = err;
+                            return;
+                        };
+                        if (read == 0) {
+                            this.err = error.FileNotFound;
+                            return;
+                        }
+                        break :contents read_in_buf[0..read];
+                    };
+
+                    const shim = WinBinLinkingShim{
+                        .bin_path = target_wpath,
+                        .shebang = WinBinLinkingShim.Shebang.parse(first_content_chunk, target_wpath) catch {
+                            this.err = error.InvalidBinContent;
+                            return;
+                        },
+                    };
+
+                    const len = shim.encodedLength();
+                    if (len > shim_buf.len) {
+                        this.err = error.InvalidBinContent;
+                        return;
+                    }
+                    const metadata = shim_buf[0..len];
+                    shim.encodeInto(metadata) catch {
+                        this.err = error.InvalidBinContent;
+                        return;
+                    };
+
                     file.writer().writeAll(metadata) catch |err| {
                         this.err = err;
                         return;
                     };
-                } else |err| {
-                    if (err != error.PathAlreadyExists) {
-                        this.err = err;
-                        return;
-                    }
                 }
 
                 destination_wpath.len -= 1;
@@ -420,9 +434,9 @@ pub const Bin = extern struct {
 
                 if (node_modules.createFileW(destination_wpath, .{
                     .exclusive = true,
-                })) |file| {
-                    defer file.close();
-                    file.writer().writeAll(WinBinLinkingShim.embedded_executable_data) catch |err| {
+                })) |exe_file| {
+                    defer exe_file.close();
+                    exe_file.writer().writeAll(WinBinLinkingShim.embedded_executable_data) catch |err| {
                         this.err = err;
                         return;
                     };

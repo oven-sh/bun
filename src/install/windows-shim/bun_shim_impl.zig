@@ -659,6 +659,12 @@ inline fn launcher(bun_ctx: anytype) noreturn {
             const spawn_err = k32.GetLastError();
             printError("CreateProcessW failed: {s}\n", .{@tagName(spawn_err)});
         }
+        // TODO: ERROR_ELEVATION_REQUIRED must take a fallback path, this path is potentially slower:
+        // This likely will not be an issue anyone runs into for a while, because it implies
+        // the shebang depends on something that requires UAC, which .... why?
+        //
+        // https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/how-it-works#user
+        // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
         fail(.CreateProcessFailed);
     }
 

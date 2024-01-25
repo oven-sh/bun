@@ -194,7 +194,7 @@ it("Bun.file lastModified update", async () => {
   const lastModified0 = file.lastModified;
 
   // sleep some time and write the file again.
-  await Bun.sleep(10);
+  await Bun.sleep(process.platform === "win32" ? 1000 : 100);
   await Bun.write(file, "test text2.");
   const lastModified1 = file.lastModified;
 

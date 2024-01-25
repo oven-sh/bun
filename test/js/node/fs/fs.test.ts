@@ -582,8 +582,8 @@ describe("promises.readFile", async () => {
 });
 
 it("promises.readFile - UTF16 file path", async () => {
-  const dest = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${(Math.random() * 1024000) | 0
-    }.txt`;
+  const filename = `superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${(Math.random() * 1024000) | 0}.txt`
+  const dest = join(tmpdir(), filename)
   await fs.promises.copyFile(import.meta.path, dest);
   const expected = readFileSync(import.meta.path, "utf-8");
   Bun.gc(true);
@@ -594,8 +594,8 @@ it("promises.readFile - UTF16 file path", async () => {
 });
 
 it("promises.readFile - atomized file path", async () => {
-  const destInput = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${(Math.random() * 1024000) | 0
-    }.txt`;
+  const filename = `superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${(Math.random() * 1024000) | 0}.txt`
+  const destInput = join(tmpdir(), filename)
   // Force it to become an atomized string by making it a property access
   const dest: string = (
     {

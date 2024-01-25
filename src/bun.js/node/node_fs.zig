@@ -21,8 +21,6 @@ const FDImpl = bun.FDImpl;
 
 const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 
-const errno_enoent = if (Environment.isWindows) .UV_ENOENT else .NOENT;
-
 const Constants = @import("./node_fs_constant.zig").Constants;
 const builtin = @import("builtin");
 const os = @import("std").os;
@@ -4275,7 +4273,7 @@ pub const NodeFS = struct {
         )) {
             .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
             .err => |err| brk: {
-                if (!args.throw_if_no_entry and err.getErrno() == errno_enoent) {
+                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
                 }
                 break :brk Maybe(Return.Lstat){ .err = err };
@@ -5669,7 +5667,7 @@ pub const NodeFS = struct {
                 .result = .{ .stats = Stats.init(result, args.big_int) },
             },
             .err => |err| brk: {
-                if (!args.throw_if_no_entry and err.getErrno() == errno_enoent) {
+                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return .{ .result = .{ .not_found = {} } };
                 }
                 break :brk .{ .err = err };

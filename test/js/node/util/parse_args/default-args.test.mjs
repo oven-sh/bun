@@ -80,7 +80,6 @@ describe("parseArgs default args", () => {
     expect(Object.keys(output?.values ?? {}).sort()).toEqual(valuesKeys.sort());
     expect(output?.positionals).toEqual(positionals);
     if (execArgv) {
-      console.log(output);
       expect(output?.execArgv).toEqual(execArgv);
     }
   });

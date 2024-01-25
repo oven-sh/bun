@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, test, expect } from "bun:test";
 import { serve, file } from "bun";
 

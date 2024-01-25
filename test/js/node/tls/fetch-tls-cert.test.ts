@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { expect, it } from "bun:test";
 import tls from "tls";
 import type { Server, TLSSocket } from "node:tls";

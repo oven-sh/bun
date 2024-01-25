@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { expect, it } from "bun:test";
 import { bunExe, bunEnv } from "../../harness.js";
 import { mkdirSync, rmSync, writeFileSync, readFileSync, mkdtempSync } from "fs";

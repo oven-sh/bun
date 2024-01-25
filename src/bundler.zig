@@ -103,7 +103,11 @@ pub const PluginRunner = struct {
 
     pub fn extractNamespace(specifier: string) string {
         const colon = strings.indexOfChar(specifier, ':') orelse return "";
-        if (colon == 1 and ((specifier[0] > 'a' and specifier[0] < 'z') or (specifier[0] > 'A' and specifier[0] < 'Z')))
+        if (Environment.isWindows and
+            colon == 1 and
+            specifier.len > 3 and
+            bun.path.isSepAny(specifier[2]) and
+            ((specifier[0] > 'a' and specifier[0] < 'z') or (specifier[0] > 'A' and specifier[0] < 'Z')))
             return "";
         return specifier[0..colon];
     }

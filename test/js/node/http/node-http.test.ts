@@ -1676,3 +1676,25 @@ it("#4415.4 IncomingMessage es5", () => {
   IncomingMessage.call(im, { url: "/foo" });
   expect(im.url).toBe("/foo");
 });
+
+it("#8446 header with underscore", done => {
+  const server = Server((req, res) => {
+    res.end('OK');
+  });
+  server.listen(0, async (_err, host, port) => {
+    try {
+      const res = await fetch(`http://localhost:${port}`, {
+        headers: {
+          "x_foo": "bar",
+        },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("OK");
+      done();
+    } catch (err) {
+      done(err);
+    } finally {
+      server.close();
+    }
+  });
+})

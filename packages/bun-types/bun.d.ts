@@ -1422,7 +1422,7 @@ declare module "bun" {
   type ModuleFormat = "esm"; // later: "cjs", "iife"
 
   interface BuildConfig {
-    entrypoints: [string, ...string[]]; // list of file path
+    entrypoints: string[]; // list of file path
     outdir?: string; // output directory
     target?: Target; // default: "browser"
     format?: ModuleFormat; // later: "cjs", "iife"

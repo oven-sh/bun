@@ -15,10 +15,9 @@ describe("Bun.build", () => {
   });
 
   test("invalid options throws", async () => {
+    expect(() => Bun.build({ entrypoints: [] })).toThrow();
     // @ts-expect-error
     expect(() => Bun.build({})).toThrow();
-    // @ts-expect-error
-    expect(() => Bun.build({ entrypoints: [] })).toThrow();
     // @ts-expect-error
     expect(() => Bun.build({ entrypoints: ["hello"], format: "invalid" })).toThrow();
     // @ts-expect-error

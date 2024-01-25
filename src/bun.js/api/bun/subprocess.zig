@@ -22,6 +22,7 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const Body = JSC.WebCore.Body;
 
 const PosixSpawn = bun.posix.spawn;
+const CloseCallbackHandler = JSC.WebCore.UVStreamSink.CloseCallbackHandler;
 
 const win_rusage = struct {
     utime: struct {
@@ -193,7 +194,8 @@ pub const Subprocess = struct {
     // on linux, it's a pidfd
     pidfd: if (Environment.isLinux) std.os.fd_t else u0 = std.math.maxInt(if (Environment.isLinux) std.os.fd_t else u0),
     pipes: if (Environment.isWindows) [3]uv.uv_pipe_t else u0 = if (Environment.isWindows) std.mem.zeroes([3]uv.uv_pipe_t) else 0,
-
+    closed_streams: u8 = 0,
+    deinit_onclose: bool = false,
     stdin: Writable,
     stdout: Readable,
     stderr: Readable,
@@ -548,6 +550,22 @@ pub const Subprocess = struct {
             }
         }
 
+        pub fn setCloseCallbackIfPossible(this: *Readable, callback: CloseCallbackHandler) bool {
+            switch (this.*) {
+                .pipe => {
+                    if (Environment.isWindows) {
+                        if (uv.uv_is_closed(@ptrCast(this.pipe.buffer.stream))) {
+                            return false;
+                        }
+                        this.pipe.buffer.closeCallback = callback;
+                        return true;
+                    }
+                    return false;
+                },
+                else => return false,
+            }
+        }
+
         pub fn finalize(this: *Readable) void {
             switch (this.*) {
                 inline .memfd, .fd => |fd| {
@@ -661,8 +679,8 @@ pub const Subprocess = struct {
             sig = arguments.ptr[0].coerce(i32, globalThis);
         }
 
-        if (!(sig > -1 and sig < std.math.maxInt(u8))) {
-            globalThis.throwInvalidArguments("Invalid signal: must be > -1 and < 255", .{});
+        if (!(sig >= 0 and sig <= std.math.maxInt(u8))) {
+            globalThis.throwInvalidArguments("Invalid signal: must be >= 0 and <= 255", .{});
             return .zero;
         }
 
@@ -712,8 +730,13 @@ pub const Subprocess = struct {
             }
             if (comptime Environment.isWindows) {
                 if (std.os.windows.kernel32.TerminateProcess(this.pid.process_handle, @intCast(sig)) == 0) {
-                    const err = @as(bun.C.E, @enumFromInt(@intFromEnum(bun.windows.GetLastError())));
-                    if (err != .SRCH)
+                    const err = bun.windows.getLastErrno();
+                    // if the process was already killed don't throw
+                    //
+                    // "After a process has terminated, call to TerminateProcess with open
+                    // handles to the process fails with ERROR_ACCESS_DENIED (5) error code."
+                    // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess
+                    if (err != .PERM)
                         return .{ .err = bun.sys.Error.fromCode(err, .kill) };
                 }
 
@@ -824,6 +847,8 @@ pub const Subprocess = struct {
         pipe: ?*uv.uv_pipe_t,
         poll_ref: ?*Async.FilePoll = null,
         written: usize = 0,
+        deinit_onclose: bool = false,
+        closeCallback: CloseCallbackHandler = CloseCallbackHandler.Empty,
 
         source: union(enum) {
             blob: JSC.WebCore.AnyBlob,
@@ -898,21 +923,10 @@ pub const Subprocess = struct {
             this.writeAllowBlocking(false);
         }
 
-        fn close(this: *BufferedPipeInput) void {
-            if (this.poll_ref) |poll| {
-                this.poll_ref = null;
-                poll.deinit();
-            }
+        fn destroy(this: *BufferedPipeInput) void {
+            defer this.closeCallback.run();
 
-            if (this.pipe) |pipe| {
-                _ = uv.uv_close(@ptrCast(pipe), null);
-                this.pipe = null;
-            }
-        }
-
-        pub fn deinit(this: *BufferedPipeInput) void {
-            this.close();
-
+            this.pipe = null;
             switch (this.source) {
                 .blob => |*blob| {
                     blob.detach();
@@ -920,6 +934,35 @@ pub const Subprocess = struct {
                 .array_buffer => |*array_buffer| {
                     array_buffer.deinit();
                 },
+            }
+        }
+
+        fn uvClosedCallback(handler: *anyopaque) callconv(.C) void {
+            const event = bun.cast(*uv.uv_pipe_t, handler);
+            var this = bun.cast(*BufferedPipeInput, event.data);
+            if (this.deinit_onclose) {
+                this.destroy();
+            }
+        }
+
+        fn close(this: *BufferedPipeInput) void {
+            if (this.poll_ref) |poll| {
+                this.poll_ref = null;
+                poll.deinit();
+            }
+
+            if (this.pipe) |pipe| {
+                pipe.data = this;
+                _ = uv.uv_close(@ptrCast(pipe), BufferedPipeInput.uvClosedCallback);
+            }
+        }
+
+        pub fn deinit(this: *BufferedPipeInput) void {
+            this.deinit_onclose = true;
+            this.close();
+
+            if (this.pipe == null or uv.uv_is_closed(@ptrCast(this.pipe.?))) {
+                this.destroy();
             }
         }
     };
@@ -1076,6 +1119,8 @@ pub const Subprocess = struct {
         status: Status = .{
             .pending = {},
         },
+        closeCallback: CloseCallbackHandler = CloseCallbackHandler.Empty,
+
         const FIFOType = if (Environment.isWindows) *uv.uv_pipe_t else JSC.WebCore.FIFO;
         pub const Status = union(enum) {
             pending: void,
@@ -1386,7 +1431,7 @@ pub const Subprocess = struct {
         }
         fn flushBufferedDataIntoReadableStream(this: *BufferedOutput) void {
             if (this.readable_stream_ref.get()) |readable| {
-                if(readable.ptr != .Bytes) return;
+                if (readable.ptr != .Bytes) return;
 
                 const internal_buffer = this.internal_buffer;
                 const isDone = this.status != .pending;
@@ -1493,16 +1538,30 @@ pub const Subprocess = struct {
             }
         }
 
+        fn uvClosedCallback(handler: *anyopaque) callconv(.C) void {
+            const event = bun.cast(*uv.uv_pipe_t, handler);
+            var this = bun.cast(*BufferedOutput, event.data);
+            this.readable_stream_ref.deinit();
+            this.closeCallback.run();
+        }
+
         pub fn close(this: *BufferedOutput) void {
+            var needCallbackCall = true;
             switch (this.status) {
                 .done => {},
                 .pending => {
                     if (Environment.isWindows) {
+                        needCallbackCall = false;
                         _ = uv.uv_read_stop(@ptrCast(&this.stream));
-                        _ = uv.uv_close(@ptrCast(&this.stream), null);
-                        this.readable_stream_ref.deinit();
+                        if (uv.uv_is_closed(@ptrCast(&this.stream))) {
+                            this.readable_stream_ref.deinit();
+                            this.closeCallback.run();
+                        } else {
+                            _ = uv.uv_close(@ptrCast(&this.stream), BufferedOutput.uvClosedCallback);
+                        }
                     } else {
                         this.stream.close();
+                        this.closeCallback.run();
                     }
                     this.status = .{ .done = {} };
                 },
@@ -1512,6 +1571,10 @@ pub const Subprocess = struct {
             if (this.internal_buffer.cap > 0) {
                 this.internal_buffer.listManaged(bun.default_allocator).deinit();
                 this.internal_buffer = .{};
+            }
+
+            if (Environment.isWindows and needCallbackCall) {
+                this.closeCallback.run();
             }
         }
     };
@@ -1578,6 +1641,7 @@ pub const Subprocess = struct {
                         .signal = .{},
                         .next = null,
                     };
+
                     if (maybe_readable) |readable| {
                         return Writable{
                             .pipe_to_readable_stream = .{
@@ -1699,8 +1763,41 @@ pub const Subprocess = struct {
             };
         }
 
+        pub fn setCloseCallbackIfPossible(this: *Writable, callback: CloseCallbackHandler) bool {
+            switch (this.*) {
+                .pipe => |pipe| {
+                    if (Environment.isWindows) {
+                        if (pipe.isClosed()) {
+                            return false;
+                        }
+                        pipe.closeCallback = callback;
+                        return true;
+                    }
+                    return false;
+                },
+                .pipe_to_readable_stream => |*pipe_to_readable_stream| {
+                    if (Environment.isWindows) {
+                        if (pipe_to_readable_stream.pipe.isClosed()) {
+                            return false;
+                        }
+                        pipe_to_readable_stream.pipe.closeCallback = callback;
+                        return true;
+                    }
+                    return false;
+                },
+                .buffered_input => {
+                    if (Environment.isWindows) {
+                        this.buffered_input.closeCallback = callback;
+                        return true;
+                    }
+                    return false;
+                },
+                else => return false,
+            }
+        }
+
         pub fn close(this: *Writable) void {
-            return switch (this.*) {
+            switch (this.*) {
                 .pipe => {},
                 .pipe_to_readable_stream => |*pipe_to_readable_stream| {
                     _ = pipe_to_readable_stream.pipe.end(null);
@@ -1714,9 +1811,24 @@ pub const Subprocess = struct {
                 },
                 .ignore => {},
                 .inherit => {},
-            };
+            }
         }
     };
+
+    fn closeIOCallback(this: *Subprocess) void {
+        log("closeIOCallback", .{});
+        this.closed_streams += 1;
+        if (this.closed_streams == @TypeOf(this.closed).len) {
+            this.exit_promise.deinit();
+            this.on_exit_callback.deinit();
+            this.stdio_pipes.deinit(bun.default_allocator);
+
+            if (this.deinit_onclose) {
+                log("destroy", .{});
+                bun.default_allocator.destroy(this);
+            }
+        }
+    }
 
     fn closeIO(this: *Subprocess, comptime io: @Type(.EnumLiteral)) void {
         if (this.closed.contains(io)) return;
@@ -1728,31 +1840,42 @@ pub const Subprocess = struct {
         //   1. We need to stop watching them
         //   2. We need to free the memory
         //   3. We need to halt any pending reads (1)
+
+        const closeCallback = CloseCallbackHandler.init(this, @ptrCast(&Subprocess.closeIOCallback));
+        const isAsync = @field(this, @tagName(io)).setCloseCallbackIfPossible(closeCallback);
+
         if (!this.hasCalledGetter(io)) {
             @field(this, @tagName(io)).finalize();
         } else {
             @field(this, @tagName(io)).close();
         }
+
+        if (!isAsync) {
+            // close is sync
+            closeCallback.run();
+        }
     }
 
     // This must only be run once per Subprocess
-    pub fn finalizeSync(this: *Subprocess) void {
+    pub fn finalizeStreams(this: *Subprocess) void {
+        log("finalizeStreams", .{});
         this.closeProcess();
 
         this.closeIO(.stdin);
         this.closeIO(.stdout);
         this.closeIO(.stderr);
-
-        this.exit_promise.deinit();
-        this.on_exit_callback.deinit();
-        this.stdio_pipes.deinit(bun.default_allocator);
     }
 
     pub fn finalize(this: *Subprocess) callconv(.C) void {
+        log("finalize", .{});
         std.debug.assert(!this.hasPendingActivity());
-        this.finalizeSync();
-        log("Finalize", .{});
-        bun.default_allocator.destroy(this);
+        if (this.closed_streams == @TypeOf(this.closed).len) {
+            log("destroy", .{});
+            bun.default_allocator.destroy(this);
+        } else {
+            this.deinit_onclose = true;
+            this.finalizeStreams();
+        }
     }
 
     pub fn getExited(
@@ -2230,7 +2353,7 @@ pub const Subprocess = struct {
             const stdout = subprocess.stdout.toBufferedValue(globalThis);
             const stderr = subprocess.stderr.toBufferedValue(globalThis);
             const resource_usage = subprocess.createResourceUsageObject(globalThis);
-            subprocess.finalizeSync();
+            subprocess.finalizeStreams();
 
             const sync_value = JSC.JSValue.createEmptyObject(globalThis, 5);
             sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@as(i32, @intCast(exitCode))));
@@ -2608,6 +2731,7 @@ pub const Subprocess = struct {
                 subprocess.stdin.buffered_input.writeIfPossible(true);
             }
         }
+
         subprocess.closeIO(.stdin);
 
         if (!WaiterThread.shouldUseWaiterThread()) {
@@ -2652,7 +2776,7 @@ pub const Subprocess = struct {
         const stdout = subprocess.stdout.toBufferedValue(globalThis);
         const stderr = subprocess.stderr.toBufferedValue(globalThis);
         const resource_usage = subprocess.createResourceUsageObject(globalThis);
-        subprocess.finalizeSync();
+        subprocess.finalizeStreams();
 
         const sync_value = JSC.JSValue.createEmptyObject(globalThis, 5);
         sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@as(i32, @intCast(exitCode))));

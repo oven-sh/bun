@@ -214,18 +214,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         const HTTPClient = @This();
 
-        pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
-            var vm = global.bunVM();
-            const loop: *bun.Async.Loop = @alignCast(@ptrCast(loop_));
-            const ctx: *uws.SocketContext = @as(*uws.SocketContext, @ptrCast(ctx_));
-
-            if (vm.event_loop_handle) |other| {
-                std.debug.assert(other == loop);
-            }
-            const is_new_loop = vm.event_loop_handle == null;
-
-            vm.event_loop_handle = loop;
-
+        pub fn register(_: *JSC.JSGlobalObject, _: *anyopaque, ctx: *uws.SocketContext) callconv(.C) void {
             Socket.configure(
                 ctx,
                 true,
@@ -242,9 +231,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     pub const onHandshake = handleHandshake;
                 },
             );
-            if (is_new_loop) {
-                vm.prepareLoop();
-            }
         }
 
         pub fn connect(
@@ -1586,7 +1572,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         this.terminate(ErrorCode.invalid_utf8);
                         return;
                     }
-                    reason = bun.String.create(body_slice);
+                    reason = bun.String.createUTF8(body_slice);
                     @memcpy(final_body_bytes[8..][0..body_len], body_slice);
                 }
             }
@@ -1636,12 +1622,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             len: usize,
             op: u8,
         ) callconv(.C) void {
-            if (this.tcp.isClosed() or this.tcp.isShutdown()) {
+            if (this.tcp.isClosed() or this.tcp.isShutdown() or op > 0xF) {
                 this.dispatchAbruptClose();
                 return;
             }
 
-            const opcode = @as(Opcode, @enumFromInt(@as(u4, @truncate(op))));
+            const opcode: Opcode = @enumFromInt(op);
             const slice = ptr[0..len];
             const bytes = Copy{ .bytes = slice };
             // fast path: small frame, no backpressure, attempt to send without allocating
@@ -1655,6 +1641,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             _ = this.sendData(bytes, !this.hasBackpressure(), opcode);
         }
+
         pub fn writeString(
             this: *WebSocket,
             str_: *const JSC.ZigString,

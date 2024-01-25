@@ -100,9 +100,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     }
 
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt_;
-        _ = options_;
-        try writer.print("{d}", .{@intFromEnum(fd)});
+        try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
     }
 };
 
@@ -180,7 +178,7 @@ pub fn len(value: anytype) usize {
         .Array => |info| info.len,
         .Vector => |info| info.len,
         .Pointer => |info| switch (info.size) {
-            .One => switch (@as(@import("builtin").TypeInfo, @typeInfo(info.child))) {
+            .One => switch (@typeInfo(info.child)) {
                 .Array => |array| brk: {
                     if (array.sentinel != null) {
                         @compileError("use bun.sliceTo");
@@ -1131,12 +1129,8 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
-        var temp: [MAX_PATH_BYTES]u8 = undefined;
-        var temp2: [MAX_PATH_BYTES]u8 = undefined;
-        const temp_slice = try std.os.getFdPath(fd, &temp);
-        const slice = path.normalizeBuf(temp_slice, &temp2, .loose);
-        strings.copyU8IntoU16(buf, slice);
-        return buf[0..slice.len];
+        const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, buf);
+        return wide_slice;
     }
 
     @panic("TODO unsupported platform for getFdPathW");

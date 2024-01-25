@@ -1912,3 +1912,22 @@ pub const PosixToWinNormalizer = struct {
         return buf[0..maybe_posix_path.len :0];
     }
 };
+
+/// Used in PathInlines.h
+/// gets cwd off of the global object
+export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
+    globalObject: *bun.JSC.JSGlobalObject,
+    in: bun.String,
+) bun.String {
+    const str = in.toUTF8WithoutRef(bun.default_allocator);
+    defer str.deinit();
+
+    const out_slice = joinAbsStringBuf(
+        globalObject.bunVM().bundler.fs.top_level_dir,
+        &join_buf,
+        &.{str.slice()},
+        comptime Platform.auto.resolve(),
+    );
+
+    return bun.String.createUTF8(out_slice);
+}

@@ -256,6 +256,7 @@ pub const PathWatcher = struct {
     const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     fn uvEventCallback(event: *uv.uv_fs_event_t, filename: [*c]const u8, events: c_int, status: c_int) callconv(.C) void {
+        if (event.data == null) return;
         const this = bun.cast(*PathWatcher, event.data);
 
         const manager = this.manager orelse return;
@@ -348,15 +349,24 @@ pub const PathWatcher = struct {
         this.flushCallback(this.ctx);
     }
 
+    fn uvClosedCallback(handler: *anyopaque) callconv(.C) void {
+        const event = bun.cast(*uv.uv_fs_event_t, handler);
+        const this = bun.cast(*PathWatcher, event.data);
+        this.destroy();
+    }
+
     pub fn deinit(this: *PathWatcher) void {
         this.closed = false;
-        _ = uv.uv_fs_event_stop(&this.handle);
 
         if (this.manager) |manager| {
             manager.unregisterWatcher(this);
         }
-
-        this.destroy();
+        if (uv.uv_is_closed(@ptrCast(&this.handle))) {
+            this.destroy();
+        } else {
+            _ = uv.uv_fs_event_stop(&this.handle);
+            _ = uv.uv_close(@ptrCast(&this.handle), PathWatcher.uvClosedCallback);
+        }
     }
 };
 

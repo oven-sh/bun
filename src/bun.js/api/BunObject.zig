@@ -549,7 +549,7 @@ pub fn shellEscape(
                 globalThis.throwOutOfMemory();
                 return .undefined;
             };
-            return bun.String.create(outbuf.items[0..]).toJS(globalThis);
+            return bun.String.createUTF8(outbuf.items[0..]).toJS(globalThis);
         }
         return jsval;
     }
@@ -559,7 +559,7 @@ pub fn shellEscape(
             globalThis.throwOutOfMemory();
             return .undefined;
         };
-        return bun.String.create(outbuf.items[0..]).toJS(globalThis);
+        return bun.String.createUTF8(outbuf.items[0..]).toJS(globalThis);
     }
 
     return jsval;
@@ -1408,11 +1408,7 @@ pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) c
                 continue;
             }
 
-            if (byte == '\r') {
-                if (i + 1 < bytes.len and bytes[i + 1] == '\n') {
-                    return JSC.JSValue.jsNumber(i + 1);
-                }
-            } else if (byte == '\n') {
+            if (byte == '\n') {
                 return JSC.JSValue.jsNumber(i);
             }
 
@@ -1856,10 +1852,10 @@ pub const Crypto = struct {
                     // bcrypt silently truncates passwords longer than 72 bytes
                     // we use SHA512 to hash the password if it's longer than 72 bytes
                     if (password.len > 72) {
-                        var sha_256 = bun.sha.SHA512.init();
-                        defer sha_256.deinit();
-                        sha_256.update(password);
-                        sha_256.final(outbuf[0..bun.sha.SHA512.digest]);
+                        var sha_512 = bun.sha.SHA512.init();
+                        defer sha_512.deinit();
+                        sha_512.update(password);
+                        sha_512.final(outbuf[0..bun.sha.SHA512.digest]);
                         password_to_use = outbuf[0..bun.sha.SHA512.digest];
                         outbuf_slice = outbuf[bun.sha.SHA512.digest..];
                     }
@@ -5364,7 +5360,7 @@ const InternalTestingAPIs = struct {
             return .zero;
         };
 
-        var str = bun.String.create(buffer.list.items);
+        var str = bun.String.createUTF8(buffer.list.items);
         defer str.deref();
         return str.toJS(globalThis);
     }

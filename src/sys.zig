@@ -750,6 +750,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                 &bytes_written,
                 null,
             );
+            log("WriteFile({d}, {d}) = {d} (written: {d})", .{ @intFromPtr(fd.cast()), adjusted_len, rc, bytes_written });
             if (rc == 0) {
                 return .{
                     .err = Syscall.Error{
@@ -1751,13 +1752,13 @@ pub fn pipe() Maybe([2]bun.FileDescriptor) {
 
 pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
-        const target: *windows.HANDLE = undefined;
+        var target: windows.HANDLE = undefined;
         const process = kernel32.GetCurrentProcess();
         const out = kernel32.DuplicateHandle(
             process,
             fd.cast(),
             process,
-            target,
+            &target,
             0,
             w.TRUE,
             w.DUPLICATE_SAME_ACCESS,
@@ -1767,7 +1768,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
                 return err;
             }
         }
-        return Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
+        return Maybe(bun.FileDescriptor){ .result = bun.toFD(target) };
     }
 
     const out = std.c.dup(fd.cast());

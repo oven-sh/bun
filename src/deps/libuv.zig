@@ -15,15 +15,12 @@ const SOCKET = *anyopaque;
 const LPFN_ACCEPTEX = *const anyopaque;
 const WIN32_FIND_DATAW = *const anyopaque;
 const LPFN_CONNECTEX = *const anyopaque;
-const O = std.os.O;
 const FILE = std.c.FILE;
 const CRITICAL_SECTION = *anyopaque;
 const INPUT_RECORD = *const anyopaque;
 const sockaddr = std.os.sockaddr;
-const sockaddr_in = std.os.sockaddr_in;
-const sockaddr_in6 = std.os.sockaddr_in6;
-const sockaddr_storage = std.os.sockaddr_storage;
-const sockaddr_un = std.os.sockaddr_un;
+const sockaddr_storage = std.os.linux.sockaddr_storage;
+const sockaddr_un = std.os.linux.sockaddr_un;
 const BOOL = windows.BOOL;
 const Env = bun.Environment;
 
@@ -189,9 +186,62 @@ pub const UV__DT_SOCKET = UV_DIRENT_SOCKET;
 pub const UV__DT_CHAR = UV_DIRENT_CHAR;
 pub const UV__DT_BLOCK = UV_DIRENT_BLOCK;
 
+pub const O = struct {
+    pub const APPEND = UV_FS_O_APPEND;
+    pub const CREAT = UV_FS_O_CREAT;
+    pub const EXCL = UV_FS_O_EXCL;
+    pub const FILEMAP = UV_FS_O_FILEMAP;
+    pub const RANDOM = UV_FS_O_RANDOM;
+    pub const RDONLY = UV_FS_O_RDONLY;
+    pub const RDWR = UV_FS_O_RDWR;
+    pub const SEQUENTIAL = UV_FS_O_SEQUENTIAL;
+    pub const SHORT_LIVED = UV_FS_O_SHORT_LIVED;
+    pub const TEMPORARY = UV_FS_O_TEMPORARY;
+    pub const TRUNC = UV_FS_O_TRUNC;
+    pub const WRONLY = UV_FS_O_WRONLY;
+    pub const DIRECT = UV_FS_O_DIRECT;
+    pub const DIRECTORY = UV_FS_O_DIRECTORY;
+    pub const DSYNC = UV_FS_O_DSYNC;
+    pub const EXLOCK = UV_FS_O_EXLOCK;
+    pub const NOATIME = UV_FS_O_NOATIME;
+    pub const NOCTTY = UV_FS_O_NOCTTY;
+    pub const NOFOLLOW = UV_FS_O_NOFOLLOW;
+    pub const NONBLOCK = UV_FS_O_NONBLOCK;
+    pub const SYMLINK = UV_FS_O_SYMLINK;
+    pub const SYNC = UV_FS_O_SYNC;
+
+    pub fn fromStd(c_flags: i32) i32 {
+        var flags: i32 = 0;
+        if (c_flags & std.os.O.NONBLOCK != 0) flags |= NONBLOCK;
+        if (c_flags & std.os.O.CREAT != 0) flags |= CREAT;
+        if (c_flags & std.os.O.NOFOLLOW != 0) flags |= NOFOLLOW;
+        if (c_flags & std.os.O.WRONLY != 0) flags |= WRONLY;
+        if (c_flags & std.os.O.RDONLY != 0) flags |= RDONLY;
+        if (c_flags & std.os.O.RDWR != 0) flags |= RDWR;
+        if (c_flags & std.os.O.TRUNC != 0) flags |= TRUNC;
+        if (c_flags & std.os.O.APPEND != 0) flags |= APPEND;
+
+        return flags;
+    }
+};
+
+const _O_RDONLY = 0x0000;
+const _O_WRONLY = 0x0001;
+const _O_RDWR = 0x0002;
+const _O_APPEND = 0x0008;
+const _O_CREAT = 0x0100;
+const _O_TRUNC = 0x0200;
+const _O_EXCL = 0x0400;
+const _O_TEXT = 0x4000;
+const _O_NOINHERIT = 0x0080;
+const _O_TEMPORARY = 0x0040;
+const _O_SHORT_LIVED = 0x1000;
+const _O_SEQUENTIAL = 0x0020;
+const _O_RANDOM = 0x0010;
+
 // These **do not** map to std.os.O!
 pub const UV_FS_O_APPEND = 0x0008;
-pub const UV_FS_O_CREAT = 0x0100;
+pub const UV_FS_O_CREAT = _O_CREAT;
 pub const UV_FS_O_EXCL = 0x0400;
 pub const UV_FS_O_FILEMAP = 0x20000000;
 pub const UV_FS_O_RANDOM = 0x0010;
@@ -200,8 +250,8 @@ pub const UV_FS_O_RDWR = 0x0002;
 pub const UV_FS_O_SEQUENTIAL = 0x0020;
 pub const UV_FS_O_SHORT_LIVED = 0x1000;
 pub const UV_FS_O_TEMPORARY = 0x0040;
-pub const UV_FS_O_TRUNC = 0x0200;
-pub const UV_FS_O_WRONLY = 0x0001;
+pub const UV_FS_O_TRUNC = _O_TRUNC;
+pub const UV_FS_O_WRONLY = _O_WRONLY;
 pub const UV_FS_O_DIRECT = 0x02000000;
 pub const UV_FS_O_DIRECTORY = 0;
 pub const UV_FS_O_DSYNC = 0x04000000;
@@ -268,7 +318,7 @@ pub const uv_random_s = struct_uv_random_s;
 pub const uv_env_item_s = struct_uv_env_item_s;
 pub const uv_cpu_times_s = struct_uv_cpu_times_s;
 pub const uv_cpu_info_s = struct_uv_cpu_info_s;
-pub const uv_interface_address_s = struct_uv_interface_address_s;
+pub const uv_interface_address_s = uv_interface_address_s;
 pub const uv_passwd_s = struct_uv_passwd_s;
 pub const uv_group_s = struct_uv_group_s;
 pub const uv_utsname_s = struct_uv_utsname_s;
@@ -1329,7 +1379,7 @@ pub const struct_uv_fs_event_req_s = extern struct {
     next_req: [*c]struct_uv_req_s,
 };
 pub const uv_fs_event_t = struct_uv_fs_event_s;
-pub const uv_fs_event_cb = ?*const fn ([*c]uv_fs_event_t, [*]const u8, c_int, c_int) callconv(.C) void;
+pub const uv_fs_event_cb = ?*const fn (*uv_fs_event_t, [*c]const u8, c_int, c_int) callconv(.C) void;
 pub const struct_uv_fs_event_s = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
@@ -1666,27 +1716,29 @@ pub const struct_uv_cpu_times_s = extern struct {
     irq: u64,
 };
 pub const struct_uv_cpu_info_s = extern struct {
-    model: [*]u8,
+    model: [*:0]u8,
     speed: c_int,
     cpu_times: struct_uv_cpu_times_s,
 };
 pub const uv_cpu_info_t = struct_uv_cpu_info_s;
-const union_unnamed_460 = extern union {
-    address4: sockaddr_in,
-    address6: sockaddr_in6,
+
+const sockaddr_in = std.os.linux.sockaddr.in;
+const sockaddr_in6 = std.os.linux.sockaddr.in6;
+pub const addr_union = extern union {
+    address4: std.os.linux.sockaddr.in,
+    address6: std.os.linux.sockaddr.in6,
 };
-const union_unnamed_461 = extern union {
-    netmask4: sockaddr_in,
-    netmask6: sockaddr_in6,
+const netmask_union = extern union {
+    netmask4: std.os.linux.sockaddr.in,
+    netmask6: std.os.linux.sockaddr.in6,
 };
-pub const struct_uv_interface_address_s = extern struct {
-    name: [*]u8,
+pub const uv_interface_address_t = extern struct {
+    name: [*:0]u8,
     phys_addr: [6]u8,
     is_internal: c_int,
-    address: union_unnamed_460,
-    netmask: union_unnamed_461,
+    address: addr_union,
+    netmask: netmask_union,
 };
-pub const uv_interface_address_t = struct_uv_interface_address_s;
 pub const struct_uv_passwd_s = extern struct {
     username: [*]u8,
     uid: c_ulong,
@@ -1702,10 +1754,14 @@ pub const struct_uv_group_s = extern struct {
 };
 pub const uv_group_t = struct_uv_group_s;
 pub const struct_uv_utsname_s = extern struct {
-    sysname: [256]u8,
-    release: [256]u8,
-    version: [256]u8,
-    machine: [256]u8,
+    sysname: [255:0]u8,
+    release: [255:0]u8,
+    version: [255:0]u8,
+    machine: [255:0]u8,
+
+    comptime {
+        std.debug.assert(@sizeOf(struct_uv_utsname_s) == 256 * 4);
+    }
 };
 pub const uv_utsname_t = struct_uv_utsname_s;
 pub const struct_uv_statfs_s = extern struct {
@@ -1823,9 +1879,9 @@ pub const UV_LEAVE_GROUP: c_int = 0;
 pub const UV_JOIN_GROUP: c_int = 1;
 pub const uv_membership = c_uint;
 pub extern fn uv_translate_sys_error(sys_errno: c_int) c_int;
-pub extern fn uv_strerror(err: c_int) [*]const u8;
+pub extern fn uv_strerror(err: c_int) [*c]const u8;
 pub extern fn uv_strerror_r(err: c_int, buf: [*]u8, buflen: usize) [*]u8;
-pub extern fn uv_err_name(err: c_int) [*]const u8;
+pub extern fn uv_err_name(err: c_int) [*c]const u8;
 pub extern fn uv_err_name_r(err: c_int, buf: [*]u8, buflen: usize) [*]u8;
 pub extern fn uv_shutdown(req: [*c]uv_shutdown_t, handle: *uv_stream_t, cb: uv_shutdown_cb) c_int;
 pub extern fn uv_handle_size(@"type": uv_handle_type) usize;
@@ -2054,11 +2110,11 @@ pub extern fn uv_os_getppid() uv_pid_t;
 pub extern fn uv_os_getpriority(pid: uv_pid_t, priority: [*c]c_int) c_int;
 pub extern fn uv_os_setpriority(pid: uv_pid_t, priority: c_int) c_int;
 pub extern fn uv_available_parallelism() c_uint;
-pub extern fn uv_cpu_info(cpu_infos: [*c][*c]uv_cpu_info_t, count: [*c]c_int) c_int;
+pub extern fn uv_cpu_info(cpu_infos: *[*]uv_cpu_info_t, count: *c_int) c_int;
 pub extern fn uv_free_cpu_info(cpu_infos: [*c]uv_cpu_info_t, count: c_int) void;
 pub extern fn uv_cpumask_size() c_int;
-pub extern fn uv_interface_addresses(addresses: [*c]?*uv_interface_address_t, count: [*c]c_int) c_int;
-pub extern fn uv_free_interface_addresses(addresses: ?*uv_interface_address_t, count: c_int) void;
+pub extern fn uv_interface_addresses(addresses: *[*]uv_interface_address_t, count: [*c]c_int) c_int;
+pub extern fn uv_free_interface_addresses(addresses: [*]uv_interface_address_t, count: c_int) void;
 pub extern fn uv_os_environ(envitems: [*c][*c]uv_env_item_t, count: [*c]c_int) c_int;
 pub extern fn uv_os_free_environ(envitems: [*c]uv_env_item_t, count: c_int) void;
 pub extern fn uv_os_getenv(name: [*]const u8, buffer: [*]u8, size: [*c]usize) c_int;
@@ -2280,6 +2336,13 @@ pub const union_uv_any_req = extern union {
 pub extern fn uv_loop_get_data([*c]const uv_loop_t) ?*anyopaque;
 pub extern fn uv_loop_set_data(*uv_loop_t, data: ?*anyopaque) void;
 
+pub const UV_HANDLE_CLOSED: c_int = 0x00000002;
+
+// uv_is_closing checks for closing or closed, we need to know if is indeed closed so we can deinit without call uv_close
+pub fn uv_is_closed(handle: *const uv_handle_t) bool {
+    return (handle.flags & UV_HANDLE_CLOSED != 0);
+}
+
 pub fn translateUVErrorToE(code: anytype) bun.C.E {
     return switch (code) {
         UV_EPERM => bun.C.E.PERM,
@@ -2355,13 +2418,93 @@ pub fn translateUVErrorToE(code: anytype) bun.C.E {
 }
 
 pub const ReturnCode = enum(c_int) {
+    pub fn format(this: ReturnCode, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt_;
+        _ = options_;
+
+        if (this.errEnum()) |err| {
+            try writer.writeAll(@tagName(err));
+        } else {
+            try writer.print("{d}", .{this.value});
+        }
+    }
+
     pub inline fn int(this: ReturnCode) c_int {
         return @intFromEnum(this);
     }
     pub inline fn errno(this: ReturnCode) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
         return if (this.int() < 0)
-            // @intFromEnum(translateUVErrorToE(this.value))
-            @as(u16, @intCast(-this.int()))
+            switch (this.int()) {
+                UV_EPERM => @intFromEnum(bun.C.E.PERM),
+                UV_ENOENT => @intFromEnum(bun.C.E.NOENT),
+                UV_ESRCH => @intFromEnum(bun.C.E.SRCH),
+                UV_EINTR => @intFromEnum(bun.C.E.INTR),
+                UV_EIO => @intFromEnum(bun.C.E.IO),
+                UV_ENXIO => @intFromEnum(bun.C.E.NXIO),
+                UV_E2BIG => @intFromEnum(bun.C.E.@"2BIG"),
+                UV_EBADF => @intFromEnum(bun.C.E.BADF),
+                UV_EAGAIN => @intFromEnum(bun.C.E.AGAIN),
+                UV_ENOMEM => @intFromEnum(bun.C.E.NOMEM),
+                UV_EACCES => @intFromEnum(bun.C.E.ACCES),
+                UV_EFAULT => @intFromEnum(bun.C.E.FAULT),
+                UV_EBUSY => @intFromEnum(bun.C.E.BUSY),
+                UV_EEXIST => @intFromEnum(bun.C.E.EXIST),
+                UV_EXDEV => @intFromEnum(bun.C.E.XDEV),
+                UV_ENODEV => @intFromEnum(bun.C.E.NODEV),
+                UV_ENOTDIR => @intFromEnum(bun.C.E.NOTDIR),
+                UV_EISDIR => @intFromEnum(bun.C.E.ISDIR),
+                UV_EINVAL => @intFromEnum(bun.C.E.INVAL),
+                UV_ENFILE => @intFromEnum(bun.C.E.NFILE),
+                UV_EMFILE => @intFromEnum(bun.C.E.MFILE),
+                UV_ENOTTY => @intFromEnum(bun.C.E.NOTTY),
+                UV_ETXTBSY => @intFromEnum(bun.C.E.TXTBSY),
+                UV_EFBIG => @intFromEnum(bun.C.E.FBIG),
+                UV_ENOSPC => @intFromEnum(bun.C.E.NOSPC),
+                UV_ESPIPE => @intFromEnum(bun.C.E.SPIPE),
+                UV_EROFS => @intFromEnum(bun.C.E.ROFS),
+                UV_EMLINK => @intFromEnum(bun.C.E.MLINK),
+                UV_EPIPE => @intFromEnum(bun.C.E.PIPE),
+                UV_ERANGE => @intFromEnum(bun.C.E.RANGE),
+                UV_ENAMETOOLONG => @intFromEnum(bun.C.E.NAMETOOLONG),
+                UV_ENOSYS => @intFromEnum(bun.C.E.NOSYS),
+                UV_ENOTEMPTY => @intFromEnum(bun.C.E.NOTEMPTY),
+                UV_ELOOP => @intFromEnum(bun.C.E.LOOP),
+                UV_EUNATCH => @intFromEnum(bun.C.E.UNATCH),
+                UV_ENODATA => @intFromEnum(bun.C.E.NODATA),
+                UV_ENONET => @intFromEnum(bun.C.E.NONET),
+                UV_EPROTO => @intFromEnum(bun.C.E.PROTO),
+                UV_EOVERFLOW => @intFromEnum(bun.C.E.OVERFLOW),
+                UV_EILSEQ => @intFromEnum(bun.C.E.ILSEQ),
+                UV_ENOTSOCK => @intFromEnum(bun.C.E.NOTSOCK),
+                UV_EDESTADDRREQ => @intFromEnum(bun.C.E.DESTADDRREQ),
+                UV_EMSGSIZE => @intFromEnum(bun.C.E.MSGSIZE),
+                UV_EPROTOTYPE => @intFromEnum(bun.C.E.PROTOTYPE),
+                UV_ENOPROTOOPT => @intFromEnum(bun.C.E.NOPROTOOPT),
+                UV_EPROTONOSUPPORT => @intFromEnum(bun.C.E.PROTONOSUPPORT),
+                UV_ESOCKTNOSUPPORT => @intFromEnum(bun.C.E.SOCKTNOSUPPORT),
+                UV_ENOTSUP => @intFromEnum(bun.C.E.NOTSUP),
+                UV_EAFNOSUPPORT => @intFromEnum(bun.C.E.AFNOSUPPORT),
+                UV_EADDRINUSE => @intFromEnum(bun.C.E.ADDRINUSE),
+                UV_EADDRNOTAVAIL => @intFromEnum(bun.C.E.ADDRNOTAVAIL),
+                UV_ENETDOWN => @intFromEnum(bun.C.E.NETDOWN),
+                UV_ENETUNREACH => @intFromEnum(bun.C.E.NETUNREACH),
+                UV_ECONNABORTED => @intFromEnum(bun.C.E.CONNABORTED),
+                UV_ECONNRESET => @intFromEnum(bun.C.E.CONNRESET),
+                UV_ENOBUFS => @intFromEnum(bun.C.E.NOBUFS),
+                UV_EISCONN => @intFromEnum(bun.C.E.ISCONN),
+                UV_ENOTCONN => @intFromEnum(bun.C.E.NOTCONN),
+                UV_ESHUTDOWN => @intFromEnum(bun.C.E.SHUTDOWN),
+                UV_ETIMEDOUT => @intFromEnum(bun.C.E.TIMEDOUT),
+                UV_ECONNREFUSED => @intFromEnum(bun.C.E.CONNREFUSED),
+                UV_EHOSTDOWN => @intFromEnum(bun.C.E.HOSTDOWN),
+                UV_EHOSTUNREACH => @intFromEnum(bun.C.E.HOSTUNREACH),
+                UV_EALREADY => @intFromEnum(bun.C.E.ALREADY),
+                UV_EREMOTEIO => @intFromEnum(bun.C.E.REMOTEIO),
+                UV_ECANCELED => @intFromEnum(bun.C.E.CANCELED),
+                UV_ECHARSET => @intFromEnum(bun.C.E.CHARSET),
+                UV_EOF => @intFromEnum(bun.C.E.OF),
+                else => null,
+            }
         else
             null;
     }
@@ -2377,9 +2520,19 @@ pub const ReturnCode = enum(c_int) {
 pub const ReturnCodeI64 = extern struct {
     value: i64,
 
+    pub fn format(this: ReturnCodeI64, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt_;
+        _ = options_;
+
+        if (this.errEnum()) |err| {
+            try writer.writeAll(@tagName(err));
+        } else {
+            try writer.print("{d}", .{this.value});
+        }
+    }
+
     pub inline fn errno(this: ReturnCodeI64) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
         return if (this.value < 0)
-            // @intFromEnum(translateUVErrorToE(this.value))
             @as(u16, @intCast(-this.value))
         else
             null;

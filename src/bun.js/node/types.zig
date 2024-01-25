@@ -292,7 +292,7 @@ pub const StringOrBuffer = union(enum) {
                     this.encoded_slice = .{};
                 }
 
-                const str = bun.String.create(this.encoded_slice.slice());
+                const str = bun.String.createUTF8(this.encoded_slice.slice());
                 defer str.deref();
                 return str.toJS(ctx);
             },
@@ -685,7 +685,7 @@ pub const PathLike = union(enum) {
                     if (allocator.vtable == bun.default_allocator.vtable) {}
                 }
 
-                const str = bun.String.create(encoded.slice());
+                const str = bun.String.createUTF8(encoded.slice());
                 defer str.deref();
                 return str.toJS(globalObject);
             },
@@ -2172,7 +2172,7 @@ pub const Path = struct {
         else
             PathHandler.joinStringBuf(buf_to_use, to_join[0..i], .windows);
 
-        var str = bun.String.create(out);
+        var str = bun.String.createUTF8(out);
         defer str.deref();
         return str.toJS(globalThis);
     }

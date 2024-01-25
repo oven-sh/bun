@@ -1,5 +1,6 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { expect } from "bun:test";
+import { platform } from "os";
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -249,3 +250,10 @@ expect.extend({
     };
   },
 });
+
+export function ospath(path: string) {
+  if (process.platform === "win32") {
+    return path.replace(/\//g, "\\");
+  }
+  return path;
+}

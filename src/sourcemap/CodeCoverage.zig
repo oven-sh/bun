@@ -617,7 +617,7 @@ pub const ByteRangeMapping = struct {
             return .zero;
         };
 
-        var str = bun.String.create(mutable_str.toOwnedSliceLeaky());
+        var str = bun.String.createUTF8(mutable_str.toOwnedSliceLeaky());
         defer str.deref();
         return str.toJS(globalThis);
     }

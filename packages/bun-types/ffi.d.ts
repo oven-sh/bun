@@ -259,7 +259,7 @@ declare module "bun:ffi" {
     f32 = 10,
 
     /**
-     * Booelan value
+     * Boolean value
      *
      * Must be `true` or `false`. `0` and `1` type coercion is not supported.
      *
@@ -339,8 +339,7 @@ declare module "bun:ffi" {
     function = 17,
   }
 
-  type UNTYPED = never;
-  type Pointer = number & {};
+  type Pointer = number & { __pointer__: null };
 
   interface FFITypeToArgsType {
     [FFIType.char]: number;
@@ -509,7 +508,7 @@ declare module "bun:ffi" {
      * This is useful if the library has already been loaded
      * or if the module is also using Node-API.
      */
-    readonly ptr?: number | bigint;
+    readonly ptr?: Pointer | bigint;
 
     /**
      * Can C/FFI code call this function from a separate thread?
@@ -539,7 +538,7 @@ declare module "bun:ffi" {
   //  */
   // export function callback(ffi: FFIFunction, cb: Function): number;
 
-  interface Library<Fns extends Readonly<Record<string, Narrow<FFIFunction>>>> {
+  interface Library<Fns extends Symbols> {
     symbols: ConvertFns<Fns>;
 
     /**
@@ -558,20 +557,7 @@ declare module "bun:ffi" {
       ? FFITypeStringToType[T]
       : never;
 
-  // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-  type _Narrow<T, U> = [U] extends [T] ? U : Extract<T, U>;
-  type Narrow<T = unknown> =
-    | _Narrow<T, 0 | (number & {})>
-    | _Narrow<T, 0n | (bigint & {})>
-    | _Narrow<T, "" | (string & {})>
-    | _Narrow<T, boolean>
-    | _Narrow<T, symbol>
-    | _Narrow<T, []>
-    | _Narrow<T, { [_: PropertyKey]: Narrow }>
-    | (T extends object ? { [K in keyof T]: Narrow<T[K]> } : never)
-    | Extract<{} | null | undefined, T>;
-
-  type ConvertFns<Fns extends Readonly<Record<string, FFIFunction>>> = {
+  type ConvertFns<Fns extends Symbols> = {
     [K in keyof Fns]: (
       ...args: Fns[K]["args"] extends infer A extends readonly FFITypeOrString[]
         ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
@@ -611,7 +597,7 @@ declare module "bun:ffi" {
    * bun uses [tinycc](https://github.com/TinyCC/tinycc), so a big thanks
    * goes to Fabrice Bellard and TinyCC maintainers for making this possible.
    */
-  function dlopen<Fns extends Record<string, Narrow<FFIFunction>>>(
+  function dlopen<Fns extends Record<string, FFIFunction>>(
     name: string,
     symbols: Fns,
   ): Library<Fns>;
@@ -700,7 +686,7 @@ declare module "bun:ffi" {
    * bun uses [tinycc](https://github.com/TinyCC/tinycc), so a big thanks
    * goes to Fabrice Bellard and TinyCC maintainers for making this possible.
    */
-  function linkSymbols<Fns extends Record<string, Narrow<FFIFunction>>>(
+  function linkSymbols<Fns extends Record<string, FFIFunction>>(
     symbols: Fns,
   ): Library<Fns>;
 

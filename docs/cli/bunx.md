@@ -63,7 +63,11 @@ $ bunx --bun my-cli # good
 $ bunx my-cli --bun # bad
 ```
 
-Of course, you can also use the `#!/usr/bin/env bun` to execute scripts with bun.
+To force bun to always be used with a script, use a shebang.
+
+```
+#!/usr/bin/env bun
+```
 
 <!-- ## Environment variables
 

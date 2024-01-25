@@ -576,11 +576,10 @@ pub const StandaloneModuleGraph = struct {
         // and also just makes sense.
         const argv = bun.argv();
         if (argv.len > 0) {
-            const argv0_len = bun.len(argv[0]);
-            if (argv0_len > 0) {
-                const argv0 = argv[0][0..argv0_len];
-
-                if (argv0_len == 3) {
+            // const argv0_len = bun.len(argv[0]);
+            const argv0 = argv[0];
+            if (argv0.len > 0) {
+                if (argv0.len == 3) {
                     if (bun.strings.eqlComptimeIgnoreLen(argv0, "bun")) {
                         return null;
                     }
@@ -592,7 +591,7 @@ pub const StandaloneModuleGraph = struct {
                     }
                 }
 
-                if (argv0_len == 4) {
+                if (argv0.len == 4) {
                     if (bun.strings.eqlComptimeIgnoreLen(argv0, "bunx")) {
                         return null;
                     }
@@ -617,7 +616,7 @@ pub const StandaloneModuleGraph = struct {
                         &whichbuf,
                         bun.getenvZ("PATH") orelse return error.FileNotFound,
                         "",
-                        bun.span(bun.argv()[0]),
+                        bun.argv()[0],
                     )) |path| {
                         return bun.toFD((try std.fs.cwd().openFileZ(path, flags)).handle);
                     }

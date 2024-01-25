@@ -2414,7 +2414,7 @@ pub const Path = struct {
 
 pub const Process = struct {
     pub fn getArgv0(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return JSC.ZigString.fromUTF8(bun.span(bun.argv()[0])).toValueGC(globalObject);
+        return JSC.ZigString.fromUTF8(bun.argv()[0]).toValueGC(globalObject);
     }
 
     pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
@@ -2452,8 +2452,7 @@ pub const Process = struct {
         var used: usize = 0;
         const offset: usize = 1;
 
-        for (bun.argv()[@min(bun.argv().len, offset)..]) |arg_| {
-            const arg = bun.span(arg_);
+        for (bun.argv()[@min(bun.argv().len, offset)..]) |arg| {
             if (arg.len == 0)
                 continue;
 

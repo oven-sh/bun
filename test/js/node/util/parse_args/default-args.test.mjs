@@ -69,7 +69,7 @@ describe("parseArgs default args", () => {
     ["run file-test.js --bun", ["bun"], [], []], // passing --bun only to the program
     ["--bun run file-test.js --foo asdf -- --foo2 -- --foo3", ["foo"], ["asdf", "--foo2", "--", "--foo3"], ["--bun"]],
     ["run script-test --foo asdf", ["foo"], ["asdf"], []], // run script
-    ["run --bun script-test-bun --foo asdf", ["foo"], ["asdf"], ["--bun"]], // run script, with bun "--bun" arg (should not appear in argv)
+    ["run --bun script-test-bun --foo asdf", ["foo"], ["asdf"], ["--bun"]], // run script, with bun "--bun" arg
     //[`--bun -e ${evalSrc} --foo asdf`, ["foo"], ["asdf"]], // eval seems to crash when triggered from tests
     //[`--bun --eval ${evalSrc} --foo asdf`, ["foo"], ["asdf"]],
     //[`--eval "require('./file-test.js')" -- --foo asdf -- --bar`, ["foo"], ["asdf"]],

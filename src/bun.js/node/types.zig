@@ -67,7 +67,11 @@ pub fn Maybe(comptime ResultType: type) type {
 
         pub inline fn todo() @This() {
             if (Environment.allow_assert) {
-                @panic("TODO: Maybe(" ++ bun.meta.typeBaseName(@typeName(ReturnType)) ++ ")");
+                if (comptime ResultType == void) {
+                    @panic("TODO called!");
+                }
+
+                @panic(comptime "TODO: Maybe(" ++ bun.meta.typeBaseName(@typeName(ReturnType)) ++ ")");
             }
             return .{ .err = Syscall.Error.todo() };
         }

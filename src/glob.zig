@@ -140,8 +140,20 @@ fn opendirat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode
     if (bun.Environment.isWindows) {
         // Internally uses NtCreateFile which doesn't support relative paths
         if (ResolvePath.Platform.isAbsolute(.windows, file_path[0..file_path.len])) return Syscall.openDirAtWindowsA(dirfd, file_path, true, flags & O.NOFOLLOW != 0);
-        const normalized_str = ResolvePath.normalizeBuf(file_path[0..file_path.len], &ResolvePath.join_buf, .windows);
-        return Syscall.openDirAtWindowsA(dirfd, normalized_str, true, flags & O.NOFOLLOW != 0);
+
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const dirpath = switch (Syscall.getFdPath(dirfd, &buf)) {
+            .result => |path| path,
+            .err => |e| return .{ .err = e },
+        };
+
+        const parts: []const []const u8 = &.{
+            dirpath[0..],
+            file_path[0..],
+        };
+        const joined = ResolvePath.joinZ(parts, .auto);
+
+        return Syscall.open(joined, flags, 0);
     }
 
     return Syscall.openat(dirfd, file_path, flags, 0);
@@ -1062,29 +1074,6 @@ pub fn GlobWalker_(
             //     return filepath.len > 1 and filepath[1] == '.';
             // }
             return filepath.len > 0 and filepath[0] == '.';
-        }
-
-        fn hasLeadingDot(filepath: []const u8, comptime allow_non_utf8: bool) bool {
-            if (comptime bun.Environment.isWindows and allow_non_utf8) {
-                // utf-16
-                if (filepath.len >= 4 and filepath[1] == '.' and filepath[3] == '/')
-                    return true;
-            } else {
-                if (filepath.len >= 2 and filepath[0] == '.' and filepath[1] == '/')
-                    return true;
-            }
-
-            return false;
-        }
-
-        /// NOTE This doesn't check that there is leading dot, use `hasLeadingDot()` to do that
-        fn removeLeadingDot(filepath: []const u8, comptime allow_non_utf8: bool) []const u8 {
-            if (comptime bun.Environment.allow_assert) std.debug.assert(hasLeadingDot(filepath, allow_non_utf8));
-            if (comptime bun.Environment.isWindows and allow_non_utf8) {
-                return filepath[4..];
-            } else {
-                return filepath[2..];
-            }
         }
 
         fn checkSpecialSyntax(pattern: []const u8) bool {

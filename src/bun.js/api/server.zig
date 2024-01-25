@@ -1878,7 +1878,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.sendfile.remain -|= @as(Blob.SizeType, @intCast(this.sendfile.offset -| start));
 
                 if (errcode != .SUCCESS or this.flags.aborted or this.sendfile.remain == 0 or val == 0) {
-                    if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE) {
+                    if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE and errcode != .NOTCONN) {
                         Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
                         Output.flush();
                     }
@@ -1908,7 +1908,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.sendfile.offset +|= wrote;
                 this.sendfile.remain -|= wrote;
                 if (errcode != .AGAIN or this.flags.aborted or this.sendfile.remain == 0 or sbytes == 0) {
-                    if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE) {
+                    if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE and errcode != .NOTCONN) {
                         Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
                         Output.flush();
                     }

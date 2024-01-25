@@ -330,7 +330,7 @@ pub const LifecycleScriptSubprocess = struct {
             try this.stderr.start().unwrap();
         }
 
-        const event_loop = this.manager.;
+        const event_loop = this.manager;
         var process = Process.initPosix(pid, @intCast(pid_fd), event_loop, false);
         if (this.process) |proc| {
             proc.detach();

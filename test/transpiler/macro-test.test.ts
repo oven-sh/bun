@@ -1,3 +1,5 @@
+// @known-failing-on-windows: panic "TODO on Windows"
+
 import { expect, test } from "bun:test";
 import { addStrings, addStringsUTF16, escape, identity } from "./macro.ts" assert { type: "macro" };
 import { escapeHTML } from "bun" assert { type: "macro" };

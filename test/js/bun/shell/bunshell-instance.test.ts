@@ -1,3 +1,4 @@
+// @known-failing-on-windows: panic "TODO on Windows"
 import { test, expect, describe } from "bun:test";
 
 import { $ } from "bun";

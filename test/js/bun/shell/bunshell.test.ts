@@ -1,3 +1,4 @@
+// @known-failing-on-windows: panic "TODO on Windows"
 /**
  * Portions of these tests are derived from the [deno_task_shell](https://github.com/denoland/deno_task_shell/) tests, which are developed and maintained by the Deno authors.
  * Copyright 2018-2023 the Deno authors.

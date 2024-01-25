@@ -210,16 +210,16 @@ pub const RuntimeTranspilerCache = struct {
                     break :brk metadata_buf[0..metadata_stream.pos];
                 };
 
-                const vecs: []const bun.PlatformIOVec = if (output_bytes.len > 0)
+                const vecs: []const bun.PlatformIOVecConst = if (output_bytes.len > 0)
                     &.{
-                        bun.platformIOVecCreate(metadata_bytes),
-                        bun.platformIOVecCreate(output_bytes),
-                        bun.platformIOVecCreate(sourcemap),
+                        bun.platformIOVecConstCreate(metadata_bytes),
+                        bun.platformIOVecConstCreate(output_bytes),
+                        bun.platformIOVecConstCreate(sourcemap),
                     }
                 else
                     &.{
-                        bun.platformIOVecCreate(metadata_bytes),
-                        bun.platformIOVecCreate(sourcemap),
+                        bun.platformIOVecConstCreate(metadata_bytes),
+                        bun.platformIOVecConstCreate(sourcemap),
                     };
 
                 var position: isize = 0;

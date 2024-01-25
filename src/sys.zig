@@ -801,7 +801,7 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     }
 }
 
-pub fn pwritev(fd: bun.FileDescriptor, buffers: []const bun.PlatformIOVec, position: isize) Maybe(usize) {
+pub fn pwritev(fd: bun.FileDescriptor, buffers: []const bun.PlatformIOVecConst, position: isize) Maybe(usize) {
     if (comptime Environment.isWindows) {
         return sys_uv.pwritev(fd, buffers, position);
     }

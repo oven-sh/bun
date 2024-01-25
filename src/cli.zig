@@ -1774,6 +1774,8 @@ pub const Command = struct {
 
         const script_name_to_search = ctx.args.entry_points[0];
 
+        var absolute_script_path: ?string = null;
+
         var file_path = script_name_to_search;
         const file_: anyerror!std.fs.File = brk: {
             if (std.fs.path.isAbsoluteWindows(script_name_to_search)) {
@@ -1782,6 +1784,7 @@ pub const Command = struct {
                 if (comptime Environment.isWindows) {
                     resolved = resolve_path.normalizeString(resolved, true, .windows);
                 }
+                absolute_script_path = resolved;
                 break :brk bun.openFile(
                     resolved,
                     .{ .mode = .read_only },
@@ -1817,7 +1820,17 @@ pub const Command = struct {
         Global.configureAllocator(.{ .long_running = true });
 
         // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
-        const absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
+        absolute_script_path = absolute_script_path orelse brk: {
+            if (comptime !Environment.isWindows) break :brk bun.getFdPath(file.handle, &script_name_buf) catch return false;
+
+            var fd_path_buf: bun.PathBuffer = undefined;
+            const path = bun.getFdPath(file.handle, &fd_path_buf) catch return false;
+            break :brk resolve_path.normalizeString(
+                resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(&script_name_buf, path) catch @panic("Could not resolve path"),
+                true,
+                .windows,
+            );
+        };
 
         if (!ctx.debug.loaded_bunfig) {
             bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
@@ -1825,7 +1838,7 @@ pub const Command = struct {
 
         BunJS.Run.boot(
             ctx.*,
-            absolute_script_path,
+            absolute_script_path.?,
         ) catch |err| {
             if (Output.enable_ansi_colors) {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};

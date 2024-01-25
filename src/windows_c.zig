@@ -9,21 +9,15 @@ const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 
 pub fn getTotalMemory() usize {
-    return 0;
-}
-pub fn getSystemMemory() usize {
-    return 0;
+    return uv.uv_get_total_memory();
 }
 
 pub fn getFreeMemory() usize {
-    return 0;
-}
-
-pub fn getSystemUptime() usize {
-    return 0;
+    return uv.uv_get_free_memory();
 }
 
 pub fn getSystemLoadavg() [3]f32 {
+    // loadavg is not supported on windows even in node
     return .{ 0, 0, 0 };
 }
 
@@ -701,7 +695,7 @@ pub const SystemErrno = enum(u16) {
                 return init(@as(Win32Error, @enumFromInt(code)));
             } else {
                 if (comptime bun.Environment.allow_assert)
-                    bun.Output.debug("Unknown error code: {}\n", .{code});
+                    bun.Output.debug("Unknown error code: {any}\n", .{code});
 
                 return null;
             }

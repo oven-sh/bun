@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync } from "fs";
 import { bunEnv, bunExe } from "harness";

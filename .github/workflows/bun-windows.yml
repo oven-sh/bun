@@ -320,11 +320,21 @@ jobs:
         run: |
           $Dist = mkdir -Force "${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}"
           cp -r build\bun.exe "$Dist\bun.exe"
-          Compress-Archive $Dist ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip
+          Compress-Archive "$Dist" "${Dist}.zip"
+          $Dist = "$Dist-profile"
+          MkDir -Force "$Dist"
+          cp -r build\bun.exe "$Dist\bun.exe"
+          cp -r build\bun.pdb "$Dist\bun.pdb"
+          Compress-Archive "$Dist" "$Dist.zip"
+
       - uses: actions/upload-artifact@v3
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
           path: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile
+          path: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile.zip
       - name: Release
         id: release
         uses: ncipollo/release-action@v1
@@ -341,7 +351,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           name: "Canary (${{github.sha}})"
           tag: "canary"
-          artifacts: "${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip"
+          artifacts: "${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip,${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile.zip"
       - uses: sarisia/actions-status-discord@v1
         if: failure() && github.repository_owner == 'oven-sh' && github.event_name == 'pull_request'
         with:
@@ -385,13 +395,13 @@ jobs:
         name: Download Release
         uses: actions/download-artifact@v3
         with:
-          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
+          name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile
           path: ${{runner.temp}}/release
       - name: Install Bun
         run: |
           cd ${{runner.temp}}/release
-          unzip ${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip
-          cd ${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
+          unzip ${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile.zip
+          cd ${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile
           pwd >> $env:GITHUB_PATH
       - name: Install Node
         uses: actions/setup-node@v4
@@ -416,7 +426,7 @@ jobs:
         run: |
           try {
             $ErrorActionPreference = "SilentlyContinue"
-            $null = node packages/bun-internal-test/src/runner.node.mjs ${{runner.temp}}/release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}/bun.exe || $true
+            $null = node packages/bun-internal-test/src/runner.node.mjs ${{runner.temp}}/release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile/bun.exe || $true
           } catch {}
           $ErrorActionPreference = "Stop"
       - uses: sarisia/actions-status-discord@v1

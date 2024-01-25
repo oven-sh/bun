@@ -354,7 +354,14 @@ pub fn getVersion(buf: []u8) []const u8 {
     } else if (comptime Environment.isMac) {
         return darwin.get_version(buf);
     } else {
-        return bun.todo(@src(), "unknown");
+        var info: bun.windows.libuv.uv_utsname_s = undefined;
+        const err = bun.windows.libuv.uv_os_uname(&info);
+        if (err != 0) {
+            return "unknown";
+        }
+        const slice = bun.sliceTo(&info.version, 0);
+        @memcpy(buf[0..slice.len], slice);
+        return buf[0..slice.len];
     }
 }
 
@@ -364,7 +371,12 @@ pub fn getRelease(buf: []u8) []const u8 {
     } else if (comptime Environment.isMac) {
         return darwin.get_release(buf);
     } else {
-        return bun.todo(@src(), "unknown");
+        var info: bun.windows.libuv.uv_utsname_s = undefined;
+        const err = bun.windows.libuv.uv_os_uname(&info);
+        if (err != 0) {
+            return "unknown";
+        }
+        return bun.sliceTo(&info.version, 0);
     }
 }
 

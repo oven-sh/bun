@@ -240,7 +240,7 @@ pub const WebWorker = struct {
             @panic("OOM");
         };
         JSC.markBinding(@src());
-        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.create(array.toOwnedSliceLeaky()), error_instance);
+        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.toOwnedSliceLeaky()), error_instance);
         if (vm.worker) |worker_| {
             worker.requested_terminate = true;
             worker.parent_poll_ref.unrefConcurrently(worker.parent);

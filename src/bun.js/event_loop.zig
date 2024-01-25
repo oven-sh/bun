@@ -13,8 +13,8 @@ const typeBaseName = @import("../meta.zig").typeBaseName;
 const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
 const CopyFilePromiseTask = WebCore.Blob.Store.CopyFile.CopyFilePromiseTask;
 const AsyncTransformTask = JSC.API.JSTranspiler.TransformTask.AsyncTransformTask;
-const ReadFileTask = WebCore.Blob.Store.ReadFile.ReadFileTask;
-const WriteFileTask = WebCore.Blob.Store.WriteFile.WriteFileTask;
+const ReadFileTask = WebCore.Blob.ReadFile.ReadFileTask;
+const WriteFileTask = WebCore.Blob.WriteFile.WriteFileTask;
 const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
 const JSValue = JSC.JSValue;
@@ -1453,6 +1453,9 @@ pub const MiniVM = struct {
     }
 
     pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
+        if (comptime Environment.isWindows) {
+            return this.mini.loop.uv_loop;
+        }
         return this.mini.loop;
     }
 
@@ -1508,7 +1511,7 @@ pub fn AbstractVM(inner: anytype) brk: {
 pub const MiniEventLoop = struct {
     tasks: Queue,
     concurrent_tasks: UnboundedQueue(AnyTaskWithExtraContext, .next) = .{},
-    loop: *JSC.PlatformEventLoop,
+    loop: *uws.Loop,
     allocator: std.mem.Allocator,
     file_polls_: ?*Async.FilePoll.Store = null,
     env: ?*bun.DotEnv.Loader = null,
@@ -1569,7 +1572,7 @@ pub const MiniEventLoop = struct {
         return .{
             .tasks = Queue.init(allocator),
             .allocator = allocator,
-            .loop = if (comptime bun.Environment.isPosix) uws.Loop.get() else bun.Async.Loop.get(),
+            .loop = uws.Loop.get(),
         };
     }
 

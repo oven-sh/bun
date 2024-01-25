@@ -1494,7 +1494,7 @@ pub const Error = struct {
         }
 
         if (this.path.len > 0) {
-            err.path = bun.String.create(this.path);
+            err.path = bun.String.createUTF8(this.path);
         }
 
         if (this.fd != bun.invalid_fd) {

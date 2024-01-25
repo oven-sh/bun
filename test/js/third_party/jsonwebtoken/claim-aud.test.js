@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 "use strict";
 
 import jwt from "jsonwebtoken";

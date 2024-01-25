@@ -1483,6 +1483,8 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
                 while (remain.len > 0) {
                     const write_buf = remain[0..@min(remain.len, max_to_write)];
                     const res = bun.sys.write(fd, write_buf);
+                    // this does not fix the issue with writes not showing up
+                    // const res = bun.sys.sys_uv.write(fd, write_buf);
 
                     if (res == .err) {
                         const retry =
@@ -4541,7 +4543,7 @@ pub const File = struct {
         var fd = if (file.pathlike != .path)
             // We will always need to close the file descriptor.
             switch (Syscall.dup(file.pathlike.fd)) {
-                .result => |_fd| _fd,
+                .result => |_fd| if (Environment.isWindows) bun.toLibUVOwnedFD(_fd) else _fd,
                 .err => |err| {
                     return .{ .err = err.withFd(file.pathlike.fd) };
                 },
@@ -4563,28 +4565,26 @@ pub const File = struct {
         }
 
         if (file.pathlike != .path and !(file.is_atty orelse false)) {
-            if (comptime Environment.isWindows) {
-                @panic("TODO on Windows");
-            }
+            if (comptime !Environment.isWindows) {
+                // ensure we have non-blocking IO set
+                switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
+                    .err => return .{ .err = Syscall.Error.fromCode(E.BADF, .fcntl) },
+                    .result => |flags| {
+                        // if we do not, clone the descriptor and set non-blocking
+                        // it is important for us to clone it so we don't cause Weird Things to happen
+                        if ((flags & std.os.O.NONBLOCK) == 0) {
+                            fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
+                                .result => |_fd| bun.toFD(_fd),
+                                .err => |err| return .{ .err = err },
+                            };
 
-            // ensure we have non-blocking IO set
-            switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
-                .err => return .{ .err = Syscall.Error.fromCode(E.BADF, .fcntl) },
-                .result => |flags| {
-                    // if we do not, clone the descriptor and set non-blocking
-                    // it is important for us to clone it so we don't cause Weird Things to happen
-                    if ((flags & std.os.O.NONBLOCK) == 0) {
-                        fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
-                            .result => |_fd| bun.toFD(_fd),
-                            .err => |err| return .{ .err = err },
-                        };
-
-                        switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
-                            .err => |err| return .{ .err = err },
-                            .result => |_| {},
+                            switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
+                                .err => |err| return .{ .err = err },
+                                .result => |_| {},
+                            }
                         }
-                    }
-                },
+                    },
+                }
             }
         }
         var size: Blob.SizeType = 0;
@@ -4609,6 +4609,11 @@ pub const File = struct {
             file.seekable = this.seekable;
             size = @intCast(stat.size);
         } else if (comptime Environment.isWindows) outer: {
+            // without this check the getEndPos call fails unpredictably
+            if (bun.windows.GetFileType(fd.cast()) != bun.windows.FILE_TYPE_DISK) {
+                this.seekable = false;
+                break :outer;
+            }
             size = @intCast(fd.asFile().getEndPos() catch {
                 this.seekable = false;
                 break :outer;

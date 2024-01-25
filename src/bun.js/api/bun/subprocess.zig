@@ -679,8 +679,8 @@ pub const Subprocess = struct {
             sig = arguments.ptr[0].coerce(i32, globalThis);
         }
 
-        if (!(sig > -1 and sig < std.math.maxInt(u8))) {
-            globalThis.throwInvalidArguments("Invalid signal: must be > -1 and < 255", .{});
+        if (!(sig >= 0 and sig <= std.math.maxInt(u8))) {
+            globalThis.throwInvalidArguments("Invalid signal: must be >= 0 and <= 255", .{});
             return .zero;
         }
 
@@ -730,8 +730,13 @@ pub const Subprocess = struct {
             }
             if (comptime Environment.isWindows) {
                 if (std.os.windows.kernel32.TerminateProcess(this.pid.process_handle, @intCast(sig)) == 0) {
-                    const err = @as(bun.C.E, @enumFromInt(@intFromEnum(bun.windows.GetLastError())));
-                    if (err != .SRCH)
+                    const err = bun.windows.getLastErrno();
+                    // if the process was already killed don't throw
+                    //
+                    // "After a process has terminated, call to TerminateProcess with open
+                    // handles to the process fails with ERROR_ACCESS_DENIED (5) error code."
+                    // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess
+                    if (err != .PERM)
                         return .{ .err = bun.sys.Error.fromCode(err, .kill) };
                 }
 

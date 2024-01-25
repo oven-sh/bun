@@ -503,6 +503,7 @@ ExceptionOr<void> WebSocket::send(ArrayBuffer& binaryData)
     }
     char* data = static_cast<char*>(binaryData.data());
     size_t length = binaryData.byteLength();
+
     this->sendWebSocketData(data, length, Opcode::Binary);
 
     return {};

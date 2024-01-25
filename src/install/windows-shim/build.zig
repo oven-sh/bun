@@ -1,11 +1,15 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    // TODO(@paperdave): arm support
     const target = b.standardTargetOptions(.{
-        .default_target = (std.zig.CrossTarget.parse(.{
-            .arch_os_abi = "x86_64-windows-msvc",
-        }) catch unreachable),
+        .default_target = .{
+            .cpu_model = .{ .explicit = &std.Target.x86.cpu.nehalem },
+            .os_tag = .windows,
+        },
     });
+
+    std.debug.assert(target.result.os.tag == .windows);
 
     const exe = b.addExecutable(.{
         .name = "bun_shim_impl",
@@ -39,16 +43,6 @@ pub fn build(b: *std.Build) void {
         .link_libc = false,
     });
 
-    const cli = b.addExecutable(.{
-        .name = "encoder-cli",
-        .root_source_file = .{ .path = "encoder-cli.zig" },
-        .target = target,
-        .optimize = .Debug,
-        .use_llvm = true,
-        .use_lld = true,
-    });
-
     b.installArtifact(exe);
     b.installArtifact(dbg);
-    b.installArtifact(cli);
 }

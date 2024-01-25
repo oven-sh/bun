@@ -1,4 +1,7 @@
-//! Windows '.bunx' files follow this format:
+//! This struct is used by bun.exe to encode `.bunx` files, to be consumed
+//! by the shim 'bun_shim_impl.exe'. The latter exe does not include this code.
+//!
+//! The format is as follows:
 //!
 //! [WSTR:bin_path][u16'"'][u16:0](shebang?)[flags:u16]
 //!
@@ -6,14 +9,13 @@
 //! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
 //! - args always ends with a trailing space
 //!
+//! See 'bun_shim_impl.zig' for more details on how this file is consumed.
 const std = @import("std");
 
-const root = @import("root");
+const bun = @import("root").bun;
+const simdutf = bun.simdutf;
 
-const indexOfScalar = std.mem.indexOfScalar;
 const lastIndexOfScalar = std.mem.lastIndexOfScalar;
-const calcUtf16LeLen = std.unicode.calcUtf16LeLen;
-const utf8ToUtf16Le = std.unicode.utf8ToUtf16Le;
 
 fn eqlComptime(a: []const u8, comptime b: []const u8) bool {
     return std.mem.eql(u8, a, b);
@@ -67,7 +69,8 @@ pub const Shebang = struct {
     pub fn init(launcher: []const u8, is_bun: bool) !Shebang {
         return .{
             .launcher = launcher,
-            .utf16_len = @intCast(calcUtf16LeLen(launcher) catch return error.InvalidUtf8),
+            // TODO(@paperdave): what if this is invalid utf8?
+            .utf16_len = @intCast(bun.simdutf.length.utf16.from.utf8(launcher)),
             .is_bun = is_bun,
         };
     }
@@ -154,7 +157,9 @@ pub const Shebang = struct {
     ///
     /// Since a command line cannot be longer than 32766 characters,
     /// this function does not accept inputs longer than `max_shebang_input_length`
-    pub fn parse(contents: []const u8, bin_path: []const u16) !?Shebang {
+    pub fn parse(contents_maybe_overflow: []const u8, bin_path: []const u16) !?Shebang {
+        const contents = contents_maybe_overflow[0..@min(contents_maybe_overflow.len, max_shebang_input_length)];
+
         if (contents.len < 3) {
             return parseFromBinPath(bin_path);
         }
@@ -164,7 +169,8 @@ pub const Shebang = struct {
         }
 
         const line = line: {
-            var line_i = indexOfScalar(u8, contents, '\n') orelse return parseFromBinPath(bin_path);
+            var line_i = bun.strings.indexOfCharUsize(u8, contents, '\n') orelse return parseFromBinPath(bin_path);
+            std.debug.assert(line_i >= 1);
             if (contents[line_i - 1] == '\r') {
                 line_i -= 1;
             }
@@ -218,7 +224,7 @@ pub fn encodeInto(options: @This(), buf: []u8) !void {
     };
 
     if (options.shebang) |s| {
-        const encoded = std.unicode.utf8ToUtf16Le(
+        const encoded = bun.strings.convertUTF8toUTF16InBuffer(
             wbuf[0..s.utf16_len],
             s.launcher,
         ) catch return error.InvalidUtf8;

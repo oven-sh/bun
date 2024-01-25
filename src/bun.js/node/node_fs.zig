@@ -5418,6 +5418,7 @@ pub const NodeFS = struct {
                 return .{ .err = Syscall.Error{
                     .errno = errno,
                     .syscall = .realpath,
+                    .path = args.path.slice(),
                 } };
 
             // Seems like `rc` does not contain the errno?

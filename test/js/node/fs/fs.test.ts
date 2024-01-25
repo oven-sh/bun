@@ -1105,7 +1105,7 @@ function triggerDOMJIT(target: fs.Stats, fn: (..._: any[]) => any, result: any) 
 
 describe("lstat", () => {
   it("file metadata is correct", () => {
-    const fileStats = lstatSync(new URL("./fs-stream.js", import.meta.url).toString().slice("file://".length - 1));
+    const fileStats = lstatSync(join(import.meta.dir, 'fs-stream.js'));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
     expect(fileStats.isDirectory()).toBe(false);
@@ -1116,7 +1116,8 @@ describe("lstat", () => {
   });
 
   it("folder metadata is correct", () => {
-    const fileStats = lstatSync(new URL("../../../../test", import.meta.url).toString().slice("file://".length - 1));
+    const path = join(import.meta.dir, "../../../../test");
+    const fileStats = lstatSync(path);
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
@@ -1127,7 +1128,9 @@ describe("lstat", () => {
   });
 
   it("symlink metadata is correct", () => {
-    const linkStats = lstatSync(new URL("./fs-stream.link.js", import.meta.url).toString().slice("file://".length - 1));
+    const link = process.platform === "win32" ? "fs-stream.winlink.js" : "fs-stream.link.js";
+    const path = join(import.meta.dir, link);
+    const linkStats = lstatSync(path);
     expect(linkStats.isSymbolicLink()).toBe(true);
     expect(linkStats.isFile()).toBe(false);
     expect(linkStats.isDirectory()).toBe(false);
@@ -1192,7 +1195,7 @@ it("realpath async", async () => {
 
 describe("stat", () => {
   it("file metadata is correct", () => {
-    const fileStats = statSync(new URL("./fs-stream.js", import.meta.url).toString().slice("file://".length - 1));
+    const fileStats = statSync(join(import.meta.dir, 'fs-stream.js'));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
     expect(fileStats.isDirectory()).toBe(false);
@@ -1203,7 +1206,8 @@ describe("stat", () => {
   });
 
   it("folder metadata is correct", () => {
-    const fileStats = statSync(new URL("../../../../test", import.meta.url).toString().slice("file://".length - 1));
+    const path = join(import.meta.dir, "../../../../test");
+    const fileStats = statSync(path);
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
@@ -2348,7 +2352,6 @@ describe("utimesSync", () => {
     fs.utimesSync(tmp, newAccessTime, newModifiedTime);
 
     const newStats = fs.statSync(tmp);
-    console.log(newStats);
 
     expect(newStats.mtime).toEqual(newModifiedTime);
     expect(newStats.atime).toEqual(newAccessTime);
@@ -2698,7 +2701,7 @@ it("test syscall errno, issue#4198", () => {
       {
         "darwin": "Operation not permitted",
         "linux": "Is a directory",
-        "windows": "lol",
+        "win32": "Operation not permitted",
       } as any
     )[process.platform],
   );

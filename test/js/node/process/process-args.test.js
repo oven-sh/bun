@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { test, expect } from "bun:test";
-import { join, } from "path";
+import { join } from "path";
 import { bunExe } from "harness";
 
 test("args exclude run", async () => {

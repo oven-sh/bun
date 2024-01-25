@@ -15,7 +15,8 @@ it("process", () => {
 
   if (process.env.USER.length === 0) throw new Error("process.env is missing a USER property");
 
-  if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32") throw new Error("process.platform is invalid");
+  if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32")
+    throw new Error("process.platform is invalid");
 
   if (isNode) throw new Error("process.isBun is invalid");
 
@@ -70,7 +71,8 @@ it("process.release", () => {
   expect(process.release.name).toBe("node");
   const platform = process.platform == "win32" ? "windows" : process.platform;
   expect(process.release.sourceUrl).toContain(
-    `https://github.com/oven-sh/bun/release/bun-v${process.versions.bun}/bun-${platform}-${{ arm64: "aarch64", x64: "x64" }[process.arch] || process.arch
+    `https://github.com/oven-sh/bun/release/bun-v${process.versions.bun}/bun-${platform}-${
+      { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch
     }`,
   );
 });

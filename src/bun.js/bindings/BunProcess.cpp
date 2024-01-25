@@ -30,11 +30,12 @@
 #include <sys/utsname.h>
 #else
 #include <uv.h>
-// https://github.com/nodejs/node/blob/62ca05017d758e254eda2dfaf9678d2038a9235b/src/node_process_methods.cc#L28
 #include <io.h>
 #include <fcntl.h>
-typedef int mode_t;
+// Using the same typedef and define for `mode_t` and `umask` as node on windows.
+// https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
 #define umask _umask
+typedef int mode_t;
 #endif
 #include "JSNextTickQueue.h"
 #include "ProcessBindingUV.h"

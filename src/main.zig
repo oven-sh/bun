@@ -26,6 +26,10 @@ pub fn main() void {
     const Output = bun.Output;
     const Environment = bun.Environment;
 
+    bun.initArgv(bun.default_allocator) catch |err| {
+        Output.panic("Failed to initialize argv: {s}\n", .{@errorName(err)});
+    };
+
     if (Environment.isRelease and Environment.isPosix)
         CrashReporter.start() catch unreachable;
     if (Environment.isWindows) {

@@ -162,7 +162,7 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 
-    pub fn exec(ctx_: bun.CLI.Command.Context, argv: [][*:0]const u8) !void {
+    pub fn exec(ctx_: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
         var ctx = ctx_;
         var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
         var run_in_bun = ctx.debug.run_in_bun;
@@ -172,9 +172,7 @@ pub const BunxCommand = struct {
         {
             var found_subcommand_name = false;
 
-            for (argv) |positional_| {
-                const positional = bun.span(positional_);
-
+            for (argv) |positional| {
                 if (positional.len == 0) continue;
 
                 if (positional[0] != '-') {

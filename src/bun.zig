@@ -1374,7 +1374,7 @@ pub fn reloadProcess(
     const bun = @This();
     const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
     for (bun.argv(), dupe_argv) |src, *dest| {
-        dest.* = (allocator.dupeZ(u8, sliceTo(src, 0)) catch unreachable).ptr;
+        dest.* = (allocator.dupeZ(u8, src) catch unreachable).ptr;
     }
 
     const environ_slice = std.mem.span(std.c.environ);
@@ -1391,7 +1391,7 @@ pub fn reloadProcess(
     const exec_path = (allocator.dupeZ(u8, std.fs.selfExePathAlloc(allocator) catch unreachable) catch unreachable).ptr;
 
     // we clone argv so that the memory address isn't the same as the libc one
-    const argv = @as([*:null]?[*:0]const u8, @ptrCast(dupe_argv.ptr));
+    const newargv = @as([*:null]?[*:0]const u8, @ptrCast(dupe_argv.ptr));
 
     // we clone envp so that the memory address of environment variables isn't the same as the libc one
     const envp = @as([*:null]?[*:0]const u8, @ptrCast(environ.ptr));
@@ -1419,7 +1419,7 @@ pub fn reloadProcess(
                 C.POSIX_SPAWN_SETEXEC |
                 C.POSIX_SPAWN_SETSIGDEF | C.POSIX_SPAWN_SETSIGMASK,
         ) catch unreachable;
-        switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(argv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
+        switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
             .err => |err| {
                 Output.panic("Unexpected error while reloading: {d} {s}", .{ err.errno, @tagName(err.getErrno()) });
             },
@@ -1428,7 +1428,7 @@ pub fn reloadProcess(
     } else {
         const err = std.os.execveZ(
             exec_path,
-            argv,
+            newargv,
             envp,
         );
         Output.panic("Unexpected error while reloading: {s}", .{@errorName(err)});
@@ -1811,17 +1811,20 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
 
+var _argv: [][:0]u8 = &[_][:0]u8{};
+
+pub inline fn argv() [][:0]u8 {
+    return _argv;
+}
+
+pub fn initArgv(allocator: std.mem.Allocator) !void {
+    _argv = try std.process.argsAlloc(allocator);
+}
+
 pub const posix = struct {
     pub const STDIN_FD = toFD(0);
     pub const STDOUT_FD = toFD(1);
     pub const STDERR_FD = toFD(2);
-
-    pub inline fn argv() [][*:0]u8 {
-        return std.os.argv;
-    }
-    pub inline fn setArgv(new_ptr: [][*:0]u8) void {
-        std.os.argv = new_ptr;
-    }
 
     pub fn stdio(i: anytype) FileDescriptor {
         return switch (i) {
@@ -1839,14 +1842,6 @@ pub const win32 = struct {
     pub var STDOUT_FD: FileDescriptor = undefined;
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
-
-    pub inline fn argv() [][*:0]u8 {
-        return std.os.argv;
-    }
-
-    pub inline fn setArgv(new_ptr: [][*:0]u8) void {
-        std.os.argv = new_ptr;
-    }
 
     pub fn stdio(i: anytype) FileDescriptor {
         return switch (i) {

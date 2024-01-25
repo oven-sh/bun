@@ -1131,7 +1131,7 @@ pub const Command = struct {
 
     // std.process.args allocates!
     const ArgsIterator = struct {
-        buf: [][*:0]u8 = undefined,
+        buf: [][:0]u8 = undefined,
         i: u32 = 0,
 
         pub fn next(this: *ArgsIterator) ?[]const u8 {
@@ -1140,7 +1140,7 @@ pub const Command = struct {
             }
             const i = this.i;
             this.i += 1;
-            return std.mem.span(this.buf[i]);
+            return this.buf[i];
         }
 
         pub fn skip(this: *ArgsIterator) bool {
@@ -1197,8 +1197,7 @@ pub const Command = struct {
             RootCommandMatcher.case("install"),
             => brk: {
                 for (args_iter.buf) |arg| {
-                    const span = std.mem.span(arg);
-                    if (span.len > 0 and (strings.eqlComptime(span, "-g") or strings.eqlComptime(span, "--global"))) {
+                    if (arg.len > 0 and (strings.eqlComptime(arg, "-g") or strings.eqlComptime(arg, "--global"))) {
                         break :brk .AddCommand;
                     }
                 }
@@ -1292,13 +1291,11 @@ pub const Command = struct {
                 };
 
                 ctx.args.target = Api.Target.bun;
-                const argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
                 if (bun.argv().len > 1) {
-                    for (argv, bun.argv()[1..]) |*dest, src| {
-                        dest.* = bun.span(src);
-                    }
+                    ctx.passthrough = bun.argv()[1..];
+                } else {
+                    ctx.passthrough = &[_]string{};
                 }
-                ctx.passthrough = argv;
 
                 try @import("./bun_js.zig").Run.bootStandalone(
                     ctx,
@@ -1510,8 +1507,7 @@ pub const Command = struct {
                 // iterate over args
                 // if --help, print help and exit
                 const print_help = brk: {
-                    for (bun.argv()) |arg_| {
-                        const arg = bun.span(arg_);
+                    for (bun.argv()) |arg| {
                         if (strings.eqlComptime(arg, "--help")) {
                             break :brk true;
                         }
@@ -1595,7 +1591,7 @@ pub const Command = struct {
                     example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {
-                    const bunx_args = try allocator.alloc([*:0]const u8, args.len - template_name_start);
+                    const bunx_args = try allocator.alloc([:0]const u8, args.len - template_name_start);
                     bunx_args[0] = try BunxCommand.addCreatePrefix(allocator, template_name);
                     for (bunx_args[1..], args[template_name_start + 1 ..]) |*dest, src| {
                         dest.* = src;
@@ -1663,7 +1659,7 @@ pub const Command = struct {
                 if (ctx.args.entry_points.len == 1) {
                     if (strings.eqlComptime(extension, ".lockb")) {
                         for (bun.argv()) |arg| {
-                            if (strings.eqlComptime(std.mem.span(arg), "--hash")) {
+                            if (strings.eqlComptime(arg, "--hash")) {
                                 try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
                                 return;
                             }

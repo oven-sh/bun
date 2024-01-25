@@ -680,6 +680,7 @@ pub const TestCommand = struct {
             vm.bundler.options.minify_syntax = false;
             vm.bundler.options.minify_identifiers = false;
             vm.bundler.options.minify_whitespace = false;
+            vm.bundler.options.dead_code_elimination = false;
             vm.global.vm().setControlFlowProfiler(true);
         }
 

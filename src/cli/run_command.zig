@@ -556,7 +556,7 @@ pub const RunCommand = struct {
 
             const prefix = comptime bun.strings.w("\\??\\");
 
-            const len = bun.windows.GetTempPath2W(
+            const len = bun.windows.GetTempPathW(
                 target_path_buffer.len - prefix.len,
                 @ptrCast(&target_path_buffer[prefix.len]),
             );

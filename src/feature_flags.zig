@@ -178,4 +178,4 @@ pub const concurrent_transpiler = !env.isWindows;
 pub const disable_auto_js_to_ts_in_node_modules = true;
 
 // TODO: implement the IO for rtc for windows
-pub const runtime_transpiler_cache = !env.isWindows;
+pub const runtime_transpiler_cache = true;

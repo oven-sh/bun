@@ -210,16 +210,16 @@ pub const RuntimeTranspilerCache = struct {
                     break :brk metadata_buf[0..metadata_stream.pos];
                 };
 
-                const vecs: []const std.os.iovec_const = if (output_bytes.len > 0)
+                const vecs: []const bun.PlatformIOVec = if (output_bytes.len > 0)
                     &.{
-                        .{ .iov_base = metadata_bytes.ptr, .iov_len = metadata_bytes.len },
-                        .{ .iov_base = output_bytes.ptr, .iov_len = output_bytes.len },
-                        .{ .iov_base = sourcemap.ptr, .iov_len = sourcemap.len },
+                        bun.platformIOVecCreate(metadata_bytes),
+                        bun.platformIOVecCreate(output_bytes),
+                        bun.platformIOVecCreate(sourcemap),
                     }
                 else
                     &.{
-                        .{ .iov_base = metadata_bytes.ptr, .iov_len = metadata_bytes.len },
-                        .{ .iov_base = sourcemap.ptr, .iov_len = sourcemap.len },
+                        bun.platformIOVecCreate(metadata_bytes),
+                        bun.platformIOVecCreate(sourcemap),
                     };
 
                 var position: isize = 0;
@@ -228,8 +228,13 @@ pub const RuntimeTranspilerCache = struct {
                 if (bun.Environment.allow_assert) {
                     var total: usize = 0;
                     for (vecs) |v| {
-                        std.debug.assert(v.iov_len > 0);
-                        total += v.iov_len;
+                        if (comptime bun.Environment.isWindows) {
+                            std.debug.assert(v.len > 0);
+                            total += v.len;
+                        } else {
+                            std.debug.assert(v.iov_len > 0);
+                            total += v.iov_len;
+                        }
                     }
                     std.debug.assert(end_position == total);
                 }
@@ -246,7 +251,11 @@ pub const RuntimeTranspilerCache = struct {
                 }
             }
 
-            try tmpfile.finish(destination_path.sliceAssumeZ());
+            if (comptime bun.Environment.isWindows) {
+                try tmpfile.finish(@as([:0]const u8, @ptrCast(std.fs.path.basename(destination_path.slice()))));
+            } else {
+                try tmpfile.finish(destination_path.sliceAssumeZ());
+            }
         }
 
         pub fn load(
@@ -539,7 +548,7 @@ pub const RuntimeTranspilerCache = struct {
         const cache_dir_fd = brk: {
             if (std.fs.path.dirname(cache_file_path)) |dirname| {
                 const dir = try std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true });
-                break :brk bun.toFD(dir.fd);
+                break :brk bun.toLibUVOwnedFD(dir.fd);
             }
 
             break :brk bun.toFD(std.fs.cwd().fd);

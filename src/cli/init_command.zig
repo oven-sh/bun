@@ -89,10 +89,9 @@ pub const InitCommand = struct {
         entry_point: string = "",
     };
 
-    pub fn exec(alloc: std.mem.Allocator, argv: [][*:0]u8) !void {
+    pub fn exec(alloc: std.mem.Allocator, argv: [][:0]u8) !void {
         const print_help = brk: {
-            for (argv) |arg_| {
-                const arg = bun.span(arg_);
+            for (argv) |arg| {
                 if (strings.eqlComptime(arg, "--help")) {
                     break :brk true;
                 }

@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { expect, test, describe } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 import { tmpdir } from "os";

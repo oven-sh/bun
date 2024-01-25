@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "switch on corrupt value"
 // @ts-check
 
 /** This file is meant to be runnable in Jest, Vitest, and Bun:

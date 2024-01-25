@@ -1342,20 +1342,11 @@ pub const RunCommand = struct {
                 path_to_use,
                 w.STANDARD_RIGHTS_READ | w.FILE_READ_DATA | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE,
                 w.FILE_OPEN,
-                0,
+                w.FILE_NON_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT,
             ).unwrap() catch |err| {
                 debug("Failed to open bunx file: '{}'", .{err});
                 break :try_bunx_file;
             }).cast();
-            // const handle = w.OpenFile(path_to_use, .{
-            //     .access_mask = w.STANDARD_RIGHTS_READ | w.FILE_READ_DATA | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE,
-            //     .share_access = w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE,
-            //     .creation = w.FILE_OPEN,
-            //     .io_mode = .blocking,
-            // }) catch |err| {
-            //     debug("Failed to open bunx file: '{}'", .{err});
-            //     break :try_bunx_file;
-            // };
 
             var i: usize = 0;
             for (ctx.passthrough) |str| {

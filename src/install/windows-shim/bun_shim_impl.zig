@@ -298,13 +298,13 @@ inline fn launcher(bun_ctx: anytype) noreturn {
         image_path_u8[0..image_path_to_copy_b_len],
     );
 
-    // BUF1: '\??\C:\Users\dave\project\node_modules\.bin\hello.bunx!!!!!!!!!!!!!!!!!!!!!!'
-    @as(*align(1) u64, @ptrCast(&buf1_u8[image_path_b_len + 2 * (nt_object_prefix.len - "exe".len)])).* = @as(u64, @bitCast([4]u16{ 'b', 'u', 'n', 'x' }));
-
     // Open the metadata file
     var metadata_handle: w.HANDLE = undefined;
     var io: w.IO_STATUS_BLOCK = undefined;
     if (is_standalone) {
+        // BUF1: '\??\C:\Users\dave\project\node_modules\.bin\hello.bunx!!!!!!!!!!!!!!!!!!!!!!'
+        @as(*align(1) u64, @ptrCast(&buf1_u8[image_path_b_len + 2 * (nt_object_prefix.len - "exe".len)])).* = @as(u64, @bitCast([4]u16{ 'b', 'u', 'n', 'x' }));
+
         const path_len_bytes: c_ushort = image_path_b_len + @as(c_ushort, 2 * (nt_object_prefix.len - "exe".len + "bunx".len));
         var nt_name = w.UNICODE_STRING{
             .Length = path_len_bytes,
@@ -399,7 +399,7 @@ inline fn launcher(bun_ctx: anytype) noreturn {
     //                                               |        'ptr' initial value
     //                                              the read ptr
     var read_ptr = brk: {
-        var left = image_path_b_len / 2 - 2 * ".exe".len;
+        var left = image_path_b_len / 2 - (if (is_standalone) 2 * ".exe".len else ".bunx".len);
         var ptr: [*]u16 = buf1_u16[left..];
         inline for (0..1) |_| {
             while (true) {
@@ -422,6 +422,9 @@ inline fn launcher(bun_ctx: anytype) noreturn {
     std.debug.assert(read_ptr[0] != '\\');
 
     const read_max_len = buf1.len * 2 - (@intFromPtr(read_ptr) - @intFromPtr(buf1_u16));
+
+    if (dbg) debug("read_ptr = buf1 + {d}\n", .{(@intFromPtr(read_ptr) - @intFromPtr(buf1_u16))});
+    if (dbg) debug("max_read_len = {d}\n", .{read_max_len});
 
     // Do the read!
     //
@@ -554,7 +557,7 @@ inline fn launcher(bun_ctx: anytype) noreturn {
                 debug("direct_launch_with_bun_js\n", .{});
                 // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
                 //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^       ^ read_ptr
-                const launch_slice = buf1_u16[nt_object_prefix.len..][0 .. (@intFromPtr(read_ptr) - shebang_arg_len_u8 - @intFromPtr(buf1_u8)) / 2];
+                const launch_slice = buf1_u16[nt_object_prefix.len..][0 .. (@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) / 2 - shebang_arg_len_u8 - "\"".len];
                 bun_ctx.direct_launch_with_bun_js(
                     launch_slice,
                     bun_ctx.cli_context,

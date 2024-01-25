@@ -387,7 +387,7 @@
       "type": "cppvsdbg",
       "request": "launch",
       "name": "Windows: bun run [file]",
-      "program": "${workspaceFolder}/build/bun-debug.exe",
+      "program": "${workspaceFolder}/build/bun-debug.exe", 
       "args": ["run", "${file}"],
       "cwd": "${fileDirname}"
     },

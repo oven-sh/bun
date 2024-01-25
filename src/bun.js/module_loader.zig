@@ -2333,6 +2333,7 @@ pub const ModuleLoader = struct {
                 .@"node-fetch" => return jsSyntheticModule(.@"node-fetch", specifier),
                 .@"@vercel/fetch" => return jsSyntheticModule(.vercel_fetch, specifier),
                 .@"utf-8-validate" => return jsSyntheticModule(.@"utf-8-validate", specifier),
+                .@"abort-controller" => return jsSyntheticModule(.@"abort-controller", specifier),
                 .undici => return jsSyntheticModule(.undici, specifier),
                 .ws => return jsSyntheticModule(.ws, specifier),
             }
@@ -2473,6 +2474,7 @@ const SavedSourceMap = JSC.SavedSourceMap;
 
 pub const HardcodedModule = enum {
     bun,
+    @"abort-controller",
     @"bun:ffi",
     @"bun:jsc",
     @"bun:main",
@@ -2614,6 +2616,7 @@ pub const HardcodedModule = enum {
             .{ "ws", HardcodedModule.ws },
             .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
             .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
+            .{ "abort-controller", HardcodedModule.@"abort-controller" },
         },
     );
 
@@ -2779,6 +2782,10 @@ pub const HardcodedModule = enum {
 
             .{ "inspector/promises", .{ .path = "inspector" } },
             .{ "node:inspector/promises", .{ .path = "inspector" } },
+
+            // Polyfills we force to native
+            .{ "abort-controller", .{ .path = "abort-controller" } },
+            .{ "abort-controller/polyfill", .{ .path = "abort-controller" } },
         };
 
         const node_alias_kvs = .{

@@ -1698,3 +1698,69 @@ it("#8446 header with underscore", done => {
     }
   });
 })
+
+it("#8446 header with dot", done => {
+  const server = Server((req, res) => {
+    res.end('OK');
+  });
+  server.listen(0, async (_err, host, port) => {
+    try {
+      const res = await fetch(`http://localhost:${port}`, {
+        headers: {
+          "x.foo": "bar",
+        },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("OK");
+      done();
+    } catch (err) {
+      done(err);
+    } finally {
+      server.close();
+    }
+  });
+})
+
+it("#8446 header start with minus", done => {
+  const server = Server((req, res) => {
+    res.end('OK');
+  });
+  server.listen(0, async (_err, host, port) => {
+    try {
+      const res = await fetch(`http://localhost:${port}`, {
+        headers: {
+          "-x-foo": "bar",
+        },
+        signal: AbortSignal.timeout(500),
+      });
+      expect.unreachable();
+    } catch (err) {
+      expect(err.message).toBe("The operation timed out.");
+      done();
+    } finally {
+      server.close();
+    }
+  });
+})
+
+it("#8446 header start with underscore", done => {
+  const server = Server((req, res) => {
+    res.end('OK');
+  });
+  server.listen(0, async (_err, host, port) => {
+    try {
+      const res = await fetch(`http://localhost:${port}`, {
+        headers: {
+          "_x-foo": "bar",
+        },
+        signal: AbortSignal.timeout(500),
+      });
+      expect.unreachable();
+    } catch (err) {
+      expect(err.message).toBe("The operation timed out.");
+      done();
+    } finally {
+      server.close();
+    }
+  });
+})

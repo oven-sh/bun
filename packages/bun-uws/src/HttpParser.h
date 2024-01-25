@@ -236,7 +236,8 @@ namespace uWS
             return (x == '-') |
                    ((x > '/') & (x < ':')) |
                    ((x > '@') & (x < '[')) |
-                   ((x > 96) & (x < '{'));
+                   ((x > 96) & (x < '{')) |
+                   (x == '_');
         }
 
         static inline uint64_t hasLess(uint64_t x, uint64_t n)

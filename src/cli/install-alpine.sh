@@ -43,7 +43,8 @@
 	fi
 
 	if [ $# -ge 1 ]; then
-		bun_uri=$GITHUB/oven-sh/bun/releases/download/$1/bun-$target.zip
+		bun_uri=$GITHUB/oven-sh/bun/releases/download/bun-v$1/bun-$target.zip
+		# bun_uri=$GITHUB/oven-sh/bun/releases/download/$1/bun-$target.zip
 	else
 		bun_uri=$GITHUB/oven-sh/bun/releases/latest/download/bun-$target.zip
 	fi

@@ -30,8 +30,11 @@
 #include <sys/utsname.h>
 #else
 #include <uv.h>
+// https://github.com/nodejs/node/blob/62ca05017d758e254eda2dfaf9678d2038a9235b/src/node_process_methods.cc#L28
 #include <io.h>
 #include <fcntl.h>
+typedef int mode_t;
+#define umask _umask
 #endif
 #include "JSNextTickQueue.h"
 #include "ProcessBindingUV.h"
@@ -342,8 +345,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-#if !OS(WINDOWS)
-
     if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
         mode_t currentMask = umask(0);
         umask(currentMask);
@@ -376,9 +377,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     }
 
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
-#else
-    return JSC::JSValue::encode(JSC::jsNumber(0));
-#endif
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);

@@ -513,7 +513,7 @@ inline fn launcher(bun_ctx: anytype) noreturn {
 
             // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //                                                                       ^ new read_ptr
-            read_ptr -= @sizeOf(ShebangMetadataPacked);
+            read_ptr = @ptrFromInt(@intFromPtr(read_ptr) - @sizeOf(ShebangMetadataPacked));
             const shebang_metadata: ShebangMetadataPacked = @as(*align(1) ShebangMetadataPacked, @ptrCast(read_ptr)).*;
 
             const shebang_arg_len_u8 = shebang_metadata.args_len_bytes;
@@ -549,9 +549,11 @@ inline fn launcher(bun_ctx: anytype) noreturn {
                 // This optimization can save an additional ~10-20ms depending on the machine
                 // as we do not have to launch a second process.
                 debug("direct_launch_with_bun_js\n", .{});
+                // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
+                //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^       ^ read_ptr
+                const launch_slice = buf1_u16[nt_object_prefix.len..][0 .. (@intFromPtr(read_ptr) - shebang_arg_len_u8 - @intFromPtr(buf1_u8)) / 2];
                 bun_ctx.direct_launch_with_bun_js(
-                    // TODO:
-                    // buf1_u16[4 .. (@intFromPtr(dirname_slash_u16_ptr) - @intFromPtr(buf1_u8) + shebang_bin_path_len_bytes + 3) / 2],
+                    launch_slice,
                     bun_ctx.cli_context,
                 );
                 fail(.CouldNotDirectLaunch);
@@ -561,7 +563,7 @@ inline fn launcher(bun_ctx: anytype) noreturn {
             // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //                                                                  ^~~~^
             // BUF2: 'node !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
-            read_ptr -= shebang_arg_len_u8;
+            read_ptr = @ptrFromInt(@intFromPtr(read_ptr) - shebang_arg_len_u8);
             @memcpy(buf2_u8, @as([*]u8, @ptrCast(read_ptr))[0..shebang_arg_len_u8]);
 
             // BUF2: 'node "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
@@ -592,12 +594,6 @@ inline fn launcher(bun_ctx: anytype) noreturn {
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
             //                                                                           ^ null terminator
             @as(*align(1) u16, @ptrCast(read_ptr)).* = 0;
-
-            if (dbg) {
-                debug("BufferAfterShebang: '{}'\n", .{
-                    fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2]),
-                });
-            }
 
             break :spawn_command_line @ptrCast(buf2_u16);
         },
@@ -696,7 +692,7 @@ pub const FromBunRunContext = struct {
 ///
 /// This saves ~5-12ms depending on the machine.
 pub fn startupFromBunJS(context: FromBunRunContext) noreturn {
-    std.debug.assert(!std.mem.startsWith(u8, context.base_path, "\\??\\"));
+    std.debug.assert(!std.mem.startsWith(u16, context.base_path, &nt_object_prefix));
     comptime std.debug.assert(!is_standalone);
     launcher(context);
 }

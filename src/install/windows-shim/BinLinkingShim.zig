@@ -169,7 +169,7 @@ pub const Shebang = struct {
         }
 
         const line = line: {
-            var line_i = bun.strings.indexOfCharUsize(u8, contents, '\n') orelse return parseFromBinPath(bin_path);
+            var line_i = bun.strings.indexOfCharUsize(contents, '\n') orelse return parseFromBinPath(bin_path);
             std.debug.assert(line_i >= 1);
             if (contents[line_i - 1] == '\r') {
                 line_i -= 1;
@@ -227,8 +227,8 @@ pub fn encodeInto(options: @This(), buf: []u8) !void {
         const encoded = bun.strings.convertUTF8toUTF16InBuffer(
             wbuf[0..s.utf16_len],
             s.launcher,
-        ) catch return error.InvalidUtf8;
-        std.debug.assert(encoded == s.utf16_len);
+        );
+        std.debug.assert(encoded.len == s.utf16_len);
         wbuf = wbuf[s.utf16_len..];
 
         wbuf[0] = ' ';

@@ -1487,8 +1487,7 @@ pub const RunCommand = struct {
 pub const DirectBinLaunch = struct {
     var direct_launch_buffer: bun.WPathBuffer = undefined;
 
-    fn directLaunchWithBunJSFromShim(wpath: []u16, args: *anyopaque) void {
-        const ctx: *Command.Context = @alignCast(@ptrCast(args));
+    fn directLaunchWithBunJSFromShim(wpath: []u16, ctx: *Command.Context) void {
         const utf8 = bun.strings.convertUTF16toUTF8InBuffer(
             bun.reinterpretSlice(u8, &direct_launch_buffer),
             wpath,

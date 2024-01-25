@@ -1,3 +1,10 @@
+/// The functions in this file are used throughout Bun's codebase
+//
+// Do not import this file directly!
+//   To import it:
+//      @import("root").bun
+//
+// Otherwise, you risk a circular dependency or Zig including multiple copies of this file which leads to strange bugs.
 const std = @import("std");
 pub const Environment = @import("env.zig");
 
@@ -35,6 +42,12 @@ pub const resolver = @import("./resolver//resolver.zig");
 pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
+
+pub const shell = struct {
+    pub usingnamespace @import("./shell/shell.zig");
+};
+
+pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./__global.zig");
@@ -87,9 +100,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     }
 
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt_;
-        _ = options_;
-        try writer.print("{d}", .{@intFromEnum(fd)});
+        try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
     }
 };
 
@@ -167,7 +178,7 @@ pub fn len(value: anytype) usize {
         .Array => |info| info.len,
         .Vector => |info| info.len,
         .Pointer => |info| switch (info.size) {
-            .One => switch (@as(@import("builtin").TypeInfo, @typeInfo(info.child))) {
+            .One => switch (@typeInfo(info.child)) {
                 .Array => |array| brk: {
                     if (array.sentinel != null) {
                         @compileError("use bun.sliceTo");
@@ -1066,17 +1077,7 @@ fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     return std.os.getcwd(buf);
 }
 
-pub fn getcwd(buf_: []u8) ![]u8 {
-    if (comptime !Environment.isWindows) {
-        return std.os.getcwd(buf_);
-    }
-
-    var temp: [MAX_PATH_BYTES]u8 = undefined;
-    const temp_slice = try std.os.getcwd(&temp);
-    // Paths are normalized to use / to make more things reliable, but eventually this will have to change to be the true file sep
-    // It is possible to expose this value to JS land
-    return path.normalizeBuf(temp_slice, buf_, .auto);
-}
+pub const getcwd = std.os.getcwd;
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
     var temp: [MAX_PATH_BYTES]u8 = undefined;
@@ -1128,12 +1129,8 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
-        var temp: [MAX_PATH_BYTES]u8 = undefined;
-        var temp2: [MAX_PATH_BYTES]u8 = undefined;
-        const temp_slice = try std.os.getFdPath(fd, &temp);
-        const slice = path.normalizeBuf(temp_slice, &temp2, .loose);
-        strings.copyU8IntoU16(buf, slice);
-        return buf[0..slice.len];
+        const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, buf);
+        return wide_slice;
     }
 
     @panic("TODO unsupported platform for getFdPathW");
@@ -2443,4 +2440,21 @@ pub fn reinterpretSlice(comptime T: type, slice: anytype) ReinterpretSliceType(T
     const bytes = std.mem.sliceAsBytes(slice);
     const new_ptr = @as(if (is_const) [*]const T else [*]T, @ptrCast(@alignCast(bytes.ptr)));
     return new_ptr[0..@divTrunc(bytes.len, @sizeOf(T))];
+}
+
+extern "kernel32" fn GetUserNameA(username: *u8, size: *u32) callconv(std.os.windows.WINAPI) c_int;
+
+pub fn getUserName(output_buffer: []u8) ?[]const u8 {
+    if (Environment.isWindows) {
+        var size: u32 = @intCast(output_buffer.len);
+        if (GetUserNameA(@ptrCast(@constCast(output_buffer.ptr)), &size) == 0) {
+            return null;
+        }
+        return output_buffer[0..size];
+    }
+    var env = std.process.getEnvMap(default_allocator) catch outOfMemory();
+    const user = env.get("USER") orelse return null;
+    const size = @min(output_buffer.len, user.len);
+    copy(u8, output_buffer[0..size], user[0..size]);
+    return output_buffer[0..size];
 }

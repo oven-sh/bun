@@ -2251,13 +2251,13 @@ pub const Resolver = struct {
     fn handleESMResolution(r: *ThisResolver, esm_resolution_: ESModule.Resolution, abs_package_path: string, kind: ast.ImportKind, package_json: *PackageJSON, package_subpath: string) ?MatchResult {
         var esm_resolution = esm_resolution_;
         if (!((esm_resolution.status == .Inexact or esm_resolution.status == .Exact or esm_resolution.status == .ExactEndsWithStar) and
-            esm_resolution.path.len > 0 and esm_resolution.path[0] == '/'))
+            esm_resolution.path.len > 0 and esm_resolution.path[0] == std.fs.path.sep))
             return null;
 
         const abs_esm_path: string = brk: {
             var parts = [_]string{
                 abs_package_path,
-                strings.withoutLeadingSlash(esm_resolution.path),
+                strings.withoutLeadingPathSeparator(esm_resolution.path),
             };
             break :brk r.fs.absBuf(&parts, bufs(.esm_absolute_package_path_joined));
         };
@@ -3260,7 +3260,7 @@ pub const Resolver = struct {
     pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) bun.JSC.JSValue {
         bun.JSC.markBinding(@src());
 
-        const in_str = bun.String.create(".");
+        const in_str = bun.String.createUTF8(".");
         const r = &globalThis.bunVM().bundler.resolver;
         return nodeModulePathsJSValue(r, in_str, globalThis);
     }
@@ -3298,7 +3298,7 @@ pub const Resolver = struct {
                     break :brk [2]string{ path_without_trailing_slash, "/node_modules" };
                 };
                 list.append(
-                    bun.String.create(
+                    bun.String.createUTF8(
                         bun.strings.concat(stack_fallback_allocator.get(), &path_parts) catch unreachable,
                     ),
                 ) catch unreachable;
@@ -3312,7 +3312,7 @@ pub const Resolver = struct {
                 const path_without_trailing_slash = strings.withoutTrailingSlash(path);
 
                 list.append(
-                    bun.String.create(
+                    bun.String.createUTF8(
                         bun.strings.concat(
                             stack_fallback_allocator.get(),
                             &[_]string{
@@ -3467,6 +3467,10 @@ pub const Resolver = struct {
                         }
                     }
                 }
+            }
+
+            if (Environment.allow_assert) {
+                std.debug.assert(std.fs.path.isAbsolute(file.path));
             }
 
             return MatchResult{

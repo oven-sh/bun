@@ -14,13 +14,13 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
-  type ArrayBufferView = Bun.ArrayBufferView;
-  type StringOrBuffer = Bun.StringOrBuffer;
-  type BlobOrStringOrBuffer = Bun.BlobOrStringOrBuffer;
-  type PathLike = Bun.PathLike;
-  import { Encoding as CryptoEncoding } from "crypto";
+  import type { Encoding as CryptoEncoding } from "crypto";
+
   interface Env {
     NODE_ENV?: string;
+    /**
+     * Can be used to change the default timezone at runtime
+     */
     TZ?: string;
   }
 
@@ -49,6 +49,181 @@ declare module "bun" {
     command: string,
     options?: { PATH?: string; cwd?: string },
   ): string | null;
+
+  export type ShellFunction = (input: Uint8Array) => Uint8Array;
+
+  export type ShellExpression =
+    | string
+    | { raw: string }
+    | Subprocess
+    | SpawnOptions.Readable
+    | SpawnOptions.Writable
+    | ReadableStream;
+
+  class ShellPromise extends Promise<ShellOutput> {
+    get stdin(): WritableStream;
+    /**
+     * Change the current working directory of the shell.
+     * @param newCwd - The new working directory
+     */
+    cwd(newCwd: string): this;
+    /**
+     * Set environment variables for the shell.
+     * @param newEnv - The new environment variables
+     *
+     * @example
+     * ```ts
+     * await $`echo $FOO`.env({ ...process.env, FOO: "LOL!" })
+     * expect(stdout.toString()).toBe("LOL!");
+     * ```
+     */
+    env(newEnv: Record<string, string> | undefined): this;
+    /**
+     * By default, the shell will write to the current process's stdout and stderr, as well as buffering that output.
+     *
+     * This configures the shell to only buffer the output.
+     */
+    quiet(): this;
+
+    /**
+     * Read from stdout as a string, line by line
+     *
+     * Automatically calls {@link quiet} to disable echoing to stdout.
+     */
+    lines(): AsyncIterable<string>;
+
+    /**
+     * Read from stdout as a string
+     *
+     * Automatically calls {@link quiet} to disable echoing to stdout.
+     * @param encoding - The encoding to use when decoding the output
+     * @returns A promise that resolves with stdout as a string
+     * @example
+     *
+     * ## Read as UTF-8 string
+     *
+     * ```ts
+     * const output = await $`echo hello`.text();
+     * console.log(output); // "hello\n"
+     * ```
+     *
+     * ## Read as base64 string
+     *
+     * ```ts
+     * const output = await $`echo ${atob("hello")}`.text("base64");
+     * console.log(output); // "hello\n"
+     * ```
+     *
+     */
+    text(encoding?: BufferEncoding): Promise<string>;
+
+    /**
+     * Read from stdout as a JSON object
+     *
+     * Automatically calls {@link quiet}
+     *
+     * @returns A promise that resolves with stdout as a JSON object
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo '{"hello": 123}'`.json();
+     * console.log(output); // { hello: 123 }
+     * ```
+     *
+     */
+    json(): Promise<any>;
+
+    /**
+     * Read from stdout as an ArrayBuffer
+     *
+     * Automatically calls {@link quiet}
+     * @returns A promise that resolves with stdout as an ArrayBuffer
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo hello`.arrayBuffer();
+     * console.log(output); // ArrayBuffer { byteLength: 6 }
+     * ```
+     */
+    arrayBuffer(): Promise<ArrayBuffer>;
+
+    /**
+     * Read from stdout as a Blob
+     *
+     * Automatically calls {@link quiet}
+     * @returns A promise that resolves with stdout as a Blob
+     * @example
+     * ```ts
+     * const output = await $`echo hello`.blob();
+     * console.log(output); // Blob { size: 6, type: "" }
+     * ```
+     */
+    blob(): Promise<Blob>;
+  }
+
+  interface ShellConstructor {
+    new (): Shell;
+  }
+
+  export interface Shell {
+    (
+      strings: TemplateStringsArray,
+      ...expressions: ShellExpression[]
+    ): ShellPromise;
+
+    /**
+     * Perform bash-like brace expansion on the given pattern.
+     * @param pattern - Brace pattern to expand
+     *
+     * @example
+     * ```js
+     * const result = braces('index.{js,jsx,ts,tsx}');
+     * console.log(result) // ['index.js', 'index.jsx', 'index.ts', 'index.tsx']
+     * ```
+     */
+    braces(pattern: string): string[];
+
+    /**
+     * Escape strings for input into shell commands.
+     * @param input
+     */
+    escape(input: string): string;
+
+    /**
+     *
+     * Change the default environment variables for shells created by this instance.
+     *
+     * @param newEnv Default environment variables to use for shells created by this instance.
+     * @default process.env
+     *
+     * ## Example
+     *
+     * ```js
+     * import {$} from 'bun';
+     * $.env({ BUN: "bun" });
+     * await $`echo $BUN`;
+     * // "bun"
+     * ```
+     */
+    env(newEnv?: Record<string, string | undefined>): this;
+
+    /**
+     *
+     * @param newCwd Default working directory to use for shells created by this instance.
+     */
+    cwd(newCwd?: string): this;
+
+    readonly ShellPromise: typeof ShellPromise;
+    readonly Shell: ShellConstructor;
+  }
+
+  export interface ShellOutput {
+    readonly stdout: Buffer;
+    readonly stderr: Buffer;
+    readonly exitCode: number;
+  }
+
+  export const $: Shell;
 
   interface TOML {
     /**
@@ -140,7 +315,7 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function write(
-    destination: BunFile | PathLike,
+    destination: BunFile | Bun.PathLike,
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | Bun.BlobPart[],
     options?: {
       /** If writing to a PathLike, set the permissions of the file. */
@@ -193,7 +368,7 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function write(
-    destinationPath: PathLike,
+    destinationPath: Bun.PathLike,
     input: Response,
     options?: {
       /**
@@ -261,7 +436,7 @@ declare module "bun" {
    */
   // tslint:disable-next-line:unified-signatures
   function write(
-    destinationPath: PathLike,
+    destinationPath: Bun.PathLike,
     input: BunFile,
     options?: {
       /**
@@ -1012,14 +1187,17 @@ declare module "bun" {
      * This function does not resolve imports.
      * @param code The code to transpile
      */
-    transform(code: StringOrBuffer, loader?: JavaScriptLoader): Promise<string>;
+    transform(
+      code: Bun.StringOrBuffer,
+      loader?: JavaScriptLoader,
+    ): Promise<string>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
      */
     transformSync(
-      code: StringOrBuffer,
+      code: Bun.StringOrBuffer,
       loader: JavaScriptLoader,
       ctx: object,
     ): string;
@@ -1029,14 +1207,14 @@ declare module "bun" {
      * @param code The code to transpile
      * @param ctx An object to pass to macros
      */
-    transformSync(code: StringOrBuffer, ctx: object): string;
+    transformSync(code: Bun.StringOrBuffer, ctx: object): string;
 
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
      */
-    transformSync(code: StringOrBuffer, loader?: JavaScriptLoader): string;
+    transformSync(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): string;
 
     /**
      * Get a list of import paths and paths from a TypeScript, JSX, TSX, or JavaScript file.
@@ -1052,7 +1230,7 @@ declare module "bun" {
      * console.log(exports); // ["hello"]
      * ```
      */
-    scan(code: StringOrBuffer): { exports: string[]; imports: Import[] };
+    scan(code: Bun.StringOrBuffer): { exports: string[]; imports: Import[] };
 
     /**
      *  Get a list of import paths from a TypeScript, JSX, TSX, or JavaScript file.
@@ -1069,7 +1247,7 @@ declare module "bun" {
      * ```
      * This is a fast path which performs less work than `scan`.
      */
-    scanImports(code: StringOrBuffer): Import[];
+    scanImports(code: Bun.StringOrBuffer): Import[];
   }
 
   type ImportKind =
@@ -1212,12 +1390,12 @@ declare module "bun" {
        *
        * If empty, always returns false
        */
-      password: StringOrBuffer,
+      password: Bun.StringOrBuffer,
       /**
        * Previously hashed password.
        * If empty, always returns false
        */
-      hash: StringOrBuffer,
+      hash: Bun.StringOrBuffer,
       /**
        * If not specified, the algorithm will be inferred from the hash.
        *
@@ -1253,7 +1431,7 @@ declare module "bun" {
        * If empty, this function throws an error. It is usually a programming
        * mistake to hash an empty password.
        */
-      password: StringOrBuffer,
+      password: Bun.StringOrBuffer,
       /**
        * @default "argon2id"
        *
@@ -1296,8 +1474,8 @@ declare module "bun" {
      * ```
      */
     verifySync(
-      password: StringOrBuffer,
-      hash: StringOrBuffer,
+      password: Bun.StringOrBuffer,
+      hash: Bun.StringOrBuffer,
       /**
        * If not specified, the algorithm will be inferred from the hash.
        */
@@ -1341,7 +1519,7 @@ declare module "bun" {
        * If empty, this function throws an error. It is usually a programming
        * mistake to hash an empty password.
        */
-      password: StringOrBuffer,
+      password: Bun.StringOrBuffer,
       /**
        * @default "argon2id"
        *
@@ -1885,7 +2063,7 @@ declare module "bun" {
 
     error?: (
       this: Server,
-      request: Errorlike,
+      request: ErrorLike,
     ) => Response | Promise<Response> | undefined | Promise<undefined>;
 
     /**
@@ -1904,7 +2082,6 @@ declare module "bun" {
     id?: string | null;
   }
 
-  type AnyFunction = (..._: any[]) => any;
   interface ServeOptions extends GenericServeOptions {
     /**
      * What port should the server listen on?
@@ -2129,7 +2306,7 @@ declare module "bun" {
     unix: string;
     tls?: TLSOptions;
   }
-  interface Errorlike extends Error {
+  interface ErrorLike extends Error {
     code?: string;
     errno?: number;
     syscall?: string;
@@ -2137,32 +2314,9 @@ declare module "bun" {
 
   interface TLSOptions {
     /**
-     * File path to a TLS key
-     *
-     * To enable TLS, this option is required.
-     *
-     * @deprecated since v0.6.3 - Use `key: Bun.file(path)` instead.
-     */
-    keyFile?: string;
-    /**
-     * File path to a TLS certificate
-     *
-     * To enable TLS, this option is required.
-     *
-     * @deprecated since v0.6.3 - Use `cert: Bun.file(path)` instead.
-     */
-    certFile?: string;
-
-    /**
      * Passphrase for the TLS key
      */
     passphrase?: string;
-    /**
-     *  File path to a .pem file for a custom root CA
-     *
-     * @deprecated since v0.6.3 - Use `ca: Bun.file(path)` instead.
-     */
-    caFile?: string;
 
     /**
      * File path to a .pem file custom Diffie Helman parameters
@@ -2594,7 +2748,7 @@ declare module "bun" {
    *
    * To close the file, set the array to `null` and it will be garbage collected eventually.
    */
-  function mmap(path: PathLike, opts?: MMapOptions): Uint8Array;
+  function mmap(path: Bun.PathLike, opts?: MMapOptions): Uint8Array;
 
   /** Write to stdout */
   const stdout: BunFile;
@@ -2758,7 +2912,7 @@ declare module "bun" {
      *
      * @param data
      */
-    update(data: BlobOrStringOrBuffer): T;
+    update(data: Bun.BlobOrStringOrBuffer): T;
 
     /**
      * Finalize the hash
@@ -2782,7 +2936,7 @@ declare module "bun" {
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
     static hash(
-      input: BlobOrStringOrBuffer,
+      input: Bun.BlobOrStringOrBuffer,
       hashInto?: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
@@ -2793,7 +2947,10 @@ declare module "bun" {
      *
      * @param encoding `DigestEncoding` to return the hash in
      */
-    static hash(input: BlobOrStringOrBuffer, encoding: DigestEncoding): string;
+    static hash(
+      input: Bun.BlobOrStringOrBuffer,
+      encoding: DigestEncoding,
+    ): string;
   }
 
   type SupportedCryptoAlgorithms =
@@ -2836,7 +2993,7 @@ declare module "bun" {
      * @param input
      */
     update(
-      input: BlobOrStringOrBuffer,
+      input: Bun.BlobOrStringOrBuffer,
       inputEncoding?: CryptoEncoding,
     ): CryptoHasher;
 
@@ -2868,7 +3025,7 @@ declare module "bun" {
      */
     static hash(
       algorithm: SupportedCryptoAlgorithms,
-      input: BlobOrStringOrBuffer,
+      input: Bun.BlobOrStringOrBuffer,
       hashInto?: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
@@ -2881,7 +3038,7 @@ declare module "bun" {
      */
     static hash(
       algorithm: SupportedCryptoAlgorithms,
-      input: BlobOrStringOrBuffer,
+      input: Bun.BlobOrStringOrBuffer,
       encoding: DigestEncoding,
     ): string;
 
@@ -2954,7 +3111,7 @@ declare module "bun" {
    * ```
    */
   function sha(
-    input: StringOrBuffer,
+    input: Bun.StringOrBuffer,
     hashInto?: NodeJS.TypedArray,
   ): NodeJS.TypedArray;
 
@@ -2975,7 +3132,7 @@ declare module "bun" {
    * openssl sha512-256 /path/to/file
    * ```
    */
-  function sha(input: StringOrBuffer, encoding: DigestEncoding): string;
+  function sha(input: Bun.StringOrBuffer, encoding: DigestEncoding): string;
 
   /**
    * This is not the default because it's not cryptographically secure and it's slower than {@link SHA512}
@@ -3902,7 +4059,7 @@ declare module "bun" {
         /**
          * If an error occurred in the call to waitpid2, this will be the error.
          */
-        error?: Errorlike,
+        error?: ErrorLike,
       ): void | Promise<void>;
 
       /**
@@ -4322,6 +4479,31 @@ declare module "bun" {
     "ignore" | "inherit" | null | undefined
   >;
 
+  // Blocked on https://github.com/oven-sh/bun/issues/8329
+  // /**
+  //  *
+  //  * Count the visible width of a string, as it would be displayed in a terminal.
+  //  *
+  //  * By default, strips ANSI escape codes before measuring the string. This is
+  //  * because ANSI escape codes are not visible characters. If passed a non-string,
+  //  * it will return 0.
+  //  *
+  //  * @param str The string to measure
+  //  * @param options
+  //  */
+  // function stringWidth(
+  //   str: string,
+  //   options?: {
+  //     /**
+  //      * Whether to include ANSI escape codes in the width calculation
+  //      *
+  //      * Slightly faster if set to `false`, but less accurate if the string contains ANSI escape codes.
+  //      * @default false
+  //      */
+  //     countAnsiEscapeCodes?: boolean;
+  //   },
+  // ): number;
+
   class FileSystemRouter {
     /**
      * Create a new {@link FileSystemRouter}.
@@ -4586,8 +4768,6 @@ declare module "bun" {
     match(str: string): boolean;
   }
 }
-
-type TypedArray = NodeJS.TypedArray;
 
 // extends lib.dom.d.ts
 interface BufferEncodingOption {

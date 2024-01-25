@@ -23,13 +23,13 @@
 const std = @import("std");
 const math = std.math;
 const mem = std.mem;
-const BunString = @import("./bun.zig").String;
+const BunString = bun.String;
 const expect = std.testing.expect;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayListUnmanaged;
 const ArrayListManaged = std.ArrayList;
 const DirIterator = @import("./bun.js/node/dir_iterator.zig");
-const bun = @import("./bun.zig");
+const bun = @import("root").bun;
 const Syscall = bun.sys;
 const PathLike = @import("./bun.js/node/types.zig").PathLike;
 const Maybe = @import("./bun.js/node/types.zig").Maybe;
@@ -109,7 +109,7 @@ const CursorState = struct {
     }
 };
 
-pub const BunGlobWalker = GlobWalker_(null);
+pub const BunGlobWalker = GlobWalker_(null, false);
 
 fn dummyFilterTrue(val: []const u8) bool {
     _ = val;
@@ -123,8 +123,12 @@ fn dummyFilterFalse(val: []const u8) bool {
 
 pub fn GlobWalker_(
     comptime ignore_filter_fn: ?*const fn ([]const u8) bool,
+    comptime sentinel: bool,
 ) type {
     const is_ignored: *const fn ([]const u8) bool = if (comptime ignore_filter_fn) |func| func else dummyFilterFalse;
+    const stdJoin = comptime if (!sentinel) std.fs.path.join else std.fs.path.joinZ;
+    const bunJoin = comptime if (!sentinel) ResolvePath.join else ResolvePath.joinZ;
+    const MatchedPath = comptime if (!sentinel) []const u8 else [:0]const u8;
 
     return struct {
         const GlobWalker = @This();
@@ -334,7 +338,7 @@ pub fn GlobWalker_(
                 return Maybe(void).success;
             }
 
-            pub fn next(this: *Iterator) !Maybe(?[]const u8) {
+            pub fn next(this: *Iterator) !Maybe(?MatchedPath) {
                 while (true) {
                     switch (this.iter_state) {
                         .get_next => {
@@ -955,17 +959,18 @@ pub fn GlobWalker_(
             return codepoints;
         }
 
-        fn prepareMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) ![]const u8 {
-            const name = try this.arena.allocator().dupe(u8, symlink_full_path);
-            return name;
+        fn prepareMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !MatchedPath {
+            if (comptime !sentinel) return try this.arena.allocator().dupe(u8, symlink_full_path);
+            return try this.arena.allocator().dupeZ(u8, symlink_full_path);
         }
 
-        fn prepareMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name: [:0]const u8) ![]const u8 {
+        fn prepareMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name: [:0]const u8) !MatchedPath {
             const subdir_parts: []const []const u8 = &[_][]const u8{
                 dir_name[0..dir_name.len],
                 entry_name,
             };
             const name = try this.join(subdir_parts);
+            // if (comptime sentinel) return name[0 .. name.len - 1 :0];
             return name;
         }
 
@@ -987,13 +992,17 @@ pub fn GlobWalker_(
             try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
         }
 
-        inline fn join(this: *GlobWalker, subdir_parts: []const []const u8) ![]u8 {
-            return if (!this.absolute)
+        inline fn join(this: *GlobWalker, subdir_parts: []const []const u8) !MatchedPath {
+            if (!this.absolute) {
                 // If relative paths enabled, stdlib join is preferred over
                 // ResolvePath.joinBuf because it doesn't try to normalize the path
-                try std.fs.path.join(this.arena.allocator(), subdir_parts)
-            else
-                try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
+                return try stdJoin(this.arena.allocator(), subdir_parts);
+            }
+
+            const out = try this.arena.allocator().dupe(u8, bunJoin(subdir_parts, .auto));
+            if (comptime sentinel) return out[0 .. out.len - 1 :0];
+
+            return out;
         }
 
         inline fn startsWithDot(filepath: []const u8) bool {

@@ -79,6 +79,19 @@ pub fn Maybe(comptime ResultType: type) type {
             };
         }
 
+        pub inline fn initErr(e: Syscall.Error) Maybe(ReturnType) {
+            return .{ .err = e };
+        }
+
+        pub inline fn asErr(this: *const @This()) ?Syscall.Error {
+            if (this.* == .err) return this.err;
+            return null;
+        }
+
+        pub inline fn initResult(result: ReturnType) Maybe(ReturnType) {
+            return .{ .result = result };
+        }
+
         pub fn toJS(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
             return switch (this) {
                 .err => |e| e.toJSC(globalThis),
@@ -279,7 +292,7 @@ pub const StringOrBuffer = union(enum) {
                     this.encoded_slice = .{};
                 }
 
-                const str = bun.String.create(this.encoded_slice.slice());
+                const str = bun.String.createUTF8(this.encoded_slice.slice());
                 defer str.deref();
                 return str.toJS(ctx);
             },
@@ -672,7 +685,7 @@ pub const PathLike = union(enum) {
                     if (allocator.vtable == bun.default_allocator.vtable) {}
                 }
 
-                const str = bun.String.create(encoded.slice());
+                const str = bun.String.createUTF8(encoded.slice());
                 defer str.deref();
                 return str.toJS(globalObject);
             },
@@ -2159,7 +2172,7 @@ pub const Path = struct {
         else
             PathHandler.joinStringBuf(buf_to_use, to_join[0..i], .windows);
 
-        var str = bun.String.create(out);
+        var str = bun.String.createUTF8(out);
         defer str.deref();
         return str.toJS(globalThis);
     }

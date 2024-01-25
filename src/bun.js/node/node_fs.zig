@@ -106,6 +106,44 @@ pub const Async = struct {
 
     pub const readdir_recursive = AsyncReaddirRecursiveTask;
 
+    /// Used internally. Not from JavaScript.
+    pub const AsyncMkdirp = struct {
+        completion_ctx: *anyopaque,
+        completion: *const fn (*anyopaque, JSC.Maybe(void)) void,
+
+        /// Memory is not owned by this struct
+        path: []const u8,
+
+        task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
+            var this: *AsyncMkdirp = @fieldParentPtr(AsyncMkdirp, "task", task);
+
+            var node_fs = NodeFS{};
+            const result = node_fs.mkdirRecursive(
+                Arguments.Mkdir{
+                    .path = PathLike{ .string = PathString.init(this.path) },
+                    .recursive = true,
+                },
+                .sync,
+            );
+            switch (result) {
+                .err => |err| {
+                    this.completion(this.completion_ctx, .{ .err = err.withPath(bun.default_allocator.dupe(u8, err.path) catch bun.outOfMemory()) });
+                },
+                .result => {
+                    this.completion(this.completion_ctx, JSC.Maybe(void).success);
+                },
+            }
+        }
+
+        pub fn schedule(this: *AsyncMkdirp) void {
+            JSC.WorkPool.schedule(&this.task);
+        }
+    };
+
     fn NewAsyncFSTask(comptime ReturnType: type, comptime ArgumentType: type, comptime Function: anytype) type {
         return struct {
             promise: JSC.JSPromise.Strong,
@@ -783,6 +821,7 @@ pub const Arguments = struct {
         /// Passing a file descriptor is deprecated and may result in an error being thrown in the future.
         path: PathOrFileDescriptor,
         len: JSC.WebCore.Blob.SizeType = 0,
+        flags: i32 = 0,
 
         pub fn deinit(this: @This()) void {
             this.path.deinit();
@@ -1590,7 +1629,6 @@ pub const Arguments = struct {
             LinkTypeEnum;
 
         const LinkTypeEnum = enum {
-            auto,
             file,
             dir,
             junction,
@@ -1656,22 +1694,28 @@ pub const Arguments = struct {
                         arguments.eat();
                         var str = next_val.toBunString(ctx.ptr());
                         defer str.deref();
-                        const utf8 = str.utf8();
-                        if (strings.eqlComptime(utf8, "dir")) break :link_type .dir;
-                        if (strings.eqlComptime(utf8, "file")) break :link_type .file;
-                        if (strings.eqlComptime(utf8, "junction")) break :link_type .junction;
+                        if (str.eqlComptime("dir")) break :link_type .dir;
+                        if (str.eqlComptime("file")) break :link_type .file;
+                        if (str.eqlComptime("junction")) break :link_type .junction;
                         if (exception.* == null) {
                             JSC.throwInvalidArguments(
-                                "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{s}\"",
-                                .{utf8},
+                                "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"",
+                                .{str},
                                 ctx,
                                 exception,
                             );
                         }
                         return null;
                     }
+
+                    // not a string. fallthrough to auto detect.
                 }
-                break :link_type .auto;
+
+                var buf: bun.PathBuffer = undefined;
+                const stat = bun.sys.stat(old_path.sliceZ(&buf));
+
+                // if there's an error node defaults to file.
+                break :link_type if (stat == .result and bun.C.S.ISDIR(@intCast(stat.result.mode))) .dir else .file;
             };
 
             return Symlink{
@@ -4673,7 +4717,7 @@ pub const NodeFS = struct {
                 switch (ExpectedType) {
                     Dirent => {
                         entries.append(.{
-                            .name = bun.String.create(utf8_name),
+                            .name = bun.String.createUTF8(utf8_name),
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -4681,7 +4725,7 @@ pub const NodeFS = struct {
                         entries.append(Buffer.fromString(utf8_name, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                     },
                     bun.String => {
-                        entries.append(bun.String.create(utf8_name)) catch bun.outOfMemory();
+                        entries.append(bun.String.createUTF8(utf8_name)) catch bun.outOfMemory();
                     },
                     else => @compileError("unreachable"),
                 }
@@ -4807,7 +4851,7 @@ pub const NodeFS = struct {
             switch (comptime ExpectedType) {
                 Dirent => {
                     entries.append(.{
-                        .name = bun.String.create(name_to_copy),
+                        .name = bun.String.createUTF8(name_to_copy),
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -4815,7 +4859,7 @@ pub const NodeFS = struct {
                     entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                 },
                 bun.String => {
-                    entries.append(bun.String.create(name_to_copy)) catch bun.outOfMemory();
+                    entries.append(bun.String.createUTF8(name_to_copy)) catch bun.outOfMemory();
                 },
                 else => bun.outOfMemory(),
             }
@@ -4936,7 +4980,7 @@ pub const NodeFS = struct {
                 switch (comptime ExpectedType) {
                     Dirent => {
                         entries.append(.{
-                            .name = bun.String.create(name_to_copy),
+                            .name = bun.String.createUTF8(name_to_copy),
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -4944,7 +4988,7 @@ pub const NodeFS = struct {
                         entries.append(Buffer.fromString(name_to_copy, bun.default_allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                     },
                     bun.String => {
-                        entries.append(bun.String.create(name_to_copy)) catch bun.outOfMemory();
+                        entries.append(bun.String.createUTF8(name_to_copy)) catch bun.outOfMemory();
                     },
                     else => @compileError("Impossible"),
                 }
@@ -5140,7 +5184,7 @@ pub const NodeFS = struct {
                     total += amt;
                     // There are cases where stat()'s size is wrong or out of date
                     if (total > size and amt != 0) {
-                        buf.ensureUnusedCapacity(8096) catch unreachable;
+                        buf.ensureUnusedCapacity(8192) catch unreachable;
                         buf.expandToCapacity();
                         continue;
                     }
@@ -5161,7 +5205,7 @@ pub const NodeFS = struct {
                         total += amt;
                         // There are cases where stat()'s size is wrong or out of date
                         if (total > size and amt != 0) {
-                            buf.ensureUnusedCapacity(8096) catch unreachable;
+                            buf.ensureUnusedCapacity(8192) catch unreachable;
                             buf.expandToCapacity();
                             continue;
                         }
@@ -5353,7 +5397,7 @@ pub const NodeFS = struct {
                     }
                 else
                     .{
-                        .string = .{ .utf8 = .{}, .underlying = bun.String.create(outbuf[0..len]) },
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(outbuf[0..len]) },
                     },
             },
         };
@@ -5377,7 +5421,7 @@ pub const NodeFS = struct {
                 } };
 
             // Seems like `rc` does not contain the errno?
-            std.debug.assert(rc.value == 0);
+            std.debug.assert(rc.errEnum() == null);
             const buf = bun.span(req.ptrAs([*:0]u8));
 
             return .{
@@ -5392,7 +5436,7 @@ pub const NodeFS = struct {
                         }
                     else
                         .{
-                            .string = .{ .utf8 = .{}, .underlying = bun.String.create(buf) },
+                            .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(buf) },
                         },
                 },
             };
@@ -5441,7 +5485,7 @@ pub const NodeFS = struct {
                     }
                 else
                     .{
-                        .string = .{ .utf8 = .{}, .underlying = bun.String.create(buf) },
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(buf) },
                     },
             },
         };
@@ -5640,8 +5684,6 @@ pub const NodeFS = struct {
                 args.old_path.sliceZ(&this.sync_error_buf),
                 args.new_path.sliceZ(&to_buf),
                 switch (args.link_type) {
-                    // TODO: auto mode
-                    .auto => 0,
                     .file => 0,
                     .dir => uv.UV_FS_SYMLINK_DIR,
                     .junction => uv.UV_FS_SYMLINK_JUNCTION,
@@ -5655,12 +5697,12 @@ pub const NodeFS = struct {
         );
     }
 
-    fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, comptime _: Flavor) Maybe(Return.Truncate) {
+    fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, flags: i32, comptime _: Flavor) Maybe(Return.Truncate) {
         if (comptime Environment.isWindows) {
             const file = Syscall.open(
                 path.sliceZ(&this.sync_error_buf),
-                os.O.RDWR,
-                0,
+                os.O.WRONLY | flags,
+                0o644,
             );
             if (file == .err)
                 return .{ .err = file.err.withPath(path.slice()) };
@@ -5681,6 +5723,7 @@ pub const NodeFS = struct {
             .path => this._truncate(
                 args.path.path,
                 args.len,
+                args.flags,
                 flavor,
             ),
         };
@@ -5799,11 +5842,6 @@ pub const NodeFS = struct {
     }
 
     pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
-        if (comptime Environment.isWindows) {
-            args.global_this.throwTODO("watch is not supported on Windows yet");
-            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
-        }
-
         const watcher = args.createFSWatcher() catch |err| {
             const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);

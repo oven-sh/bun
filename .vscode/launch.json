@@ -134,6 +134,26 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "ZACK",
+      "program": "bun-debug",
+      "args": ["run", "./wtf"],
+      // "args": ["test", "bunshell.test.ts", "-t", "cd"],
+      // "args": ["test", "lex.test.ts"],
+      // "args": ["test", "bunshell.test.ts", "-t", "invalid surrogates"],
+      // "args": ["test", "bunshell.test.ts"],
+      // "args": ["test", "bunshell.test.ts", "-t", "recursive"],
+      // The cwd here must be the same as in CI. Or you will cause test failures that only happen in CI.
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "bun run [file]",
       "program": "bun-debug",
       "args": ["run", "${file}"],
@@ -370,6 +390,14 @@
       "program": "${workspaceFolder}/build/bun-debug.exe",
       "args": ["run", "${file}"],
       "cwd": "${fileDirname}"
-    }
+    },
+    {
+      "type": "cppvsdbg",
+      "request": "launch",
+      "name": "Windows: bun test [file]",
+      "program": "${workspaceFolder}/build/bun-debug.exe",
+      "args": ["test", "${file}"],
+      "cwd": "${fileDirname}"
+    },
   ]
 }

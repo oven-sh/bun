@@ -436,7 +436,7 @@ declare module "bun:sqlite" {
      * ```
      */
     static deserialize(
-      serialized: TypedArray | ArrayBufferLike,
+      serialized: NodeJS.TypedArray | ArrayBufferLike,
       isReadOnly?: boolean,
     ): Database;
   }
@@ -802,22 +802,22 @@ declare module "bun:sqlite" {
   export type SQLQueryBindings =
     | string
     | bigint
-    | TypedArray
+    | NodeJS.TypedArray
     | number
     | boolean
     | null
-    | Record<string, string | bigint | TypedArray | number | boolean | null>;
+    | Record<
+        string,
+        string | bigint | NodeJS.TypedArray | number | boolean | null
+      >;
 
   export default Database;
 
   /**
    * Errors from SQLite have a name `SQLiteError`.
    *
-   * This class does not exist! It is not a class. It is just a type.
-   *
-   * To check if an `Error` is an SQLiteError, use `error.name === "SQLiteError"`
    */
-  export interface SQLiteError extends Error {
+  export class SQLiteError extends Error {
     readonly name: "SQLiteError";
 
     /**

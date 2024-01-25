@@ -251,6 +251,12 @@ pub const Placeholder = struct {
 
     pub var eventlist: [WATCHER_MAX_LIST]EventListIndex = undefined;
     pub var eventlist_index: EventListIndex = 0;
+
+    pub fn isRunning() bool {
+        return true;
+    }
+
+    pub fn init() !void {}
 };
 
 const PlatformWatcher = if (Environment.isMac)
@@ -385,10 +391,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const watcher = try allocator.create(Watcher);
             errdefer allocator.destroy(watcher);
 
-            if (comptime bun.Environment.isWindows) {
-                @panic("TODO on Windows");
-            }
-
             if (!PlatformWatcher.isRunning()) {
                 try PlatformWatcher.init();
             }
@@ -408,8 +410,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         pub fn start(this: *Watcher) !void {
-            std.debug.assert(this.watchloop_handle == null);
-            this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
+            if (!Environment.isWindows) {
+                std.debug.assert(this.watchloop_handle == null);
+                this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
+            }
         }
 
         pub fn deinit(this: *Watcher, close_descriptors: bool) void {
@@ -436,6 +440,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         // This must only be called from the watcher thread
         pub fn watchLoop(this: *Watcher) !void {
+            if (Environment.isWindows) {
+                @compileError("watchLoop should not be used on Windows");
+            }
+
             this.watchloop_handle = std.Thread.getCurrentId();
             Output.Source.configureNamedThread("File Watcher");
 
@@ -676,6 +684,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         remaining_events -= slice.len;
                     }
                 }
+            } else if (Environment.isWindows) {
+                @compileError("watchLoop should not be used on Windows");
             }
         }
 

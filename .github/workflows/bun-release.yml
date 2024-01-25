@@ -111,9 +111,15 @@ jobs:
         with:
           node-version: latest
       - name: Setup Bun
+        if: ${{ env.BUN_VERSION != 'canary' }}
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: "1.0.21"
+      - name: Setup Bun
+        if: ${{ env.BUN_VERSION == 'canary' }}
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: "canary" # Must be 'canary' so tag is correct
       - name: Install Dependencies
         run: bun install
       - name: Setup Tag
@@ -131,14 +137,14 @@ jobs:
         if: ${{ env.BUN_VERSION == 'canary' }}
         uses: JS-DevTools/npm-publish@v1
         with:
-          package: packages/bun-types/dist/package.json
+          package: packages/bun-types/package.json
           token: ${{ secrets.NPM_TOKEN }}
           tag: canary
       - name: Release (latest)
         if: ${{ env.BUN_LATEST == 'true' }}
         uses: JS-DevTools/npm-publish@v1
         with:
-          package: packages/bun-types/dist/package.json
+          package: packages/bun-types/package.json
           token: ${{ secrets.NPM_TOKEN }}
   docker:
     name: Release to Dockerhub

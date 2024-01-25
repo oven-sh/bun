@@ -89,7 +89,7 @@ const FetchFlags = JSC.FetchFlags;
 
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const Task = JSC.Task;
-const Blob = @import("../blob.zig");
+
 pub const Buffer = MarkedArrayBuffer;
 const Lock = @import("../lock.zig").Lock;
 const BuildMessage = JSC.BuildMessage;
@@ -107,6 +107,8 @@ pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context)
 }
 
 pub const bun_file_import_path = "/node_modules.server.bun";
+
+export var has_bun_garbage_collector_flag_enabled = false;
 
 const SourceMap = @import("../sourcemap/sourcemap.zig");
 const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
@@ -465,7 +467,7 @@ pub const ImportWatcher = union(enum) {
     }
 };
 
-const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
+pub const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
 
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
@@ -482,7 +484,6 @@ pub const VirtualMachine = struct {
     main: string = "",
     main_hash: u32 = 0,
     process: js.JSObjectRef = null,
-    blobs: ?*Blob.Group = null,
     flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
@@ -563,7 +564,6 @@ pub const VirtualMachine = struct {
 
     ref_strings: JSC.RefString.Map = undefined,
     ref_strings_mutex: Lock = undefined,
-    file_blobs: JSC.WebCore.Blob.Store.Map,
 
     source_mappings: SavedSourceMap = undefined,
 
@@ -778,8 +778,10 @@ pub const VirtualMachine = struct {
 
             if (strings.eqlComptime(gc_level, "1")) {
                 this.aggressive_garbage_collection = .mild;
+                has_bun_garbage_collector_flag_enabled = true;
             } else if (strings.eqlComptime(gc_level, "2")) {
                 this.aggressive_garbage_collection = .aggressive;
+                has_bun_garbage_collector_flag_enabled = true;
             }
         }
     }
@@ -1017,12 +1019,12 @@ pub const VirtualMachine = struct {
             const debugger = other_vm.debugger.?;
 
             if (debugger.unix.len > 0) {
-                var url = bun.String.create(debugger.unix);
+                var url = bun.String.createUTF8(debugger.unix);
                 Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
             }
 
             if (debugger.path_or_port) |path_or_port| {
-                var url = bun.String.create(path_or_port);
+                var url = bun.String.createUTF8(path_or_port);
                 Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
             }
 
@@ -1176,7 +1178,6 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1186,7 +1187,6 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
-            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = opts.graph.?,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
@@ -1288,7 +1288,6 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1298,7 +1297,6 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
-            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
@@ -1436,7 +1434,6 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1446,7 +1443,6 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
-            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
@@ -1560,21 +1556,6 @@ pub const VirtualMachine = struct {
         std.debug.assert(input_.len > 0);
         var _was_new = false;
         return this.refCountedStringWithWasNew(&_was_new, input_, hash_, comptime dupe);
-    }
-
-    pub fn preflush(this: *VirtualMachine) void {
-        // We flush on the next tick so that if there were any errors you can still see them
-        this.blobs.?.temporary.reset() catch {};
-    }
-
-    pub fn flush(this: *VirtualMachine) void {
-        this.had_errors = false;
-        for (this.flush_list.items) |item| {
-            this.allocator.free(item);
-        }
-        this.flush_list.shrinkRetainingCapacity(0);
-        this.transpiled_count = 0;
-        this.resolved_count = 0;
     }
 
     pub fn fetchWithoutOnLoadPlugins(
@@ -3072,6 +3053,7 @@ pub const VirtualMachine = struct {
             .ipc = undefined,
         };
         const socket = IPC.Socket.fromFd(context, fd, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
+        socket.setTimeout(0);
         instance.ipc = .{ .socket = socket };
 
         const ptr = socket.ext(*IPCInstance);

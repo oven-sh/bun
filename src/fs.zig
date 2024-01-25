@@ -550,7 +550,7 @@ pub const FileSystem = struct {
                             break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
                         }
 
-                        break :brk "C:/Windows/Temp";
+                        break :brk "C:\\Windows\\Temp";
                     };
                     win_tempdir_cache = value;
                     return value;
@@ -631,15 +631,11 @@ pub const FileSystem = struct {
             dir_fd: bun.FileDescriptor = bun.invalid_fd,
 
             pub inline fn dir(this: *TmpfilePosix) std.fs.Dir {
-                return std.fs.Dir{
-                    .fd = bun.fdcast(this.dir_fd),
-                };
+                return this.dir_fd.asDir();
             }
 
             pub inline fn file(this: *TmpfilePosix) std.fs.File {
-                return std.fs.File{
-                    .handle = bun.fdcast(this.fd),
-                };
+                return this.fd.asFile();
             }
 
             pub fn close(this: *TmpfilePosix) void {
@@ -685,9 +681,7 @@ pub const FileSystem = struct {
             }
 
             pub inline fn file(this: *TmpfileWindows) std.fs.File {
-                return std.fs.File{
-                    .handle = bun.fdcast(this.fd),
-                };
+                return this.fd.asFile();
             }
 
             pub fn close(this: *TmpfileWindows) void {
@@ -911,9 +905,8 @@ pub const FileSystem = struct {
                     std.os.O.DIRECTORY,
                     0,
                 );
-            return std.fs.Dir{
-                .fd = bun.fdcast(try dirfd.unwrap()),
-            };
+            const fd = try dirfd.unwrap();
+            return fd.asDir();
         }
 
         fn readdir(
@@ -1489,6 +1482,13 @@ pub const PathName = struct {
     }
 
     pub fn init(_path: string) PathName {
+        if (comptime Environment.isWindows and Environment.isDebug) {
+            // This path is likely incorrect. I think it may be *possible*
+            // but it is almost entirely certainly a bug.
+            std.debug.assert(!strings.startsWith(_path, "/:/"));
+            std.debug.assert(!strings.startsWith(_path, "\\:\\"));
+        }
+
         var path = _path;
         var base = path;
         var ext: []const u8 = undefined;

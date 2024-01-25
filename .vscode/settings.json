@@ -29,7 +29,7 @@
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "zig.zls.enableInlayHints": false,
-  "zig.path": "${workspaceFolder}/.cache/zig/zig",
+  "zig.path": "${workspaceFolder}/.cache/zig/zig.exe",
   "git.ignoreSubmodules": true,
   "[jsx]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"

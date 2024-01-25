@@ -1,26 +1,23 @@
-declare namespace NodeJS {
-  type _BunEnv = import("bun").Env;
-  interface ProcessVersions extends Dict<string> {
-    bun: string;
-  }
-  interface ProcessEnv extends Dict<string>, _BunEnv {
-    /**
-     * Can be used to change the default timezone at runtime
-     */
-    NODE_ENV?: string;
+export {};
+
+import type { Env, PathLike, BunFile } from "bun";
+
+declare global {
+  namespace NodeJS {
+    interface ProcessVersions extends Dict<string> {
+      bun: string;
+    }
+    interface ProcessEnv extends Env {}
   }
 }
 
 declare module "fs/promises" {
-  import { PathLike } from "bun";
   function exists(path: PathLike): Promise<boolean>;
 }
 
 declare module "tls" {
-  // eslint-disable-next-line no-duplicate-imports
-  import { BunFile } from "bun";
-
-  type BunConnectionOptions = Omit<ConnectionOptions, "ca" | "tls" | "cert"> & {
+  interface BunConnectionOptions
+    extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
     /**
      * Optionally override the trusted CA certificates. Default is to trust
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
@@ -68,7 +65,7 @@ declare module "tls" {
       | NodeJS.TypedArray
       | Array<string | Buffer | BunFile | NodeJS.TypedArray | KeyObject>
       | undefined;
-  };
+  }
 
   function connect(
     options: BunConnectionOptions,

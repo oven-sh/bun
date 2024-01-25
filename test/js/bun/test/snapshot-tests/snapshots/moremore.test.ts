@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { it, test, expect, describe } from "bun:test";
 
 class Number2 extends Number {

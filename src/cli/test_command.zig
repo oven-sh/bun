@@ -419,7 +419,7 @@ const Scanner = struct {
 
         while (this.dirs_to_scan.readItem()) |entry| {
             if (!Environment.isWindows) {
-                const dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
+                const dir = entry.relative_dir.asDir();
                 std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
@@ -431,7 +431,7 @@ const Scanner = struct {
                 FileSystem.setMaxFd(child_dir.fd);
                 _ = this.readDirWithName(path2, child_dir) catch continue;
             } else {
-                const dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
+                const dir = entry.relative_dir.asDir();
                 std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
@@ -680,6 +680,7 @@ pub const TestCommand = struct {
             vm.bundler.options.minify_syntax = false;
             vm.bundler.options.minify_identifiers = false;
             vm.bundler.options.minify_whitespace = false;
+            vm.bundler.options.dead_code_elimination = false;
             vm.global.vm().setControlFlowProfiler(true);
         }
 

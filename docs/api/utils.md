@@ -261,6 +261,24 @@ This function is optimized for large input. On an M1X, it processes 480 MB/s -
 20 GB/s, depending on how much data is being escaped and whether there is non-ascii
 text. Non-string types will be converted to a string before escaping.
 
+## `Bun.stringWidth()`
+
+```ts
+Bun.stringWidth(input: string, options?: { countAnsiEscapeCodes?: boolean = false }): number
+```
+
+Returns the number of columns required to display a string. This is useful for aligning text in a terminal. By default, ANSI escape codes are removed before measuring the string. To include them, pass `{ countAnsiEscapeCodes: true }` as the second argument.
+
+```ts
+Bun.stringWidth("hello"); // => 5
+Bun.stringWidth("\u001b[31mhello\u001b[0m"); // => 5
+Bun.stringWidth("\u001b[31mhello\u001b[0m", { countAnsiEscapeCodes: true }); // => 12
+```
+
+Compared with the popular `string-width` npm package, `bun`'s implementation is > [100x faster](https://github.com/oven-sh/bun/blob/8abd1fb088bcf2e78bd5d0d65ba4526872d2ab61/bench/snippets/string-width.mjs#L22)
+
+
+
 <!-- ## `Bun.enableANSIColors()` -->
 
 ## `Bun.fileURLToPath()`

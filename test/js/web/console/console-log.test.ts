@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
 import { bunExe } from "harness";
@@ -14,8 +13,8 @@ it("should log to console correctly", async () => {
     },
   });
   expect(await exited).toBe(0);
-  expect(await new Response(stderr).text()).toBe("uh oh\n");
-  expect(await new Response(stdout).text()).toBe(
-    await new Response(file(import.meta.dir + "/console-log.expected.txt")).text(),
+  expect((await new Response(stderr).text()).replaceAll("\r\n", "\n")).toBe("uh oh\n");
+  expect((await new Response(stdout).text()).replaceAll("\r\n", "\n")).toBe(
+    (await new Response(file(import.meta.dir + "/console-log.expected.txt")).text()).replaceAll("\r\n", "\n"),
   );
 });

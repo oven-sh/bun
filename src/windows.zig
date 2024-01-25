@@ -12,6 +12,7 @@ pub const LPCWSTR = windows.LPCWSTR;
 pub const LPSTR = windows.LPSTR;
 pub const WCHAR = windows.WCHAR;
 pub const LPCSTR = windows.LPCSTR;
+pub const PWSTR = windows.PWSTR;
 pub const FALSE = windows.FALSE;
 pub const TRUE = windows.TRUE;
 pub const INVALID_HANDLE_VALUE = windows.INVALID_HANDLE_VALUE;
@@ -74,6 +75,17 @@ pub extern fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
 ) [*]win32.LPWSTR;
+
+pub extern fn GetFileType(
+    hFile: win32.HANDLE,
+) callconv(windows.WINAPI) win32.DWORD;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfiletype#return-value
+pub const FILE_TYPE_UNKNOWN = 0x0000;
+pub const FILE_TYPE_DISK = 0x0001;
+pub const FILE_TYPE_CHAR = 0x0002;
+pub const FILE_TYPE_PIPE = 0x0003;
+pub const FILE_TYPE_REMOTE = 0x8000;
 
 pub const LPDWORD = *win32.DWORD;
 
@@ -2970,7 +2982,11 @@ pub extern "kernel32" fn SetFileInformationByHandle(
 ) BOOL;
 
 pub fn getLastErrno() bun.C.E {
-    return switch (bun.windows.kernel32.GetLastError()) {
+    return translateWinErrorToErrno(bun.windows.kernel32.GetLastError());
+}
+
+pub fn translateWinErrorToErrno(err: win32.Win32Error) bun.C.E {
+    return switch (err) {
         .SUCCESS => .SUCCESS,
         .FILE_NOT_FOUND => .NOENT,
         .PATH_NOT_FOUND => .NOENT,
@@ -2982,10 +2998,21 @@ pub fn getLastErrno() bun.C.E {
         .INVALID_PARAMETER => .INVAL,
 
         else => |t| {
-            if (bun.Environment.isDebug) {
-                bun.Output.warn("Called getLastErrno with {s} which does not have a mapping to errno", .{@tagName(t)});
-            }
+            // if (bun.Environment.isDebug) {
+            bun.Output.warn("Called getLastErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
+            // }
             return .UNKNOWN;
         },
     };
 }
+
+pub extern "kernel32" fn GetHostNameW(
+    lpBuffer: PWSTR,
+    nSize: c_int,
+) BOOL;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
+pub extern "kernel32" fn GetTempPathW(
+    nBufferLength: DWORD, // [in]
+    lpBuffer: LPCWSTR, // [out]
+) DWORD;

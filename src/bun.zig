@@ -1,3 +1,10 @@
+/// The functions in this file are used throughout Bun's codebase
+//
+// Do not import this file directly!
+//   To import it:
+//      @import("root").bun
+//
+// Otherwise, you risk a circular dependency or Zig including multiple copies of this file which leads to strange bugs.
 const std = @import("std");
 pub const Environment = @import("env.zig");
 
@@ -36,6 +43,12 @@ pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 
+pub const shell = struct {
+    pub usingnamespace @import("./shell/shell.zig");
+};
+
+pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
+
 pub const Output = @import("./output.zig");
 pub const Global = @import("./__global.zig");
 
@@ -65,22 +78,29 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
         return @enumFromInt(try reader.readInt(FileDescriptorInt, endian));
     }
 
+    /// converts a `bun.FileDescriptor` into the native operating system fd
+    ///
+    /// On non-windows this does nothing, but on windows it converts UV descriptors
+    /// to Windows' *HANDLE, and casts the types for proper usage.
+    ///
+    /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
     pub inline fn cast(fd: FileDescriptor) std.os.fd_t {
-        return fdcast(fd);
+        if (!Environment.isWindows) return fd.int();
+        // if not having this check, the cast may crash zig compiler?
+        if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
+        return FDImpl.decode(fd).system();
     }
 
     pub inline fn asDir(fd: FileDescriptor) std.fs.Dir {
-        return std.fs.Dir{ .fd = fdcast(fd) };
+        return std.fs.Dir{ .fd = fd.cast() };
     }
 
     pub inline fn asFile(fd: FileDescriptor) std.fs.File {
-        return std.fs.File{ .handle = fdcast(fd) };
+        return std.fs.File{ .handle = fd.cast() };
     }
 
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt_;
-        _ = options_;
-        try writer.print("{d}", .{@intFromEnum(fd)});
+        try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
     }
 };
 
@@ -158,7 +178,7 @@ pub fn len(value: anytype) usize {
         .Array => |info| info.len,
         .Vector => |info| info.len,
         .Pointer => |info| switch (info.size) {
-            .One => switch (@as(@import("builtin").TypeInfo, @typeInfo(info.child))) {
+            .One => switch (@typeInfo(info.child)) {
                 .Array => |array| brk: {
                     if (array.sentinel != null) {
                         @compileError("use bun.sliceTo");
@@ -547,7 +567,7 @@ pub fn openFileZ(pathZ: [:0]const u8, open_flags: std.fs.File.OpenFlags) !std.fs
     }
 
     const res = try sys.open(pathZ, flags, 0).unwrap();
-    return std.fs.File{ .handle = fdcast(res) };
+    return std.fs.File{ .handle = res.cast() };
 }
 
 pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
@@ -559,7 +579,8 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
             .read_write => flags |= std.os.O.RDWR,
         }
 
-        return std.fs.File{ .handle = fdcast(try sys.openA(path_, flags, 0).unwrap()) };
+        const fd = try sys.openA(path_, flags, 0).unwrap();
+        return fd.asFile();
     }
 
     return try openFileZ(&try std.os.toPosixPath(path_), open_flags);
@@ -568,7 +589,7 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
-        return std.fs.Dir{ .fd = fdcast(res) };
+        return res.asDir();
     } else {
         const fd = try sys.openat(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return fd.asDir();
@@ -578,7 +599,7 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
 pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
-        return std.fs.Dir{ .fd = fdcast(res) };
+        return res.asDir();
     } else {
         const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return fd.asDir();
@@ -588,7 +609,7 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
 pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(invalid_fd, path_, true, false).unwrap();
-        return std.fs.Dir{ .fd = fdcast(res) };
+        return res.asDir();
     } else {
         const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return fd.asDir();
@@ -1056,17 +1077,7 @@ fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     return std.os.getcwd(buf);
 }
 
-pub fn getcwd(buf_: []u8) ![]u8 {
-    if (comptime !Environment.isWindows) {
-        return std.os.getcwd(buf_);
-    }
-
-    var temp: [MAX_PATH_BYTES]u8 = undefined;
-    const temp_slice = try std.os.getcwd(&temp);
-    // Paths are normalized to use / to make more things reliable, but eventually this will have to change to be the true file sep
-    // It is possible to expose this value to JS land
-    return path.normalizeBuf(temp_slice, buf_, .auto);
-}
+pub const getcwd = std.os.getcwd;
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
     var temp: [MAX_PATH_BYTES]u8 = undefined;
@@ -1077,7 +1088,7 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
 pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
-    const fd = fdcast(toFD(fd_));
+    const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
         var temp: [MAX_PATH_BYTES]u8 = undefined;
@@ -1115,15 +1126,11 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 }
 
 pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
-    const fd = fdcast(toFD(fd_));
+    const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
-        var temp: [MAX_PATH_BYTES]u8 = undefined;
-        var temp2: [MAX_PATH_BYTES]u8 = undefined;
-        const temp_slice = try std.os.getFdPath(fd, &temp);
-        const slice = path.normalizeBuf(temp_slice, &temp2, .loose);
-        strings.copyU8IntoU16(buf, slice);
-        return buf[0..slice.len];
+        const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, buf);
+        return wide_slice;
     }
 
     @panic("TODO unsupported platform for getFdPathW");
@@ -1367,7 +1374,7 @@ pub fn reloadProcess(
     const bun = @This();
     const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
     for (bun.argv(), dupe_argv) |src, *dest| {
-        dest.* = (allocator.dupeZ(u8, sliceTo(src, 0)) catch unreachable).ptr;
+        dest.* = (allocator.dupeZ(u8, src) catch unreachable).ptr;
     }
 
     const environ_slice = std.mem.span(std.c.environ);
@@ -1384,7 +1391,7 @@ pub fn reloadProcess(
     const exec_path = (allocator.dupeZ(u8, std.fs.selfExePathAlloc(allocator) catch unreachable) catch unreachable).ptr;
 
     // we clone argv so that the memory address isn't the same as the libc one
-    const argv = @as([*:null]?[*:0]const u8, @ptrCast(dupe_argv.ptr));
+    const newargv = @as([*:null]?[*:0]const u8, @ptrCast(dupe_argv.ptr));
 
     // we clone envp so that the memory address of environment variables isn't the same as the libc one
     const envp = @as([*:null]?[*:0]const u8, @ptrCast(environ.ptr));
@@ -1412,7 +1419,7 @@ pub fn reloadProcess(
                 C.POSIX_SPAWN_SETEXEC |
                 C.POSIX_SPAWN_SETSIGDEF | C.POSIX_SPAWN_SETSIGMASK,
         ) catch unreachable;
-        switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(argv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
+        switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
             .err => |err| {
                 Output.panic("Unexpected error while reloading: {d} {s}", .{ err.errno, @tagName(err.getErrno()) });
             },
@@ -1421,7 +1428,7 @@ pub fn reloadProcess(
     } else {
         const err = std.os.execveZ(
             exec_path,
-            argv,
+            newargv,
             envp,
         );
         Output.panic("Unexpected error while reloading: {s}", .{@errorName(err)});
@@ -1673,19 +1680,6 @@ pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(valu
     return value;
 }
 
-/// converts a `bun.FileDescriptor` into the native operating system fd
-///
-/// On non-windows this does nothing, but on windows it converts UV descriptors
-/// to Windows' *HANDLE, and casts the types for proper usage.
-///
-/// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
-pub inline fn fdcast(fd: FileDescriptor) std.os.fd_t {
-    if (!Environment.isWindows) return fd.int();
-    // if not having this check, the cast may crash zig compiler?
-    if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
-    return FDImpl.decode(fd).system();
-}
-
 /// Converts a native file descriptor into a `bun.FileDescriptor`
 ///
 /// Accepts either a UV descriptor (i32) or a windows handle (*anyopaque)
@@ -1817,17 +1811,20 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
 
+var _argv: [][:0]u8 = &[_][:0]u8{};
+
+pub inline fn argv() [][:0]u8 {
+    return _argv;
+}
+
+pub fn initArgv(allocator: std.mem.Allocator) !void {
+    _argv = try std.process.argsAlloc(allocator);
+}
+
 pub const posix = struct {
     pub const STDIN_FD = toFD(0);
     pub const STDOUT_FD = toFD(1);
     pub const STDERR_FD = toFD(2);
-
-    pub inline fn argv() [][*:0]u8 {
-        return std.os.argv;
-    }
-    pub inline fn setArgv(new_ptr: [][*:0]u8) void {
-        std.os.argv = new_ptr;
-    }
 
     pub fn stdio(i: anytype) FileDescriptor {
         return switch (i) {
@@ -1845,14 +1842,6 @@ pub const win32 = struct {
     pub var STDOUT_FD: FileDescriptor = undefined;
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
-
-    pub inline fn argv() [][*:0]u8 {
-        return std.os.argv;
-    }
-
-    pub inline fn setArgv(new_ptr: [][*:0]u8) void {
-        std.os.argv = new_ptr;
-    }
 
     pub fn stdio(i: anytype) FileDescriptor {
         return switch (i) {
@@ -2446,4 +2435,21 @@ pub fn reinterpretSlice(comptime T: type, slice: anytype) ReinterpretSliceType(T
     const bytes = std.mem.sliceAsBytes(slice);
     const new_ptr = @as(if (is_const) [*]const T else [*]T, @ptrCast(@alignCast(bytes.ptr)));
     return new_ptr[0..@divTrunc(bytes.len, @sizeOf(T))];
+}
+
+extern "kernel32" fn GetUserNameA(username: *u8, size: *u32) callconv(std.os.windows.WINAPI) c_int;
+
+pub fn getUserName(output_buffer: []u8) ?[]const u8 {
+    if (Environment.isWindows) {
+        var size: u32 = @intCast(output_buffer.len);
+        if (GetUserNameA(@ptrCast(@constCast(output_buffer.ptr)), &size) == 0) {
+            return null;
+        }
+        return output_buffer[0..size];
+    }
+    var env = std.process.getEnvMap(default_allocator) catch outOfMemory();
+    const user = env.get("USER") orelse return null;
+    const size = @min(output_buffer.len, user.len);
+    copy(u8, output_buffer[0..size], user[0..size]);
+    return output_buffer[0..size];
 }

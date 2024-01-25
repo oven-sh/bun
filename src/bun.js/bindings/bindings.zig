@@ -294,7 +294,7 @@ pub const ZigString = extern struct {
 
     pub fn utf16ByteLength(this: ZigString) usize {
         if (this.isUTF8()) {
-            return bun.simdutf.length.utf16.from.utf8.le(this.slice());
+            return bun.simdutf.length.utf16.from.utf8(this.slice());
         }
 
         if (this.is16Bit()) {

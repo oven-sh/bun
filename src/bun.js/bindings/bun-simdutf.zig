@@ -258,16 +258,12 @@ pub const length = struct {
 
     pub const utf16 = struct {
         pub const from = struct {
-            pub const utf8 = struct {
-                pub fn le(input: []const u8) usize {
-                    JSC.markBinding(@src());
-                    return simdutf__utf16_length_from_utf8(input.ptr, input.len);
+            pub fn utf8(input: []const u8) usize {
+                if (@inComptime()) {
+                    return @import("std").unicode.utf8CountCodepoints(input) catch @compileError("Invalid UTF-8");
                 }
-                pub fn be(input: []const u8) usize {
-                    JSC.markBinding(@src());
-                    return simdutf__utf16_length_from_utf8(input.ptr, input.len);
-                }
-            };
+                return simdutf__utf16_length_from_utf8(input.ptr, input.len);
+            }
 
             pub fn utf32(input: []const u32) usize {
                 JSC.markBinding(@src());

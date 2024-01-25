@@ -25,7 +25,7 @@ async function* naturals() {
   }
 }
 
-const test1 = await Array.fromAsync(naturals(), (n) => Promise.resolve(`${n}`));
+const test1 = await Array.fromAsync(naturals(), n => Promise.resolve(`${n}`));
 expectType<string[]>(test1);
 
 const test2 = await Array.fromAsync([Promise.resolve(1), Promise.resolve(2)]);

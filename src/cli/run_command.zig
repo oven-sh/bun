@@ -1111,19 +1111,17 @@ pub const RunCommand = struct {
                 possibly_open_with_bun_js: {
                     const ext = std.fs.path.extension(script_name_to_search);
                     var has_loader = false;
-                    if (!force_using_bun) {
-                        if (options.defaultLoaders.get(ext)) |load| {
-                            has_loader = true;
-                            if (!load.canBeRunByBun())
-                                break :possibly_open_with_bun_js;
-                            // if there are preloads, allow weirdo file extensions
-                        } else {
-                            // you can have package.json scripts with file extensions in the name
-                            // eg "foo.zip"
-                            // in those cases, we don't know
-                            if (ext.len == 0 or strings.containsChar(script_name_to_search, ':'))
-                                break :possibly_open_with_bun_js;
-                        }
+                    if (options.defaultLoaders.get(ext)) |load| {
+                        has_loader = true;
+                        if (!load.canBeRunByBun())
+                            break :possibly_open_with_bun_js;
+                        // if there are preloads, allow weirdo file extensions
+                    } else {
+                        // you can have package.json scripts with file extensions in the name
+                        // eg "foo.zip"
+                        // in those cases, we don't know
+                        if (ext.len == 0 or strings.containsChar(script_name_to_search, ':'))
+                            break :possibly_open_with_bun_js;
                     }
 
                     var file_path = script_name_to_search;

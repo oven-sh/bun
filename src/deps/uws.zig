@@ -2413,6 +2413,7 @@ pub const PING: i32 = 9;
 pub const PONG: i32 = 10;
 
 pub const Opcode = enum(i32) {
+    continuation = 0,
     text = 1,
     binary = 2,
     close = 8,

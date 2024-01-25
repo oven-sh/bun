@@ -21,7 +21,7 @@ const strings = [
     message: "utf8-😶",
     bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x98, 0xb6],
   },
-];
+] as const;
 
 const buffers = [
   {
@@ -39,9 +39,9 @@ const buffers = [
     message: Buffer.from("utf8-🤩"),
     bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0xa4, 0xa9],
   },
-];
+] as const;
 
-const messages = [...strings, ...buffers];
+const messages = [...strings, ...buffers] as const;
 
 const binaryTypes = [
   {

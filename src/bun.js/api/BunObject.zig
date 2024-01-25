@@ -1408,11 +1408,7 @@ pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) c
                 continue;
             }
 
-            if (byte == '\r') {
-                if (i + 1 < bytes.len and bytes[i + 1] == '\n') {
-                    return JSC.JSValue.jsNumber(i + 1);
-                }
-            } else if (byte == '\n') {
+            if (byte == '\n') {
                 return JSC.JSValue.jsNumber(i);
             }
 

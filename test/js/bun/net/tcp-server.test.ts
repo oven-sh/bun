@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { listen, connect, TCPSocketListener, SocketHandler } from "bun";
 import { describe, expect, it } from "bun:test";
 import { expectMaxObjectTypeCount } from "harness";

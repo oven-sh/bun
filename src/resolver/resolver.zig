@@ -3260,7 +3260,7 @@ pub const Resolver = struct {
     pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) bun.JSC.JSValue {
         bun.JSC.markBinding(@src());
 
-        const in_str = bun.String.create(".");
+        const in_str = bun.String.createUTF8(".");
         const r = &globalThis.bunVM().bundler.resolver;
         return nodeModulePathsJSValue(r, in_str, globalThis);
     }
@@ -3298,7 +3298,7 @@ pub const Resolver = struct {
                     break :brk [2]string{ path_without_trailing_slash, "/node_modules" };
                 };
                 list.append(
-                    bun.String.create(
+                    bun.String.createUTF8(
                         bun.strings.concat(stack_fallback_allocator.get(), &path_parts) catch unreachable,
                     ),
                 ) catch unreachable;
@@ -3312,7 +3312,7 @@ pub const Resolver = struct {
                 const path_without_trailing_slash = strings.withoutTrailingSlash(path);
 
                 list.append(
-                    bun.String.create(
+                    bun.String.createUTF8(
                         bun.strings.concat(
                             stack_fallback_allocator.get(),
                             &[_]string{

@@ -1,3 +1,5 @@
+// @known-failing-on-windows: panic "TODO on Windows"
+
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv } from "harness";

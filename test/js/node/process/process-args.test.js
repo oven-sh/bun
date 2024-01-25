@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { spawn } from "bun";
 import { test, expect } from "bun:test";
 import { join, } from "path";

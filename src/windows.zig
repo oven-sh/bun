@@ -3016,3 +3016,29 @@ pub extern "kernel32" fn GetTempPath2W(
     nBufferLength: DWORD, // [in]
     lpBuffer: LPCWSTR, // [out]
 ) DWORD;
+
+pub fn getFileKindFastA(
+    utf8_path: []const u8,
+) ?std.fs.File.Kind {
+    var wbuf: bun.WPathBuffer = undefined;
+    const path = bun.strings.toWPath(&wbuf, utf8_path);
+    const attrs = kernel32.GetFileAttributesW(path.ptr);
+
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        return null;
+    }
+
+    if ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        return .dir;
+    }
+
+    if ((attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        return .sym_link;
+    }
+
+    if ((attrs & FILE_ATTRIBUTE_DEVICE) != 0) {
+        return .char_device;
+    }
+
+    return .file;
+}

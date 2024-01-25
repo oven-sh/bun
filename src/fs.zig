@@ -1272,10 +1272,7 @@ pub const FileSystem = struct {
             const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
             if (comptime bun.Environment.isWindows) {
-                var file = try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only });
-                defer file.close();
-                const metadata = try file.metadata();
-                cache.kind = switch (metadata.kind()) {
+                cache.kind = switch (bun.windows.getFileKindFastA(absolute_path_c)) {
                     .directory => .dir,
                     .sym_link => .file,
                     else => .file,

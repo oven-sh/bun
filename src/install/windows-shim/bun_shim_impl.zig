@@ -53,7 +53,7 @@ pub inline fn wliteral(comptime str: []const u8) []const u16 {
 }
 
 const is_standalone = !@hasDecl(@import("root"), "bun");
-const bunDebugMessage = @import("root").bun.Output.scoped(.bun_shim_impl, false);
+const bunDebugMessage = @import("root").bun.Output.scoped(.bun_shim_impl, true);
 
 const dbg = builtin.mode == .Debug;
 
@@ -442,7 +442,10 @@ inline fn launcher(bun_ctx: anytype) noreturn {
         // https://stackoverflow.com/questions/62438021/can-ntreadfile-produce-a-short-read-without-reaching-eof
         // In the context of this program, I don't think that is possible, but I will handle it
         read_max_len,
-        else => fail(.CouldNotReadShim),
+        else => |rc| {
+            if (dbg) debug("error reading: {s}\n", .{@tagName(rc)});
+            fail(.CouldNotReadShim);
+        },
     };
 
     _ = nt.NtClose(metadata_handle);

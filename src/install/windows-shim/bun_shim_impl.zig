@@ -554,7 +554,7 @@ inline fn launcher(bun_ctx: anytype) noreturn {
                 //
                 // This optimization can save an additional ~10-20ms depending on the machine
                 // as we do not have to launch a second process.
-                debug("direct_launch_with_bun_js\n", .{});
+                if (dbg) debug("direct_launch_with_bun_js\n", .{});
                 // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
                 //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^       ^ read_ptr
                 const launch_slice = buf1_u16[nt_object_prefix.len..][0 .. (@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) / 2 - shebang_arg_len_u8 - "\"".len];

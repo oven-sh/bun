@@ -1680,13 +1680,13 @@ declare global {
     /**
      * Create an array from an iterable or async iterable object.
      * Values from the iterable are awaited.
-     * 
+     *
      * ```ts
      * await Array.fromAsync([1]); // [1]
      * await Array.fromAsync([Promise.resolve(1)]); // [1]
      * await Array.fromAsync((async function*() { yield 1 })()); // [1]
      * ```
-     * 
+     *
      * @param arrayLike - The iterable or async iterable to convert to an array.
      * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
      */
@@ -1697,7 +1697,7 @@ declare global {
     /**
      * Create an array from an iterable or async iterable object.
      * Values from the iterable are awaited. Results of the map function are also awaited.
-     * 
+     *
      * ```ts
      * await Array.fromAsync([1]); // [1]
      * await Array.fromAsync([Promise.resolve(1)]); // [1]
@@ -1705,7 +1705,7 @@ declare global {
      * await Array.fromAsync([1], (n) => n + 1); // [2]
      * await Array.fromAsync([1], (n) => Promise.resolve(n + 1)); // [2]
      * ```
-     * 
+     *
      * @param arrayLike - The iterable or async iterable to convert to an array.
      * @param mapFn - A mapper function that transforms each element of `arrayLike` after awaiting them.
      * @param thisArg - The `this` to which `mapFn` is bound.

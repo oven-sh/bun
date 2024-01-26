@@ -251,11 +251,7 @@ pub const RuntimeTranspilerCache = struct {
                 }
             }
 
-            if (comptime bun.Environment.isWindows) {
-                try tmpfile.finish(@as([:0]const u8, @ptrCast(std.fs.path.basename(destination_path.slice()))));
-            } else {
-                try tmpfile.finish(destination_path.sliceAssumeZ());
-            }
+            try tmpfile.finish(@ptrCast(std.fs.path.basename(destination_path.slice())));
         }
 
         pub fn load(

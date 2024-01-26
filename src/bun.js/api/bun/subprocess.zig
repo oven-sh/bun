@@ -726,6 +726,8 @@ pub const Subprocess = struct {
                     } else {
                         break :send_signal;
                     }
+                    this.signal_code = SignalCode.from(sig);
+                    return .{ .result = {} };
                 }
             }
             if (comptime Environment.isWindows) {
@@ -739,7 +741,7 @@ pub const Subprocess = struct {
                     if (err != .PERM)
                         return .{ .err = bun.sys.Error.fromCode(err, .kill) };
                 }
-
+                this.signal_code = SignalCode.from(sig);
                 return .{ .result = {} };
             }
 
@@ -752,9 +754,10 @@ pub const Subprocess = struct {
                     return .{ .err = bun.sys.Error.fromCode(errno, .kill) };
             }
             this.signal_code = SignalCode.from(sig);
+            return .{ .result = {} };
         }
 
-        return .{ .result = {} };
+        @compileError("unreachable");
     }
 
     fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.EnumLiteral)) bool {

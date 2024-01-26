@@ -267,3 +267,18 @@ export function getMaxFD(): number {
   closeSync(maxFD);
   return maxFD;
 }
+
+// This is extremely frowned upon but I think it's easier to deal with than
+// remembering to do this manually everywhere
+declare global {
+  interface Buffer {
+    /**
+     * **INTERNAL USE ONLY, NOT An API IN BUN**
+     */
+    toUnixString(): string;
+  }
+}
+
+Buffer.prototype.toUnixString = function () {
+  return this.toString("utf-8").replaceAll("\r\n", "\n");
+};

@@ -1,6 +1,6 @@
 var foo = () => {
-  // prettier-ignore
-  var D=(i,r)=>()=>(r||i((r={exports:{}}).exports,r),r.exports);
+  // biome-ignore: format ignore
+  var D = (i, r) => () => (r || i((r = { exports: {} }).exports, r), r.exports);
   return D;
 };
 

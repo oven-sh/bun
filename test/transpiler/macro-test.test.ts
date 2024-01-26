@@ -27,11 +27,11 @@ test("escaping", () => {
   expect(identity("'")).toBe("'");
   expect(identity('"')).toBe('"');
   expect(identity("`")).toBe("`");
-  // prettier-ignore
+  // biome-ignore: format ignore
   expect(identity("\'")).toBe("\'");
-  // prettier-ignore
+  // biome-ignore: format ignoreormat ignore
   expect(identity('\"')).toBe('\"');
-  // prettier-ignore
+  // biome-ignore: format ignoreormat ignore
   expect(identity("\`")).toBe("\`");
   expect(identity("$")).toBe("$");
   expect(identity("\x00")).toBe("\x00");

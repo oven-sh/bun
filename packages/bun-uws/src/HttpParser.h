@@ -231,12 +231,17 @@ namespace uWS
          * [...] It MUST conform to the field-name syntax defined in Section 5.1,
          * and it SHOULD be restricted to just letters, digits,
          * and hyphen ('-') characters, with the first character being a letter. */
+        static inline bool isFieldNameFirstByte(unsigned char x)
+        {
+            return ((x > '@') & (x < '[')) |
+                   ((x > 96) & (x < '{'));
+        }
+
         static inline bool isFieldNameByte(unsigned char x)
         {
             return (x == '-') |
                    ((x > '/') & (x < ':')) |
-                   ((x > '@') & (x < '[')) |
-                   ((x > 96) & (x < '{')) |
+                   isFieldNameFirstByte(x) |
                    (x == '_') |
                    (x == '.');
         }
@@ -258,7 +263,9 @@ namespace uWS
 
         static inline bool notFieldNameWord(uint64_t x)
         {
-            return hasLess(x, 'A') |
+            return hasLess(x, '-') |
+                   hasBetween(x, '-', '0') |
+                   hasBetween(x, '9', 'A') |
                    hasBetween(x, 'Z', 'a') |
                    hasMore(x, 'z');
         }
@@ -271,6 +278,9 @@ namespace uWS
                 memcpy(&word, p, sizeof(uint64_t));
                 if (notFieldNameWord(word))
                 {
+                    if (!isFieldNameFirstByte(*(unsigned char *)p)) {
+                        return (void *)p;
+                    }
                     *(p++) |= 0x20;
                     while (isFieldNameByte(*(unsigned char *)p))
                     {

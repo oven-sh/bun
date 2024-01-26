@@ -4264,6 +4264,16 @@ describe("expect()", () => {
     });
   });
 
+  test("expect.hasAssertions doesn't throw when valid", () => {
+    expect.hasAssertions();
+    expect("a").toEqual("a");
+  });
+
+  test("expect.assertions doesn't throw when valid", () => {
+    expect.assertions(1);
+    expect("a").toEqual("a");
+  });
+
   const mocked = mock(() => {});
   mocked();
 

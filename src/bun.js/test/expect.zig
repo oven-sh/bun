@@ -4325,9 +4325,10 @@ pub const Expect = struct {
     pub fn hasAssertions(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         _ = callFrame;
         defer globalObject.bunVM().autoGarbageCollect();
+        const error_value = globalObject.createErrorInstance("expected at least one assertion", .{});
 
         if (Jest.runner.?.pending_test) |pending_test|
-            pending_test.assert_asserts(NeededAssertType.atLeastOne, 0);
+            pending_test.assert_asserts(NeededAssertType.atLeastOne, 0, error_value);
 
         return .zero;
     }
@@ -4358,10 +4359,12 @@ pub const Expect = struct {
             return .zero;
         }
 
+        const error_value = globalObject.createErrorInstance("expected x assertion(s) but found only y", .{});
+
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
 
         if (Jest.runner.?.pending_test) |pending_test|
-            pending_test.assert_asserts(NeededAssertType.equalToNeededAsserts, unsigned_expected_assertions);
+            pending_test.assert_asserts(NeededAssertType.equalToNeededAsserts, unsigned_expected_assertions, error_value);
 
         return .zero;
     }

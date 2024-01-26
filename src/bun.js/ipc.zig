@@ -169,7 +169,7 @@ const NamedPipeIPCData = struct {
     current_payload_len: usize = 0,
 
     pub fn processSend(this: *NamedPipeIPCData) void {
-        const bytes = this.outgoing.list.slice();
+        const bytes = this.outgoing.list.slice()[this.outgoing.cursor..];
         log("processSend {d}", .{bytes.len});
         if (bytes.len == 0) return;
 
@@ -519,10 +519,6 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             while (true) {
                 const result = decodeIPCMessage(slice, globalThis) catch |e| switch (e) {
                     error.NotEnoughBytes => {
-                        // copy the remaining bytes to the start of the buffer
-                        bun.copy(u8, this.ipc.incoming.ptr[0..slice.len], slice);
-                        this.ipc.incoming.len = @truncate(slice.len);
-                        log("hit NotEnoughBytes2", .{});
                         return;
                     },
                     error.InvalidFormat => {

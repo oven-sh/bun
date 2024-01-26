@@ -17,6 +17,16 @@
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "zig.initialSetupDone": true,
   "editor.formatOnSave": true,
+
+  // We are using biome instead of prettier.
+  "prettier.enable": false,
+
+  "[json]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,

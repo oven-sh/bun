@@ -751,6 +751,7 @@ pub const Subprocess = struct {
                 if (errno != .SRCH)
                     return .{ .err = bun.sys.Error.fromCode(errno, .kill) };
             }
+            this.signal_code = SignalCode.from(sig);
         }
 
         return .{ .result = {} };

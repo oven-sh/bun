@@ -805,7 +805,12 @@ pub const Subprocess = struct {
 
     pub fn disconnect(this: *Subprocess) void {
         if (this.ipc_mode == .none) return;
-        this.ipc.socket.close(0, null);
+        if (Environment.isWindows) {
+            this.ipc.pipe.data = this;
+            this.ipc.close(Subprocess);
+        } else {
+            this.ipc.socket.close(0, null);
+        }
         this.ipc_mode = .none;
     }
 
@@ -2193,11 +2198,6 @@ pub const Subprocess = struct {
                 }
 
                 if (args.get(globalThis, "ipc")) |val| {
-                    if (Environment.isWindows) {
-                        globalThis.throwTODO("TODO: IPC is not yet supported on Windows");
-                        return .zero;
-                    }
-
                     if (val.isCell() and val.isCallable(globalThis.vm())) {
                         // In the future, we should add a way to use a different IPC serialization format, specifically `json`.
                         // but the only use case this has is doing interop with node.js IPC and other programs.
@@ -2228,6 +2228,24 @@ pub const Subprocess = struct {
                 env_array.capacity = env_array.items.len;
             }
 
+            const pipe_prefix = "BUN_INTERNAL_IPC_PIPE=\\\\.\\pipe\\BUN_IPC_";
+            var pipe_env_bytes: [pipe_prefix.len + 37]u8 = undefined;
+
+            const pipe_name_bytes = pipe_env_bytes["BUN_INTERNAL_IPC_PIPE=".len..];
+
+            if (ipc_mode != .none) {
+                if (comptime is_sync) {
+                    globalThis.throwInvalidArguments("IPC is not supported in Bun.spawnSync", .{});
+                    return .zero;
+                }
+                env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in uv_spawn");
+
+                const uuid = globalThis.bunVM().rareData().nextUUID();
+                const pipe_env = std.fmt.bufPrintZ(&pipe_env_bytes, "{s}{s}", .{ pipe_prefix, uuid }) catch |err| return globalThis.handleError(err, "in uv_spawn");
+
+                env_array.appendAssumeCapacity(pipe_env);
+            }
+
             env_array.append(allocator, null) catch {
                 globalThis.throwOutOfMemory();
                 return .zero;
@@ -2239,6 +2257,15 @@ pub const Subprocess = struct {
                 globalThis.throwOutOfMemory();
                 return .zero;
             };
+            subprocess.ipc = .{ .pipe = std.mem.zeroes(uv.uv_pipe_t) };
+            if (ipc_mode != .none) {
+                const errno = subprocess.ipc.configureServer(Subprocess, subprocess, pipe_name_bytes);
+                if (errno != 0) {
+                    alloc.destroy(subprocess);
+                    globalThis.throwValue(bun.sys.Error.fromCodeInt(errno, .uv_spawn).toJSC(globalThis));
+                    return .zero;
+                }
+            }
 
             var uv_stdio = [3]uv.uv_stdio_container_s{
                 stdio[0].setUpChildIoUvSpawn(0, &subprocess.pipes[0], true, bun.invalid_fd) catch |err| {
@@ -2286,6 +2313,7 @@ pub const Subprocess = struct {
                 .pid = subprocess.pid,
                 .pidfd = 0,
                 .stdin = Writable.initWithPipe(stdio[0], &subprocess.pipes[0], globalThis) catch {
+                    alloc.destroy(subprocess);
                     globalThis.throwOutOfMemory();
                     return .zero;
                 },
@@ -2295,16 +2323,15 @@ pub const Subprocess = struct {
                 .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
 
                 .ipc_mode = ipc_mode,
-                .ipc = undefined,
-                .ipc_callback = undefined,
+                .ipc = subprocess.ipc,
+                .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else undefined,
 
                 .flags = .{
                     .is_sync = is_sync,
                 },
             };
-            subprocess.pid.data = subprocess;
-            std.debug.assert(ipc_mode == .none); //TODO:
 
+            subprocess.pid.data = subprocess;
             const out = if (comptime !is_sync) subprocess.toJS(globalThis) else .zero;
             subprocess.this_jsvalue = out;
 
@@ -3396,8 +3423,7 @@ pub const Subprocess = struct {
         }
     }
 
-    pub fn handleIPCClose(this: *Subprocess, _: IPC.Socket) void {
-        // uSocket is already freed so calling .close() on the socket can segfault
+    pub fn handleIPCClose(this: *Subprocess) void {
         this.ipc_mode = .none;
         this.updateHasPendingActivity();
     }

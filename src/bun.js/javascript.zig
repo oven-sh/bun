@@ -95,6 +95,7 @@ const Lock = @import("../lock.zig").Lock;
 const BuildMessage = JSC.BuildMessage;
 const ResolveMessage = JSC.ResolveMessage;
 const Async = bun.Async;
+const uv = bun.windows.libuv;
 
 pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
 pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
@@ -760,11 +761,22 @@ pub const VirtualMachine = struct {
             this.hide_bun_stackframes = false;
         }
 
-        if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
-            if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
-                this.initIPCInstance(bun.toFD(fd));
+        if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_PIPE")) |kv| {
+            if (Environment.isWindows) {
+                this.initIPCInstance(kv.value.value);
             } else {
+                Output.printErrorln("Failed to connect into BUN_INTERNAL_IPC_PIPE", .{});
+            }
+        }
+        if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
+            if (Environment.isWindows) {
                 Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
+            } else {
+                if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
+                    this.initIPCInstance(bun.toFD(fd));
+                } else {
+                    Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
+                }
             }
         }
 
@@ -3000,7 +3012,8 @@ pub const VirtualMachine = struct {
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
-        uws_context: *uws.SocketContext,
+        context: if (Environment.isWindows) u0 else *uws.SocketContext,
+
         ipc: IPC.IPCData,
 
         pub fn handleIPCMessage(
@@ -3023,36 +3036,51 @@ pub const VirtualMachine = struct {
             }
         }
 
-        pub fn handleIPCClose(this: *IPCInstance, _: IPC.Socket) void {
+        pub fn handleIPCClose(this: *IPCInstance) void {
             JSC.markBinding(@src());
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;
                 Process__emitDisconnectEvent(global);
             }
-            uws.us_socket_context_free(0, this.uws_context);
+
+            if (!Environment.isWindows) {
+                uws.us_socket_context_free(0, this.context);
+            }
             bun.default_allocator.destroy(this);
         }
 
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
     };
 
-    pub fn initIPCInstance(this: *VirtualMachine, fd: bun.FileDescriptor) void {
+    pub fn initIPCInstance(this: *VirtualMachine, source: if (Environment.isWindows) []const u8 else bun.FileDescriptor) void {
+        this.event_loop.ensureWaker();
+
         if (Environment.isWindows) {
-            Output.warn("IPC is not supported on Windows", .{});
+            var instance = bun.default_allocator.create(IPCInstance) catch bun.outOfMemory();
+            instance.* = .{
+                .globalThis = this.global,
+                .context = 0,
+                .ipc = .{ .pipe = std.mem.zeroes(uv.uv_pipe_t) },
+            };
+            const errno = instance.ipc.configureClient(IPCInstance, instance, source);
+            if (errno != 0) {
+                @panic("Unable to start IPC");
+            }
+            this.ipc = instance;
             return;
         }
-        this.event_loop.ensureWaker();
+
         const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
         IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
 
-        var instance = bun.default_allocator.create(IPCInstance) catch @panic("OOM");
+        var instance = bun.default_allocator.create(IPCInstance) catch bun.outOfMemory();
         instance.* = .{
             .globalThis = this.global,
-            .uws_context = context,
+            .context = context,
             .ipc = undefined,
         };
-        const socket = IPC.Socket.fromFd(context, fd, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
+        const socket = IPC.Socket.fromFd(context, source, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
         socket.setTimeout(0);
         instance.ipc = .{ .socket = socket };
 

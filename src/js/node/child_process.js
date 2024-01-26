@@ -1296,6 +1296,8 @@ class ChildProcess extends EventEmitter {
       this.#handle.kill(signal);
     }
     this.#killed = true;
+    this.signalCode = this.#handle.signalCode;
+    this.exitCode = this.#handle.exitCode;
 
     this.#maybeClose();
 

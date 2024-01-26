@@ -5841,3 +5841,17 @@ pub const QuoteEscapeFormat = struct {
         try writer.writeAll(self.data[i..]);
     }
 };
+
+/// Generic. Works on []const u8, []const u16, etc
+pub inline fn indexOfScalar(input: anytype, scalar: std.meta.Child(@TypeOf(input))) ?usize {
+    if (comptime std.meta.Child(@TypeOf(input)) == u8) {
+        return strings.indexOfCharUsize(input, scalar);
+    } else {
+        return std.mem.indexOfScalar(std.meta.Child(@TypeOf(input)), input, scalar);
+    }
+}
+
+/// Generic. Works on []const u8, []const u16, etc
+pub fn containsScalar(input: anytype, item: std.meta.Child(@TypeOf(input))) bool {
+    return indexOfScalar(input, item) != null;
+}

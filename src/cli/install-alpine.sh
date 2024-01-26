@@ -25,9 +25,9 @@
 
 	if [ $(apk info | grep -c "glibc") -eq 0 ]; then
 		wget -O "glibc.apk" "$GLIBC"
-		# wget -q -O "glibc-bin.apk" "$GLIBC_BIN"
-		apk add --allow-untrusted --force-overwrite --no-cache "glibc.apk" #"glibc-bin.apk"
-		rm "glibc.apk" #"glibc-bin.apk"
+		wget -q -O "glibc-bin.apk" "$GLIBC_BIN"
+		apk add --allow-untrusted --force-overwrite --no-cache "glibc.apk" "glibc-bin.apk"
+		rm "glibc.apk" "glibc-bin.apk"
 	fi
 
 

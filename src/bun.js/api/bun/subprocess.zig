@@ -847,7 +847,6 @@ pub const Subprocess = struct {
 
     pub const BufferedPipeInput = struct {
         remain: []const u8 = "",
-        input_buffer: uv.uv_buf_t = std.mem.zeroes(uv.uv_buf_t),
         write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
         pipe: ?*uv.uv_pipe_t,
         poll_ref: ?*Async.FilePoll = null,
@@ -864,8 +863,7 @@ pub const Subprocess = struct {
             this.writeAllowBlocking(is_sync);
         }
 
-        pub fn uvWriteCallback(req: *uv.uv_write_t, status: uv.ReturnCode) callconv(.C) void {
-            const this = bun.cast(*BufferedPipeInput, req.data);
+        pub fn onWrite(this: *BufferedPipeInput, status: uv.ReturnCode) void {
             if (this.pipe == null) return;
             if (status.errEnum()) |_| {
                 log("uv_write({d}) fail: {d}", .{ this.remain.len, status.int() });
@@ -884,7 +882,6 @@ pub const Subprocess = struct {
 
             var to_write = this.remain;
 
-            this.input_buffer = uv.uv_buf_t.init(to_write);
             if (allow_blocking) {
                 while (true) {
                     if (to_write.len == 0) {
@@ -892,35 +889,33 @@ pub const Subprocess = struct {
                         this.close();
                         return;
                     }
-                    const status = uv.uv_try_write(@ptrCast(pipe), @ptrCast(&this.input_buffer), 1);
-                    if (status.errEnum()) |err| {
-                        if (err == bun.C.E.AGAIN) {
-                            //EAGAIN
-                            this.write_req.data = this;
-                            const write_err = uv.uv_write(&this.write_req, @ptrCast(pipe), @ptrCast(&this.input_buffer), 1, BufferedPipeInput.uvWriteCallback).int();
-                            if (write_err < 0) {
-                                log("uv_write({d}) fail: {d}", .{ this.remain.len, write_err });
-                                this.deinit();
+                    switch (pipe.tryWrite(to_write)) {
+                        .err => |err| {
+                            const errno = err.getErrno();
+                            if (errno == bun.C.E.AGAIN) {
+                                //EAGAIN
+                                this.write_req.write(@ptrCast(pipe), to_write, this, BufferedPipeInput.onWrite).unwrap() catch |write_err| {
+                                    log("uv_write({d}) fail: {}", .{ this.remain.len, write_err });
+                                    this.deinit();
+                                };
+                                return;
                             }
+                            log("uv_try_write({d}) fail: {}", .{ to_write.len, errno });
+                            this.deinit();
                             return;
-                        }
-                        // fail
-                        log("uv_try_write({d}) fail: {d}", .{ to_write.len, status.int() });
-                        this.deinit();
-                        return;
+                        },
+                        .result => |bytes_written| {
+                            this.written += bytes_written;
+                            this.remain = this.remain[@min(bytes_written, this.remain.len)..];
+                            to_write = to_write[bytes_written..];
+                        },
                     }
-                    const bytes_written: usize = @intCast(status.int());
-                    this.written += bytes_written;
-                    this.remain = this.remain[@min(bytes_written, this.remain.len)..];
-                    to_write = to_write[bytes_written..];
                 }
             } else {
-                this.write_req.data = this;
-                const err = uv.uv_write(&this.write_req, @ptrCast(pipe), @ptrCast(&this.input_buffer), 1, BufferedPipeInput.uvWriteCallback).int();
-                if (err < 0) {
-                    log("uv_write({d}) fail: {d}", .{ this.remain.len, err });
+                this.write_req.write(@ptrCast(pipe), to_write, this, BufferedPipeInput.onWrite).unwrap() catch |err| {
+                    log("uv_write({d}) fail: {}", .{ this.remain.len, err });
                     this.deinit();
-                }
+                };
             }
         }
 
@@ -942,9 +937,7 @@ pub const Subprocess = struct {
             }
         }
 
-        fn uvClosedCallback(handler: *anyopaque) callconv(.C) void {
-            const event = bun.cast(*uv.uv_pipe_t, handler);
-            var this = bun.cast(*BufferedPipeInput, event.data);
+        fn uvClosedCallback(this: *BufferedPipeInput) void {
             if (this.deinit_onclose) {
                 this.destroy();
             }
@@ -957,8 +950,7 @@ pub const Subprocess = struct {
             }
 
             if (this.pipe) |pipe| {
-                pipe.data = this;
-                pipe.close(BufferedPipeInput.uvClosedCallback);
+                pipe.close(this, BufferedPipeInput.uvClosedCallback);
             }
         }
 
@@ -1242,40 +1234,22 @@ pub const Subprocess = struct {
             }
         }
 
-        fn uvStreamReadCallback(handle: *uv.uv_stream_t, nread: isize, buffer: *const uv.uv_buf_t) callconv(.C) void {
-            const this: *BufferedOutput = @ptrCast(@alignCast(handle.data));
-            if (nread <= 0) {
-                switch (nread) {
-                    0 => {
-                        // EAGAIN or EWOULDBLOCK
-                        return;
-                    },
-                    uv.UV_EOF => {
-                        this.status = .{ .done = {} };
-                        handle.readStop();
-                        this.flushBufferedDataIntoReadableStream();
-                    },
-                    else => {
-                        const rt = uv.ReturnCodeI64{
-                            .value = @intCast(nread),
-                        };
-                        const err = rt.errEnum() orelse bun.C.E.CANCELED;
-                        this.status = .{ .err = bun.sys.Error.fromCode(err, .read) };
-                        handle.readStop();
-                        this.signalStreamError();
-                    },
-                }
-
-                // when nread < 0 buffer maybe not point to a valid address
-                return;
+        fn onReadError(this: *BufferedOutput, err: bun.C.E) void {
+            if (err == bun.C.E.OF) {
+                this.status = .{ .done = {} };
+                this.flushBufferedDataIntoReadableStream();
+            } else {
+                this.status = .{ .err = bun.sys.Error.fromCode(err, .read) };
+                this.signalStreamError();
             }
+        }
 
+        fn onStreamRead(this: *BufferedOutput, buffer: []const u8) void {
             this.internal_buffer.len += @as(u32, @truncate(buffer.len));
             this.flushBufferedDataIntoReadableStream();
         }
 
-        fn uvStreamAllocCallback(handle: *uv.uv_stream_t, suggested_size: usize, buffer: *uv.uv_buf_t) callconv(.C) void {
-            const this: *BufferedOutput = @ptrCast(@alignCast(handle.data));
+        fn onReadAlloc(this: *BufferedOutput, suggested_size: usize) []u8 {
             var size: usize = 0;
             var available = this.internal_buffer.available();
             if (this.auto_sizer) |auto_sizer| {
@@ -1294,18 +1268,20 @@ pub const Subprocess = struct {
                     size = suggested_size;
                 }
             }
-            buffer.* = .{ .base = @ptrCast(available.ptr), .len = @intCast(size) };
+
             if (size == 0) {
-                handle.readStop();
+                this.stream.readStop();
                 this.status = .{ .done = {} };
+                return "";
             }
+            return available.ptr[0..@intCast(size)];
         }
 
         pub fn readAll(this: *BufferedOutput) void {
             if (Environment.isWindows) {
                 if (this.status == .pending) {
                     this.stream.data = this;
-                    _ = this.stream.readStart(BufferedOutput.uvStreamAllocCallback, BufferedOutput.uvStreamReadCallback);
+                    _ = this.stream.readStart(this, onReadAlloc, onReadError, onStreamRead);
                 }
                 return;
             }
@@ -1543,9 +1519,7 @@ pub const Subprocess = struct {
             }
         }
 
-        fn uvClosedCallback(handler: *anyopaque) callconv(.C) void {
-            const event = bun.cast(*uv.uv_pipe_t, handler);
-            var this = bun.cast(*BufferedOutput, event.data);
+        fn uvClosedCallback(this: *BufferedOutput) void {
             this.readable_stream_ref.deinit();
             this.closeCallback.run();
         }
@@ -1562,7 +1536,7 @@ pub const Subprocess = struct {
                             this.readable_stream_ref.deinit();
                             this.closeCallback.run();
                         } else {
-                            this.stream.close(BufferedOutput.uvClosedCallback);
+                            this.stream.close(this, BufferedOutput.uvClosedCallback);
                         }
                     } else {
                         this.stream.close();

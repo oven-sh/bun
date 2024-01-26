@@ -1248,7 +1248,7 @@ for (const [key, blob] of build.outputs) {
             let error;
             const lines = stderr!
               .toString("utf-8")
-              .replceAll("\r\n", "\n")
+              .replaceAll("\r\n", "\n")
               .split("\n")
               .filter(Boolean)
               .map(x => x.trim())

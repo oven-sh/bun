@@ -349,45 +349,12 @@ pub fn getErrno(rc: anytype) bun.C.E {
     };
 }
 
-// pub fn openOptionsFromFlagsWindows(flags: u32) windows.OpenFileOptions {
-//     const w = windows;
-//     const O = std.os.O;
-
-//     var access_mask: w.ULONG = w.READ_CONTROL | w.FILE_WRITE_ATTRIBUTES | w.SYNCHRONIZE;
-//     if (flags & O.RDWR != 0) {
-//         access_mask |= w.GENERIC_READ | w.GENERIC_WRITE;
-//     } else if (flags & O.WRONLY != 0) {
-//         access_mask |= w.GENERIC_WRITE;
-//     } else {
-//         access_mask |= w.GENERIC_READ | w.GENERIC_WRITE;
-//     }
-
-//     const filter: windows.OpenFileOptions.Filter = if (flags & O.DIRECTORY != 0) .dir_only else .file_only;
-//     const follow_symlinks: bool = flags & O.NOFOLLOW == 0;
-
-//     const creation: w.ULONG = blk: {
-//         if (flags & O.CREAT != 0) {
-//             if (flags & O.EXCL != 0) {
-//                 break :blk w.FILE_CREATE;
-//             }
-//         }
-//         break :blk w.FILE_OPEN;
-//     };
-
-//     return .{
-//         .access_mask = access_mask,
-//         .io_mode = .blocking,
-//         .creation = creation,
-//         .filter = filter,
-//         .follow_symlinks = follow_symlinks,
-//     };
-// }
 const O = std.os.O;
 const w = std.os.windows;
 
 pub fn openDirAtWindows(
     dirFd: bun.FileDescriptor,
-    path: [:0]const u16,
+    path: []const u16,
     iterable: bool,
     no_follow: bool,
 ) Maybe(bun.FileDescriptor) {
@@ -403,7 +370,7 @@ pub fn openDirAtWindows(
     };
     var attr = w.OBJECT_ATTRIBUTES{
         .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path))
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(path))
             null
         else if (dirFd == bun.invalid_fd)
             std.fs.cwd().fd
@@ -519,7 +486,7 @@ pub fn openatWindows(dir: bun.FileDescriptor, path: []const u16, flags: bun.Mode
 /// examples to this call and the above function that maps unix flags to
 /// the windows ones.
 ///
-/// It is very easy to waste hours on the subtle semantics of this function.
+/// It is very easy to waste HOURS on the subtle semantics of this function.
 ///
 /// In the zig standard library, messing up the input to their equivalent
 /// will trigger `unreachable`. Here there will be a debug log with the path.

@@ -461,7 +461,7 @@ pub const StandaloneModuleGraph = struct {
         if (Environment.isWindows) {
             var outfile_buf: bun.OSPathBuffer = undefined;
             const outfile_slice = brk: {
-                const outfile_w = bun.strings.toWPath(&outfile_buf, outfile);
+                const outfile_w = bun.strings.toWPathNormalized(&outfile_buf, std.fs.path.basenameWindows(outfile));
                 std.debug.assert(outfile_w.ptr == &outfile_buf);
                 const outfile_buf_u16 = bun.reinterpretSlice(u16, &outfile_buf);
                 if (!bun.strings.endsWithComptime(outfile, ".exe")) {
@@ -475,7 +475,7 @@ pub const StandaloneModuleGraph = struct {
                 break :brk outfile_buf_u16[0..outfile_w.len :0];
             };
 
-            bun.C.moveOpenedFileAt(fd, bun.toFD(root_dir.fd), outfile_slice, true).unwrap() catch |err| {
+            bun.C.moveOpenedFileAtLoose(fd, bun.toFD(root_dir.fd), outfile_slice, true).unwrap() catch |err| {
                 if (err == error.EISDIR) {
                     Output.errGeneric("{} is a directory. Please choose a different --outfile or delete the directory", .{std.unicode.fmtUtf16le(outfile_slice)});
                 } else {

@@ -3017,6 +3017,8 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         .INVALID_PARAMETER => .INVAL,
         .OBJECT_NAME_COLLISION => .EXIST,
         .FILE_IS_A_DIRECTORY => .ISDIR,
+        .OBJECT_PATH_NOT_FOUND => .NOENT,
+        .OBJECT_NAME_NOT_FOUND => .NOENT,
 
         else => |t| {
             // if (bun.Environment.isDebug) {

@@ -381,8 +381,9 @@ if (failing_tests.length) {
       report += `${reason}\n\n`;
     }
     report += "```\n";
-    report += output.replace(/\x1b\[[0-9;]*m/g, "")
-      .replace(/^::(group|endgroup|error|warning|set-output|add-matcher|remove-matcher).*$/gm, "")
+    report += output
+      .replace(/\x1b\[[0-9;]*m/g, "")
+      .replace(/^::(group|endgroup|error|warning|set-output|add-matcher|remove-matcher).*$/gm, "");
     report += "```\n\n";
   }
 }
@@ -405,10 +406,7 @@ if (ci) {
     if (regressions.length > 0) {
       action.setFailed(`${regressions.length} regressing tests`);
     }
-    action.setOutput(
-      "regressing_tests",
-      regressions.map(({ path }) => `- \`${path}\``).join("\n"),
-    );
+    action.setOutput("regressing_tests", regressions.map(({ path }) => `- \`${path}\``).join("\n"));
     action.setOutput("regressing_test_count", regressions.length);
   } else {
     if (failing_tests.length > 0) {

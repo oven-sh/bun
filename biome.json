@@ -1,0 +1,70 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "organizeImports": {
+    "enabled": true
+  },
+  "linter": {
+    "enabled": false
+  },
+  "javascript": {
+    "parser": {
+      "unsafeParameterDecoratorsEnabled": true
+    },
+    "formatter": {
+      "arrowParentheses": "asNeeded",
+      "quoteProperties": "preserve",
+      "semicolons": "always",
+      "trailingComma": "all",
+      "indentStyle": "space",
+      "quoteStyle": "double"
+    }
+  },
+  "json": {
+    "formatter": {
+      "indentStyle": "space"
+    },
+    "parser": {
+      "allowComments": true,
+      "allowTrailingCommas": true
+    }
+  },
+  "vcs": {
+    "clientKind": "git",
+    "enabled": false,
+    "root": "./"
+  },
+  "files": {
+    "maxSize": 9128312873
+  },
+  "formatter": {
+    "enabled": true,
+    "indentWidth": 2,
+    "lineEnding": "lf",
+    "formatWithErrors": true,
+    "lineWidth": 120,
+    "indentStyle": "space",
+    "ignore": [
+      "node_modules/**",
+      "test/snapshots",
+      "test/fixtures",
+      ".next",
+      "test/js/deno",
+      "./src/deps",
+      "./src/bun.js/WebKit/**",
+      "packages/bun-polyfills",
+      "./build-*",
+      "./build",
+      ".cache",
+      "out/",
+      "test/transpiler/property-non-ascii-fixture.js",
+      "test/transpiler/macro-test.test.ts",
+      "test/transpiler/decorator-metadata.test.ts",
+      "src/react-refresh.js",
+      "bindings-obj/*",
+      "src/deps/**",
+      "./bench/react-hello-world/react-hello-world.node.js",
+      "./test/cli/run/require-cache-bug-leak-fixture-large-ast.js",
+      "./test/cli/run/esm-leak-fixture-large-ast.mjs"
+    ]
+  }
+}

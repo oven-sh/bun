@@ -147,7 +147,6 @@ pub const FilePoll = struct {
     pub const AllocatorType = enum {
         js,
         mini,
-        install,
     };
 
     const FileReader = JSC.WebCore.FileReader;
@@ -271,9 +270,6 @@ pub const FilePoll = struct {
                 const loop = handle.platformEventLoop();
                 const file_polls = handle.filePolls();
                 this.deinitPossiblyDefer(vm, loop, file_polls, false);
-            },
-            .install => {
-                Output.debugWarn("leaked FilePoll", .{});
             },
         }
     }

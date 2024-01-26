@@ -322,7 +322,7 @@ const NamedPipeIPCData = struct {
             return .{ .err = err };
         }
         ipc_pipe.data = @ptrCast(instance);
-        if (ipc_pipe.listenNamedPipe(named_pipe, 0, NewNamedPipeIPCHandler(Context).onNewClientConnect).asErr()) |err| {
+        if (ipc_pipe.listenNamedPipe(named_pipe, 0, instance, NewNamedPipeIPCHandler(Context).onNewClientConnect).asErr()) |err| {
             return .{ .err = err };
         }
 
@@ -340,7 +340,7 @@ const NamedPipeIPCData = struct {
         try ipc_pipe.init(uv.Loop.get(), true).unwrap();
         ipc_pipe.data = @ptrCast(instance);
         this.connect_req.data = @ptrCast(instance);
-        try ipc_pipe.connect(&this.connect_req, named_pipe, NewNamedPipeIPCHandler(Context).onConnect).unwrap();
+        try ipc_pipe.connect(&this.connect_req, named_pipe, instance, NewNamedPipeIPCHandler(Context).onConnect).unwrap();
 
         this.writeVersionPacket();
     }
@@ -569,13 +569,12 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             }
         }
 
-        pub fn onNewClientConnect(req: *uv.uv_stream_t, status: c_int) callconv(.C) void {
-            log("onNewClientConnect {d}", .{status});
-            if (status < 0) {
+        pub fn onNewClientConnect(this: *Context, status: uv.ReturnCode) void {
+            log("onNewClientConnect {d}", .{status.int()});
+            if (status.errEnum()) |_| {
                 Output.printErrorln("Failed to connect IPC pipe", .{});
                 return;
             }
-            const this = bun.cast(*Context, req.data);
             const client = &this.ipc.pipe;
             const server = &this.ipc.server;
             client.init(uv.Loop.get(), true).unwrap() catch {
@@ -600,13 +599,13 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                 },
             }
         }
-        pub fn onConnect(req: *uv.uv_connect_t, status: c_int) callconv(.C) void {
-            log("onConnect {d}", .{status});
-            if (status < 0) {
+
+        pub fn onConnect(this: *Context, status: uv.ReturnCode) void {
+            log("onConnect {d}", .{status.int()});
+            if (status.errEnum()) |_| {
                 Output.printErrorln("Failed to connect IPC pipe", .{});
                 return;
             }
-            const this = bun.cast(*Context, req.data);
             this.ipc.pipe.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
                 this.ipc.close(Context);
                 Output.printErrorln("Failed to connect IPC pipe", .{});

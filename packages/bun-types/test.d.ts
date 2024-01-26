@@ -20,7 +20,7 @@ declare module "bun:test" {
   export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
 
   export const mock: {
-    <T extends (...args: any[]) => any>(Function: T): Mock<T>;
+    <T extends (...args: any[]) => any>(Function?: T): Mock<T>;
 
     /**
      * Replace the module `id` with the return value of `factory`.

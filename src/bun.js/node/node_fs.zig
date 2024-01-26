@@ -461,11 +461,6 @@ pub const AsyncReaddirRecursiveTask = struct {
         args: Arguments.Readdir,
         vm: *JSC.VirtualMachine,
     ) JSC.JSValue {
-        if (comptime Environment.isWindows) {
-            globalObject.throwTODO("fs.promises.readdir is not implemented on Windows yet");
-            return .zero;
-        }
-
         var task = AsyncReaddirRecursiveTask.new(.{
             .promise = JSC.JSPromise.Strong.init(globalObject),
             .args = args,
@@ -4757,7 +4752,13 @@ pub const NodeFS = struct {
         comptime is_root: bool,
     ) Maybe(void) {
         const flags = os.O.DIRECTORY | os.O.RDONLY;
-        const fd = switch (Syscall.openat(if (comptime is_root) bun.toFD(std.fs.cwd().fd) else async_task.root_fd, basename, flags, 0)) {
+
+        const atfd = if (comptime is_root) bun.toFD(std.fs.cwd().fd) else async_task.root_fd;
+        const fd = switch (switch (Environment.os) {
+            else => Syscall.openat(atfd, basename, flags, 0),
+            // windows bun.sys.open does not pass iterable=true,
+            .windows => bun.sys.openDirAtWindowsA(atfd, basename, true, false),
+        }) {
             .err => |err| {
                 if (comptime !is_root) {
                     switch (err.getErrno()) {
@@ -4776,7 +4777,6 @@ pub const NodeFS = struct {
                         .err = err.withPath(bun.path.joinZBuf(buf, &path_parts, .auto)),
                     };
                 }
-
                 return .{
                     .err = err.withPath(args.path.slice()),
                 };

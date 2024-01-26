@@ -438,7 +438,7 @@ pub fn openDirAtWindows(
     );
 
     if (comptime Environment.allow_assert) {
-        log("NtCreateFile({d}, {s}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
+        log("NtCreateFile({d}, {s}, iterable = {}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), iterable, @tagName(rc), @intFromPtr(fd) });
     }
 
     switch (windows.Win32Error.fromNTStatus(rc)) {

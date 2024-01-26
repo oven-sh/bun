@@ -11,7 +11,7 @@ const JSC = bun.JSC;
 const WaiterThread = bun.spawn.WaiterThread;
 const Timer = std.time.Timer;
 
-const Process = bun.spawn.ProcessMiniEventLoop;
+const Process = bun.spawn.Process;
 pub const LifecycleScriptSubprocess = struct {
     package_name: []const u8,
 
@@ -59,7 +59,7 @@ pub const LifecycleScriptSubprocess = struct {
 
         fn finish(this: *OutputReader) void {
             this.poll.flags.insert(.ignore_updates);
-            this.subprocess().manager.file_poll_store.hive.put(this.poll);
+            this.subprocess().manager.event_loop.putFilePoll(this.poll);
             std.debug.assert(!this.is_done);
             this.is_done = true;
         }
@@ -75,7 +75,7 @@ pub const LifecycleScriptSubprocess = struct {
         }
 
         pub fn registerPoll(this: *OutputReader) void {
-            switch (this.poll.register(this.subprocess().manager.uws_event_loop, .readable, true)) {
+            switch (this.poll.register(this.subprocess().manager.event_loop.loop(), .readable, true)) {
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r>: Failed to register poll for <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
                         this.subprocess().scriptName(),
@@ -93,7 +93,7 @@ pub const LifecycleScriptSubprocess = struct {
         }
 
         pub fn start(this: *OutputReader) JSC.Maybe(void) {
-            const maybe = this.poll.register(this.subprocess().manager.uws_event_loop, .readable, true);
+            const maybe = this.poll.register(this.subprocess().manager.event_loop.loop(), .readable, true);
             if (maybe != .result) {
                 return maybe;
             }
@@ -319,19 +319,24 @@ pub const LifecycleScriptSubprocess = struct {
         if (!this.manager.options.log_level.isVerbose()) {
             this.stdout = .{
                 .parent = this,
-                .poll = Async.FilePoll.initWithPackageManager(manager, bun.toFD(fdsOut[0]), .{}, &this.stdout),
+                .poll = Async.FilePoll.init(manager, bun.toFD(fdsOut[0]), .{}, OutputReader, &this.stdout),
             };
 
             this.stderr = .{
                 .parent = this,
-                .poll = Async.FilePoll.initWithPackageManager(manager, bun.toFD(fdsErr[0]), .{}, &this.stderr),
+                .poll = Async.FilePoll.init(manager, bun.toFD(fdsErr[0]), .{}, OutputReader, &this.stderr),
             };
             try this.stdout.start().unwrap();
             try this.stderr.start().unwrap();
         }
 
-        const event_loop = this.manager;
-        var process = Process.initPosix(pid, @intCast(pid_fd), event_loop, false);
+        const event_loop = &this.manager.event_loop;
+        var process = Process.initPosix(
+            pid,
+            if (comptime Environment.isLinux) @intCast(pid_fd) else 0,
+            event_loop,
+            false,
+        );
         if (this.process) |proc| {
             proc.detach();
             proc.deref();

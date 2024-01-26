@@ -69,10 +69,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         const log = Output.scoped(.SHELL_SUBPROC, false);
         pub const default_max_buffer_size = 1024 * 1024 * 4;
 
-        pub const Process = switch (EventLoopKind) {
-            .js => bun.spawn.Process,
-            .mini => bun.spawn.ProcessMiniEventLoop,
-        };
+        pub const Process = bun.spawn.Process;
 
         pub const GlobalHandle = switch (EventLoopKind) {
             .js => bun.shell.GlobalJS,
@@ -894,12 +891,8 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         }
 
         pub fn ref(this: *Subprocess) void {
-            this.process.enableKeepingEventLoopAlive(
-                if (comptime EventLoopKind == .js)
-                    this.globalThis.bunVM().eventLoop()
-                else
-                    this.globalThis,
-            );
+            this.process.enableKeepingEventLoopAlive();
+
             this.stdin.ref();
             // }
 
@@ -917,12 +910,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             _ = deactivate_poll_ref; // autofix
             // const vm = this.globalThis.bunVM();
 
-            this.process.disableKeepingEventLoopAlive(
-                if (comptime EventLoopKind == .js)
-                    this.globalThis.bunVM().eventLoop()
-                else
-                    this.globalThis,
-            );
+            this.process.disableKeepingEventLoopAlive();
             // if (!this.hasCalledGetter(.stdin)) {
             this.stdin.unref();
             // }
@@ -1357,7 +1345,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 .globalThis = globalThis_,
                 .process = Process.initPosix(
                     pid,
-                    @intCast(pidfd),
+                    if (Environment.isLinux) @intCast(pidfd) else 0,
                     if (comptime EventLoopKind == .js) globalThis.eventLoopCtx().eventLoop() else globalThis.eventLoopCtx(),
                     is_sync,
                 ),

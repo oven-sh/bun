@@ -50,12 +50,17 @@ pub const KeepAlive = struct {
 
     /// Prevent a poll from keeping the process alive.
     pub fn unref(this: *KeepAlive, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
         if (this.status != .active)
             return;
         this.status = .inactive;
-        // vm.event_loop_handle.?.subActive(1);
-        event_loop_ctx.platformEventLoop().subActive(1);
+
+        if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
+            event_loop_ctx_.loop().subActive(1);
+            return;
+        } else {
+            const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+            event_loop_ctx.platformEventLoop().subActive(1);
+        }
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -88,12 +93,18 @@ pub const KeepAlive = struct {
 
     /// Allow a poll to keep the process alive.
     pub fn ref(this: *KeepAlive, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
         if (this.status != .inactive)
             return;
+
         this.status = .active;
+        const EventLoopContext = @TypeOf(event_loop_ctx_);
+        if (comptime EventLoopContext == JSC.EventLoopHandle) {
+            event_loop_ctx_.ref();
+            return;
+        }
+        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+
         event_loop_ctx.platformEventLoop().ref();
-        // vm.event_loop_handle.?.ref();
     }
 
     /// Allow a poll to keep the process alive.
@@ -154,7 +165,6 @@ pub const FilePoll = struct {
     const ShellBufferedOutput = bun.shell.Subprocess.BufferedOutput;
     const ShellBufferedOutputMini = bun.shell.SubprocessMini.BufferedOutput;
     const Process = bun.spawn.Process;
-    const ProcessMiniEventLoop = bun.spawn.ProcessMiniEventLoop;
     const Subprocess = JSC.Subprocess;
     const BufferedInput = Subprocess.BufferedInput;
     const BufferedOutput = Subprocess.BufferedOutput;
@@ -188,7 +198,6 @@ pub const FilePoll = struct {
         GetAddrInfoRequest,
         LifecycleScriptSubprocessOutputReader,
         Process,
-        ProcessMiniEventLoop,
     });
 
     fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
@@ -349,12 +358,6 @@ pub const FilePoll = struct {
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(Process))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Process", .{poll.fd});
                 var loader = ptr.as(Process);
-
-                loader.onWaitPidFromEventLoopTask();
-            },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ProcessMiniEventLoop))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ProcessMini", .{poll.fd});
-                var loader = ptr.as(ProcessMiniEventLoop);
 
                 loader.onWaitPidFromEventLoopTask();
             },
@@ -528,10 +531,6 @@ pub const FilePoll = struct {
         }
 
         pub fn put(this: *Store, poll: *FilePoll, vm: anytype, ever_registered: bool) void {
-            if (@TypeOf(vm) != *JSC.VirtualMachine and @TypeOf(vm) != *JSC.MiniEventLoop) {
-                @compileError("Bad vm: " ++ @typeName(@TypeOf(vm)));
-            }
-
             if (!ever_registered) {
                 this.hive.put(poll);
                 return;
@@ -571,10 +570,15 @@ pub const FilePoll = struct {
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disableKeepingProcessAlive(this: *FilePoll, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
-        // log("{x} disableKeepingProcessAlive", .{@intFromPtr(this)});
-        // vm.event_loop_handle.?.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
-        event_loop_ctx.platformEventLoop().subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+        if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
+            event_loop_ctx_.loop().subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+        } else {
+            const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+            // log("{x} disableKeepingProcessAlive", .{@intFromPtr(this)});
+            // vm.event_loop_handle.?.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+            event_loop_ctx.platformEventLoop().subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+        }
+
         this.flags.remove(.keeps_event_loop_alive);
         this.flags.remove(.has_incremented_active_count);
     }
@@ -584,13 +588,16 @@ pub const FilePoll = struct {
     }
 
     pub fn enableKeepingProcessAlive(this: *FilePoll, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
-        // log("{x} enableKeepingProcessAlive", .{@intFromPtr(this)});
         if (this.flags.contains(.closed))
             return;
 
-        // vm.event_loop_handle.?.addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
-        event_loop_ctx.platformEventLoop().addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
+        if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
+            event_loop_ctx_.loop().addActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+        } else {
+            const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+            event_loop_ctx.platformEventLoop().addActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+        }
+
         this.flags.insert(.keeps_event_loop_alive);
         this.flags.insert(.has_incremented_active_count);
     }
@@ -620,7 +627,23 @@ pub const FilePoll = struct {
 
     pub fn init(vm: anytype, fd: bun.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
         if (comptime @TypeOf(vm) == *bun.install.PackageManager) {
-            return initWithPackageManager(vm, fd, flags, owner);
+            return init(JSC.EventLoopHandle.init(&vm.event_loop), fd, flags, Type, owner);
+        }
+
+        if (comptime @TypeOf(vm) == JSC.EventLoopHandle) {
+            var poll = vm.filePolls().get();
+            poll.fd = fd;
+            poll.flags = Flags.Set.init(flags);
+            poll.owner = Owner.init(owner);
+            poll.next_to_free = null;
+            poll.allocator_type = if (vm == .js) .js else .mini;
+
+            if (KQueueGenerationNumber != u0) {
+                max_generation_number +%= 1;
+                poll.generation_number = max_generation_number;
+            }
+
+            return poll;
         }
 
         return initWithOwner(vm, fd, flags, Owner.init(owner));
@@ -639,27 +662,6 @@ pub const FilePoll = struct {
             max_generation_number +%= 1;
             poll.generation_number = max_generation_number;
         }
-        return poll;
-    }
-
-    pub fn initWithPackageManager(m: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: anytype) *FilePoll {
-        return initWithPackageManagerWithOwner(m, fd, flags, Owner.init(owner));
-    }
-
-    pub fn initWithPackageManagerWithOwner(manager: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
-        var poll = manager.file_poll_store.get();
-        poll.fd = fd;
-        poll.flags = Flags.Set.init(flags);
-        poll.owner = owner;
-        poll.next_to_free = null;
-        // Well I'm not sure what to put here because it looks bun install doesn't use JSC event loop or mini event loop
-        poll.allocator_type = .install;
-
-        if (KQueueGenerationNumber != u0) {
-            max_generation_number +%= 1;
-            poll.generation_number = max_generation_number;
-        }
-
         return poll;
     }
 

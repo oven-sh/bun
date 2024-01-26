@@ -121,13 +121,6 @@ pub const ProcessExitHandler = struct {
                 const subprocess = this.ptr.as(ShellSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
-            @field(TaggedPointer.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocessMini))) => {
-                if (comptime ProcessType != ProcessMiniEventLoop)
-                    unreachable;
-
-                const subprocess = this.ptr.as(ShellSubprocessMini);
-                subprocess.onProcessExit(process, status, rusage);
-            },
             else => {
                 @panic("Internal Bun error: ProcessExitHandler has an invalid tag. Please file a bug report.");
             },
@@ -135,435 +128,424 @@ pub const ProcessExitHandler = struct {
     }
 };
 
-pub const Process = NewProcess(JSC.EventLoopKind.js);
-pub const ProcessMiniEventLoop = NewProcess(JSC.EventLoopKind.mini);
+pub const Process = struct {
+    pid: pid_t = 0,
+    pidfd: PidFDType = 0,
+    status: Status = Status{ .running = {} },
+    poller: Poller = Poller{
+        .detached = {},
+    },
+    ref_count: u32 = 1,
+    exit_handler: ProcessExitHandler = ProcessExitHandler{},
+    sync: bool = false,
+    event_loop: JSC.EventLoopHandle,
 
-pub const ProcessEventLoop = struct {
-    
-};
+    pub usingnamespace bun.NewRefCounted(Process, deinit);
+    pub const PidFDType = if (Environment.isLinux) fd_t else u0;
 
-fn NewProcess(comptime EventLoopKind: JSC.EventLoopKind) type {
-    return struct {
-        pid: pid_t = 0,
-        pidfd: PidFDType = 0,
-        status: Status = Status{ .running = {} },
-        poller: Poller = Poller{
-            .detached = {},
-        },
-        ref_count: u32 = 1,
-        exit_handler: ProcessExitHandler = ProcessExitHandler{},
-        sync: bool = false,
-        event_loop: *EventLoop,
+    pub fn setExitHandler(this: *Process, handler: anytype) void {
+        this.exit_handler.init(handler);
+    }
 
-        pub const EventLoop = EventLoopKind.Type();
+    pub fn initPosix(
+        pid: pid_t,
+        pidfd: PidFDType,
+        event_loop: anytype,
+        sync: bool,
+    ) *Process {
+        return Process.new(.{
+            .pid = pid,
+            .pidfd = pidfd,
+            .event_loop = JSC.EventLoopHandle.init(event_loop),
+            .sync = sync,
+            .poller = .{ .detached = {} },
+        });
+    }
 
-        const ThisProcess = @This();
+    pub fn hasExited(this: *const Process) bool {
+        return switch (this.status) {
+            .exited => true,
+            .signaled => true,
+            .err => true,
+            else => false,
+        };
+    }
 
-        pub usingnamespace bun.NewRefCounted(ThisProcess, deinit);
-        pub const PidFDType = if (Environment.isLinux) fd_t else u0;
+    pub fn hasKilled(this: *const Process) bool {
+        return switch (this.status) {
+            .exited, .signaled => true,
+            else => false,
+        };
+    }
 
-        pub fn setExitHandler(this: *ThisProcess, handler: anytype) void {
-            this.exit_handler.init(handler);
+    pub fn onExit(this: *Process, status: Status, rusage: *const Rusage) void {
+        const exit_handler = this.exit_handler;
+        if (status == .exited or status == .err) {
+            this.detach();
         }
 
-        pub fn initPosix(
-            pid: pid_t,
-            pidfd: PidFDType,
-            event_loop: *EventLoop,
-            sync: bool,
-        ) *ThisProcess {
-            return ThisProcess.new(.{
-                .pid = pid,
-                .pidfd = pidfd,
-                .event_loop = event_loop,
-                .sync = sync,
-                .poller = .{ .detached = {} },
-            });
+        this.status = status;
+
+        exit_handler.call(Process, this, status, rusage);
+    }
+
+    pub fn signalCode(this: *const Process) ?bun.SignalCode {
+        return this.status.signalCode();
+    }
+
+    pub fn wait(this: *Process, sync: bool) void {
+        var rusage = std.mem.zeroes(Rusage);
+        const waitpid_result = PosixSpawn.wait4(this.pid, if (sync) 0 else std.os.W.NOHANG, &rusage);
+        this.onWaitPid(&waitpid_result, &rusage);
+    }
+
+    pub fn onWaitPidFromWaiterThread(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult)) void {
+        if (comptime Environment.isWindows) {
+            @compileError("not implemented on this platform");
+        }
+        if (this.poller == .waiter_thread) {
+            this.poller.waiter_thread.unref(this.event_loop);
+            this.poller = .{ .detached = {} };
+        }
+        this.onWaitPid(waitpid_result, &std.mem.zeroes(Rusage));
+        this.deref();
+    }
+
+    pub fn onWaitPidFromEventLoopTask(this: *Process) void {
+        if (comptime Environment.isWindows) {
+            @compileError("not implemented on this platform");
+        }
+        this.wait(false);
+        this.deref();
+    }
+
+    fn onWaitPid(this: *Process, waitpid_result_: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
+        if (comptime !Environment.isPosix) {
+            @compileError("not implemented on this platform");
         }
 
-        pub fn hasExited(this: *const ThisProcess) bool {
-            return switch (this.status) {
-                .exited => true,
-                .signaled => true,
-                .err => true,
-                else => false,
-            };
-        }
+        const pid = this.pid;
 
-        pub fn hasKilled(this: *const ThisProcess) bool {
-            return switch (this.status) {
-                .exited, .signaled => true,
-                else => false,
-            };
-        }
+        var waitpid_result = waitpid_result_.*;
+        var rusage_result = rusage.*;
+        var exit_code: ?u8 = null;
+        var signal: ?u8 = null;
+        var err: ?bun.sys.Error = null;
 
-        pub fn onExit(this: *ThisProcess, status: Status, rusage: *const Rusage) void {
-            const exit_handler = this.exit_handler;
-            if ((status == .exited and status.exited.code != 0) or status == .err) {
-                this.detach();
+        while (true) {
+            switch (waitpid_result) {
+                .err => |err_| {
+                    err = err_;
+                },
+                .result => |*result| {
+                    if (result.pid == this.pid) {
+                        if (std.os.W.IFEXITED(result.status)) {
+                            exit_code = std.os.W.EXITSTATUS(result.status);
+                            // True if the process terminated due to receipt of a signal.
+                        }
+
+                        if (std.os.W.IFSIGNALED(result.status)) {
+                            signal = @as(u8, @truncate(std.os.W.TERMSIG(result.status)));
+                        }
+
+                        // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/waitpid.2.html
+                        // True if the process has not terminated, but has stopped and can
+                        // be restarted.  This macro can be true only if the wait call spec-ified specified
+                        // ified the WUNTRACED option or if the child process is being
+                        // traced (see ptrace(2)).
+                        else if (std.os.W.IFSTOPPED(result.status)) {
+                            signal = @as(u8, @truncate(std.os.W.STOPSIG(result.status)));
+                        }
+                    }
+                },
             }
 
-            this.status = status;
-
-            exit_handler.call(ThisProcess, this, status, rusage);
-        }
-
-        pub fn signalCode(this: *const ThisProcess) ?bun.SignalCode {
-            return this.status.signalCode();
-        }
-
-        pub fn wait(this: *ThisProcess, sync: bool) void {
-            var rusage = std.mem.zeroes(Rusage);
-            const waitpid_result = PosixSpawn.wait4(this.pid, if (sync) 0 else std.os.W.NOHANG, &rusage);
-            this.onWaitPid(&waitpid_result, &rusage);
-        }
-
-        pub fn onWaitPidFromWaiterThread(this: *ThisProcess, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult)) void {
-            if (comptime Environment.isWindows) {
-                @compileError("not implemented on this platform");
-            }
-            if (this.poller == .waiter_thread) {
-                this.poller.waiter_thread.unref(this.event_loop);
-                this.poller = .{ .detached = {} };
-            }
-            this.onWaitPid(waitpid_result, &std.mem.zeroes(Rusage));
-            this.deref();
-        }
-
-        pub fn onWaitPidFromEventLoopTask(this: *ThisProcess) void {
-            if (comptime Environment.isWindows) {
-                @compileError("not implemented on this platform");
-            }
-            this.wait(false);
-            this.deref();
-        }
-
-        fn onWaitPid(this: *ThisProcess, waitpid_result_: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
-            if (comptime !Environment.isPosix) {
-                @compileError("not implemented on this platform");
-            }
-
-            const pid = this.pid;
-
-            var waitpid_result = waitpid_result_.*;
-            var rusage_result = rusage.*;
-            var exit_code: ?u8 = null;
-            var signal: ?u8 = null;
-            var err: ?bun.sys.Error = null;
-
-            while (true) {
-                switch (waitpid_result) {
+            if (exit_code == null and signal == null and err == null) {
+                switch (this.rewatchPosix()) {
+                    .result => {},
                     .err => |err_| {
-                        err = err_;
-                    },
-                    .result => |*result| {
-                        if (result.pid == this.pid) {
-                            if (std.os.W.IFEXITED(result.status)) {
-                                exit_code = std.os.W.EXITSTATUS(result.status);
-                                // True if the process terminated due to receipt of a signal.
-                            }
-
-                            if (std.os.W.IFSIGNALED(result.status)) {
-                                signal = @as(u8, @truncate(std.os.W.TERMSIG(result.status)));
-                            }
-
-                            // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/waitpid.2.html
-                            // True if the process has not terminated, but has stopped and can
-                            // be restarted.  This macro can be true only if the wait call spec-ified specified
-                            // ified the WUNTRACED option or if the child process is being
-                            // traced (see ptrace(2)).
-                            else if (std.os.W.IFSTOPPED(result.status)) {
-                                signal = @as(u8, @truncate(std.os.W.STOPSIG(result.status)));
+                        if (comptime Environment.isMac) {
+                            if (err_.getErrno() == .SRCH) {
+                                waitpid_result = PosixSpawn.wait4(
+                                    pid,
+                                    if (this.sync) 0 else std.os.W.NOHANG,
+                                    &rusage_result,
+                                );
+                                continue;
                             }
                         }
+                        err = err_;
                     },
                 }
-
-                if (exit_code == null and signal == null and err == null) {
-                    switch (this.rewatchPosix()) {
-                        .result => {},
-                        .err => |err_| {
-                            if (comptime Environment.isMac) {
-                                if (err_.getErrno() == .SRCH) {
-                                    waitpid_result = PosixSpawn.wait4(
-                                        pid,
-                                        if (this.sync) 0 else std.os.W.NOHANG,
-                                        &rusage_result,
-                                    );
-                                    continue;
-                                }
-                            }
-                            err = err_;
-                        },
-                    }
-                }
-
-                break;
             }
 
-            if (exit_code != null) {
-                this.onExit(
-                    .{
-                        .exited = .{ .code = exit_code.?, .signal = @enumFromInt(signal orelse 0) },
-                    },
-                    &rusage_result,
-                );
-            } else if (signal != null) {
-                this.onExit(
-                    .{
-                        .signaled = @enumFromInt(signal.?),
-                    },
-                    &rusage_result,
-                );
-            } else if (err != null) {
-                this.onExit(.{ .err = err.? }, &rusage_result);
-            }
+            break;
         }
 
-        pub fn watch(this: *ThisProcess, vm: anytype) JSC.Maybe(void) {
-            if (comptime Environment.isWindows) {
-                return;
-            }
+        if (exit_code != null) {
+            this.onExit(
+                .{
+                    .exited = .{ .code = exit_code.?, .signal = @enumFromInt(signal orelse 0) },
+                },
+                &rusage_result,
+            );
+        } else if (signal != null) {
+            this.onExit(
+                .{
+                    .signaled = @enumFromInt(signal.?),
+                },
+                &rusage_result,
+            );
+        } else if (err != null) {
+            this.onExit(.{ .err = err.? }, &rusage_result);
+        }
+    }
 
-            if (WaiterThread.shouldUseWaiterThread() or comptime EventLoopKind == .mini) {
-                this.poller = .{ .waiter_thread = .{} };
-                if (EventLoopKind == .js)
-                    this.poller.waiter_thread.ref(this.event_loop);
+    pub fn watch(this: *Process, vm: anytype) JSC.Maybe(void) {
+        _ = vm; // autofix
+        if (comptime Environment.isWindows) {
+            return;
+        }
+
+        if (WaiterThread.shouldUseWaiterThread()) {
+            this.poller = .{ .waiter_thread = .{} };
+            this.poller.waiter_thread.ref(this.event_loop);
+            this.ref();
+            WaiterThread.append(this);
+            return JSC.Maybe(void){ .result = {} };
+        }
+
+        const watchfd = if (comptime Environment.isLinux) this.pidfd else this.pid;
+        const poll = bun.Async.FilePoll.init(this.event_loop, bun.toFD(watchfd), .{}, Process, this);
+        this.poller = .{ .fd = poll };
+
+        switch (this.poller.fd.register(
+            this.event_loop.loop(),
+            .process,
+            true,
+        )) {
+            .result => {
+                this.poller.fd.enableKeepingProcessAlive(this.event_loop);
                 this.ref();
-                WaiterThread.append(this);
                 return JSC.Maybe(void){ .result = {} };
-            }
+            },
+            .err => |err| {
+                if (err.getErrno() != .SRCH) {
+                    @panic("This shouldn't happen");
+                }
 
-            const watchfd = if (comptime Environment.isLinux) this.pidfd else this.pid;
-            const poll = bun.Async.FilePoll.init(vm, bun.toFD(watchfd), .{}, ThisProcess, this);
-            this.poller = .{ .fd = poll };
+                return .{ .err = err };
+            },
+        }
 
-            switch (this.poller.fd.register(
-                this.event_loop.getVmImpl().event_loop_handle.?,
+        unreachable;
+    }
+
+    pub fn rewatchPosix(this: *Process) JSC.Maybe(void) {
+        if (WaiterThread.shouldUseWaiterThread()) {
+            if (this.poller != .waiter_thread)
+                this.poller = .{ .waiter_thread = .{} };
+            this.poller.waiter_thread.ref(this.event_loop);
+            this.ref();
+            WaiterThread.append(this);
+            return JSC.Maybe(void){ .result = {} };
+        }
+
+        if (this.poller == .fd) {
+            return this.poller.fd.register(
+                this.event_loop.loop(),
                 .process,
                 true,
-            )) {
-                .result => {
-                    this.poller.fd.enableKeepingProcessAlive(vm);
-                    this.ref();
-                    return JSC.Maybe(void){ .result = {} };
-                },
-                .err => |err| {
-                    if (err.getErrno() != .SRCH) {
-                        @panic("This shouldn't happen");
-                    }
-
-                    return .{ .err = err };
-                },
-            }
-
-            unreachable;
+            );
+        } else {
+            @panic("Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.");
         }
+    }
 
-        pub fn rewatchPosix(this: *ThisProcess) JSC.Maybe(void) {
-            if (WaiterThread.shouldUseWaiterThread() or comptime EventLoopKind == .mini) {
-                if (this.poller != .waiter_thread)
-                    this.poller = .{ .waiter_thread = .{} };
-                if (EventLoopKind == .js)
-                    this.poller.waiter_thread.ref(this.event_loop.getVmImpl());
-                this.ref();
-                WaiterThread.append(this);
-                return JSC.Maybe(void){ .result = {} };
-            }
+    fn onExitUV(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.C) void {
+        const poller = @fieldParentPtr(Process, "uv", process);
+        var this = @fieldParentPtr(Process, "poller", poller);
+        const exit_code: u8 = if (exit_status >= 0) @as(u8, @truncate(@as(u64, @intCast(exit_status)))) else 0;
+        const signal_code: ?bun.SignalCode = if (term_signal > 0 and term_signal < @intFromEnum(bun.SignalCode.SIGSYS)) @enumFromInt(term_signal) else null;
+        const rusage = uv_getrusage(process);
 
-            if (this.poller == .fd) {
-                return this.poller.fd.register(
-                    this.event_loop.getVmImpl().event_loop_handle.?,
-                    .process,
-                    true,
-                );
-            } else {
-                @panic("Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.");
-            }
-        }
-
-        fn onExitUV(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.C) void {
-            const poller = @fieldParentPtr(ThisProcess, "uv", process);
-            var this = @fieldParentPtr(ThisProcess, "poller", poller);
-            const exit_code: u8 = if (exit_status >= 0) @as(u8, @truncate(@as(u64, @intCast(exit_status)))) else 0;
-            const signal_code: ?bun.SignalCode = if (term_signal > 0 and term_signal < @intFromEnum(bun.SignalCode.SIGSYS)) @enumFromInt(term_signal) else null;
-            const rusage = uv_getrusage(process);
-
-            if (exit_status != 0) {
-                this.close();
-                this.onExit(
-                    .{
-                        .exited = .{ .code = exit_code, .signal = signal_code orelse @enumFromInt(0) },
-                    },
-                    &rusage,
-                );
-            } else if (signal_code != null) {
-                this.onExit(
-                    .{
-                        .signaled = .{ .signal = signal_code },
-                    },
-                    &rusage,
-                );
-            } else {
-                this.onExit(
-                    .{
-                        .err = .{ .err = bun.sys.Error.fromCode(.INVAL, .waitpid) },
-                    },
-                    &rusage,
-                );
-            }
-        }
-
-        fn onCloseUV(uv_handle: *uv.uv_process_t) callconv(.C) void {
-            const poller = @fieldParentPtr(Poller, "uv", uv_handle);
-            var this = @fieldParentPtr(ThisProcess, "poller", poller);
-            if (this.poller == .uv) {
-                this.poller = .{ .detached = {} };
-            }
-            this.deref();
-        }
-
-        pub fn close(this: *ThisProcess) void {
-            switch (this.poller) {
-                .fd => |fd| {
-                    if (comptime !Environment.isPosix) {
-                        unreachable;
-                    }
-
-                    fd.deinit();
-                    this.poller = .{ .detached = {} };
-                },
-
-                .uv => |*process| {
-                    if (comptime !Environment.isWindows) {
-                        unreachable;
-                    }
-                    process.unref();
-
-                    if (process.isClosed()) {
-                        this.poller = .{ .detached = {} };
-                    } else if (!process.isClosing()) {
-                        this.ref();
-                        process.close(&onCloseUV);
-                    }
-                },
-                .waiter_thread => |*waiter| {
-                    waiter.disable();
-                    this.poller = .{ .detached = {} };
-                },
-                else => {},
-            }
-
-            if (comptime Environment.isLinux) {
-                if (this.pidfd != bun.invalid_fd.int()) {
-                    _ = bun.sys.close(this.pidfd);
-                    this.pidfd = @intCast(bun.invalid_fd.int());
-                }
-            }
-        }
-
-        pub fn disableKeepingEventLoopAlive(this: *ThisProcess, event_loop_ctx: anytype) void {
-            if (this.poller == .fd) {
-                if (comptime Environment.isWindows)
-                    unreachable;
-                this.poller.fd.disableKeepingProcessAlive(event_loop_ctx);
-            } else if (this.poller == .uv) {
-                if (comptime Environment.isWindows) {
-                    if (!this.poller.uv.isClosing()) {
-                        this.poller.uv.unref();
-                    }
-                } else {
-                    unreachable;
-                }
-            } else if (this.poller == .waiter_thread) {
-                this.poller.waiter_thread.unref(event_loop_ctx);
-            }
-        }
-
-        pub fn hasRef(this: *ThisProcess) bool {
-            return switch (this.poller) {
-                .fd => this.poller.fd.isActive(),
-                .uv => if (Environment.isWindows) this.poller.uv.hasRef() else unreachable,
-                .waiter_thread => this.poller.waiter_thread.isActive(),
-                else => false,
-            };
-        }
-
-        pub fn enableKeepingEventLoopAlive(this: *ThisProcess, event_loop_ctx: anytype) void {
-            if (this.poller == .fd) {
-                this.poller.fd.enableKeepingProcessAlive(event_loop_ctx);
-            } else if (this.poller == .uv) {
-                if (comptime Environment.isWindows) {
-                    if (!this.poller.uv.hasRef()) {
-                        this.poller.uv.ref();
-                    }
-                } else {
-                    unreachable;
-                }
-            } else if (this.poller == .waiter_thread) {
-                this.poller.waiter_thread.ref(event_loop_ctx);
-            }
-        }
-
-        pub fn detach(this: *ThisProcess) void {
+        if (exit_status != 0) {
             this.close();
-            this.exit_handler = .{};
+            this.onExit(
+                .{
+                    .exited = .{ .code = exit_code, .signal = signal_code orelse @enumFromInt(0) },
+                },
+                &rusage,
+            );
+        } else if (signal_code != null) {
+            this.onExit(
+                .{
+                    .signaled = .{ .signal = signal_code },
+                },
+                &rusage,
+            );
+        } else {
+            this.onExit(
+                .{
+                    .err = .{ .err = bun.sys.Error.fromCode(.INVAL, .waitpid) },
+                },
+                &rusage,
+            );
         }
+    }
 
-        fn deinit(this: *ThisProcess) void {
-            if (this.poller == .fd) {
-                this.poller.fd.deinit();
-            } else if (this.poller == .uv) {
-                if (comptime Environment.isWindows) {
-                    std.debug.assert(!this.poller.uv.isActive());
-                } else {
+    fn onCloseUV(uv_handle: *uv.uv_process_t) callconv(.C) void {
+        const poller = @fieldParentPtr(Poller, "uv", uv_handle);
+        var this = @fieldParentPtr(Process, "poller", poller);
+        if (this.poller == .uv) {
+            this.poller = .{ .detached = {} };
+        }
+        this.deref();
+    }
+
+    pub fn close(this: *Process) void {
+        switch (this.poller) {
+            .fd => |fd| {
+                if (comptime !Environment.isPosix) {
                     unreachable;
                 }
-            } else if (this.poller == .waiter_thread) {
-                this.poller.waiter_thread.disable();
-            }
 
-            this.destroy();
+                fd.deinit();
+                this.poller = .{ .detached = {} };
+            },
+
+            .uv => |*process| {
+                if (comptime !Environment.isWindows) {
+                    unreachable;
+                }
+                process.unref();
+
+                if (process.isClosed()) {
+                    this.poller = .{ .detached = {} };
+                } else if (!process.isClosing()) {
+                    this.ref();
+                    process.close(&onCloseUV);
+                }
+            },
+            .waiter_thread => |*waiter| {
+                waiter.disable();
+                this.poller = .{ .detached = {} };
+            },
+            else => {},
         }
 
-        pub fn kill(this: *ThisProcess, signal: u8) Maybe(void) {
-            switch (this.poller) {
-                .uv => |*handle| {
-                    if (comptime !Environment.isWindows) {
-                        unreachable;
-                    }
-
-                    if (handle.kill(signal).toError(.kill)) |err| {
-                        return .{ .err = err };
-                    }
-
-                    return .{
-                        .result = {},
-                    };
-                },
-                .fd => {
-                    if (comptime !Environment.isPosix) {
-                        unreachable;
-                    }
-
-                    const err = std.c.kill(this.pid, signal);
-                    if (err != 0) {
-                        const errno_ = bun.C.getErrno(err);
-
-                        // if the process was already killed don't throw
-                        if (errno_ != .SRCH)
-                            return .{ .err = bun.sys.Error.fromCode(errno_, .kill) };
-                    }
-                },
-                else => {},
+        if (comptime Environment.isLinux) {
+            if (this.pidfd != bun.invalid_fd.int()) {
+                _ = bun.sys.close(this.pidfd);
+                this.pidfd = @intCast(bun.invalid_fd.int());
             }
-
-            return .{
-                .result = {},
-            };
         }
-    };
-}
+    }
+
+    pub fn disableKeepingEventLoopAlive(this: *Process) void {
+        if (this.poller == .fd) {
+            if (comptime Environment.isWindows)
+                unreachable;
+            this.poller.fd.disableKeepingProcessAlive(this.event_loop);
+        } else if (this.poller == .uv) {
+            if (comptime Environment.isWindows) {
+                if (!this.poller.uv.isClosing()) {
+                    this.poller.uv.unref();
+                }
+            } else {
+                unreachable;
+            }
+        } else if (this.poller == .waiter_thread) {
+            this.poller.waiter_thread.unref(this.event_loop);
+        }
+    }
+
+    pub fn hasRef(this: *Process) bool {
+        return switch (this.poller) {
+            .fd => this.poller.fd.canEnableKeepingProcessAlive(),
+            .uv => if (Environment.isWindows) this.poller.uv.hasRef() else unreachable,
+            .waiter_thread => this.poller.waiter_thread.isActive(),
+            else => false,
+        };
+    }
+
+    pub fn enableKeepingEventLoopAlive(this: *Process) void {
+        if (this.hasExited())
+            return;
+
+        if (this.poller == .fd) {
+            this.poller.fd.enableKeepingProcessAlive(this.event_loop);
+        } else if (this.poller == .uv) {
+            if (comptime Environment.isWindows) {
+                if (!this.poller.uv.hasRef()) {
+                    this.poller.uv.ref();
+                }
+            } else {
+                unreachable;
+            }
+        } else if (this.poller == .waiter_thread) {
+            this.poller.waiter_thread.ref(this.event_loop);
+        }
+    }
+
+    pub fn detach(this: *Process) void {
+        this.close();
+        this.exit_handler = .{};
+    }
+
+    fn deinit(this: *Process) void {
+        if (this.poller == .fd) {
+            this.poller.fd.deinit();
+        } else if (this.poller == .uv) {
+            if (comptime Environment.isWindows) {
+                std.debug.assert(!this.poller.uv.isActive());
+            } else {
+                unreachable;
+            }
+        } else if (this.poller == .waiter_thread) {
+            this.poller.waiter_thread.disable();
+        }
+
+        this.destroy();
+    }
+
+    pub fn kill(this: *Process, signal: u8) Maybe(void) {
+        switch (this.poller) {
+            .uv => |*handle| {
+                if (comptime !Environment.isWindows) {
+                    unreachable;
+                }
+
+                if (handle.kill(signal).toError(.kill)) |err| {
+                    return .{ .err = err };
+                }
+
+                return .{
+                    .result = {},
+                };
+            },
+            .waiter_thread, .fd => {
+                if (comptime !Environment.isPosix) {
+                    unreachable;
+                }
+
+                const err = std.c.kill(this.pid, signal);
+                if (err != 0) {
+                    const errno_ = bun.C.getErrno(err);
+
+                    // if the process was already killed don't throw
+                    if (errno_ != .SRCH)
+                        return .{ .err = bun.sys.Error.fromCode(errno_, .kill) };
+                }
+            },
+            else => {},
+        }
+
+        return .{
+            .result = {},
+        };
+    }
+};
 
 pub const Status = union(enum) {
     running: void,
@@ -601,10 +583,8 @@ pub const WaiterThread = struct {
     eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
 
     js_process: ProcessQueue = .{},
-    mini_process: ProcessMiniEventLoopQueue = .{},
 
     pub const ProcessQueue = NewQueue(Process);
-    pub const ProcessMiniEventLoopQueue = NewQueue(ProcessMiniEventLoop);
 
     fn NewQueue(comptime T: type) type {
         return struct {
@@ -622,6 +602,27 @@ pub const WaiterThread = struct {
             pub const ResultTask = struct {
                 result: JSC.Maybe(PosixSpawn.WaitPidResult),
                 subprocess: *T,
+
+                pub usingnamespace bun.New(@This());
+
+                pub const runFromJSThread = runFromMainThread;
+
+                pub fn runFromMainThread(self: *@This()) void {
+                    const result = self.result;
+                    const subprocess = self.subprocess;
+                    self.destroy();
+                    subprocess.onWaitPidFromWaiterThread(&result);
+                }
+
+                pub fn runFromMainThreadMini(self: *@This(), _: *void) void {
+                    self.runFromMainThread();
+                }
+            };
+
+            pub const ResultTaskMini = struct {
+                result: JSC.Maybe(PosixSpawn.WaitPidResult),
+                subprocess: *T,
+                task: JSC.AnyTaskWithExtraContext = .{},
 
                 pub usingnamespace bun.New(@This());
 
@@ -661,7 +662,7 @@ pub const WaiterThread = struct {
                 var queue: []*T = this.active.items;
                 var i: usize = 0;
                 while (queue.len > 0 and i < queue.len) {
-                    var process = queue[i];
+                    const process = queue[i];
                     const pid = process.pid;
                     // this case shouldn't really happen
                     if (pid == 0) {
@@ -675,18 +676,32 @@ pub const WaiterThread = struct {
                         _ = this.active.orderedRemove(i);
                         queue = this.active.items;
 
-                        process.event_loop.enqueueTaskConcurrent(
-                            JSC.ConcurrentTask.create(
-                                JSC.Task.init(
-                                    ResultTask.new(
-                                        .{
-                                            .result = result,
-                                            .subprocess = process,
-                                        },
-                                    ),
-                                ),
-                            ),
-                        );
+                        switch (process.event_loop) {
+                            .js => |event_loop| {
+                                event_loop.enqueueTaskConcurrent(
+                                    JSC.ConcurrentTask.create(JSC.Task.init(
+                                        ResultTask.new(
+                                            .{
+                                                .result = result,
+                                                .subprocess = process,
+                                            },
+                                        ),
+                                    )),
+                                );
+                            },
+                            .mini => |mini| {
+                                const AnyTask = JSC.AnyTaskWithExtraContext.New(ResultTaskMini, void, ResultTaskMini.runFromMainThreadMini);
+                                const out = ResultTaskMini.new(
+                                    .{
+                                        .result = result,
+                                        .subprocess = process,
+                                    },
+                                );
+                                out.task = AnyTask.init(out);
+
+                                mini.enqueueTaskConcurrent(&out.task);
+                            },
+                        }
                     }
 
                     i += 1;
@@ -706,7 +721,6 @@ pub const WaiterThread = struct {
     pub fn append(process: anytype) void {
         switch (comptime @TypeOf(process)) {
             *Process => instance.js_process.append(process),
-            *ProcessMiniEventLoop => instance.mini_process.append(process),
             else => @compileError("Unknown Process type"),
         }
 
@@ -748,7 +762,6 @@ pub const WaiterThread = struct {
 
         while (true) {
             this.js_process.loop();
-            this.mini_process.loop();
 
             if (comptime Environment.isLinux) {
                 var polls = [_]std.os.pollfd{

@@ -2554,6 +2554,9 @@ pub const UVLoop = extern struct {
         this.uv_loop.dec();
     }
 
+    pub const ref = inc;
+    pub const unref = dec;
+
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
             pub fn callback(data: *anyopaque) callconv(.C) void {

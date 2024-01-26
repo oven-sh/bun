@@ -241,9 +241,7 @@ pub const Subprocess = struct {
     }
 
     pub fn ref(this: *Subprocess) void {
-        const vm = this.globalThis.bunVM();
-
-        this.process.enableKeepingEventLoopAlive(vm);
+        this.process.enableKeepingEventLoopAlive();
 
         if (!this.hasCalledGetter(.stdin)) {
             this.stdin.ref();
@@ -260,9 +258,7 @@ pub const Subprocess = struct {
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn unref(this: *Subprocess, comptime _: bool) void {
-        const vm = this.globalThis.bunVM();
-
-        this.process.disableKeepingEventLoopAlive(vm.eventLoop());
+        this.process.disableKeepingEventLoopAlive();
 
         if (!this.hasCalledGetter(.stdin)) {
             this.stdin.unref();
@@ -1664,7 +1660,7 @@ pub const Subprocess = struct {
                 globalThis.bunVM().drainMicrotasks();
         }
 
-        if (this.hasExited()) {
+        if (!is_sync and this.hasExited()) {
             this.flags.waiting_for_onexit = true;
 
             const Holder = struct {
@@ -2461,7 +2457,7 @@ pub const Subprocess = struct {
             if (send_exit_notification) {
                 // process has already exited
                 // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                subprocess.process.unref(); // from the watch
+                subprocess.process.deref(); // from the watch
                 subprocess.process.wait(is_sync);
             }
         }

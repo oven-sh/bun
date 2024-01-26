@@ -1876,51 +1876,10 @@ pub const CacheLevel = struct {
     use_etag: bool,
     use_last_modified: bool,
 };
-const Waker = if (Environment.isPosix) bun.Async.Waker else *bun.uws.UVLoop;
 
-const Waiter = struct {
-    onWait: *const fn (this: *anyopaque) anyerror!usize,
-    onWake: *const fn (this: *anyopaque) void,
-    ctx: *anyopaque,
-
-    pub fn init(
-        ctx: anytype,
-        comptime onWait: *const fn (this: @TypeOf(ctx)) anyerror!usize,
-        comptime onWake: *const fn (this: @TypeOf(ctx)) void,
-    ) Waiter {
-        return Waiter{
-            .ctx = @ptrCast(ctx),
-            .onWait = @alignCast(@ptrCast(@as(*const anyopaque, @ptrCast(onWait)))),
-            .onWake = @alignCast(@ptrCast(@as(*const anyopaque, @ptrCast(onWake)))),
-        };
-    }
-
-    pub fn wait(this: *Waiter) !usize {
-        return this.onWait(this.ctx);
-    }
-
-    pub fn wake(this: *Waiter) void {
-        this.onWake(this.ctx);
-    }
-
-    pub fn fromUWSLoop(loop: *uws.Loop) Waiter {
-        const Handlers = struct {
-            fn onWait(uws_loop: *uws.Loop) !usize {
-                uws_loop.run();
-                return 0;
-            }
-
-            fn onWake(uws_loop: *uws.Loop) void {
-                uws_loop.wakeup();
-            }
-        };
-
-        return Waiter.init(
-            loop,
-            Handlers.onWait,
-            Handlers.onWake,
-        );
-    }
+pub const PackageManagerEventLoop = struct {
+    uws_loop: *uws.Loop,
+    concurrent_task_queue: JSC.MiniEventLoop.ConcurrentTaskQueue = .{},
 };
 
 // We can't know all the packages we need until we've downloaded all the packages
@@ -2008,15 +1967,10 @@ pub const PackageManager = struct {
 
     peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
 
-    /// Do not use directly outside of wait or wake
-    event_loop: *uws.Loop,
-
-    concurrent_tasks:
-
-    file_poll_store: bun.Async.FilePoll.Store,
-
     // name hash from alias package name -> aliased package dependency version info
     known_npm_aliases: NpmAliasMap = .{},
+
+    event_loop: JSC.AnyEventLoop,
 
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
@@ -2089,7 +2043,7 @@ pub const PackageManager = struct {
     };
 
     pub fn hasEnoughTimePassedBetweenWaitingMessages() bool {
-        const iter = instance.uws_event_loop.iterationNumber();
+        const iter = instance.event_loop.loop().iterationNumber();
         if (TimePasser.last_time < iter) {
             TimePasser.last_time = iter;
             return true;
@@ -2200,22 +2154,20 @@ pub const PackageManager = struct {
         }
 
         _ = this.wait_count.fetchAdd(1, .Monotonic);
-        this.uws_event_loop.wakeup();
+        this.event_loop.wakeup();
+    }
+
+    fn hasNoMorePendingLifecycleScripts(this: *PackageManager) bool {
+        return this.pending_lifecycle_script_tasks.load(.Monotonic) == 0;
     }
 
     pub fn tickLifecycleScripts(this: *PackageManager) void {
-        if (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-            this.uws_event_loop.tickWithoutIdle();
-        }
+        this.event_loop.tick(this, hasNoMorePendingLifecycleScripts);
     }
 
     pub fn sleep(this: *PackageManager) void {
-        if (this.wait_count.swap(0, .Monotonic) > 0) {
-            this.tickLifecycleScripts();
-            return;
-        }
         Output.flush();
-        this.uws_event_loop.tick();
+        this.event_loop.tickOnce(this);
     }
 
     const DependencyToEnqueue = union(enum) {
@@ -6353,8 +6305,9 @@ pub const PackageManager = struct {
             .root_package_json_file = package_json_file,
             .workspaces = workspaces,
             // .progress
-            .uws_event_loop = uws.Loop.get(),
-            .file_poll_store = bun.Async.FilePoll.Store.init(ctx.allocator),
+            .event_loop = .{
+                .mini = JSC.MiniEventLoop.init(bun.default_allocator),
+            },
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
 
@@ -6443,8 +6396,9 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = undefined,
-            .uws_event_loop = uws.Loop.get(),
-            .file_poll_store = bun.Async.FilePoll.Store.init(allocator),
+            .event_loop = .{
+                .js = JSC.VirtualMachine.get().eventLoop(),
+            },
             .workspaces = std.StringArrayHashMap(Semver.Version).init(allocator),
         };
         manager.lockfile = try allocator.create(Lockfile);
@@ -8904,12 +8858,9 @@ pub const PackageManager = struct {
                     if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
                 }
 
-                if (this.pending_tasks > 0)
-                    this.sleep()
-                else
-                    this.tickLifecycleScripts();
+                this.sleep();
             } else {
-                this.tickLifecycleScripts();
+                this.sleep();
             }
 
             this.finished_installing.store(true, .Monotonic);

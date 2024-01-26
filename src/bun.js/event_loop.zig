@@ -1512,7 +1512,7 @@ pub fn AbstractVM(inner: anytype) brk: {
 
 pub const MiniEventLoop = struct {
     tasks: Queue,
-    concurrent_tasks: UnboundedQueue(AnyTaskWithExtraContext, .next) = .{},
+    concurrent_tasks: ConcurrentTaskQueue = .{},
     loop: *uws.Loop,
     allocator: std.mem.Allocator,
     file_polls_: ?*Async.FilePoll.Store = null,
@@ -1522,6 +1522,8 @@ pub const MiniEventLoop = struct {
     after_event_loop_callback: ?JSC.OpaqueCallback = null,
 
     pub threadlocal var global: *MiniEventLoop = undefined;
+
+    pub const ConcurrentTaskQueue = UnboundedQueue(AnyTaskWithExtraContext, .next);
 
     pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
         const loop = MiniEventLoop.init(bun.default_allocator);
@@ -1607,10 +1609,26 @@ pub const MiniEventLoop = struct {
         return this.tasks.count - start_count;
     }
 
+    pub fn tickOnce(
+        this: *MiniEventLoop,
+        context: *anyopaque,
+    ) void {
+        if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
+            defer this.onAfterEventLoop();
+            this.loop.inc();
+            this.loop.tick();
+            this.loop.dec();
+        }
+
+        while (this.tasks.readItem()) |task| {
+            task.run(context);
+        }
+    }
+
     pub fn tick(
         this: *MiniEventLoop,
         context: *anyopaque,
-        comptime isDone: fn (*anyopaque) bool,
+        comptime isDone: *const fn (*anyopaque) bool,
     ) void {
         while (!isDone(context)) {
             if (this.tickConcurrentWithCount() == 0 and this.tasks.count == 0) {
@@ -1674,6 +1692,31 @@ pub const AnyEventLoop = union(enum) {
         this.* = .{ .js = jsc };
     }
 
+    pub fn wakeup(this: *AnyEventLoop) void {
+        this.loop().wakeup();
+    }
+
+    pub fn filePolls(this: *AnyEventLoop) *bun.Async.FilePoll.Store {
+        return switch (this.*) {
+            .js => this.js.virtual_machine.rareData().filePolls(this.js.virtual_machine),
+            .mini => this.mini.filePolls(),
+        };
+    }
+
+    pub fn putFilePoll(this: *AnyEventLoop, poll: *Async.FilePoll) void {
+        switch (this.*) {
+            .js => this.js.virtual_machine.rareData().filePolls(this.js.virtual_machine).put(poll, this.js.virtual_machine, poll.flags.contains(.was_ever_registered)),
+            .mini => this.mini.filePolls().put(poll, &this.mini, poll.flags.contains(.was_ever_registered)),
+        }
+    }
+
+    pub fn loop(this: *AnyEventLoop) *uws.Loop {
+        return switch (this.*) {
+            .js => this.js.virtual_machine.uwsLoop(),
+            .mini => this.mini.loop,
+        };
+    }
+
     pub fn init(
         allocator: std.mem.Allocator,
     ) AnyEventLoop {
@@ -1682,8 +1725,25 @@ pub const AnyEventLoop = union(enum) {
 
     pub fn tick(
         this: *AnyEventLoop,
-        context: *anyopaque,
-        comptime isDone: fn (*anyopaque) bool,
+        context: anytype,
+        comptime isDone: *const fn (@TypeOf(context)) bool,
+    ) void {
+        switch (this.*) {
+            .js => {
+                while (!isDone(context)) {
+                    this.js.tick();
+                    this.js.autoTick();
+                }
+            },
+            .mini => {
+                this.mini.tick(context, @ptrCast(isDone));
+            },
+        }
+    }
+
+    pub fn tickOnce(
+        this: *AnyEventLoop,
+        context: anytype,
     ) void {
         switch (this.*) {
             .js => {
@@ -1691,7 +1751,7 @@ pub const AnyEventLoop = union(enum) {
                 this.js.autoTick();
             },
             .mini => {
-                this.mini.tick(context, isDone);
+                this.mini.tickOnce(context);
             },
         }
     }
@@ -1718,5 +1778,63 @@ pub const AnyEventLoop = union(enum) {
                 this.mini.enqueueTaskConcurrentWithExtraCtx(Context, ParentContext, ctx, Callback, field);
             },
         }
+    }
+};
+
+pub const EventLoopHandle = union(enum) {
+    js: *JSC.EventLoop,
+    mini: *MiniEventLoop,
+
+    pub fn init(context: anytype) EventLoopHandle {
+        const Context = @TypeOf(context);
+        return switch (Context) {
+            *JSC.VirtualMachine => .{ .js = context.eventLoop() },
+            *JSC.EventLoop => .{ .js = context },
+            *JSC.MiniEventLoop => .{ .mini = context },
+            *AnyEventLoop => switch (context.*) {
+                .js => .{ .js = context.js },
+                .mini => .{ .mini = &context.mini },
+            },
+            else => @compileError("Invalid context type for EventLoopHandle.init " ++ @typeName(Context)),
+        };
+    }
+
+    pub fn filePolls(this: EventLoopHandle) *bun.Async.FilePoll.Store {
+        return switch (this) {
+            .js => this.js.virtual_machine.rareData().filePolls(this.js.virtual_machine),
+            .mini => this.mini.filePolls(),
+        };
+    }
+
+    pub fn enqueueTaskConcurrent(this: EventLoopHandle, context: anytype) void {
+        switch (this.*) {
+            .js => {
+                this.js.enqueueTaskConcurrent(
+                    context.toJSTask(),
+                );
+            },
+            .mini => {
+                this.mini.enqueueTaskConcurrent(
+                    context.toMiniTask(),
+                );
+            },
+        }
+    }
+
+    pub fn loop(this: EventLoopHandle) *bun.uws.Loop {
+        return switch (this) {
+            .js => this.js.usocketsLoop(),
+            .mini => this.mini.loop,
+        };
+    }
+
+    pub const platformEventLoop = loop;
+
+    pub fn ref(this: EventLoopHandle) void {
+        this.loop().ref();
+    }
+
+    pub fn unref(this: EventLoopHandle) void {
+        this.loop().unref();
     }
 };

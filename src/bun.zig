@@ -102,6 +102,14 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
         try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
     }
+
+    pub fn assertValid(fd: FileDescriptor) void {
+        FDImpl.decode(fd).assertValid();
+    }
+
+    pub fn isValid(fd: FileDescriptor) void {
+        FDImpl.decode(fd).isValid();
+    }
 };
 
 pub const FDImpl = @import("./fd.zig").FDImpl;

@@ -32,7 +32,7 @@ export class PublishCommand extends BuildCommand {
     }
     const { layer, region, arch, output, public: isPublic } = flags;
     if (region.includes("*")) {
-      // prettier-ignore
+      // biome-ignore: format ignore
       const result = this.#aws([
         "ec2",
         "describe-regions",
@@ -44,7 +44,7 @@ export class PublishCommand extends BuildCommand {
         region.push(name);
       }
     } else if (!region.length) {
-      // prettier-ignore
+      // biome-ignore: format ignore
       region.push(this.#aws([
         "configure",
         "get",
@@ -54,7 +54,7 @@ export class PublishCommand extends BuildCommand {
     this.log("Publishing...");
     for (const regionName of region) {
       for (const layerName of layer) {
-        // prettier-ignore
+        // biome-ignore: format ignore
         const result = this.#aws([
           "lambda",
           "publish-layer-version",
@@ -70,7 +70,7 @@ export class PublishCommand extends BuildCommand {
         const { LayerVersionArn } = JSON.parse(result);
         this.log("Published", LayerVersionArn);
         if (isPublic) {
-          // prettier-ignore
+          // biome-ignore: format ignore
           this.#aws([
             "lambda",
             "add-layer-version-permission",

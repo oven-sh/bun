@@ -163,10 +163,7 @@ tsd.expectType<CString>(lib2.symbols.sqlite3_libversion());
 // tslint:disable-next-line:no-void-expression
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
 tsd.expectType<void>(lib2.symbols.multi_args(1, 2));
-tsd.expectTypeEquals<
-  ReturnType<(typeof lib2)["symbols"]["no_returns"]>,
-  undefined
->(true);
+tsd.expectTypeEquals<ReturnType<(typeof lib2)["symbols"]["no_returns"]>, undefined>(true);
 tsd.expectTypeEquals<Parameters<(typeof lib2)["symbols"]["no_args"]>, []>(true);
 
 tsd.expectType<number>(read.u8(0));

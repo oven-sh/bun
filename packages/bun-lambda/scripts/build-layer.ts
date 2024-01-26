@@ -87,12 +87,13 @@ export class BuildCommand extends Command {
     this.log("Saving...", output);
     const archiveBuffer = await archive
       .generateAsync({
-        type: 'blob',
+        type: "blob",
         compression: "DEFLATE",
         compressionOptions: {
           level: 9,
         },
-      }).then(blob => blob.arrayBuffer());
+      })
+      .then(blob => blob.arrayBuffer());
     writeFileSync(output, archiveBuffer);
     this.log("Saved");
   }

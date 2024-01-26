@@ -1,11 +1,4 @@
-import {
-  FileSink,
-  NullSubprocess,
-  PipedSubprocess,
-  ReadableSubprocess,
-  SyncSubprocess,
-  WritableSubprocess,
-} from "bun";
+import { FileSink, NullSubprocess, PipedSubprocess, ReadableSubprocess, SyncSubprocess, WritableSubprocess } from "bun";
 import * as tsd from "./utilities.test";
 
 Bun.spawn(["echo", "hello"]);
@@ -32,11 +25,7 @@ function depromise<T>(_promise: Promise<T>): T {
 
 {
   const proc = Bun.spawn(["cat"], {
-    stdin: depromise(
-      fetch(
-        "https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js",
-      ),
-    ),
+    stdin: depromise(fetch("https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js")),
   });
 
   const text = depromise(new Response(proc.stdout).text());
@@ -141,36 +130,16 @@ function depromise<T>(_promise: Promise<T>): T {
   });
   tsd.expectType<number>(proc.stdin);
 }
-tsd.expectAssignable<PipedSubprocess>(
-  Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }),
-);
-tsd.expectNotAssignable<PipedSubprocess>(
-  Bun.spawn([], { stdio: ["inherit", "inherit", "inherit"] }),
-);
-tsd.expectAssignable<ReadableSubprocess>(
-  Bun.spawn([], { stdio: ["ignore", "pipe", "pipe"] }),
-);
-tsd.expectAssignable<ReadableSubprocess>(
-  Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }),
-);
-tsd.expectNotAssignable<ReadableSubprocess>(
-  Bun.spawn([], { stdio: ["pipe", "ignore", "pipe"] }),
-);
-tsd.expectAssignable<WritableSubprocess>(
-  Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }),
-);
-tsd.expectAssignable<WritableSubprocess>(
-  Bun.spawn([], { stdio: ["pipe", "ignore", "inherit"] }),
-);
-tsd.expectNotAssignable<WritableSubprocess>(
-  Bun.spawn([], { stdio: ["ignore", "pipe", "pipe"] }),
-);
-tsd.expectAssignable<NullSubprocess>(
-  Bun.spawn([], { stdio: ["ignore", "inherit", "ignore"] }),
-);
-tsd.expectAssignable<NullSubprocess>(
-  Bun.spawn([], { stdio: [null, null, null] }),
-);
+tsd.expectAssignable<PipedSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));
+tsd.expectNotAssignable<PipedSubprocess>(Bun.spawn([], { stdio: ["inherit", "inherit", "inherit"] }));
+tsd.expectAssignable<ReadableSubprocess>(Bun.spawn([], { stdio: ["ignore", "pipe", "pipe"] }));
+tsd.expectAssignable<ReadableSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));
+tsd.expectNotAssignable<ReadableSubprocess>(Bun.spawn([], { stdio: ["pipe", "ignore", "pipe"] }));
+tsd.expectAssignable<WritableSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));
+tsd.expectAssignable<WritableSubprocess>(Bun.spawn([], { stdio: ["pipe", "ignore", "inherit"] }));
+tsd.expectNotAssignable<WritableSubprocess>(Bun.spawn([], { stdio: ["ignore", "pipe", "pipe"] }));
+tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: ["ignore", "inherit", "ignore"] }));
+tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: [null, null, null] }));
 tsd.expectNotAssignable<ReadableSubprocess>(Bun.spawn([], {}));
 tsd.expectNotAssignable<PipedSubprocess>(Bun.spawn([], {}));
 

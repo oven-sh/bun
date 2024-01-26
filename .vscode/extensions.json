@@ -1,10 +1,10 @@
 {
   "recommendations": [
     "ziglang.vscode-zig",
-    "esbenp.prettier-vscode",
+    "biomejs.biome",
     "xaver.clang-format",
     "vadimcn.vscode-lldb",
     "bierner.comment-tagged-templates",
-    "ms-vscode.cpptools"
+    "clangd.clangd"
   ]
 }

@@ -27,7 +27,7 @@
     "prebuild": "echo $(pwd)",
     "build": "bun scripts/build.ts && bun run fmt",
     "test": "tsc",
-    "fmt": "echo $(which prettier) && prettier --write './**/*.{ts,tsx,js,jsx}'"
+    "fmt": "echo $(which biome) && biome format --write ."
   },
   "keywords": [
     "bun",

@@ -6,7 +6,7 @@
 import { file, Server } from "bun";
 import { mkdtempSync, realpathSync } from "fs";
 
-let expect: (typeof import("bun:test"))["expect"];
+let expect: typeof import("bun:test")["expect"];
 
 import { readdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";

@@ -1,6 +1,7 @@
 {
   "name": "bun",
   "dependencies": {
+    "@biomejs/biome": "^1.5.3",
     "@vscode/debugadapter": "^1.61.0",
     "esbuild": "^0.17.15",
     "eslint": "^8.20.0",
@@ -21,7 +22,7 @@
     "build:release": "cmake . -DCMAKE_BUILD_TYPE=Release -GNinja -Bbuild-release && ninja -Cbuild-release",
     "build:safe": "cmake . -DZIG_OPTIMIZE=ReleaseSafe -DUSE_DEBUG_JSC=ON -DCMAKE_BUILD_TYPE=Release -GNinja -Bbuild-safe && ninja -Cbuild-safe",
     "typecheck": "tsc --noEmit && cd test && bun run typecheck",
-    "fmt": "prettier --write --cache \"./{src,test,bench,packages/{bun-types,bun-inspector-*,bun-vscode,bun-debug-adapter-protocol}}/**/*.{mjs,ts,tsx,js,jsx}\"",
+    "fmt": "biome format --write {src,test,bench,packages/{bun-types,bun-inspector-*,bun-vscode,bun-debug-adapter-protocol}}",
     "fmt:zig": "zig fmt src/*.zig src/**/*.zig",
     "lint": "eslint './**/*.d.ts' --cache",
     "lint:fix": "eslint './**/*.d.ts' --cache --fix",

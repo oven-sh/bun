@@ -227,12 +227,6 @@ namespace uWS
             return unsignedIntegerValue;
         }
 
-        static inline bool isFieldNameFirstByte(unsigned char x)
-        {
-            return ((x > '@') & (x < '[')) |
-                   ((x > 96) & (x < '{'));
-        }
-
         /* RFC 9110 16.3.1 Field Name Registry (TLDR; alnum + hyphen is allowed)
          * [...] It MUST conform to the field-name syntax defined in Section 5.1,
          * and it SHOULD be restricted to just letters, digits,
@@ -241,7 +235,8 @@ namespace uWS
         {
             return (x == '-') |
                    ((x > '/') & (x < ':')) |
-                   isFieldNameFirstByte(x) |
+                   ((x > '@') & (x < '[')) |
+                   ((x > 96) & (x < '{')) |
                    (x == '_') |
                    (x == '.');
         }
@@ -251,13 +246,30 @@ namespace uWS
             return (((x) - ~0ULL / 255 * (n)) & ~(x) & ~0ULL / 255 * 128);
         }
 
+        static inline uint64_t hasMore(uint64_t x, uint64_t n)
+        {
+            return ((((x) + ~0ULL / 255 * (127 - (n))) | (x)) & ~0ULL / 255 * 128);
+        }
+
+        static inline uint64_t hasBetween(uint64_t x, uint64_t m, uint64_t n)
+        {
+            return (((~0ULL / 255 * (127 + (n)) - ((x) & ~0ULL / 255 * 127)) & ~(x) & (((x) & ~0ULL / 255 * 127) + ~0ULL / 255 * (127 - (m)))) & ~0ULL / 255 * 128);
+        }
+
+        static inline bool notFieldNameWord(uint64_t x)
+        {
+            return hasLess(x, 'A') |
+                   hasBetween(x, 'Z', 'a') |
+                   hasMore(x, 'z');
+        }
+
         static inline void *consumeFieldName(char *p)
         {
             for (; true; p += 8)
             {
                 uint64_t word;
                 memcpy(&word, p, sizeof(uint64_t));
-                if (isFieldNameFirstByte(*(unsigned char *)p))
+                if (notFieldNameWord(word))
                 {
                     *(p++) |= 0x20;
                     while (isFieldNameByte(*(unsigned char *)p))

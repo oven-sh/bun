@@ -507,7 +507,9 @@ describe("websocket in subprocess", () => {
 
     subprocess.kill();
 
-    expect(await subprocess.exited).toBe(129);
+    expect(subprocess.killed).toBe(true);
+    expect(subprocess.signalCode).toBe("SIGTERM");
+    expect(subprocess.exitCode).toBe(null);
   });
 
   it("should exit with invalid url", async () => {

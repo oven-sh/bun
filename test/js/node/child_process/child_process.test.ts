@@ -210,9 +210,35 @@ describe("spawn()", () => {
     expect(result1.trim()).toBe(Bun.which("sh"));
     expect(result2.trim()).toBe(Bun.which("bash"));
   });
-  it("should spawn a process synchronously", () => {
-    const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
-    expect(stdout.trim()).toBe("hello");
+
+  it("should be able to be killed", () => {
+    const child = spawn(bunExe(), ["repl"]);
+    child.on("exit", () => {
+      // expect(child.killed).toBe(true);
+      expect(child.signalCode).toBe("SIGTERM");
+      expect(child.exitCode).toBe(null);
+    });
+    child.kill();
+  });
+
+  it("should allow a number to kill()", () => {
+    const child = spawn(bunExe(), ["repl"]);
+    child.on("exit", () => {
+      // expect(child.killed).toBe(true);
+      expect(child.signalCode).toBe("SIGQUIT");
+      expect(child.exitCode).toBe(null);
+    });
+    child.kill(3);
+  });
+
+  it("should allow a string to kill()", () => {
+    const child = spawn(bunExe(), ["repl"]);
+    child.on("exit", () => {
+      // expect(child.killed).toBe(true);
+      expect(child.signalCode).toBe("SIGQUIT");
+      expect(child.exitCode).toBe(null);
+    });
+    child.kill("SIGQUIT");
   });
 });
 

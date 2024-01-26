@@ -2162,12 +2162,12 @@ pub const PackageManager = struct {
     }
 
     pub fn tickLifecycleScripts(this: *PackageManager) void {
-        this.event_loop.tick(this, hasNoMorePendingLifecycleScripts);
+        this.event_loop.tickOnce(this);
     }
 
     pub fn sleep(this: *PackageManager) void {
         Output.flush();
-        this.event_loop.tickOnce(this);
+        this.event_loop.tick(this, hasNoMorePendingLifecycleScripts);
     }
 
     const DependencyToEnqueue = union(enum) {
@@ -6310,7 +6310,7 @@ pub const PackageManager = struct {
             },
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
-
+        JSC.MiniEventLoop.global = &manager.event_loop.mini;
         if (!manager.options.enable.cache) {
             manager.options.enable.manifest_cache = false;
             manager.options.enable.manifest_cache_control = false;
@@ -8860,7 +8860,7 @@ pub const PackageManager = struct {
 
                 this.sleep();
             } else {
-                this.sleep();
+                this.tickLifecycleScripts();
             }
 
             this.finished_installing.store(true, .Monotonic);

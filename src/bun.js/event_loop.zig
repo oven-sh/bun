@@ -1625,6 +1625,24 @@ pub const MiniEventLoop = struct {
         }
     }
 
+    pub fn tickWithoutIdle(
+        this: *MiniEventLoop,
+        context: *anyopaque,
+    ) void {
+        defer this.onAfterEventLoop();
+
+        while (true) {
+            _ = this.tickConcurrentWithCount();
+            while (this.tasks.readItem()) |task| {
+                task.run(context);
+            }
+
+            this.loop.tickWithoutIdle();
+
+            if (this.tasks.count == 0 and this.tickConcurrentWithCount() == 0) break;
+        }
+    }
+
     pub fn tick(
         this: *MiniEventLoop,
         context: *anyopaque,
@@ -1748,10 +1766,10 @@ pub const AnyEventLoop = union(enum) {
         switch (this.*) {
             .js => {
                 this.js.tick();
-                this.js.autoTick();
+                this.js.autoTickActive();
             },
             .mini => {
-                this.mini.tickOnce(context);
+                this.mini.tickWithoutIdle(context);
             },
         }
     }

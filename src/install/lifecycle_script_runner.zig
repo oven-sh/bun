@@ -27,6 +27,8 @@ pub const LifecycleScriptSubprocess = struct {
 
     timer: ?Timer = null,
 
+    pub usingnamespace bun.New(@This());
+
     pub const min_milliseconds_to_log = 500;
 
     pub var alive_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
@@ -491,17 +493,13 @@ pub const LifecycleScriptSubprocess = struct {
 
     pub fn deinit(this: *LifecycleScriptSubprocess) void {
         this.resetPolls();
-        if (this.process) |process| {
-            this.process = null;
-            process.detach();
-            process.deref();
-        }
 
         if (!this.manager.options.log_level.isVerbose()) {
             this.stdout.buffer.clearAndFree();
             this.stderr.buffer.clearAndFree();
         }
-        this.manager.allocator.destroy(this);
+
+        this.destroy();
     }
 
     pub fn spawnPackageScripts(
@@ -510,10 +508,12 @@ pub const LifecycleScriptSubprocess = struct {
         envp: [:null]?[*:0]u8,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
-        var lifecycle_subprocess = try manager.allocator.create(LifecycleScriptSubprocess);
-        lifecycle_subprocess.scripts = list.items;
-        lifecycle_subprocess.manager = manager;
-        lifecycle_subprocess.envp = envp;
+        var lifecycle_subprocess = LifecycleScriptSubprocess.new(.{
+            .manager = manager,
+            .envp = envp,
+            .scripts = list.items,
+            .package_name = list.first().package_name,
+        });
 
         if (comptime log_level.isVerbose()) {
             Output.prettyErrorln("<d>[LifecycleScriptSubprocess]<r> Starting scripts for <b>\"{s}\"<r>", .{

@@ -673,7 +673,7 @@ pub const Subprocess = struct {
         var arguments = callframe.arguments(1);
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
-        var sig: i32 = 1;
+        var sig: i32 = 15; // TERM
 
         if (arguments.len > 0) {
             sig = arguments.ptr[0].coerce(i32, globalThis);

@@ -76,6 +76,17 @@ pub extern fn CommandLineToArgvW(
     pNumArgs: *c_int,
 ) [*]win32.LPWSTR;
 
+pub extern fn GetFileType(
+    hFile: win32.HANDLE,
+) callconv(windows.WINAPI) win32.DWORD;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfiletype#return-value
+pub const FILE_TYPE_UNKNOWN = 0x0000;
+pub const FILE_TYPE_DISK = 0x0001;
+pub const FILE_TYPE_CHAR = 0x0002;
+pub const FILE_TYPE_PIPE = 0x0003;
+pub const FILE_TYPE_REMOTE = 0x8000;
+
 pub const LPDWORD = *win32.DWORD;
 
 pub extern "kernel32" fn GetBinaryTypeW(
@@ -3000,8 +3011,8 @@ pub extern "kernel32" fn GetHostNameW(
     nSize: c_int,
 ) BOOL;
 
-/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppatha
-pub extern "kernel32" fn GetTempPath2W(
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
+pub extern "kernel32" fn GetTempPathW(
     nBufferLength: DWORD, // [in]
     lpBuffer: LPCWSTR, // [out]
 ) DWORD;

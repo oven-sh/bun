@@ -17,32 +17,42 @@
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "zig.initialSetupDone": true,
   "editor.formatOnSave": true,
+
+  // We are using biome instead of prettier.
+  "prettier.enable": false,
+
+  "[json]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
     "editor.defaultFormatter": "ziglang.vscode-zig"
   },
   "[ts]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "biomejs.biome"
   },
   "[js]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "biomejs.biome"
   },
   "zig.zls.enableInlayHints": false,
   "zig.path": "${workspaceFolder}/.cache/zig/zig.exe",
   "git.ignoreSubmodules": true,
   "[jsx]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "biomejs.biome"
   },
   "[tsx]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "biomejs.biome"
   },
   "[yaml]": {},
   "[markdown]": {
     "editor.unicodeHighlight.ambiguousCharacters": false,
     "editor.unicodeHighlight.invisibleCharacters": false,
     "diffEditor.ignoreTrimWhitespace": false,
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.defaultFormatter": "biomejs.biome",
     "editor.wordWrap": "on",
     "editor.quickSuggestions": {
       "comments": "off",

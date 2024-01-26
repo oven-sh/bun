@@ -566,8 +566,8 @@ pub const Subprocess = struct {
             sig = arguments.ptr[0].coerce(i32, globalThis);
         }
 
-        if (!(sig > -1 and sig < std.math.maxInt(u8))) {
-            globalThis.throwInvalidArguments("Invalid signal: must be > -1 and < 255", .{});
+        if (!(sig >= 0 and sig <= std.math.maxInt(u8))) {
+            globalThis.throwInvalidArguments("Invalid signal: must be >= 0 and <= 255", .{});
             return .zero;
         }
 

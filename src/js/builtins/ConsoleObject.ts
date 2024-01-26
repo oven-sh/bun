@@ -38,7 +38,12 @@ export function asyncIterator(this: Console) {
           // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
           i = indexOf(actualChunk, last);
           while (i !== -1) {
-            yield decoder.decode(actualChunk.subarray(last, i));
+            yield decoder.decode(
+              actualChunk.subarray(
+                last,
+                process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
+              ),
+            );
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -78,7 +83,12 @@ export function asyncIterator(this: Console) {
           while (i !== -1) {
             // This yield may end the function, in that case we need to be able to recover state
             // if the iterator was fired up again.
-            yield decoder.decode(actualChunk.subarray(last, i));
+            yield decoder.decode(
+              actualChunk.subarray(
+                last,
+                process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
+              ),
+            );
             last = i + 1;
             i = indexOf(actualChunk, last);
           }

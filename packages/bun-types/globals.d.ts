@@ -33,9 +33,7 @@ type _Performance = typeof globalThis extends {
   ? {}
   : import("perf_hooks").Performance;
 
-type _Worker = typeof globalThis extends { onerror: any; Worker: infer T }
-  ? T
-  : Bun.Worker;
+type _Worker = typeof globalThis extends { onerror: any; Worker: infer T } ? T : Bun.Worker;
 
 type _Event = typeof globalThis extends { onerror: any; Event: any }
   ? {}
@@ -140,10 +138,7 @@ type _Body = typeof globalThis extends { onerror: any }
     };
 
 import type { MessagePort } from "worker_threads";
-import type {
-  TextEncoder as NodeTextEncoder,
-  TextDecoder as NodeTextDecoder,
-} from "util";
+import type { TextEncoder as NodeTextEncoder, TextDecoder as NodeTextDecoder } from "util";
 import type { WebSocket as _WebSocket } from "ws";
 
 declare module "*.txt" {
@@ -201,15 +196,9 @@ declare global {
     type TimerHandler = (...args: any[]) => void;
     type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
     type DOMHighResTimeStamp = number;
-    type EventListenerOrEventListenerObject =
-      | EventListener
-      | EventListenerObject;
+    type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
 
-    type BlobOrStringOrBuffer =
-      | string
-      | NodeJS.TypedArray
-      | ArrayBufferLike
-      | Blob;
+    type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
 
     type Platform =
       | "aix"
@@ -223,56 +212,23 @@ declare global {
       | "win32"
       | "cygwin"
       | "netbsd";
-    type Architecture =
-      | "arm"
-      | "arm64"
-      | "ia32"
-      | "mips"
-      | "mipsel"
-      | "ppc"
-      | "ppc64"
-      | "s390"
-      | "s390x"
-      | "x64";
+    type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
 
-    type UncaughtExceptionListener = (
-      error: Error,
-      origin: UncaughtExceptionOrigin,
-    ) => void;
+    type UncaughtExceptionListener = (error: Error, origin: UncaughtExceptionOrigin) => void;
     /**
      * Most of the time the unhandledRejection will be an Error, but this should not be relied upon
      * as *anything* can be thrown/rejected, it is therefore unsafe to assume that the value is an Error.
      */
-    type UnhandledRejectionListener = (
-      reason: unknown,
-      promise: Promise<unknown>,
-    ) => void;
+    type UnhandledRejectionListener = (reason: unknown, promise: Promise<unknown>) => void;
 
-    type MultipleResolveListener = (
-      type: MultipleResolveType,
-      promise: Promise<unknown>,
-      value: unknown,
-    ) => void;
+    type MultipleResolveListener = (type: MultipleResolveType, promise: Promise<unknown>, value: unknown) => void;
 
-    type HeadersInit =
-      | Headers
-      | Record<string, string>
-      | Array<[string, string]>
-      | IterableIterator<[string, string]>;
+    type HeadersInit = Headers | Record<string, string> | Array<[string, string]> | IterableIterator<[string, string]>;
 
-    type ResponseType =
-      | "basic"
-      | "cors"
-      | "default"
-      | "error"
-      | "opaque"
-      | "opaqueredirect";
+    type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
 
     interface TextEncoder extends NodeTextEncoder {
-      new (
-        encoding?: Bun.Encoding,
-        options?: { fatal?: boolean; ignoreBOM?: boolean },
-      ): TextEncoder;
+      new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextEncoder;
       /**
        * UTF-8 encodes the `src` string to the `dest` Uint8Array and returns an object
        * containing the read Unicode code units and written UTF-8 bytes.
@@ -286,17 +242,11 @@ declare global {
        * @param src The text to encode.
        * @param dest The array to hold the encode result.
        */
-      encodeInto(
-        src?: string,
-        dest?: Bun.BufferSource,
-      ): import("util").EncodeIntoResult;
+      encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
     }
 
     interface TextDecoder extends NodeTextDecoder {
-      new (
-        encoding?: Bun.Encoding,
-        options?: { fatal?: boolean; ignoreBOM?: boolean },
-      ): TextDecoder;
+      new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
     }
 
     interface ErrorEventInit extends EventInit {
@@ -416,10 +366,7 @@ declare global {
     }
 
     interface EventSource extends EventTarget {
-      new (
-        url: string | URL,
-        eventSourceInitDict?: EventSourceInit,
-      ): EventSource;
+      new (url: string | URL, eventSourceInitDict?: EventSourceInit): EventSource;
 
       onerror: ((this: EventSource, ev: Event) => any) | null;
       onmessage: ((this: EventSource, ev: MessageEvent) => any) | null;
@@ -485,9 +432,7 @@ declare global {
     }
 
     interface TransformerFlushCallback<O> {
-      (
-        controller: TransformStreamDefaultController<O>,
-      ): void | PromiseLike<void>;
+      (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
     }
 
     interface TransformerStartCallback<O> {
@@ -495,10 +440,7 @@ declare global {
     }
 
     interface TransformerTransformCallback<I, O> {
-      (
-        chunk: I,
-        controller: TransformStreamDefaultController<O>,
-      ): void | PromiseLike<void>;
+      (chunk: I, controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
     }
 
     interface UnderlyingSinkAbortCallback {
@@ -514,10 +456,7 @@ declare global {
     }
 
     interface UnderlyingSinkWriteCallback<W> {
-      (
-        chunk: W,
-        controller: WritableStreamDefaultController,
-      ): void | PromiseLike<void>;
+      (chunk: W, controller: WritableStreamDefaultController): void | PromiseLike<void>;
     }
 
     interface UnderlyingSourceCancelCallback {
@@ -545,9 +484,7 @@ declare global {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     interface DirectUnderlyingSource<R = any> {
       cancel?: UnderlyingSourceCancelCallback;
-      pull: (
-        controller: ReadableStreamDirectController,
-      ) => void | PromiseLike<void>;
+      pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
       type: "direct";
     }
 
@@ -647,10 +584,7 @@ declare global {
       /**
        * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
        */
-      env?:
-        | Record<string, string>
-        | (typeof import("node:worker_threads"))["SHARE_ENV"]
-        | undefined;
+      env?: Record<string, string> | typeof import("node:worker_threads")["SHARE_ENV"] | undefined;
 
       /**
        * In Bun, this does nothing.
@@ -736,10 +670,7 @@ declare global {
     ? T
     : {
         prototype: ReadableStream;
-        new <R = any>(
-          underlyingSource?: Bun.UnderlyingSource<R>,
-          strategy?: QueuingStrategy<R>,
-        ): ReadableStream<R>;
+        new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
         new <R = any>(
           underlyingSource?: Bun.DirectUnderlyingSource<R>,
           strategy?: QueuingStrategy<R>,
@@ -754,10 +685,7 @@ declare global {
     ? T
     : {
         prototype: WritableStream;
-        new <W = any>(
-          underlyingSink?: Bun.UnderlyingSink<W>,
-          strategy?: QueuingStrategy<W>,
-        ): WritableStream<W>;
+        new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
       };
 
   interface Worker extends _Worker {}
@@ -768,10 +696,7 @@ declare global {
     ? T
     : {
         prototype: Worker;
-        new (
-          scriptURL: string | URL,
-          options?: Bun.WorkerOptions | undefined,
-        ): Worker;
+        new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
         /**
          * This is the cloned value of the `data` property passed to `new Worker()`
          *
@@ -867,17 +792,11 @@ declare global {
      * @param `name` - The name of the file
      * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
      */
-    new (
-      parts: Bun.BlobPart[],
-      name: string,
-      options?: BlobPropertyBag & { lastModified?: Date | number },
-    ): File;
+    new (parts: Bun.BlobPart[], name: string, options?: BlobPropertyBag & { lastModified?: Date | number }): File;
     readonly lastModified: number;
     readonly name: string;
   }
-  var File: typeof globalThis extends { onerror: any; File: infer T }
-    ? T
-    : typeof File;
+  var File: typeof globalThis extends { onerror: any; File: infer T } ? T : typeof File;
 
   interface FetchRequestInit extends RequestInit {
     /**
@@ -1007,10 +926,7 @@ declare global {
    *
    * @returns A promise that resolves to {@link Response} object.
    */
-  function fetch(
-    url: string | URL | Request,
-    init?: FetchRequestInit,
-  ): Promise<Response>;
+  function fetch(url: string | URL | Request, init?: FetchRequestInit): Promise<Response>;
 
   function queueMicrotask(callback: (...args: any[]) => void): void;
   /**
@@ -1052,21 +968,13 @@ declare global {
    * @param handler function to call
    * @param interval milliseconds to wait between calls
    */
-  function setInterval(
-    handler: Bun.TimerHandler,
-    interval?: number,
-    ...arguments: any[]
-  ): Timer;
+  function setInterval(handler: Bun.TimerHandler, interval?: number, ...arguments: any[]): Timer;
   /**
    * Run a function after `timeout` (milliseconds)
    * @param handler function to call
    * @param timeout milliseconds to wait between calls
    */
-  function setTimeout(
-    handler: Bun.TimerHandler,
-    timeout?: number,
-    ...arguments: any[]
-  ): Timer;
+  function setTimeout(handler: Bun.TimerHandler, timeout?: number, ...arguments: any[]): Timer;
 
   function addEventListener<K extends keyof EventMap>(
     type: K,
@@ -1128,10 +1036,7 @@ declare global {
     ? T
     : {
         prototype: MessageEvent;
-        new <T>(
-          type: string,
-          eventInitDict?: Bun.MessageEventInit<T>,
-        ): MessageEvent<T>;
+        new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): MessageEvent<T>;
       };
 
   interface CustomEvent<T = any> extends Event {
@@ -1141,10 +1046,7 @@ declare global {
 
   var CustomEvent: {
     prototype: CustomEvent;
-    new <T>(
-      type: string,
-      eventInitDict?: Bun.CustomEventInit<T>,
-    ): CustomEvent<T>;
+    new <T>(type: string, eventInitDict?: Bun.CustomEventInit<T>): CustomEvent<T>;
   };
 
   /**
@@ -1174,14 +1076,7 @@ declare global {
     : typeof URL;
 
   interface URLSearchParams {
-    new (
-      init?:
-        | string
-        | string[][]
-        | Record<string, string>
-        | URLSearchParams
-        | undefined,
-    ): URLSearchParams;
+    new (init?: string | string[][] | Record<string, string> | URLSearchParams | undefined): URLSearchParams;
     toString(): string;
   }
   var URLSearchParams: typeof globalThis extends {
@@ -1270,9 +1165,7 @@ declare global {
         fetch: Promise<any>;
         instantiate: Promise<any>;
         satisfy: Promise<any>;
-        dependencies: Array<
-          (typeof Loader)["registry"] extends Map<any, infer V> ? V : any
-        >;
+        dependencies: Array<(typeof Loader)["registry"] extends Map<any, infer V> ? V : any>;
         /**
          * Your application will probably crash if you mess with this.
          */
@@ -1360,9 +1253,7 @@ declare global {
 
   interface ReadableStreamDirectController {
     close(error?: Error): void;
-    write(
-      data: Bun.BufferSource | ArrayBuffer | string,
-    ): number | Promise<number>;
+    write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
     end(): number | Promise<number>;
     flush(): number | Promise<number>;
     start(): void;
@@ -1373,16 +1264,13 @@ declare global {
     new (): ReadableStreamDefaultController;
   };
 
-  interface ReadableStreamDefaultReader<R = any>
-    extends ReadableStreamGenericReader {
+  interface ReadableStreamDefaultReader<R = any> extends ReadableStreamGenericReader {
     read(): Promise<Bun.ReadableStreamDefaultReadResult<R>>;
     /**
      * Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time.
      * Will only return a promise if the data is not immediately available.
      */
-    readMany():
-      | Promise<Bun.ReadableStreamDefaultReadManyResult<R>>
-      | Bun.ReadableStreamDefaultReadManyResult<R>;
+    readMany(): Promise<Bun.ReadableStreamDefaultReadManyResult<R>> | Bun.ReadableStreamDefaultReadManyResult<R>;
     releaseLock(): void;
   }
 
@@ -1641,9 +1529,7 @@ declare global {
      *
      * @see https://v8.dev/docs/stack-trace-api#customizing-stack-traces
      */
-    prepareStackTrace?:
-      | ((err: Error, stackTraces: NodeJS.CallSite[]) => any)
-      | undefined;
+    prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
 
     stackTraceLimit: number;
   }
@@ -1677,11 +1563,43 @@ declare global {
   }
 
   interface ArrayConstructor {
-    fromAsync<T>(
-      asyncItems: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
-      mapfn?: (value: any, index: number) => any,
+    /**
+     * Create an array from an iterable or async iterable object.
+     * Values from the iterable are awaited.
+     *
+     * ```ts
+     * await Array.fromAsync([1]); // [1]
+     * await Array.fromAsync([Promise.resolve(1)]); // [1]
+     * await Array.fromAsync((async function*() { yield 1 })()); // [1]
+     * ```
+     *
+     * @param arrayLike - The iterable or async iterable to convert to an array.
+     * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
+     */
+    fromAsync<T>(arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>): Promise<Awaited<T>[]>;
+
+    /**
+     * Create an array from an iterable or async iterable object.
+     * Values from the iterable are awaited. Results of the map function are also awaited.
+     *
+     * ```ts
+     * await Array.fromAsync([1]); // [1]
+     * await Array.fromAsync([Promise.resolve(1)]); // [1]
+     * await Array.fromAsync((async function*() { yield 1 })()); // [1]
+     * await Array.fromAsync([1], (n) => n + 1); // [2]
+     * await Array.fromAsync([1], (n) => Promise.resolve(n + 1)); // [2]
+     * ```
+     *
+     * @param arrayLike - The iterable or async iterable to convert to an array.
+     * @param mapFn - A mapper function that transforms each element of `arrayLike` after awaiting them.
+     * @param thisArg - The `this` to which `mapFn` is bound.
+     * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
+     */
+    fromAsync<T, U>(
+      arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
+      mapFn?: (value: T, index: number) => U,
       thisArg?: any,
-    ): Promise<T[]>;
+    ): Promise<Awaited<U>[]>;
   }
 
   interface ConsoleOptions {
@@ -1925,10 +1843,7 @@ declare global {
    *
    * [MDN Reference](https://developer.mozilla.org/docs/Web/API/structuredClone)
    */
-  function structuredClone<T>(
-    value: T,
-    options?: Bun.StructuredSerializeOptions,
-  ): T;
+  function structuredClone<T>(value: T, options?: Bun.StructuredSerializeOptions): T;
 
   /**
    * Post a message to the parent thread.

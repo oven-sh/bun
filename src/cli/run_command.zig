@@ -510,7 +510,7 @@ pub const RunCommand = struct {
             // if we are already an absolute path, use that
             // if the user started the application via a shebang, it's likely that the path is absolute already
             if (bun.argv()[0][0] == '/') {
-                optional_bun_path.* = bun.span(bun.argv()[0]);
+                optional_bun_path.* = bun.argv()[0];
                 argv0 = bun.argv()[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
@@ -556,7 +556,7 @@ pub const RunCommand = struct {
 
             const prefix = comptime bun.strings.w("\\??\\");
 
-            const len = bun.windows.GetTempPath2W(
+            const len = bun.windows.GetTempPathW(
                 target_path_buffer.len - prefix.len,
                 @ptrCast(&target_path_buffer[prefix.len]),
             );
@@ -1176,7 +1176,7 @@ pub const RunCommand = struct {
 
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
                         if (strings.hasPrefixComptime(shebang, "#!")) {
-                            const first_arg: string = if (bun.argv().len > 0) bun.span(bun.argv()[0]) else "";
+                            const first_arg: string = if (bun.argv().len > 0) bun.argv()[0] else "";
                             const filename = std.fs.path.basename(first_arg);
                             // are we attempting to run the script with bun?
                             if (!strings.contains(shebang, filename)) {
@@ -1301,6 +1301,81 @@ pub const RunCommand = struct {
             }
         }
 
+        if (Environment.isWindows) try_bunx_file: {
+            const WinBunShimImpl = @import("../install/windows-shim/bun_shim_impl.zig");
+            const w = std.os.windows;
+            const debug = Output.scoped(.BunRunXFastPath, true);
+
+            // Attempt to find a ".bunx" file on disk, and run it, skipping the wrapper exe.
+            // we build the full exe path even though we could do a relative lookup, because in the case we do find it, we have to generate this full path anyways
+            var ptr: []u16 = &DirectBinLaunch.direct_launch_buffer;
+            const root = comptime bun.strings.w("\\??\\");
+            @memcpy(ptr[0..root.len], root);
+            ptr = ptr[4..];
+            const cwd_len = w.kernel32.GetCurrentDirectoryW(
+                DirectBinLaunch.direct_launch_buffer.len - 4,
+                ptr.ptr,
+            );
+            if (cwd_len == 0) break :try_bunx_file;
+            ptr = ptr[cwd_len..];
+            const prefix = comptime bun.strings.w("\\node_modules\\.bin\\");
+            @memcpy(ptr[0..prefix.len], prefix);
+            ptr = ptr[prefix.len..];
+            const encoded = bun.strings.convertUTF8toUTF16InBuffer(ptr[0..], script_name_to_search);
+            ptr = ptr[encoded.len..];
+            const ext = comptime bun.strings.w(".bunx");
+            @memcpy(ptr[0..ext.len], ext);
+            ptr[ext.len] = 0;
+
+            const l = root.len + cwd_len + prefix.len + script_name_to_search.len + ext.len;
+            const path_to_use = DirectBinLaunch.direct_launch_buffer[0..l];
+            var command_line = DirectBinLaunch.direct_launch_buffer[l..];
+
+            debug("Attempting to find and load bunx file: '{}'", .{
+                std.unicode.fmtUtf16le(path_to_use),
+            });
+            if (Environment.allow_assert) {
+                std.debug.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
+            }
+            const handle = (bun.sys.ntCreateFile(
+                bun.invalid_fd, // absolute path is given
+                path_to_use,
+                w.STANDARD_RIGHTS_READ | w.FILE_READ_DATA | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE,
+                w.FILE_OPEN,
+                w.FILE_NON_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT,
+            ).unwrap() catch |err| {
+                debug("Failed to open bunx file: '{}'", .{err});
+                break :try_bunx_file;
+            }).cast();
+
+            var i: usize = 0;
+            for (ctx.passthrough) |str| {
+                command_line[i] = ' ';
+                const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[1 + i ..], str);
+                i += result.len + 1;
+            }
+
+            const run_ctx = WinBunShimImpl.FromBunRunContext{
+                .handle = handle,
+                .base_path = path_to_use[4..],
+                .arguments = command_line[0..i],
+                .force_use_bun = ctx.debug.run_in_bun,
+                .direct_launch_with_bun_js = &DirectBinLaunch.directLaunchWithBunJSFromShim,
+                .cli_context = &ctx,
+            };
+
+            if (Environment.isDebug) {
+                debug("run_ctx.handle: '{}'", .{bun.FDImpl.fromSystem(handle)});
+                debug("run_ctx.base_path: '{}'", .{std.unicode.fmtUtf16le(run_ctx.base_path)});
+                debug("run_ctx.arguments: '{}'", .{std.unicode.fmtUtf16le(run_ctx.arguments)});
+                debug("run_ctx.force_use_bun: '{}'", .{run_ctx.force_use_bun});
+            }
+
+            // this function does not return. spooky
+            WinBunShimImpl.startupFromBunJS(run_ctx);
+            comptime unreachable;
+        }
+
         const PATH = this_bundler.env.map.get("PATH") orelse "";
         var path_for_which = PATH;
         if (comptime bin_dirs_only) {
@@ -1395,6 +1470,22 @@ pub const RunCommand = struct {
             ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
             Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});
+            Global.exit(1);
+        };
+    }
+};
+
+pub const DirectBinLaunch = struct {
+    var direct_launch_buffer: bun.WPathBuffer = undefined;
+
+    fn directLaunchWithBunJSFromShim(wpath: []u16, ctx: *Command.Context) void {
+        const utf8 = bun.strings.convertUTF16toUTF8InBuffer(
+            bun.reinterpretSlice(u8, &direct_launch_buffer),
+            wpath,
+        ) catch return;
+        Run.boot(ctx.*, utf8) catch |err| {
+            ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+            Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
             Global.exit(1);
         };
     }

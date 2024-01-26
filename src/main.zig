@@ -26,6 +26,10 @@ pub fn main() void {
     const Output = bun.Output;
     const Environment = bun.Environment;
 
+    bun.initArgv(bun.default_allocator) catch |err| {
+        Output.panic("Failed to initialize argv: {s}\n", .{@errorName(err)});
+    };
+
     if (Environment.isRelease and Environment.isPosix)
         CrashReporter.start() catch unreachable;
     if (Environment.isWindows) {
@@ -35,8 +39,15 @@ pub fn main() void {
         bun.win32.STDERR_FD = bun.toFD(std.io.getStdErr().handle);
         bun.win32.STDIN_FD = bun.toFD(std.io.getStdIn().handle);
 
-        // This fixes printing unicode characters
-        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
+        const w = std.os.windows;
+
+        // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
+        const CP_UTF8 = 65001;
+        _ = w.kernel32.SetConsoleOutputCP(CP_UTF8);
+        // var mode: w.DWORD = undefined;
+        // if (w.kernel32.GetConsoleMode(bun.win32.STDOUT_FD)) {
+        //     _ = w.kernel32.SetConsoleMode(bun.win32.STDOUT_FD, mode | std.os.windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        // }
     }
 
     bun.start_time = std.time.nanoTimestamp();

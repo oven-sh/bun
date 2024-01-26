@@ -286,9 +286,6 @@ pub const FilePoll = struct {
                 const loop = vm.loop;
                 this.deinitPossiblyDefer(vm, loop, vm.filePolls(), true);
             },
-            .install => {
-                Output.debugWarn("leaked FilePoll", .{});
-            },
         }
     }
 

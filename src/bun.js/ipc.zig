@@ -309,7 +309,7 @@ const NamedPipeIPCData = struct {
     }
 };
 
-pub const IPCData = if (Environment.isWindows) NamedPipeIPCData else NamedPipeIPCData;
+pub const IPCData = if (Environment.isWindows) NamedPipeIPCData else SocketIPCData;
 
 fn NewSocketIPCHandler(comptime Context: type) type {
     return struct {

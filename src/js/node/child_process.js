@@ -981,6 +981,7 @@ class ChildProcess extends EventEmitter {
   #exited = false;
   #closesNeeded = 1;
   #closesGot = 0;
+  #killed = false;
 
   connected = false;
   signalCode = null;
@@ -991,7 +992,9 @@ class ChildProcess extends EventEmitter {
   channel;
 
   get killed() {
+    if (this.#killed) return true;
     if (this.#handle == null) return false;
+    return this.#handle.killed;
   }
 
   // constructor(options) {
@@ -1292,6 +1295,7 @@ class ChildProcess extends EventEmitter {
     if (this.#handle) {
       this.#handle.kill(signal);
     }
+    this.#killed = true;
 
     this.#maybeClose();
 

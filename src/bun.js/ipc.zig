@@ -519,6 +519,10 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             while (true) {
                 const result = decodeIPCMessage(slice, globalThis) catch |e| switch (e) {
                     error.NotEnoughBytes => {
+                        // copy the remaining bytes to the start of the buffer
+                        bun.copy(u8, this.ipc.incoming.ptr[0..slice.len], slice);
+                        this.ipc.incoming.len = @truncate(slice.len);
+                        log("hit NotEnoughBytes2", .{});
                         return;
                     },
                     error.InvalidFormat => {

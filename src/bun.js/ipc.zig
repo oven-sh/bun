@@ -220,7 +220,7 @@ const NamedPipeIPCData = struct {
                     this.outgoing = temp;
 
                     // enqueue the write
-                    this.write_req.write(@ptrCast(&this.pipe), bytes, this, onWriteCallback).unwrap() catch {
+                    this.write_req.write(@ptrCast(&this.pipe), bytes, this, onWriteComplete).unwrap() catch {
                         Output.printErrorln("Failed to write outgoing data", .{});
                         return;
                     };
@@ -238,8 +238,8 @@ const NamedPipeIPCData = struct {
         }
     }
 
-    fn onWriteCallback(this: *NamedPipeIPCData, status: uv.ReturnCode) void {
-        log("onWriteCallback {d} {d}", .{ status.int(), this.current_payload.size() });
+    fn onWriteComplete(this: *NamedPipeIPCData, status: uv.ReturnCode) void {
+        log("onWriteComplete {d} {d}", .{ status.int(), this.current_payload.size() });
         if (status.errEnum()) |_| {
             Output.printErrorln("Failed to write outgoing data", .{});
             return;
@@ -326,7 +326,7 @@ const NamedPipeIPCData = struct {
             return .{ .err = err };
         }
 
-        ipc_pipe.setPendingInstances(1);
+        ipc_pipe.setPendingInstancesCount(1);
 
         ipc_pipe.unref();
 

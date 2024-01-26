@@ -863,7 +863,7 @@ pub const Subprocess = struct {
             this.writeAllowBlocking(is_sync);
         }
 
-        pub fn onWrite(this: *BufferedPipeInput, status: uv.ReturnCode) void {
+        pub fn onWriteComplete(this: *BufferedPipeInput, status: uv.ReturnCode) void {
             if (this.pipe == null) return;
             if (status.errEnum()) |_| {
                 log("uv_write({d}) fail: {d}", .{ this.remain.len, status.int() });
@@ -894,7 +894,7 @@ pub const Subprocess = struct {
                             const errno = err.getErrno();
                             if (errno == bun.C.E.AGAIN) {
                                 //EAGAIN
-                                this.write_req.write(@ptrCast(pipe), to_write, this, BufferedPipeInput.onWrite).unwrap() catch |write_err| {
+                                this.write_req.write(@ptrCast(pipe), to_write, this, onWriteComplete).unwrap() catch |write_err| {
                                     log("uv_write({d}) fail: {}", .{ this.remain.len, write_err });
                                     this.deinit();
                                 };
@@ -912,7 +912,7 @@ pub const Subprocess = struct {
                     }
                 }
             } else {
-                this.write_req.write(@ptrCast(pipe), to_write, this, BufferedPipeInput.onWrite).unwrap() catch |err| {
+                this.write_req.write(@ptrCast(pipe), to_write, this, onWriteComplete).unwrap() catch |err| {
                     log("uv_write({d}) fail: {}", .{ this.remain.len, err });
                     this.deinit();
                 };
@@ -937,7 +937,7 @@ pub const Subprocess = struct {
             }
         }
 
-        fn uvClosedCallback(this: *BufferedPipeInput) void {
+        fn onStreamClosed(this: *BufferedPipeInput) void {
             if (this.deinit_onclose) {
                 this.destroy();
             }
@@ -950,7 +950,7 @@ pub const Subprocess = struct {
             }
 
             if (this.pipe) |pipe| {
-                pipe.close(this, BufferedPipeInput.uvClosedCallback);
+                pipe.close(this, onStreamClosed);
             }
         }
 
@@ -1519,7 +1519,7 @@ pub const Subprocess = struct {
             }
         }
 
-        fn uvClosedCallback(this: *BufferedOutput) void {
+        fn onStreamClosed(this: *BufferedOutput) void {
             this.readable_stream_ref.deinit();
             this.closeCallback.run();
         }
@@ -1536,7 +1536,7 @@ pub const Subprocess = struct {
                             this.readable_stream_ref.deinit();
                             this.closeCallback.run();
                         } else {
-                            this.stream.close(this, BufferedOutput.uvClosedCallback);
+                            this.stream.close(this, onStreamClosed);
                         }
                     } else {
                         this.stream.close();

@@ -1443,7 +1443,7 @@ pub const struct_uv_pipe_s = extern struct {
         return .{ .result = {} };
     }
 
-    pub fn setPendingInstances(this: *@This(), count: i32) void {
+    pub fn setPendingInstancesCount(this: *@This(), count: i32) void {
         uv_pipe_pending_instances(this, count);
     }
 };

@@ -1,12 +1,11 @@
 export {};
 
-type _Global<T extends Bun.WebAssembly.ValueType = Bun.WebAssembly.ValueType> =
-  typeof globalThis extends {
-    onerror: any;
-    WebAssembly: { Global: infer T };
-  }
-    ? T
-    : Bun.WebAssembly.Global<T>;
+type _Global<T extends Bun.WebAssembly.ValueType = Bun.WebAssembly.ValueType> = typeof globalThis extends {
+  onerror: any;
+  WebAssembly: { Global: infer T };
+}
+  ? T
+  : Bun.WebAssembly.Global<T>;
 
 type _CompileError = typeof globalThis extends {
   onerror: any;
@@ -63,11 +62,7 @@ declare global {
       type ImportExportKind = "function" | "global" | "memory" | "table";
       type TableKind = "anyfunc" | "externref";
       // eslint-disable-next-line @typescript-eslint/ban-types
-      type ExportValue =
-        | Function
-        | Global
-        | WebAssembly.Memory
-        | WebAssembly.Table;
+      type ExportValue = Function | Global | WebAssembly.Memory | WebAssembly.Table;
       type Exports = Record<string, ExportValue>;
       type ImportValue = ExportValue | number;
       type Imports = Record<string, ModuleImports>;
@@ -166,17 +161,13 @@ declare global {
 
   namespace WebAssembly {
     interface ValueTypeMap extends Bun.WebAssembly.ValueTypeMap {}
-    interface GlobalDescriptor<
-      T extends keyof ValueTypeMap = keyof ValueTypeMap,
-    > extends Bun.WebAssembly.GlobalDescriptor<T> {}
+    interface GlobalDescriptor<T extends keyof ValueTypeMap = keyof ValueTypeMap>
+      extends Bun.WebAssembly.GlobalDescriptor<T> {}
     interface MemoryDescriptor extends Bun.WebAssembly.MemoryDescriptor {}
-    interface ModuleExportDescriptor
-      extends Bun.WebAssembly.ModuleExportDescriptor {}
-    interface ModuleImportDescriptor
-      extends Bun.WebAssembly.ModuleImportDescriptor {}
+    interface ModuleExportDescriptor extends Bun.WebAssembly.ModuleExportDescriptor {}
+    interface ModuleImportDescriptor extends Bun.WebAssembly.ModuleImportDescriptor {}
     interface TableDescriptor extends Bun.WebAssembly.TableDescriptor {}
-    interface WebAssemblyInstantiatedSource
-      extends Bun.WebAssembly.WebAssemblyInstantiatedSource {}
+    interface WebAssemblyInstantiatedSource extends Bun.WebAssembly.WebAssemblyInstantiatedSource {}
 
     interface LinkError extends _LinkError {}
     var LinkError: {
@@ -204,8 +195,7 @@ declare global {
       (message?: string): RuntimeError;
     };
 
-    interface Global<T extends keyof ValueTypeMap = keyof ValueTypeMap>
-      extends _Global<T> {}
+    interface Global<T extends keyof ValueTypeMap = keyof ValueTypeMap> extends _Global<T> {}
     var Global: typeof globalThis extends {
       onerror: any;
       WebAssembly: { Global: infer T };
@@ -227,10 +217,7 @@ declare global {
       ? T
       : {
           prototype: Instance;
-          new (
-            module: Module,
-            importObject?: Bun.WebAssembly.Imports,
-          ): Instance;
+          new (module: Module, importObject?: Bun.WebAssembly.Imports): Instance;
         };
 
     interface Memory extends _Memory {}
@@ -249,10 +236,7 @@ declare global {
           prototype: Module;
           new (bytes: Bun.BufferSource): Module;
           /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/customSections) */
-          customSections(
-            moduleObject: Module,
-            sectionName: string,
-          ): ArrayBuffer[];
+          customSections(moduleObject: Module, sectionName: string): ArrayBuffer[];
           /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/exports) */
           exports(moduleObject: Module): ModuleExportDescriptor[];
           /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/imports) */
@@ -268,18 +252,13 @@ declare global {
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/compile) */
     function compile(bytes: Bun.BufferSource): Promise<Module>;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/compileStreaming) */
-    function compileStreaming(
-      source: Response | PromiseLike<Response>,
-    ): Promise<Module>;
+    function compileStreaming(source: Response | PromiseLike<Response>): Promise<Module>;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/instantiate) */
     function instantiate(
       bytes: Bun.BufferSource,
       importObject?: Bun.WebAssembly.Imports,
     ): Promise<WebAssemblyInstantiatedSource>;
-    function instantiate(
-      moduleObject: Module,
-      importObject?: Bun.WebAssembly.Imports,
-    ): Promise<Instance>;
+    function instantiate(moduleObject: Module, importObject?: Bun.WebAssembly.Imports): Promise<Instance>;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/instantiateStreaming) */
     function instantiateStreaming(
       source: Response | PromiseLike<Response>,

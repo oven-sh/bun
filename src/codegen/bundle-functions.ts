@@ -357,9 +357,7 @@ for (const { basename, internal } of files) {
   if (internal) {
     bundledCPP += `#define DECLARE_GLOBAL_STATIC(name) \\
     Zig::GlobalObject::GlobalPropertyInfo( \\
-        clientData.builtinFunctions().${low(basename)}Builtins().name##PrivateName(), ${low(
-          basename,
-        )}().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
+        clientData.builtinFunctions().${low(basename)}Builtins().name##PrivateName(), ${low(basename)}().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
     WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
   #undef DECLARE_GLOBAL_STATIC
   `;

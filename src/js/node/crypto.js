@@ -496,7 +496,6 @@ var require_hash = __commonJS({
       for (
         var block = this._block, blockSize = this._blockSize, length = data.length, accum = this._len, offset = 0;
         offset < length;
-
       ) {
         for (
           var assigned = accum % blockSize, remainder = Math.min(length - offset, blockSize - assigned), i = 0;
@@ -2381,7 +2380,7 @@ var require_cfb1 = __commonJS({
         (pad = self2._cipher.encryptBlock(self2._prev)),
           (bit = byteParam & (1 << (7 - i)) ? 128 : 0),
           (value = pad[0] ^ bit),
-          (out += (value & 128) >> i % 8),
+          (out += (value & 128) >> (i % 8)),
           (self2._prev = shiftIn(self2._prev, decrypt ? bit : value));
       return out;
     }
@@ -3069,7 +3068,6 @@ var require_evp_bytestokey = __commonJS({
       for (
         var keyLen = keyBits / 8, key = Buffer2.alloc(keyLen), iv = Buffer2.alloc(ivLen || 0), tmp = Buffer2.alloc(0);
         keyLen > 0 || ivLen > 0;
-
       ) {
         var hash = new MD5();
         hash.update(tmp), hash.update(password), salt && hash.update(salt), (tmp = hash.digest());
@@ -5262,7 +5260,6 @@ var require_bn = __commonJS({
           for (
             var c = this.pow(z, q), r = this.pow(a, q.addn(1).iushrn(1)), t = this.pow(a, q), m = s;
             t.cmp(one) !== 0;
-
           ) {
             for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++) tmp = tmp.redSqr();
             assert(i < m);
@@ -6242,7 +6239,6 @@ var require_short = __commonJS({
           r,
           x;
         u.cmpn(0) !== 0;
-
       ) {
         var q = v.div(u);
         (r = v.sub(q.mul(u))), (x = x2.sub(q.mul(x1)));
@@ -9171,7 +9167,6 @@ var require_signature = __commonJS({
       for (
         r[0] & 128 && (r = [0].concat(r)), s[0] & 128 && (s = [0].concat(s)), r = rmPadding(r), s = rmPadding(s);
         !s[0] && !(s[1] & 128);
-
       )
         s = s.slice(1);
       var arr = [2];
@@ -9234,7 +9229,6 @@ var require_ec = __commonJS({
           bytes = this.n.byteLength(),
           ns2 = this.n.sub(new BN(2));
         ;
-
       ) {
         var priv = new BN(drbg.generate(bytes));
         if (!(priv.cmp(ns2) > 0)) return priv.iaddn(1), this.keyFromPrivate(priv);
@@ -11325,7 +11319,6 @@ var require_sign = __commonJS({
           s = !1,
           kv = getKey(x, q, hash, algo);
         s === !1;
-
       )
         (k = makeKey(q, kv, algo)),
           (r = makeR(g, k, p, q)),

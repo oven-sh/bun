@@ -478,7 +478,6 @@ var require_assertion_error = __commonJS({
         actualLines.pop(),
         expectedLines.pop(),
         !(actualLines.length === 0 || expectedLines.length === 0));
-
       )
         (a = actualLines[actualLines.length - 1]), (b = expectedLines[expectedLines.length - 1]);
       var maxLines = Math.max(actualLines.length, expectedLines.length);

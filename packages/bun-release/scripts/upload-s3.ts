@@ -32,9 +32,7 @@ for (const asset of release.assets) {
   const url = asset.browser_download_url;
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(
-      `Failed to download asset: ${response.status} ${url}`
-    );
+    throw new Error(`Failed to download asset: ${response.status} ${url}`);
   }
   const name = asset.name;
   let contentType: string;
@@ -86,9 +84,7 @@ async function uploadToS3({
     headers,
   });
   if (!response.ok) {
-    throw new Error(
-      `Failed to upload to S3: ${response.status} ${response.statusText}`
-    );
+    throw new Error(`Failed to upload to S3: ${response.status} ${response.statusText}`);
   }
 }
 

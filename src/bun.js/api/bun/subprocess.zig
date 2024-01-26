@@ -704,7 +704,7 @@ pub const Subprocess = struct {
             return .{ .result = {} };
         }
 
-        send_signal: {
+        {
             if (comptime Environment.isLinux) {
                 // if these are the same, it means the pidfd is invalid.
                 if (!WaiterThread.shouldUseWaiterThread()) {
@@ -723,8 +723,6 @@ pub const Subprocess = struct {
                         // if the process was already killed don't throw
                         if (errno != .SRCH and errno != .NOSYS)
                             return .{ .err = bun.sys.Error.fromCode(errno, .kill) };
-                    } else {
-                        break :send_signal;
                     }
                     this.signal_code = SignalCode.from(sig);
                     return .{ .result = {} };
@@ -756,8 +754,6 @@ pub const Subprocess = struct {
             this.signal_code = SignalCode.from(sig);
             return .{ .result = {} };
         }
-
-        @compileError("unreachable");
     }
 
     fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.EnumLiteral)) bool {

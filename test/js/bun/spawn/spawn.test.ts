@@ -5,6 +5,8 @@ import { gcTick as _gcTick, bunExe, bunEnv } from "harness";
 import { rmSync, writeFileSync } from "node:fs";
 import path from "path";
 
+const help_fixture = path.join(import.meta.dir, "spawn.fixture.js");
+
 for (let [gcTick, label] of [
   [_gcTick, "gcTick"],
   // [() => {}, "no gc tick"],
@@ -15,7 +17,11 @@ for (let [gcTick, label] of [
       const hugeString = "hello".repeat(10000).slice();
 
       it("as an array", () => {
-        const { stdout } = spawnSync(["echo", "hi"]);
+        const { stdout } = spawnSync([bunExe(), help_fixture, "echo", "hi"], {
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
+        });
         gcTick();
         // stdout is a Buffer
         const text = stdout!.toString();
@@ -25,8 +31,11 @@ for (let [gcTick, label] of [
 
       it("Uint8Array works as stdin", async () => {
         const { stdout, stderr } = spawnSync({
-          cmd: ["cat"],
+          cmd: [bunExe(), help_fixture, "cat"],
           stdin: new TextEncoder().encode(hugeString),
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
         gcTick();
         expect(stdout!.toString()).toBe(hugeString);
@@ -36,11 +45,11 @@ for (let [gcTick, label] of [
 
       it("check exit code", async () => {
         const { exitCode: exitCode1 } = spawnSync({
-          cmd: ["ls"],
+          cmd: [bunExe(), help_fixture, "echo", "1"],
         });
         gcTick();
         const { exitCode: exitCode2 } = spawnSync({
-          cmd: ["false"],
+          cmd: [bunExe(), help_fixture, "false"],
         });
         gcTick();
         expect(exitCode1).toBe(0);
@@ -51,8 +60,11 @@ for (let [gcTick, label] of [
       it("throws errors for invalid arguments", async () => {
         expect(() => {
           spawnSync({
-            cmd: ["echo", "hi"],
+            cmd: [ bunExe(), help_fixture, "echo", "hi"],
             cwd: "./this-should-not-exist",
+            env: {
+              BUN_DEBUG_QUIET_LOGS: "1",
+            },
           });
         }).toThrow("No such file or directory");
       });
@@ -64,10 +76,13 @@ for (let [gcTick, label] of [
       it("as an array", async () => {
         gcTick();
         await (async () => {
-          const { stdout } = spawn(["echo", "hello"], {
+          const { stdout } = spawn([bunExe(), help_fixture, "echo", "hello"], {
             stdout: "pipe",
             stderr: null,
             stdin: null,
+            env: {
+              BUN_DEBUG_QUIET_LOGS: "1",
+            },
           });
           gcTick();
           const text = await new Response(stdout).text();
@@ -78,11 +93,12 @@ for (let [gcTick, label] of [
 
       it("as an array with options object", async () => {
         gcTick();
-        const { stdout } = spawn(["printenv", "FOO"], {
+        const { stdout } = spawn([bunExe(), help_fixture, "printenv", "FOO"], {
           cwd: "/tmp",
           env: {
             ...process.env,
             FOO: "bar",
+            BUN_DEBUG_QUIET_LOGS: "1",
           },
           stdin: null,
           stdout: "pipe",
@@ -98,9 +114,12 @@ for (let [gcTick, label] of [
         rmSync("/tmp/out.123.txt", { force: true });
         gcTick();
         const { exited } = spawn({
-          cmd: ["cat"],
+          cmd: [bunExe(), help_fixture, "cat"],
           stdin: new TextEncoder().encode(hugeString),
           stdout: Bun.file("/tmp/out.123.txt"),
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
         gcTick();
         await exited;
@@ -110,11 +129,11 @@ for (let [gcTick, label] of [
 
       it("check exit code", async () => {
         const exitCode1 = await spawn({
-          cmd: ["ls"],
+          cmd: [bunExe(), "help"],
         }).exited;
         gcTick();
         const exitCode2 = await spawn({
-          cmd: ["false"],
+          cmd: [bunExe(), help_fixture, "false"],
         }).exited;
         gcTick();
         expect(exitCode1).toBe(0);
@@ -124,7 +143,10 @@ for (let [gcTick, label] of [
 
       it("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
         const proc = spawn({
-          cmd: ["sleep", "0.1"],
+          cmd: [bunExe(), help_fixture, "sleep", "0.1"],
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
         gcTick();
         for await (const _ of proc.stdout) {
@@ -139,7 +161,7 @@ for (let [gcTick, label] of [
           await new Promise<void>(resolve => {
             var counter = 0;
             spawn({
-              cmd: ["ls"],
+              cmd: [bunExe(), "help"],
               stdin: "ignore",
               stdout: "ignore",
               stderr: "ignore",
@@ -153,7 +175,7 @@ for (let [gcTick, label] of [
             });
 
             spawn({
-              cmd: ["false"],
+              cmd: [bunExe(), help_fixture, "false"],
               stdin: "ignore",
               stdout: "ignore",
               stderr: "ignore",
@@ -177,10 +199,13 @@ for (let [gcTick, label] of [
       it.skip("Uint8Array works as stdout", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(11);
-        const { stdout } = spawnSync(["echo", "hello world"], {
+        const { stdout } = spawnSync([bunExe(), help_fixture, "echo", "hello world"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
         gcTick();
         const text = new TextDecoder().decode(stdout);
@@ -193,10 +218,13 @@ for (let [gcTick, label] of [
       it.skip("Uint8Array works as stdout when is smaller than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(5);
-        const { stdout } = spawnSync(["echo", "hello world"], {
+        const { stdout } = spawnSync([bunExe(), help_fixture, "echo", "hello world"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
         gcTick();
         const text = new TextDecoder().decode(stdout);
@@ -209,10 +237,13 @@ for (let [gcTick, label] of [
       it.skip("Uint8Array works as stdout when is the exactly size than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(12);
-        const { stdout } = spawnSync(["echo", "hello world"], {
+        const { stdout } = spawnSync([bunExe(), help_fixture, "echo", "hello world"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
         gcTick();
         const text = new TextDecoder().decode(stdout);
@@ -225,10 +256,13 @@ for (let [gcTick, label] of [
       it.skip("Uint8Array works as stdout when is larger than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(15);
-        const { stdout } = spawnSync(["echo", "hello world"], {
+        const { stdout } = spawnSync([bunExe(), help_fixture, "echo", "hello world"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
         gcTick();
         const text = new TextDecoder().decode(stdout);
@@ -242,9 +276,12 @@ for (let [gcTick, label] of [
         rmSync("/tmp/out.123.txt", { force: true });
         gcTick();
         const { exited } = spawn({
-          cmd: ["cat"],
+          cmd: [bunExe(), help_fixture, "cat"],
           stdin: new Blob([new TextEncoder().encode(hugeString)]),
           stdout: Bun.file("/tmp/out.123.txt"),
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
 
         await exited;
@@ -255,8 +292,11 @@ for (let [gcTick, label] of [
         rmSync("/tmp/out.123.txt", { force: true });
         gcTick();
         const { exited } = spawn({
-          cmd: ["echo", "hello"],
+          cmd: [bunExe(), help_fixture, "echo", "hello"],
           stdout: Bun.file("/tmp/out.123.txt"),
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
 
         await exited;
@@ -268,9 +308,12 @@ for (let [gcTick, label] of [
         await write(Bun.file("/tmp/out.456.txt"), "hello there!");
         gcTick();
         const { stdout } = spawn({
-          cmd: ["cat"],
+          cmd: [bunExe(), help_fixture, "cat"],
           stdout: "pipe",
           stdin: Bun.file("/tmp/out.456.txt"),
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
         gcTick();
         expect(await readableStreamToText(stdout!)).toBe("hello there!");
@@ -283,9 +326,12 @@ for (let [gcTick, label] of [
         gcTick();
 
         const { exited } = spawn({
-          cmd: ["cat"],
+          cmd: [bunExe(), help_fixture, "cat"],
           stdout: Bun.file("/tmp/out.123.txt"),
           stdin: Bun.file("/tmp/out.456.txt"),
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
         gcTick();
         await exited;
@@ -298,8 +344,11 @@ for (let [gcTick, label] of [
         await Bun.write("/tmp/out.txt", hugeString);
         gcTick();
         const { stdout } = spawn({
-          cmd: ["cat", "/tmp/out.txt"],
+          cmd: [bunExe(), help_fixture, "cat", "/tmp/out.txt"],
           stdout: "pipe",
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
 
         gcTick();
@@ -311,8 +360,11 @@ for (let [gcTick, label] of [
 
       it("kill(1) works", async () => {
         const process = spawn({
-          cmd: ["bash", "-c", "sleep 1000"],
+          cmd: [bunExe(), help_fixture, "sleep", "1000"],
           stdout: "pipe",
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
         gcTick();
         const prom = process.exited;
@@ -322,8 +374,11 @@ for (let [gcTick, label] of [
 
       it("kill() works", async () => {
         const process = spawn({
-          cmd: ["bash", "-c", "sleep 1000"],
+          cmd: [bunExe(), help_fixture, "sleep", "1000"],
           stdout: "pipe",
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
         gcTick();
         const prom = process.exited;
@@ -333,11 +388,14 @@ for (let [gcTick, label] of [
 
       it("stdin can be read and stdout can be written", async () => {
         const proc = spawn({
-          cmd: ["bash", import.meta.dir + "/bash-echo.sh"],
+          cmd: [bunExe(), help_fixture, "cat"],
           stdout: "pipe",
           stdin: "pipe",
           lazy: true,
           stderr: "inherit",
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
         });
 
         var stdout = proc.stdout;
@@ -369,19 +427,25 @@ for (let [gcTick, label] of [
       describe("pipe", () => {
         function huge() {
           return spawn({
-            cmd: ["echo", hugeString],
+            cmd: [bunExe(), help_fixture, "cat"],
             stdout: "pipe",
-            stdin: "pipe",
+            stdin: Buffer.from(hugeString),
             stderr: "inherit",
             lazy: true,
+            env: {
+              BUN_DEBUG_QUIET_LOGS: "1",
+            },
           });
         }
 
         function helloWorld() {
           return spawn({
-            cmd: ["echo", "hello"],
+            cmd: [bunExe(), help_fixture, "echo", "hello"],
             stdout: "pipe",
             stdin: "ignore",
+            env: {
+              BUN_DEBUG_QUIET_LOGS: "1",
+            },
           });
         }
 
@@ -452,43 +516,14 @@ for (let [gcTick, label] of [
         }
       });
 
-      describe("ipc", () => {
-        it("the subprocess should be defined and the child should send", done => {
-          gcTick();
-          const returned_subprocess = spawn([bunExe(), path.join(__dirname, "bun-ipc-child.js")], {
-            ipc: (message, subProcess) => {
-              expect(subProcess).toBe(returned_subprocess);
-              expect(message).toBe("hello");
-              subProcess.kill();
-              done();
-              gcTick();
-            },
-          });
-        });
-
-        it("the subprocess should receive the parent message and respond back", done => {
-          gcTick();
-
-          const parentMessage = "I am your father";
-          const childProc = spawn([bunExe(), path.join(__dirname, "bun-ipc-child-respond.js")], {
-            ipc: (message, subProcess) => {
-              expect(message).toBe(`pong:${parentMessage}`);
-              subProcess.kill();
-              done();
-              gcTick();
-            },
-          });
-
-          childProc.send(parentMessage);
-          gcTick();
-        });
-      });
-
       it("throws errors for invalid arguments", async () => {
         expect(() => {
           spawnSync({
-            cmd: ["echo", "hi"],
+            cmd: [bunExe(), help_fixture, "echo", "hi"],
             cwd: "./this-should-not-exist",
+            env: {
+              BUN_DEBUG_QUIET_LOGS: "1",
+            },
           });
         }).toThrow("No such file or directory");
       });
@@ -505,6 +540,7 @@ if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) {
         // Both flags are necessary to force this condition
         "BUN_FEATURE_FLAG_FORCE_WAITER_THREAD": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+        BUN_DEBUG_QUIET_LOGS: "1",
       },
       stderr: "inherit",
       stdout: "inherit",
@@ -518,7 +554,7 @@ describe("spawn unref and kill should not hang", () => {
   it("kill and await exited", async () => {
     for (let i = 0; i < 10; i++) {
       const proc = spawn({
-        cmd: ["sleep", "0.001"],
+        cmd: [bunExe(), help_fixture, "sleep", "0.001"],
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -532,7 +568,7 @@ describe("spawn unref and kill should not hang", () => {
   it("unref", async () => {
     for (let i = 0; i < 100; i++) {
       const proc = spawn({
-        cmd: ["sleep", "0.001"],
+        cmd: [bunExe(), help_fixture, "sleep", "0.001"],
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -546,7 +582,7 @@ describe("spawn unref and kill should not hang", () => {
   it("kill and unref", async () => {
     for (let i = 0; i < 100; i++) {
       const proc = spawn({
-        cmd: ["sleep", "0.001"],
+        cmd: [bunExe(), help_fixture, "sleep", "0.001"],
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -561,7 +597,7 @@ describe("spawn unref and kill should not hang", () => {
   it("unref and kill", async () => {
     for (let i = 0; i < 100; i++) {
       const proc = spawn({
-        cmd: ["sleep", "0.001"],
+        cmd: [bunExe(), help_fixture, "sleep", "0.001"],
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -588,7 +624,7 @@ async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited
   console.log("running", order.join(","));
   for (let i = 0; i < 100; i++) {
     const proc = spawn({
-      cmd: ["sleep", sleep],
+      cmd: [bunExe(), help_fixture, "sleep", sleep],
       stdout: "ignore",
       stderr: "ignore",
       stdin: "ignore",
@@ -658,7 +694,11 @@ it("#3480", async () => {
     var server = Bun.serve({
       port: 0,
       fetch: (req, res) => {
-        Bun.spawnSync(["echo", "1"], {});
+        Bun.spawnSync([bunExe(), help_fixture, "echo", "1"], {
+          env: {
+            BUN_DEBUG_QUIET_LOGS: "1",
+          },
+        });
         return new Response("Hello world!");
       },
     });

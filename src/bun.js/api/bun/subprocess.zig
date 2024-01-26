@@ -2259,7 +2259,30 @@ pub const Subprocess = struct {
             };
 
             var cwd_resolver = bun.path.PosixToWinNormalizer{};
+            var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            if (!std.fs.path.isAbsoluteWindows(cwd)) {
+                // we need the absolute path so we can resolveCWDZ
+                var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
 
+                var parts = [_]string{
+                    cwd,
+                };
+
+                const application_cwd = bun.getcwd(&buf) catch |err| {
+                    alloc.destroy(subprocess);
+                    return globalThis.handleError(err, "in uv_spawn");
+                };
+                buf[application_cwd.len] = std.fs.path.sep;
+                const file_path = bun.path.joinAbsStringBuf(
+                    buf[0 .. application_cwd.len + 1],
+                    &joined_buf,
+                    &parts,
+                    .auto,
+                );
+
+                joined_buf[file_path.len] = 0;
+                cwd = joined_buf[0..file_path.len :0];
+            }
             const options = uv.uv_process_options_t{
                 .exit_cb = uvExitCallback,
                 .args = @ptrCast(argv.items[0 .. argv.items.len - 1 :null]),
@@ -3202,6 +3225,20 @@ pub const Subprocess = struct {
                 .path => |pathlike| {
                     _ = pathlike;
                     @panic("TODO");
+                    // var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    // const path_fd = try bun.sys.open(
+                    //     pathlike.path.sliceZ(&file_path),
+                    //     std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                    //     0o664,
+                    // ).unwrap();
+
+                    // try pipe.init(uv.Loop.get(), false).unwrap();
+                    // try pipe.open(bun.uvfdcast(path_fd)).unwrap();
+
+                    // return uv.uv_stdio_container_s{
+                    //     .flags = @intCast(uv.UV_INHERIT_STREAM),
+                    //     .data = .{ .stream = @ptrCast(pipe) },
+                    // };
                 },
                 .inherit => uv.uv_stdio_container_s{
                     .flags = uv.UV_INHERIT_FD,

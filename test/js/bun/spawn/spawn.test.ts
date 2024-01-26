@@ -60,7 +60,7 @@ for (let [gcTick, label] of [
       it("throws errors for invalid arguments", async () => {
         expect(() => {
           spawnSync({
-            cmd: [ bunExe(), help_fixture, "echo", "hi"],
+            cmd: [bunExe(), help_fixture, "echo", "hi"],
             cwd: "./this-should-not-exist",
             env: {
               BUN_DEBUG_QUIET_LOGS: "1",

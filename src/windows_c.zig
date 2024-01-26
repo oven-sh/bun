@@ -1281,7 +1281,21 @@ pub fn renameAtW(
     };
     defer _ = bun.sys.close(src_fd);
 
+    return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
+}
+
+/// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
+/// Does not close the file descriptor.
+///
+/// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL
+pub fn moveOpenedFileAt(
+    src_fd: bun.FileDescriptor,
+    new_dir_fd: bun.FileDescriptor,
+    new_path_w: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
     var rc: w.NTSTATUS = undefined;
+
     // FILE_RENAME_INFORMATION_EX and FILE_RENAME_POSIX_SEMANTICS require >= win10_rs1,
     // but FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5. We check >= rs5 here
     // so that we only use POSIX_SEMANTICS when we know IGNORE_READONLY_ATTRIBUTE will also be
@@ -1292,6 +1306,7 @@ pub fn renameAtW(
 
     const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + (bun.MAX_PATH_BYTES - 1);
     var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION_EX)) = undefined;
+
     const struct_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) - 1 + new_path_w.len * 2;
     if (struct_len > struct_buf_len) return Maybe(void).errno(bun.C.E.NAMETOOLONG, .NtSetInformationFile);
 
@@ -1314,6 +1329,46 @@ pub fn renameAtW(
         @intCast(struct_len), // already checked for error.NameTooLong
         .FileRenameInformationEx,
     );
+
+    if (bun.Environment.isDebug) {
+        if (rc == .ACCESS_DENIED) {
+            bun.Output.debugWarn("moveOpenedFileAt was called on a file descriptor without access_mask=w.DELETE", .{});
+        }
+    }
+
+    return if (rc == .SUCCESS)
+        Maybe(void).success
+    else
+        Maybe(void).errno(rc, .NtSetInformationFile);
+}
+
+const FILE_DISPOSITION_DO_NOT_DELETE: w.ULONG = 0x00000000;
+const FILE_DISPOSITION_DELETE: w.ULONG = 0x00000001;
+const FILE_DISPOSITION_POSIX_SEMANTICS: w.ULONG = 0x00000002;
+const FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK: w.ULONG = 0x00000004;
+const FILE_DISPOSITION_ON_CLOSE: w.ULONG = 0x00000008;
+const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: w.ULONG = 0x00000010;
+
+/// Extracted from standard library except this takes an open file descriptor
+///
+/// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL
+pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
+    comptime std.debug.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+    var info = w.FILE_DISPOSITION_INFORMATION_EX{
+        .Flags = FILE_DISPOSITION_DELETE |
+            FILE_DISPOSITION_POSIX_SEMANTICS |
+            FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
+    };
+
+    var io: w.IO_STATUS_BLOCK = undefined;
+    const rc = w.ntdll.NtSetInformationFile(
+        fd.cast(),
+        &io,
+        &info,
+        @sizeOf(w.FILE_DISPOSITION_INFORMATION_EX),
+        .FileDispositionInformationEx,
+    );
+
     return if (rc == .SUCCESS)
         Maybe(void).success
     else

@@ -76,12 +76,12 @@ pub const FDImpl = packed struct {
         else => System,
     };
 
-    const Value = if (env.os == .windows)
+    pub const Value = if (env.os == .windows)
         packed union { as_system: SystemAsInt, as_uv: UV }
     else
         packed union { as_system: SystemAsInt };
 
-    const Kind = if (env.os == .windows)
+    pub const Kind = if (env.os == .windows)
         enum(u1) { system = 0, uv = 1 }
     else
         enum(u0) { system };
@@ -284,6 +284,10 @@ pub const FDImpl = packed struct {
     }
 
     pub fn format(this: FDImpl, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (!this.isValid()) {
+            try writer.writeAll("invalid_fd");
+            return;
+        }
         switch (env.os) {
             else => {
                 try writer.print("{d}", .{this.system()});

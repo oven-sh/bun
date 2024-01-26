@@ -350,6 +350,7 @@ pub const BuildCommand = struct {
                         );
 
                         Output.flush();
+
                         try bun.StandaloneModuleGraph.toExecutable(
                             allocator,
                             output_files,

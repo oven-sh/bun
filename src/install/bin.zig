@@ -283,7 +283,7 @@ pub const Bin = extern struct {
 
         err: ?anyerror = null,
 
-        pub var umask: std.os.mode_t = 0;
+        pub var umask: bun.C.Mode = 0;
 
         var has_set_umask = false;
 
@@ -671,7 +671,7 @@ pub const Bin = extern struct {
                 dest_buf[0.."../".len].* = "../".*;
                 remain = dest_buf["../".len..];
             } else {
-                if (this.global_bin_dir.fd >= bun.invalid_fd.int()) {
+                if (bun.toFD(this.global_bin_dir.fd) == bun.invalid_fd) {
                     this.err = error.MissingGlobalBinDir;
                     return;
                 }
@@ -696,10 +696,6 @@ pub const Bin = extern struct {
             remain = remain[name.len..];
             remain[0] = std.fs.path.sep;
             remain = remain[1..];
-
-            if (comptime Environment.isWindows) {
-                @compileError("Bin.Linker.unlink() needs to be updated to generate .cmd files on Windows");
-            }
 
             switch (this.bin.tag) {
                 .none => {

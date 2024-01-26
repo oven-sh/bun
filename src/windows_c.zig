@@ -1257,6 +1257,9 @@ const Maybe = bun.JSC.Maybe;
 
 const w = std.os.windows;
 
+extern "c" fn _umask(Mode) Mode;
+pub const umask = _umask;
+
 /// Derived from std.os.windows.renameAtW
 /// Allows more errors
 pub fn renameAtW(

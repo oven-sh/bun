@@ -2959,17 +2959,18 @@ pub const Blob = struct {
 
             var pipe_ptr = &(this.store.?.data.file.pipe);
             if (store.data.file.pipe.loop == null) {
-                if (libuv.uv_pipe_init(libuv.Loop.get(), pipe_ptr, 0) != 0) {
+                pipe_ptr.init(libuv.Loop.get(), false).unwrap() catch {
                     pipe_ptr.loop = null;
                     globalThis.throwInvalidArguments("Failed to create UVStreamSink", .{});
                     return JSValue.jsUndefined();
-                }
+                };
+
                 const file_fd = bun.uvfdcast(fd);
-                if (libuv.uv_pipe_open(pipe_ptr, file_fd).errEnum()) |err| {
+                pipe_ptr.open(file_fd).unwrap() catch |err| {
                     pipe_ptr.loop = null;
                     globalThis.throwInvalidArguments("Failed to create UVStreamSink: uv_pipe_open({d}) {}", .{ file_fd, err });
                     return JSValue.jsUndefined();
-                }
+                };
             }
 
             var sink = JSC.WebCore.UVStreamSink.init(globalThis.allocator(), @ptrCast(pipe_ptr), null) catch |err| {

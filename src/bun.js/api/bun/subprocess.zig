@@ -411,7 +411,7 @@ pub const Subprocess = struct {
                 .pipe => {
                     if (this.pipe == .buffer) {
                         if (Environment.isWindows) {
-                            uv.uv_ref(@ptrCast(&this.pipe.buffer.stream));
+                            this.pipe.buffer.stream.unref();
                             return;
                         }
                         if (this.pipe.buffer.stream.poll_ref) |poll| {
@@ -428,7 +428,7 @@ pub const Subprocess = struct {
                 .pipe => {
                     if (this.pipe == .buffer) {
                         if (Environment.isWindows) {
-                            uv.uv_unref(@ptrCast(&this.pipe.buffer.stream));
+                            this.pipe.buffer.stream.unref();
                             return;
                         }
                         if (this.pipe.buffer.stream.poll_ref) |poll| {
@@ -554,7 +554,7 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => {
                     if (Environment.isWindows) {
-                        if (uv.uv_is_closed(@ptrCast(this.pipe.buffer.stream))) {
+                        if (this.pipe.buffer.stream.isClosed()) {
                             return false;
                         }
                         this.pipe.buffer.closeCallback = callback;
@@ -958,7 +958,7 @@ pub const Subprocess = struct {
 
             if (this.pipe) |pipe| {
                 pipe.data = this;
-                _ = uv.uv_close(@ptrCast(pipe), BufferedPipeInput.uvClosedCallback);
+                pipe.close(BufferedPipeInput.uvClosedCallback);
             }
         }
 
@@ -1242,7 +1242,7 @@ pub const Subprocess = struct {
             }
         }
 
-        fn uvStreamReadCallback(handle: *uv.uv_handle_t, nread: isize, buffer: *const uv.uv_buf_t) callconv(.C) void {
+        fn uvStreamReadCallback(handle: *uv.uv_stream_t, nread: isize, buffer: *const uv.uv_buf_t) callconv(.C) void {
             const this: *BufferedOutput = @ptrCast(@alignCast(handle.data));
             if (nread <= 0) {
                 switch (nread) {
@@ -1252,7 +1252,7 @@ pub const Subprocess = struct {
                     },
                     uv.UV_EOF => {
                         this.status = .{ .done = {} };
-                        _ = uv.uv_read_stop(@ptrCast(handle));
+                        handle.readStop();
                         this.flushBufferedDataIntoReadableStream();
                     },
                     else => {
@@ -1261,7 +1261,7 @@ pub const Subprocess = struct {
                         };
                         const err = rt.errEnum() orelse bun.C.E.CANCELED;
                         this.status = .{ .err = bun.sys.Error.fromCode(err, .read) };
-                        _ = uv.uv_read_stop(@ptrCast(handle));
+                        handle.readStop();
                         this.signalStreamError();
                     },
                 }
@@ -1274,7 +1274,7 @@ pub const Subprocess = struct {
             this.flushBufferedDataIntoReadableStream();
         }
 
-        fn uvStreamAllocCallback(handle: *uv.uv_handle_t, suggested_size: usize, buffer: *uv.uv_buf_t) callconv(.C) void {
+        fn uvStreamAllocCallback(handle: *uv.uv_stream_t, suggested_size: usize, buffer: *uv.uv_buf_t) callconv(.C) void {
             const this: *BufferedOutput = @ptrCast(@alignCast(handle.data));
             var size: usize = 0;
             var available = this.internal_buffer.available();
@@ -1296,7 +1296,7 @@ pub const Subprocess = struct {
             }
             buffer.* = .{ .base = @ptrCast(available.ptr), .len = @intCast(size) };
             if (size == 0) {
-                _ = uv.uv_read_stop(@ptrCast(@alignCast(handle)));
+                handle.readStop();
                 this.status = .{ .done = {} };
             }
         }
@@ -1305,7 +1305,7 @@ pub const Subprocess = struct {
             if (Environment.isWindows) {
                 if (this.status == .pending) {
                     this.stream.data = this;
-                    _ = uv.uv_read_start(@ptrCast(this.stream), BufferedOutput.uvStreamAllocCallback, BufferedOutput.uvStreamReadCallback);
+                    _ = this.stream.readStart(BufferedOutput.uvStreamAllocCallback, BufferedOutput.uvStreamReadCallback);
                 }
                 return;
             }
@@ -1557,12 +1557,12 @@ pub const Subprocess = struct {
                 .pending => {
                     if (Environment.isWindows) {
                         needCallbackCall = false;
-                        _ = uv.uv_read_stop(@ptrCast(&this.stream));
-                        if (uv.uv_is_closed(@ptrCast(&this.stream))) {
+                        this.stream.readStop();
+                        if (this.stream.isClosed()) {
                             this.readable_stream_ref.deinit();
                             this.closeCallback.run();
                         } else {
-                            _ = uv.uv_close(@ptrCast(&this.stream), BufferedOutput.uvClosedCallback);
+                            this.stream.close(BufferedOutput.uvClosedCallback);
                         }
                     } else {
                         this.stream.close();
@@ -1602,7 +1602,9 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => {
                     if (Environment.isWindows) {
-                        _ = uv.uv_ref(@ptrCast(this.pipe.stream));
+                        if (this.pipe.stream) |stream| {
+                            stream.unref();
+                        }
                     } else if (this.pipe.poll_ref) |poll| {
                         poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
                     }
@@ -1615,7 +1617,9 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => {
                     if (Environment.isWindows) {
-                        _ = uv.uv_unref(@ptrCast(this.pipe.stream));
+                        if (this.pipe.stream) |stream| {
+                            stream.unref();
+                        }
                     } else if (this.pipe.poll_ref) |poll| {
                         poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
                     }
@@ -2259,11 +2263,9 @@ pub const Subprocess = struct {
             };
             subprocess.ipc = .{ .pipe = std.mem.zeroes(uv.uv_pipe_t) };
             if (ipc_mode != .none) {
-                const errno = subprocess.ipc.configureServer(Subprocess, subprocess, pipe_name_bytes);
-                if (errno != 0) {
+                if (subprocess.ipc.configureServer(Subprocess, subprocess, pipe_name_bytes).asErr()) |err| {
                     alloc.destroy(subprocess);
-                    globalThis.throwValue(bun.sys.Error.fromCodeInt(errno, .uv_spawn).toJSC(globalThis));
-                    return .zero;
+                    globalThis.throwValue(err.toJSC(globalThis));
                 }
             }
 
@@ -3203,14 +3205,11 @@ pub const Subprocess = struct {
         ) !uv.uv_stdio_container_s {
             return switch (stdio) {
                 .array_buffer, .blob, .pipe => {
-                    if (uv.uv_pipe_init(uv.Loop.get(), pipe, 0) != 0) {
-                        return error.FailedToCreatePipe;
-                    }
+                    try pipe.init(uv.Loop.get(), false).unwrap();
+
                     if (fd != bun.invalid_fd) {
                         // we receive a FD so we open this into our pipe
-                        if (uv.uv_pipe_open(pipe, bun.uvfdcast(fd)).errEnum()) |_| {
-                            return error.FailedToCreatePipe;
-                        }
+                        try pipe.open(bun.uvfdcast(fd)).unwrap();
                         return uv.uv_stdio_container_s{
                             .flags = @intCast(uv.UV_INHERIT_STREAM),
                             .data = .{ .stream = @ptrCast(pipe) },

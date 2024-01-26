@@ -3016,6 +3016,8 @@ pub const VirtualMachine = struct {
 
         ipc: IPC.IPCData,
 
+        pub usingnamespace bun.New(@This());
+
         pub fn handleIPCMessage(
             this: *IPCInstance,
             message: IPC.DecodedIPCMessage,
@@ -3057,16 +3059,17 @@ pub const VirtualMachine = struct {
         this.event_loop.ensureWaker();
 
         if (Environment.isWindows) {
-            var instance = bun.default_allocator.create(IPCInstance) catch bun.outOfMemory();
-            instance.* = .{
+            var instance = IPCInstance.new(.{
                 .globalThis = this.global,
                 .context = 0,
                 .ipc = .{ .pipe = std.mem.zeroes(uv.uv_pipe_t) },
+            });
+            instance.ipc.configureClient(IPCInstance, instance, source) catch {
+                instance.destroy();
+                Output.printErrorln("Unable to start IPC pipe", .{});
+                return;
             };
-            const errno = instance.ipc.configureClient(IPCInstance, instance, source);
-            if (errno != 0) {
-                @panic("Unable to start IPC");
-            }
+
             this.ipc = instance;
             return;
         }

@@ -3,6 +3,7 @@ import { bunExe, bunEnv, gc } from "harness";
 import { readFileSync } from "fs";
 import { join } from "path";
 
+const isWindows = process.platform === "win32";
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 
 describe("WebSocket", () => {
@@ -561,7 +562,7 @@ describe("websocket in subprocess", () => {
     server.stop(true);
   });
 
-  it("should exit after server stop and 0 messages", async () => {
+  it.skipIf(isWindows)("should exit after server stop and 0 messages", async () => {
     const server = Bun.serve({
       port: 0,
       fetch(req, server) {

@@ -1,58 +1,88 @@
 {
-  "git.autoRepositoryDetection": "openEditors",
+  // Editor
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.formatOnSave": true,
+  "editor.formatOnSaveMode": "modificationsIfAvailable",
+
+  // Search
   "search.quickOpen.includeSymbols": false,
   "search.seedWithNearestWord": true,
   "search.smartCase": true,
   "search.exclude": {
     "node_modules": true,
-    "src/bun.js/WebKit": true,
     ".git": true,
+    "src/bun.js/WebKit": true,
     "src/deps/*/**": true
   },
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
+
+  // Git
+  "git.autoRepositoryDetection": "openEditors",
+  "git.ignoreSubmodules": true,
+  "git.ignoreLimitWarning": true,
+
+  // Zig
+  "zig.initialSetupDone": true,
   "zig.buildOnSave": false,
-  "zig.formattingProvider": "zls",
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
-  "zig.initialSetupDone": true,
-  "editor.formatOnSave": true,
-
-  // We are using biome instead of prettier.
-  "prettier.enable": false,
-
-  "[json]": {
-    "editor.defaultFormatter": "biomejs.biome"
-  },
-  "[jsonc]": {
-    "editor.defaultFormatter": "biomejs.biome"
-  },
+  // "zig.path": "${workspaceFolder}/.cache/zig/zig.exe",
+  "zig.formattingProvider": "zls",
+  "zig.zls.enableInlayHints": false,
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
     "editor.defaultFormatter": "ziglang.vscode-zig"
   },
-  "[ts]": {
+
+  // C++
+  "lldb.verboseLogging": false,
+  "cmake.configureOnOpen": false,
+  "C_Cpp.errorSquiggles": "enabled",  
+  "[cpp]": {
+    "editor.defaultFormatter": "xaver.clang-format"
+  },
+  "[c]": {
+    "editor.defaultFormatter": "xaver.clang-format"
+  },
+  "[h]": {
+    "editor.defaultFormatter": "xaver.clang-format"
+  },
+
+  // JavaScript
+  "eslint.workingDirectories": ["${workspaceFolder}/packages/bun-types"],
+  "[javascript]": {
+    "editor.defaultFormatter": "biomejs.biome",
+  },
+  "[javascriptreact]": {
     "editor.defaultFormatter": "biomejs.biome"
   },
-  "[js]": {
+
+  // TypeScript
+  "typescript.tsdk": "${workspaceFolder}/node_modules/typescript/lib",
+  "[typescript]": {
     "editor.defaultFormatter": "biomejs.biome"
   },
-  "zig.zls.enableInlayHints": false,
-  "zig.path": "${workspaceFolder}/.cache/zig/zig.exe",
-  "git.ignoreSubmodules": true,
-  "[jsx]": {
+  "[typescriptreact]": {
     "editor.defaultFormatter": "biomejs.biome"
   },
-  "[tsx]": {
-    "editor.defaultFormatter": "biomejs.biome"
+
+  // JSON
+  "[json]": {
+    "editor.defaultFormatter": "biomejs.biome",
   },
-  "[yaml]": {},
+  "[jsonc]": {
+    "editor.defaultFormatter": "biomejs.biome",
+  },
+  
+  // Markdown
   "[markdown]": {
+    "editor.defaultFormatter": "biomejs.biome",
     "editor.unicodeHighlight.ambiguousCharacters": false,
     "editor.unicodeHighlight.invisibleCharacters": false,
     "diffEditor.ignoreTrimWhitespace": false,
-    "editor.defaultFormatter": "biomejs.biome",
     "editor.wordWrap": "on",
     "editor.quickSuggestions": {
       "comments": "off",
@@ -60,7 +90,18 @@
       "other": "off"
     }
   },
-  "lldb.verboseLogging": false,
+
+  // TOML
+  "[toml]": {
+    "editor.defaultFormatter": "biomejs.biome",
+  },
+
+  // YAML
+  "[yaml]": {
+    "editor.defaultFormatter": "biomejs.biome",
+  },
+
+  // Files
   "files.exclude": {
     "**/.git": true,
     "**/.svn": true,
@@ -86,33 +127,6 @@
     "src/deps/zstd": true,
     "**/*.i": true,
     "packages/bun-uws/fuzzing/seed-corpus/**/*": true
-  },
-  "C_Cpp.files.exclude": {
-    "**/.vscode": true,
-    "WebKit/JSTests": true,
-    "WebKit/Tools": true,
-    "WebKit/WebDriverTests": true,
-    "WebKit/WebKit.xcworkspace": true,
-    "WebKit/WebKitLibraries": true,
-    "WebKit/Websites": true,
-    "WebKit/resources": true,
-    "WebKit/LayoutTests": true,
-    "WebKit/ManualTests": true,
-    "WebKit/PerformanceTests": true,
-    "WebKit/WebKitLegacy": true,
-    "WebKit/WebCore": true,
-    "WebKit/WebDriver": true,
-    "WebKit/WebKitBuild": true,
-    "WebKit/WebInspectorUI": true
-  },
-  "[cpp]": {
-    "editor.defaultFormatter": "xaver.clang-format"
-  },
-  "[h]": {
-    "editor.defaultFormatter": "xaver.clang-format"
-  },
-  "[c]": {
-    "editor.defaultFormatter": "xaver.clang-format"
   },
   "files.associations": {
     "*.lock": "yarnlock",
@@ -233,9 +247,22 @@
     "xtree": "cpp",
     "xutility": "cpp"
   },
-  "C_Cpp.errorSquiggles": "enabled",
-  "eslint.workingDirectories": ["packages/bun-types"],
-  "typescript.tsdk": "node_modules/typescript/lib",
-  "cmake.configureOnOpen": false,
-  "git.ignoreLimitWarning": true
+  "C_Cpp.files.exclude": {
+    "**/.vscode": true,
+    "WebKit/JSTests": true,
+    "WebKit/Tools": true,
+    "WebKit/WebDriverTests": true,
+    "WebKit/WebKit.xcworkspace": true,
+    "WebKit/WebKitLibraries": true,
+    "WebKit/Websites": true,
+    "WebKit/resources": true,
+    "WebKit/LayoutTests": true,
+    "WebKit/ManualTests": true,
+    "WebKit/PerformanceTests": true,
+    "WebKit/WebKitLegacy": true,
+    "WebKit/WebCore": true,
+    "WebKit/WebDriver": true,
+    "WebKit/WebKitBuild": true,
+    "WebKit/WebInspectorUI": true
+  },
 }

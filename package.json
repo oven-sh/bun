@@ -1,7 +1,8 @@
 {
+  "private": true,
   "name": "bun",
   "dependencies": {
-    "@biomejs/biome": "^1.5.3",
+    "@biomejs/biome": "1.5.3",
     "@vscode/debugadapter": "^1.61.0",
     "esbuild": "^0.17.15",
     "eslint": "^8.20.0",
@@ -14,7 +15,11 @@
     "source-map-js": "^1.0.2",
     "typescript": "^5.0.2"
   },
-  "private": true,
+  "devDependencies": {
+    "@types/react": "^18.0.25",
+    "@typescript-eslint/eslint-plugin": "^5.31.0",
+    "@typescript-eslint/parser": "^5.31.0"
+  },
   "scripts": {
     "setup": "./scripts/setup.sh",
     "build": "if [ ! -e build ]; then bun setup; fi && ninja -C build",
@@ -29,12 +34,5 @@
     "test": "node packages/bun-internal-test/src/runner.node.mjs ./build/bun-debug",
     "test:release": "node packages/bun-internal-test/src/runner.node.mjs ./build-release/bun",
     "update-known-failures": "node packages/bun-internal-test/src/update-known-windows-failures.mjs"
-  },
-  "devDependencies": {
-    "@types/react": "^18.0.25",
-    "@typescript-eslint/eslint-plugin": "^5.31.0",
-    "@typescript-eslint/parser": "^5.31.0"
-  },
-  "version": "0.0.0",
-  "prettier": "./.prettierrc.cjs"
+  }
 }

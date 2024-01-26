@@ -1144,8 +1144,8 @@ for (const [key, blob] of build.outputs) {
       if (cjs2esm) {
         const outfiletext = api.readFile(path.relative(root, outfile ?? outputPaths[0]));
         const regex = /\/\/\s+(.+?)\nvar\s+([a-zA-Z0-9_$]+)\s+=\s+__commonJS/g;
-        const matches = [...outfiletext.matchAll(regex)].map(match => "/" + match[1]);
-        const expectedMatches = cjs2esm === true ? [] : cjs2esm.unhandled ?? [];
+        const matches = [...outfiletext.matchAll(regex)].map(match => ("/" + match[1]).replaceAll("\\", "/"));
+        const expectedMatches = (cjs2esm === true ? [] : cjs2esm.unhandled ?? []).map(a => a.replaceAll("\\", "/"));
         try {
           expect(matches.sort()).toEqual(expectedMatches.sort());
         } catch (error) {
@@ -1248,6 +1248,7 @@ for (const [key, blob] of build.outputs) {
             let error;
             const lines = stderr!
               .toString("utf-8")
+              .replceAll("\r\n", "\n")
               .split("\n")
               .filter(Boolean)
               .map(x => x.trim())
@@ -1283,7 +1284,7 @@ for (const [key, blob] of build.outputs) {
         }
 
         if (run.stdout !== undefined) {
-          const result = stdout!.toString("utf-8").trim();
+          const result = stdout!.toString("utf-8").trim().replaceAll("\r\n", "\n");
           if (typeof run.stdout === "string") {
             const expected = dedent(run.stdout).trim();
             if (expected !== result) {
@@ -1305,7 +1306,7 @@ for (const [key, blob] of build.outputs) {
         }
 
         if (run.partialStdout !== undefined) {
-          const result = stdout!.toString("utf-8").trim();
+          const result = stdout!.toString("utf-8").trim().replaceAll("\r\n", "\n");
           const expected = dedent(run.partialStdout).trim();
           if (!result.includes(expected)) {
             console.log(`runtime failed file=${file}`);

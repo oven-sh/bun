@@ -4,7 +4,7 @@ import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv } from "harness";
 import { appendFileSync, closeSync, openSync, writeFileSync } from "node:fs";
-import { tmpdir } from "os";
+import { tmpdir, devNull } from "os";
 import { join } from "path";
 import { TestBuilder } from "./util";
 
@@ -55,13 +55,13 @@ describe("fd leak", () => {
         await builder().quiet().run();
       }
 
-      const baseline = openSync("/dev/null", "r");
+      const baseline = openSync(devNull, "r");
       closeSync(baseline);
 
       for (let i = 0; i < runs; i++) {
         await builder().quiet().run();
       }
-      const fd = openSync("/dev/null", "r");
+      const fd = openSync(devNull, "r");
       closeSync(fd);
       expect(fd).toBe(baseline);
     }, 100_000);

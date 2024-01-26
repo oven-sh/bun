@@ -1528,6 +1528,10 @@ pub const Blob = struct {
                 .path => {
                     const slice = path_.path.slice();
 
+                    if (Environment.isWindows and bun.strings.eqlComptime(slice, "/dev/null")) {
+                        path_.* = .{ .path = .{ .string = bun.PathString.init("\\\\.\\NUL") } };
+                    }
+
                     if (vm.standalone_module_graph) |graph| {
                         if (graph.find(slice)) |file| {
                             defer {

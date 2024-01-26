@@ -2,7 +2,7 @@
 import { describe, expect, it } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
-import { bunEnv, bunExe, gc } from "harness";
+import { bunEnv, bunExe, gc, getMaxFD } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -2010,8 +2010,7 @@ describe("fs/promises", () => {
 
   for (let withFileTypes of [false, true] as const) {
     const doIt = async () => {
-      const maxFD = openSync("/dev/null", "r");
-      closeSync(maxFD);
+      const maxFD = getMaxFD();
       const full = resolve(import.meta.dir, "../");
 
       const pending = new Array(100);
@@ -2032,13 +2031,12 @@ describe("fs/promises", () => {
         expect(results[0]).toContain(relative(full, import.meta.path));
       }
 
-      const newMaxFD = openSync("/dev/null", "r");
-      closeSync(newMaxFD);
+      const newMaxFD = getMaxFD();
       expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
     };
 
     const fail = async () => {
-      const maxFD = openSync("/dev/null", "r");
+      const maxFD = getMaxFD();
       closeSync(maxFD);
 
       const pending = new Array(100);
@@ -2053,7 +2051,7 @@ describe("fs/promises", () => {
         expect(results[i].reason!.path).toBe("/notfound/i/dont/exist/for/sure/" + i);
       }
 
-      const newMaxFD = openSync("/dev/null", "r");
+      const newMaxFD = getMaxFD();
       closeSync(newMaxFD);
       expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
     };

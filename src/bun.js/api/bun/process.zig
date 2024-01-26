@@ -436,7 +436,7 @@ pub const Process = struct {
 
         if (comptime Environment.isLinux) {
             if (this.pidfd != bun.invalid_fd.int()) {
-                _ = bun.sys.close(this.pidfd);
+                _ = bun.sys.close(this.pidfd.int());
                 this.pidfd = @intCast(bun.invalid_fd.int());
             }
         }

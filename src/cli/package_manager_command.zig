@@ -180,12 +180,12 @@ pub const PackageManagerCommand = struct {
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: [bun.MAX_PATH_BYTES]u8 = undefined;
             var fd = pm.getCacheDirectory();
-            var outpath = bun.getFdPath(fd.fd, &dir) catch |err| {
+            const outpath = bun.getFdPath(fd.fd, &dir) catch |err| {
                 Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
                 Global.crash();
             };
 
-            outpath = Path.normalizeString(outpath, true, .auto);
+            // outpath = Path.normalizeString(outpath, true, .auto);
 
             if (pm.options.positionals.len > 1 and strings.eqlComptime(pm.options.positionals[1], "rm")) {
                 fd.close();

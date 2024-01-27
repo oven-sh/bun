@@ -916,6 +916,9 @@ pub fn spawnProcess(
     }
     defer to_close_on_error.clearAndFree();
 
+    attr.set(@intCast(flags)) catch {};
+    attr.resetSignals() catch {};
+
     const stdio_options = .{ options.stdin, options.stdout, options.stderr };
     const stdios = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
 
@@ -939,11 +942,12 @@ pub fn spawnProcess(
                 const idx: usize = comptime if (i == 0) 0 else 1;
                 const theirs = pipe[idx];
                 const ours = pipe[1 - idx];
-                try to_close_at_end.append(theirs);
-                try to_close_on_error.append(ours);
 
                 try actions.dup2(theirs, fileno);
                 try actions.close(ours);
+
+                try to_close_at_end.append(theirs);
+                try to_close_on_error.append(ours);
 
                 stdio.* = ours;
             },

@@ -1095,7 +1095,10 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
-        return std.os.getFdPath(fd, buf);
+        var wide_buf: WPathBuffer = undefined;
+        const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]);
+        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice, true);
+        return buf[0..res.written];
     }
 
     if (comptime Environment.allow_assert) {

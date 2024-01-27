@@ -24,7 +24,6 @@ fn handleToNumber(handle: FDImpl.System) FDImpl.SystemAsInt {
 fn numberToHandle(handle: FDImpl.SystemAsInt) FDImpl.System {
     if (env.os == .windows) {
         if (!@inComptime()) {
-            std.unicode.replacement_character
             std.debug.assert(handle != FDImpl.invalid_value);
         }
         return @ptrFromInt(handle);

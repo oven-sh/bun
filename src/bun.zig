@@ -107,10 +107,10 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
         FDImpl.decode(fd).assertValid();
     }
 
-    pub fn isValid(fd: FileDescriptor) void {
-        FDImpl.decode(fd).isValid();
+    pub fn isValid(fd: FileDescriptor) bool {
+        return FDImpl.decode(fd).isValid();
     }
-    
+
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
         std.debug.assert(FDImpl.decode(fd).kind == kind);
     }

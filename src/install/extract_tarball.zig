@@ -339,6 +339,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         ) catch unreachable;
         return error.InstallFailed;
     };
+    bun.Async.Closer.close(bun.Async.Loop.get(), final_dir.fd);
 
     defer final_dir.close();
     // and get the fd path

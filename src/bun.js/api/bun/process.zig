@@ -180,11 +180,11 @@ pub const Process = struct {
 
     pub fn onExit(this: *Process, status: Status, rusage: *const Rusage) void {
         const exit_handler = this.exit_handler;
-        if (status == .exited or status == .err) {
+        this.status = status;
+
+        if (this.hasExited()) {
             this.detach();
         }
-
-        this.status = status;
 
         exit_handler.call(Process, this, status, rusage);
     }
@@ -318,6 +318,7 @@ pub const Process = struct {
         const watchfd = if (comptime Environment.isLinux) this.pidfd else this.pid;
         const poll = bun.Async.FilePoll.init(this.event_loop, bun.toFD(watchfd), .{}, Process, this);
         this.poller = .{ .fd = poll };
+        this.poller.fd.enableKeepingProcessAlive(this.event_loop);
 
         switch (this.poller.fd.register(
             this.event_loop.loop(),
@@ -325,11 +326,12 @@ pub const Process = struct {
             true,
         )) {
             .result => {
-                this.poller.fd.enableKeepingProcessAlive(this.event_loop);
                 this.ref();
                 return JSC.Maybe(void){ .result = {} };
             },
             .err => |err| {
+                this.poller.fd.disableKeepingProcessAlive(this.event_loop);
+
                 if (err.getErrno() != .SRCH) {
                     @panic("This shouldn't happen");
                 }

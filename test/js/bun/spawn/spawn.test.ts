@@ -585,7 +585,7 @@ describe("spawn unref and kill should not hang", () => {
 });
 
 async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited"]) {
-  console.log("running", order.join(","));
+  console.log("running", order.join(","), "x 100");
   for (let i = 0; i < 100; i++) {
     const proc = spawn({
       cmd: ["sleep", sleep],
@@ -625,31 +625,41 @@ async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited
 }
 
 describe("should not hang", () => {
-  for (let sleep of ["0.001", "0"]) {
-    describe("sleep " + sleep, () => {
-      for (let order of [
-        ["sleep", "kill", "unref", "exited"],
-        ["sleep", "unref", "kill", "exited"],
-        ["kill", "sleep", "unref", "exited"],
-        ["kill", "unref", "sleep", "exited"],
-        ["unref", "sleep", "kill", "exited"],
-        ["unref", "kill", "sleep", "exited"],
-        ["exited", "sleep", "kill", "unref"],
-        ["exited", "sleep", "unref", "kill"],
-        ["exited", "kill", "sleep", "unref"],
-        ["exited", "kill", "unref", "sleep"],
-        ["exited", "unref", "sleep", "kill"],
-        ["exited", "unref", "kill", "sleep"],
-        ["unref", "exited"],
-        ["exited", "unref"],
-        ["kill", "exited"],
-        ["exited"],
-      ]) {
-        const name = order.join(",");
-        const fn = runTest.bind(undefined, sleep, order);
-        it(name, fn);
-      }
-    });
+  for (let sleep of ["0", "0.1"]) {
+    it(
+      "sleep " + sleep,
+      () => {
+        const runs = [];
+        for (let order of [
+          ["sleep", "kill", "unref", "exited"],
+          ["sleep", "unref", "kill", "exited"],
+          ["kill", "sleep", "unref", "exited"],
+          ["kill", "unref", "sleep", "exited"],
+          ["unref", "sleep", "kill", "exited"],
+          ["unref", "kill", "sleep", "exited"],
+          ["exited", "sleep", "kill", "unref"],
+          ["exited", "sleep", "unref", "kill"],
+          ["exited", "kill", "sleep", "unref"],
+          ["exited", "kill", "unref", "sleep"],
+          ["exited", "unref", "sleep", "kill"],
+          ["exited", "unref", "kill", "sleep"],
+          ["unref", "exited"],
+          ["exited", "unref"],
+          ["kill", "exited"],
+          ["exited"],
+        ]) {
+          runs.push(
+            runTest(sleep, order).catch(err => {
+              console.error("For order", JSON.stringify(order, null, 2));
+              throw err;
+            }),
+          );
+        }
+
+        return Promise.all(runs);
+      },
+      128_000,
+    );
   }
 });
 

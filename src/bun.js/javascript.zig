@@ -504,7 +504,7 @@ pub const VirtualMachine = struct {
     hide_bun_stackframes: bool = true,
 
     is_printing_plugin: bool = false,
-
+    is_shutting_down: bool = false,
     plugin_runner: ?PluginRunner = null,
     is_main_thread: bool = false,
     last_reported_error_for_dedupe: JSValue = .zero,
@@ -623,6 +623,10 @@ pub const VirtualMachine = struct {
 
     pub fn isInspectorEnabled(this: *const VirtualMachine) bool {
         return this.debugger != null;
+    }
+
+    pub inline fn isShuttingDown(this: *const VirtualMachine) bool {
+        return this.is_shutting_down;
     }
 
     pub fn setOnException(this: *VirtualMachine, callback: *const OnException) void {

@@ -585,10 +585,10 @@ pub const FilePoll = struct {
             return;
 
         if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
-            event_loop_ctx_.loop().addActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+            event_loop_ctx_.loop().addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
         } else {
             const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
-            event_loop_ctx.platformEventLoop().addActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
+            event_loop_ctx.platformEventLoop().addActive(@as(u32, @intFromBool(!this.flags.contains(.has_incremented_active_count))));
         }
 
         this.flags.insert(.keeps_event_loop_alive);

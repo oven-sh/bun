@@ -4466,7 +4466,7 @@ pub fn NewFIFO(comptime EventLoop: JSC.EventLoopKind) type {
                     }
 
                     if (result == 0) {
-                        return .{ .read = buf[0..0] };
+                        return .{ .done = {} };
                     }
                     return .{ .read = buf[0..result] };
                 },

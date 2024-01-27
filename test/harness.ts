@@ -2,6 +2,7 @@ import { gc as bunGC, unsafe, which } from "bun";
 import { expect } from "bun:test";
 import { readlink, readFile } from "fs/promises";
 import { platform } from "os";
+import { openSync, closeSync } from "node:fs";
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -285,3 +286,27 @@ export async function toBeValidBin(actual: string, expectedLinkPath: string) {
 
   return { pass: await readlink(actual) === expectedLinkPath, message };
 }
+
+export function getMaxFD(): number {
+  if (process.platform === "win32") {
+    return 0;
+  }
+  const maxFD = openSync("/dev/null", "r");
+  closeSync(maxFD);
+  return maxFD;
+}
+
+// This is extremely frowned upon but I think it's easier to deal with than
+// remembering to do this manually everywhere
+declare global {
+  interface Buffer {
+    /**
+     * **INTERNAL USE ONLY, NOT An API IN BUN**
+     */
+    toUnixString(): string;
+  }
+}
+
+Buffer.prototype.toUnixString = function () {
+  return this.toString("utf-8").replaceAll("\r\n", "\n");
+};

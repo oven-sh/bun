@@ -2,7 +2,7 @@
 import { describe, expect, it } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
-import { bunEnv, bunExe, gc } from "harness";
+import { bunEnv, bunExe, gc, getMaxFD } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -48,7 +48,7 @@ import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
-import { SystemError, spawnSync } from "bun";
+import { SystemError, pathToFileURL, spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -582,9 +582,10 @@ describe("promises.readFile", async () => {
 });
 
 it("promises.readFile - UTF16 file path", async () => {
-  const dest = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+  const filename = `superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
     (Math.random() * 1024000) | 0
   }.txt`;
+  const dest = join(tmpdir(), filename);
   await fs.promises.copyFile(import.meta.path, dest);
   const expected = readFileSync(import.meta.path, "utf-8");
   Bun.gc(true);
@@ -595,9 +596,10 @@ it("promises.readFile - UTF16 file path", async () => {
 });
 
 it("promises.readFile - atomized file path", async () => {
-  const destInput = `/tmp/superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+  const filename = `superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
     (Math.random() * 1024000) | 0
   }.txt`;
+  const destInput = join(tmpdir(), filename);
   // Force it to become an atomized string by making it a property access
   const dest: string = (
     {
@@ -727,14 +729,14 @@ it("mkdtempSync() non-exist dir #2568", () => {
   try {
     expect(mkdtempSync("/tmp/hello/world")).toBeFalsy();
   } catch (err: any) {
-    expect(err?.errno).toBe(process.platform === "win32" ? -4058 : -2);
+    expect(err?.errno).toBe(-2);
   }
 });
 
 it("mkdtemp() non-exist dir #2568", done => {
   mkdtemp("/tmp/hello/world", (err, folder) => {
     try {
-      expect(err?.errno).toBe(process.platform === "win32" ? -4058 : -2);
+      expect(err?.errno).toBe(-2);
       expect(folder).toBeUndefined();
       done();
     } catch (e) {
@@ -785,7 +787,9 @@ it("readdirSync throws when given a path that doesn't exist", () => {
     readdirSync(import.meta.path + "/does-not-exist/really");
     throw new Error("should not get here");
   } catch (exception: any) {
-    expect(exception.name).toBe("ENOTDIR");
+    // the correct error to return in this case is actually ENOENT (which we do on windows),
+    // but on posix we return ENOTDIR
+    expect(exception.name).toMatch(/ENOTDIR|ENOENT/);
   }
 });
 
@@ -907,7 +911,7 @@ it("readvSync", () => {
 });
 
 it("preadv", () => {
-  var fd = openSync(`${tmpdir()}/preadv.txt`, "w");
+  var fd = openSync(join(tmpdir(), "preadv.txt"), "w");
   fs.ftruncateSync(fd, 0);
 
   const buf = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
@@ -991,17 +995,18 @@ describe("readFileSync", () => {
     gc();
     const outpath = join(tmpdir(), "read file sync with space characters " + Math.random().toString(32) + " .txt");
     await Bun.write(outpath, Bun.file(Bun.fileURLToPath(new URL("./readFileSync.txt", import.meta.url))));
-    const text = readFileSync(new URL(outpath, import.meta.url), "utf8");
+    // on windows constructing a file url from an absolute path containing a drive letter will not add the "file:///" prefix
+    // node.js has the same behavior, not sure what makes the most sense here
+    const url = isWindows ? new URL("file:///" + outpath) : new URL(outpath, import.meta.url);
+    const text = readFileSync(url, "utf8");
     gc();
     expect(text).toBe("File read successfully");
   });
 
-  it("works with special files in the filesystem", () => {
-    {
-      const text = readFileSync("/dev/null", "utf8");
-      gc();
-      expect(text).toBe("");
-    }
+  it.skipIf(isWindows)("works with special files in the filesystem", () => {
+    const text = readFileSync("/dev/null", "utf8");
+    gc();
+    expect(text).toBe("");
 
     if (process.platform === "linux") {
       const text = readFileSync("/proc/filesystems");
@@ -1062,7 +1067,7 @@ describe("writeFileSync", () => {
     const path = `${tmpdir()}/${Date.now()}.writeFileSyncWithMode.txt`;
     writeFileSync(path, "bun", { mode: 33188 });
     const stat = fs.statSync(path);
-    expect(stat.mode).toBe(process.platform === "win32" ? 33206 : 33188);
+    expect(stat.mode).toBe(isWindows ? 33206 : 33188);
   });
   it("returning Buffer works", () => {
     const buffer = new Buffer([
@@ -1102,7 +1107,7 @@ function triggerDOMJIT(target: fs.Stats, fn: (..._: any[]) => any, result: any) 
 
 describe("lstat", () => {
   it("file metadata is correct", () => {
-    const fileStats = lstatSync(new URL("./fs-stream.js", import.meta.url).toString().slice("file://".length - 1));
+    const fileStats = lstatSync(join(import.meta.dir, "fs-stream.js"));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
     expect(fileStats.isDirectory()).toBe(false);
@@ -1113,7 +1118,8 @@ describe("lstat", () => {
   });
 
   it("folder metadata is correct", () => {
-    const fileStats = lstatSync(new URL("../../../../test", import.meta.url).toString().slice("file://".length - 1));
+    const path = join(import.meta.dir, "../../../../test");
+    const fileStats = lstatSync(path);
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
@@ -1124,7 +1130,9 @@ describe("lstat", () => {
   });
 
   it("symlink metadata is correct", () => {
-    const linkStats = lstatSync(new URL("./fs-stream.link.js", import.meta.url).toString().slice("file://".length - 1));
+    const link = join(tmpdir(), `fs-stream.link${Math.random().toString(32)}.js`);
+    symlinkSync(join(import.meta.dir, "fs-stream.js"), link);
+    const linkStats = lstatSync(link);
     expect(linkStats.isSymbolicLink()).toBe(true);
     expect(linkStats.isFile()).toBe(false);
     expect(linkStats.isDirectory()).toBe(false);
@@ -1189,7 +1197,7 @@ it("realpath async", async () => {
 
 describe("stat", () => {
   it("file metadata is correct", () => {
-    const fileStats = statSync(new URL("./fs-stream.js", import.meta.url).toString().slice("file://".length - 1));
+    const fileStats = statSync(join(import.meta.dir, "fs-stream.js"));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
     expect(fileStats.isDirectory()).toBe(false);
@@ -1200,7 +1208,8 @@ describe("stat", () => {
   });
 
   it("folder metadata is correct", () => {
-    const fileStats = statSync(new URL("../../../../test", import.meta.url).toString().slice("file://".length - 1));
+    const path = join(import.meta.dir, "../../../../test");
+    const fileStats = statSync(path);
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
@@ -2002,22 +2011,22 @@ describe("fs/promises", () => {
   }, 100000);
 
   for (let withFileTypes of [false, true] as const) {
+    const iterCount = 100;
     const doIt = async () => {
-      const maxFD = openSync("/dev/null", "r");
-      closeSync(maxFD);
+      const maxFD = getMaxFD();
       const full = resolve(import.meta.dir, "../");
 
-      const pending = new Array(100);
-      for (let i = 0; i < 100; i++) {
+      const pending = new Array(iterCount);
+      for (let i = 0; i < iterCount; i++) {
         pending[i] = promises.readdir(full, { recursive: true, withFileTypes });
       }
 
       const results = await Promise.all(pending);
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < iterCount; i++) {
         results[i].sort();
       }
       expect(results[0].length).toBeGreaterThan(0);
-      for (let i = 1; i < 100; i++) {
+      for (let i = 1; i < iterCount; i++) {
         expect(results[i]).toEqual(results[0]);
       }
 
@@ -2025,29 +2034,28 @@ describe("fs/promises", () => {
         expect(results[0]).toContain(relative(full, import.meta.path));
       }
 
-      const newMaxFD = openSync("/dev/null", "r");
-      closeSync(newMaxFD);
+      const newMaxFD = getMaxFD();
       expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
     };
 
     const fail = async () => {
-      const maxFD = openSync("/dev/null", "r");
-      closeSync(maxFD);
+      const notfound = isWindows ? "C:\\notfound\\for\\sure" : "/notfound/for/sure";
 
-      const pending = new Array(100);
-      for (let i = 0; i < 100; i++) {
-        pending[i] = promises.readdir("/notfound/i/dont/exist/for/sure/" + i, { recursive: true, withFileTypes });
+      const maxFD = getMaxFD();
+
+      const pending = new Array(iterCount);
+      for (let i = 0; i < iterCount; i++) {
+        pending[i] = promises.readdir(join(notfound, i), { recursive: true, withFileTypes });
       }
 
       const results = await Promise.allSettled(pending);
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < iterCount; i++) {
         expect(results[i].status).toBe("rejected");
         expect(results[i].reason!.code).toBe("ENOENT");
-        expect(results[i].reason!.path).toBe("/notfound/i/dont/exist/for/sure/" + i);
+        expect(results[i].reason!.path).toBe(join(notfound, i));
       }
 
-      const newMaxFD = openSync("/dev/null", "r");
-      closeSync(newMaxFD);
+      const newMaxFD = getMaxFD();
       expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
     };
 
@@ -2325,7 +2333,7 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 
-  it("works after 2038", () => {
+  it.skipIf(isWindows)("works after 2038", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
     const prevStats = fs.statSync(tmp);
@@ -2345,7 +2353,6 @@ describe("utimesSync", () => {
     fs.utimesSync(tmp, newAccessTime, newModifiedTime);
 
     const newStats = fs.statSync(tmp);
-    console.log(newStats);
 
     expect(newStats.mtime).toEqual(newModifiedTime);
     expect(newStats.atime).toEqual(newAccessTime);
@@ -2640,8 +2647,8 @@ it("new Stats", () => {
 });
 
 it("BigIntStats", () => {
-  const withoutBigInt = statSync(__filename, { bigint: false });
-  const withBigInt = statSync(__filename, { bigint: true });
+  const withoutBigInt = statSync(import.meta.path, { bigint: false });
+  const withBigInt = statSync(import.meta.path, { bigint: true });
 
   expect(withoutBigInt.isFile() === withBigInt.isFile()).toBe(true);
   expect(withoutBigInt.isDirectory() === withBigInt.isDirectory()).toBe(true);
@@ -2695,7 +2702,7 @@ it("test syscall errno, issue#4198", () => {
       {
         "darwin": "Operation not permitted",
         "linux": "Is a directory",
-        "windows": "lol",
+        "win32": "Operation not permitted",
       } as any
     )[process.platform],
   );

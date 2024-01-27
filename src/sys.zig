@@ -357,8 +357,28 @@ fn normalizePathWindows(
     path: []const u8,
     buf: *bun.WPathBuffer,
 ) Maybe([:0]const u16) {
-    // TODO this check can be more sophisticated: paths like C:\bun\hello.txt are fine, even though they contain a dot
-    if (!bun.strings.containsChar(path, '.')) {
+    const slash = bun.strings.charIsAnySlash;
+    const ok = brk: {
+        var slash_or_start = true;
+        for (0..path.len) |i| {
+            // if we're starting with a dot or just saw a slash and now a dot
+            if (slash_or_start and path[i] == '.') {
+                // just '.' or ending on '/.'
+                if (i + 1 == path.len) break :brk false;
+                // starting with './' or containing '/./'
+                if (slash(path[i + 1])) break :brk false;
+                if (path.len > i + 2) {
+                    // starting with '../'' or containing '/../'
+                    if (path[i + 1] == '.' and slash(path[i + 2])) break :brk false;
+                }
+            }
+            // two slashes in a row
+            if (slash_or_start and slash(path[i])) break :brk false;
+            slash_or_start = slash(path[i]);
+        }
+        break :brk true;
+    };
+    if (ok) {
         // no need to normalize, proceed normally
         return .{
             .result = bun.strings.toNTPath(buf, path),

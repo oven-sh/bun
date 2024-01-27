@@ -1,9 +1,9 @@
 // @known-failing-on-windows: 1 failing
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
-import { access, mkdir, readlink as readlink, realpath, rm, writeFile, readFile } from "fs/promises";
-import { join, isAbsolute, sep, basename, dirname } from "path";
+import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink } from "harness";
+import { access, mkdir, readlink as readlink, realpath, rm, writeFile } from "fs/promises";
+import { join, sep } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -18,18 +18,7 @@ import {
 } from "./dummy.registry.js";
 
 expect.extend({
-  async toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
-    const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
-
-    if (process.platform === "win32") {
-      // junctions on windows will have an absolute path
-      const pass = isAbsolute(actual) && actual.includes(expectedLinkPath.split("..").at(-1)!);
-      return { pass, message };
-    }
-
-    const pass = actual === expectedLinkPath;
-    return { pass, message };
-  },
+  toBeWorkspaceLink,
   toBeValidBin,
   toHaveBins,
 });
@@ -7814,157 +7803,157 @@ it("should install correct version of peer dependency from root package", async 
   await access(join(package_dir, "bun.lockb"));
 });
 
-// describe("Registry URLs", () => {
-//   // Some of the non failing URLs are invalid, but bun's URL parser ignores
-//   // the validation error and returns a valid serialized URL anyway.
-//   const registryURLs: [url: string, fails: boolean][] = [
-//     ["asdfghjklqwertyuiop", true],
-//     ["                ", true],
-//     ["::::::::::::::::", true],
-//     ["https://ex ample.org/", true],
-//     ["example", true],
-//     ["https://example.com:demo", true],
-//     ["http://[www.example.com]/", true],
-//     ["c:a", true],
-//     ["https://registry.npmjs.org/", false],
-//     ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm/", false], // https://github.com/oven-sh/bun/issues/3899
-//     ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm", false], // https://github.com/oven-sh/bun/issues/5368
-//     // ["", true],
-//     ["https:example.org", false],
-//     ["https://////example.com///", false],
-//     ["https://example.com/https:example.org", false],
-//     ["https://example.com/[]?[]#[]", false],
-//     ["https://example/%?%#%", false],
-//     ["c:", true],
-//     ["c:/", false],
-//     ["https://點看", false], // gets converted to punycode
-//     ["https://xn--c1yn36f/", false],
-//   ];
+describe("Registry URLs", () => {
+  // Some of the non failing URLs are invalid, but bun's URL parser ignores
+  // the validation error and returns a valid serialized URL anyway.
+  const registryURLs: [url: string, fails: boolean][] = [
+    ["asdfghjklqwertyuiop", true],
+    ["                ", true],
+    ["::::::::::::::::", true],
+    ["https://ex ample.org/", true],
+    ["example", true],
+    ["https://example.com:demo", true],
+    ["http://[www.example.com]/", true],
+    ["c:a", true],
+    ["https://registry.npmjs.org/", false],
+    ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm/", false], // https://github.com/oven-sh/bun/issues/3899
+    ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm", false], // https://github.com/oven-sh/bun/issues/5368
+    // ["", true],
+    ["https:example.org", false],
+    ["https://////example.com///", false],
+    ["https://example.com/https:example.org", false],
+    ["https://example.com/[]?[]#[]", false],
+    ["https://example/%?%#%", false],
+    ["c:", true],
+    ["c:/", false],
+    ["https://點看", false], // gets converted to punycode
+    ["https://xn--c1yn36f/", false],
+  ];
 
-//   for (const entry of registryURLs) {
-//     const regURL = entry[0];
-//     const fails = entry[1];
+  for (const entry of registryURLs) {
+    const regURL = entry[0];
+    const fails = entry[1];
 
-//     it(
-//       `should ${fails ? "fail" : "handle"} joining registry and package URLs (${regURL})`,
-//       async () => {
-//         await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+    it(
+      `should ${fails ? "fail" : "handle"} joining registry and package URLs (${regURL})`,
+      async () => {
+        await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
 
-//         await writeFile(
-//           join(package_dir, "package.json"),
-//           JSON.stringify({
-//             name: "foo",
-//             version: "0.0.1",
-//             dependencies: {
-//               notapackage: "0.0.2",
-//             },
-//           }),
-//         );
+        await writeFile(
+          join(package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: {
+              notapackage: "0.0.2",
+            },
+          }),
+        );
 
-//         const { stdout, stderr, exited } = spawn({
-//           cmd: [bunExe(), "install"],
-//           cwd: package_dir,
-//           stdout: null,
-//           stdin: "pipe",
-//           stderr: "pipe",
-//           env,
-//         });
-//         expect(stdout).toBeDefined();
-//         expect(await new Response(stdout).text()).toBeEmpty();
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: package_dir,
+          stdout: null,
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        expect(stdout).toBeDefined();
+        expect(await new Response(stdout).text()).toBeEmpty();
 
-//         expect(stderr).toBeDefined();
-//         const err = await new Response(stderr).text();
+        expect(stderr).toBeDefined();
+        const err = await new Response(stderr).text();
 
-//         if (fails) {
-//           expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
-//           expect(err).toContain("error: InvalidURL");
-//         } else {
-//           expect(err).toContain("error: notapackage@0.0.2 failed to resolve");
-//         }
-//         // fails either way, since notapackage is, well, not a real package.
-//         expect(await exited).not.toBe(0);
-//       },
-//       Infinity,
-//     );
-//   }
+        if (fails) {
+          expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+          expect(err).toContain("error: InvalidURL");
+        } else {
+          expect(err).toContain("error: notapackage@0.0.2 failed to resolve");
+        }
+        // fails either way, since notapackage is, well, not a real package.
+        expect(await exited).not.toBe(0);
+      },
+      Infinity,
+    );
+  }
 
-//   it("shouldn't fail joining invalid registry and package URLs for optional dependencies", async () => {
-//     const regURL = "asdfghjklqwertyuiop";
+  it("shouldn't fail joining invalid registry and package URLs for optional dependencies", async () => {
+    const regURL = "asdfghjklqwertyuiop";
 
-//     await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+    await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
 
-//     await writeFile(
-//       join(package_dir, "package.json"),
-//       JSON.stringify({
-//         name: "foo",
-//         version: "0.0.1",
-//         optionalDependencies: {
-//           notapackage: "0.0.2",
-//         },
-//       }),
-//     );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        optionalDependencies: {
+          notapackage: "0.0.2",
+        },
+      }),
+    );
 
-//     const { stdout, stderr, exited } = spawn({
-//       cmd: [bunExe(), "install"],
-//       cwd: package_dir,
-//       stdout: null,
-//       stdin: "pipe",
-//       stderr: "pipe",
-//       env,
-//     });
-//     expect(stdout).toBeDefined();
-//     expect(await new Response(stdout).text()).not.toBeEmpty();
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stdout).toBeDefined();
+    expect(await new Response(stdout).text()).not.toBeEmpty();
 
-//     expect(stderr).toBeDefined();
-//     const err = await new Response(stderr).text();
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
 
-//     expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
-//     expect(err).toContain("warn: InvalidURL");
+    expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+    expect(err).toContain("warn: InvalidURL");
 
-//     expect(await exited).toBe(0);
-//   });
+    expect(await exited).toBe(0);
+  });
 
-//   // TODO: This test should fail if the param `warn_on_error` is true in
-//   // `(install.zig).NetworkTask.forManifest()`. Unfortunately, that
-//   // code never gets run for peer dependencies unless you do some package
-//   // manifest magic. I doubt it'd ever fail, but having a dedicated
-//   // test would be nice.
-//   test.todo("shouldn't fail joining invalid registry and package URLs for peer dependencies", async () => {
-//     const regURL = "asdfghjklqwertyuiop";
+  // TODO: This test should fail if the param `warn_on_error` is true in
+  // `(install.zig).NetworkTask.forManifest()`. Unfortunately, that
+  // code never gets run for peer dependencies unless you do some package
+  // manifest magic. I doubt it'd ever fail, but having a dedicated
+  // test would be nice.
+  test.todo("shouldn't fail joining invalid registry and package URLs for peer dependencies", async () => {
+    const regURL = "asdfghjklqwertyuiop";
 
-//     await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+    await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
 
-//     await writeFile(
-//       join(package_dir, "package.json"),
-//       JSON.stringify({
-//         name: "foo",
-//         version: "0.0.1",
-//         peerDependencies: {
-//           notapackage: "0.0.2",
-//         },
-//       }),
-//     );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        peerDependencies: {
+          notapackage: "0.0.2",
+        },
+      }),
+    );
 
-//     const { stdout, stderr, exited } = spawn({
-//       cmd: [bunExe(), "install"],
-//       cwd: package_dir,
-//       stdout: null,
-//       stdin: "pipe",
-//       stderr: "pipe",
-//       env,
-//     });
-//     expect(stdout).toBeDefined();
-//     expect(await new Response(stdout).text()).not.toBeEmpty();
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stdout).toBeDefined();
+    expect(await new Response(stdout).text()).not.toBeEmpty();
 
-//     expect(stderr).toBeDefined();
-//     const err = await new Response(stderr).text();
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
 
-//     expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
-//     expect(err).toContain("warn: InvalidURL");
+    expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+    expect(err).toContain("warn: InvalidURL");
 
-//     expect(await exited).toBe(0);
-//   });
-// });
+    expect(await exited).toBe(0);
+  });
+});
 
 it("should handle @scoped name that contains tilde, issue#7045", async () => {
   await writeFile(

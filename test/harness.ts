@@ -1,7 +1,7 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { expect } from "bun:test";
 import { readlink, readFile } from "fs/promises";
-import { platform } from "os";
+import { isAbsolute } from "path";
 import { openSync, closeSync } from "node:fs";
 
 export const bunEnv: NodeJS.ProcessEnv = {
@@ -285,6 +285,19 @@ export async function toBeValidBin(actual: string, expectedLinkPath: string) {
   }
 
   return { pass: await readlink(actual) === expectedLinkPath, message };
+}
+
+export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
+  const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
+
+  if (process.platform === "win32") {
+    // junctions on windows will have an absolute path
+    const pass = isAbsolute(actual) && actual.includes(expectedLinkPath.split("..").at(-1)!);
+    return { pass, message };
+  }
+
+  const pass = actual === expectedLinkPath;
+  return { pass, message };
 }
 
 export function getMaxFD(): number {

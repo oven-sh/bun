@@ -4390,7 +4390,7 @@ it("should report error on invalid format for workspaces", async () => {
   expect(await exited).toBe(1);
 });
 
-it.only("should report error on duplicated workspace packages", async () => {
+it("should report error on duplicated workspace packages", async () => {
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -5570,8 +5570,8 @@ it("should handle tarball path with existing lockfile", async () => {
   ]);
   expect(requested).toBe(4);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-run"]);
-  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "baz", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
+  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
@@ -5631,8 +5631,8 @@ it("should handle tarball path with existing lockfile", async () => {
   ]);
   expect(requested).toBe(8);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-run"]);
-  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "baz", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
+  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({

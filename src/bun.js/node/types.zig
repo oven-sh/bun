@@ -146,7 +146,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @truncate(@intFromEnum(err)),
+                        .errno = translateToErrInt(err),
                         .syscall = syscall,
                     },
                 },
@@ -157,7 +157,7 @@ pub fn Maybe(comptime ResultType: type) type {
             return @This(){
                 // always truncate
                 .err = .{
-                    .errno = @truncate(@intFromEnum(err)),
+                    .errno = translateToErrInt(err),
                     .syscall = syscall,
                 },
             };
@@ -169,7 +169,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @truncate(@intFromEnum(err)),
+                        .errno = translateToErrInt(err),
                         .syscall = syscall,
                         .fd = fd,
                     },
@@ -186,13 +186,21 @@ pub fn Maybe(comptime ResultType: type) type {
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @truncate(@intFromEnum(err)),
+                        .errno = translateToErrInt(err),
                         .syscall = syscall,
                         .path = bun.asByteSlice(path),
                     },
                 },
             };
         }
+    };
+}
+
+fn translateToErrInt(err: anytype) bun.sys.Error.Int {
+    return switch (@TypeOf(err)) {
+        bun.windows.Win32Error => @intFromEnum(bun.windows.translateWinErrorToErrno(err)),
+        bun.windows.NTSTATUS => @intFromEnum(bun.windows.translateNTStatusToErrno(err)),
+        else => @truncate(@intFromEnum(err)),
     };
 }
 

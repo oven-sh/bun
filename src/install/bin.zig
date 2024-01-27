@@ -278,12 +278,14 @@ pub const Bin = extern struct {
         global_bin_dir: std.fs.Dir,
         global_bin_path: stringZ = "",
 
+        relative_path_to_bin_for_windows_global_link_offset: usize = 0,
+
         string_buf: []const u8,
         extern_string_buf: []const ExternalString,
 
         err: ?anyerror = null,
 
-        pub var umask: std.os.mode_t = 0;
+        pub var umask: bun.C.Mode = 0;
 
         var has_set_umask = false;
 
@@ -310,9 +312,9 @@ pub const Bin = extern struct {
             _ = C.fchmodat(folder, target, @intCast(umask | 0o777), 0);
         }
 
-        fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
-            const node_modules = this.package_installed_node_modules.asDir();
-            if (!Environment.isWindows) {
+        fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8, link_global: bool) void {
+            if (comptime !Environment.isWindows) {
+                const node_modules = this.package_installed_node_modules.asDir();
                 std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err| {
                     // Silently ignore PathAlreadyExists if the symlink is valid.
                     // Most likely, the symlink was already created by another package
@@ -346,12 +348,20 @@ pub const Bin = extern struct {
             } else {
                 const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
 
+                const node_modules = if (link_global)
+                    this.global_bin_dir
+                else
+                    this.package_installed_node_modules.asDir();
+
                 var shim_buf: [65536]u8 = undefined;
                 var read_in_buf: [WinBinLinkingShim.Shebang.max_shebang_input_length]u8 = undefined;
                 var filename1_buf: bun.WPathBuffer = undefined;
                 var filename2_buf: bun.WPathBuffer = undefined;
+                var filename3_buf: bun.WPathBuffer = undefined;
 
-                std.debug.assert(strings.hasPrefixComptime(target_path, "..\\"));
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(strings.hasPrefixComptime(target_path, "..\\"));
+                }
 
                 const target_wpath = bun.strings.toWPathNormalized(&filename1_buf, target_path[3..]);
                 var destination_wpath: []u16 = bun.strings.convertUTF8toUTF16InBuffer(&filename2_buf, dest_path);
@@ -385,7 +395,13 @@ pub const Bin = extern struct {
                     const first_content_chunk = contents: {
                         const fd = bun.sys.openatWindows(
                             this.package_installed_node_modules,
-                            target_wpath,
+                            if (link_global)
+                                bun.strings.toWPathNormalized(
+                                    &filename3_buf,
+                                    target_path[this.relative_path_to_bin_for_windows_global_link_offset..],
+                                )
+                            else
+                                target_wpath,
                             std.os.O.RDONLY,
                         ).unwrap() catch |err| {
                             this.err = err;
@@ -502,25 +518,44 @@ pub const Bin = extern struct {
                     return;
                 }
 
-                bun.copy(u8, &target_buf, this.global_bin_path);
-                from_remain = target_buf[this.global_bin_path.len..];
-                from_remain[0] = std.fs.path.sep;
-                from_remain = from_remain[1..];
-                const abs = bun.getFdPath(this.root_node_modules_folder, &dest_buf) catch |err| {
-                    this.err = err;
-                    return;
-                };
-                remain = remain[abs.len..];
-                remain[0] = std.fs.path.sep;
-                remain = remain[1..];
+                if (comptime Environment.isWindows) {
+                    const from = this.global_bin_path;
+                    const to = bun.getFdPath(this.package_installed_node_modules, &dest_buf) catch |err| {
+                        this.err = err;
+                        return;
+                    };
+
+                    const rel = Path.relative(from, to);
+                    @memcpy(remain[0..rel.len], rel);
+                    remain = remain[rel.len..];
+                    remain[0] = std.fs.path.sep;
+                    remain = remain[1..];
+                } else {
+                    bun.copy(u8, &target_buf, this.global_bin_path);
+                    from_remain = target_buf[this.global_bin_path.len..];
+                    from_remain[0] = std.fs.path.sep;
+                    from_remain = from_remain[1..];
+                    const abs = bun.getFdPath(this.root_node_modules_folder, &dest_buf) catch |err| {
+                        this.err = err;
+                        return;
+                    };
+                    remain = remain[abs.len..];
+                    remain[0] = std.fs.path.sep;
+                    remain = remain[1..];
+                }
 
                 this.root_node_modules_folder = bun.toFD(this.global_bin_dir.fd);
+            }
+
+            if (comptime Environment.isWindows and link_global) {
+                this.relative_path_to_bin_for_windows_global_link_offset = dest_buf.len - remain.len;
             }
 
             const name = this.package_name.slice();
             bun.copy(u8, remain, name);
             remain = remain[name.len..];
             remain[0] = std.fs.path.sep;
+
             remain = remain[1..];
 
             switch (this.bin.tag) {
@@ -550,7 +585,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    this.setSymlinkAndPermissions(target_path, dest_path);
+                    this.setSymlinkAndPermissions(target_path, dest_path, link_global);
                 },
                 .named_file => {
                     var target = this.bin.value.named_file[1].slice(this.string_buf);
@@ -570,7 +605,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    this.setSymlinkAndPermissions(target_path, dest_path);
+                    this.setSymlinkAndPermissions(target_path, dest_path, link_global);
                 },
                 .map => {
                     var extern_string_i: u32 = this.bin.value.map.off;
@@ -601,7 +636,7 @@ pub const Bin = extern struct {
                         from_remain[0] = 0;
                         const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                        this.setSymlinkAndPermissions(target_path, dest_path);
+                        this.setSymlinkAndPermissions(target_path, dest_path, link_global);
                     }
                 },
                 .dir => {
@@ -650,7 +685,7 @@ pub const Bin = extern struct {
                                 else
                                     std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 
-                                this.setSymlinkAndPermissions(from_path, to_path);
+                                this.setSymlinkAndPermissions(from_path, to_path, link_global);
                             },
                             else => {},
                         }
@@ -671,7 +706,7 @@ pub const Bin = extern struct {
                 dest_buf[0.."../".len].* = "../".*;
                 remain = dest_buf["../".len..];
             } else {
-                if (this.global_bin_dir.fd >= bun.invalid_fd.int()) {
+                if (bun.toFD(this.global_bin_dir.fd) == bun.invalid_fd) {
                     this.err = error.MissingGlobalBinDir;
                     return;
                 }
@@ -696,10 +731,6 @@ pub const Bin = extern struct {
             remain = remain[name.len..];
             remain[0] = std.fs.path.sep;
             remain = remain[1..];
-
-            if (comptime Environment.isWindows) {
-                @compileError("Bin.Linker.unlink() needs to be updated to generate .cmd files on Windows");
-            }
 
             switch (this.bin.tag) {
                 .none => {

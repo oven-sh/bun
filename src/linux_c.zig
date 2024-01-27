@@ -578,6 +578,8 @@ pub const Mode = u32;
 pub const E = std.os.E;
 pub const S = std.os.S;
 
+pub extern "c" fn umask(Mode) Mode;
+
 pub fn getErrno(rc: anytype) E {
     return std.c.getErrno(rc);
 }

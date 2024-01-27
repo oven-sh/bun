@@ -36,7 +36,7 @@ pub fn uv_get_osfhandle(in: c_int) libuv.uv_os_fd_t {
 
 pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
     const out = libuv.uv_open_osfhandle(in);
-    log("uv_get_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
+    log("uv_open_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
     return out;
 }
 
@@ -76,12 +76,12 @@ pub const FDImpl = packed struct {
         else => System,
     };
 
-    const Value = if (env.os == .windows)
+    pub const Value = if (env.os == .windows)
         packed union { as_system: SystemAsInt, as_uv: UV }
     else
         packed union { as_system: SystemAsInt };
 
-    const Kind = if (env.os == .windows)
+    pub const Kind = if (env.os == .windows)
         enum(u1) { system = 0, uv = 1 }
     else
         enum(u0) { system };
@@ -284,14 +284,41 @@ pub const FDImpl = packed struct {
     }
 
     pub fn format(this: FDImpl, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (!this.isValid()) {
+            try writer.writeAll("[invalid_fd]");
+            return;
+        }
         switch (env.os) {
             else => {
                 try writer.print("{d}", .{this.system()});
             },
             .windows => {
                 switch (this.kind) {
-                    .system => try writer.print("{d}[handle]", .{this.value.as_system}),
-                    .uv => try writer.print("{d}[libuv]", .{this.value.as_system}),
+                    .system => {
+                        if (env.isDebug) {
+                            const peb = std.os.windows.peb();
+                            const handle = this.system();
+                            if (handle == peb.ProcessParameters.hStdInput) {
+                                return try writer.print("{d}[stdin handle]", .{this.value.as_system});
+                            } else if (handle == peb.ProcessParameters.hStdOutput) {
+                                return try writer.print("{d}[stdout handle]", .{this.value.as_system});
+                            } else if (handle == peb.ProcessParameters.hStdError) {
+                                return try writer.print("{d}[stderr handle]", .{this.value.as_system});
+                            } else if (handle == peb.ProcessParameters.CurrentDirectory.Handle) {
+                                return try writer.print("{d}[cwd handle]", .{this.value.as_system});
+                            } else print_with_path: {
+                                var fd_path: bun.WPathBuffer = undefined;
+                                const path = std.os.windows.GetFinalPathNameByHandle(handle, .{ .volume_name = .Dos }, &fd_path) catch break :print_with_path;
+                                return try writer.print("{d}[{}]", .{
+                                    this.value.as_system,
+                                    std.unicode.fmtUtf16le(path),
+                                });
+                            }
+                        }
+
+                        try writer.print("{d}[handle]", .{this.value.as_system});
+                    },
+                    .uv => try writer.print("{d}[libuv]", .{this.value.as_uv}),
                 }
             },
         }

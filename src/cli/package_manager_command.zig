@@ -179,13 +179,16 @@ pub const PackageManagerCommand = struct {
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const fd = pm.getCacheDirectory();
+            var fd = pm.getCacheDirectory();
             const outpath = bun.getFdPath(fd.fd, &dir) catch |err| {
                 Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
                 Global.crash();
             };
 
+            // outpath = Path.normalizeString(outpath, true, .auto);
+
             if (pm.options.positionals.len > 1 and strings.eqlComptime(pm.options.positionals[1], "rm")) {
+                fd.close();
                 std.fs.deleteTreeAbsolute(outpath) catch |err| {
                     Output.prettyErrorln("{s} deleting cache directory", .{@errorName(err)});
                     Global.crash();
@@ -380,8 +383,8 @@ fn printNodeModulesFolderStructure(
 
     for (sorted_dependencies, 0..) |dependency_id, index| {
         const package_name = dependencies[dependency_id].name.slice(string_bytes);
-
-        const possible_path = try std.fmt.allocPrint(allocator, "{s}/{s}/node_modules", .{ directory.relative_path, package_name });
+        const fmt = "{s}" ++ std.fs.path.sep_str ++ "{s}" ++ std.fs.path.sep_str ++ "node_modules";
+        const possible_path = try std.fmt.allocPrint(allocator, fmt, .{ directory.relative_path, package_name });
         defer allocator.free(possible_path);
 
         if (index + 1 == sorted_dependencies.len) {
@@ -394,7 +397,7 @@ fn printNodeModulesFolderStructure(
         while (dir_index < directories.items.len) : (dir_index += 1) {
             // Recursively print node_modules. node_modules is removed from
             // the directories list before traversal.
-            if (strings.eql(possible_path, directories.items[dir_index].relative_path)) {
+            if (strings.eqlLong(possible_path, directories.items[dir_index].relative_path, true)) {
                 found_node_modules = true;
                 const next = directories.orderedRemove(dir_index);
 

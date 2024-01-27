@@ -1,7 +1,7 @@
 // @known-failing-on-windows: 1 failing
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
-import { bunExe, bunEnv as env } from "harness";
+import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
 import { access, mkdir, readlink as readlink, realpath, rm, writeFile, readFile } from "fs/promises";
 import { join, isAbsolute, sep, basename, dirname } from "path";
 import {
@@ -30,33 +30,8 @@ expect.extend({
     const pass = actual === expectedLinkPath;
     return { pass, message };
   },
-
-  async toHaveBins(actual: string[], expectedBins: string[]) {
-    const message = () => `Expected ${actual} to be package bins ${expectedBins}`
-
-    if (process.platform === "win32") {
-      for (var i = 0; i < actual.length; i += 2) {
-        if (!actual[i].includes(expectedBins[i / 2]) || !actual[i + 1].includes(expectedBins[i / 2])) {
-          return { pass: false, message };
-        }
-      }
-      return { pass: true, message };
-    }
-
-    return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
-  },
-
-  async toBeValidBin(actual: string, expectedLinkPath: string) {
-    const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
-
-    if (process.platform === "win32") {
-      const contents = await readFile(actual + ".bunx", "utf16le");
-      const expected = expectedLinkPath.slice(3);
-      return { pass: contents.includes(expected), message };
-    }
-
-    return { pass: await readlink(actual) === expectedLinkPath, message };
-  }
+  toBeValidBin,
+  toHaveBins,
 });
 
 beforeAll(dummyBeforeAll);

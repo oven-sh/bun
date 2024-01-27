@@ -1,5 +1,6 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { expect } from "bun:test";
+import { readlink, readFile } from "fs/promises";
 import { platform } from "os";
 
 export const bunEnv: NodeJS.ProcessEnv = {
@@ -256,4 +257,31 @@ export function ospath(path: string) {
     return path.replace(/\//g, "\\");
   }
   return path;
+}
+
+export async function toHaveBins(actual: string[], expectedBins: string[]) {
+  const message = () => `Expected ${actual} to be package bins ${expectedBins}`
+
+  if (process.platform === "win32") {
+    for (var i = 0; i < actual.length; i += 2) {
+      if (!actual[i].includes(expectedBins[i / 2]) || !actual[i + 1].includes(expectedBins[i / 2])) {
+        return { pass: false, message };
+      }
+    }
+    return { pass: true, message };
+  }
+
+  return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
+}
+
+export async function toBeValidBin(actual: string, expectedLinkPath: string) {
+  const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
+
+  if (process.platform === "win32") {
+    const contents = await readFile(actual + ".bunx", "utf16le");
+    const expected = expectedLinkPath.slice(3);
+    return { pass: contents.includes(expected), message };
+  }
+
+  return { pass: await readlink(actual) === expectedLinkPath, message };
 }

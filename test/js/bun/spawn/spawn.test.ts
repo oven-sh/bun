@@ -4,7 +4,7 @@ import { describe, expect, it } from "bun:test";
 import { gcTick as _gcTick, bunExe, bunEnv } from "harness";
 import { rmSync, writeFileSync } from "node:fs";
 import path from "path";
-
+import { openSync, fstatSync, closeSync } from "fs";
 for (let [gcTick, label] of [
   [_gcTick, "gcTick"],
   // [() => {}, "no gc tick"],
@@ -678,5 +678,76 @@ it("#3480", async () => {
     expect(response.ok);
   } finally {
     server!.stop(true);
+  }
+});
+
+describe("close handling", () => {
+  var testNumber = 0;
+  for (let stdin_ of [() => openSync(import.meta.path, "r"), "ignore", Bun.stdin, undefined as any] as const) {
+    const stdinFn = typeof stdin_ === "function" ? stdin_ : () => stdin_;
+    for (let stdout of [1, "ignore", Bun.stdout, undefined as any] as const) {
+      for (let stderr of [2, "ignore", Bun.stderr, undefined as any] as const) {
+        it(`[ ${typeof stdin_ === "function" ? "fd" : stdin_}, ${stdout}, ${stderr} ]`, async () => {
+          const stdin = stdinFn();
+
+          function getExitPromise() {
+            testNumber++;
+
+            const { exited: proc1Exited } = spawn({
+              cmd: ["echo", "Executing test " + testNumber],
+              stdin,
+              stdout,
+              stderr,
+            });
+
+            const { exited: proc2Exited } = spawn({
+              cmd: ["echo", "Executing test " + testNumber],
+              stdin,
+              stdout,
+              stderr,
+            });
+
+            return Promise.all([proc1Exited, proc2Exited]);
+          }
+
+          // We do this to try to force the GC to finalize the Subprocess objects.
+          await (async function () {
+            let exitPromise = getExitPromise();
+
+            if (typeof stdin === "number") {
+              expect(() => fstatSync(stdin)).not.toThrow();
+            }
+
+            if (typeof stdout === "number") {
+              expect(() => fstatSync(stdout)).not.toThrow();
+            }
+
+            if (typeof stderr === "number") {
+              expect(() => fstatSync(stderr)).not.toThrow();
+            }
+
+            await exitPromise;
+          })();
+          Bun.gc(false);
+          await Bun.sleep(0);
+
+          if (typeof stdin === "number") {
+            expect(() => fstatSync(stdin)).not.toThrow();
+          }
+
+          if (typeof stdout === "number") {
+            expect(() => fstatSync(stdout)).not.toThrow();
+          }
+
+          if (typeof stderr === "number") {
+            expect(() => fstatSync(stderr)).not.toThrow();
+          }
+
+          if (typeof stdin === "number") {
+            closeSync(stdin);
+          }
+        });
+      }
+    }
   }
 });

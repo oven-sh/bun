@@ -1498,8 +1498,8 @@ pub const Subprocess = struct {
                     }
                     return Writable{ .buffered_input = buffered_input };
                 },
-                .memfd => {
-                    return Writable{ .memfd = stdio.memfd };
+                .memfd => |memfd| {
+                    return Writable{ .memfd = memfd };
                 },
                 .fd => |fd| {
                     return Writable{ .fd = fd };
@@ -1549,12 +1549,13 @@ pub const Subprocess = struct {
                     }
                     return Writable{ .buffered_input = buffered_input };
                 },
-                .memfd => {
-                    return Writable{ .memfd = stdio.memfd };
+                .memfd => |memfd| {
+                    std.debug.assert(memfd != bun.invalid_fd);
+                    return Writable{ .memfd = memfd };
                 },
-                .fd => {
-                    std.debug.assert(fd != bun.invalid_fd);
-                    return Writable{ .fd = fd };
+                .fd => |fd_to_use| {
+                    std.debug.assert(fd_to_use != bun.invalid_fd);
+                    return Writable{ .fd = fd_to_use };
                 },
                 .inherit => {
                     return Writable{ .inherit = {} };
@@ -1584,7 +1585,7 @@ pub const Subprocess = struct {
                 .pipe_to_readable_stream => |*pipe_to_readable_stream| {
                     _ = pipe_to_readable_stream.pipe.end(null);
                 },
-                inline .memfd, .fd => |fd| {
+                .memfd => |fd| {
                     _ = bun.sys.close(fd);
                     this.* = .{ .ignore = {} };
                 },
@@ -1592,7 +1593,7 @@ pub const Subprocess = struct {
                     this.buffered_input.deinit();
                 },
                 .ignore => {},
-                .inherit => {},
+                .fd, .inherit => {},
             };
         }
 
@@ -2776,6 +2777,14 @@ pub const Subprocess = struct {
             const fd = value.asFileDescriptor();
             if (fd.int() < 0) {
                 globalThis.throwInvalidArguments("file descriptor must be a positive integer", .{});
+                return false;
+            }
+
+            if (fd.int() >= std.math.maxInt(i32)) {
+                var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+                globalThis.throwInvalidArguments("file descriptor must be a valid integer, received: {}", .{
+                    value.toFmt(globalThis, &formatter),
+                });
                 return false;
             }
 

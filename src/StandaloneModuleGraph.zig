@@ -1,14 +1,16 @@
-// Originally, we tried using LIEF to inject the module graph into a MachO segment
-// But this incurred a fixed 350ms overhead on every build, which is unacceptable
-// so we give up on codesigning support on macOS for now until we can find a better solution
+//! Originally, we tried using LIEF to inject the module graph into a MachO segment
+//! But this incurred a fixed 350ms overhead on every build, which is unacceptable
+//! so we give up on codesigning support on macOS for now until we can find a better solution
 const bun = @import("root").bun;
 const std = @import("std");
 const Schema = bun.Schema.Api;
 const strings = bun.strings;
-
+const Output = bun.Output;
+const Global = bun.Global;
 const Environment = bun.Environment;
-
 const Syscall = bun.sys;
+
+const w = std.os.windows;
 
 pub const StandaloneModuleGraph = struct {
     bytes: []const u8 = "",
@@ -252,6 +254,40 @@ pub const StandaloneModuleGraph = struct {
             self_buf[self_exe.len] = 0;
             const self_exeZ = self_buf[0..self_exe.len :0];
 
+            if (comptime Environment.isWindows) {
+                // copy self and then open it for writing
+
+                var in_buf: bun.WPathBuffer = undefined;
+                strings.copyU8IntoU16(&in_buf, self_exeZ);
+                in_buf[self_exe.len] = 0;
+                const in = in_buf[0..self_exe.len :0];
+                var out_buf: bun.WPathBuffer = undefined;
+                strings.copyU8IntoU16(&out_buf, zname);
+                out_buf[zname.len] = 0;
+                const out = out_buf[0..zname.len :0];
+
+                bun.copyFile(in, out) catch |err| {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
+                    Global.exit(1);
+                };
+
+                const file = bun.sys.ntCreateFile(
+                    bun.invalid_fd,
+                    out,
+                    // access_mask
+                    w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+                    // create disposition
+                    w.FILE_OPEN,
+                    // create options
+                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                ).unwrap() catch |e| {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{e});
+                    Global.exit(1);
+                };
+
+                break :brk file;
+            }
+
             if (comptime Environment.isMac) {
                 // if we're on a mac, use clonefile() if we can
                 // failure is okay, clonefile is just a fast path.
@@ -296,12 +332,12 @@ pub const StandaloneModuleGraph = struct {
                                 switch (err.getErrno()) {
                                     // try again
                                     .PERM, .AGAIN, .BUSY => continue,
-                                    else => {},
+                                    else => break,
                                 }
-                            }
 
-                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{err});
-                            Global.exit(1);
+                                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{err});
+                                Global.exit(1);
+                            }
                         },
                     }
                 }
@@ -331,66 +367,60 @@ pub const StandaloneModuleGraph = struct {
 
             defer _ = Syscall.close(self_fd);
 
-            if (comptime Environment.isWindows) {
-                var in_buf: bun.WPathBuffer = undefined;
-                strings.copyU8IntoU16(&in_buf, self_exeZ);
-                const in = in_buf[0..self_exe.len :0];
-                var out_buf: bun.WPathBuffer = undefined;
-                strings.copyU8IntoU16(&out_buf, zname);
-                const out = out_buf[0..zname.len :0];
-
-                bun.copyFile(in, out) catch |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
-                    cleanup(zname, fd);
-                    Global.exit(1);
-                };
-            } else {
-                bun.copyFile(self_fd.cast(), fd.cast()) catch |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
-                    cleanup(zname, fd);
-                    Global.exit(1);
-                };
-            }
+            bun.copyFile(self_fd.cast(), fd.cast()) catch |err| {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
+                cleanup(zname, fd);
+                Global.exit(1);
+            };
             break :brk fd;
         };
 
-        const seek_position = @as(u64, @intCast(brk: {
-            const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
-                .result => |res| res,
+        var total_byte_count: usize = undefined;
+
+        if (Environment.isWindows) {
+            total_byte_count = bytes.len + 8 + (Syscall.setFileOffsetToEndWindows(cloned_executable_fd).unwrap() catch |err| {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to seek to end of temporary file\n{}", .{err});
+                cleanup(zname, cloned_executable_fd);
+                Global.exit(1);
+            });
+        } else {
+            const seek_position = @as(u64, @intCast(brk: {
+                const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
+                    .result => |res| res,
+                    .err => |err| {
+                        Output.prettyErrorln("{}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    },
+                };
+
+                break :brk @max(fstat.size, 0);
+            }));
+
+            total_byte_count = seek_position + bytes.len + 8;
+
+            // From https://man7.org/linux/man-pages/man2/lseek.2.html
+            //
+            //  lseek() allows the file offset to be set beyond the end of the
+            //  file (but this does not change the size of the file).  If data is
+            //  later written at this point, subsequent reads of the data in the
+            //  gap (a "hole") return null bytes ('\0') until data is actually
+            //  written into the gap.
+            //
+            switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
                 .err => |err| {
-                    Output.prettyErrorln("{}", .{err});
+                    Output.prettyErrorln(
+                        "{}\nwhile seeking to end of temporary file (pos: {d})",
+                        .{
+                            err,
+                            seek_position,
+                        },
+                    );
                     cleanup(zname, cloned_executable_fd);
                     Global.exit(1);
                 },
-            };
-
-            break :brk @max(fstat.size, 0);
-        }));
-
-        const total_byte_count = seek_position + bytes.len + 8;
-
-        // From https://man7.org/linux/man-pages/man2/lseek.2.html
-        //
-        //  lseek() allows the file offset to be set beyond the end of the
-        //  file (but this does not change the size of the file).  If data is
-        //  later written at this point, subsequent reads of the data in the
-        //  gap (a "hole") return null bytes ('\0') until data is actually
-
-        //  written into the gap.
-        //
-        switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
-            .err => |err| {
-                Output.prettyErrorln(
-                    "{}\nwhile seeking to end of temporary file (pos: {d})",
-                    .{
-                        err,
-                        seek_position,
-                    },
-                );
-                cleanup(zname, cloned_executable_fd);
-                Global.exit(1);
-            },
-            else => {},
+                else => {},
+            }
         }
 
         var remain = bytes;
@@ -415,11 +445,50 @@ pub const StandaloneModuleGraph = struct {
         return cloned_executable_fd;
     }
 
-    pub fn toExecutable(allocator: std.mem.Allocator, output_files: []const bun.options.OutputFile, root_dir: std.fs.Dir, module_prefix: []const u8, outfile: []const u8) !void {
+    pub fn toExecutable(
+        allocator: std.mem.Allocator,
+        output_files: []const bun.options.OutputFile,
+        root_dir: std.fs.Dir,
+        module_prefix: []const u8,
+        outfile: []const u8,
+    ) !void {
         const bytes = try toBytes(allocator, module_prefix, output_files);
         if (bytes.len == 0) return;
 
         const fd = inject(bytes);
+        fd.assertKind(.system);
+
+        if (Environment.isWindows) {
+            var outfile_buf: bun.OSPathBuffer = undefined;
+            const outfile_slice = brk: {
+                const outfile_w = bun.strings.toWPathNormalized(&outfile_buf, std.fs.path.basenameWindows(outfile));
+                std.debug.assert(outfile_w.ptr == &outfile_buf);
+                const outfile_buf_u16 = bun.reinterpretSlice(u16, &outfile_buf);
+                if (!bun.strings.endsWithComptime(outfile, ".exe")) {
+                    // append .exe
+                    const suffix = comptime bun.strings.w(".exe");
+                    @memcpy(outfile_buf_u16[outfile_w.len..][0..suffix.len], suffix);
+                    outfile_buf_u16[outfile_w.len + suffix.len] = 0;
+                    break :brk outfile_buf_u16[0 .. outfile_w.len + suffix.len :0];
+                }
+                outfile_buf_u16[outfile_w.len] = 0;
+                break :brk outfile_buf_u16[0..outfile_w.len :0];
+            };
+
+            bun.C.moveOpenedFileAtLoose(fd, bun.toFD(root_dir.fd), outfile_slice, true).unwrap() catch |err| {
+                if (err == error.EISDIR) {
+                    Output.errGeneric("{} is a directory. Please choose a different --outfile or delete the directory", .{std.unicode.fmtUtf16le(outfile_slice)});
+                } else {
+                    Output.err(err, "failed to move executable to result path", .{});
+                }
+
+                _ = bun.C.deleteOpenedFile(fd);
+
+                Global.exit(1);
+            };
+            return;
+        }
+
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const temp_location = bun.getFdPath(fd, &buf) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get path for fd: {s}", .{@errorName(err)});
@@ -449,11 +518,6 @@ pub const StandaloneModuleGraph = struct {
             }
         }
 
-        if (comptime Environment.isWindows) {
-            Output.prettyError("TODO: windows support. sorry!!\n", .{});
-            Global.exit(1);
-        }
-
         bun.C.moveFileZWithHandle(
             fd,
             bun.toFD(std.fs.cwd().fd),
@@ -475,7 +539,7 @@ pub const StandaloneModuleGraph = struct {
     }
 
     pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {
-        const self_exe = (openSelfExe(.{}) catch null) orelse return null;
+        const self_exe = bun.toLibUVOwnedFD(openSelf() catch return null);
         defer _ = Syscall.close(self_exe);
 
         var trailer_bytes: [4096]u8 = undefined;
@@ -569,75 +633,103 @@ pub const StandaloneModuleGraph = struct {
         return try StandaloneModuleGraph.fromBytes(allocator, to_read, offsets);
     }
 
-    // this is based on the Zig standard library function, except it accounts for
-    fn openSelfExe(flags: std.fs.File.OpenFlags) std.fs.OpenSelfExeError!?bun.FileDescriptor {
-        // heuristic: `bun build --compile` won't be supported if the name is "bun" or "bunx".
-        // this is a cheap way to avoid the extra overhead of opening the executable
-        // and also just makes sense.
-        const argv = bun.argv();
-        if (argv.len > 0) {
-            // const argv0_len = bun.len(argv[0]);
-            const argv0 = argv[0];
-            if (argv0.len > 0) {
-                if (argv0.len == 3) {
-                    if (bun.strings.eqlComptimeIgnoreLen(argv0, "bun")) {
-                        return null;
-                    }
-                }
+    const exe_suffix = if (Environment.isWindows) ".exe" else "";
 
-                if (comptime Environment.isDebug) {
-                    if (bun.strings.eqlComptime(argv0, "bun-debug")) {
-                        return null;
-                    }
-                }
+    fn isBuiltInExe(argv0: []const u8) bool {
+        if (argv0.len == 0) return false;
 
-                if (argv0.len == 4) {
-                    if (bun.strings.eqlComptimeIgnoreLen(argv0, "bunx")) {
-                        return null;
-                    }
-                }
+        if (argv0.len == 3) {
+            if (bun.strings.eqlComptimeIgnoreLen(argv0, "bun" ++ exe_suffix)) {
+                return true;
+            }
+        }
 
-                if (comptime Environment.isDebug) {
-                    if (bun.strings.eqlComptime(argv0, "bun-debugx")) {
-                        return null;
-                    }
+        if (argv0.len == 4) {
+            if (bun.strings.eqlComptimeIgnoreLen(argv0, "bunx" ++ exe_suffix)) {
+                return true;
+            }
+
+            if (bun.strings.eqlComptimeIgnoreLen(argv0, "node" ++ exe_suffix)) {
+                return true;
+            }
+        }
+
+        if (comptime Environment.isDebug) {
+            if (bun.strings.eqlComptime(argv0, "bun-debug")) {
+                return true;
+            }
+            if (bun.strings.eqlComptime(argv0, "bun-debugx")) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    fn openSelf() std.fs.OpenSelfExeError!bun.FileDescriptor {
+        // heuristic: `bun build --compile` won't be supported if the name is "bun", "bunx", or "node".
+        // this is a cheap way to avoid the extra overhead
+        // of opening the executable and also just makes sense.
+        if (!Environment.isWindows) {
+            const argv = bun.argv();
+            if (argv.len > 0) {
+                if (isBuiltInExe(argv[0])) {
+                    return error.FileNotFound;
                 }
             }
         }
 
-        if (comptime Environment.isLinux) {
-            if (std.fs.openFileAbsoluteZ("/proc/self/exe", flags)) |easymode| {
-                return bun.toFD(easymode.handle);
-            } else |_| {
-                if (bun.argv().len > 0) {
-                    // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
-                    var whichbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    if (bun.which(
-                        &whichbuf,
-                        bun.getenvZ("PATH") orelse return error.FileNotFound,
-                        "",
-                        bun.argv()[0],
-                    )) |path| {
-                        return bun.toFD((try std.fs.cwd().openFileZ(path, flags)).handle);
+        switch (Environment.os) {
+            .linux => {
+                if (std.fs.openFileAbsoluteZ("/proc/self/exe", .{})) |easymode| {
+                    return bun.toFD(easymode.handle);
+                } else |_| {
+                    if (bun.argv().len > 0) {
+                        // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
+                        var whichbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        if (bun.which(
+                            &whichbuf,
+                            bun.getenvZ("PATH") orelse return error.FileNotFound,
+                            "",
+                            bun.argv()[0],
+                        )) |path| {
+                            return bun.toFD((try std.fs.cwd().openFileZ(path, .{})).handle);
+                        }
                     }
+
+                    return error.FileNotFound;
                 }
+            },
+            .mac => {
+                // Use of MAX_PATH_BYTES here is valid as the resulting path is immediately
+                // opened with no modification.
+                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const self_exe_path = try std.fs.selfExePath(&buf);
+                buf[self_exe_path.len] = 0;
+                const file = try std.fs.openFileAbsoluteZ(buf[0..self_exe_path.len :0].ptr, .{});
+                return bun.toFD(file.handle);
+            },
+            .windows => {
+                const image_path_unicode_string = std.os.windows.peb().ProcessParameters.ImagePathName;
+                const image_path = image_path_unicode_string.Buffer[0 .. image_path_unicode_string.Length / 2];
 
-                return error.FileNotFound;
-            }
-        }
+                var nt_path_buf: bun.WPathBuffer = undefined;
+                const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);
 
-        if (comptime Environment.isWindows) {
-            return bun.toFD((try std.fs.openSelfExe(flags)).handle);
+                return bun.sys.ntCreateFile(
+                    bun.invalid_fd,
+                    nt_path,
+                    // access_mask
+                    w.SYNCHRONIZE | w.GENERIC_READ,
+                    // create disposition
+                    w.FILE_OPEN,
+                    // create options
+                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                ).unwrap() catch {
+                    return error.FileNotFound;
+                };
+            },
+            else => @compileError("TODO"),
         }
-        // Use of MAX_PATH_BYTES here is valid as the resulting path is immediately
-        // opened with no modification.
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const self_exe_path = try std.fs.selfExePath(&buf);
-        buf[self_exe_path.len] = 0;
-        const file = try std.fs.openFileAbsoluteZ(buf[0..self_exe_path.len :0].ptr, flags);
-        return @enumFromInt(file.handle);
     }
 };
-
-const Output = bun.Output;
-const Global = bun.Global;

@@ -591,6 +591,7 @@ pub fn build_(b: *Build) !void {
         \\For more info, see https://bun.sh/docs/project/contributing
         \\
     });
+
     b.default_step.dependOn(&mistake_message.step);
 }
 

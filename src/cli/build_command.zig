@@ -350,6 +350,7 @@ pub const BuildCommand = struct {
                         );
 
                         Output.flush();
+
                         try bun.StandaloneModuleGraph.toExecutable(
                             allocator,
                             output_files,
@@ -371,8 +372,9 @@ pub const BuildCommand = struct {
 
                         Output.printElapsedStdoutTrim(@as(f64, @floatFromInt(compiled_elapsed)));
 
-                        Output.prettyln(" <green>compile<r>  <b><blue>{s}<r>", .{
+                        Output.prettyln(" <green>compile<r>  <b><blue>{s}{s}<r>", .{
                             outfile,
+                            if (Environment.isWindows and !strings.hasSuffixComptime(outfile, ".exe")) ".exe" else "",
                         });
 
                         break :dump;

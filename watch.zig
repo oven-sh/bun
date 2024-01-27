@@ -1,5 +1,93 @@
 const std = @import("std");
 
+pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    if (!std.fs.path.isAbsoluteWindows(utf8)) {
+        return toWPathNormalized(wbuf, utf8);
+    }
+
+    wbuf[0..4].* = [_]u16{ '\\', '?', '?', '\\' };
+    return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
+}
+
+// These are the same because they don't have rules like needing a trailing slash
+pub const toNTDir = toNTPath;
+
+pub fn toExtendedPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    std.debug.assert(wbuf.len > 4);
+    wbuf[0..4].* = [_]u16{ '\\', '\\', '?', '\\' };
+    return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
+}
+
+pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    if (std.fs.path.isAbsoluteWindows(utf8)) {
+        return toExtendedPathNormalized(wbuf, utf8);
+    }
+
+    return toWPathNormalized(wbuf, utf8);
+}
+
+pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    var renormalized: []u8 = undefined;
+    var path_to_use = utf8;
+
+    if (std.mem.indexOfScalar(u8, utf8, '/') != null) {
+        @memcpy(renormalized[0..utf8.len], utf8);
+        for (renormalized[0..utf8.len]) |*c| {
+            if (c.* == '/') {
+                c.* = '\\';
+            }
+        }
+        path_to_use = renormalized[0..utf8.len];
+    }
+
+    // is there a trailing slash? Let's remove it before converting to UTF-16
+    if (path_to_use.len > 3 and path_to_use[path_to_use.len - 1] == '\\') {
+        path_to_use = path_to_use[0 .. path_to_use.len - 1];
+    }
+
+    return toWPath(wbuf, path_to_use);
+}
+
+pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    var renormalized: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var path_to_use = utf8;
+
+    if (std.mem.indexOfScalar(u8, utf8, '.') != null) {
+        @memcpy(renormalized[0..utf8.len], utf8);
+        for (renormalized[0..utf8.len]) |*c| {
+            if (c.* == '/') {
+                c.* = '\\';
+            }
+        }
+        path_to_use = renormalized[0..utf8.len];
+    }
+
+    return toWDirPath(wbuf, path_to_use);
+}
+
+pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    return toWPathMaybeDir(wbuf, utf8, false);
+}
+
+pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
+    return toWPathMaybeDir(wbuf, utf8, true);
+}
+
+pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u16 {
+    std.debug.assert(wbuf.len > 0);
+
+    const count = std.unicode.utf8ToUtf16Le(wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool(add_trailing_lash)))], utf8) catch unreachable;
+
+    if (add_trailing_lash and count > 0 and wbuf[count - 1] != '\\') {
+        wbuf[count] = '\\';
+        count += 1;
+    }
+
+    wbuf[count] = 0;
+
+    return wbuf[0..count :0];
+}
+
 pub const WindowsWatcher = struct {
     iocp: w.HANDLE,
     allocator: std.mem.Allocator,
@@ -14,6 +102,7 @@ pub const WindowsWatcher = struct {
         overlapped: w.OVERLAPPED = undefined,
         buf: [64 * 1024]u8 align(@alignOf(w.FILE_NOTIFY_INFORMATION)) = undefined,
         dirHandle: w.HANDLE,
+        watch_subtree: w.BOOLEAN = 1,
 
         fn handleEvent(this: *DirWatcher, nbytes: w.DWORD) void {
             if (nbytes == 0) return;
@@ -22,12 +111,21 @@ pub const WindowsWatcher = struct {
                 const info_size = @sizeOf(w.FILE_NOTIFY_INFORMATION);
                 const info: *w.FILE_NOTIFY_INFORMATION = @alignCast(@ptrCast(this.buf[offset..].ptr));
                 const name_ptr: [*]u16 = @alignCast(@ptrCast(this.buf[offset + info_size ..]));
-                const filename: []u16 = name_ptr[0..info.FileNameLength];
+                const filename: []u16 = name_ptr[0 .. info.FileNameLength / @sizeOf(u16)];
 
                 std.debug.print("filename: {}, action: {}\n", .{ std.unicode.fmtUtf16le(filename), info.Action });
 
                 if (info.NextEntryOffset == 0) break;
                 offset += @as(usize, info.NextEntryOffset);
+            }
+        }
+
+        fn listen(this: *DirWatcher) !void {
+            const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_SIZE | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION | w.FILE_NOTIFY_CHANGE_SECURITY;
+            if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, this.watch_subtree, filter, null, &this.overlapped, null) == 0) {
+                const err = w.kernel32.GetLastError();
+                std.debug.print("failed to start watching directory: {s}\n", .{@tagName(err)});
+                @panic("failed to start watching directory");
             }
         }
     };
@@ -44,22 +142,68 @@ pub const WindowsWatcher = struct {
         return watcher;
     }
 
-    pub fn addWatchedDirectory(this: *WindowsWatcher, path: [:0]u16) !void {
+    pub fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: [:0]const u16) !void {
+        _ = dirFd; // autofix
         // TODO respect dirFd
-        const handle = w.kernel32.CreateFileW(
-            path,
-            w.FILE_LIST_DIRECTORY,
+        // const flags = w.STANDARD_RIGHTS_READ | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA |
+        //     w.FILE_TRAVERSE | w.FILE_LIST_DIRECTORY;
+        const flags = w.FILE_LIST_DIRECTORY;
+
+        const path_len_bytes: u16 = @truncate(path.len * 2);
+        var nt_name = w.UNICODE_STRING{
+            .Length = path_len_bytes,
+            .MaximumLength = path_len_bytes,
+            .Buffer = @constCast(path.ptr),
+        };
+        var attr = w.OBJECT_ATTRIBUTES{
+            .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+            .RootDirectory = null,
+            // if (std.fs.path.isAbsoluteWindowsW(path))
+            //     null
+            // else if (dirFd == w.INVALID_HANDLE_VALUE)
+            //     std.fs.cwd().fd
+            // else
+            //     dirFd,
+            .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+            .ObjectName = &nt_name,
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        };
+        var handle: w.HANDLE = w.INVALID_HANDLE_VALUE;
+        var io: w.IO_STATUS_BLOCK = undefined;
+        const rc = w.ntdll.NtCreateFile(
+            &handle,
+            flags,
+            &attr,
+            &io,
+            null,
+            0,
             w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
+            w.FILE_OPEN,
+            w.FILE_DIRECTORY_FILE | w.FILE_OPEN_FOR_BACKUP_INTENT,
             null,
-            w.OPEN_EXISTING,
-            w.FILE_FLAG_BACKUP_SEMANTICS | w.FILE_FLAG_OVERLAPPED,
-            null,
+            0,
         );
-        if (handle == w.INVALID_HANDLE_VALUE) {
+
+        if (rc != .SUCCESS) {
+            std.debug.print("failed to open directory for watching: {s}\n", .{@tagName(rc)});
             @panic("failed to open directory for watching");
         }
-        // TODO check if this is a directory
-        {}
+
+        // const handle = w.kernel32.CreateFileW(
+        //     path,
+        //     w.FILE_LIST_DIRECTORY,
+        //     w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
+        //     null,
+        //     w.OPEN_EXISTING,
+        //     w.FILE_FLAG_BACKUP_SEMANTICS | w.FILE_FLAG_OVERLAPPED,
+        //     null,
+        // );
+        // if (handle == w.INVALID_HANDLE_VALUE) {
+        //     @panic("failed to open directory for watching");
+        // }
+        // // TODO check if this is a directory
+        // {}
 
         errdefer _ = w.kernel32.CloseHandle(handle);
 
@@ -71,11 +215,7 @@ pub const WindowsWatcher = struct {
         errdefer this.allocator.destroy(watcher);
         watcher.* = .{ .dirHandle = handle };
         // try this.watchers.put(key, watcher);
-
-        const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_SIZE | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION | w.FILE_NOTIFY_CHANGE_SECURITY;
-        if (w.kernel32.ReadDirectoryChangesW(handle, &watcher.buf, watcher.buf.len, 0, filter, null, null, null) == 0) {
-            @panic("failed to start watching directory");
-        }
+        try watcher.listen();
     }
 
     pub fn stop(this: *WindowsWatcher) void {
@@ -100,6 +240,7 @@ pub const WindowsWatcher = struct {
 
             const watcher: *DirWatcher = @ptrCast(overlapped);
             watcher.handleEvent(nbytes);
+            try watcher.listen();
 
             if (@atomicLoad(bool, &this.running, .Unordered) == false) {
                 break;
@@ -111,15 +252,18 @@ pub const WindowsWatcher = struct {
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
-    var buf: [256]u16 = undefined;
-    const idx = try std.unicode.utf8ToUtf16Le(&buf, "C:\\bun");
-    buf[idx] = 0;
-    const path = buf[0..idx :0];
+    var buf: [std.fs.MAX_PATH_BYTES]u16 = undefined;
+    const path = toNTPath(&buf, "C:\\bun\\");
+    // const idx = try std.unicode.utf8ToUtf16Le(&buf, "C:\\bun\\");
+    // buf[idx] = 0;
+    // const path = buf[0..idx :0];
 
-    std.debug.print("watching {}\n", .{std.unicode.fmtUtf16le(path)});
+    std.debug.print("directory: {}\n", .{std.unicode.fmtUtf16le(path)});
 
     const watcher = try WindowsWatcher.init(allocator);
-    try watcher.addWatchedDirectory(path);
+    try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, path);
+
+    std.debug.print("watching...\n", .{});
 
     try watcher.run();
 }

@@ -149,7 +149,6 @@ it("should reject invalid path without segfault", async () => {
   );
   const add_path = relative(package_dir, add_dir);
   const dep = `file://${add_path}`.replace(/\\/g, "\\\\");
-  console.log("dep:", dep);
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", dep],
     cwd: package_dir,

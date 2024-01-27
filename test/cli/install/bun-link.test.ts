@@ -3,7 +3,7 @@ import { spawn, file } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
 import { access, mkdtemp, readlink, realpath, rm, writeFile, mkdir } from "fs/promises";
-import  { basename, join, sep, dirname } from "path";
+import { basename, join, sep, dirname } from "path";
 import { tmpdir } from "os";
 import {
   dummyAfterAll,
@@ -22,7 +22,7 @@ let link_dir: string;
 expect.extend({
   toBeValidBin,
   toHaveBins,
-})
+});
 
 beforeEach(async () => {
   link_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-link.test"));
@@ -466,9 +466,7 @@ it("should link dependency without crashing", async () => {
   expect(await exited2).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", link_name].sort());
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins([link_name]);
-  expect(join(package_dir, "node_modules", ".bin", link_name)).toBeValidBin(
-    join("..", link_name, `${link_name}.js`),
-  );
+  expect(join(package_dir, "node_modules", ".bin", link_name)).toBeValidBin(join("..", link_name, `${link_name}.js`));
   expect(await readdirSorted(join(package_dir, "node_modules", link_name))).toEqual(
     ["package.json", `${link_name}.js`].sort(),
   );

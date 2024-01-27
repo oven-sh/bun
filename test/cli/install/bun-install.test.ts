@@ -2175,7 +2175,7 @@ it("should prefer latest-tagged dependency", async () => {
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
@@ -2370,7 +2370,7 @@ it("should handle dependency aliasing", async () => {
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "Bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "Bar", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "Bar", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
     name: "baz",
@@ -2427,7 +2427,7 @@ it("should handle dependency aliasing (versioned)", async () => {
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "Bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "Bar", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "Bar", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
     name: "baz",
@@ -2484,7 +2484,7 @@ it("should handle dependency aliasing (dist-tagged)", async () => {
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "Bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "Bar", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "Bar", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
     name: "baz",
@@ -2545,7 +2545,7 @@ it("should not reinstall aliased dependencies", async () => {
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "Bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "Bar", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "Bar", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
     name: "baz",
@@ -2583,7 +2583,7 @@ it("should not reinstall aliased dependencies", async () => {
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "Bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "Bar", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "Bar", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
     name: "baz",
@@ -2653,7 +2653,7 @@ it("should handle aliased & direct dependency references", async () => {
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
@@ -2740,7 +2740,7 @@ it("should not hoist if name collides with alias", async () => {
   expect(requested).toBe(4);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "bar", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "bar", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
     name: "baz",
@@ -3054,7 +3054,7 @@ it("should handle aliased dependency with existing lockfile", async () => {
   expect(requested).toBe(6);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "baz", "moz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
     name: "bar",
@@ -3113,7 +3113,7 @@ it("should handle aliased dependency with existing lockfile", async () => {
   expect(requested).toBe(9);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "baz", "moz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
     name: "bar",
@@ -3526,9 +3526,7 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-  expect((join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBeValidBin(
-    join("..", "uglify", "bin", "uglifyjs"),
-  );
+  expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(join("..", "uglify", "bin", "uglifyjs"));
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual([
     "@GH@mishoo-UglifyJS-e219a9a",
     "uglify",
@@ -3649,9 +3647,7 @@ it("should handle GitHub URL in dependencies (git://github.com/user/repo.git#com
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-  expect((join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBeValidBin(
-    join("..", "uglify", "bin", "uglifyjs"),
-  );
+  expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(join("..", "uglify", "bin", "uglifyjs"));
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual([
     "@GH@mishoo-UglifyJS-e219a9a",
     "uglify",
@@ -3966,7 +3962,11 @@ cache = false
     "uglify-js",
     "upper-case",
   ]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["he", "html-minifier", "uglifyjs"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins([
+    "he",
+    "html-minifier",
+    "uglifyjs",
+  ]);
   expect(join(package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
   expect(join(package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
     join("..", "html-minifier", "cli.js"),
@@ -4020,7 +4020,11 @@ cache = false
     "uglify-js",
     "upper-case",
   ]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["he", "html-minifier", "uglifyjs"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins([
+    "he",
+    "html-minifier",
+    "uglifyjs",
+  ]);
   expect(join(package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
   expect(join(package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
     join("..", "html-minifier", "cli.js"),
@@ -4109,9 +4113,7 @@ it("should consider peerDependencies during hoisting", async () => {
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
   expect(await readdirSorted(join(package_dir, "bar"))).toEqual(["node_modules", "package.json"]);
   expect(await readdirSorted(join(package_dir, "bar", "node_modules"))).toEqual([".bin", "baz"]);
-  expect((join(package_dir, "bar", "node_modules", ".bin", "baz-run"))).toBeValidBin(
-    join("..", "baz", "index.js"),
-  );
+  expect(join(package_dir, "bar", "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "bar", "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "bar", "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
@@ -4207,12 +4209,10 @@ it("should install peerDependencies when needed", async () => {
   expect(requested).toBe(3);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "baz", "moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-exec"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-exec"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-exec")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
   expect(await readdirSorted(join(package_dir, "bar"))).toEqual(["node_modules", "package.json"]);
-  expect((join(package_dir, "bar", "node_modules", ".bin", "baz-run"))).toBeValidBin(
-    join("..", "baz", "index.js"),
-  );
+  expect(join(package_dir, "bar", "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
@@ -4417,7 +4417,8 @@ it("should report error on duplicated workspace packages", async () => {
   expect(
     err
       .replace(/^bun install v.+\n/, "bun install\n")
-      .replaceAll(package_dir, "[dir]").replaceAll(sep, "/"),
+      .replaceAll(package_dir, "[dir]")
+      .replaceAll(sep, "/"),
   ).toMatchSnapshot();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -4464,7 +4465,7 @@ it("should handle Git URL in dependencies", async () => {
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBin(["uglifyjs"]);
-  expect((join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBeValidBin(
+  expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
     join("..", "uglify-js", "bin", "uglifyjs"),
   );
   expect((await readdirSorted(join(package_dir, "node_modules", ".cache")))[0]).toBe("9694c5fe9c41ad51.git");
@@ -4526,9 +4527,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-  expect((join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBeValidBin(
-    join("..", "uglify", "bin", "uglifyjs"),
-  );
+  expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(join("..", "uglify", "bin", "uglifyjs"));
   expect((await readdirSorted(join(package_dir, "node_modules", ".cache")))[0]).toBe("87d55589eb4217d2.git");
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
@@ -4586,9 +4585,7 @@ it("should handle Git URL with committish in dependencies", async () => {
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-  expect((join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBeValidBin(
-    join("..", "uglify", "bin", "uglifyjs"),
-  );
+  expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(join("..", "uglify", "bin", "uglifyjs"));
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual([
     "9694c5fe9c41ad51.git",
     "@G@e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
@@ -4735,7 +4732,7 @@ it("should de-duplicate committish in Git URLs", async () => {
     "uglify-ver",
   ]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-  expect((join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBeValidBin(
+  expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
     join("..", "uglify-hash", "bin", "uglifyjs"),
   );
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual([
@@ -4841,12 +4838,16 @@ cache = false
     "uglify-js",
     "upper-case",
   ]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["he", "html-minifier", "uglifyjs"]);
-  expect((join(package_dir, "node_modules", ".bin", "he"))).toBeValidBin(join("..", "he", "bin", "he"));
-  expect((join(package_dir, "node_modules", ".bin", "html-minifier"))).toBeValidBin(
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins([
+    "he",
+    "html-minifier",
+    "uglifyjs",
+  ]);
+  expect(join(package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
+  expect(join(package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
     join("..", "html-minifier", "cli.js"),
   );
-  expect((join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBeValidBin(
+  expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
     join("..", "uglify-js", "bin", "uglifyjs"),
   );
   await access(join(package_dir, "bun.lockb"));
@@ -4895,12 +4896,16 @@ cache = false
     "uglify-js",
     "upper-case",
   ]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["he", "html-minifier", "uglifyjs"]);
-  expect((join(package_dir, "node_modules", ".bin", "he"))).toBeValidBin(join("..", "he", "bin", "he"));
-  expect((join(package_dir, "node_modules", ".bin", "html-minifier"))).toBeValidBin(
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins([
+    "he",
+    "html-minifier",
+    "uglifyjs",
+  ]);
+  expect(join(package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
+  expect(join(package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
     join("..", "html-minifier", "cli.js"),
   );
-  expect((join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBeValidBin(
+  expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
     join("..", "uglify-js", "bin", "uglifyjs"),
   );
   await access(join(package_dir, "bun.lockb"));
@@ -4966,12 +4971,16 @@ cache = false
     "uglify-js",
     "upper-case",
   ]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["he", "html-minifier", "uglifyjs"]);
-  expect((join(package_dir, "node_modules", ".bin", "he"))).toBeValidBin(join("..", "he", "bin", "he"));
-  expect((join(package_dir, "node_modules", ".bin", "html-minifier"))).toBeValidBin(
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins([
+    "he",
+    "html-minifier",
+    "uglifyjs",
+  ]);
+  expect(join(package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
+  expect(join(package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
     join("..", "html-minifier", "cli.js"),
   );
-  expect((join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBeValidBin(
+  expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
     join("..", "uglify-js", "bin", "uglifyjs"),
   );
   await access(join(package_dir, "bun.lockb"));
@@ -5122,7 +5131,7 @@ it("should handle tarball URL", async () => {
   expect(requested).toBe(1);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
@@ -5219,7 +5228,7 @@ it("should handle tarball URL with aliasing", async () => {
   expect(requested).toBe(1);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "bar", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "bar", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
     name: "baz",
@@ -5333,7 +5342,7 @@ it("should de-duplicate dependencies alongside tarball URL", async () => {
   expect(requested).toBe(5);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
@@ -5416,7 +5425,7 @@ it("should handle tarball URL with existing lockfile", async () => {
   expect(requested).toBe(5);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
@@ -5478,7 +5487,7 @@ it("should handle tarball URL with existing lockfile", async () => {
   expect(requested).toBe(10);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
@@ -5560,7 +5569,7 @@ it("should handle tarball path with existing lockfile", async () => {
   expect(requested).toBe(4);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
@@ -5621,7 +5630,7 @@ it("should handle tarball path with existing lockfile", async () => {
   expect(requested).toBe(8);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({

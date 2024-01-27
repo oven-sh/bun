@@ -25,7 +25,7 @@ afterEach(dummyAfterEach);
 expect.extend({
   toBeValidBin,
   toHaveBins,
-})
+});
 
 it("should update to latest version of dependency", async () => {
   const urls: string[] = [];
@@ -81,7 +81,7 @@ it("should update to latest version of dependency", async () => {
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
@@ -126,7 +126,7 @@ it("should update to latest version of dependency", async () => {
   expect(requested).toBe(4);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-exec"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-exec"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-exec")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
@@ -200,7 +200,7 @@ it("should update to latest versions of dependencies", async () => {
   expect(requested).toBe(4);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-run"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
@@ -252,7 +252,7 @@ it("should update to latest versions of dependencies", async () => {
   expect(requested).toBe(8);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-exec"]);
-  expect((join(package_dir, "node_modules", ".bin", "baz-exec"))).toBeValidBin(join("..", "baz", "index.js"));
+  expect(join(package_dir, "node_modules", ".bin", "baz-exec")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);

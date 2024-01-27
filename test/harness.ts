@@ -261,7 +261,7 @@ export function ospath(path: string) {
 }
 
 export async function toHaveBins(actual: string[], expectedBins: string[]) {
-  const message = () => `Expected ${actual} to be package bins ${expectedBins}`
+  const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 
   if (process.platform === "win32") {
     for (var i = 0; i < actual.length; i += 2) {
@@ -284,7 +284,7 @@ export async function toBeValidBin(actual: string, expectedLinkPath: string) {
     return { pass: contents.includes(expected), message };
   }
 
-  return { pass: await readlink(actual) === expectedLinkPath, message };
+  return { pass: (await readlink(actual)) === expectedLinkPath, message };
 }
 
 export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {

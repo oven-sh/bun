@@ -102,7 +102,7 @@ for (let withRun of [false, true]) {
       });
 
       it("no --silent includes error messages", async () => {
-        const exe = process.platform === "win32" ? "bun.exe" : "bun"
+        const exe = process.platform === "win32" ? "bun.exe" : "bun";
         const { stdout, stderr, exitCode } = spawnSync({
           cmd: [bunExe(), "run", exe, "doesnotexist"],
           cwd: run_dir,

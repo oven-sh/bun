@@ -1,0 +1,125 @@
+const std = @import("std");
+
+pub const WindowsWatcher = struct {
+    iocp: w.HANDLE,
+    allocator: std.mem.Allocator,
+    // watchers: Map,
+    // rng: std.rand.DefaultPrng,
+    running: bool = true,
+
+    // const Map = std.AutoArrayHashMap(*w.OVERLAPPED, *DirWatcher);
+    const w = std.os.windows;
+    const DirWatcher = extern struct {
+        // this must be the first field
+        overlapped: w.OVERLAPPED = undefined,
+        buf: [64 * 1024]u8 align(@alignOf(w.FILE_NOTIFY_INFORMATION)) = undefined,
+        dirHandle: w.HANDLE,
+
+        fn handleEvent(this: *DirWatcher, nbytes: w.DWORD) void {
+            if (nbytes == 0) return;
+            var offset: usize = 0;
+            while (true) {
+                const info_size = @sizeOf(w.FILE_NOTIFY_INFORMATION);
+                const info: *w.FILE_NOTIFY_INFORMATION = @alignCast(@ptrCast(this.buf[offset..].ptr));
+                const name_ptr: [*]u16 = @alignCast(@ptrCast(this.buf[offset + info_size ..]));
+                const filename: []u16 = name_ptr[0..info.FileNameLength];
+
+                std.debug.print("filename: {}, action: {}\n", .{ std.unicode.fmtUtf16le(filename), info.Action });
+
+                if (info.NextEntryOffset == 0) break;
+                offset += @as(usize, info.NextEntryOffset);
+            }
+        }
+    };
+
+    pub fn init(allocator: std.mem.Allocator) !*WindowsWatcher {
+        const watcher = try allocator.create(WindowsWatcher);
+        errdefer allocator.destroy(watcher);
+
+        const iocp = try w.CreateIoCompletionPort(w.INVALID_HANDLE_VALUE, null, 0, 1);
+        watcher.* = .{
+            .iocp = iocp,
+            .allocator = allocator,
+        };
+        return watcher;
+    }
+
+    pub fn addWatchedDirectory(this: *WindowsWatcher, path: [:0]u16) !void {
+        // TODO respect dirFd
+        const handle = w.kernel32.CreateFileW(
+            path,
+            w.FILE_LIST_DIRECTORY,
+            w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
+            null,
+            w.OPEN_EXISTING,
+            w.FILE_FLAG_BACKUP_SEMANTICS | w.FILE_FLAG_OVERLAPPED,
+            null,
+        );
+        if (handle == w.INVALID_HANDLE_VALUE) {
+            @panic("failed to open directory for watching");
+        }
+        // TODO check if this is a directory
+        {}
+
+        errdefer _ = w.kernel32.CloseHandle(handle);
+
+        // const key = this.rng.next();
+
+        this.iocp = try w.CreateIoCompletionPort(handle, this.iocp, 0, 1);
+
+        const watcher = try this.allocator.create(DirWatcher);
+        errdefer this.allocator.destroy(watcher);
+        watcher.* = .{ .dirHandle = handle };
+        // try this.watchers.put(key, watcher);
+
+        const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_SIZE | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION | w.FILE_NOTIFY_CHANGE_SECURITY;
+        if (w.kernel32.ReadDirectoryChangesW(handle, &watcher.buf, watcher.buf.len, 0, filter, null, null, null) == 0) {
+            @panic("failed to start watching directory");
+        }
+    }
+
+    pub fn stop(this: *WindowsWatcher) void {
+        @atomicStore(bool, &this.running, false, .Unordered);
+    }
+
+    pub fn run(this: *WindowsWatcher) !void {
+        var nbytes: w.DWORD = 0;
+        var key: w.ULONG_PTR = 0;
+        var overlapped: ?*w.OVERLAPPED = null;
+        while (true) {
+            switch (w.GetQueuedCompletionStatus(this.iocp, &nbytes, &key, &overlapped, w.INFINITE)) {
+                .Normal => {},
+                .Aborted => @panic("aborted"),
+                .Cancelled => @panic("cancelled"),
+                .EOF => @panic("eof"),
+            }
+            if (nbytes == 0) {
+                // exit notification?
+                break;
+            }
+
+            const watcher: *DirWatcher = @ptrCast(overlapped);
+            watcher.handleEvent(nbytes);
+
+            if (@atomicLoad(bool, &this.running, .Unordered) == false) {
+                break;
+            }
+        }
+    }
+};
+
+pub fn main() !void {
+    const allocator = std.heap.page_allocator;
+
+    var buf: [256]u16 = undefined;
+    const idx = try std.unicode.utf8ToUtf16Le(&buf, "C:\\bun");
+    buf[idx] = 0;
+    const path = buf[0..idx :0];
+
+    std.debug.print("watching {}\n", .{std.unicode.fmtUtf16le(path)});
+
+    const watcher = try WindowsWatcher.init(allocator);
+    try watcher.addWatchedDirectory(path);
+
+    try watcher.run();
+}

@@ -284,7 +284,7 @@ describe("child_process cwd", () => {
   //     mustCall(function (e) {
   //       console.log(e);
   //       strictEqual(e.code, "ENOENT");
-  //     })
+  //     }),
   //   );
   // });
 
@@ -387,7 +387,7 @@ describe("child_process default options", () => {
 });
 
 describe("child_process double pipe", () => {
-  it.skipIf(process.platform === "linux")("should allow two pipes to be used at once", done => {
+  it("should allow two pipes to be used at once", done => {
     // const { mustCallAtLeast, mustCall } = createCallCheckCtx(done);
     const mustCallAtLeast = fn => fn;
     const mustCall = fn => fn;
@@ -641,44 +641,41 @@ describe("fork", () => {
         });
       });
     });
-    it.todo(
-      "Ensure that the second argument of `fork` and `fork` should parse options correctly if args is undefined or null",
-      done => {
-        const invalidSecondArgs = [0, true, () => {}, Symbol("t")];
-        invalidSecondArgs.forEach(arg => {
-          expect(() => fork(fixtures.path("child-process-echo-options.js"), arg)).toThrow({
-            code: "ERR_INVALID_ARG_TYPE",
-            name: "TypeError",
-            message: `The \"args\" argument must be of type Array. Received ${arg?.toString()}`,
-          });
+    it("Ensure that the second argument of `fork` and `fork` should parse options correctly if args is undefined or null", done => {
+      const invalidSecondArgs = [0, true, () => {}, Symbol("t")];
+      invalidSecondArgs.forEach(arg => {
+        expect(() => fork(fixtures.path("child-process-echo-options.js"), arg)).toThrow({
+          code: "ERR_INVALID_ARG_TYPE",
+          name: "TypeError",
+          message: `The \"args\" argument must be of type Array. Received ${arg?.toString()}`,
+        });
+      });
+
+      const argsLists = [undefined, null, []];
+
+      const { mustCall } = createCallCheckCtx(done);
+
+      argsLists.forEach(args => {
+        const cp = fork(fixtures.path("child-process-echo-options.js"), args, {
+          env: { ...process.env, ...expectedEnv, ...bunEnv },
         });
 
-        const argsLists = [undefined, null, []];
+        // TODO - bun has no `send` method in the process
+        cp.on(
+          "message",
+          mustCall(({ env }) => {
+            assert.strictEqual(env.foo, expectedEnv.foo);
+          }),
+        );
 
-        const { mustCall } = createCallCheckCtx(done);
-
-        argsLists.forEach(args => {
-          const cp = fork(fixtures.path("child-process-echo-options.js"), args, {
-            env: { ...process.env, ...expectedEnv, ...bunEnv },
-          });
-
-          // TODO - bun has no `send` method in the process
-          // cp.on(
-          //   'message',
-          //   common.mustCall(({ env }) => {
-          //     assert.strictEqual(env.foo, expectedEnv.foo);
-          //   })
-          // );
-
-          cp.on(
-            "exit",
-            mustCall(code => {
-              assert.strictEqual(code, 0);
-            }),
-          );
-        });
-      },
-    );
+        cp.on(
+          "exit",
+          mustCall(code => {
+            assert.strictEqual(code, 0);
+          }),
+        );
+      });
+    });
     it("Ensure that the third argument should be type of object if provided", () => {
       const invalidThirdArgs = [0, true, () => {}, Symbol("t")];
       invalidThirdArgs.forEach(arg => {

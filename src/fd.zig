@@ -36,7 +36,7 @@ pub fn uv_get_osfhandle(in: c_int) libuv.uv_os_fd_t {
 
 pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
     const out = libuv.uv_open_osfhandle(in);
-    log("uv_get_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
+    log("uv_open_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
     return out;
 }
 

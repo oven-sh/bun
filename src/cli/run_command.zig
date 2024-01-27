@@ -422,7 +422,10 @@ pub const RunCommand = struct {
                     }
                 }
             }
-            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
+
+            if (!silent) {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
+            }
             Global.exit(1);
         };
         switch (result) {

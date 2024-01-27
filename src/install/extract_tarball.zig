@@ -161,12 +161,24 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     const name = this.name.slice();
     const basename = brk: {
-        if (name[0] == '@') {
-            if (strings.indexOfChar(name, '/')) |i| {
-                break :brk name[i + 1 ..];
+        var tmp = name;
+        if (tmp[0] == '@') {
+            if (strings.indexOfChar(tmp, '/')) |i| {
+                tmp = tmp[i + 1 ..];
             }
         }
-        break :brk name;
+
+        if (comptime Environment.isWindows) {
+            if (strings.lastIndexOfChar(tmp, ':')) |i| {
+                tmp = tmp[i + 1 ..];
+            }
+        }
+
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(tmp.len > 0);
+        }
+
+        break :brk tmp;
     };
 
     var resolved: string = "";

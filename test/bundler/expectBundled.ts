@@ -689,7 +689,7 @@ function expectBundled(
       // Check for errors
       if (!success) {
         if (!ESBUILD) {
-          const errorText = stderr.toString("utf-8");
+          const errorText = stderr.toUnixString();
 
           var skip = false;
           if (errorText.includes("----- bun meta -----")) {
@@ -777,7 +777,7 @@ function expectBundled(
           }
           throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
         } else if (!expectedErrors) {
-          throw new Error("Bundle Failed\n" + stderr?.toString("utf-8"));
+          throw new Error("Bundle Failed\n" + stderr?.toUnixString());
         }
         return testRef(id, opts);
       } else if (expectedErrors) {
@@ -786,9 +786,9 @@ function expectBundled(
 
       // Check for warnings
       if (!ESBUILD) {
-        const warningText = stderr!.toString("utf-8");
+        const warningText = stderr!.toUnixString();
         const allWarnings = warnParser(warningText).map(([error, source]) => {
-          const [_str2, fullFilename, line, col] = source.match(/bun-build-tests\/(.*):(\d+):(\d+)/)!;
+          const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
           const file = fullFilename.slice(id.length + path.basename(outBase).length + 1);
           return { error, file, line, col };
         });
@@ -993,7 +993,7 @@ for (const [key, blob] of build.outputs) {
 
     const readCache: Record<string, string> = {};
     const readFile = (file: string) =>
-      readCache[file] || (readCache[file] = readFileSync(path.join(root, file), "utf-8"));
+      readCache[file] || (readCache[file] = readFileSync(path.join(root, file)).toUnixString());
     const writeFile = (file: string, contents: string) => {
       readCache[file] = contents;
       writeFileSync(path.join(root, file), contents);
@@ -1044,7 +1044,7 @@ for (const [key, blob] of build.outputs) {
           throw new Error("Bundle was not written to disk: " + outfile);
         } else {
           if (dce) {
-            const content = readFileSync(outfile).toString();
+            const content = readFileSync(outfile).toUnixString();
             const dceFails = [...content.matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
             if (dceFails.length) {
               throw new Error("DCE test did not remove all expected code in " + outfile + ".");
@@ -1144,8 +1144,8 @@ for (const [key, blob] of build.outputs) {
       if (cjs2esm) {
         const outfiletext = api.readFile(path.relative(root, outfile ?? outputPaths[0]));
         const regex = /\/\/\s+(.+?)\nvar\s+([a-zA-Z0-9_$]+)\s+=\s+__commonJS/g;
-        const matches = [...outfiletext.matchAll(regex)].map(match => "/" + match[1]);
-        const expectedMatches = cjs2esm === true ? [] : cjs2esm.unhandled ?? [];
+        const matches = [...outfiletext.matchAll(regex)].map(match => ("/" + match[1]).replaceAll("\\", "/"));
+        const expectedMatches = (cjs2esm === true ? [] : cjs2esm.unhandled ?? []).map(a => a.replaceAll("\\", "/"));
         try {
           expect(matches.sort()).toEqual(expectedMatches.sort());
         } catch (error) {
@@ -1190,7 +1190,7 @@ for (const [key, blob] of build.outputs) {
         if (!existsSync(theirs)) throw new Error(`Reference test "${ref.id}" did not write ${file}`);
         if (!existsSync(ours)) throw new Error(`Test did not write ${file}`);
         try {
-          expect(readFileSync(ours).toString()).toBe(readFileSync(theirs).toString());
+          expect(readFileSync(ours).toUnixString()).toBe(readFileSync(theirs).toUnixString());
         } catch (error) {
           console.log("Expected reference test " + ref.id + "'s " + file + " to match ours");
           throw error;
@@ -1235,9 +1235,9 @@ for (const [key, blob] of build.outputs) {
             throw new Error(
               prefix +
                 "Bundle should have thrown at runtime\n" +
-                stdout!.toString("utf-8") +
+                stdout!.toUnixString() +
                 "\n" +
-                stderr!.toString("utf-8"),
+                stderr!.toUnixString(),
             );
           }
 
@@ -1247,7 +1247,7 @@ for (const [key, blob] of build.outputs) {
             const stack = [];
             let error;
             const lines = stderr!
-              .toString("utf-8")
+              .toUnixString()
               .split("\n")
               .filter(Boolean)
               .map(x => x.trim())
@@ -1279,11 +1279,11 @@ for (const [key, blob] of build.outputs) {
             }
           }
         } else if (!success) {
-          throw new Error(prefix + "Runtime failed\n" + stdout!.toString("utf-8") + "\n" + stderr!.toString("utf-8"));
+          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
         }
 
         if (run.stdout !== undefined) {
-          const result = stdout!.toString("utf-8").trim();
+          const result = stdout!.toUnixString().trim();
           if (typeof run.stdout === "string") {
             const expected = dedent(run.stdout).trim();
             if (expected !== result) {
@@ -1305,7 +1305,7 @@ for (const [key, blob] of build.outputs) {
         }
 
         if (run.partialStdout !== undefined) {
-          const result = stdout!.toString("utf-8").trim();
+          const result = stdout!.toUnixString().trim();
           const expected = dedent(run.partialStdout).trim();
           if (!result.includes(expected)) {
             console.log(`runtime failed file=${file}`);

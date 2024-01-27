@@ -31,9 +31,7 @@ declare module "bun:jsc" {
   function isRope(input: string): boolean;
   function callerSourceOrigin(): string;
   function noFTL(func: (...args: any[]) => any): (...args: any[]) => any;
-  function noOSRExitFuzzing(
-    func: (...args: any[]) => any,
-  ): (...args: any[]) => any;
+  function noOSRExitFuzzing(func: (...args: any[]) => any): (...args: any[]) => any;
   function optimizeNextInvocation(func: (...args: any[]) => any): void;
   function numberOfDFGCompiles(func: (...args: any[]) => any): number;
   function releaseWeakRefs(): void;
@@ -49,10 +47,7 @@ declare module "bun:jsc" {
    * @param value A JavaScript value, usually an object or array, to be converted.
    * @returns A SharedArrayBuffer that can be sent to another Bun instance.
    */
-  function serialize(
-    value: any,
-    options?: { binaryType?: "arraybuffer" },
-  ): SharedArrayBuffer;
+  function serialize(value: any, options?: { binaryType?: "arraybuffer" }): SharedArrayBuffer;
 
   /**
    * Convert a JavaScript value to a binary representation that can be sent to another Bun instance.
@@ -62,19 +57,14 @@ declare module "bun:jsc" {
    * @param value A JavaScript value, usually an object or array, to be converted.
    * @returns A Buffer that can be sent to another Bun instance.
    */
-  function serialize(
-    value: any,
-    options?: { binaryType: "nodebuffer" },
-  ): Buffer;
+  function serialize(value: any, options?: { binaryType: "nodebuffer" }): Buffer;
 
   /**
    * Convert an ArrayBuffer or Buffer to a JavaScript value compatible with the HTML Structured Clone Algorithm.
    *
    * @param value A serialized value, usually an ArrayBuffer or Buffer, to be converted.
    */
-  function deserialize(
-    value: ArrayBufferLike | NodeJS.TypedArray | Buffer,
-  ): any;
+  function deserialize(value: ArrayBufferLike | NodeJS.TypedArray | Buffer): any;
 
   /**
    * Set the timezone used by Intl, Date, etc.

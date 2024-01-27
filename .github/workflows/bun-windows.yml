@@ -57,6 +57,7 @@ jobs:
     timeout-minutes: 60
     if: github.repository_owner == 'oven-sh'
     steps:
+      - run: git config --global core.autocrlf false && git config --global core.eol lf
       - uses: actions/checkout@v4
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -116,6 +117,7 @@ jobs:
         cpu: [haswell, nehalem]
         arch: [x86_64]
     steps:
+      - run: git config --global core.autocrlf false && git config --global core.eol lf
       - name: Checkout
         uses: actions/checkout@v4
       - name: Clone Submodules
@@ -214,6 +216,7 @@ jobs:
         cpu: [haswell, nehalem]
         arch: [x86_64]
     steps:
+      - run: git config --global core.autocrlf false && git config --global core.eol lf
       - uses: actions/checkout@v4
       - uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
         with:
@@ -273,6 +276,7 @@ jobs:
     timeout-minutes: 30
     permissions: write-all
     steps:
+      - run: git config --global core.autocrlf false && git config --global core.eol lf
       - uses: actions/checkout@v4
       - uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
         with:
@@ -386,6 +390,7 @@ jobs:
         cpu: [haswell]
         arch: [x86_64]
     steps:
+      - run: git config --global core.autocrlf false && git config --global core.eol lf
       - id: checkout
         name: Checkout
         uses: actions/checkout@v3

@@ -197,7 +197,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.appendFile(
         "/out.js",
-        dedent/* js */ `
+        dedent /* js */`
           import { strictEqual } from "node:assert";
           strictEqual(globalName.default, 123, ".default");
           strictEqual(globalName.v, 234, ".v");
@@ -298,7 +298,7 @@ describe("bundler", () => {
         export default 3;
         export const a2 = 4;
       `,
-      "/test.js": String.raw/* js */ `
+      "/test.js": String.raw /* js */`
         import { deepEqual } from 'node:assert';
         globalThis.deepEqual = deepEqual;
         await import ('./out.js');

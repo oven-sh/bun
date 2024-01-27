@@ -377,44 +377,47 @@ pub const BunxCommand = struct {
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-            if (getBinName(&this_bundler, root_dir_info.getFileDescriptor(), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
-                // if we check the bin name and its actually the same, we don't need to check $PATH here again
-                if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                    absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
+            const root_dir_fd = root_dir_info.getFileDescriptor();
+            if (root_dir_fd != .zero) {
+                if (getBinName(&this_bundler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+                    // if we check the bin name and its actually the same, we don't need to check $PATH here again
+                    if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
+                        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
-                    // Only use the system-installed version if there is no version specified
-                    if (update_request.version.literal.isEmpty()) {
-                        destination_ = bun.which(
+                        // Only use the system-installed version if there is no version specified
+                        if (update_request.version.literal.isEmpty()) {
+                            destination_ = bun.which(
+                                &path_buf,
+                                PATH_FOR_BIN_DIRS,
+                                if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
+                                package_name_for_bin,
+                            );
+                        }
+
+                        if (destination_ orelse bun.which(
                             &path_buf,
-                            PATH_FOR_BIN_DIRS,
+                            bunx_cache_dir,
                             if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
-                            package_name_for_bin,
-                        );
+                            absolute_in_cache_dir,
+                        )) |destination| {
+                            const out = bun.asByteSlice(destination);
+                            _ = try Run.runBinary(
+                                ctx,
+                                try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                                this_bundler.fs.top_level_dir,
+                                this_bundler.env,
+                                passthrough,
+                                null,
+                            );
+                            // we are done!
+                            Global.exit(0);
+                        }
                     }
-
-                    if (destination_ orelse bun.which(
-                        &path_buf,
-                        bunx_cache_dir,
-                        if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
-                        absolute_in_cache_dir,
-                    )) |destination| {
-                        const out = bun.asByteSlice(destination);
-                        _ = try Run.runBinary(
-                            ctx,
-                            try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
-                            this_bundler.fs.top_level_dir,
-                            this_bundler.env,
-                            passthrough,
-                            null,
-                        );
-                        // we are done!
-                        Global.exit(0);
+                } else |err| {
+                    if (err == error.NoBinFound) {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> could not determine executable to run for package <r><b>{s}<r>", .{update_request.name});
+                        Global.exit(1);
                     }
-                }
-            } else |err| {
-                if (err == error.NoBinFound) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> could not determine executable to run for package <r><b>{s}<r>", .{update_request.name});
-                    Global.exit(1);
                 }
             }
         }

@@ -2,9 +2,7 @@ import { expectType } from "./utilities.test";
 
 async function* listReleases() {
   for (let page = 1; ; page++) {
-    const response = await fetch(
-      `https://api.github.com/repos/oven-sh/bun/releases?page=${page}`,
-    );
+    const response = await fetch(`https://api.github.com/repos/oven-sh/bun/releases?page=${page}`);
     const releases = (await response.json()) as Array<{ data: string }>;
     if (!releases.length) {
       break;
@@ -25,7 +23,7 @@ async function* naturals() {
   }
 }
 
-const test1 = await Array.fromAsync(naturals(), (n) => Promise.resolve(`${n}`));
+const test1 = await Array.fromAsync(naturals(), n => Promise.resolve(`${n}`));
 expectType<string[]>(test1);
 
 const test2 = await Array.fromAsync([Promise.resolve(1), Promise.resolve(2)]);

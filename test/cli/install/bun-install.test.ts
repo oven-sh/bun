@@ -4464,7 +4464,7 @@ it("should handle Git URL in dependencies", async () => {
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBin(["uglifyjs"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
   expect(join(package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
     join("..", "uglify-js", "bin", "uglifyjs"),
   );

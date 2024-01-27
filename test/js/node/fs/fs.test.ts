@@ -582,8 +582,9 @@ describe("promises.readFile", async () => {
 });
 
 it("promises.readFile - UTF16 file path", async () => {
-  const filename = `superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${(Math.random() * 1024000) | 0
-    }.txt`;
+  const filename = `superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+    (Math.random() * 1024000) | 0
+  }.txt`;
   const dest = join(tmpdir(), filename);
   await fs.promises.copyFile(import.meta.path, dest);
   const expected = readFileSync(import.meta.path, "utf-8");
@@ -595,8 +596,9 @@ it("promises.readFile - UTF16 file path", async () => {
 });
 
 it("promises.readFile - atomized file path", async () => {
-  const filename = `superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${(Math.random() * 1024000) | 0
-    }.txt`;
+  const filename = `superduperduperdupduperdupersuperduperduperduperduperduperdupersuperduperduperduperduperduperdupersuperduperduperdupe-Bun-👍-${Date.now()}-${
+    (Math.random() * 1024000) | 0
+  }.txt`;
   const destInput = join(tmpdir(), filename);
   // Force it to become an atomized string by making it a property access
   const dest: string = (
@@ -1145,7 +1147,7 @@ it("symlink", () => {
   const actual = join(tmpdir(), Math.random().toString(32) + "-fs-symlink.txt");
   try {
     unlinkSync(actual);
-  } catch (e) { }
+  } catch (e) {}
 
   symlinkSync(import.meta.path, actual);
 
@@ -1156,7 +1158,7 @@ it("readlink", () => {
   const actual = join(tmpdir(), Math.random().toString(32) + "-fs-readlink.txt");
   try {
     unlinkSync(actual);
-  } catch (e) { }
+  } catch (e) {}
 
   symlinkSync(import.meta.path, actual);
 
@@ -1167,7 +1169,7 @@ it("realpath async", async () => {
   const actual = join(tmpdir(), Math.random().toString(32) + "-fs-realpath.txt");
   try {
     unlinkSync(actual);
-  } catch (e) { }
+  } catch (e) {}
 
   symlinkSync(import.meta.path, actual);
 
@@ -1316,7 +1318,7 @@ describe("rm", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmSync(path, { recursive: true });
     expect(existsSync(path)).toBe(false);
@@ -1326,7 +1328,7 @@ describe("rm", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmSync(join(path, "../../"), { recursive: true });
     expect(existsSync(path)).toBe(false);
@@ -1355,7 +1357,7 @@ describe("rmdir", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmdir(path, err => {
       if (err) return done(err);
@@ -1371,7 +1373,7 @@ describe("rmdir", () => {
       const path = `${tmpdir()}/${Date.now()}.rm.dir${i}`;
       try {
         mkdirSync(path);
-      } catch (e) { }
+      } catch (e) {}
       paths[i] = path;
       queue[i] = promises.rmdir(path);
     }
@@ -1387,7 +1389,7 @@ describe("rmdir", () => {
     try {
       mkdirSync(path);
       writeFileSync(`${path}/file.txt`, "File written successfully", "utf8");
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path + "/file.txt")).toBe(true);
     try {
       await promises.rmdir(path);
@@ -1404,7 +1406,7 @@ describe("rmdir", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmdir(join(path, "../../"), { recursive: true }, err => {
       try {
@@ -1433,7 +1435,7 @@ describe("rmdirSync", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmdirSync(path);
     expect(existsSync(path)).toBe(false);
@@ -1442,7 +1444,7 @@ describe("rmdirSync", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
-    } catch (e) { }
+    } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmdirSync(join(path, "../../"), { recursive: true });
     expect(existsSync(path)).toBe(false);
@@ -1826,7 +1828,7 @@ describe.skipIf(isWindows)("createWriteStream", () => {
     const stream = createWriteStream(path);
     try {
       stream.write(null);
-      expect(() => { }).toThrow(Error);
+      expect(() => {}).toThrow(Error);
     } catch (exception: any) {
       expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
     }
@@ -1840,7 +1842,7 @@ describe.skipIf(isWindows)("createWriteStream", () => {
     });
     try {
       stream.write(null);
-      expect(() => { }).toThrow(Error);
+      expect(() => {}).toThrow(Error);
     } catch (exception: any) {
       expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
     }
@@ -1851,7 +1853,7 @@ describe.skipIf(isWindows)("createWriteStream", () => {
     const stream = createWriteStream(path);
     try {
       stream.write(false);
-      expect(() => { }).toThrow(Error);
+      expect(() => {}).toThrow(Error);
     } catch (exception: any) {
       expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
     }
@@ -1865,7 +1867,7 @@ describe.skipIf(isWindows)("createWriteStream", () => {
     });
     try {
       stream.write(false);
-      expect(() => { }).toThrow(Error);
+      expect(() => {}).toThrow(Error);
     } catch (exception: any) {
       expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
     }
@@ -1954,7 +1956,7 @@ describe("fs/promises", () => {
   it("should not segfault on exception", async () => {
     try {
       await stat("foo/bar");
-    } catch (e) { }
+    } catch (e) {}
   });
 
   it("readFile", async () => {
@@ -2096,7 +2098,7 @@ describe("fs/promises", () => {
       expect(await exists(path)).toBe(true);
       try {
         await rmdir(path);
-        expect(() => { }).toThrow();
+        expect(() => {}).toThrow();
       } catch (err: any) {
         expect("ENOTDIR EPERM ENOENT").toContain(err.code);
         expect(await exists(path)).toBe(true);
@@ -2107,7 +2109,7 @@ describe("fs/promises", () => {
       const path = `${tmpdir()}/${Date.now()}.rm.dir`;
       try {
         await mkdir(path);
-      } catch (e) { }
+      } catch (e) {}
       expect(await exists(path)).toBe(true);
       await rmdir(path);
       expect(await exists(path)).toBe(false);
@@ -2116,7 +2118,7 @@ describe("fs/promises", () => {
       const path = `${tmpdir()}/${Date.now()}.rm.dir/foo/bar`;
       try {
         await mkdir(path, { recursive: true });
-      } catch (e) { }
+      } catch (e) {}
       expect(await exists(path)).toBe(true);
       await rmdir(join(path, "../../"), { recursive: true });
       expect(await exists(path)).toBe(false);
@@ -2716,7 +2718,7 @@ it.if(isWindows)("writing to windows hidden file is possible", () => {
 
 it("fs.ReadStream allows functions", () => {
   // @ts-expect-error
-  expect(() => new fs.ReadStream(".", function lol() { })).not.toThrow();
+  expect(() => new fs.ReadStream(".", function lol() {})).not.toThrow();
   // @ts-expect-error
   expect(() => new fs.ReadStream(".", {})).not.toThrow();
 });

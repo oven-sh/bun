@@ -486,6 +486,7 @@ pub const RuntimeTranspilerCache = struct {
 
         const file = cache_fd.asFile();
         const metadata_bytes = try file.preadAll(&metadata_bytes_buf, 0);
+        if (comptime bun.Environment.isWindows) try file.seekTo(0);
         var metadata_stream = std.io.fixedBufferStream(metadata_bytes_buf[0..metadata_bytes]);
 
         var entry = Entry{

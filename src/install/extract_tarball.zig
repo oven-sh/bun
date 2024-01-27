@@ -161,12 +161,24 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     const name = this.name.slice();
     const basename = brk: {
-        if (name[0] == '@') {
-            if (strings.indexOfChar(name, '/')) |i| {
-                break :brk name[i + 1 ..];
+        var tmp = name;
+        if (tmp[0] == '@') {
+            if (strings.indexOfChar(tmp, '/')) |i| {
+                tmp = tmp[i + 1 ..];
             }
         }
-        break :brk name;
+
+        if (comptime Environment.isWindows) {
+            if (strings.lastIndexOfChar(tmp, ':')) |i| {
+                tmp = tmp[i + 1 ..];
+            }
+        }
+
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(tmp.len > 0);
+        }
+
+        break :brk tmp;
     };
 
     var resolved: string = "";
@@ -277,7 +289,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     // e.g. @next
     // if it's a namespace package, we need to make sure the @name folder exists
-    if (basename.len != name.len) {
+    if (basename.len != name.len and !this.resolution.tag.isGit()) {
         cache_dir.makeDir(std.mem.trim(u8, name[0 .. name.len - basename.len], "/")) catch {};
     }
 

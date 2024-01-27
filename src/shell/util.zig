@@ -26,6 +26,16 @@ pub const Stdio = union(enum) {
     pipe: ?JSC.WebCore.ReadableStream,
     array_buffer: struct { buf: JSC.ArrayBuffer.Strong, from_jsc: bool = false },
 
+    pub fn toPosix(self: Stdio) bun.spawn.SpawnOptions.Stdio {
+        return switch (self) {
+            .pipe, .blob, .array_buffer => .{ .buffer = {} },
+            .inherit => |inherit| if (inherit.captured == null) .{ .inherit = {} } else .{ .buffer = {} },
+            .fd => .{ .pipe = self.fd },
+            .path => .{ .path = self.path.slice() },
+            .ignore => .{ .ignore = {} },
+        };
+    }
+
     pub fn isPiped(self: Stdio) bool {
         return switch (self) {
             .array_buffer, .blob, .pipe => true,

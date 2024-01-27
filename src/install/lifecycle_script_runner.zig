@@ -189,153 +189,36 @@ pub const LifecycleScriptSubprocess = struct {
             combined_script,
             null,
         };
-        // Have both stdout and stderr write to the same buffer
-        const fdsOut, const fdsErr = if (!this.manager.options.log_level.isVerbose())
-            .{ try std.os.pipe2(0), try std.os.pipe2(0) }
-        else
-            .{ .{ 0, 0 }, .{ 0, 0 } };
 
-        var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
-        if (comptime Environment.isMac) {
-            flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
-        }
-
-        const pid = brk: {
-            var attr = try PosixSpawn.Attr.init();
-            defer attr.deinit();
-            try attr.set(@intCast(flags));
-            try attr.resetSignals();
-
-            var actions = try PosixSpawn.Actions.init();
-            defer actions.deinit();
-            try actions.openZ(bun.STDIN_FD, "/dev/null", std.os.O.RDONLY, 0o664);
-
-            if (!this.manager.options.log_level.isVerbose()) {
-                try actions.dup2(bun.toFD(fdsOut[1]), bun.STDOUT_FD);
-                try actions.dup2(bun.toFD(fdsErr[1]), bun.STDERR_FD);
-            } else {
-                if (comptime Environment.isMac) {
-                    try actions.inherit(bun.STDOUT_FD);
-                    try actions.inherit(bun.STDERR_FD);
-                } else {
-                    try actions.dup2(bun.STDOUT_FD, bun.STDOUT_FD);
-                    try actions.dup2(bun.STDERR_FD, bun.STDERR_FD);
-                }
-            }
-
-            try actions.chdir(cwd);
-
-            defer {
-                if (!this.manager.options.log_level.isVerbose()) {
-                    _ = bun.sys.close(bun.toFD(fdsOut[1]));
-                    _ = bun.sys.close(bun.toFD(fdsErr[1]));
-                }
-            }
-
-            if (manager.options.log_level.isVerbose()) {
-                Output.prettyErrorln("<d>[LifecycleScriptSubprocess]<r> Spawning <b>\"{s}\"<r> script for package <b>\"{s}\"<r>\ncwd: {s}\n<r><d><magenta>$<r> <d><b>{s}<r>", .{
-                    this.scriptName(),
-                    this.package_name,
-                    cwd,
-                    combined_script,
-                });
-            }
-
-            this.timer = Timer.start() catch null;
-
-            switch (PosixSpawn.spawnZ(
-                argv[0].?,
-                actions,
-                attr,
-                argv[0..3 :null],
-                this.envp,
-            )) {
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{
-                        this.scriptName(),
-                        err.errno,
-                        @tagName(err.getErrno()),
-                    });
-                    Output.flush();
-                    return;
-                },
-                .result => |pid| break :brk pid,
-            }
+        const spawn_options = bun.spawn.SpawnOptions{
+            .stdin = .ignore,
+            .stdout = if (this.manager.options.log_level.isVerbose()) .inherit else .buffer,
+            .stderr = if (this.manager.options.log_level.isVerbose()) .inherit else .buffer,
+            .cwd = cwd,
         };
 
-        const pid_fd: std.os.fd_t = brk: {
-            if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
-                break :brk pid;
-            }
+        const spawned = try PosixSpawn.spawnProcess(&spawn_options, @ptrCast(&argv), this.envp);
 
-            var pidfd_flags = JSC.Subprocess.pidfdFlagsForLinux();
-
-            var fd = std.os.linux.pidfd_open(
-                @intCast(pid),
-                pidfd_flags,
-            );
-
-            while (true) {
-                switch (std.os.linux.getErrno(fd)) {
-                    .SUCCESS => break :brk @intCast(fd),
-                    .INTR => {
-                        fd = std.os.linux.pidfd_open(
-                            @intCast(pid),
-                            pidfd_flags,
-                        );
-                        continue;
-                    },
-                    else => |err| {
-                        if (err == .INVAL) {
-                            if (pidfd_flags != 0) {
-                                fd = std.os.linux.pidfd_open(
-                                    @intCast(pid),
-                                    0,
-                                );
-                                pidfd_flags = 0;
-                                continue;
-                            }
-                        }
-
-                        if (err == .NOSYS) {
-                            WaiterThread.setShouldUseWaiterThread();
-                            break :brk pid;
-                        }
-
-                        var status: u32 = 0;
-                        // ensure we don't leak the child process on error
-                        _ = std.os.linux.waitpid(pid, &status, 0);
-
-                        Output.prettyErrorln("<r><red>error<r>: Failed to spawn script <b>{s}<r> due to error <b>{d} {s}<r>", .{
-                            this.scriptName(),
-                            err,
-                            @tagName(err),
-                        });
-                        Output.flush();
-                        return;
-                    },
-                }
-            }
-        };
-
-        if (!this.manager.options.log_level.isVerbose()) {
+        if (spawned.stdout) |stdout| {
             this.stdout = .{
                 .parent = this,
-                .poll = Async.FilePoll.init(manager, bun.toFD(fdsOut[0]), .{}, OutputReader, &this.stdout),
-            };
-
-            this.stderr = .{
-                .parent = this,
-                .poll = Async.FilePoll.init(manager, bun.toFD(fdsErr[0]), .{}, OutputReader, &this.stderr),
+                .poll = Async.FilePoll.init(manager, stdout, .{}, OutputReader, &this.stdout),
             };
             try this.stdout.start().unwrap();
+        }
+
+        if (spawned.stderr) |stderr| {
+            this.stderr = .{
+                .parent = this,
+                .poll = Async.FilePoll.init(manager, stderr, .{}, OutputReader, &this.stderr),
+            };
+
             try this.stderr.start().unwrap();
         }
 
         const event_loop = &this.manager.event_loop;
         var process = Process.initPosix(
-            pid,
-            if (comptime Environment.isLinux) @intCast(pid_fd) else 0,
+            spawned,
             event_loop,
             false,
         );

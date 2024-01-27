@@ -120,6 +120,7 @@ pub const ProcessExitHandler = struct {
         }
     }
 };
+pub const PidFDType = if (Environment.isLinux) fd_t else u0;
 
 pub const Process = struct {
     pid: pid_t = 0,
@@ -134,21 +135,19 @@ pub const Process = struct {
     event_loop: JSC.EventLoopHandle,
 
     pub usingnamespace bun.NewRefCounted(Process, deinit);
-    pub const PidFDType = if (Environment.isLinux) fd_t else u0;
 
     pub fn setExitHandler(this: *Process, handler: anytype) void {
         this.exit_handler.init(handler);
     }
 
     pub fn initPosix(
-        pid: pid_t,
-        pidfd: PidFDType,
+        posix: PosixSpawnResult,
         event_loop: anytype,
         sync: bool,
     ) *Process {
         return Process.new(.{
-            .pid = pid,
-            .pidfd = pidfd,
+            .pid = posix.pid,
+            .pidfd = posix.pidfd orelse 0,
             .event_loop = JSC.EventLoopHandle.init(event_loop),
             .sync = sync,
             .poller = .{ .detached = {} },
@@ -786,3 +785,426 @@ pub const WaiterThread = struct {
         }
     }
 };
+
+pub const PosixSpawnOptions = struct {
+    stdin: Stdio = .ignore,
+    stdout: Stdio = .ignore,
+    stderr: Stdio = .ignore,
+    extra_fds: []const Stdio = &.{},
+    cwd: []const u8 = "",
+    detached: bool = false,
+
+    pub const Stdio = union(enum) {
+        path: []const u8,
+        inherit: void,
+        ignore: void,
+        buffer: void,
+        pipe: bun.FileDescriptor,
+    };
+};
+
+pub const PosixSpawnResult = struct {
+    pid: pid_t = 0,
+    pidfd: ?PidFDType = null,
+    stdin: ?bun.FileDescriptor = null,
+    stdout: ?bun.FileDescriptor = null,
+    stderr: ?bun.FileDescriptor = null,
+    extra_pipes: std.ArrayList(bun.FileDescriptor) = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator),
+
+    fn pidfdFlagsForLinux() u32 {
+        const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+
+        // pidfd_nonblock only supported in 5.10+
+        return if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
+            std.os.O.NONBLOCK
+        else
+            0;
+    }
+
+    pub fn pifdFromPid(pid: pid_t) JSC.Maybe(PidFDType) {
+        if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
+            return .{ .err = bun.sys.Error.fromCode(.NOSYS, .pidfd_open) };
+        }
+
+        var pidfd_flags = pidfdFlagsForLinux();
+
+        var rc = std.os.linux.pidfd_open(
+            @intCast(pid),
+            pidfd_flags,
+        );
+        while (true) {
+            switch (std.os.linux.getErrno(rc)) {
+                .SUCCESS => return JSC.Maybe(PidFDType){ .result = @intCast(rc) },
+                .INTR => {
+                    rc = std.os.linux.pidfd_open(
+                        @intCast(pid),
+                        pidfd_flags,
+                    );
+                    continue;
+                },
+                else => |err| {
+                    if (err == .INVAL) {
+                        if (pidfd_flags != 0) {
+                            rc = std.os.linux.pidfd_open(
+                                @intCast(pid),
+                                0,
+                            );
+                            pidfd_flags = 0;
+                            continue;
+                        }
+                    }
+
+                    if (err == .NOSYS) {
+                        WaiterThread.setShouldUseWaiterThread();
+                        return .{ .err = err };
+                    }
+
+                    var status: u32 = 0;
+                    // ensure we don't leak the child process on error
+                    _ = std.os.linux.wait4(pid, &status, 0, null);
+
+                    return .{ .err = err };
+                },
+            }
+        }
+
+        unreachable;
+    }
+};
+pub const SpawnOptions = if (Environment.isPosix) PosixSpawnOptions else void;
+pub fn spawnProcess(
+    options: *const PosixSpawnOptions,
+    argv: [*:null]?[*:0]const u8,
+    envp: [*:null]?[*:0]const u8,
+) !PosixSpawnResult {
+    var actions = try PosixSpawn.Actions.init();
+    defer actions.deinit();
+
+    var attr = try PosixSpawn.Attr.init();
+    defer attr.deinit();
+
+    var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
+
+    if (comptime Environment.isMac) {
+        flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
+    }
+
+    if (options.detached) {
+        flags |= bun.C.POSIX_SPAWN_SETSID;
+    }
+
+    if (options.cwd.len > 0) {
+        actions.chdir(options.cwd) catch return error.ChangingDirectoryFailed;
+    }
+    var spawned = PosixSpawnResult{};
+    var extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
+    errdefer extra_fds.deinit();
+    var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+    const allocator = stack_fallback.get();
+    var to_close_at_end = std.ArrayList(bun.FileDescriptor).init(allocator);
+    defer {
+        for (to_close_at_end.items) |fd| {
+            _ = bun.sys.close(fd);
+        }
+        to_close_at_end.clearAndFree();
+    }
+    var to_close_on_error = std.ArrayList(bun.FileDescriptor).init(allocator);
+    errdefer {
+        for (to_close_on_error.items) |fd| {
+            _ = bun.sys.close(fd);
+        }
+    }
+    defer to_close_on_error.clearAndFree();
+
+    const stdio_options = .{ options.stdin, options.stdout, options.stderr };
+    const stdios = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
+
+    inline for (0..3) |i| {
+        const stdio = stdios[i];
+        const fileno = bun.toFD(i);
+        const flag = comptime if (i == 0) @as(u32, std.os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
+
+        switch (stdio_options[i]) {
+            .inherit => {
+                try actions.inherit(fileno);
+            },
+            .ignore => {
+                try actions.openZ(fileno, "/dev/null", flag | std.os.O.CREAT, 0o664);
+            },
+            .path => |path| {
+                try actions.open(fileno, path, flag | std.os.O.CREAT, 0o664);
+            },
+            .buffer => {
+                const pipe = try bun.sys.pipe().unwrap();
+                const idx: usize = comptime if (i == 0) 0 else 1;
+                const theirs = pipe[idx];
+                const ours = pipe[1 - idx];
+                try to_close_at_end.append(theirs);
+                try to_close_on_error.append(ours);
+
+                try actions.dup2(theirs, fileno);
+                try actions.close(ours);
+
+                stdio.* = ours;
+            },
+            .pipe => |fd| {
+                try actions.dup2(fd, fileno);
+                stdio.* = fd;
+            },
+        }
+    }
+
+    for (options.extra_fds, 0..) |ipc, i| {
+        const fileno = bun.toFD(3 + i);
+
+        switch (ipc) {
+            .inherit => {
+                try actions.inherit(fileno);
+            },
+            .ignore => {
+                try actions.openZ(fileno, "/dev/null", std.os.O.RDWR, 0o664);
+            },
+
+            .path => |path| {
+                try actions.open(fileno, path, std.os.O.RDWR | std.os.O.CREAT, 0o664);
+            },
+            .buffer => {
+                const fds: [2]bun.FileDescriptor = brk: {
+                    var fds_: [2]std.c.fd_t = undefined;
+                    const rc = std.c.socketpair(std.os.AF.UNIX, std.os.SOCK.STREAM, 0, &fds_);
+                    if (rc != 0) {
+                        return error.SystemResources;
+                    }
+
+                    // enable non-block
+                    const before = std.c.fcntl(fds_[0], std.os.F.GETFL);
+                    _ = std.c.fcntl(fds_[0], std.os.F.SETFL, before | std.os.O.NONBLOCK);
+                    // enable SOCK_CLOXEC
+                    _ = std.c.fcntl(fds_[0], std.os.FD_CLOEXEC);
+
+                    break :brk .{ bun.toFD(fds_[0]), bun.toFD(fds_[1]) };
+                };
+
+                try to_close_at_end.append(fds[1]);
+                try to_close_on_error.append(fds[0]);
+
+                try actions.dup2(fds[1], fileno);
+                try actions.close(fds[1]);
+                try extra_fds.append(fds[0]);
+            },
+            .pipe => |fd| {
+                try actions.dup2(fd, fileno);
+
+                try extra_fds.append(fd);
+            },
+        }
+    }
+
+    const spawn_result = PosixSpawn.spawnZ(
+        argv[0].?,
+        actions,
+        attr,
+        argv,
+        envp,
+    );
+
+    switch (spawn_result) {
+        .err => {
+            _ = try spawn_result.unwrap(); // trigger the error
+        },
+        .result => |pid| {
+            spawned.pid = pid;
+            spawned.extra_pipes = extra_fds;
+            extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
+
+            if (comptime Environment.isLinux) {
+                switch (spawned.pifdFromPid(pid)) {
+                    .result => |pidfd| {
+                        spawned.pidfd = pidfd;
+                    },
+                    .err => {},
+                }
+            }
+
+            return spawned;
+        },
+    }
+
+    unreachable;
+}
+
+// pub const TaskProcess = struct {
+//     process: *Process,
+//     pending_error: ?bun.sys.Error = null,
+//     std: union(enum) {
+//         buffer: struct {
+//             out: BufferedOutput = BufferedOutput{},
+//             err: BufferedOutput = BufferedOutput{},
+//         },
+//         unavailable: void,
+
+//         pub fn out(this: *@This()) [2]TaskOptions.Output.Result {
+//             return switch (this.*) {
+//                 .unavailable => .{ .{ .unavailable = {} }, .{ .unavailable = {} } },
+//                 .buffer => |*buffer| {
+//                     return .{
+//                         .{
+//                             .buffer = buffer.out.buffer.moveToUnmanaged().items,
+//                         },
+//                         .{
+//                             .buffer = buffer.err.buffer.moveToUnmanaged().items,
+//                         },
+//                     };
+//                 },
+//             };
+//         }
+//     } = .{ .buffer = .{} },
+//     callback: Callback = Callback{},
+
+//     pub const Callback = struct {
+//         ctx: *anyopaque = undefined,
+//         callback: *const fn (*anyopaque, status: Status, stdout: TaskOptions.Output.Result, stderr: TaskOptions.Output.Result) void = undefined,
+//     };
+
+//     pub inline fn loop(this: *const TaskProcess) JSC.EventLoopHandle {
+//         return this.process.event_loop;
+//     }
+
+//     fn onOutputDone(this: *TaskProcess) void {
+//         this.maybeFinish();
+//     }
+
+//     fn onOutputError(this: *TaskProcess, err: bun.sys.Error) void {
+//         this.pending_error = err;
+
+//         this.maybeFinish();
+//     }
+
+//     pub fn isDone(this: *const TaskProcess) bool {
+//         if (!this.process.hasExited()) {
+//             return false;
+//         }
+
+//         switch (this.std) {
+//             .buffer => |*buffer| {
+//                 if (!buffer.err.is_done)
+//                     return false;
+
+//                 if (!buffer.out.is_done)
+//                     return false;
+//             },
+//             else => {},
+//         }
+
+//         return true;
+//     }
+
+//     fn maybeFinish(this: *TaskProcess) void {
+//         if (!this.isDone()) {
+//             return;
+//         }
+
+//         const status = brk: {
+//             if (this.pending_error) |pending_er| {
+//                 if (this.process.status == .exited) {
+//                     break :brk .{ .err = pending_er };
+//                 }
+//             }
+
+//             break :brk this.process.status;
+//         };
+
+//         const callback = this.callback;
+//         const out, const err = this.std.out();
+
+//         this.process.detach();
+//         this.process.deref();
+//         this.deinit();
+//         callback.callback(callback.ctx, status, out, err);
+//     }
+
+//     pub const BufferedOutput = struct {
+//         poll: *bun.Async.FilePoll = undefined,
+//         buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+//         is_done: bool = false,
+
+//         // This is a workaround for "Dependency loop detected"
+//         parent: *TaskProcess = undefined,
+
+//         pub usingnamespace bun.io.PipeReader(
+//             @This(),
+//             getFd,
+//             getBuffer,
+//             null,
+//             registerPoll,
+//             done,
+//             onError,
+//         );
+
+//         pub fn getFd(this: *BufferedOutput) bun.FileDescriptor {
+//             return this.poll.fd;
+//         }
+
+//         pub fn getBuffer(this: *BufferedOutput) *std.ArrayList(u8) {
+//             return &this.buffer;
+//         }
+
+//         fn finish(this: *BufferedOutput) void {
+//             this.poll.flags.insert(.ignore_updates);
+//             this.parent.loop().putFilePoll(this.parent, this.poll);
+//             std.debug.assert(!this.is_done);
+//             this.is_done = true;
+//         }
+
+//         pub fn done(this: *BufferedOutput, _: []u8) void {
+//             this.finish();
+//             onOutputDone(this.parent);
+//         }
+
+//         pub fn onError(this: *BufferedOutput, err: bun.sys.Error) void {
+//             this.finish();
+//             onOutputError(this.parent, err);
+//         }
+
+//         pub fn registerPoll(this: *BufferedOutput) void {
+//             switch (this.poll.register(this.parent().loop(), .readable, true)) {
+//                 .err => |err| {
+//                     this.onError(err);
+//                 },
+//                 .result => {},
+//             }
+//         }
+
+//         pub fn start(this: *BufferedOutput) JSC.Maybe(void) {
+//             const maybe = this.poll.register(this.parent.loop(), .readable, true);
+//             if (maybe != .result) {
+//                 this.is_done = true;
+//                 return maybe;
+//             }
+
+//             this.read();
+
+//             return .{
+//                 .result = {},
+//             };
+//         }
+//     };
+
+//     pub const Result = union(enum) {
+//         fd: bun.FileDescriptor,
+//         buffer: []u8,
+//         unavailable: void,
+
+//         pub fn deinit(this: *const Result) void {
+//             return switch (this.*) {
+//                 .fd => {
+//                     _ = bun.sys.close(this.fd);
+//                 },
+//                 .buffer => {
+//                     bun.default_allocator.free(this.buffer);
+//                 },
+//                 .unavailable => {},
+//             };
+//         }
+//     };
+// };

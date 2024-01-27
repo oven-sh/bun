@@ -2609,7 +2609,7 @@ extern fn us_socket_pair(
     fds: *[2]LIBUS_SOCKET_DESCRIPTOR,
 ) ?*Socket;
 
-extern fn us_socket_from_fd(
+pub extern fn us_socket_from_fd(
     ctx: *SocketContext,
     ext_size: c_int,
     fd: LIBUS_SOCKET_DESCRIPTOR,

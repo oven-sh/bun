@@ -1824,6 +1824,13 @@ pub const EventLoopHandle = union(enum) {
         };
     }
 
+    pub fn putFilePoll(this: *EventLoopHandle, poll: *Async.FilePoll) void {
+        switch (this.*) {
+            .js => this.js.virtual_machine.rareData().filePolls(this.js.virtual_machine).put(poll, this.js.virtual_machine, poll.flags.contains(.was_ever_registered)),
+            .mini => this.mini.filePolls().put(poll, &this.mini, poll.flags.contains(.was_ever_registered)),
+        }
+    }
+
     pub fn enqueueTaskConcurrent(this: EventLoopHandle, context: anytype) void {
         switch (this.*) {
             .js => {

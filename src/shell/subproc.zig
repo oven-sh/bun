@@ -147,19 +147,19 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             pub fn onReady(_: *Writable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
             pub fn onStart(_: *Writable) void {}
 
-            pub fn init(subproc: *Subprocess, stdio: Stdio, fd: bun.FileDescriptor, globalThis: GlobalRef) !Writable {
+            pub fn init(subproc: *Subprocess, stdio: Stdio, fd: ?bun.FileDescriptor, globalThis: GlobalRef) !Writable {
                 switch (stdio) {
                     .pipe => {
                         // var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
                         var sink = try GlobalHandle.init(globalThis).allocator().create(FileSink);
                         sink.* = .{
-                            .fd = fd,
+                            .fd = fd.?,
                             .buffer = bun.ByteList{},
                             .allocator = GlobalHandle.init(globalThis).allocator(),
                             .auto_close = true,
                         };
                         sink.mode = std.os.S.IFIFO;
-                        sink.watch(fd);
+                        sink.watch(fd.?);
                         if (stdio == .pipe) {
                             if (stdio.pipe) |readable| {
                                 if (comptime EventLoopKind == .mini) @panic("FIXME TODO error gracefully but wait can this even happen");
@@ -175,7 +175,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                         return Writable{ .pipe = sink };
                     },
                     .array_buffer, .blob => {
-                        var buffered_input: BufferedInput = .{ .fd = fd, .source = undefined, .subproc = subproc };
+                        var buffered_input: BufferedInput = .{ .fd = fd.?, .source = undefined, .subproc = subproc };
                         switch (stdio) {
                             .array_buffer => |array_buffer| {
                                 buffered_input.source = .{ .array_buffer = array_buffer.buf };
@@ -188,7 +188,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                         return Writable{ .buffered_input = buffered_input };
                     },
                     .fd => {
-                        return Writable{ .fd = fd };
+                        return Writable{ .fd = fd.? };
                     },
                     .inherit => {
                         return Writable{ .inherit = {} };
@@ -317,13 +317,13 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 }
             };
 
-            pub fn init(subproc: *Subprocess, comptime kind: OutKind, stdio: Stdio, fd: bun.FileDescriptor, allocator: std.mem.Allocator, max_size: u32) Readable {
+            pub fn init(subproc: *Subprocess, comptime kind: OutKind, stdio: Stdio, fd: ?bun.FileDescriptor, allocator: std.mem.Allocator, max_size: u32) Readable {
                 return switch (stdio) {
                     .ignore => Readable{ .ignore = {} },
                     .pipe => {
                         var subproc_readable_ptr = subproc.getIO(kind);
                         subproc_readable_ptr.* = Readable{ .pipe = .{ .buffer = undefined } };
-                        BufferedOutput.initWithAllocator(subproc, &subproc_readable_ptr.pipe.buffer, kind, allocator, fd, max_size);
+                        BufferedOutput.initWithAllocator(subproc, &subproc_readable_ptr.pipe.buffer, kind, allocator, fd.?, max_size);
                         return subproc_readable_ptr.*;
                     },
                     .inherit => {
@@ -331,7 +331,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                         if (stdio.inherit.captured != null) {
                             var subproc_readable_ptr = subproc.getIO(kind);
                             subproc_readable_ptr.* = Readable{ .pipe = .{ .buffer = undefined } };
-                            BufferedOutput.initWithAllocator(subproc, &subproc_readable_ptr.pipe.buffer, kind, allocator, fd, max_size);
+                            BufferedOutput.initWithAllocator(subproc, &subproc_readable_ptr.pipe.buffer, kind, allocator, fd.?, max_size);
                             subproc_readable_ptr.pipe.buffer.out = stdio.inherit.captured.?;
                             subproc_readable_ptr.pipe.buffer.writer = BufferedOutput.CapturedBufferedWriter{
                                 .src = BufferedOutput.WriterSrc{
@@ -346,7 +346,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                         return Readable{ .inherit = {} };
                     },
                     .path => Readable{ .ignore = {} },
-                    .blob, .fd => Readable{ .fd = fd },
+                    .blob, .fd => Readable{ .fd = fd.? },
                     .array_buffer => {
                         var subproc_readable_ptr = subproc.getIO(kind);
                         subproc_readable_ptr.* = Readable{
@@ -355,9 +355,9 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                             },
                         };
                         if (stdio.array_buffer.from_jsc) {
-                            BufferedOutput.initWithArrayBuffer(subproc, &subproc_readable_ptr.pipe.buffer, kind, fd, stdio.array_buffer.buf);
+                            BufferedOutput.initWithArrayBuffer(subproc, &subproc_readable_ptr.pipe.buffer, kind, fd.?, stdio.array_buffer.buf);
                         } else {
-                            subproc_readable_ptr.pipe.buffer = BufferedOutput.initWithSlice(subproc, kind, fd, stdio.array_buffer.buf.slice());
+                            subproc_readable_ptr.pipe.buffer = BufferedOutput.initWithSlice(subproc, kind, fd.?, stdio.array_buffer.buf.slice());
                         }
                         return subproc_readable_ptr.*;
                     },
@@ -1172,86 +1172,17 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             const globalThis = GlobalHandle.init(globalThis_);
             const is_sync = config.is_sync;
 
-            var env: [*:null]?[*:0]const u8 = undefined;
-
-            var attr = PosixSpawn.Attr.init() catch {
-                return .{ .err = globalThis.throw("out of memory", .{}) };
-            };
-
-            var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
-
-            if (comptime Environment.isMac) {
-                flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
-            }
-
-            if (spawn_args.detached) {
-                flags |= bun.C.POSIX_SPAWN_SETSID;
-            }
-
-            defer attr.deinit();
-            var actions = PosixSpawn.Actions.init() catch |err| {
-                return .{ .err = globalThis.handleError(err, "in posix_spawn") };
-            };
-            if (comptime Environment.isMac) {
-                attr.set(@intCast(flags)) catch |err| {
-                    return .{ .err = globalThis.handleError(err, "in posix_spawn") };
-                };
-            } else if (comptime Environment.isLinux) {
-                attr.set(@intCast(flags)) catch |err| {
-                    return .{ .err = globalThis.handleError(err, "in posix_spawn") };
-                };
-            }
-
-            attr.resetSignals() catch {
-                return .{ .err = globalThis.throw("Failed to reset signals in posix_spawn", .{}) };
-            };
-
-            defer actions.deinit();
-
             if (!spawn_args.override_env and spawn_args.env_array.items.len == 0) {
                 // spawn_args.env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch bun.outOfMemory();
                 spawn_args.env_array.items = globalThis.createNullDelimitedEnvMap(allocator) catch bun.outOfMemory();
                 spawn_args.env_array.capacity = spawn_args.env_array.items.len;
             }
 
-            const stdin_pipe = if (spawn_args.stdio[0].isPiped()) bun.sys.pipe().unwrap() catch |err| {
-                return .{ .err = globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)}) };
-            } else undefined;
-
-            const stdout_pipe = if (spawn_args.stdio[1].isPiped()) bun.sys.pipe().unwrap() catch |err| {
-                return .{ .err = globalThis.throw("failed to create stdout pipe: {s}", .{@errorName(err)}) };
-            } else undefined;
-
-            const stderr_pipe = if (spawn_args.stdio[2].isPiped()) bun.sys.pipe().unwrap() catch |err| {
-                return .{ .err = globalThis.throw("failed to create stderr pipe: {s}", .{@errorName(err)}) };
-            } else undefined;
-
-            spawn_args.stdio[0].setUpChildIoPosixSpawn(
-                &actions,
-                stdin_pipe,
-                bun.STDIN_FD,
-            ) catch |err| {
-                return .{ .err = globalThis.handleError(err, "in configuring child stdin") };
-            };
-
-            spawn_args.stdio[1].setUpChildIoPosixSpawn(
-                &actions,
-                stdout_pipe,
-                bun.STDOUT_FD,
-            ) catch |err| {
-                return .{ .err = globalThis.handleError(err, "in configuring child stdout") };
-            };
-
-            spawn_args.stdio[2].setUpChildIoPosixSpawn(
-                &actions,
-                stderr_pipe,
-                bun.STDERR_FD,
-            ) catch |err| {
-                return .{ .err = globalThis.handleError(err, "in configuring child stderr") };
-            };
-
-            actions.chdir(spawn_args.cwd) catch |err| {
-                return .{ .err = globalThis.handleError(err, "in chdir()") };
+            var spawn_options = bun.spawn.SpawnOptions{
+                .cwd = spawn_args.cwd,
+                .stdin = spawn_args.stdio[0].toPosix(),
+                .stdout = spawn_args.stdio[1].toPosix(),
+                .stderr = spawn_args.stdio[2].toPosix(),
             };
 
             spawn_args.argv.append(allocator, null) catch {
@@ -1261,82 +1192,13 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             spawn_args.env_array.append(allocator, null) catch {
                 return .{ .err = globalThis.throw("out of memory", .{}) };
             };
-            env = @as(@TypeOf(env), @ptrCast(spawn_args.env_array.items.ptr));
 
-            const pid = brk: {
-                defer {
-                    if (spawn_args.stdio[0].isPiped()) {
-                        _ = bun.sys.close(stdin_pipe[0]);
-                    }
-
-                    if (spawn_args.stdio[1].isPiped()) {
-                        _ = bun.sys.close(stdout_pipe[1]);
-                    }
-
-                    if (spawn_args.stdio[2].isPiped()) {
-                        _ = bun.sys.close(stderr_pipe[1]);
-                    }
-                }
-
-                log("spawning", .{});
-                break :brk switch (PosixSpawn.spawnZ(spawn_args.argv.items[0].?, actions, attr, @as([*:null]?[*:0]const u8, @ptrCast(spawn_args.argv.items[0..].ptr)), env)) {
-                    .err => |err| {
-                        log("error spawning", .{});
-                        return .{ .err = .{ .sys = err.toSystemError() } };
-                    },
-                    .result => |pid_| pid_,
-                };
-            };
-
-            const pidfd: std.os.fd_t = brk: {
-                if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
-                    break :brk pid;
-                }
-
-                var pidfd_flags = JSC.Subprocess.pidfdFlagsForLinux();
-
-                var rc = std.os.linux.pidfd_open(
-                    @intCast(pid),
-                    pidfd_flags,
-                );
-                while (true) {
-                    switch (std.os.linux.getErrno(rc)) {
-                        .SUCCESS => break :brk @as(std.os.fd_t, @intCast(rc)),
-                        .INTR => {
-                            rc = std.os.linux.pidfd_open(
-                                @intCast(pid),
-                                pidfd_flags,
-                            );
-                            continue;
-                        },
-                        else => |err| {
-                            if (err == .INVAL) {
-                                if (pidfd_flags != 0) {
-                                    rc = std.os.linux.pidfd_open(
-                                        @intCast(pid),
-                                        0,
-                                    );
-                                    pidfd_flags = 0;
-                                    continue;
-                                }
-                            }
-
-                            const error_instance = brk2: {
-                                if (err == .NOSYS) {
-                                    WaiterThread.setShouldUseWaiterThread();
-                                    break :brk pid;
-                                }
-
-                                break :brk2 bun.sys.Error.fromCode(err, .open);
-                            };
-                            var status: u32 = 0;
-                            // ensure we don't leak the child process on error
-                            _ = std.os.linux.wait4(pid, &status, 0, null);
-                            log("Error in getting pidfd", .{});
-                            return .{ .err = .{ .sys = error_instance.toSystemError() } };
-                        },
-                    }
-                }
+            const spawn_result = bun.spawn.spawnProcess(
+                &spawn_options,
+                @ptrCast(spawn_args.argv.items.ptr),
+                @ptrCast(spawn_args.env_array.items.ptr),
+            ) catch |err| {
+                return .{ .err = globalThis.throw("Failed to spawn process: {s}", .{@errorName(err)}) };
             };
 
             var subprocess = globalThis.allocator().create(Subprocess) catch bun.outOfMemory();
@@ -1344,16 +1206,15 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             subprocess.* = Subprocess{
                 .globalThis = globalThis_,
                 .process = Process.initPosix(
-                    pid,
-                    if (Environment.isLinux) @intCast(pidfd) else 0,
+                    spawn_result,
                     if (comptime EventLoopKind == .js) globalThis.eventLoopCtx().eventLoop() else globalThis.eventLoopCtx(),
                     is_sync,
                 ),
-                .stdin = Subprocess.Writable.init(subprocess, spawn_args.stdio[0], stdin_pipe[1], globalThis_) catch bun.outOfMemory(),
+                .stdin = Subprocess.Writable.init(subprocess, spawn_args.stdio[0], spawn_result.stdin, globalThis_) catch bun.outOfMemory(),
                 // Readable initialization functions won't touch the subrpocess pointer so it's okay to hand it to them even though it technically has undefined memory at the point of Readble initialization
                 // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
-                .stdout = Subprocess.Readable.init(subprocess, .stdout, spawn_args.stdio[1], stdout_pipe[0], globalThis.getAllocator(), Subprocess.default_max_buffer_size),
-                .stderr = Subprocess.Readable.init(subprocess, .stderr, spawn_args.stdio[2], stderr_pipe[0], globalThis.getAllocator(), Subprocess.default_max_buffer_size),
+                .stdout = Subprocess.Readable.init(subprocess, .stdout, spawn_args.stdio[1], spawn_result.stdout, globalThis.getAllocator(), Subprocess.default_max_buffer_size),
+                .stderr = Subprocess.Readable.init(subprocess, .stderr, spawn_args.stdio[2], spawn_result.stderr, globalThis.getAllocator(), Subprocess.default_max_buffer_size),
                 .flags = .{
                     .is_sync = is_sync,
                 },

@@ -111,10 +111,7 @@ pub const BunSpawn = struct {
         }
 
         pub fn inherit(self: *Actions, fd: bun.FileDescriptor) !void {
-            _ = self;
-            _ = fd;
-
-            @panic("not implemented");
+            try self.dup2(fd, fd);
         }
 
         pub fn chdir(self: *Actions, path: []const u8) !void {
@@ -451,4 +448,5 @@ pub const PosixSpawn = struct {
     }
 
     pub usingnamespace @import("./process.zig");
+
 };

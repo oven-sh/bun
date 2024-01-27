@@ -13,6 +13,7 @@ const std = @import("std");
 const uws = bun.uws;
 const JSC = bun.JSC;
 const WaiterThread = JSC.Subprocess.WaiterThread;
+const Fs = @import("../fs.zig");
 
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -52,6 +53,7 @@ const PosixSpawn = bun.posix.spawn;
 
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
+const FilterArg = @import("filter_arg.zig");
 
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
@@ -340,8 +342,7 @@ pub const RunCommand = struct {
                         Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
                         Output.flush();
                     }
-
-                    Global.exit(code);
+                    return false;
                 }
             },
             .Signal => |signal| {
@@ -369,7 +370,6 @@ pub const RunCommand = struct {
 
     /// When printing error messages from 'bun run', attribute bun overridden node.js to bun
     /// This prevents '"node" exited with ...' when it was actually bun.
-    /// As of writing this is only used for 'runBinary'
     fn basenameOrBun(str: []const u8) []const u8 {
         if (strings.eqlComptime(str, bun_node_dir ++ "/node")) {
             return "bun";
@@ -384,47 +384,94 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         original_script_for_bun_run: ?[]const u8,
-    ) !bool {
-        var argv_ = [_]string{executable};
-        var argv: []const string = &argv_;
+    ) !ExecResult {
+        var arena = std.heap.ArenaAllocator.init(ctx.allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
 
-        if (passthrough.len > 0) {
-            var array_list = std.ArrayList(string).init(ctx.allocator);
-            try array_list.append(executable);
-            try array_list.appendSlice(passthrough);
-            argv = try array_list.toOwnedSlice();
+        const argc = passthrough.len + 1;
+        var argv = try alloc.allocSentinel(?[*:0]const u8, argc, null);
+        var name = try alloc.allocSentinel(u8, executable.len, 0);
+        @memcpy(name[0..executable.len], executable);
+        argv[0] = name; //name[0..executable.len :0];
+
+        for (1.., passthrough) |i, p| {
+            var arg = try alloc.allocSentinel(u8, p.len, 0);
+            @memcpy(arg[0..p.len], p);
+            argv[i] = arg;
         }
 
-        var child_process = std.ChildProcess.init(argv, ctx.allocator);
+        const envc = env.map.map.count();
+        var envp = try alloc.allocSentinel(?[*:0]const u8, envc, null);
+        var offset: usize = 0;
+        var iter = env.map.map.iterator();
+        while (iter.next()) |entry| : (offset += 1) {
+            const len = entry.key_ptr.len + 1 + entry.value_ptr.value.len;
+            var envvar = try alloc.allocSentinel(u8, len, 0);
+            @memcpy(envvar[0..entry.key_ptr.len], entry.key_ptr.*);
+            envvar[entry.key_ptr.len] = '=';
+            @memcpy(envvar[entry.key_ptr.len + 1 .. len], entry.value_ptr.value);
+            envp[offset] = envvar;
+        }
 
-        var buf_map = try env.map.cloneToEnvMap(ctx.allocator);
-        child_process.cwd = cwd;
-        child_process.env_map = &buf_map;
-        child_process.stderr_behavior = .Inherit;
-        child_process.stdin_behavior = .Inherit;
-        child_process.stdout_behavior = .Inherit;
         const silent = ctx.debug.silent;
 
-        const result = child_process.spawnAndWait() catch |err| {
-            if (err == error.AccessDenied) {
+        var actions = try PosixSpawn.Actions.init();
+        try actions.inherit(bun.posix.STDIN_FD);
+        try actions.inherit(bun.posix.STDOUT_FD);
+        try actions.inherit(bun.posix.STDERR_FD);
+        try actions.chdir(cwd);
+
+        var execpath_buf: bun.PathBuffer = undefined;
+        @memcpy(execpath_buf[0..executable.len], executable);
+        execpath_buf[executable.len] = 0;
+        const execpath = execpath_buf[0..executable.len :0];
+
+        const childpid = switch (PosixSpawn.spawnZ(execpath, actions, null, argv, envp)) {
+            .result => |pid| pid,
+            .err => |err| {
                 if (comptime Environment.isPosix) {
-                    var stat = std.mem.zeroes(std.c.Stat);
-                    const rc = bun.C.stat(executable[0.. :0].ptr, &stat);
-                    if (rc == 0) {
-                        if (std.os.S.ISDIR(stat.mode)) {
-                            if (!silent)
-                                Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
-                            if (@errorReturnTrace()) |trace| {
-                                std.debug.dumpStackTrace(trace.*);
+                    const EACCES: u16 = @intCast(@intFromEnum(bun.C.E.ACCES));
+                    if (@as(u16, err.errno) == EACCES) {
+                        var stat = std.mem.zeroes(std.c.Stat);
+                        const rc = bun.C.stat(executable[0.. :0].ptr, &stat);
+                        if (rc == 0) {
+                            if (std.os.S.ISDIR(stat.mode)) {
+                                if (!silent)
+                                    Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
+                                if (@errorReturnTrace()) |trace| {
+                                    std.debug.dumpStackTrace(trace.*);
+                                }
+                                return ExecResult.failure;
                             }
-                            Global.exit(1);
                         }
                     }
                 }
-            }
-            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
-            Global.exit(1);
+                Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error: <b>{}<r>", .{ basenameOrBun(executable), err });
+                return ExecResult.failure;
+            },
         };
+
+        const status = switch (PosixSpawn.waitpid(childpid, 0)) {
+            .result => |res| res.status,
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error: <b>{}<r>", .{ basenameOrBun(executable), err });
+                return ExecResult.failure;
+            },
+        };
+
+        const os = std.os;
+        const Term = std.ChildProcess.Term;
+        const result =
+            if (os.W.IFEXITED(status))
+            Term{ .Exited = os.W.EXITSTATUS(status) }
+        else if (os.W.IFSIGNALED(status))
+            Term{ .Signal = os.W.TERMSIG(status) }
+        else if (os.W.IFSTOPPED(status))
+            Term{ .Stopped = os.W.STOPSIG(status) }
+        else
+            Term{ .Unknown = status };
+
         switch (result) {
             .Exited => |code| {
                 if (!silent) {
@@ -452,7 +499,7 @@ pub const RunCommand = struct {
                         Output.errGeneric("\"<b>{s}<r>\" exited with code {d}", .{ basenameOrBun(executable), code });
                     }
                 }
-                Global.exit(code);
+                return ExecResult.withCode(code);
             },
             .Signal, .Stopped => |sig| {
                 // forward the signal to the shell / parent process
@@ -462,17 +509,57 @@ pub const RunCommand = struct {
                 } else if (!silent) {
                     std.debug.panic("\"{s}\" stopped by signal code 0, which isn't supposed to be possible", .{executable});
                 }
+                // here we exit immediately, so we don't need to return a code
                 Global.exit(128 + @as(u8, @as(u7, @truncate(sig))));
             },
             .Unknown => |sig| {
                 if (!silent) {
                     Output.errGeneric("\"<b>{s}<r>\" stopped with unknown state <b>{d}<r>", .{ basenameOrBun(executable), sig });
                 }
-                Global.exit(1);
+                return ExecResult.failure;
             },
         }
+    }
 
-        return true;
+    pub fn bootMaybeSubprocess(ctx_: Command.Context, entry_path: string, comptime subprocess: bool) !ExecResult {
+        if (comptime subprocess) {
+            const pid = std.c.fork();
+            if (pid == 0) {
+                // child
+                Run.boot(ctx_, entry_path) catch {
+                    Global.exit(1);
+                };
+                Global.exit(0);
+            } else {
+                // parent
+                var cstatus: c_int = 0;
+                switch (std.c.getErrno(std.c.waitpid(pid, &cstatus, 0))) {
+                    .SUCCESS => {
+                        const status: u32 = @intCast(cstatus);
+                        const os = std.os;
+                        if (os.W.IFEXITED(status)) {
+                            const code = os.W.EXITSTATUS(status);
+                            return ExecResult.withCode(@intCast(code));
+                            // Term{ .Exited = os.W.EXITSTATUS(status) };
+                        } else if (os.W.IFSIGNALED(status)) {
+                            const code = os.W.TERMSIG(status);
+                            Global.exit(128 + @as(u8, @as(u7, @truncate(code))));
+                        } else if (os.W.IFSTOPPED(status)) {
+                            const code = os.W.STOPSIG(status);
+                            Global.exit(128 + @as(u8, @as(u7, @truncate(code))));
+                        } else {
+                            // shouldn't be possible, but in case we get an invalid status code just ignore it
+                            return ExecResult.ok;
+                        }
+                    },
+                    // if the waitpid call failed, we can't get the exit code
+                    else => return ExecResult.failure,
+                }
+            }
+        } else {
+            try Run.boot(ctx_, entry_path);
+            return ExecResult.ok;
+        }
     }
 
     pub fn ls(ctx: Command.Context) !void {
@@ -1066,8 +1153,138 @@ pub const RunCommand = struct {
         }
     }
 
-    pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
+    const ExecResult = union(enum) {
+        code: u8,
+        failure,
+        ok,
+
+        pub fn withCode(code: u8) ExecResult {
+            return ExecResult{ .code = code };
+        }
+
+        pub fn notFailure(self: ExecResult) bool {
+            return switch (self) {
+                .ok => true,
+                .failure => false,
+                .code => |code| code == 0,
+            };
+        }
+    };
+
+    pub fn execAll(ctx: Command.Context, comptime bin_dirs_only: bool) !void {
+        // without filters just behave like normal exec
+        if (ctx.filters.len == 0) {
+            switch (try exec(ctx, bin_dirs_only, true, false)) {
+                .ok => return,
+                .failure => Global.exit(1),
+                .code => |code| Global.exit(code),
+            }
+            return;
+        }
+
+        const fsinstance = try bun.fs.FileSystem.init(null);
+        const olddir = fsinstance.top_level_dir;
+        defer {
+            // change back to the original directory once we're done
+            fsinstance.top_level_dir = olddir;
+            switch (bun.sys.chdir(olddir)) {
+                .err => |err| {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s} due to error {}<r>", .{ olddir, err });
+                    Global.crash();
+                },
+                .result => {},
+            }
+        }
+
+        var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, ctx.filters, olddir);
+        defer filter_instance.deinit();
+
+        var patterns = std.ArrayList([]u8).init(ctx.allocator);
+        defer {
+            for (patterns.items) |path| {
+                ctx.allocator.free(path);
+            }
+            patterns.deinit();
+        }
+
+        var root_buf: bun.PathBuffer = undefined;
+        const resolve_root = try FilterArg.getCandidatePackagePatterns(ctx.allocator, ctx.log, &patterns, olddir, &root_buf);
+
+        var package_json_iter = try FilterArg.PackageFilterIterator.init(ctx.allocator, patterns.items, resolve_root);
+        defer package_json_iter.deinit();
+
+        var arena = std.heap.ArenaAllocator.init(ctx.allocator);
+        var arena_alloc = arena.allocator();
+
+        var ok = true;
+        var any_match = false;
+        while (try package_json_iter.next()) |package_json_path| {
+            const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
+            const path = strings.withoutTrailingSlash(dirpath);
+            const matches = matches: {
+                if (filter_instance.has_name_filters) {
+                    // TODO load name from package.json
+
+                    const json_file = try std.fs.cwd().openFile(
+                        package_json_path,
+                        .{ .mode = .read_only },
+                    );
+                    defer json_file.close();
+
+                    const json_stat_size = try json_file.getEndPos();
+                    const json_buf = try arena_alloc.alloc(u8, json_stat_size + 64);
+                    defer _ = arena.reset(std.heap.ArenaAllocator.ResetMode.retain_capacity);
+
+                    const json_len = try json_file.preadAll(json_buf, 0);
+                    const json_source = bun.logger.Source.initPathString(path, json_buf[0..json_len]);
+
+                    var parser = try json_parser.PackageJSONVersionChecker.init(arena_alloc, &json_source, ctx.log);
+                    _ = try parser.parseExpr();
+                    if (!parser.has_found_name) {
+                        // TODO warn of malformed package
+                        continue;
+                    }
+                    break :matches filter_instance.matchesPathName(path, parser.found_name);
+                } else {
+                    break :matches filter_instance.matchesPath(path);
+                }
+            };
+
+            if (!matches) continue;
+            any_match = true;
+            Output.prettyErrorln("<d><b>In <r><yellow><d>{s}<r>:", .{path});
+            // flush outputs to ensure that stdout and stderr are in the correct order for each of the paths
+            Output.flush();
+            switch (bun.sys.chdir(path)) {
+                .err => |err| {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to change directory to <b>{s} due to error {}<r>", .{ path, err });
+                    Global.crash();
+                },
+                .result => {},
+            }
+            fsinstance.top_level_dir = path;
+            // TODO is this necessary? which assignment is correct here?
+            fsinstance.fs.cwd = path;
+            const res = exec(ctx, bin_dirs_only, true, true) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ path, @errorName(err) });
+                continue;
+            };
+            ok = ok and res.notFailure();
+        }
+
+        if (!any_match) {
+            Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
+            Global.exit(1);
+        }
+
+        if (!ok) {
+            Global.exit(1);
+        }
+    }
+
+    pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool, comptime subprocess: bool) !ExecResult {
         var ctx = ctx_;
+
         // Step 1. Figure out what we're trying to run
         var positionals = ctx.positionals;
         if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run") or strings.eqlComptime(positionals[0], "r")) {
@@ -1087,7 +1304,7 @@ pub const RunCommand = struct {
         if ((script_name_to_search.len == 1 and script_name_to_search[0] == '.') or
             (script_name_to_search.len == 2 and @as(u16, @bitCast(script_name_to_search[0..2].*)) == @as(u16, @bitCast([_]u8{ '.', '/' }))))
         {
-            Run.boot(ctx, ".") catch |err| {
+            return bootMaybeSubprocess(ctx, ".", subprocess) catch |err| {
                 if (Output.enable_ansi_colors) {
                     ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                 } else {
@@ -1101,9 +1318,9 @@ pub const RunCommand = struct {
                 if (@errorReturnTrace()) |trace| {
                     std.debug.dumpStackTrace(trace.*);
                 }
-                Global.exit(1);
+                return ExecResult.failure;
             };
-            return true;
+            // return ExecResult.ok;
         }
 
         if (log_errors or force_using_bun) {
@@ -1149,6 +1366,7 @@ pub const RunCommand = struct {
                     };
 
                     const file = file_ catch break :possibly_open_with_bun_js;
+                    defer file.close();
 
                     if (!force_using_bun) {
                         // Due to preload, we don't know if they intend to run
@@ -1169,7 +1387,7 @@ pub const RunCommand = struct {
                         const shebang_size = file.pread(&shebang_buf, 0) catch |err| {
                             if (!ctx.debug.silent)
                                 Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
-                            Global.exit(1);
+                            return ExecResult.failure;
                         };
 
                         var shebang: string = shebang_buf[0..shebang_size];
@@ -1187,7 +1405,8 @@ pub const RunCommand = struct {
 
                     Global.configureAllocator(.{ .long_running = true });
                     const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
-                    Run.boot(ctx, out_path) catch |err| {
+
+                    return bootMaybeSubprocess(ctx, out_path, subprocess) catch |err| {
                         if (Output.enable_ansi_colors) {
                             ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                         } else {
@@ -1201,10 +1420,8 @@ pub const RunCommand = struct {
                         if (@errorReturnTrace()) |trace| {
                             std.debug.dumpStackTrace(trace.*);
                         }
-                        Global.exit(1);
+                        return ExecResult.failure;
                     };
-
-                    return true;
                 }
             }
         }
@@ -1216,6 +1433,12 @@ pub const RunCommand = struct {
         const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors);
         try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
+        defer {
+            this_bundler.env.map.put("PATH", ORIGINAL_PATH) catch |err| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to restore PATH due to error <b>{s}<r>", .{@errorName(err)});
+                Global.crash();
+            };
+        }
 
         if (script_name_to_search.len == 0) {
             // naked "bun run"
@@ -1227,7 +1450,7 @@ pub const RunCommand = struct {
                 Output.flush();
             }
 
-            return true;
+            return ExecResult.ok;
         }
 
         if (root_dir_info.enclosing_package_json) |package_json| {
@@ -1247,7 +1470,7 @@ pub const RunCommand = struct {
                             &.{},
                             ctx.debug.silent,
                         )) {
-                            return false;
+                            return ExecResult.failure;
                         }
                     }
 
@@ -1259,7 +1482,7 @@ pub const RunCommand = struct {
                         this_bundler.env,
                         passthrough,
                         ctx.debug.silent,
-                    )) return false;
+                    )) return ExecResult.failure;
 
                     temp_script_buffer[0.."post".len].* = "post".*;
 
@@ -1273,15 +1496,14 @@ pub const RunCommand = struct {
                             &.{},
                             ctx.debug.silent,
                         )) {
-                            return false;
+                            return ExecResult.failure;
                         }
                     }
-
-                    return true;
+                    return ExecResult.ok;
                 } else if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
                     (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
                 {
-                    Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
+                    return bootMaybeSubprocess(ctx, try ctx.allocator.dupe(u8, script_name_to_search), subprocess) catch |err| {
                         if (Output.enable_ansi_colors) {
                             ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                         } else {
@@ -1295,7 +1517,7 @@ pub const RunCommand = struct {
                         if (@errorReturnTrace()) |trace| {
                             std.debug.dumpStackTrace(trace.*);
                         }
-                        Global.exit(1);
+                        return ExecResult.failure;
                     };
                 }
             }
@@ -1388,22 +1610,6 @@ pub const RunCommand = struct {
 
         if (path_for_which.len > 0) {
             if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
-                // var file = std.fs.openFileAbsoluteZ(destination, .{ .mode = .read_only }) catch |err| {
-                //     if (!log_errors) return false;
-
-                //     Output.prettyErrorln("<r>error: <red>{s}<r> opening file: \"{s}\"", .{ err, std.mem.span(destination) });
-                //     Output.flush();
-                //     return err;
-                // };
-                // // var outbuf = bun.getFdPath(file.handle, &path_buf2) catch |err| {
-                // //     if (!log_errors) return false;
-                // //     Output.prettyErrorln("<r>error: <red>{s}<r> resolving file: \"{s}\"", .{ err, std.mem.span(destination) });
-                // //     Output.flush();
-                // //     return err;
-                // // };
-
-                // // file.close();
-
                 const out = bun.asByteSlice(destination);
                 return try runBinary(
                     ctx,
@@ -1417,15 +1623,14 @@ pub const RunCommand = struct {
         }
 
         if (ctx.runtime_options.if_present) {
-            return true;
+            return ExecResult.ok;
         }
 
         if (comptime log_errors) {
             Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{script_name_to_search});
-            Global.exit(1);
         }
 
-        return false;
+        return ExecResult.failure;
     }
 
     pub fn execAsIfNode(ctx: Command.Context) !void {

@@ -20,6 +20,9 @@ const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
+const Glob = @import("glob.zig");
+
+const Package = @import("install/lockfile.zig").Package;
 
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
@@ -194,6 +197,7 @@ pub const Arguments = struct {
     const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const run_only_params = [_]ParamType{
+        clap.parseParam("--filter <STR>...                 Run the script or executable in each workspace package matching the filter pattern") catch unreachable,
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     };
@@ -336,16 +340,17 @@ pub const Arguments = struct {
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
         } else {
-            if (ctx.args.absolute_working_dir == null) {
-                var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd = bun.getcwd(&secondbuf) catch return;
-
-                ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
+            var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var cwd: []const u8 = undefined;
+            if (ctx.args.cwd_override) |cwd_val| {
+                cwd = cwd_val;
+            } else {
+                cwd = try bun.getcwd(&cwd_buf);
             }
 
-            var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
+            var parts = [_]string{ cwd, config_path_ };
             config_path_ = resolve_path.joinAbsStringBuf(
-                ctx.args.absolute_working_dir.?,
+                cwd,
                 &config_buf,
                 &parts,
                 .auto,
@@ -402,18 +407,29 @@ pub const Arguments = struct {
             }
         }
 
-        var cwd: []u8 = undefined;
+        var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var cwd: []const u8 = undefined;
         if (args.option("--cwd")) |cwd_| {
-            cwd = brk: {
-                var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const out = std.os.realpath(cwd_, &outbuf) catch |err| {
-                    Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
-                    Global.exit(1);
-                };
-                break :brk try allocator.dupe(u8, out);
+            var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const out = std.os.realpath(cwd_, &outbuf) catch |err| {
+                Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
+                Global.exit(1);
             };
+            switch (bun.sys.chdir(out)) {
+                .err => |err| {
+                    Output.prettyErrorln("error setting --cwd to {s} due to error {}", .{ out, err });
+                    Global.crash();
+                },
+                .result => {},
+            }
+            cwd = try allocator.dupe(u8, out);
+            ctx.args.cwd_override = cwd;
         } else {
-            cwd = try bun.getcwdAlloc(allocator);
+            cwd = try bun.getcwd(&cwd_buf);
+        }
+
+        if (cmd == .RunCommand) {
+            ctx.filters = args.options("--filter");
         }
 
         if (cmd == .TestCommand) {
@@ -472,7 +488,6 @@ pub const Arguments = struct {
             ctx.test_options.only = args.flag("--only");
         }
 
-        ctx.args.absolute_working_dir = cwd;
         ctx.positionals = args.positionals();
 
         if (comptime Command.Tag.loads_config.get(cmd)) {
@@ -1087,6 +1102,8 @@ pub const Command = struct {
         bundler_options: BundlerOptions = BundlerOptions{},
         runtime_options: RuntimeOptions = RuntimeOptions{},
 
+        filters: []const []const u8 = &[_][]const u8{},
+
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
 
@@ -1606,11 +1623,7 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
 
                 if (ctx.positionals.len > 0) {
-                    if (try RunCommand.exec(ctx, false, true)) {
-                        return;
-                    }
-
-                    Global.exit(1);
+                    try RunCommand.execAll(ctx, false);
                 }
             },
             .RunAsNodeCommand => {
@@ -1723,8 +1736,15 @@ pub const Command = struct {
                 }
 
                 if (ctx.positionals.len > 0 and extension.len == 0) {
-                    if (try RunCommand.exec(ctx, true, false)) {
-                        return;
+                    if (ctx.filters.len > 0) {
+                        Output.prettyln("<r><yellow>warn<r>: Filters are ignored for auto command", .{});
+                    }
+                    switch (try RunCommand.exec(ctx, true, false, false)) {
+                        .failure => {},
+                        .ok => return,
+                        .code => |code| {
+                            Global.exit(code);
+                        },
                     }
 
                     Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Script not found \"{s}\"<r>", .{

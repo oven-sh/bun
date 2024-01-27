@@ -1257,6 +1257,14 @@ pub const Log = struct {
         if (needs_newline) _ = try to.write("\n");
     }
 
+    pub fn printForLogLevelColorsRuntime(self: *Log, to: anytype, enable_ansi_colors: bool) !void {
+        if (enable_ansi_colors) {
+            return self.printForLogLevelWithEnableAnsiColors(to, true);
+        } else {
+            return self.printForLogLevelWithEnableAnsiColors(to, false);
+        }
+    }
+
     pub fn toZigException(this: *const Log, allocator: std.mem.Allocator) *js.ZigException.Holder {
         var holder = try allocator.create(js.ZigException.Holder);
         holder.* = js.ZigException.Holder.init();

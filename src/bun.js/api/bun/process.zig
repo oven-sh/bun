@@ -96,28 +96,21 @@ pub const ProcessExitHandler = struct {
         this.ptr = TaggedPointer.init(ptr);
     }
 
-    pub fn call(this: *const ProcessExitHandler, comptime ProcessType: type, process: *ProcessType, status: Status, rusage: *const Rusage) void {
+    pub fn call(this: *const ProcessExitHandler, process: *Process, status: Status, rusage: *const Rusage) void {
         if (this.ptr.isNull()) {
             return;
         }
 
         switch (this.ptr.tag()) {
             .Subprocess => {
-                if (comptime ProcessType != Process)
-                    unreachable;
                 const subprocess = this.ptr.as(Subprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
             .LifecycleScriptSubprocess => {
-                if (comptime ProcessType != Process)
-                    unreachable;
                 const subprocess = this.ptr.as(LifecycleScriptSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocess))) => {
-                if (comptime ProcessType != Process)
-                    unreachable;
-
                 const subprocess = this.ptr.as(ShellSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
@@ -186,7 +179,7 @@ pub const Process = struct {
             this.detach();
         }
 
-        exit_handler.call(Process, this, status, rusage);
+        exit_handler.call(this, status, rusage);
     }
 
     pub fn signalCode(this: *const Process) ?bun.SignalCode {

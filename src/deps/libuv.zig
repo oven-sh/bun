@@ -415,7 +415,7 @@ fn HandleMixin(comptime Type: type) type {
         pub fn setData(handle: *Type, ptr: ?*anyopaque) void {
             uv_handle_set_data(@ptrCast(handle), ptr);
         }
-        pub fn close(this: *Type, cb: uv_close_cb) void {
+        pub fn close(this: *Type, cb: *const fn (*Type) callconv(.C) void) void {
             uv_close(@ptrCast(this), @ptrCast(cb));
         }
 
@@ -433,6 +433,10 @@ fn HandleMixin(comptime Type: type) type {
 
         pub fn isClosing(this: *const Type) bool {
             return uv_is_closing(@ptrCast(this)) != 0;
+        }
+
+        pub fn isClosed(this: *const Type) bool {
+            return uv_is_closed(@ptrCast(this)) != 0;
         }
 
         pub fn isActive(this: *const Type) bool {
@@ -974,6 +978,8 @@ pub const struct_uv_stream_s = extern struct {
     activecnt: c_int,
     read_req: uv_read_t,
     stream: union_unnamed_384,
+
+    pub usingnamespace HandleMixin(@This());
 };
 const union_unnamed_390 = extern union {
     fd: c_int,
@@ -1353,33 +1359,7 @@ pub const uv_process = extern struct {
     process_handle: HANDLE,
     exit_cb_pending: u8,
 
-    pub fn isActive(this: *const @This()) bool {
-        return uv_is_active(@as(*const uv_handle_t, @alignCast(@ptrCast(this)))) != 0;
-    }
-
-    pub fn isClosing(this: *const @This()) bool {
-        return uv_is_closing(@as(*const uv_handle_t, @alignCast(@ptrCast(this)))) != 0;
-    }
-
-    pub fn isClosed(this: *const @This()) bool {
-        return uv_is_closed(@as(*const uv_handle_t, @alignCast(@ptrCast(this)))) != 0;
-    }
-
-    pub fn close(this: *@This(), cb: *const fn (*uv_process_t) callconv(.C) void) void {
-        uv_close(@alignCast(@ptrCast(this)), @alignCast(@ptrCast(cb)));
-    }
-
-    pub fn ref(this: *@This()) void {
-        uv_ref(@alignCast(@ptrCast(this)));
-    }
-
-    pub fn unref(this: *@This()) void {
-        uv_unref(@alignCast(@ptrCast(this)));
-    }
-
-    pub fn hasRef(this: *const @This()) bool {
-        return uv_has_ref(@alignCast(@ptrCast(this))) != 0;
-    }
+    pub usingnamespace HandleMixin(@This());
 
     pub fn kill(this: *@This(), signum: c_int) ReturnCode {
         return uv_process_kill(@alignCast(@ptrCast(this)), signum);

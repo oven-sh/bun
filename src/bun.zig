@@ -915,6 +915,8 @@ pub const SignalCode = enum(u8) {
         return null;
     }
 
+    /// Shell scripts use exit codes 128 + signal number
+    /// https://tldp.org/LDP/abs/html/exitcodes.html
     pub fn toExitCode(value: SignalCode) ?u8 {
         return switch (@intFromEnum(value)) {
             1...31 => 128 +% @intFromEnum(value),

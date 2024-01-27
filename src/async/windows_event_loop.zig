@@ -8,9 +8,6 @@ const uv = bun.windows.libuv;
 pub const Loop = uv.Loop;
 
 pub const KeepAlive = struct {
-    // handle.init zeroes the memory
-    handle: uv.uv_async_t = undefined,
-
     status: Status = .inactive,
 
     const log = Output.scoped(.KeepAlive, false);
@@ -18,11 +15,6 @@ pub const KeepAlive = struct {
     const Status = enum { active, inactive, done };
 
     pub inline fn isActive(this: KeepAlive) bool {
-        if (comptime Environment.allow_assert) {
-            if (this.status == .active) {
-                std.debug.assert(this.handle.isActive());
-            }
-        }
         return this.status == .active;
     }
 
@@ -30,7 +22,6 @@ pub const KeepAlive = struct {
     pub fn disable(this: *KeepAlive) void {
         if (this.status == .active) {
             this.unref(JSC.VirtualMachine.get());
-            this.handle.close(null);
         }
 
         this.status = .done;
@@ -38,12 +29,11 @@ pub const KeepAlive = struct {
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(this: *KeepAlive, loop: *Loop) void {
-        _ = loop;
         if (this.status != .active)
             return;
 
         this.status = .inactive;
-        this.handle.close(null);
+        loop.inc();
     }
 
     /// Only intended to be used from EventLoop.Pollable
@@ -52,7 +42,7 @@ pub const KeepAlive = struct {
             return;
 
         this.status = .active;
-        this.handle.init(loop, null);
+        loop.inc();
     }
 
     pub fn init() KeepAlive {
@@ -61,42 +51,39 @@ pub const KeepAlive = struct {
 
     /// Prevent a poll from keeping the process alive.
     pub fn unref(this: *KeepAlive, event_loop_ctx_: anytype) void {
-        _ = event_loop_ctx_;
-        // const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
         if (this.status != .active)
             return;
         this.status = .inactive;
-        this.handle.unref();
+        event_loop_ctx.platformEventLoop().dec();
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
     pub fn unrefConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
-        _ = vm;
+        // _ = vm;
         if (this.status != .active)
             return;
         this.status = .inactive;
 
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        this.handle.unref();
+        vm.event_loop_handle.?.dec();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
     pub fn unrefOnNextTick(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
-        _ = vm;
         if (this.status != .active)
             return;
         this.status = .inactive;
-        this.handle.unref();
+        vm.event_loop_handle.?.dec();
     }
 
     /// From another thread, prevent a poll from keeping the process alive on the next tick.
     pub fn unrefOnNextTickConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
-        _ = vm;
         if (this.status != .active)
             return;
         this.status = .inactive;
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        this.handle.unref();
+        vm.event_loop_handle.?.dec();
     }
 
     /// Allow a poll to keep the process alive.
@@ -105,8 +92,7 @@ pub const KeepAlive = struct {
         if (this.status != .inactive)
             return;
         this.status = .active;
-        this.handle.init(event_loop_ctx.platformEventLoop(), null);
-        this.handle.ref();
+        event_loop_ctx.platformEventLoop().inc();
     }
 
     /// Allow a poll to keep the process alive.
@@ -115,8 +101,7 @@ pub const KeepAlive = struct {
             return;
         this.status = .active;
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        this.handle.init(vm.event_loop_handle.?, null);
-        this.handle.ref();
+        vm.event_loop_handle.?.inc();
     }
 
     pub fn refConcurrentlyFromEventLoop(this: *KeepAlive, loop: *JSC.EventLoop) void {

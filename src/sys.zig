@@ -349,41 +349,67 @@ pub fn getErrno(rc: anytype) bun.C.E {
     };
 }
 
-// pub fn openOptionsFromFlagsWindows(flags: u32) windows.OpenFileOptions {
-//     const w = windows;
-//     const O = std.os.O;
-
-//     var access_mask: w.ULONG = w.READ_CONTROL | w.FILE_WRITE_ATTRIBUTES | w.SYNCHRONIZE;
-//     if (flags & O.RDWR != 0) {
-//         access_mask |= w.GENERIC_READ | w.GENERIC_WRITE;
-//     } else if (flags & O.WRONLY != 0) {
-//         access_mask |= w.GENERIC_WRITE;
-//     } else {
-//         access_mask |= w.GENERIC_READ | w.GENERIC_WRITE;
-//     }
-
-//     const filter: windows.OpenFileOptions.Filter = if (flags & O.DIRECTORY != 0) .dir_only else .file_only;
-//     const follow_symlinks: bool = flags & O.NOFOLLOW == 0;
-
-//     const creation: w.ULONG = blk: {
-//         if (flags & O.CREAT != 0) {
-//             if (flags & O.EXCL != 0) {
-//                 break :blk w.FILE_CREATE;
-//             }
-//         }
-//         break :blk w.FILE_OPEN;
-//     };
-
-//     return .{
-//         .access_mask = access_mask,
-//         .io_mode = .blocking,
-//         .creation = creation,
-//         .filter = filter,
-//         .follow_symlinks = follow_symlinks,
-//     };
-// }
 const O = std.os.O;
 const w = std.os.windows;
+
+fn normalizePathWindows(
+    dir_fd: bun.FileDescriptor,
+    path: []const u8,
+    buf: *bun.WPathBuffer,
+) Maybe([:0]const u16) {
+    const slash = bun.strings.charIsAnySlash;
+    const ok = brk: {
+        var slash_or_start = true;
+        for (0..path.len) |i| {
+            // if we're starting with a dot or just saw a slash and now a dot
+            if (slash_or_start and path[i] == '.') {
+                // just '.' or ending on '/.'
+                if (i + 1 == path.len) break :brk false;
+                // starting with './' or containing '/./'
+                if (slash(path[i + 1])) break :brk false;
+                if (path.len > i + 2) {
+                    // starting with '../'' or containing '/../'
+                    if (path[i + 1] == '.' and slash(path[i + 2])) break :brk false;
+                }
+            }
+            // two slashes in a row
+            if (slash_or_start and slash(path[i])) break :brk false;
+            slash_or_start = slash(path[i]);
+        }
+        break :brk true;
+    };
+    if (ok) {
+        // no need to normalize, proceed normally
+        return .{
+            .result = bun.strings.toNTPath(buf, path),
+        };
+    }
+    var buf1: bun.PathBuffer = undefined;
+    var buf2: bun.PathBuffer = undefined;
+    if (std.fs.path.isAbsoluteWindows(path)) {
+        const norm = bun.path.normalizeStringWindows(path, &buf1, false, false);
+        return .{
+            .result = bun.strings.toNTPath(buf, norm),
+        };
+    }
+
+    const base_fd = if (dir_fd == bun.invalid_fd)
+        std.fs.cwd().fd
+    else
+        dir_fd.cast();
+
+    const base_path = w.GetFinalPathNameByHandle(base_fd, w.GetFinalPathNameByHandleFormat{}, buf) catch {
+        return .{ .err = .{
+            .errno = @intFromEnum(bun.C.E.BADFD),
+            .syscall = .open,
+        } };
+    };
+    const base_count = bun.simdutf.convert.utf16.to.utf8.le(base_path, &buf1);
+    const norm = bun.path.joinAbsStringBuf(buf1[0..base_count], &buf2, &[_][]const u8{path}, .windows);
+    return .{
+        .result = bun.strings.toNTPath(buf, norm),
+    };
+}
 
 pub fn openDirAtWindows(
     dirFd: bun.FileDescriptor,
@@ -432,7 +458,7 @@ pub fn openDirAtWindows(
     );
 
     if (comptime Environment.allow_assert) {
-        log("NtCreateFile({d}, {s}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
+        log("NtCreateFile({d}, {s}, iterable = {}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), iterable, @tagName(rc), @intFromPtr(fd) });
     }
 
     switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -468,8 +494,15 @@ pub noinline fn openDirAtWindowsA(
     no_follow: bool,
 ) Maybe(bun.FileDescriptor) {
     var wbuf: bun.WPathBuffer = undefined;
-    return openDirAtWindows(dirFd, bun.strings.toNTDir(&wbuf, path), iterable, no_follow);
+
+    const norm = switch (normalizePathWindows(dirFd, path, &wbuf)) {
+        .err => |err| return .{ .err = err },
+        .result => |norm| norm,
+    };
+
+    return openDirAtWindows(dirFd, norm, iterable, no_follow);
 }
+
 pub fn openatWindows(dir: bun.FileDescriptor, path: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
     const nonblock = flags & O.NONBLOCK != 0;
     const overwrite = flags & O.WRONLY != 0 and flags & O.APPEND == 0;

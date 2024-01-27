@@ -1696,11 +1696,6 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
 pub fn assertIsValidWindowsPath(utf8: []const u8) void {
     if (Environment.allow_assert and Environment.isWindows) {
-        if (windowsPathIsPosixAbsolute(utf8)) {
-            std.debug.panic("Do not pass posix paths to windows APIs, was given '{s}' (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)", .{
-                utf8,
-            });
-        }
         if (startsWith(utf8, ":/")) {
             std.debug.panic("Path passed to windows API '{s}' is almost certainly invalid. Where did the drive letter go?", .{
                 utf8,

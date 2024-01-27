@@ -979,3 +979,102 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
     };
 }
+
+pub const WindowsWatcher = struct {
+    iocp: w.HANDLE,
+    allocator: std.mem.Allocator,
+    watchers: Map,
+    rng: std.rand.DefaultPrng,
+    running: bool = true,
+
+    const Map = std.ArrayHashMap(w.ULONG_PTR, *DirWatcher, false);
+    const w = std.os.windows;
+    const DirWatcher = struct {
+        buf: [64 * 1024]u8 align(@alignOf(w.DWORD)) = undefined,
+        dirHandle: w.HANDLE,
+
+        fn handleEvent(this: *DirWatcher, nbytes: w.DWORD) void {
+            if (nbytes == 0) return;
+            var offset = 0;
+            while (true) {
+                const info: *w.FILE_NOTIFY_INFORMATION = @alignCast(@ptrCast(&this.buf[offset .. offset + @sizeOf(w.FILE_NOTIFY_INFORMATION)]));
+                const name_offset = offset + @sizeOf(w.FILE_NOTIFY_INFORMATION);
+                const filename: []u16 = @alignCast(@ptrCast(&this.buf[name_offset .. name_offset + info.FileNameLength / @sizeOf(u16)]));
+
+                _ = filename;
+                _ = info.Action;
+
+                if (info.NextEntryOffset == 0) break;
+                offset += info.NextEntryOffset;
+            }
+        }
+    };
+
+    pub fn init(allocator: std.mem.Allocator) !*WindowsWatcher {
+        const watcher = try allocator.create(WindowsWatcher);
+        errdefer allocator.destroy(watcher);
+
+        const iocp = try w.CreateIoCompletionPort(w.INVALID_HANDLE_VALUE, null, 0, 1);
+        watcher.* = .{ .iocp = iocp, .allocator = allocator, .watchers = Map.init(allocator), .rng = std.rand.DefaultPrng.init(0) };
+        return watcher;
+    }
+
+    pub fn addWatchedDirectory(this: *WindowsWatcher, dirFd: bun.FileDescriptor, path: [:0]u16) !void {
+        _ = dirFd;
+        // TODO respect dirFd
+        const handle = w.kernel32.CreateFileW(
+            path,
+            w.FILE_LIST_DIRECTORY,
+            w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
+            null,
+            w.OPEN_EXISTING,
+            w.FILE_FLAG_BACKUP_SEMANTICS | w.FILE_FLAG_OVERLAPPED,
+            null,
+        );
+        if (handle == w.INVALID_HANDLE_VALUE) {
+            @panic("failed to open directory for watching");
+        }
+        // TODO check if this is a directory
+
+        errdefer _ = w.kernel32.CloseHandle(handle);
+
+        const key = this.rng.next();
+
+        this.iocp = try w.CreateIoCompletionPort(handle, this.iocp, key, 1);
+
+        const watcher = try this.allocator.create(DirWatcher);
+        errdefer this.allocator.destroy(watcher);
+        watcher.* = .{ .dirHandle = handle };
+        try this.watchers.put(key, watcher);
+
+        const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_SIZE | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION | w.FILE_NOTIFY_CHANGE_SECURITY;
+        if (w.kernel32.ReadDirectoryChangesW(handle, &watcher.buf, watcher.buf.len, 1, filter, null, null, null) == 0) {
+            @panic("failed to start watching directory");
+        }
+    }
+
+    pub fn stop(this: *WindowsWatcher) void {
+        @atomicStore(bool, &this.running, false, .Unordered);
+    }
+
+    pub fn run(this: *WindowsWatcher) void {
+        var nbytes: w.DWORD = 0;
+        var key: w.ULONG_PTR = 0;
+        var overlapped: ?*w.OVERLAPPED = null;
+        while (w.GetQueuedCompletionStatus(this.iocp, &nbytes, &key, &overlapped, w.INFINITE) != 0) {
+            if (nbytes == 0) {
+                // exit notification?
+                break;
+            }
+            if (this.watchers.get(key)) |watcher| {
+                watcher.handleEvent(nbytes);
+            } else {
+                // not really an error: the watcher with this key has already been closed and we're just receiving the remaining events
+                Output.prettyErrorln("no watcher with key {d}", .{key});
+            }
+            if (@atomicLoad(bool, &this.running, .Unordered) == false) {
+                break;
+            }
+        }
+    }
+};

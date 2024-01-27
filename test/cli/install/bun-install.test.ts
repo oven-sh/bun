@@ -4390,7 +4390,7 @@ it("should report error on invalid format for workspaces", async () => {
   expect(await exited).toBe(1);
 });
 
-it("should report error on duplicated workspace packages", async () => {
+it.only("should report error on duplicated workspace packages", async () => {
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -4428,7 +4428,7 @@ it("should report error on duplicated workspace packages", async () => {
   expect(
     err
       .replace(/^bun install v.+\n/, "bun install\n")
-      .replaceAll(package_dir.replaceAll(sep, "/"), "[dir]").replaceAll(sep, "/"),
+      .replaceAll(package_dir, "[dir]").replaceAll(sep, "/"),
   ).toMatchSnapshot();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();

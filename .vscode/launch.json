@@ -533,7 +533,7 @@
       "request": "launch",
       "name": "Windows: bun run [file]",
       "program": "${workspaceFolder}/build/bun-debug.exe",
-      "args": ["run", "${relativeFile}"],
+      "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "environment": [
         {
@@ -555,7 +555,7 @@
       "request": "launch",
       "name": "Windows: bun run [file] (fast)",
       "program": "${workspaceFolder}/build/bun-debug.exe",
-      "args": ["run", "${relativeFile}"],
+      "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "environment": [
         {
@@ -577,7 +577,7 @@
       "request": "launch",
       "name": "Windows: bun run [file] (verbose)",
       "program": "${workspaceFolder}/build/bun-debug.exe",
-      "args": ["run", "${relativeFile}"],
+      "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "environment": [
         {
@@ -599,7 +599,7 @@
       "request": "launch",
       "name": "Windows: bun run [file] --inspect",
       "program": "${workspaceFolder}/build/bun-debug.exe",
-      "args": ["run", "${relativeFile}"],
+      "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "environment": [
         {
@@ -630,7 +630,7 @@
       "request": "launch",
       "name": "Windows: bun run [file] --inspect-brk",
       "program": "${workspaceFolder}/build/bun-debug.exe",
-      "args": ["run", "${relativeFile}"],
+      "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "environment": [
         {

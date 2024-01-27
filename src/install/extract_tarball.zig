@@ -289,7 +289,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     // e.g. @next
     // if it's a namespace package, we need to make sure the @name folder exists
-    if (basename.len != name.len) {
+    if (basename.len != name.len and !this.resolution.tag.isGit()) {
         cache_dir.makeDir(std.mem.trim(u8, name[0 .. name.len - basename.len], "/")) catch {};
     }
 

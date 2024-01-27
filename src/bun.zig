@@ -2453,3 +2453,9 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     copy(u8, output_buffer[0..size], user[0..size]);
     return output_buffer[0..size];
 }
+
+/// This struct is a workaround a Windows terminal bug.
+/// TODO: when https://github.com/microsoft/terminal/issues/16606 is resolved, revert this commit.
+pub var buffered_stdin = std.io.BufferedReader(4096, std.fs.File.Reader){
+    .unbuffered_reader = std.fs.File.Reader{ .context = .{ .handle = if (Environment.isWindows) undefined else 0 } },
+};

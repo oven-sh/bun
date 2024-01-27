@@ -244,8 +244,7 @@ pub const Prompt = struct {
         bun.Output.flush();
 
         // 7. Pause while waiting for the user's response.
-        var stdin = std.io.getStdIn();
-        var reader = stdin.reader();
+        const reader = bun.buffered_stdin.reader();
 
         const first_byte = reader.readByte() catch {
             // 8. Let result be null if the user aborts, or otherwise the string

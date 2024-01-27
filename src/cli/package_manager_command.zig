@@ -179,13 +179,14 @@ pub const PackageManagerCommand = struct {
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const fd = pm.getCacheDirectory();
+            var fd = pm.getCacheDirectory();
             const outpath = bun.getFdPath(fd.fd, &dir) catch |err| {
                 Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
                 Global.crash();
             };
 
             if (pm.options.positionals.len > 1 and strings.eqlComptime(pm.options.positionals[1], "rm")) {
+                fd.close();
                 std.fs.deleteTreeAbsolute(outpath) catch |err| {
                     Output.prettyErrorln("{s} deleting cache directory", .{@errorName(err)});
                     Global.crash();

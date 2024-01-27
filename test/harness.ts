@@ -1,6 +1,7 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { expect } from "bun:test";
 import { platform } from "os";
+import { openSync, closeSync } from "node:fs";
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -256,6 +257,15 @@ export function ospath(path: string) {
     return path.replace(/\//g, "\\");
   }
   return path;
+}
+
+export function getMaxFD(): number {
+  if (process.platform === "win32") {
+    return 0;
+  }
+  const maxFD = openSync("/dev/null", "r");
+  closeSync(maxFD);
+  return maxFD;
 }
 
 // This is extremely frowned upon but I think it's easier to deal with than

@@ -832,6 +832,10 @@ pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool 
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], comptime toUTF16Literal(alt), false);
 }
 
+pub fn hasPrefixComptimeType(comptime T: type, self: []const T, comptime alt: []const T) bool {
+    return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], alt, false);
+}
+
 pub fn hasSuffixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[self.len - alt.len ..], alt, false);
 }
@@ -1626,8 +1630,15 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
         return toWPathNormalized(wbuf, utf8);
     }
 
-    wbuf[0..4].* = [_]u16{ '\\', '?', '?', '\\' };
+    wbuf[0..4].* = bun.windows.nt_object_prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
+}
+
+pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]const u16 {
+    wbuf[0..bun.windows.nt_object_prefix.len].* = bun.windows.nt_object_prefix;
+    @memcpy(wbuf[bun.windows.nt_object_prefix.len..][0..utf16.len], utf16);
+    wbuf[utf16.len + bun.windows.nt_object_prefix.len] = 0;
+    return wbuf[0 .. utf16.len + bun.windows.nt_object_prefix.len :0];
 }
 
 // These are the same because they don't have rules like needing a trailing slash
@@ -1696,11 +1707,6 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
 pub fn assertIsValidWindowsPath(utf8: []const u8) void {
     if (Environment.allow_assert and Environment.isWindows) {
-        if (windowsPathIsPosixAbsolute(utf8)) {
-            std.debug.panic("Do not pass posix paths to windows APIs, was given '{s}' (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)", .{
-                utf8,
-            });
-        }
         if (startsWith(utf8, ":/")) {
             std.debug.panic("Path passed to windows API '{s}' is almost certainly invalid. Where did the drive letter go?", .{
                 utf8,

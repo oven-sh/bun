@@ -4292,7 +4292,7 @@ it("should report error on invalid format for package.json", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir.replaceAll(sep, "/"), "[dir]")).toMatchSnapshot();
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir + sep, "[dir]/")).toMatchSnapshot();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toEqual("");
@@ -4318,7 +4318,7 @@ it("should report error on invalid format for dependencies", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir.replaceAll(sep, "/"), "[dir]")).toMatchSnapshot();
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir + sep, "[dir]/")).toMatchSnapshot();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toEqual("");
@@ -4344,7 +4344,7 @@ it("should report error on invalid format for optionalDependencies", async () =>
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir.replaceAll(sep, "/"), "[dir]")).toMatchSnapshot();
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir + sep, "[dir]/")).toMatchSnapshot();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toEqual("");
@@ -4372,7 +4372,7 @@ it("should report error on invalid format for workspaces", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir.replaceAll(sep, "/"), "[dir]")).toMatchSnapshot();
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").replaceAll(package_dir + sep, "[dir]/")).toMatchSnapshot();
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toEqual("");

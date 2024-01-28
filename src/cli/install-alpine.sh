@@ -2,7 +2,7 @@
 
 # wget -O - https://raw.githubusercontent.com/alxivnov/bun/alpine/src/cli/install-alpine.sh | sh
 
-# if [ $(cat /etc/os-release | grep -c "alpine") -gt 0 ]; then
+if [ $(cat /etc/os-release | grep -c "alpine") -gt 0 ]; then
 	apk add --no-cache gcompat
 
 	GITHUB="https://github.com"
@@ -29,6 +29,7 @@
 		apk add --allow-untrusted --force-overwrite --no-cache "glibc.apk" "glibc-bin.apk"
 		rm "glibc.apk" "glibc-bin.apk"
 	fi
+fi
 
 
 
@@ -49,18 +50,17 @@
 		bun_uri=$GITHUB/oven-sh/bun/releases/latest/download/bun-$target.zip
 	fi
 
-	if [ $(ls /usr/local/bin | grep -c "$exe_name") -eq 0 ]; then
+	# if [ $(ls /usr/local/bin | grep -c "$exe_name") -eq 0 ]; then
 		wget -O "bun.zip" "$bun_uri"
 		unzip -o "bun.zip"
 		mv "bun-$target/$exe_name" "/usr/local/bin/$exe_name"
 		rm -r "bun.zip" "bun-$target"
 
 		ln -s /usr/local/bin/$exe_name /usr/local/bin/$BUNX
-	fi
+	# fi
 
 
 
 	which $exe_name
 	which $BUNX
 	$exe_name --version
-# fi

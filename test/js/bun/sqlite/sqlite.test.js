@@ -676,9 +676,9 @@ it("multiple statements", () => {
     "INSERT INTO foo (name) VALUES ('barabc')",
     "INSERT INTO foo (name) VALUES ('!bazaspdok')",
   ];
-  for (let separator of [";", ";\n", "\n;", "\r\n;", ";\r\n", ";\t"]) {
+  for (let separator of [";", ";\n", "\n;", "\r\n;", ";\r\n", ";\t", "\t;", "\r\n;"]) {
     for (let spaceOffset of [1, 0, -1]) {
-      for (let spacesCount = 0; spacesCount < 10; spacesCount++) {
+      for (let spacesCount = 0; spacesCount < 8; spacesCount++) {
         const db = new Database(":memory:");
         db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
 

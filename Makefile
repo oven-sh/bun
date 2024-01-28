@@ -629,7 +629,7 @@ libarchive:
 	(make clean || echo ""); \
 	(./build/clean.sh || echo ""); \
 	./build/autogen.sh; \
-	CFLAGS="$(CFLAGS)" $(CCACHE_CC_FLAG) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
+	CFLAGS="$(CFLAGS)" $(CCACHE_CC_FLAG) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --with-zlib; \
 	make -j${CPUS}; \
 	cp ./.libs/libarchive.a $(BUN_DEPS_OUT_DIR)/libarchive.a;
 
@@ -646,7 +646,7 @@ tgz-debug:
 	rm -rf $(DEBUG_PACKAGE_DIR)/tgz.o
 
 zlib:
-	cd $(BUN_DEPS_DIR)/zlib; make clean; $(CCACHE_CC_FLAG) CFLAGS="$(CFLAGS)" ./configure --static && make -j${CPUS} && cp ./libz.a $(BUN_DEPS_OUT_DIR)/libz.a
+	cd $(BUN_DEPS_DIR)/zlib; $(CCACHE_CC_FLAG) CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -G Ninja -B build -DZLIB_COMPAT=ON -DBUILD_SHARED_LIBS=OFF && ninja -C build libz.a && cp ./build/libz.a $(BUN_DEPS_OUT_DIR)/libz.a
 
 ifeq ($(POSIX_PKG_MANAGER), brew)
 PKGNAME_NINJA := ninja
@@ -930,9 +930,9 @@ clone-submodules:
 
 .PHONY: headers
 headers:
-	echo please don't run the headers generator anymore. i don't think it works. 
+	echo please don't run the headers generator anymore. i don't think it works.
 	echo if you really need it, run make headers2
-headers2: 
+headers2:
 	rm -f /tmp/build-jsc-headers src/bun.js/bindings/headers.zig
 	touch src/bun.js/bindings/headers.zig
 	$(ZIG) build headers-obj
@@ -1910,7 +1910,7 @@ vendor: assert-deps submodule vendor-without-check
 vendor-dev: assert-deps submodule npm-install-dev vendor-without-npm
 
 .PHONY: bun
-bun: 
+bun:
 	@echo 'makefile is deprecated - use `cmake` / `bun run build`'
 	@echo 'See https://bun.sh/docs/project/contributing for more details'
 

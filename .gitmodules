@@ -22,7 +22,7 @@ shallow = true
 fetchRecurseSubmodules = false
 [submodule "src/deps/zlib"]
 path = src/deps/zlib
-url = https://github.com/cloudflare/zlib.git
+	url = https://github.com/zlib-ng/zlib-ng
 ignore = dirty
 depth = 1
 shallow = true

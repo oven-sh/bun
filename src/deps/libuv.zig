@@ -303,7 +303,7 @@ pub const uv_pipe_s = struct_uv_pipe_s;
 pub const uv_tty_s = struct_uv_tty_s;
 pub const uv_poll_s = struct_uv_poll_s;
 pub const uv_process_exit_s = struct_uv_process_exit_s;
-pub const uv_process_s = uv_process;
+pub const uv_process_s = Process;
 pub const uv_fs_event_req_s = struct_uv_fs_event_req_s;
 pub const uv_fs_event_s = struct_uv_fs_event_s;
 pub const uv_fs_poll_s = struct_uv_fs_poll_s;
@@ -1318,7 +1318,7 @@ const union_unnamed_424 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
 };
-pub const uv_process_t = uv_process;
+pub const uv_process_t = Process;
 pub const uv_exit_cb = ?*const fn (*uv_process_t, i64, c_int) callconv(.C) void;
 const struct_unnamed_426 = extern struct {
     overlapped: OVERLAPPED,
@@ -1341,7 +1341,7 @@ pub const struct_uv_process_exit_s = extern struct {
     u: union_unnamed_425,
     next_req: [*c]struct_uv_req_s,
 };
-pub const uv_process = extern struct {
+pub const Process = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
     type: uv_handle_type,
@@ -1350,7 +1350,7 @@ pub const uv_process = extern struct {
     u: union_unnamed_424,
     endgame_next: [*c]uv_handle_t,
     flags: c_uint,
-    exit_cb: ?*const fn ([*c]uv_process, i64, c_int) callconv(.C) void,
+    exit_cb: ?*const fn ([*c]Process, i64, c_int) callconv(.C) void,
     pid: c_int,
     exit_req: struct_uv_process_exit_s,
     unused: ?*anyopaque,
@@ -1358,6 +1358,10 @@ pub const uv_process = extern struct {
     wait_handle: HANDLE,
     process_handle: HANDLE,
     exit_cb_pending: u8,
+
+    pub fn spawn(handle: *uv_process_t, loop: *uv_loop_t, options: *const uv_process_options_t) ReturnCode {
+        return uv_spawn(loop, handle, options);
+    }
 
     pub usingnamespace HandleMixin(@This());
 

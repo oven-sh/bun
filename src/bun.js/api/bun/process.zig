@@ -456,7 +456,7 @@ pub const Process = struct {
 
     pub fn hasRef(this: *Process) bool {
         return switch (this.poller) {
-            .fd => this.poller.fd.canEnableKeepingProcessAlive(),
+            .fd => this.poller.fd.isActive(),
             .uv => if (Environment.isWindows) this.poller.uv.hasRef() else unreachable,
             .waiter_thread => this.poller.waiter_thread.isActive(),
             else => false,
@@ -791,8 +791,37 @@ pub const PosixSpawnOptions = struct {
     stdout: Stdio = .ignore,
     stderr: Stdio = .ignore,
     extra_fds: []const Stdio = &.{},
-    cwd: []const u8 = "",
+    cwd: [:0]const u8 = "",
     detached: bool = false,
+    windows: void = {},
+
+    pub const Stdio = union(enum) {
+        path: []const u8,
+        inherit: void,
+        ignore: void,
+        buffer: void,
+        pipe: bun.FileDescriptor,
+    };
+};
+
+pub const WindowsSpawnResult = struct {
+
+};
+
+pub const WindowsSpawnOptions = struct {
+    stdin: Stdio = .ignore,
+    stdout: Stdio = .ignore,
+    stderr: Stdio = .ignore,
+    extra_fds: []const Stdio = &.{},
+    cwd: [:0]const u8 = "",
+    detached: bool = false,
+    windows: WindowsOptions = .{},
+
+    pub const WindowsOptions = struct {
+        verbatim_arguments: bool = false,
+        hide_window: bool = false,
+        loop: *bun.windows.libuv.Loop = undefined,
+    };
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -810,6 +839,18 @@ pub const PosixSpawnResult = struct {
     stdout: ?bun.FileDescriptor = null,
     stderr: ?bun.FileDescriptor = null,
     extra_pipes: std.ArrayList(bun.FileDescriptor) = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator),
+
+    pub fn toProcess(
+        this: *const PosixSpawnResult,
+        event_loop: anytype,
+        sync: bool,
+    ) *Process {
+        return Process.initPosix(
+            this.*,
+            event_loop,
+            sync,
+        );
+    }
 
     fn pidfdFlagsForLinux() u32 {
         const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
@@ -871,12 +912,13 @@ pub const PosixSpawnResult = struct {
         unreachable;
     }
 };
-pub const SpawnOptions = if (Environment.isPosix) PosixSpawnOptions else void;
-pub fn spawnProcess(
+pub const SpawnOptions = if (Environment.isPosix) PosixSpawnOptions else WindowsSpawnOptions;
+pub const spawnProcess = if (Environment.isPosix) spawnProcessPosix else spawnProcessWin32;
+pub fn spawnProcessPosix(
     options: *const PosixSpawnOptions,
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
-) !PosixSpawnResult {
+) !JSC.Maybe(PosixSpawnResult) {
     var actions = try PosixSpawn.Actions.init();
     defer actions.deinit();
 
@@ -1014,7 +1056,7 @@ pub fn spawnProcess(
 
     switch (spawn_result) {
         .err => {
-            _ = try spawn_result.unwrap(); // trigger the error
+            return .{ .err = spawn_result.err };
         },
         .result => |pid| {
             spawned.pid = pid;
@@ -1030,11 +1072,40 @@ pub fn spawnProcess(
                 }
             }
 
-            return spawned;
+            return .{ .result = spawned };
         },
     }
 
     unreachable;
+}
+
+pub fn spawnProcessWin32(
+    options: *const WindowsSpawnOptions,
+    argv: [*:null]?[*:0]const u8,
+    envp: [*:null]?[*:0]const u8,
+) JSC.Maybe(WindowsSpawnResult) {
+    var uv_process_options = std.mem.zeroes(uv.uv_process_options_t);
+    uv_process_options.cwd = options.cwd;
+    uv_process_options.args = argv;
+    uv_process_options.env = envp;
+    uv_process_options.file = argv[0].?;
+    uv_process_options.exit_cb = &Process.onExitUV;
+
+    if (options.windows.hide_window) {
+        uv_process_options.flags |= uv.uv_process_flags.UV_PROCESS_WINDOWS_HIDE;
+    }
+
+    if (options.windows.verbatim_arguments) {
+        uv_process_options.flags |= uv.uv_process_flags.UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS;
+    }
+
+    if (options.detached) {
+        uv_process_options.flags |= uv.uv_process_flags.UV_PROCESS_DETACHED;
+    }
+
+    var stdio_options = std.mem.zeroes([3]uv.uv_stdio_container_t);
+    
+
 }
 
 // pub const TaskProcess = struct {

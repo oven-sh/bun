@@ -160,3 +160,21 @@ extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
     return 0;
 }
 #endif
+
+#if OS(LINUX)
+
+#include <sys/syscall.h>
+
+static ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
+{
+    return syscall(__NR_close_range, start, end, flags);
+}
+
+extern "C" void on_before_reload_process_linux()
+{
+    // close all file descriptors except stdin, stdout, stderr and possibly IPC.
+    // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
+    bun_close_range(8, ~0U, 0U);
+}
+
+#endif

@@ -1,4 +1,5 @@
 const bun = @import("root").bun;
+const Maybe = bun.JSC.Maybe;
 
 const WORD = c_ushort;
 const LARGE_INTEGER = i64;
@@ -290,7 +291,6 @@ pub const uv_once_s = struct_uv_once_s;
 pub const uv__dirent_s = struct_uv__dirent_s;
 pub const uv_dirent_s = struct_uv_dirent_s;
 pub const uv_dir_s = struct_uv_dir_s;
-pub const uv_read_s = struct_uv_read_s;
 pub const uv_shutdown_s = struct_uv_shutdown_s;
 pub const uv_stream_s = struct_uv_stream_s;
 pub const uv_tcp_accept_s = struct_uv_tcp_accept_s;
@@ -299,7 +299,6 @@ pub const uv_udp_s = struct_uv_udp_s;
 pub const uv_pipe_accept_s = struct_uv_pipe_accept_s;
 pub const uv_timer_s = struct_uv_timer_s;
 pub const uv_write_s = struct_uv_write_s;
-pub const uv_pipe_s = struct_uv_pipe_s;
 pub const uv_tty_s = struct_uv_tty_s;
 pub const uv_poll_s = struct_uv_poll_s;
 pub const uv_process_exit_s = struct_uv_process_exit_s;
@@ -441,6 +440,18 @@ fn HandleMixin(comptime Type: type) type {
 
         pub fn isActive(this: *const Type) bool {
             return uv_is_active(@ptrCast(this)) != 0;
+        }
+
+        pub fn fd(this: *const Type) bun.FileDescriptor {
+            var fd_: uv_os_fd_t = windows.INVALID_HANDLE_VALUE;
+            _ = uv_fileno(@ptrCast(this), &fd_);
+            if (fd_ == windows.INVALID_HANDLE_VALUE)
+                return bun.invalid_fd;
+
+            return bun.FDImpl{
+                .kind = .system,
+                .value = .{ .as_system = @truncate(@intFromPtr(fd_)) },
+            };
         }
     };
 }
@@ -900,7 +911,7 @@ const union_unnamed_380 = extern union {
 pub const uv_alloc_cb = ?*const fn (*uv_handle_t, usize, *uv_buf_t) callconv(.C) void;
 pub const uv_stream_t = struct_uv_stream_s;
 /// *uv.uv_handle_t is actually *uv_stream_t, just changed to avoid dependency loop error on Zig
-pub const uv_read_cb = ?*const fn (*uv_handle_t, isize, *const uv_buf_t) callconv(.C) void;
+pub const uv_read_cb = ?*const fn (*uv_handle_t, ReturnCodeI64, *const uv_buf_t) callconv(.C) void;
 const struct_unnamed_382 = extern struct {
     overlapped: OVERLAPPED,
     queued_bytes: usize,
@@ -915,7 +926,7 @@ const union_unnamed_381 = extern union {
     io: struct_unnamed_382,
     connect: struct_unnamed_383,
 };
-pub const struct_uv_read_s = extern struct {
+pub const Read = extern struct {
     data: ?*anyopaque,
     type: uv_req_type,
     reserved: [6]?*anyopaque,
@@ -924,7 +935,7 @@ pub const struct_uv_read_s = extern struct {
     event_handle: HANDLE,
     wait_handle: HANDLE,
 };
-pub const uv_read_t = struct_uv_read_s;
+pub const uv_read_t = Read;
 const struct_unnamed_387 = extern struct {
     overlapped: OVERLAPPED,
     queued_bytes: usize,
@@ -979,7 +990,7 @@ pub const struct_uv_stream_s = extern struct {
     read_req: uv_read_t,
     stream: union_unnamed_384,
 
-    pub usingnamespace HandleMixin(@This());
+    pub usingnamespace StreamMixin(@This());
 };
 const union_unnamed_390 = extern union {
     fd: c_int,
@@ -1202,7 +1213,7 @@ const union_unnamed_405 = extern union {
     serv: struct_unnamed_406,
     conn: struct_unnamed_410,
 };
-pub const struct_uv_pipe_s = extern struct {
+pub const Pipe = extern struct {
     data: ?*anyopaque,
     loop: ?*uv_loop_t,
     type: uv_handle_type,
@@ -1222,8 +1233,21 @@ pub const struct_uv_pipe_s = extern struct {
     handle: HANDLE,
     name: [*]WCHAR,
     pipe: union_unnamed_405,
+
+    pub usingnamespace StreamMixin(@This());
+
+    pub fn init(this: *Pipe, loop: *Loop, ipc: bool) Maybe(void) {
+        if (uv_pipe_init(loop, this, if (ipc) 1 else 0).toError(.pipe)) |err| return .{ .err = err };
+
+        return .{ .result = {} };
+    }
+
+    pub fn open(this: *Pipe, file: uv_file) Maybe(void) {
+        if (uv_pipe_open(this, file).toError(.open)) |err| return .{ .err = err };
+
+        return .{ .result = {} };
+    }
 };
-pub const uv_pipe_t = struct_uv_pipe_s;
 const union_unnamed_416 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
@@ -1925,19 +1949,19 @@ pub extern fn uv_recv_buffer_size(handle: *uv_handle_t, value: [*c]c_int) c_int;
 pub extern fn uv_fileno(handle: *const uv_handle_t, fd: [*c]uv_os_fd_t) c_int;
 pub extern fn uv_buf_init(base: [*]u8, len: c_uint) uv_buf_t;
 pub extern fn uv_pipe(fds: *[2]uv_file, read_flags: c_int, write_flags: c_int) ReturnCode;
-pub extern fn uv_socketpair(@"type": c_int, protocol: c_int, socket_vector: [*c]uv_os_sock_t, flags0: c_int, flags1: c_int) c_int;
+pub extern fn uv_socketpair(@"type": c_int, protocol: c_int, socket_vector: [*]uv_os_sock_t, flags0: c_int, flags1: c_int) ReturnCode;
 pub extern fn uv_stream_get_write_queue_size(stream: [*c]const uv_stream_t) usize;
 pub extern fn uv_listen(stream: [*c]uv_stream_t, backlog: c_int, cb: uv_connection_cb) c_int;
 pub extern fn uv_accept(server: [*c]uv_stream_t, client: [*c]uv_stream_t) c_int;
-pub extern fn uv_read_start([*c]uv_stream_t, alloc_cb: uv_alloc_cb, read_cb: uv_read_cb) c_int;
-pub extern fn uv_read_stop([*c]uv_stream_t) c_int;
+pub extern fn uv_read_start(*uv_stream_t, alloc_cb: uv_alloc_cb, read_cb: uv_read_cb) ReturnCode;
+pub extern fn uv_read_stop(*uv_stream_t) ReturnCode;
 pub extern fn uv_write(req: *uv_write_t, handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, cb: uv_write_cb) ReturnCode;
 pub extern fn uv_write2(req: *uv_write_t, handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, send_handle: *uv_stream_t, cb: uv_write_cb) ReturnCode;
 pub extern fn uv_try_write(handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint) ReturnCode;
 pub extern fn uv_try_write2(handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, send_handle: *uv_stream_t) c_int;
 pub extern fn uv_is_readable(handle: *const uv_stream_t) c_int;
 pub extern fn uv_is_writable(handle: *const uv_stream_t) c_int;
-pub extern fn uv_stream_set_blocking(handle: *uv_stream_t, blocking: c_int) c_int;
+pub extern fn uv_stream_set_blocking(handle: *uv_stream_t, blocking: c_int) ReturnCode;
 pub extern fn uv_is_closing(handle: *const uv_handle_t) c_int;
 pub extern fn uv_tcp_init(*uv_loop_t, handle: *uv_tcp_t) c_int;
 pub extern fn uv_tcp_init_ex(*uv_loop_t, handle: *uv_tcp_t, flags: c_uint) c_int;
@@ -1997,18 +2021,18 @@ pub extern fn uv_tty_get_vterm_state(state: [*c]uv_tty_vtermstate_t) c_int;
 pub extern fn uv_guess_handle(file: uv_file) uv_handle_type;
 pub const UV_PIPE_NO_TRUNCATE: c_int = 1;
 const enum_unnamed_462 = c_uint;
-pub extern fn uv_pipe_init(*uv_loop_t, handle: *uv_pipe_t, ipc: c_int) c_int;
-pub extern fn uv_pipe_open([*c]uv_pipe_t, file: uv_file) ReturnCode;
-pub extern fn uv_pipe_bind(handle: *uv_pipe_t, name: [*]const u8) c_int;
-pub extern fn uv_pipe_bind2(handle: *uv_pipe_t, name: [*]const u8, namelen: usize, flags: c_uint) c_int;
-pub extern fn uv_pipe_connect(req: [*c]uv_connect_t, handle: *uv_pipe_t, name: [*]const u8, cb: uv_connect_cb) void;
-pub extern fn uv_pipe_connect2(req: [*c]uv_connect_t, handle: *uv_pipe_t, name: [*]const u8, namelen: usize, flags: c_uint, cb: uv_connect_cb) c_int;
-pub extern fn uv_pipe_getsockname(handle: *const uv_pipe_t, buffer: [*]u8, size: [*c]usize) c_int;
-pub extern fn uv_pipe_getpeername(handle: *const uv_pipe_t, buffer: [*]u8, size: [*c]usize) c_int;
-pub extern fn uv_pipe_pending_instances(handle: *uv_pipe_t, count: c_int) void;
-pub extern fn uv_pipe_pending_count(handle: *uv_pipe_t) c_int;
-pub extern fn uv_pipe_pending_type(handle: *uv_pipe_t) uv_handle_type;
-pub extern fn uv_pipe_chmod(handle: *uv_pipe_t, flags: c_int) c_int;
+pub extern fn uv_pipe_init(*uv_loop_t, handle: *Pipe, ipc: c_int) c_int;
+pub extern fn uv_pipe_open(*Pipe, file: uv_file) ReturnCode;
+pub extern fn uv_pipe_bind(handle: *Pipe, name: [*]const u8) c_int;
+pub extern fn uv_pipe_bind2(handle: *Pipe, name: [*]const u8, namelen: usize, flags: c_uint) c_int;
+pub extern fn uv_pipe_connect(req: [*c]uv_connect_t, handle: *Pipe, name: [*]const u8, cb: uv_connect_cb) void;
+pub extern fn uv_pipe_connect2(req: [*c]uv_connect_t, handle: *Pipe, name: [*]const u8, namelen: usize, flags: c_uint, cb: uv_connect_cb) c_int;
+pub extern fn uv_pipe_getsockname(handle: *const Pipe, buffer: [*]u8, size: [*c]usize) c_int;
+pub extern fn uv_pipe_getpeername(handle: *const Pipe, buffer: [*]u8, size: [*c]usize) c_int;
+pub extern fn uv_pipe_pending_instances(handle: *Pipe, count: c_int) void;
+pub extern fn uv_pipe_pending_count(handle: *Pipe) c_int;
+pub extern fn uv_pipe_pending_type(handle: *Pipe) uv_handle_type;
+pub extern fn uv_pipe_chmod(handle: *Pipe, flags: c_int) c_int;
 pub const UV_READABLE: c_int = 1;
 pub const UV_WRITABLE: c_int = 2;
 pub const UV_DISCONNECT: c_int = 4;
@@ -2039,17 +2063,53 @@ pub extern fn uv_timer_get_due_in(handle: *const uv_timer_t) u64;
 pub extern fn uv_getaddrinfo(loop: *uv_loop_t, req: *uv_getaddrinfo_t, getaddrinfo_cb: uv_getaddrinfo_cb, node: [*:0]const u8, service: [*:0]const u8, hints: ?*const anyopaque) ReturnCode;
 pub extern fn uv_freeaddrinfo(ai: *anyopaque) void;
 pub extern fn uv_getnameinfo(loop: *uv_loop_t, req: [*c]uv_getnameinfo_t, getnameinfo_cb: uv_getnameinfo_cb, addr: [*c]const sockaddr, flags: c_int) c_int;
-pub const UV_IGNORE: c_int = 0;
-pub const UV_CREATE_PIPE: c_int = 1;
-pub const UV_INHERIT_FD: c_int = 2;
-pub const UV_INHERIT_STREAM: c_int = 4;
-pub const UV_READABLE_PIPE: c_int = 16;
-pub const UV_WRITABLE_PIPE: c_int = 32;
-pub const UV_NONBLOCK_PIPE: c_int = 64;
-pub const UV_OVERLAPPED_PIPE: c_int = 64;
+pub const UV_IGNORE = 0;
+pub const UV_CREATE_PIPE = 1;
+pub const UV_INHERIT_FD = 2;
+pub const UV_INHERIT_STREAM = 4;
+pub const UV_READABLE_PIPE = 16;
+pub const UV_WRITABLE_PIPE = 32;
+pub const UV_NONBLOCK_PIPE = 64;
+pub const UV_OVERLAPPED_PIPE = 64;
 pub const uv_stdio_flags = c_uint;
+pub const StdioFlags = struct {
+    pub const ignore = UV_IGNORE;
+    pub const create_pipe = UV_CREATE_PIPE;
+    pub const inherit_fd = UV_INHERIT_FD;
+    pub const inherit_stream = UV_INHERIT_STREAM;
+    pub const readable_pipe = UV_READABLE_PIPE;
+    pub const writable_pipe = UV_WRITABLE_PIPE;
+    pub const nonblock_pipe = UV_NONBLOCK_PIPE;
+    pub const overlapped_pipe = UV_OVERLAPPED_PIPE;
+};
+
+pub fn socketpair(stdio_flag_1: uv_stdio_flags, stdio_flag_2: uv_stdio_flags) Maybe([2]*anyopaque) {
+    var pair: [2]uv_os_sock_t = undefined;
+    // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-socket
+    const SOCK_STREAM = 1;
+
+    if (uv_socketpair(0, SOCK_STREAM, &pair, stdio_flag_1, stdio_flag_2).toError(.open)) |err| {
+        return .{ .err = err };
+    }
+
+    return .{ .result = pair };
+}
+pub usingnamespace struct {
+    pub fn pipe(stdio_flag_1: uv_stdio_flags, stdio_flag_2: uv_stdio_flags) Maybe([2]*anyopaque) {
+        var pair: [2]uv_file = undefined;
+        // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-socket
+        const SOCK_STREAM = 1;
+
+        if (uv_socketpair(0, SOCK_STREAM, &pair, stdio_flag_1, stdio_flag_2).toError(.open)) |err| {
+            return .{ .err = err };
+        }
+
+        return .{ .result = pair };
+    }
+};
+
 const union_unnamed_463 = extern union {
-    stream: [*c]uv_stream_t,
+    stream: *uv_stream_t,
     fd: c_int,
 };
 pub const struct_uv_stdio_container_s = extern struct {
@@ -2330,7 +2390,7 @@ pub const union_uv_any_handle = extern union {
     fs_poll: uv_fs_poll_t,
     handle: uv_handle_t,
     idle: uv_idle_t,
-    pipe: uv_pipe_t,
+    pipe: Pipe,
     poll: uv_poll_t,
     prepare: uv_prepare_t,
     process: uv_process_t,
@@ -2445,7 +2505,7 @@ pub const ReturnCode = enum(c_int) {
         if (this.errEnum()) |err| {
             try writer.writeAll(@tagName(err));
         } else {
-            try writer.print("{d}", .{this.value});
+            try writer.print("{d}", .{@intFromEnum(this)});
         }
     }
 
@@ -2549,8 +2609,9 @@ pub const ReturnCode = enum(c_int) {
     }
 };
 
-pub const ReturnCodeI64 = extern struct {
-    value: i64,
+pub const ReturnCodeI64 = enum(i64) {
+    zero = 0,
+    _,
 
     pub fn format(this: ReturnCodeI64, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt_;
@@ -2559,26 +2620,37 @@ pub const ReturnCodeI64 = extern struct {
         if (this.errEnum()) |err| {
             try writer.writeAll(@tagName(err));
         } else {
-            try writer.print("{d}", .{this.value});
+            try writer.print("{d}", .{@intFromEnum(this)});
         }
     }
 
+    pub fn toError(this: ReturnCodeI64, syscall: bun.sys.Tag) ?bun.sys.Error {
+        if (this.errno()) |e| {
+            return .{
+                .errno = @intFromEnum(e),
+                .syscall = syscall,
+            };
+        }
+
+        return null;
+    }
+
     pub inline fn errno(this: ReturnCodeI64) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
-        return if (this.value < 0)
-            @as(u16, @intCast(-this.value))
+        return if (@intFromEnum(this) < 0)
+            @as(u16, @intCast(-@intFromEnum(this)))
         else
             null;
     }
 
     pub inline fn errEnum(this: ReturnCodeI64) ?bun.C.E {
-        return if (this.value < 0)
-            (translateUVErrorToE(this.value))
+        return if (@intFromEnum(this) < 0)
+            (translateUVErrorToE(@intFromEnum(this)))
         else
             null;
     }
 
-    comptime {
-        std.debug.assert(@as(i64, @bitCast(ReturnCodeI64{ .value = 4021000000000 })) == 4021000000000);
+    pub inline fn int(this: ReturnCodeI64) i64 {
+        return @intFromEnum(this);
     }
 };
 
@@ -2614,6 +2686,108 @@ fn WriterMixin(comptime Type: type) type {
             }
 
             return uv_write(null, mixin, @ptrCast(&uv_buf_t.init(input)), 1, null);
+        }
+    };
+}
+
+pub fn StreamReaderMixin(comptime Type: type, comptime pipe_field_name: std.meta.FieldEnum(Type)) type {
+    return struct {
+        fn uv_alloc_cb(pipe: *uv_stream_t, suggested_size: usize, buf: *uv_buf_t) callconv(.C) void {
+            var this = @fieldParentPtr(Type, pipe, @tagName(pipe_field_name));
+            const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
+            buf.* = uv_buf_t.init(result);
+        }
+
+        fn uv_read_cb(pipe: *uv_stream_t, nread: ReturnCodeI64, buf: *const uv_buf_t) callconv(.C) void {
+            var this = @fieldParentPtr(Type, pipe, @tagName(pipe_field_name));
+
+            this.onRead(
+                if (nread.toError(.recv)) |err| .{ .err = err } else .{ .result = @intCast(nread.int()) },
+                buf.*,
+            );
+        }
+
+        fn __get_pipe(this: *@This()) *uv_stream_t {
+            comptime {
+                switch (@TypeOf(@field(this, @tagName(@tagName(pipe_field_name))))) {
+                    Pipe, uv_tcp_t, uv_tty_t => {},
+                    else => @compileError("StreamWriterMixin only works with Pipe, uv_tcp_t, uv_tty_t"),
+                }
+            }
+
+            return @ptrCast(&@field(this, @tagName(@tagName(pipe_field_name))));
+        }
+
+        pub fn startReading(this: *@This()) Maybe(void) {
+            if (uv_read_start(__get_pipe(this), &@This().uv_alloc_cb, &@This().uv_read_cb).toError(.open)) |err| {
+                return .{ .err = err };
+            }
+
+            return .{ .result = {} };
+        }
+
+        pub fn stopReading(this: *@This()) Maybe(void) {
+            if (uv_read_stop(__get_pipe(this)).toError(.close)) |err| {
+                return .{ .err = err };
+            }
+
+            return .{ .result = {} };
+        }
+    };
+}
+
+fn StreamMixin(comptime Type: type) type {
+    return struct {
+        pub usingnamespace HandleMixin(Type);
+
+        pub fn isWritable(this: *const Type) bool {
+            return uv_is_writable(@ptrCast(this));
+        }
+
+        pub fn isReadable(this: *const Type) bool {
+            return uv_is_readable(@ptrCast(this));
+        }
+
+        pub fn getWriteQueueSize(this: *const Type) usize {
+            return uv_stream_get_write_queue_size(@ptrCast(this));
+        }
+
+        pub fn setBlocking(this: *Type, blocking: bool) Maybe(void) {
+            if (uv_stream_set_blocking(@ptrCast(this), blocking).toError(.setBlocking)) |err| {
+                return .{ .err = err };
+            }
+
+            return .{ .result = {} };
+        }
+    };
+}
+
+pub fn StreamWriterMixin(comptime Type: type, comptime pipe_field_name: std.meta.FieldEnum(Type), comptime uv_write_t_field_name: std.meta.FieldEnum(Type)) type {
+    return struct {
+        fn __get_pipe(this: *@This()) *uv_stream_t {
+            comptime {
+                switch (@TypeOf(@field(this, @tagName(@tagName(pipe_field_name))))) {
+                    Pipe, uv_tcp_t, uv_tty_t => {},
+                    else => @compileError("StreamWriterMixin only works with Pipe, uv_tcp_t, uv_tty_t"),
+                }
+            }
+
+            return @ptrCast(&@field(this, @tagName(@tagName(pipe_field_name))));
+        }
+
+        fn uv_on_write_cb(req: *uv_write_t, status: ReturnCode) callconv(.C) void {
+            var this: *Type = @fieldParentPtr(Type, @tagName(uv_write_t_field_name), req);
+            this.onWrite(if (status.toError(.send)) |err| .{ .err = err } else .{ .result = @intCast(status.int()) });
+        }
+
+        pub fn write(this: *@This(), input: []const u8) void {
+            if (comptime Env.allow_assert) {
+                if (!this.isStreamWritable()) {
+                    @panic("StreamWriterMixin.write: stream is not writable. This is a bug in Bun.");
+                }
+            }
+
+            __get_pipe(this).write(input, this, &uv_on_write_cb);
         }
     };
 }

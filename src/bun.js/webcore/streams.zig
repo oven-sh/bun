@@ -2063,6 +2063,8 @@ pub const UVStreamSink = struct {
         pub const Empty: CloseCallbackHandler = .{};
 
         pub fn init(ctx: *anyopaque, callback: *const fn (ctx: ?*anyopaque) void) CloseCallbackHandler {
+            bun.markWindowsOnly();
+
             return CloseCallbackHandler{
                 .ctx = ctx,
                 .callback = callback,
@@ -2070,6 +2072,8 @@ pub const UVStreamSink = struct {
         }
 
         pub fn run(this: *const CloseCallbackHandler) void {
+            bun.markWindowsOnly();
+
             if (this.callback) |callback| {
                 callback(this.ctx);
             }
@@ -2082,6 +2086,8 @@ pub const UVStreamSink = struct {
         req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
 
         pub fn init(parent: *UVStreamSink, data: []const u8) *AsyncWriteInfo {
+            bun.markWindowsOnly();
+
             var info = bun.new(AsyncWriteInfo, .{ .sink = parent });
             info.req.data = info;
             info.input_buffer = uv.uv_buf_t.init(bun.default_allocator.dupe(u8, data) catch bun.outOfMemory());
@@ -2089,6 +2095,8 @@ pub const UVStreamSink = struct {
         }
 
         fn uvWriteCallback(req: *uv.uv_write_t, status: uv.ReturnCode) callconv(.C) void {
+            bun.markWindowsOnly();
+
             const this = bun.cast(*AsyncWriteInfo, req.data);
             defer this.deinit();
             if (status.errEnum()) |err| {
@@ -2098,6 +2106,8 @@ pub const UVStreamSink = struct {
         }
 
         pub fn run(this: *AsyncWriteInfo) void {
+            bun.markWindowsOnly();
+
             if (this.sink.stream) |stream| {
                 if (uv.uv_write(&this.req, @ptrCast(stream), @ptrCast(&this.input_buffer), 1, AsyncWriteInfo.uvWriteCallback).errEnum()) |err| {
                     _ = this.sink.end(bun.sys.Error.fromCode(err, .write));
@@ -2107,20 +2117,23 @@ pub const UVStreamSink = struct {
         }
 
         pub fn deinit(this: *AsyncWriteInfo) void {
+            bun.markWindowsOnly();
+
             bun.default_allocator.free(this.input_buffer.slice());
             bun.default_allocator.destroy(this);
         }
     };
 
     fn writeAsync(this: *UVStreamSink, data: []const u8) void {
+        bun.markWindowsOnly();
+
         if (this.done) return;
-        if (!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
 
         AsyncWriteInfo.init(this, data).run();
     }
 
     fn writeMaybeSync(this: *UVStreamSink, data: []const u8) void {
-        if (!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
+        bun.markWindowsOnly();
 
         if (this.done) return;
 
@@ -2143,25 +2156,35 @@ pub const UVStreamSink = struct {
     }
 
     pub fn connect(this: *UVStreamSink, signal: Signal) void {
+        bun.markWindowsOnly();
+
         std.debug.assert(this.reader == null);
         this.signal = signal;
     }
 
     pub fn start(this: *UVStreamSink, _: StreamStart) JSC.Node.Maybe(void) {
+        bun.markWindowsOnly();
+
         this.done = false;
         this.signal.start();
         return .{ .result = {} };
     }
 
     pub fn flush(_: *UVStreamSink) JSC.Node.Maybe(void) {
+        bun.markWindowsOnly();
+
         return .{ .result = {} };
     }
 
     pub fn flushFromJS(_: *UVStreamSink, _: *JSGlobalObject, _: bool) JSC.Node.Maybe(JSValue) {
+        bun.markWindowsOnly();
+
         return .{ .result = JSValue.jsNumber(0) };
     }
 
     fn uvCloseCallback(handler: *anyopaque) callconv(.C) void {
+        bun.markWindowsOnly();
+
         const event = bun.cast(*uv.uv_pipe_t, handler);
         var this = bun.cast(*UVStreamSink, event.data);
         this.stream = null;
@@ -2171,12 +2194,15 @@ pub const UVStreamSink = struct {
     }
 
     pub fn isClosed(this: *UVStreamSink) bool {
+        bun.markWindowsOnly();
+
         const stream = this.stream orelse return true;
         return uv.uv_is_closed(@ptrCast(stream));
     }
 
     pub fn close(this: *UVStreamSink) void {
-        if (!Environment.isWindows) @panic("UVStreamSink is only supported on Windows");
+        bun.markWindowsOnly();
+
         const stream = this.stream orelse return;
         stream.data = this;
         if (this.isClosed()) {
@@ -2190,6 +2216,8 @@ pub const UVStreamSink = struct {
     }
 
     fn _destroy(this: *UVStreamSink) void {
+        bun.markWindowsOnly();
+
         const callback = this.closeCallback;
         defer callback.run();
         this.stream = null;
@@ -2201,6 +2229,8 @@ pub const UVStreamSink = struct {
     }
 
     pub fn finalize(this: *UVStreamSink) void {
+        bun.markWindowsOnly();
+
         if (this.stream == null) {
             this._destroy();
         } else {
@@ -2210,6 +2240,8 @@ pub const UVStreamSink = struct {
     }
 
     pub fn init(allocator: std.mem.Allocator, stream: StreamType, next: ?Sink) !*UVStreamSink {
+        bun.markWindowsOnly();
+
         const this = try allocator.create(UVStreamSink);
         this.* = UVStreamSink{
             .stream = stream,
@@ -2220,6 +2252,8 @@ pub const UVStreamSink = struct {
     }
 
     pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
+        bun.markWindowsOnly();
+
         if (this.next) |*next| {
             return next.writeBytes(data);
         }
@@ -2231,6 +2265,8 @@ pub const UVStreamSink = struct {
 
     pub const writeBytes = write;
     pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
+        bun.markWindowsOnly();
+
         if (this.next) |*next| {
             return next.writeLatin1(data);
         }
@@ -2250,6 +2286,7 @@ pub const UVStreamSink = struct {
     }
 
     pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
+        bun.markWindowsOnly();
         if (this.next) |*next| {
             return next.writeUTF16(data);
         }
@@ -2263,6 +2300,8 @@ pub const UVStreamSink = struct {
     }
 
     pub fn end(this: *UVStreamSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+        bun.markWindowsOnly();
+
         if (this.next) |*next| {
             return next.end(err);
         }
@@ -2272,6 +2311,8 @@ pub const UVStreamSink = struct {
     }
 
     pub fn destroy(this: *UVStreamSink) void {
+        bun.markWindowsOnly();
+
         if (this.stream == null) {
             this._destroy();
         } else {

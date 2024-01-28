@@ -376,7 +376,7 @@ pub const FilePoll = struct {
                 loader.onMachportChange();
             },
 
-            @field(Owner.Tag, "OutputReader") => {
+            @field(Owner.Tag, "PosixOutputReader") => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) OutputReader", .{poll.fd});
                 var output: *LifecycleScriptSubprocessOutputReader = ptr.as(LifecycleScriptSubprocessOutputReader);
                 output.onPoll(size_or_offset);

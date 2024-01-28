@@ -2462,3 +2462,27 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     copy(u8, output_buffer[0..size], user[0..size]);
     return output_buffer[0..size];
 }
+
+pub inline fn markWindowsOnly() if (Environment.isWindows) void else noreturn {
+    if (Environment.isWindows) {
+        return;
+    }
+
+    if (@inComptime()) {
+        @compileError("This function is only available on Windows");
+    }
+
+    @panic("Assertion failure: this function should only be accessible on Windows.");
+}
+
+pub inline fn markPosixOnly() if (Environment.isPosix) void else noreturn {
+    if (Environment.isPosix) {
+        return;
+    }
+
+    if (@inComptime()) {
+        @compileError("This function is only available on POSIX");
+    }
+
+    @panic("Assertion failure: this function should only be accessible on POSIX.");
+}

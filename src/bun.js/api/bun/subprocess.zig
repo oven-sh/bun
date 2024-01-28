@@ -958,7 +958,6 @@ pub const Subprocess = struct {
         status: Status = .{
             .pending = {},
         },
-        closeCallback: CloseCallbackHandler = CloseCallbackHandler.Empty,
 
         const FIFOType = if (Environment.isWindows) *uv.uv_pipe_t else JSC.WebCore.FIFO;
         pub const Status = union(enum) {
@@ -1387,23 +1386,10 @@ pub const Subprocess = struct {
         }
 
         pub fn close(this: *BufferedOutput) void {
-            var needCallbackCall = true;
             switch (this.status) {
                 .done => {},
                 .pending => {
-                    if (Environment.isWindows) {
-                        needCallbackCall = false;
-                        _ = uv.uv_read_stop(@ptrCast(&this.stream));
-                        if (uv.uv_is_closed(@ptrCast(&this.stream))) {
-                            this.readable_stream_ref.deinit();
-                            this.closeCallback.run();
-                        } else {
-                            _ = uv.uv_close(@ptrCast(&this.stream), BufferedOutput.uvClosedCallback);
-                        }
-                    } else {
-                        this.stream.close();
-                        this.closeCallback.run();
-                    }
+                    this.stream.close();
                     this.status = .{ .done = {} };
                 },
                 .err => {},
@@ -1412,10 +1398,6 @@ pub const Subprocess = struct {
             if (this.internal_buffer.cap > 0) {
                 this.internal_buffer.listManaged(bun.default_allocator).deinit();
                 this.internal_buffer = .{};
-            }
-
-            if (Environment.isWindows and needCallbackCall) {
-                this.closeCallback.run();
             }
         }
     };
@@ -1838,6 +1820,8 @@ pub const Subprocess = struct {
         secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
     ) JSValue {
+        bun.markPosixOnly();
+
         var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();
@@ -1872,7 +1856,7 @@ pub const Subprocess = struct {
         var ipc_callback: JSValue = .zero;
         var extra_fds = std.ArrayList(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
 
-        var windows_hide: if (Environment.isWindows) u1 else u0 = 0;
+        var windows_hide: bool = false;
 
         {
             if (args.isEmptyOrUndefinedOrNull()) {
@@ -2168,51 +2152,26 @@ pub const Subprocess = struct {
         const spawn_options = bun.spawn.SpawnOptions{
             .cwd = cwd,
             .detached = detached,
-            .stdin = stdio[0].toPosix(),
-            .stdout = stdio[1].toPosix(),
-            .stderr = stdio[2].toPosix(),
+            .stdin = stdio[0].asSpawnOption(),
+            .stdout = stdio[1].asSpawnOption(),
+            .stderr = stdio[2].asSpawnOption(),
             .extra_fds = extra_fds.items,
         };
 
-        var spawned = bun.spawn.spawnProcess(
+        var spawned = switch (bun.spawn.spawnProcess(
             &spawn_options,
             @ptrCast(argv.items.ptr),
             @ptrCast(env_array.items.ptr),
         ) catch |err| {
-            // TODO: have some way to map between zig's error type and providing the real errorno.
-            const sys_err: ?bun.sys.Error = switch (err) {
-                error.ENOENT => bun.sys.Error.fromCode(std.os.E.NOENT, .posix_spawn),
-                error.EINVAL => bun.sys.Error.fromCode(std.os.E.INVAL, .posix_spawn),
-                error.EACCES => bun.sys.Error.fromCode(std.os.E.ACCES, .posix_spawn),
-                error.ELOOP => bun.sys.Error.fromCode(std.os.E.LOOP, .posix_spawn),
-                error.ENAMETOOLONG => bun.sys.Error.fromCode(std.os.E.NAMETOOLONG, .posix_spawn),
-                error.ENOEXEC => bun.sys.Error.fromCode(std.os.E.NOEXEC, .posix_spawn),
-                error.ENOTDIR => bun.sys.Error.fromCode(std.os.E.NOTDIR, .posix_spawn),
-                error.EPERM => bun.sys.Error.fromCode(std.os.E.PERM, .posix_spawn),
-                error.EISDIR => bun.sys.Error.fromCode(std.os.E.ISDIR, .posix_spawn),
-                error.EFAULT => bun.sys.Error.fromCode(std.os.E.FAULT, .posix_spawn),
-                error.EIO => bun.sys.Error.fromCode(std.os.E.IO, .posix_spawn),
-                error.ENFILE => bun.sys.Error.fromCode(std.os.E.NFILE, .posix_spawn),
-                error.EMFILE => bun.sys.Error.fromCode(std.os.E.MFILE, .posix_spawn),
-                error.ENOMEM => bun.sys.Error.fromCode(std.os.E.NOMEM, .posix_spawn),
-                error.EAGAIN => bun.sys.Error.fromCode(std.os.E.AGAIN, .posix_spawn),
-                error.EBADF => bun.sys.Error.fromCode(std.os.E.BADF, .posix_spawn),
-                error.EFBIG => bun.sys.Error.fromCode(std.os.E.FBIG, .posix_spawn),
-                else => null,
-            };
-
-            if (sys_err) |err_| {
-                globalThis.throwValue(err_.toJSC(globalThis));
-            } else {
-                globalThis.throwError(err, ": failed to spawn process");
-            }
+            globalThis.throwError(err, ": failed to spawn process");
 
             return .zero;
-        };
-
-        var subprocess = globalThis.allocator().create(Subprocess) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+        }) {
+            .err => |err| {
+                globalThis.throwValue(err.toJSC(globalThis));
+                return .zero;
+            },
+            .result => |result| result,
         };
 
         if (ipc_mode != .none) {
@@ -2221,7 +2180,7 @@ pub const Subprocess = struct {
                 .socket = uws.us_socket_from_fd(
                     jsc_vm.rareData().spawnIPCContext(jsc_vm),
                     @sizeOf(*Subprocess),
-                    spawned.extra_pipes.items[0].int(),
+                    spawned.extra_pipes.items[0].cast(),
                 ) orelse {
                     globalThis.throw("failed to create socket pair", .{});
                     // TODO:
@@ -2230,11 +2189,15 @@ pub const Subprocess = struct {
             };
         }
 
+        var subprocess = globalThis.allocator().create(Subprocess) catch {
+            globalThis.throwOutOfMemory();
+            return .zero;
+        };
+
         // When run synchronously, subprocess isn't garbage collected
         subprocess.* = Subprocess{
             .globalThis = globalThis,
-            .process = Process.initPosix(
-                spawned,
+            .process = spawned.toProcess(
                 jsc_vm.eventLoop(),
                 is_sync,
             ),
@@ -2468,7 +2431,7 @@ pub const Subprocess = struct {
             this.* = .{ .memfd = fd };
         }
 
-        pub fn toPosix(
+        fn toPosix(
             stdio: @This(),
         ) bun.spawn.SpawnOptions.Stdio {
             return switch (stdio) {
@@ -2479,6 +2442,30 @@ pub const Subprocess = struct {
                 .inherit => .{ .inherit = {} },
                 .ignore => .{ .ignore = {} },
             };
+        }
+
+        fn toWindows(
+            stdio: @This(),
+        ) bun.spawn.SpawnOptions.Stdio {
+            return switch (stdio) {
+                .array_buffer, .blob, .pipe => .{ .buffer = {} },
+                .fd => |fd| .{ .pipe = fd },
+                .path => |pathlike| .{ .path = pathlike.slice() },
+                .inherit => .{ .inherit = {} },
+                .ignore => .{ .ignore = {} },
+
+                .memfd => @panic("This should never happen"),
+            };
+        }
+
+        pub fn asSpawnOption(
+            stdio: @This(),
+        ) bun.spawn.SpawnOptions.Stdio {
+            if (comptime Environment.isWindows) {
+                return stdio.toWindows();
+            } else {
+                return stdio.toPosix();
+            }
         }
 
         fn setUpChildIoUvSpawn(
@@ -2591,7 +2578,7 @@ pub const Subprocess = struct {
                 out_stdio.* = Stdio{ .inherit = {} };
             } else if (str.eqlComptime("ignore")) {
                 out_stdio.* = Stdio{ .ignore = {} };
-            } else if (str.eqlComptime("pipe")) {
+            } else if (str.eqlComptime("pipe") or str.eqlComptime("overlapped")) {
                 out_stdio.* = Stdio{ .pipe = null };
             } else if (str.eqlComptime("ipc")) {
                 out_stdio.* = Stdio{ .pipe = null }; // TODO:

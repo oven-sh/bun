@@ -33,7 +33,9 @@ pub const LifecycleScriptSubprocess = struct {
 
     pub var alive_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
 
-    pub const OutputReader = struct {
+    const uv = bun.windows.libuv;
+
+    const PosixOutputReader = struct {
         poll: *Async.FilePoll = undefined,
         buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
         is_done: bool = false,
@@ -51,32 +53,32 @@ pub const LifecycleScriptSubprocess = struct {
             onError,
         );
 
-        pub fn getFd(this: *OutputReader) bun.FileDescriptor {
+        pub fn getFd(this: *PosixOutputReader) bun.FileDescriptor {
             return this.poll.fd;
         }
 
-        pub fn getBuffer(this: *OutputReader) *std.ArrayList(u8) {
+        pub fn getBuffer(this: *PosixOutputReader) *std.ArrayList(u8) {
             return &this.buffer;
         }
 
-        fn finish(this: *OutputReader) void {
+        fn finish(this: *PosixOutputReader) void {
             this.poll.flags.insert(.ignore_updates);
             this.subprocess().manager.event_loop.putFilePoll(this.poll);
             std.debug.assert(!this.is_done);
             this.is_done = true;
         }
 
-        pub fn done(this: *OutputReader, _: []u8) void {
+        pub fn done(this: *PosixOutputReader) void {
             this.finish();
             this.subprocess().onOutputDone();
         }
 
-        pub fn onError(this: *OutputReader, err: bun.sys.Error) void {
+        pub fn onError(this: *PosixOutputReader, err: bun.sys.Error) void {
             this.finish();
             this.subprocess().onOutputError(err);
         }
 
-        pub fn registerPoll(this: *OutputReader) void {
+        pub fn registerPoll(this: *PosixOutputReader) void {
             switch (this.poll.register(this.subprocess().manager.event_loop.loop(), .readable, true)) {
                 .err => |err| {
                     Output.prettyErrorln("<r><red>error<r>: Failed to register poll for <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
@@ -90,11 +92,11 @@ pub const LifecycleScriptSubprocess = struct {
             }
         }
 
-        pub inline fn subprocess(this: *OutputReader) *LifecycleScriptSubprocess {
+        pub inline fn subprocess(this: *PosixOutputReader) *LifecycleScriptSubprocess {
             return this.parent;
         }
 
-        pub fn start(this: *OutputReader) JSC.Maybe(void) {
+        pub fn start(this: *PosixOutputReader) JSC.Maybe(void) {
             const maybe = this.poll.register(this.subprocess().manager.event_loop.loop(), .readable, true);
             if (maybe != .result) {
                 return maybe;
@@ -107,6 +109,59 @@ pub const LifecycleScriptSubprocess = struct {
             };
         }
     };
+
+    const WindowsOutputReader = struct {
+        pipe: uv.Pipe = std.mem.zeroes(uv.Pipe),
+        buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+        is_done: bool = false,
+
+        // This is a workaround for "Dependency loop detected"
+        parent: *LifecycleScriptSubprocess = undefined,
+
+        pub usingnamespace bun.io.PipeReader(
+            @This(),
+            {},
+            getBuffer,
+            null,
+            {},
+            done,
+            onError,
+        );
+
+        pub fn getBuffer(this: *WindowsOutputReader) *std.ArrayList(u8) {
+            return &this.buffer;
+        }
+
+        fn finish(this: *WindowsOutputReader) void {
+            std.debug.assert(!this.is_done);
+            this.is_done = true;
+        }
+
+        pub fn done(this: *WindowsOutputReader) void {
+            std.debug.assert(this.pipe.isClosed());
+            std.debug.assert(!this.pipe.isClosing());
+
+            this.finish();
+            this.subprocess().onOutputDone();
+        }
+
+        pub fn onError(this: *WindowsOutputReader, err: bun.sys.Error) void {
+            this.finish();
+            this.subprocess().onOutputError(err);
+        }
+
+        pub inline fn subprocess(this: *WindowsOutputReader) *LifecycleScriptSubprocess {
+            return this.parent;
+        }
+
+        pub fn start(this: *WindowsOutputReader) JSC.Maybe(void) {
+            this.buffer.clearRetainingCapacity();
+            this.is_done = false;
+            this.startReading();
+        }
+    };
+
+    pub const OutputReader = if (Environment.isPosix) PosixOutputReader else WindowsOutputReader;
 
     pub fn scriptName(this: *const LifecycleScriptSubprocess) []const u8 {
         std.debug.assert(this.current_script_index < Lockfile.Scripts.names.len);
@@ -144,17 +199,16 @@ pub const LifecycleScriptSubprocess = struct {
         }
     }
 
-    pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: u8) !void {
-        if (Environment.isWindows) {
-            @panic("TODO");
-        }
+    // This is only used on the main thread.
+    var cwd_z_buf: bun.PathBuffer = undefined;
 
+    pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: u8) !void {
         _ = alive_count.fetchAdd(1, .Monotonic);
         errdefer _ = alive_count.fetchSub(1, .Monotonic);
 
         const manager = this.manager;
         const original_script = this.scripts[next_script_index].?;
-        const cwd = original_script.cwd;
+        const cwd = bun.path.z(original_script.cwd, &cwd_z_buf);
         const env = manager.env;
 
         if (manager.scripts_node) |scripts_node| {
@@ -173,7 +227,12 @@ pub const LifecycleScriptSubprocess = struct {
         this.package_name = original_script.package_name;
         this.current_script_index = next_script_index;
         this.finished_fds = 0;
-
+        errdefer {
+            if (Environment.isWindows) {
+                if (this.stdout.isActive()) this.stdout.close();
+                if (this.stderr.isActive()) this.stderr.close();
+            }
+        }
         const shell_bin = bun.CLI.RunCommand.findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.script.len + 1);
@@ -192,36 +251,65 @@ pub const LifecycleScriptSubprocess = struct {
 
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = .ignore,
-            .stdout = if (this.manager.options.log_level.isVerbose()) .inherit else .buffer,
-            .stderr = if (this.manager.options.log_level.isVerbose()) .inherit else .buffer,
+            .stdout = if (this.manager.options.log_level.isVerbose())
+                .inherit
+            else if (Environment.isPosix)
+                .buffer
+            else
+                .{
+                    .buffer = &this.stdout.pipe,
+                },
+            .stderr = if (this.manager.options.log_level.isVerbose())
+                .inherit
+            else if (Environment.isPosix)
+                .buffer
+            else
+                .{
+                    .buffer = &this.stderr.pipe,
+                },
             .cwd = cwd,
+
+            .windows = if (Environment.isWindows)
+                .{
+                    .loop = JSC.EventLoopHandle.init(&manager.event_loop),
+                }
+            else {},
         };
 
-        const spawned = try PosixSpawn.spawnProcess(&spawn_options, @ptrCast(&argv), this.envp);
+        const spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), this.envp)).unwrap();
 
-        if (spawned.stdout) |stdout| {
-            this.stdout = .{
-                .parent = this,
-                .poll = Async.FilePoll.init(manager, stdout, .{}, OutputReader, &this.stdout),
-            };
-            try this.stdout.start().unwrap();
-        }
+        if (comptime Environment.isPosix) {
+            if (spawned.stdout) |stdout| {
+                this.stdout = .{
+                    .parent = this,
+                    .poll = Async.FilePoll.init(manager, stdout, .{}, OutputReader, &this.stdout),
+                };
+                try this.stdout.start().unwrap();
+            }
 
-        if (spawned.stderr) |stderr| {
-            this.stderr = .{
-                .parent = this,
-                .poll = Async.FilePoll.init(manager, stderr, .{}, OutputReader, &this.stderr),
-            };
+            if (spawned.stderr) |stderr| {
+                this.stderr = .{
+                    .parent = this,
+                    .poll = Async.FilePoll.init(manager, stderr, .{}, OutputReader, &this.stderr),
+                };
 
-            try this.stderr.start().unwrap();
+                try this.stderr.start().unwrap();
+            }
+        } else if (comptime Environment.isWindows) {
+            if (spawned.stdout == .buffer) {
+                try this.stdout.start().unwrap();
+            }
+            if (spawned.stdout == .buffer) {
+                try this.stderr.start().unwrap();
+            }
         }
 
         const event_loop = &this.manager.event_loop;
-        var process = Process.initPosix(
-            spawned,
+        var process = spawned.toProcess(
             event_loop,
             false,
         );
+
         if (this.process) |proc| {
             proc.detach();
             proc.deref();

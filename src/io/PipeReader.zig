@@ -2,7 +2,7 @@ const bun = @import("root").bun;
 const std = @import("std");
 
 /// Read a blocking pipe without blocking the current thread.
-pub fn PipeReader(
+pub fn PosixPipeReader(
     comptime This: type,
     // Originally this was the comptime vtable struct like the below
     // But that caused a Zig compiler segfault as of 0.12.0-dev.1604+caae40c21
@@ -10,7 +10,7 @@ pub fn PipeReader(
     comptime getBuffer: fn (*This) *std.ArrayList(u8),
     comptime onReadChunk: ?fn (*This, chunk: []u8) void,
     comptime registerPoll: ?fn (*This) void,
-    comptime done: fn (*This, []u8) void,
+    comptime done: fn (*This) void,
     comptime onError: fn (*This, bun.sys.Error) void,
 ) type {
     return struct {
@@ -65,7 +65,7 @@ pub fn PipeReader(
                 switch (bun.sys.read(fd, buffer)) {
                     .result => |bytes_read| {
                         if (bytes_read == 0) {
-                            vtable.done(parent, resizable_buffer.items);
+                            vtable.done(parent);
                             return;
                         }
 
@@ -115,3 +115,89 @@ pub fn PipeReader(
         }
     };
 }
+
+const uv = bun.windows.libuv;
+pub fn WindowsPipeReader(
+    comptime This: type,
+    // Originally this was the comptime vtable struct like the below
+    // But that caused a Zig compiler segfault as of 0.12.0-dev.1604+caae40c21
+    comptime getFd: anytype,
+    comptime getBuffer: fn (*This) *std.ArrayList(u8),
+    comptime onReadChunk: ?fn (*This, chunk: []u8) void,
+    comptime registerPoll: ?fn (*This) void,
+    comptime done: fn (*This) void,
+    comptime onError: fn (*This, bun.sys.Error) void,
+) type {
+    return struct {
+        pub usingnamespace uv.StreamReaderMixin(This, .pipe);
+
+        const vtable = .{
+            .getFd = getFd,
+            .getBuffer = getBuffer,
+            .onReadChunk = onReadChunk,
+            .registerPoll = registerPoll,
+            .done = done,
+            .onError = onError,
+        };
+
+        fn _pipe(this: *This) *uv.Pipe {
+            return this.pipe;
+        }
+
+        pub fn open(this: *This, loop: *uv.Loop, fd: bun.FileDescriptor, ipc: bool) bun.JSC.Maybe(void) {
+            switch (_pipe(this).init(loop, ipc)) {
+                .err => |err| {
+                    return .{ .err = err };
+                },
+                else => {},
+            }
+
+            switch (_pipe(this).open(bun.uvfdcast(fd))) {
+                .err => |err| {
+                    return .{ .err = err };
+                },
+                else => {},
+            }
+
+            return .{ .result = {} };
+        }
+
+        fn onClosePipe(pipe: *uv.Pipe) callconv(.C) void {
+            const this = @fieldParentPtr(This, "pipe", pipe);
+            done(this);
+        }
+
+        pub fn onRead(this: *This, amount: bun.JSC.Maybe(usize), buf: *const uv.uv_buf_t) void {
+            if (amount == .err) {
+                onError(this, amount.err);
+                return;
+            }
+
+            var buffer = getBuffer(this);
+
+            if (amount.result == 0) {
+                close(this);
+                return;
+            }
+
+            if (comptime bun.Environment.allow_assert) {
+                if (!bun.isSliceInBuffer(buf.slice()[0..amount.result], buffer.items)) {
+                    @panic("uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it.");
+                }
+            }
+
+            buffer.items.len += amount.result;
+
+            if (comptime onReadChunk) |onChunk| {
+                onChunk(this, buf[0..amount.result].slice());
+            }
+        }
+
+        pub fn close(this: *This) void {
+            this.stopReading().unwrap() catch unreachable;
+            _pipe(this).close(&onClosePipe);
+        }
+    };
+}
+
+pub const PipeReader = if (bun.Environment.isWindows) WindowsPipeReader else PosixPipeReader;

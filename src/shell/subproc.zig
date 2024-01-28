@@ -1193,20 +1193,22 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 return .{ .err = globalThis.throw("out of memory", .{}) };
             };
 
-            const spawn_result = bun.spawn.spawnProcess(
+            const spawn_result = switch (bun.spawn.spawnProcess(
                 &spawn_options,
                 @ptrCast(spawn_args.argv.items.ptr),
                 @ptrCast(spawn_args.env_array.items.ptr),
             ) catch |err| {
                 return .{ .err = globalThis.throw("Failed to spawn process: {s}", .{@errorName(err)}) };
+            }) {
+                .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
+                .result => |result| result,
             };
 
             var subprocess = globalThis.allocator().create(Subprocess) catch bun.outOfMemory();
             out_subproc.* = subprocess;
             subprocess.* = Subprocess{
                 .globalThis = globalThis_,
-                .process = Process.initPosix(
-                    spawn_result,
+                .process = spawn_result.toProcess(
                     if (comptime EventLoopKind == .js) globalThis.eventLoopCtx().eventLoop() else globalThis.eventLoopCtx(),
                     is_sync,
                 ),

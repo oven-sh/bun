@@ -175,6 +175,11 @@ extern "C" void on_before_reload_process_linux()
     // close all file descriptors except stdin, stdout, stderr and possibly IPC.
     // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
     bun_close_range(8, ~0U, 0U);
+
+    // reset all signals to default
+    sigset_t signal_set;
+    sigfillset(&signal_set);
+    sigprocmask(SIG_SETMASK, &signal_set, nullptr);
 }
 
 #endif

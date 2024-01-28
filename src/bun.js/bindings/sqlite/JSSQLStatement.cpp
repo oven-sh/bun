@@ -984,7 +984,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     int rc = SQLITE_OK;
 
 #if ASSERT_ENABLED
-    // -1 means we don't know the length
     int maxSqlStringBytes = end - sqlStringHead;
 #endif
 

@@ -165,6 +165,7 @@ extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 
 #include <sys/syscall.h>
 
+// close_range is glibc > 2.33, which is very new
 static ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
     return syscall(__NR_close_range, start, end, flags);

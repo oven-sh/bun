@@ -670,6 +670,44 @@ it("empty blob", () => {
   ]);
 });
 
+it("multiple statements with a schema change", () => {
+  const db = new Database(":memory:");
+  db.run(
+    `
+    CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT); 
+    CREATE TABLE bar (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+
+    INSERT INTO foo (name) VALUES ('foo');
+    INSERT INTO foo (name) VALUES ('bar');
+
+    INSERT INTO bar (name) VALUES ('foo');
+    INSERT INTO bar (name) VALUES ('bar');
+  `,
+  );
+
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      name: "foo",
+    },
+    {
+      id: 2,
+      name: "bar",
+    },
+  ]);
+
+  expect(db.query("SELECT * FROM bar").all()).toEqual([
+    {
+      id: 1,
+      name: "foo",
+    },
+    {
+      id: 2,
+      name: "bar",
+    },
+  ]);
+});
+
 it("multiple statements", () => {
   const fixtures = [
     "INSERT INTO foo (name) VALUES ('foo')",

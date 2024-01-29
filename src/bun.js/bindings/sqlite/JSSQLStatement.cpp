@@ -1091,6 +1091,41 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunctionFunction, (JSC::JSGlobalObj
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSValue thisValue = callFrame->thisValue();
+    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    if (UNLIKELY(!thisObject)) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSC::JSValue dbNumber = callFrame->argument(0);
+    JSC::JSValue callback = callFrame->argument(1);
+    JSC::JSValue functionName = callFrame->argument(2);
+    JSC::JSValue argCount = callFrame->argument(3);
+    JSC::JSValue safeIntegers = callFrame->argument(4);
+    JSC::JSValue deterministic = callFrame->argument(5);
+    JSC::JSValue directOnly = callFrame->argument(6);
+
+    if (!dbNumber.isNumber()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    int32_t handle = dbNumber.toInt32(lexicalGlobalObject);
+
+    if (handle < 0 || handle > databases().size()) {
+        throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    sqlite3* db = databases()[handle]->db;
+
+    if (!db) {
+        throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Cannot use a closed database"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
 }
 

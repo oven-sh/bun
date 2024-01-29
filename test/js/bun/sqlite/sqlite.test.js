@@ -480,6 +480,38 @@ it("inlineCapacity #987", async () => {
   expect(Object.keys(db.query(query).all()[0]).length).toBe(99);
 });
 
+it("db.defineFunction()", () => {
+  const db = Database.open(":memory:");
+  db.defineFunction("catNameLength", name => name.length);
+
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+  const insert = db.prepare("INSERT INTO cats (name, age) VALUES (@name, @age)");
+  const cats = [
+    { "@name": "Joey", "@age": 2 },
+    { "@name": "Sally", "@age": 4 },
+    { "@name": "Junior", "@age": 1 },
+    { "@name": "Sally", "@age": 4 },
+  ];
+  for (const cat of cats) {
+    insert.run(cat);
+  }
+
+  const res = db.query("SELECT catNameLength(name) AS l FROM cats").all();
+  expect(res).toStrictEqual([
+    { "l": 4 },
+    { "l": 5 },
+    { "l": 6 },
+    { "l": 5 },
+  ]);
+});
+
+it("db.defineFunction() with varargs", () => {
+  const db = Database.open(":memory:");
+  db.defineFunction("joinStrings", { varargs: true, }, (...args) => args.join(","));
+  const res = db.query("SELECT joinStrings('a','b','c') AS joined FROM cats").get().joined;
+  expect(res).toBe("a,b,c");
+});
+
 // https://github.com/oven-sh/bun/issues/1553
 it("latin1 supplement chars", () => {
   const db = new Database();

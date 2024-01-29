@@ -799,8 +799,13 @@ pub const HTTPThread = struct {
     }
 
     fn processEvents(this: *@This()) noreturn {
-        if (comptime Environment.isPosix)
+        if (comptime Environment.isPosix) {
             this.loop.num_polls = @max(2, this.loop.num_polls);
+        } else if (comptime Environment.isWindows) {
+            this.loop.inc();
+        } else {
+            @compileError("TODO:");
+        }
 
         while (true) {
             this.drainEvents();
@@ -810,7 +815,6 @@ pub const HTTPThread = struct {
                 start_time = std.time.nanoTimestamp();
             }
             Output.flush();
-            // TODO(@paperdave): this does not wait any time on windows
             this.loop.run();
             if (comptime Environment.isDebug) {
                 const end = std.time.nanoTimestamp();

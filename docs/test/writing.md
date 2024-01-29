@@ -301,7 +301,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.extend`](https://jestjs.io/docs/expect#expectextendmatchers)
 
 ---

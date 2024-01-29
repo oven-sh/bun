@@ -206,7 +206,8 @@ $$capture_start$$(${fn.async ? "async " : ""}${
           )
       )
         .replace(/^\((async )?function\(/, "($1function (")
-        .replace(/__intrinsic__/g, "@") + "\n";
+        .replace(/__intrinsic__/g, "@")
+        .replace(/__no_intrinsic__/g, "") + "\n";
 
     bundledFunctions.push({
       name: fn.name,

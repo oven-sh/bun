@@ -1416,7 +1416,7 @@ pub fn reloadProcess(
         actions.inherit(posix.STDERR_FD) catch unreachable;
 
         var attrs = PosixSpawn.Attr.init() catch unreachable;
-        attrs.resetSignals();
+        attrs.resetSignals() catch {};
 
         attrs.set(
             C.POSIX_SPAWN_CLOEXEC_DEFAULT |

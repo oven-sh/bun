@@ -354,10 +354,9 @@ const ShellRmDirTaskMini = bun.shell.InterpreterMini.Builtin.Rm.ShellRmTask.DirT
 const ShellLsTask = bun.shell.Interpreter.Builtin.Ls.ShellLsTask;
 const ShellMvCheckTargetTask = bun.shell.Interpreter.Builtin.Mv.ShellMvCheckTargetTask;
 const ShellMvBatchedTask = bun.shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
-const ShellSubprocessResultTask = JSC.Subprocess.WaiterThread.ShellSubprocessQueue.ResultTask;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
-const ProcessWaiterThreadTask = bun.spawn.WaiterThread.ProcessQueue.ResultTask;
-const ProcessMiniEventLoopWaiterThreadTask = bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask;
+const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
+const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -993,13 +992,12 @@ pub const EventLoop = struct {
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {
+                    bun.markPosixOnly();
                     var any: *ProcessWaiterThreadTask = task.get(ProcessWaiterThreadTask).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
-                    if (Environment.isWindows) {
-                        @panic("This should not be reachable on Windows");
-                    }
+                    bun.markWindowsOnly();
                     var any: *TimerReference = task.get(TimerReference).?;
                     any.runFromJSThread();
                 },
@@ -1173,14 +1171,10 @@ pub const EventLoop = struct {
         }
 
         if (!loop.isActive()) {
-            if (comptime Environment.isWindows) {
-                bun.todo(@src(), {});
-            } else {
-                if (this.forever_timer == null) {
-                    var t = uws.Timer.create(loop, this);
-                    t.set(this, &noopForeverTimer, 1000 * 60 * 4, 1000 * 60 * 4);
-                    this.forever_timer = t;
-                }
+            if (this.forever_timer == null) {
+                var t = uws.Timer.create(loop, this);
+                t.set(this, &noopForeverTimer, 1000 * 60 * 4, 1000 * 60 * 4);
+                this.forever_timer = t;
             }
         }
 

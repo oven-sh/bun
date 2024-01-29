@@ -123,7 +123,7 @@ pub const LifecycleScriptSubprocess = struct {
             {},
             getBuffer,
             null,
-            {},
+            null,
             done,
             onError,
         );
@@ -154,10 +154,15 @@ pub const LifecycleScriptSubprocess = struct {
             return this.parent;
         }
 
+        pub fn getReadBufferWithStableMemoryAddress(this: *WindowsOutputReader, suggested_size: usize) []u8 {
+            this.buffer.ensureUnusedCapacity(suggested_size) catch bun.outOfMemory();
+            return this.buffer.allocatedSlice()[this.buffer.items.len..];
+        }
+
         pub fn start(this: *WindowsOutputReader) JSC.Maybe(void) {
             this.buffer.clearRetainingCapacity();
             this.is_done = false;
-            this.startReading();
+            return this.startReading();
         }
     };
 
@@ -229,8 +234,8 @@ pub const LifecycleScriptSubprocess = struct {
         this.finished_fds = 0;
         errdefer {
             if (Environment.isWindows) {
-                if (this.stdout.isActive()) this.stdout.close();
-                if (this.stderr.isActive()) this.stderr.close();
+                if (this.stdout.pipe.isActive()) this.stdout.close();
+                if (this.stderr.pipe.isActive()) this.stderr.close();
             }
         }
         const shell_bin = bun.CLI.RunCommand.findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
@@ -276,7 +281,7 @@ pub const LifecycleScriptSubprocess = struct {
             else {},
         };
 
-        const spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), this.envp)).unwrap();
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), this.envp)).unwrap();
 
         if (comptime Environment.isPosix) {
             if (spawned.stdout) |stdout| {
@@ -297,9 +302,11 @@ pub const LifecycleScriptSubprocess = struct {
             }
         } else if (comptime Environment.isWindows) {
             if (spawned.stdout == .buffer) {
+                this.stdout.parent = this;
                 try this.stdout.start().unwrap();
             }
             if (spawned.stdout == .buffer) {
+                this.stderr.parent = this;
                 try this.stderr.start().unwrap();
             }
         }

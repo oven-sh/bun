@@ -2183,14 +2183,15 @@ pub const UVStreamSink = struct {
     }
 
     fn uvCloseCallback(handler: *anyopaque) callconv(.C) void {
+        _ = handler; // autofix
         bun.markWindowsOnly();
 
-        const event = bun.cast(*uv.uv_pipe_t, handler);
-        var this = bun.cast(*UVStreamSink, event.data);
-        this.stream = null;
-        if (this.deinit_onclose) {
-            this._destroy();
-        }
+        // const event = bun.cast(uv.Pipe, handler);
+        // var this = bun.cast(*UVStreamSink, event.data);
+        // this.stream = null;
+        // if (this.deinit_onclose) {
+        //     this._destroy();
+        // }
     }
 
     pub fn isClosed(this: *UVStreamSink) bool {

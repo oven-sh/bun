@@ -485,7 +485,7 @@ pub const WriteFileWindows = struct {
             return;
         }
 
-        this.fd = @intCast(rc.value);
+        this.fd = @intCast(rc.int());
 
         // the loop must be copied
         this.doWriteLoop(this.loop());
@@ -537,7 +537,7 @@ pub const WriteFileWindows = struct {
             return;
         }
 
-        this.total_written += @intCast(rc.value);
+        this.total_written += @intCast(rc.int());
         this.doWriteLoop(this.loop());
     }
 

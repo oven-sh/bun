@@ -1865,6 +1865,8 @@ pub const win32 = struct {
             else => @panic("Invalid stdio fd"),
         };
     }
+
+    pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
 };
 
 pub usingnamespace if (@import("builtin").target.os.tag != .windows) posix else win32;

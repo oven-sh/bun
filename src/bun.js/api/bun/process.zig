@@ -296,7 +296,8 @@ pub const Process = struct {
     pub fn watch(this: *Process, vm: anytype) JSC.Maybe(void) {
         _ = vm; // autofix
         if (comptime Environment.isWindows) {
-            return;
+            this.poller.uv.ref();
+            return JSC.Maybe(void){ .result = {} };
         }
 
         if (WaiterThread.shouldUseWaiterThread()) {
@@ -357,7 +358,7 @@ pub const Process = struct {
     }
 
     fn onExitUV(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.C) void {
-        const poller = @fieldParentPtr(Process, "uv", process);
+        const poller = @fieldParentPtr(PollerWindows, "uv", process);
         var this = @fieldParentPtr(Process, "poller", poller);
         const exit_code: u8 = if (exit_status >= 0) @as(u8, @truncate(@as(u64, @intCast(exit_status)))) else 0;
         const signal_code: ?bun.SignalCode = if (term_signal > 0 and term_signal < @intFromEnum(bun.SignalCode.SIGSYS)) @enumFromInt(term_signal) else null;
@@ -371,17 +372,17 @@ pub const Process = struct {
                 },
                 &rusage,
             );
-        } else if (signal_code != null) {
+        } else if (signal_code) |sig| {
+            this.close();
+
             this.onExit(
-                .{
-                    .signaled = .{ .signal = signal_code },
-                },
+                .{ .signaled = sig },
                 &rusage,
             );
         } else {
             this.onExit(
                 .{
-                    .err = .{ .err = bun.sys.Error.fromCode(.INVAL, .waitpid) },
+                    .err = bun.sys.Error.fromCode(.INVAL, .waitpid),
                 },
                 &rusage,
             );
@@ -398,34 +399,36 @@ pub const Process = struct {
     }
 
     pub fn close(this: *Process) void {
-        switch (this.poller) {
-            .fd => |fd| {
-                if (comptime !Environment.isPosix) {
-                    unreachable;
-                }
-
-                fd.deinit();
-                this.poller = .{ .detached = {} };
-            },
-
-            .uv => |*process| {
-                if (comptime !Environment.isWindows) {
-                    unreachable;
-                }
-                process.unref();
-
-                if (process.isClosed()) {
+        if (Environment.isPosix) {
+            switch (this.poller) {
+                .fd => |fd| {
+                    fd.deinit();
                     this.poller = .{ .detached = {} };
-                } else if (!process.isClosing()) {
-                    this.ref();
-                    process.close(&onCloseUV);
-                }
-            },
-            .waiter_thread => |*waiter| {
-                waiter.disable();
-                this.poller = .{ .detached = {} };
-            },
-            else => {},
+                },
+
+                .waiter_thread => |*waiter| {
+                    waiter.disable();
+                    this.poller = .{ .detached = {} };
+                },
+                else => {},
+            }
+        } else if (Environment.isWindows) {
+            switch (this.poller) {
+                .uv => |*process| {
+                    if (comptime !Environment.isWindows) {
+                        unreachable;
+                    }
+                    process.unref();
+
+                    if (process.isClosed()) {
+                        this.poller = .{ .detached = {} };
+                    } else if (!process.isClosing()) {
+                        this.ref();
+                        process.close(&onCloseUV);
+                    }
+                },
+                else => {},
+            }
         }
 
         if (comptime Environment.isLinux) {
@@ -437,49 +440,18 @@ pub const Process = struct {
     }
 
     pub fn disableKeepingEventLoopAlive(this: *Process) void {
-        if (this.poller == .fd) {
-            if (comptime Environment.isWindows)
-                unreachable;
-            this.poller.fd.disableKeepingProcessAlive(this.event_loop);
-        } else if (this.poller == .uv) {
-            if (comptime Environment.isWindows) {
-                if (!this.poller.uv.isClosing()) {
-                    this.poller.uv.unref();
-                }
-            } else {
-                unreachable;
-            }
-        } else if (this.poller == .waiter_thread) {
-            this.poller.waiter_thread.unref(this.event_loop);
-        }
+        this.poller.disableKeepingEventLoopAlive(this.event_loop);
     }
 
     pub fn hasRef(this: *Process) bool {
-        return switch (this.poller) {
-            .fd => this.poller.fd.isActive(),
-            .uv => if (Environment.isWindows) this.poller.uv.hasRef() else unreachable,
-            .waiter_thread => this.poller.waiter_thread.isActive(),
-            else => false,
-        };
+        return this.poller.hasRef();
     }
 
     pub fn enableKeepingEventLoopAlive(this: *Process) void {
         if (this.hasExited())
             return;
 
-        if (this.poller == .fd) {
-            this.poller.fd.enableKeepingProcessAlive(this.event_loop);
-        } else if (this.poller == .uv) {
-            if (comptime Environment.isWindows) {
-                if (!this.poller.uv.hasRef()) {
-                    this.poller.uv.ref();
-                }
-            } else {
-                unreachable;
-            }
-        } else if (this.poller == .waiter_thread) {
-            this.poller.waiter_thread.ref(this.event_loop);
-        }
+        this.poller.enableKeepingEventLoopAlive(this.event_loop);
     }
 
     pub fn detach(this: *Process) void {
@@ -488,51 +460,38 @@ pub const Process = struct {
     }
 
     fn deinit(this: *Process) void {
-        if (this.poller == .fd) {
-            this.poller.fd.deinit();
-        } else if (this.poller == .uv) {
-            if (comptime Environment.isWindows) {
-                std.debug.assert(!this.poller.uv.isActive());
-            } else {
-                unreachable;
-            }
-        } else if (this.poller == .waiter_thread) {
-            this.poller.waiter_thread.disable();
-        }
-
+        this.poller.deinit();
         this.destroy();
     }
 
     pub fn kill(this: *Process, signal: u8) Maybe(void) {
-        switch (this.poller) {
-            .uv => |*handle| {
-                if (comptime !Environment.isWindows) {
-                    unreachable;
-                }
+        if (comptime Environment.isPosix) {
+            switch (this.poller) {
+                .waiter_thread, .fd => {
+                    const err = std.c.kill(this.pid, signal);
+                    if (err != 0) {
+                        const errno_ = bun.C.getErrno(err);
 
-                if (handle.kill(signal).toError(.kill)) |err| {
-                    return .{ .err = err };
-                }
+                        // if the process was already killed don't throw
+                        if (errno_ != .SRCH)
+                            return .{ .err = bun.sys.Error.fromCode(errno_, .kill) };
+                    }
+                },
+                else => {},
+            }
+        } else if (comptime Environment.isWindows) {
+            switch (this.poller) {
+                .uv => |*handle| {
+                    if (handle.kill(signal).toError(.kill)) |err| {
+                        return .{ .err = err };
+                    }
 
-                return .{
-                    .result = {},
-                };
-            },
-            .waiter_thread, .fd => {
-                if (comptime !Environment.isPosix) {
-                    unreachable;
-                }
-
-                const err = std.c.kill(this.pid, signal);
-                if (err != 0) {
-                    const errno_ = bun.C.getErrno(err);
-
-                    // if the process was already killed don't throw
-                    if (errno_ != .SRCH)
-                        return .{ .err = bun.sys.Error.fromCode(errno_, .kill) };
-                }
-            },
-            else => {},
+                    return .{
+                        .result = {},
+                    };
+                },
+                else => {},
+            }
         }
 
         return .{
@@ -561,17 +520,104 @@ pub const Status = union(enum) {
     }
 };
 
-pub const Poller = union(enum) {
+pub const PollerPosix = union(enum) {
     fd: *bun.Async.FilePoll,
-    uv: if (Environment.isWindows) uv.uv_process_t else void,
     waiter_thread: bun.Async.KeepAlive,
     detached: void,
+
+    pub fn deinit(this: *PollerPosix) void {
+        if (this.poller == .fd) {
+            this.poller.fd.deinit();
+        } else if (this.poller == .waiter_thread) {
+            this.poller.waiter_thread.disable();
+        }
+    }
+
+    pub fn enableKeepingEventLoopAlive(this: *Poller, event_loop: JSC.EventLoopHandle) void {
+        switch (this.*) {
+            .fd => |poll| {
+                poll.enableKeepingEventLoopAlive(event_loop);
+            },
+            .waiter_thread => |waiter| {
+                waiter.ref(event_loop);
+            },
+            else => {},
+        }
+    }
+
+    pub fn disableKeepingEventLoopAlive(this: *PollerPosix, event_loop: JSC.EventLoopHandle) void {
+        switch (this.*) {
+            .fd => |poll| {
+                poll.disableKeepingEventLoopAlive(event_loop);
+            },
+            .waiter_thread => |waiter| {
+                waiter.unref(event_loop);
+            },
+            else => {},
+        }
+    }
+
+    pub fn hasRef(this: *const PollerPosix) bool {
+        return switch (this.*) {
+            .fd => this.fd.hasRef(),
+            .waiter_thread => this.waiter_thread.isActive(),
+            else => false,
+        };
+    }
+};
+
+pub const Poller = if (Environment.isPosix) PollerPosix else PollerWindows;
+
+pub const PollerWindows = union(enum) {
+    uv: uv.uv_process_t,
+    detached: void,
+
+    pub fn deinit(this: *PollerWindows) void {
+        if (this.* == .uv) {
+            std.debug.assert(!this.uv.isActive());
+        }
+    }
+
+    pub fn enableKeepingEventLoopAlive(this: *PollerWindows, event_loop: JSC.EventLoopHandle) void {
+        _ = event_loop; // autofix
+        switch (this.*) {
+            .uv => |*process| {
+                process.ref();
+            },
+            else => {},
+        }
+    }
+
+    pub fn disableKeepingEventLoopAlive(this: *PollerWindows, event_loop: JSC.EventLoopHandle) void {
+        _ = event_loop; // autofix
+        switch (this.*) {
+            .uv => |*process| {
+                process.unref();
+            },
+            else => {},
+        }
+    }
+
+    pub fn hasRef(this: *const PollerWindows) bool {
+        return switch (this.*) {
+            .uv => if (Environment.isWindows) this.uv.hasRef() else unreachable,
+            else => false,
+        };
+    }
+};
+
+pub const WaiterThread = if (Environment.isPosix) WaiterThreadPosix else struct {
+    pub inline fn shouldUseWaiterThread() bool {
+        return false;
+    }
+
+    pub fn setShouldUseWaiterThread() void {}
 };
 
 // Machines which do not support pidfd_open (GVisor, Linux Kernel < 5.6)
 // use a thread to wait for the child process to exit.
 // We use a single thread to call waitpid() in a loop.
-pub const WaiterThread = struct {
+const WaiterThreadPosix = struct {
     started: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     signalfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
     eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
@@ -1147,7 +1193,7 @@ pub fn spawnProcessWindows(
 
     var uv_process_options = std.mem.zeroes(uv.uv_process_options_t);
 
-    uv_process_options.args = argv;
+    uv_process_options.args = @ptrCast(argv);
     uv_process_options.env = envp;
     uv_process_options.file = argv[0].?;
     uv_process_options.exit_cb = &Process.onExitUV;
@@ -1155,8 +1201,10 @@ pub fn spawnProcessWindows(
     const allocator = stack_allocator.get();
     const loop = options.windows.loop.platformEventLoop().uv_loop;
 
-    uv_process_options.cwd = try allocator.dupeZ(u8, options.cwd);
-    defer allocator.free(uv_process_options.cwd);
+    const cwd = try allocator.dupeZ(u8, options.cwd);
+    defer allocator.free(cwd);
+
+    uv_process_options.cwd = cwd.ptr;
 
     var uv_files_to_close = std.ArrayList(uv.uv_file).init(allocator);
 
@@ -1172,15 +1220,15 @@ pub fn spawnProcessWindows(
     errdefer failed = true;
 
     if (options.windows.hide_window) {
-        uv_process_options.flags |= uv.uv_process_flags.UV_PROCESS_WINDOWS_HIDE;
+        uv_process_options.flags |= uv.UV_PROCESS_WINDOWS_HIDE;
     }
 
     if (options.windows.verbatim_arguments) {
-        uv_process_options.flags |= uv.uv_process_flags.UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS;
+        uv_process_options.flags |= uv.UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS;
     }
 
     if (options.detached) {
-        uv_process_options.flags |= uv.uv_process_flags.UV_PROCESS_DETACHED;
+        uv_process_options.flags |= uv.UV_PROCESS_DETACHED;
     }
 
     var stdio_containers = try std.ArrayList(uv.uv_stdio_container_t).initCapacity(allocator, 3 + options.extra_fds.len);
@@ -1188,20 +1236,20 @@ pub fn spawnProcessWindows(
     @memset(stdio_containers.allocatedSlice(), std.mem.zeroes(uv.uv_stdio_container_t));
     stdio_containers.items.len = 3 + options.extra_fds.len;
 
-    const stdios = .{ &stdio_containers[0], &stdio_containers[1], &stdio_containers[2] };
+    const stdios = .{ &stdio_containers.items[0], &stdio_containers.items[1], &stdio_containers.items[2] };
     const stdio_options: [3]WindowsSpawnOptions.Stdio = .{ options.stdin, options.stdout, options.stderr };
 
     inline for (0..3) |fd_i| {
         const stdio: *uv.uv_stdio_container_t = stdios[fd_i];
 
-        const fileno = bun.toFD(fd_i);
+        const fileno = bun.stdio(fd_i);
         const flag = comptime if (fd_i == 0) @as(u32, uv.O.RDONLY) else @as(u32, uv.O.WRONLY);
         const my_pipe_flags = comptime if (fd_i == 0) uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE else uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE;
 
         switch (stdio_options[fd_i]) {
             .inherit => {
                 stdio.flags = uv.UV_INHERIT_FD;
-                stdio.data.fd = fileno;
+                stdio.data.fd = bun.uvfdcast(fileno);
             },
             .ignore => {
                 stdio.flags = uv.UV_IGNORE;
@@ -1227,22 +1275,22 @@ pub fn spawnProcessWindows(
             },
             .pipe => |fd| {
                 stdio.flags = uv.UV_INHERIT_FD;
-                stdio.data.fd = fd;
+                stdio.data.fd = bun.uvfdcast(fd);
             },
         }
     }
 
     for (options.extra_fds, 0..) |ipc, i| {
-        const stdio: *uv.uv_stdio_container_t = &stdio_containers[3 + i];
+        const stdio: *uv.uv_stdio_container_t = &stdio_containers.items[3 + i];
 
-        const fileno = bun.toFD(3 + i);
+        const fileno = bun.toFD(@as(i32, @intCast(3 + i)));
         const flag = @as(u32, uv.O.RDWR);
         const my_pipe_flags = uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE | uv.UV_WRITABLE_PIPE;
 
         switch (ipc) {
             .inherit => {
                 stdio.flags = uv.StdioFlags.inherit_fd;
-                stdio.data.fd = fileno;
+                stdio.data.fd = bun.uvfdcast(fileno);
             },
             .ignore => {
                 stdio.flags = uv.UV_IGNORE;
@@ -1268,13 +1316,13 @@ pub fn spawnProcessWindows(
             },
             .pipe => |fd| {
                 stdio.flags = uv.StdioFlags.inherit_fd;
-                stdio.data.fd = fd;
+                stdio.data.fd = bun.uvfdcast(fd);
             },
         }
     }
 
     uv_process_options.stdio = stdio_containers.items.ptr;
-    uv_process_options.stdio_count = @truncate(stdio_containers.items.len);
+    uv_process_options.stdio_count = @intCast(stdio_containers.items.len);
 
     uv_process_options.exit_cb = &Process.onExitUV;
     var process = Process.new(.{
@@ -1326,7 +1374,7 @@ pub fn spawnProcessWindows(
                 result.extra_pipes.appendAssumeCapacity(.{ .buffer = @ptrCast(stdio_containers.items[3 + i].data.stream) });
             },
             else => {
-                result.extra_pipes.appendAssumeCapacity(.{.{ .unavailable = {} }});
+                result.extra_pipes.appendAssumeCapacity(.{ .unavailable = {} });
             },
         }
     }

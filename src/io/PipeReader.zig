@@ -141,7 +141,7 @@ pub fn WindowsPipeReader(
         };
 
         fn _pipe(this: *This) *uv.Pipe {
-            return this.pipe;
+            return &this.pipe;
         }
 
         pub fn open(this: *This, loop: *uv.Loop, fd: bun.FileDescriptor, ipc: bool) bun.JSC.Maybe(void) {

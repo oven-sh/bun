@@ -435,7 +435,7 @@ fn HandleMixin(comptime Type: type) type {
         }
 
         pub fn isClosed(this: *const Type) bool {
-            return uv_is_closed(@ptrCast(this)) != 0;
+            return uv_is_closed(@ptrCast(this));
         }
 
         pub fn isActive(this: *const Type) bool {
@@ -2021,7 +2021,7 @@ pub extern fn uv_tty_get_vterm_state(state: [*c]uv_tty_vtermstate_t) c_int;
 pub extern fn uv_guess_handle(file: uv_file) uv_handle_type;
 pub const UV_PIPE_NO_TRUNCATE: c_int = 1;
 const enum_unnamed_462 = c_uint;
-pub extern fn uv_pipe_init(*uv_loop_t, handle: *Pipe, ipc: c_int) c_int;
+pub extern fn uv_pipe_init(*uv_loop_t, handle: *Pipe, ipc: c_int) ReturnCode;
 pub extern fn uv_pipe_open(*Pipe, file: uv_file) ReturnCode;
 pub extern fn uv_pipe_bind(handle: *Pipe, name: [*]const u8) c_int;
 pub extern fn uv_pipe_bind2(handle: *Pipe, name: [*]const u8, namelen: usize, flags: c_uint) c_int;
@@ -2516,7 +2516,7 @@ pub const ReturnCode = enum(c_int) {
     pub fn toError(this: ReturnCode, syscall: bun.sys.Tag) ?bun.sys.Error {
         if (this.errno()) |e| {
             return .{
-                .errno = @intFromEnum(e),
+                .errno = e,
                 .syscall = syscall,
             };
         }
@@ -2627,7 +2627,7 @@ pub const ReturnCodeI64 = enum(i64) {
     pub fn toError(this: ReturnCodeI64, syscall: bun.sys.Tag) ?bun.sys.Error {
         if (this.errno()) |e| {
             return .{
-                .errno = @intFromEnum(e),
+                .errno = e,
                 .syscall = syscall,
             };
         }
@@ -2651,6 +2651,10 @@ pub const ReturnCodeI64 = enum(i64) {
 
     pub inline fn int(this: ReturnCodeI64) i64 {
         return @intFromEnum(this);
+    }
+
+    pub fn toFD(this: ReturnCodeI64) bun.FileDescriptor {
+        return bun.toFD(@as(i32, @truncate(this.int())));
     }
 };
 
@@ -2693,40 +2697,48 @@ fn WriterMixin(comptime Type: type) type {
 pub fn StreamReaderMixin(comptime Type: type, comptime pipe_field_name: std.meta.FieldEnum(Type)) type {
     return struct {
         fn uv_alloc_cb(pipe: *uv_stream_t, suggested_size: usize, buf: *uv_buf_t) callconv(.C) void {
-            var this = @fieldParentPtr(Type, pipe, @tagName(pipe_field_name));
+            var this = @fieldParentPtr(
+                Type,
+                @tagName(pipe_field_name),
+                @as(*Pipe, @ptrCast(pipe)),
+            );
             const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
             buf.* = uv_buf_t.init(result);
         }
 
         fn uv_read_cb(pipe: *uv_stream_t, nread: ReturnCodeI64, buf: *const uv_buf_t) callconv(.C) void {
-            var this = @fieldParentPtr(Type, pipe, @tagName(pipe_field_name));
+            var this = @fieldParentPtr(
+                Type,
+                @tagName(pipe_field_name),
+                @as(*Pipe, @ptrCast(pipe)),
+            );
 
             this.onRead(
                 if (nread.toError(.recv)) |err| .{ .err = err } else .{ .result = @intCast(nread.int()) },
-                buf.*,
+                buf,
             );
         }
 
-        fn __get_pipe(this: *@This()) *uv_stream_t {
+        fn __get_pipe(this: *Type) *uv_stream_t {
             comptime {
-                switch (@TypeOf(@field(this, @tagName(@tagName(pipe_field_name))))) {
+                switch (@TypeOf(@field(this, @tagName(pipe_field_name)))) {
                     Pipe, uv_tcp_t, uv_tty_t => {},
                     else => @compileError("StreamWriterMixin only works with Pipe, uv_tcp_t, uv_tty_t"),
                 }
             }
 
-            return @ptrCast(&@field(this, @tagName(@tagName(pipe_field_name))));
+            return @ptrCast(&@field(this, @tagName(pipe_field_name)));
         }
 
-        pub fn startReading(this: *@This()) Maybe(void) {
-            if (uv_read_start(__get_pipe(this), &@This().uv_alloc_cb, &@This().uv_read_cb).toError(.open)) |err| {
+        pub fn startReading(this: *Type) Maybe(void) {
+            if (uv_read_start(__get_pipe(this), @ptrCast(&@This().uv_alloc_cb), @ptrCast(&@This().uv_read_cb)).toError(.open)) |err| {
                 return .{ .err = err };
             }
 
             return .{ .result = {} };
         }
 
-        pub fn stopReading(this: *@This()) Maybe(void) {
+        pub fn stopReading(this: *Type) Maybe(void) {
             if (uv_read_stop(__get_pipe(this)).toError(.close)) |err| {
                 return .{ .err = err };
             }

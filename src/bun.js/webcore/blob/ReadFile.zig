@@ -756,14 +756,16 @@ pub const ReadFileUV = struct {
     pub fn onRead(req: *libuv.fs_t) callconv(.C) void {
         var this: *ReadFileUV = @alignCast(@ptrCast(req.data));
 
-        if (req.result.errEnum()) |errno| {
+        const result = req.result;
+
+        if (result.errEnum()) |errno| {
             this.errno = bun.errnoToZigErr(errno);
             this.system_error = bun.sys.Error.fromCode(errno, .read).toSystemError();
             this.finalize();
             return;
         }
 
-        if (req.result.value == 0) {
+        if (result.int() == 0) {
             // We are done reading.
             _ = bun.default_allocator.resize(this.buffer, this.read_off);
             this.buffer = this.buffer[0..this.read_off];
@@ -772,7 +774,7 @@ pub const ReadFileUV = struct {
             return;
         }
 
-        this.read_off += @intCast(req.result.value);
+        this.read_off += @intCast(result.int());
 
         this.queueRead();
     }

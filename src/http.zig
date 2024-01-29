@@ -815,7 +815,7 @@ pub const HTTPThread = struct {
                 start_time = std.time.nanoTimestamp();
             }
             Output.flush();
-            this.loop.wait();
+            this.loop.run();
             if (comptime Environment.isDebug) {
                 const end = std.time.nanoTimestamp();
                 threadlog("Waited {any}\n", .{std.fmt.fmtDurationSigned(@as(i64, @truncate(end - start_time)))});

@@ -806,3 +806,9 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
 pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<red>error<r><d>:<r> " ++ fmt, args);
 }
+
+/// This struct is a workaround a Windows terminal bug.
+/// TODO: when https://github.com/microsoft/terminal/issues/16606 is resolved, revert this commit.
+pub var buffered_stdin = std.io.BufferedReader(4096, std.fs.File.Reader){
+    .unbuffered_reader = std.fs.File.Reader{ .context = .{ .handle = if (Environment.isWindows) undefined else 0 } },
+};

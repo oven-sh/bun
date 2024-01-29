@@ -43,7 +43,7 @@ pub fn main() void {
         bun.win32.STDERR_FD = bun.toFD(std.io.getStdErr().handle);
         bun.win32.STDIN_FD = bun.toFD(std.io.getStdIn().handle);
 
-        bun.buffered_stdin.unbuffered_reader.context.handle = std.io.getStdIn().handle;
+        bun.Output.buffered_stdin.unbuffered_reader.context.handle = std.io.getStdIn().handle;
 
         const w = std.os.windows;
 

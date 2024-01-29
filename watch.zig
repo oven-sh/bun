@@ -92,11 +92,19 @@ pub const WindowsWatcher = struct {
     iocp: w.HANDLE,
     allocator: std.mem.Allocator,
     // watchers: Map,
-    // rng: std.rand.DefaultPrng,
     running: bool = true,
 
     // const Map = std.AutoArrayHashMap(*w.OVERLAPPED, *DirWatcher);
     const w = std.os.windows;
+
+    const Action = enum(w.DWORD) {
+        Added = 1,
+        Removed,
+        Modified,
+        RenamedOld,
+        RenamedNew,
+    };
+
     const DirWatcher = extern struct {
         // this must be the first field
         overlapped: w.OVERLAPPED = undefined,
@@ -113,7 +121,8 @@ pub const WindowsWatcher = struct {
                 const name_ptr: [*]u16 = @alignCast(@ptrCast(this.buf[offset + info_size ..]));
                 const filename: []u16 = name_ptr[0 .. info.FileNameLength / @sizeOf(u16)];
 
-                std.debug.print("filename: {}, action: {}\n", .{ std.unicode.fmtUtf16le(filename), info.Action });
+                const action: Action = @enumFromInt(info.Action);
+                std.debug.print("filename: {}, action: {s}\n", .{ std.unicode.fmtUtf16le(filename), @tagName(action) });
 
                 if (info.NextEntryOffset == 0) break;
                 offset += @as(usize, info.NextEntryOffset);
@@ -121,7 +130,7 @@ pub const WindowsWatcher = struct {
         }
 
         fn listen(this: *DirWatcher) !void {
-            const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_SIZE | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION | w.FILE_NOTIFY_CHANGE_SECURITY;
+            const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION;
             if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, this.watch_subtree, filter, null, &this.overlapped, null) == 0) {
                 const err = w.kernel32.GetLastError();
                 std.debug.print("failed to start watching directory: {s}\n", .{@tagName(err)});
@@ -142,11 +151,14 @@ pub const WindowsWatcher = struct {
         return watcher;
     }
 
+    pub fn deinit(this: *WindowsWatcher) void {
+        // get all the directory watchers and close their handles
+        // TODO
+        // close the io completion port handle
+        w.kernel32.CloseHandle(this.iocp);
+    }
+
     pub fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: [:0]const u16) !void {
-        _ = dirFd; // autofix
-        // TODO respect dirFd
-        // const flags = w.STANDARD_RIGHTS_READ | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA |
-        //     w.FILE_TRAVERSE | w.FILE_LIST_DIRECTORY;
         const flags = w.FILE_LIST_DIRECTORY;
 
         const path_len_bytes: u16 = @truncate(path.len * 2);
@@ -157,13 +169,12 @@ pub const WindowsWatcher = struct {
         };
         var attr = w.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-            .RootDirectory = null,
-            // if (std.fs.path.isAbsoluteWindowsW(path))
-            //     null
-            // else if (dirFd == w.INVALID_HANDLE_VALUE)
-            //     std.fs.cwd().fd
-            // else
-            //     dirFd,
+            .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path))
+                null
+            else if (dirFd == w.INVALID_HANDLE_VALUE)
+                std.fs.cwd().fd
+            else
+                dirFd,
             .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
             .ObjectName = &nt_name,
             .SecurityDescriptor = null,
@@ -190,24 +201,7 @@ pub const WindowsWatcher = struct {
             @panic("failed to open directory for watching");
         }
 
-        // const handle = w.kernel32.CreateFileW(
-        //     path,
-        //     w.FILE_LIST_DIRECTORY,
-        //     w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
-        //     null,
-        //     w.OPEN_EXISTING,
-        //     w.FILE_FLAG_BACKUP_SEMANTICS | w.FILE_FLAG_OVERLAPPED,
-        //     null,
-        // );
-        // if (handle == w.INVALID_HANDLE_VALUE) {
-        //     @panic("failed to open directory for watching");
-        // }
-        // // TODO check if this is a directory
-        // {}
-
         errdefer _ = w.kernel32.CloseHandle(handle);
-
-        // const key = this.rng.next();
 
         this.iocp = try w.CreateIoCompletionPort(handle, this.iocp, 0, 1);
 
@@ -219,6 +213,8 @@ pub const WindowsWatcher = struct {
     }
 
     pub fn stop(this: *WindowsWatcher) void {
+        // close all the handles
+        // w.kernel32.PostQueuedCompletionStatus(this.iocp, 0, 1, )
         @atomicStore(bool, &this.running, false, .Unordered);
     }
 
@@ -234,8 +230,8 @@ pub const WindowsWatcher = struct {
                 .EOF => @panic("eof"),
             }
             if (nbytes == 0) {
-                // exit notification?
-                break;
+                // exit notification for this watcher - we should probably deallocate it here
+                continue;
             }
 
             const watcher: *DirWatcher = @ptrCast(overlapped);
@@ -253,15 +249,11 @@ pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
     var buf: [std.fs.MAX_PATH_BYTES]u16 = undefined;
-    const path = toNTPath(&buf, "C:\\bun\\");
-    // const idx = try std.unicode.utf8ToUtf16Le(&buf, "C:\\bun\\");
-    // buf[idx] = 0;
-    // const path = buf[0..idx :0];
-
-    std.debug.print("directory: {}\n", .{std.unicode.fmtUtf16le(path)});
 
     const watcher = try WindowsWatcher.init(allocator);
-    try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, path);
+    try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, "C:\\bun\\src"));
+    try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, "C:\\bun\\test"));
+    try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, "C:\\bun\\testdir"));
 
     std.debug.print("watching...\n", .{});
 

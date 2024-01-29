@@ -410,5 +410,3 @@ pub const Closer = struct {
         closer.destroy();
     }
 };
-
-

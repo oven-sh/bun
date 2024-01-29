@@ -332,7 +332,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`PerformanceResourceTiming`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceResourceTiming)
 
-🟢 Fully implemented.
+🔴 Not implemented.
 
 ### [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/performance)
 

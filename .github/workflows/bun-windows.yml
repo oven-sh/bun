@@ -435,7 +435,7 @@ jobs:
           } catch {}
           $ErrorActionPreference = "Stop"
       - uses: sarisia/actions-status-discord@v1
-        if: always() && steps.test.outputs.regressing_tests != '' && github.event_name == 'pull_request'
+        if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         with:
           title: ""
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
@@ -445,9 +445,9 @@ jobs:
           description: |
             ### ❌🪟 [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
 
-            @${{ github.actor }}, there are **${{ steps.test.outputs.regressing_test_count }} test regressions** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
+            @${{ github.actor }}, there are **${{ steps.test.outputs.regressing_test_count }} failing testts** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
 
-            ${{ steps.test.outputs.regressing_tests }}
+            ${{ steps.test.outputs.failing_tests }}
 
             [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})
       - name: Comment on PR

@@ -445,7 +445,7 @@ jobs:
           description: |
             ### ❌🪟 [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
 
-            @${{ github.actor }}, there are **${{ steps.test.outputs.regressing_test_count }} failing testts** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
+            @${{ github.actor }}, there are **${{ steps.test.outputs.failing_test_count }} failing tests** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
 
             ${{ steps.test.outputs.failing_tests }}
 

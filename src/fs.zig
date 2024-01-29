@@ -1133,10 +1133,12 @@ pub const FileSystem = struct {
                 while (true) {
 
                     // We use pread to ensure if the file handle was open, it doesn't seek from the last position
+                    const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
                     const read_count = file.preadAll(shared_buffer.list.items[offset..], offset) catch |err| {
                         fs.readFileError(path, err);
                         return err;
                     };
+                    if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
                     shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + offset];
                     file_contents = shared_buffer.list.items;
                     debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
@@ -1179,10 +1181,12 @@ pub const FileSystem = struct {
                 // stick a zero at the end
                 buf[size] = 0;
 
+                const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
                 const read_count = file.preadAll(buf, 0) catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };
+                if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
                 file_contents = buf[0..read_count];
                 debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
 

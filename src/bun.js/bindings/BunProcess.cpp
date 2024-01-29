@@ -32,6 +32,10 @@
 #include <uv.h>
 #include <io.h>
 #include <fcntl.h>
+// Using the same typedef and define for `mode_t` and `umask` as node on windows.
+// https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
+#define umask _umask
+typedef int mode_t;
 #endif
 #include "JSNextTickQueue.h"
 #include "ProcessBindingUV.h"
@@ -342,8 +346,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-#if !OS(WINDOWS)
-
     if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
         mode_t currentMask = umask(0);
         umask(currentMask);
@@ -376,9 +378,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     }
 
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
-#else
-    return JSC::JSValue::encode(JSC::jsNumber(0));
-#endif
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);

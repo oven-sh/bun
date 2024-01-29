@@ -1,11 +1,11 @@
-// @known-failing-on-windows: 1 failing
 import { spawn } from "bun";
 import { test, expect } from "bun:test";
+import { join } from "path";
 import { bunExe } from "harness";
 
 test("args exclude run", async () => {
   const arg0 = process.argv[0];
-  const arg1 = import.meta.dir + "/print-process-args.js";
+  const arg1 = join(import.meta.dir, "/print-process-args.js");
   const exe = bunExe();
   const { stdout: s1 } = spawn([exe, "print-process-args.js"], {
     cwd: import.meta.dir,

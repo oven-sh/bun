@@ -6582,6 +6582,7 @@ pub const PackageManager = struct {
                     current_package_json_buf,
                     0,
                 );
+                if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
 
                 const package_json_source = logger.Source.initPathString(
                     package_json_cwd,
@@ -6757,6 +6758,7 @@ pub const PackageManager = struct {
                     current_package_json_buf,
                     0,
                 );
+                if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
 
                 const package_json_source = logger.Source.initPathString(
                     package_json_cwd,
@@ -7462,6 +7464,7 @@ pub const PackageManager = struct {
             current_package_json_buf,
             0,
         );
+        if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
 
         const package_json_source = logger.Source.initPathString(
             package_json_cwd,

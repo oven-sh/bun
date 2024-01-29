@@ -136,10 +136,12 @@ pub const InitCommand = struct {
                 package_json_contents = try MutableString.init(alloc, size);
                 package_json_contents.list.expandToCapacity();
 
+                const prev_file_pos = if (comptime Environment.isWindows) try pkg.getPos() else 0;
                 _ = pkg.preadAll(package_json_contents.list.items, 0) catch {
                     package_json_file = null;
                     break :read_package_json;
                 };
+                if (comptime Environment.isWindows) try pkg.seekTo(prev_file_pos);
             }
         }
 

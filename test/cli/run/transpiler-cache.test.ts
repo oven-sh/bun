@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import assert from "assert";
 import { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";

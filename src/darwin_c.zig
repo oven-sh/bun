@@ -775,8 +775,8 @@ pub const preallocate_length = std.math.maxInt(u51);
 pub const Mode = std.os.mode_t;
 
 pub const E = std.os.E;
+pub const S = std.os.S;
 pub fn getErrno(rc: anytype) E {
     return std.c.getErrno(rc);
 }
-
 pub extern "c" fn umask(Mode) Mode;

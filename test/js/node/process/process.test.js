@@ -9,13 +9,14 @@ it("process", () => {
   // this property isn't implemented yet but it should at least return a string
   const isNode = !process.isBun;
 
-  if (!isNode && process.title !== "bun") throw new Error("process.title is not 'bun'");
+  if (!isNode && process.platform !== "win32" && process.title !== "bun") throw new Error("process.title is not 'bun'");
 
   if (typeof process.env.USER !== "string") throw new Error("process.env is not an object");
 
   if (process.env.USER.length === 0) throw new Error("process.env is missing a USER property");
 
-  if (process.platform !== "darwin" && process.platform !== "linux") throw new Error("process.platform is invalid");
+  if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32")
+    throw new Error("process.platform is invalid");
 
   if (isNode) throw new Error("process.isBun is invalid");
 
@@ -68,8 +69,9 @@ it("process.hrtime.bigint()", () => {
 
 it("process.release", () => {
   expect(process.release.name).toBe("node");
+  const platform = process.platform == "win32" ? "windows" : process.platform;
   expect(process.release.sourceUrl).toContain(
-    `https://github.com/oven-sh/bun/release/bun-v${process.versions.bun}/bun-${process.platform}-${
+    `https://github.com/oven-sh/bun/release/bun-v${process.versions.bun}/bun-${platform}-${
       { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch
     }`,
   );
@@ -155,11 +157,16 @@ it("process.umask()", () => {
     }).toThrow(RangeError);
   }
 
-  const orig = process.umask(0o777);
-  expect(orig).toBeGreaterThan(0);
-  expect(process.umask()).toBe(0o777);
-  expect(process.umask(undefined)).toBe(0o777);
-  expect(process.umask(Number(orig))).toBe(0o777);
+  const mask = process.platform == "win32" ? 0o600 : 0o777;
+  const orig = process.umask(mask);
+  if (process.platform == "win32") {
+    expect(orig).toBe(0);
+  } else {
+    expect(orig).toBeGreaterThan(0);
+  }
+  expect(process.umask()).toBe(mask);
+  expect(process.umask(undefined)).toBe(mask);
+  expect(process.umask(Number(orig))).toBe(mask);
   expect(process.umask()).toBe(orig);
 });
 

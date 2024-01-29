@@ -2900,14 +2900,9 @@ pub const Blob = struct {
             return JSValue.jsBoolean(true);
         }
 
-        if (comptime Environment.isWindows) {
-            this.globalThis.throwTODO("exists is not implemented on Windows");
-            return JSValue.jsUndefined();
-        }
-
         // We say regular files and pipes exist.
         // This is mostly meant for "Can we use this in new Response(file)?"
-        return JSValue.jsBoolean(bun.isRegularFile(store.data.file.mode) or std.os.S.ISFIFO(store.data.file.mode));
+        return JSValue.jsBoolean(bun.isRegularFile(store.data.file.mode) or bun.C.S.ISFIFO(store.data.file.mode));
     }
 
     // This mostly means 'can it be read?'

@@ -1245,6 +1245,8 @@ pub fn spawnProcessWindows(
         const fileno = bun.stdio(fd_i);
         const flag = comptime if (fd_i == 0) @as(u32, uv.O.RDONLY) else @as(u32, uv.O.WRONLY);
         const my_pipe_flags = comptime if (fd_i == 0) uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE else uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE;
+        const their_pipe_flags = comptime if (fd_i != 0) uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE else uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE;
+        _ = their_pipe_flags; // autofix
 
         switch (stdio_options[fd_i]) {
             .inherit => {
@@ -1269,7 +1271,7 @@ pub fn spawnProcessWindows(
                 stdio.data.fd = fd;
             },
             .buffer => |my_pipe| {
-                try my_pipe.init(loop, true).unwrap();
+                try my_pipe.init(loop, false).unwrap();
                 stdio.flags = my_pipe_flags;
                 stdio.data.stream = @ptrCast(my_pipe);
             },

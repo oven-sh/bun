@@ -3635,7 +3635,10 @@ pub const Blob = struct {
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             // instead of erroring, invalid characters will become a U+FFFD replacement character
-            if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch unreachable) |external| {
+            if (strings.toUTF16Alloc(bun.default_allocator, buf, false, false) catch {
+                global.throwOutOfMemory();
+                return .zero;
+            }) |external| {
                 if (lifetime != .temporary)
                     this.setIsASCIIFlag(false);
 
@@ -3735,7 +3738,7 @@ pub const Blob = struct {
             var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
             const allocator = stack_fallback.get();
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
-            if (strings.toUTF16Alloc(allocator, buf, false) catch null) |external| {
+            if (strings.toUTF16Alloc(allocator, buf, false, false) catch null) |external| {
                 if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
                 const result = ZigString.init16(external).toJSONObject(global);
                 allocator.free(external);
@@ -4393,7 +4396,7 @@ pub const InternalBlob = struct {
 
     pub fn toStringOwned(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
         const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);
-        if (strings.toUTF16Alloc(globalThis.allocator(), bytes_without_bom, false) catch &[_]u16{}) |out| {
+        if (strings.toUTF16Alloc(globalThis.allocator(), bytes_without_bom, false, false) catch &[_]u16{}) |out| {
             const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);
             return_value.ensureStillAlive();
             this.deinit();

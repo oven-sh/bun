@@ -1270,7 +1270,7 @@ pub const SliceWithUnderlyingString = struct {
             }
 
             if (this.utf8.allocator.get()) |_| {
-                if (bun.strings.toUTF16Alloc(bun.default_allocator, this.utf8.slice(), false) catch null) |utf16| {
+                if (bun.strings.toUTF16Alloc(bun.default_allocator, this.utf8.slice(), false, false) catch null) |utf16| {
                     this.utf8.deinit();
                     this.utf8 = .{};
                     return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, globalObject);

@@ -34,7 +34,8 @@
 //! Prior Art:
 //! - https://github.com/ScoopInstaller/Shim/blob/master/src/shim.cs
 //!
-//! The compiled binary is 10240 bytes and is `@embedFile`d into Bun itself
+//! The compiled binary is 10240 bytes and is `@embedFile`d into Bun itself.
+//! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
 const std = @import("std");
 const builtin = @import("builtin");
 
@@ -387,6 +388,10 @@ inline fn launcher(bun_ctx: anytype) noreturn {
     std.debug.assert(user_arguments_u8.len != 2);
     std.debug.assert(user_arguments_u8.len == 0 or user_arguments_u8[0] == ' ');
 
+    // TODO(@paperdave): this explanation is incorrect. there are two off-by-four bugs.
+    // both in the opposite direction, so it ends up working out. later, the code needs
+    // to be simplified to explicitly take advantage of this.
+    //
     // Read the metadata file into the memory right after the image path.
     //
     // i'm really proud of this technique, because it will create an absolute path, but
@@ -395,12 +400,17 @@ inline fn launcher(bun_ctx: anytype) noreturn {
     // we do this by reusing the memory in the first buffer
     // BUF1: '\??\C:\Users\dave\project\node_modules\.bin\hello.bunx!!!!!!!!!!!!!!!!!!!!!!'
     //                                              ^^        ^    ^
-    //                                              S|        |    image_path_b_len
+    //                                              S|        |    image_path_b_len + nt_object_prefix.len
     //                                               |        'ptr' initial value
     //                                              the read ptr
     var read_ptr = brk: {
-        var left = image_path_b_len / 2 - (if (is_standalone) 2 * ".exe".len else ".bunx".len);
-        var ptr: [*]u16 = buf1_u16[left..];
+        var left = image_path_b_len / 2 - (if (is_standalone) 2 * "exe".len else "bunx".len) + 1;
+        var ptr: [*]u16 = buf1_u16[nt_object_prefix.len + left ..];
+
+        // if this is false, potential out of bounds memory access
+        std.debug.assert(@intFromPtr(ptr) - left * @sizeOf(std.meta.Child(@TypeOf(ptr))) >= @intFromPtr(buf1_u16));
+        std.debug.assert(ptr[1] == '.');
+
         inline for (0..1) |_| {
             while (true) {
                 if (ptr[0] == '\\') {

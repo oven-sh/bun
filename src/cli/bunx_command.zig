@@ -142,6 +142,7 @@ pub const BunxCommand = struct {
     /// Check the enclosing package.json for a matching "bin"
     /// If not found, check bunx cache dir
     fn getBinName(bundler: *bun.Bundler, toplevel_fd: bun.FileDescriptor, tempdir_name: []const u8, package_name: []const u8) error{ NoBinFound, NeedToInstall }![]const u8 {
+        toplevel_fd.assertValid();
         return getBinNameFromProjectDirectory(bundler, toplevel_fd, package_name) catch |err| {
             if (err == error.NoBinFound) {
                 return error.NoBinFound;
@@ -323,13 +324,13 @@ pub const BunxCommand = struct {
         if (PATH.len > 0) {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                "{s}/{s}--bunx/node_modules/.bin:{s}",
+                bun.pathLiteral("{s}/{s}--bunx/node_modules/.bin:{s}"),
                 .{ temp_dir, package_fmt, PATH },
             );
         } else {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                "{s}/{s}--bunx/node_modules/.bin",
+                bun.pathLiteral("{s}/{s}--bunx/node_modules/.bin"),
                 .{ temp_dir, package_fmt },
             );
         }
@@ -337,7 +338,7 @@ pub const BunxCommand = struct {
         const bunx_cache_dir = PATH[0 .. temp_dir.len + "/--bunx".len + package_fmt.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}"), .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         const passthrough = passthrough_list.items;
 

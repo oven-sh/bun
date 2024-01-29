@@ -55,23 +55,15 @@ const ScanOpts = struct {
                 }
 
                 // Conver to utf-16
-                const utf16 = (bun.strings.toUTF16Alloc(
+                const utf16 = bun.strings.toUTF16AllocForReal(
                     allocator,
                     cwd_zig_str.slice(),
                     // Let windows APIs handle errors with invalid surrogate pairs, etc.
                     false,
+                    false,
                 ) catch {
                     globalThis.throwOutOfMemory();
                     return null;
-                }) orelse brk: {
-                    // All ascii
-                    const output = allocator.alloc(u16, cwd_zig_str.len) catch {
-                        globalThis.throwOutOfMemory();
-                        return null;
-                    };
-
-                    bun.strings.copyU8IntoU16(output, cwd_zig_str.slice());
-                    break :brk output;
                 };
 
                 const ptr: [*]u8 = @ptrCast(utf16.ptr);

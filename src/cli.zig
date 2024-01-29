@@ -196,7 +196,10 @@ pub const Arguments = struct {
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
-    };
+    } ++ if (Environment.isWindows) [_]ParamType{
+        // clap.parseParam("--native-shell                    Use cmd.exe to interpret package.json scripts") catch unreachable,
+        clap.parseParam("--no-native-shell                    Use Bun shell (TODO: flip this switch)") catch unreachable,
+    } else .{};
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const bunx_commands = [_]ParamType{
@@ -835,6 +838,13 @@ pub const Arguments = struct {
         if (output_file != null)
             ctx.debug.output_file = output_file.?;
 
+        if (cmd == .RunCommand) {
+            ctx.debug.use_native_shell = if (Environment.isWindows)
+                !args.flag("--no-native-shell")
+            else
+                true;
+        }
+
         return opts;
     }
 };
@@ -1028,6 +1038,8 @@ pub const Command = struct {
         offline_mode_setting: ?Bunfig.OfflineMode = null,
         run_in_bun: bool = false,
         loaded_bunfig: bool = false,
+        /// Disables using bun.shell.Interpreter for `bun run`, instead spawning cmd.exe
+        use_native_shell: bool = false,
 
         // technical debt
         macros: MacroOptions = MacroOptions.unspecified,

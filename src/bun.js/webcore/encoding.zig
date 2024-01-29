@@ -641,7 +641,7 @@ pub const TextDecoder = struct {
                     buffer_slice;
 
                 if (this.fatal) {
-                    if (toUTF16(default_allocator, moved_buffer_slice_8, true)) |result_| {
+                    if (toUTF16(default_allocator, moved_buffer_slice_8, true, false)) |result_| {
                         if (result_) |result| {
                             return ZigString.toExternalU16(result.ptr, result.len, globalThis);
                         }
@@ -660,7 +660,7 @@ pub const TextDecoder = struct {
                         }
                     }
                 } else {
-                    if (toUTF16(default_allocator, moved_buffer_slice_8, false)) |result_| {
+                    if (toUTF16(default_allocator, moved_buffer_slice_8, false, false)) |result_| {
                         if (result_) |result| {
                             return ZigString.toExternalU16(result.ptr, result.len, globalThis);
                         }
@@ -899,7 +899,7 @@ pub const Encoder = struct {
                 return bun.String.createExternalGloballyAllocated(.latin1, input);
             },
             .buffer, .utf8 => {
-                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false) catch return bun.String.dead;
+                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false, false) catch return bun.String.dead;
                 if (converted) |utf16| {
                     defer bun.default_allocator.free(input);
                     return bun.String.createExternalGloballyAllocated(.utf16, utf16);
@@ -978,7 +978,7 @@ pub const Encoder = struct {
                 return str.toJS(global);
             },
             .buffer, .utf8 => {
-                const converted = strings.toUTF16Alloc(allocator, input, false) catch return ZigString.init("Out of memory").toErrorInstance(global);
+                const converted = strings.toUTF16Alloc(allocator, input, false, false) catch return ZigString.init("Out of memory").toErrorInstance(global);
                 if (converted) |utf16| {
                     return ZigString.toExternalU16(utf16.ptr, utf16.len, global);
                 }

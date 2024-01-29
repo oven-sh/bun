@@ -26,23 +26,33 @@ bin_path: []const u16,
 /// Information found within the target file's shebang
 shebang: ?Shebang,
 
+/// Random numbers are chosen for validation purposes
+/// These arbitrary numbers will probably not show up in the other fields.
+/// This will reveal off-by-one mistakes.
+pub const VersionFlag = enum(u13) {
+    pub const current = .v2;
+
+    v1 = 5474,
+    v2 = 5475,
+    _,
+};
+
 pub const Flags = packed struct(u16) {
-    // the shim doesnt use this right now
+    // this is set if the shebang content is "node" or "bun"
     is_node_or_bun: bool,
     // this is for validation that the shim is not corrupt and to detect offset memory reads
-    // if this format is ever modified, we will set this flag to false to indicate version 2+
-    is_version_1: bool = true,
+    is_valid: bool = true,
     // indicates if a shebang is present
     has_shebang: bool,
-    // this is for validation that the shim is not corrupt and to detect offset memory reads
-    must_be_5474: u13 = 5474,
+
+    version_tag: VersionFlag = VersionFlag.current,
 
     pub fn isValid(flags: Flags) bool {
         const mask: u16 = @bitCast(Flags{
             .is_node_or_bun = false,
-            .is_version_1 = true,
+            .is_valid = true,
             .has_shebang = false,
-            .must_be_5474 = std.math.maxInt(u13),
+            .version_tag = @enumFromInt(std.math.maxInt(u13)),
         });
 
         const compare_to: u16 = @bitCast(Flags{

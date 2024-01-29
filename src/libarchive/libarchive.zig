@@ -490,6 +490,9 @@ pub const Archive = struct {
         const dir = dir_;
         const dir_fd = dir.fd;
 
+        const loop = if (Environment.isWindows) bun.Async.Loop.get() else {};
+        var w_path: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
+
         loop: while (true) {
             const r = @as(Status, @enumFromInt(lib.archive_read_next_header(archive, &entry)));
 
@@ -577,11 +580,13 @@ pub const Archive = struct {
                         },
                         Kind.file => {
                             const mode: bun.Mode = if (comptime Environment.isWindows) 0 else @intCast(lib.archive_entry_perm(entry));
-                            const file = dir.createFileZ(pathname, .{ .truncate = true, .mode = mode }) catch |err| brk: {
+                            const os_path = if (Environment.isWindows) bun.strings.toWPathNormalized(&w_path, pathname) else pathname;
+                            const createFileOS = if (Environment.isWindows) std.fs.Dir.createFileW else std.fs.Dir.createFileZ;
+                            const file = createFileOS(dir, os_path, .{ .truncate = true, .mode = mode }) catch |err| brk: {
                                 switch (err) {
                                     error.AccessDenied, error.FileNotFound => {
                                         dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
-                                        break :brk try dir.createFileZ(pathname, .{
+                                        break :brk try createFileOS(dir, os_path, .{
                                             .truncate = true,
                                             .mode = mode,
                                         });
@@ -593,9 +598,19 @@ pub const Archive = struct {
                             };
                             const file_handle = bun.toLibUVOwnedFD(file.handle);
 
-                            defer {
-                                if (comptime close_handles) _ = bun.sys.close(file_handle);
-                            }
+                            defer if (comptime close_handles) {
+                                if (Environment.isWindows) {
+                                    // Using Async.Closer defers closing the file to a different thread.
+                                    // On windows, AV hangs these closes really badly.
+                                    //
+                                    // 'bun i @mui/icons-material' takes like 20 seconds to extract
+                                    //
+                                    // The install still takes a long time but this makes it a little bit better.
+                                    bun.Async.Closer.close(bun.uvfdcast(file_handle), loop);
+                                } else {
+                                    _ = bun.sys.close(file_handle);
+                                }
+                            };
 
                             const entry_size = @max(lib.archive_entry_size(entry), 0);
                             const size = @as(usize, @intCast(entry_size));

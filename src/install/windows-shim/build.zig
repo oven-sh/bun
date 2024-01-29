@@ -34,11 +34,7 @@ pub fn build(b: *std.Build) void {
         .optimize = .Debug,
         .use_llvm = true,
         .use_lld = true,
-        .unwind_tables = false,
-        .omit_frame_pointer = true,
-        .strip = true,
         .linkage = .static,
-        .sanitize_thread = false,
         .single_threaded = true,
         .link_libc = false,
     });

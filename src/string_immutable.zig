@@ -1316,7 +1316,7 @@ pub fn withoutUTF8BOM(bytes: []const u8) []const u8 {
 /// Convert a UTF-8 string to a UTF-16 string IF there are any non-ascii characters
 /// If there are no non-ascii characters, this returns null
 /// This is intended to be used for strings that go to JavaScript
-pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
+pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime sentinel: bool) !if (sentinel) ?[:0]u16 else ?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
             const trimmed = bun.simdutf.trim.utf8(bytes);
@@ -1329,11 +1329,15 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             if (out_length == 0)
                 break :simd null;
 
-            var out = try allocator.alloc(u16, out_length);
+            var out = try allocator.alloc(u16, out_length + if (sentinel) 1 else 0);
             log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
 
             const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out);
             if (res.status == .success) {
+                if (comptime sentinel) {
+                    out[out_length] = 0;
+                    return out[0 .. out_length + 1 :0];
+                }
                 return out;
             }
 
@@ -1429,13 +1433,33 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             strings.copyU8IntoU16(output.items[output.items.len - remaining.len ..], remaining);
         }
 
+        if (comptime sentinel) {
+            output.items[output.items.len] = 0;
+            return output.items[0 .. output.items.len + 1 :0];
+        }
+
         return output.items;
     }
 
     return null;
 }
 
-pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
+// this one does the thing it's named after
+pub fn toUTF16AllocForReal(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime sentinel: bool) !if (sentinel) [:0]u16 else []u16 {
+    return (try toUTF16Alloc(allocator, bytes, fail_if_invalid, sentinel)) orelse {
+        const output = try allocator.alloc(u16, bytes.len + if (sentinel) 1 else 0);
+        bun.strings.copyU8IntoU16(output, bytes);
+
+        if (comptime sentinel) {
+            output[bytes.len] = 0;
+            return output[0..bytes.len :0];
+        }
+
+        return output;
+    };
+}
+
+pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime _: bool) !?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
             const out_length = bun.simdutf.length.utf16.from.utf8(bytes);
@@ -5256,34 +5280,37 @@ pub fn concatIfNeeded(
     std.debug.assert(remain.len == 0);
 }
 
+/// This will simply ignore invalid UTF-8 and just do it
 pub fn convertUTF8toUTF16InBuffer(
     buf: []u16,
     input: []const u8,
 ) []u16 {
-    if (!Environment.isWindows) @compileError("please dont't use this function on posix until fixing the todos.");
-
-    const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(input, buf);
-    switch (result.status) {
-        .success => return buf[0..result.count],
-        // TODO(@paperdave): handle surrogate
-        .surrogate => @panic("TODO: handle surrogate in convertUTF8toUTF16"),
-        else => @panic("TODO: handle error in convertUTF8toUTF16"),
-    }
+    // TODO(@paperdave): implement error handling here.
+    // for now this will cause invalid utf-8 to be ignored and become empty.
+    // this is lame because of https://github.com/oven-sh/bun/issues/8197
+    // it will cause process.env.whatever to be len=0 instead of the data
+    // but it's better than failing the run entirely
+    //
+    // the reason i didn't implement the fallback is purely because our
+    // code in this file is too chaotic. it is left as a TODO
+    const result = bun.simdutf.convert.utf8.to.utf16.le(input, buf);
+    return buf[0..result];
 }
 
 pub fn convertUTF16toUTF8InBuffer(
     buf: []u8,
     input: []const u16,
 ) ![]const u8 {
-    if (!Environment.isWindows) @compileError("please dont't use this function on posix until fixing the todos.");
+    // See above
 
-    const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(input, buf);
-    switch (result.status) {
-        .success => return buf[0..result.count],
-        // TODO(@paperdave): handle surrogate
-        .surrogate => @panic("TODO: handle surrogate in convertUTF8toUTF16"),
-        else => @panic("TODO: handle error in convertUTF16toUTF8InBuffer"),
-    }
+    const result = bun.simdutf.convert.utf16.to.utf8.le(input, buf);
+    // switch (result.status) {
+    //     .success => return buf[0..result.count],
+    //     // TODO(@paperdave): handle surrogate
+    //     .surrogate => @panic("TODO: handle surrogate in convertUTF8toUTF16"),
+    //     else => @panic("TODO: handle error in convertUTF16toUTF8InBuffer"),
+    // }
+    return buf[0..result];
 }
 
 pub inline fn charIsAnySlash(char: u8) bool {

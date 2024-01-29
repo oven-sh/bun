@@ -28,11 +28,11 @@ bun install
 
 ---
 
-Start the development server with the `vite` CLI using `bunx`.
+Start the development server with the `vite` CLI using `bun x`.
 
 The `--bun` flag tells Bun to run Vite's CLI using `bun` instead of `node`; by default Bun respects Vite's `#!/usr/bin/env node` [shebang line](<https://en.wikipedia.org/wiki/Shebang_(Unix)>).
 ```bash
-bunx --bun vite
+bun --bun x vite
 ```
 
 ---
@@ -42,7 +42,7 @@ To simplify this command, update the `"dev"` script in `package.json` to the fol
 ```json-diff#package.json
   "scripts": {
 -   "dev": "vite",
-+   "dev": "bunx --bun vite",
++   "dev": "bun --bun x vite",
     "build": "vite build",
     "serve": "vite preview"
   },
@@ -62,7 +62,7 @@ bun run dev
 The following command will build your app for production.
 
 ```sh
-$ bunx --bun vite build
+$ bun --bun x vite build
 ```
 
 ---

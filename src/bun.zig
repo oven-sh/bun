@@ -130,6 +130,11 @@ pub const PlatformIOVec = if (Environment.isWindows)
 else
     std.os.iovec;
 
+pub const PlatformIOVecConst = if (Environment.isWindows)
+    windows.libuv.uv_buf_t
+else
+    std.os.iovec_const;
+
 pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
     if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
     if (Environment.allow_assert) {
@@ -138,6 +143,16 @@ pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
         }
     }
     return .{ .iov_len = @intCast(input.len), .iov_base = @constCast(input.ptr) };
+}
+
+pub fn platformIOVecConstCreate(input: []const u8) PlatformIOVecConst {
+    if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
+    if (Environment.allow_assert) {
+        if (input.len > @as(usize, std.math.maxInt(u32))) {
+            Output.debugWarn("call to bun.PlatformIOVecConst.init with length larger than u32, this will overflow on windows", .{});
+        }
+    }
+    return .{ .iov_len = @intCast(input.len), .iov_base = input.ptr };
 }
 
 pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {

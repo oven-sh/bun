@@ -872,7 +872,10 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     }
 }
 
-pub fn pwritev(fd: bun.FileDescriptor, buffers: []const std.os.iovec_const, position: isize) Maybe(usize) {
+pub fn pwritev(fd: bun.FileDescriptor, buffers: []const bun.PlatformIOVecConst, position: isize) Maybe(usize) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.pwritev(fd, buffers, position);
+    }
     if (comptime Environment.isMac) {
         const rc = pwritev_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)

@@ -27,38 +27,17 @@ const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const WATCHER_MAX_LIST = 8096;
 
 pub const INotify = struct {
-    pub const IN_CLOEXEC = std.os.O.CLOEXEC;
-    pub const IN_NONBLOCK = std.os.O.NONBLOCK;
+    loaded_inotify: bool = false,
+    inotify_fd: EventListIndex = 0,
 
-    pub const IN_ACCESS = 0x00000001;
-    pub const IN_MODIFY = 0x00000002;
-    pub const IN_ATTRIB = 0x00000004;
-    pub const IN_CLOSE_WRITE = 0x00000008;
-    pub const IN_CLOSE_NOWRITE = 0x00000010;
-    pub const IN_CLOSE = IN_CLOSE_WRITE | IN_CLOSE_NOWRITE;
-    pub const IN_OPEN = 0x00000020;
-    pub const IN_MOVED_FROM = 0x00000040;
-    pub const IN_MOVED_TO = 0x00000080;
-    pub const IN_MOVE = IN_MOVED_FROM | IN_MOVED_TO;
-    pub const IN_CREATE = 0x00000100;
-    pub const IN_DELETE = 0x00000200;
-    pub const IN_DELETE_SELF = 0x00000400;
-    pub const IN_MOVE_SELF = 0x00000800;
-    pub const IN_ALL_EVENTS = 0x00000fff;
+    eventlist: EventListBuffer = undefined,
+    eventlist_ptrs: [128]*const INotifyEvent = undefined,
 
-    pub const IN_UNMOUNT = 0x00002000;
-    pub const IN_Q_OVERFLOW = 0x00004000;
-    pub const IN_IGNORED = 0x00008000;
-
-    pub const IN_ONLYDIR = 0x01000000;
-    pub const IN_DONT_FOLLOW = 0x02000000;
-    pub const IN_EXCL_UNLINK = 0x04000000;
-    pub const IN_MASK_ADD = 0x20000000;
-
-    pub const IN_ISDIR = 0x40000000;
-    pub const IN_ONESHOT = 0x80000000;
+    watch_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    coalesce_interval: isize = 100_000,
 
     pub const EventListIndex = c_int;
+    const EventListBuffer = [@sizeOf([128]INotifyEvent) + (128 * bun.MAX_PATH_BYTES + (128 * @alignOf(INotifyEvent)))]u8;
 
     pub const INotifyEvent = extern struct {
         watch_descriptor: c_int,
@@ -76,62 +55,52 @@ pub const INotify = struct {
             return bun.sliceTo(@as([*:0]u8, @ptrFromInt(@intFromPtr(&this.name_len) + @sizeOf(u32))), 0)[0.. :0];
         }
     };
-    pub var inotify_fd: EventListIndex = 0;
-    pub var loaded_inotify = false;
 
-    const EventListBuffer = [@sizeOf([128]INotifyEvent) + (128 * bun.MAX_PATH_BYTES + (128 * @alignOf(INotifyEvent)))]u8;
-    var eventlist: EventListBuffer = undefined;
-    var eventlist_ptrs: [128]*const INotifyEvent = undefined;
-
-    var watch_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
-
-    const watch_file_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.MOVED_TO | std.os.linux.IN.MODIFY;
-    const watch_dir_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.DELETE | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.CREATE | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.ONLYDIR | std.os.linux.IN.MOVED_TO;
-
-    pub fn watchPath(pathname: [:0]const u8) !EventListIndex {
-        std.debug.assert(loaded_inotify);
-        const old_count = watch_count.fetchAdd(1, .Release);
-        defer if (old_count == 0) Futex.wake(&watch_count, 10);
-        return std.os.inotify_add_watchZ(inotify_fd, pathname, watch_file_mask);
+    pub fn watchPath(this: *INotify, pathname: [:0]const u8) !EventListIndex {
+        std.debug.assert(this.loaded_inotify);
+        const old_count = this.watch_count.fetchAdd(1, .Release);
+        defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
+        const watch_file_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.MOVED_TO | std.os.linux.IN.MODIFY;
+        return std.os.inotify_add_watchZ(this.inotify_fd, pathname, watch_file_mask);
     }
 
-    pub fn watchDir(pathname: [:0]const u8) !EventListIndex {
-        std.debug.assert(loaded_inotify);
-        const old_count = watch_count.fetchAdd(1, .Release);
-        defer if (old_count == 0) Futex.wake(&watch_count, 10);
-        return std.os.inotify_add_watchZ(inotify_fd, pathname, watch_dir_mask);
+    pub fn watchDir(this: *INotify, pathname: [:0]const u8) !EventListIndex {
+        std.debug.assert(this.loaded_inotify);
+        const old_count = this.watch_count.fetchAdd(1, .Release);
+        defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
+        const watch_dir_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.DELETE | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.CREATE | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.ONLYDIR | std.os.linux.IN.MOVED_TO;
+        return std.os.inotify_add_watchZ(this.inotify_fd, pathname, watch_dir_mask);
     }
 
-    pub fn unwatch(wd: EventListIndex) void {
-        std.debug.assert(loaded_inotify);
-        _ = watch_count.fetchSub(1, .Release);
-        std.os.inotify_rm_watch(inotify_fd, wd);
+    pub fn unwatch(this: *INotify, wd: EventListIndex) void {
+        std.debug.assert(this.loaded_inotify);
+        _ = this.watch_count.fetchSub(1, .Release);
+        std.os.inotify_rm_watch(this.inotify_fd, wd);
     }
 
-    pub fn isRunning() bool {
-        return loaded_inotify;
+    pub fn isRunning(this: *INotify) bool {
+        return this.loaded_inotify;
     }
 
-    var coalesce_interval: isize = 100_000;
-    pub fn init() !void {
-        std.debug.assert(!loaded_inotify);
-        loaded_inotify = true;
+    pub fn init(this: *INotify) !void {
+        std.debug.assert(!this.loaded_inotify);
+        this.loaded_inotify = true;
 
         if (bun.getenvZ("BUN_INOTIFY_COALESCE_INTERVAL")) |env| {
-            coalesce_interval = std.fmt.parseInt(isize, env, 10) catch 100_000;
+            this.coalesce_interval = std.fmt.parseInt(isize, env, 10) catch 100_000;
         }
 
-        inotify_fd = try std.os.inotify_init1(IN_CLOEXEC);
+        this.inotify_fd = try std.os.inotify_init1(std.os.linux.IN.CLOEXEC);
     }
 
-    pub fn read() ![]*const INotifyEvent {
-        std.debug.assert(loaded_inotify);
+    pub fn read(this: *INotify) ![]*const INotifyEvent {
+        std.debug.assert(this.loaded_inotify);
 
         restart: while (true) {
-            Futex.wait(&watch_count, 0, null) catch unreachable;
+            Futex.wait(&this.watch_count, 0, null) catch unreachable;
             const rc = std.os.system.read(
-                inotify_fd,
-                @as([*]u8, @ptrCast(@alignCast(&eventlist))),
+                this.inotify_fd,
+                @as([*]u8, @ptrCast(@alignCast(&this.eventlist))),
                 @sizeOf(EventListBuffer),
             );
 
@@ -145,16 +114,16 @@ pub const INotify = struct {
                     // we do a 0.1ms sleep to try to coalesce events better
                     if (len < (@sizeOf(EventListBuffer) / 2)) {
                         var fds = [_]std.os.pollfd{.{
-                            .fd = inotify_fd,
+                            .fd = this.inotify_fd,
                             .events = std.os.POLL.IN | std.os.POLL.ERR,
                             .revents = 0,
                         }};
-                        var timespec = std.os.timespec{ .tv_sec = 0, .tv_nsec = coalesce_interval };
+                        var timespec = std.os.timespec{ .tv_sec = 0, .tv_nsec = this.coalesce_interval };
                         if ((std.os.ppoll(&fds, &timespec, null) catch 0) > 0) {
                             while (true) {
                                 const new_rc = std.os.system.read(
-                                    inotify_fd,
-                                    @as([*]u8, @ptrCast(@alignCast(&eventlist))) + len,
+                                    this.inotify_fd,
+                                    @as([*]u8, @ptrCast(@alignCast(&this.eventlist))) + len,
                                     @sizeOf(EventListBuffer) - len,
                                 );
                                 switch (std.os.errno(new_rc)) {
@@ -186,14 +155,14 @@ pub const INotify = struct {
                     var i: u32 = 0;
                     while (i < len) : (i += @sizeOf(INotifyEvent)) {
                         @setRuntimeSafety(false);
-                        const event = @as(*INotifyEvent, @ptrCast(@alignCast(eventlist[i..][0..@sizeOf(INotifyEvent)])));
+                        const event = @as(*INotifyEvent, @ptrCast(@alignCast(this.eventlist[i..][0..@sizeOf(INotifyEvent)])));
                         i += event.name_len;
 
-                        eventlist_ptrs[count] = event;
+                        this.eventlist_ptrs[count] = event;
                         count += 1;
                     }
 
-                    return eventlist_ptrs[0..count];
+                    return this.eventlist_ptrs[0..count];
                 },
                 .AGAIN => continue :restart,
                 .INVAL => return error.ShortRead,
@@ -205,10 +174,10 @@ pub const INotify = struct {
         unreachable;
     }
 
-    pub fn stop() void {
-        if (inotify_fd != 0) {
-            _ = bun.sys.close(bun.toFD(inotify_fd));
-            inotify_fd = 0;
+    pub fn stop(this: *INotify) void {
+        if (this.inotify_fd != 0) {
+            _ = bun.sys.close(bun.toFD(this.inotify_fd));
+            this.inotify_fd = 0;
         }
     }
 };
@@ -217,32 +186,30 @@ const DarwinWatcher = struct {
     pub const EventListIndex = u32;
 
     const KEvent = std.c.Kevent;
+
     // Internal
-    pub var changelist: [128]KEvent = undefined;
+    changelist: [128]KEvent = undefined,
 
     // Everything being watched
-    pub var eventlist: [WATCHER_MAX_LIST]KEvent = undefined;
-    pub var eventlist_index: EventListIndex = 0;
+    eventlist: [WATCHER_MAX_LIST]KEvent = undefined,
+    eventlist_index: EventListIndex = 0,
 
-    pub var fd: i32 = 0;
+    fd: i32 = 0,
 
-    pub fn init() !void {
-        std.debug.assert(fd == 0);
-
-        fd = try std.os.kqueue();
-        if (fd == 0) return error.KQueueError;
+    pub fn init(this: *DarwinWatcher) !void {
+        this.fd = try std.os.kqueue();
+        if (this.fd == 0) return error.KQueueError;
     }
 
-    pub fn isRunning() bool {
-        return fd != 0;
+    pub fn isRunning(this: *DarwinWatcher) bool {
+        return this.fd != 0;
     }
 
-    pub fn stop() void {
-        if (fd != 0) {
-            _ = bun.sys.close(fd);
+    pub fn stop(this: *DarwinWatcher) void {
+        if (this.fd != 0) {
+            _ = bun.sys.close(this.fd);
         }
-
-        fd = 0;
+        this.fd = 0;
     }
 };
 
@@ -332,11 +299,11 @@ pub const WatchEvent = struct {
     pub fn fromINotify(this: *WatchEvent, event: INotify.INotifyEvent, index: WatchItemIndex) void {
         this.* = WatchEvent{
             .op = Op{
-                .delete = (event.mask & INotify.IN_DELETE_SELF) > 0 or (event.mask & INotify.IN_DELETE) > 0,
+                .delete = (event.mask & std.os.linux.IN.DELETE_SELF) > 0 or (event.mask & std.os.linux.IN.DELETE) > 0,
                 .metadata = false,
-                .rename = (event.mask & INotify.IN_MOVE_SELF) > 0,
-                .move_to = (event.mask & INotify.IN_MOVED_TO) > 0,
-                .write = (event.mask & INotify.IN_MODIFY) > 0,
+                .rename = (event.mask & std.os.linux.IN.MOVE_SELF) > 0,
+                .move_to = (event.mask & std.os.linux.IN.MOVED_TO) > 0,
+                .write = (event.mask & std.os.linux.IN.MODIFY) > 0,
             },
             .index = index,
         };
@@ -391,10 +358,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const watcher = try allocator.create(Watcher);
             errdefer allocator.destroy(watcher);
 
-            if (!PlatformWatcher.isRunning()) {
-                try PlatformWatcher.init();
-            }
-
             watcher.* = Watcher{
                 .fs = fs,
                 .fd = .zero,
@@ -405,6 +368,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .mutex = Mutex.init(),
                 .cwd = fs.top_level_dir,
             };
+
+            try PlatformWatcher.init(&watcher.platform);
 
             return watcher;
         }
@@ -452,7 +417,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             this._watchLoop() catch |err| {
                 this.watchloop_handle = null;
-                PlatformWatcher.stop();
+                this.platform.stop();
                 if (this.running) {
                     this.ctx.onError(err);
                 }
@@ -543,7 +508,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         fn _watchLoop(this: *Watcher) !void {
             if (Environment.isMac) {
-                std.debug.assert(DarwinWatcher.fd > 0);
+                std.debug.assert(this.platform.fd > 0);
                 const KEvent = std.c.Kevent;
 
                 var changelist_array: [128]KEvent = std.mem.zeroes([128]KEvent);
@@ -552,7 +517,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     defer Output.flush();
 
                     var count_ = std.os.system.kevent(
-                        DarwinWatcher.fd,
+                        this.platform.fd,
                         @as([*]KEvent, changelist),
                         0,
                         @as([*]KEvent, changelist),
@@ -566,7 +531,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         const remain = 128 - count_;
                         var timespec = std.os.timespec{ .tv_sec = 0, .tv_nsec = 100_000 };
                         const extra = std.os.system.kevent(
-                            DarwinWatcher.fd,
+                            this.platform.fd,
                             @as([*]KEvent, changelist[@as(usize, @intCast(count_))..].ptr),
                             0,
                             @as([*]KEvent, changelist[@as(usize, @intCast(count_))..].ptr),
@@ -768,7 +733,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // - We register the event here.
                 // our while(true) loop above receives notification of changes to any of the events created here.
                 _ = std.os.system.kevent(
-                    DarwinWatcher.fd,
+                    this.platform.fd,
                     @as([]KEvent, events[0..1]).ptr,
                     1,
                     @as([]KEvent, events[0..1]).ptr,
@@ -849,7 +814,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // - We register the event here.
                 // our while(true) loop above receives notification of changes to any of the events created here.
                 _ = std.os.system.kevent(
-                    DarwinWatcher.fd,
+                    this.platform.fd,
                     @as([]KEvent, events[0..1]).ptr,
                     1,
                     @as([]KEvent, events[0..1]).ptr,

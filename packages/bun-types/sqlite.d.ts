@@ -289,6 +289,9 @@ declare module "bun:sqlite" {
      */
     loadExtension(extension: string, entryPoint?: string): void;
 
+    defineFunction(name: string, cb: (...params: unknown[]) => unknown): void;
+    defineFunction(name: string, options: FunctionRegistrationOptions, cb: (...params: unknown[]) => unknown): void;
+
     /**
      * Change the dynamic library path to SQLite
      *
@@ -303,9 +306,6 @@ declare module "bun:sqlite" {
      * @param path The path to the SQLite library
      */
     static setCustomSQLite(path: string): boolean;
-
-    defineFunction(name: string, cb: (...params: unknown[]) => unknown): void;
-    defineFunction(name: string, options: FunctionRegistrationOptions, cb: (...params: unknown[]) => unknown): void;
 
     /**
      * Creates a function that always runs inside a transaction. When the

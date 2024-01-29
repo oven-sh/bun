@@ -4486,7 +4486,11 @@ pub const NodeFS = struct {
     }
 
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime _: Flavor) Maybe(Return.Open) {
-        const path = args.path.sliceZ(&this.sync_error_buf);
+        const path = if (Environment.isWindows and bun.strings.eqlComptime(args.path.slice(), "/dev/null"))
+            "\\\\.\\NUL"
+        else
+            args.path.sliceZ(&this.sync_error_buf);
+
         return switch (Syscall.open(path, @intFromEnum(args.flags), args.mode)) {
             .err => |err| .{
                 .err = err.withPath(args.path.slice()),

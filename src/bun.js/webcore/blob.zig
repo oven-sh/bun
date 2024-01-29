@@ -1519,21 +1519,27 @@ pub const Blob = struct {
         return ptr.toJS(globalObject);
     }
 
-    pub fn findOrCreateFileFromPath(path_: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
+    pub fn findOrCreateFileFromPath(path_or_fd: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
         var vm = globalThis.bunVM();
         const allocator = bun.default_allocator;
 
         const path: JSC.Node.PathOrFileDescriptor = brk: {
-            switch (path_.*) {
+            switch (path_or_fd.*) {
                 .path => {
-                    const slice = path_.path.slice();
+                    const slice = path_or_fd.path.slice();
+
+                    if (Environment.isWindows and bun.strings.eqlComptime(slice, "/dev/null")) {
+                        // it is okay to use rodata here, because the '.string' case
+                        // in PathLike.deinit does not free anything.
+                        path_or_fd.* = .{ .path = .{ .string = bun.PathString.init("\\\\.\\NUL") } };
+                    }
 
                     if (vm.standalone_module_graph) |graph| {
                         if (graph.find(slice)) |file| {
                             defer {
-                                if (path_.path != .string) {
-                                    path_.deinit();
-                                    path_.* = .{ .path = .{ .string = bun.PathString.empty } };
+                                if (path_or_fd.path != .string) {
+                                    path_or_fd.deinit();
+                                    path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
                                 }
                             }
 
@@ -1541,13 +1547,13 @@ pub const Blob = struct {
                         }
                     }
 
-                    path_.toThreadSafe();
-                    const copy = path_.*;
-                    path_.* = .{ .path = .{ .string = bun.PathString.empty } };
+                    path_or_fd.toThreadSafe();
+                    const copy = path_or_fd.*;
+                    path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
                     break :brk copy;
                 },
                 .fd => {
-                    switch (bun.FDTag.get(path_.fd)) {
+                    switch (bun.FDTag.get(path_or_fd.fd)) {
                         .stdin => return Blob.initWithStore(
                             vm.rareData().stdin(),
                             globalThis,
@@ -1562,7 +1568,7 @@ pub const Blob = struct {
                         ),
                         else => {},
                     }
-                    break :brk path_.*;
+                    break :brk path_or_fd.*;
                 },
             }
         };

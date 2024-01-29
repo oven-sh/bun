@@ -3315,6 +3315,49 @@ declare module "bun" {
      */
     static readonly byteLength: 32;
   }
+  
+  /** Compression options for `Bun.deflateSync` and `Bun.gzipSync` */
+  interface ZstdCompressionOptions {
+    /**
+     * The compression level to use. Must be between `-1` and `22`.
+     * - A value of `-1` uses the default compression level (Currently `3`)
+     * - A value of `0` gives no compression
+     * - A value of `1` gives least compression, fastest speed
+     * - A value of `19` gives best compression, slowest speed
+     * - A value of `20`-`22` gives the maxium compression, greater memory usage
+     */
+    level?: -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22;
+
+    /**
+     * The base 2 logarithm of the window size (the size of the history buffer).
+     *
+     * Larger values of this parameter result in better compression at the expense of memory usage.
+     */
+    windowLog?:
+      | 10
+      | 11
+      | 12
+      | 13
+      | 14
+      | 15
+      | 16
+      | 17
+      | 18
+      | 19
+      | 20
+      | 21
+      | 22
+      | 23
+      | 24
+      | 25
+      | 26
+      | 27
+      | 28
+      | 29
+      | 30
+      | 31;
+    /**
+  }
 
   /** Compression options for `Bun.deflateSync` and `Bun.gzipSync` */
   interface ZlibCompressionOptions {
@@ -3412,6 +3455,20 @@ declare module "bun" {
    * @returns The output buffer with the decompressed data
    */
   function gunzipSync(data: Uint8Array | string | ArrayBuffer): Uint8Array;
+
+  /**
+   * Decompresses a chunk of data with the `zstd` algorithm.
+   * @param data The buffer of data to decompress
+   * @returns The output buffer with the decompressed data
+   */
+  function zstdDecompressSync(data: Uint8Array, options?: ZstdCompressionOptions): Uint8Array;
+
+  /**
+   * Decompresses a chunk of data with the `zstd` algorithm.
+   * @param data The buffer of data to decompress
+   * @returns The output buffer with the decompressed data
+   */
+  function zstdCompressSync(data: Uint8Array, options?: ZstdCompressionOptions): Uint8Array;
 
   type Target =
     /**

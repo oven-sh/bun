@@ -304,6 +304,9 @@ declare module "bun:sqlite" {
      */
     static setCustomSQLite(path: string): boolean;
 
+    defineFunction(name: string, cb: (...params: unknown[]) => unknown): void;
+    defineFunction(name: string, options: FunctionRegistrationOptions, cb: (...params: unknown[]) => unknown): void;
+
     /**
      * Creates a function that always runs inside a transaction. When the
      * function is invoked, it will begin a new transaction. When the function
@@ -428,6 +431,13 @@ declare module "bun:sqlite" {
      */
     static deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, isReadOnly?: boolean): Database;
   }
+
+  export type FunctionRegistrationOptions = {
+    varargs?: boolean | undefined;
+    deterministic?: boolean | undefined;
+    safeIntegers?: boolean | undefined;
+    directOnly?: boolean | undefined;
+  };
 
   /**
    * A prepared statement.

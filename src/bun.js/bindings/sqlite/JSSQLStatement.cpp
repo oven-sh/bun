@@ -1171,6 +1171,16 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunctionFunction, (JSC::JSGlobalObj
 
     auto directOnlyBool = directOnly.toBoolean(lexicalGlobalObject);
 
+    int nArgsMask = SQLITE_UTF8;
+    if (deterministicBool) {
+        nArgsMask |= SQLITE_DETERMINISTIC;
+    }
+    if (directOnlyBool) {
+        nArgsMask |= SQLITE_DIRECTONLY;
+    }
+
+    safeIntegersInt = safeIntegersInt < 2 ? safeIntegersInt : static_cast<int>(db->safe_ints);
+
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
 }
 

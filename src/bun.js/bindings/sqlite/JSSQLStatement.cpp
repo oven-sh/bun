@@ -1125,6 +1125,51 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunctionFunction, (JSC::JSGlobalObj
         return JSValue::encode(JSC::jsUndefined());
     }
 
+    // TODO: Callback
+
+    if (!functionName.isString()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Function name must be of type string"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto nameString = functionName.toWTFString(lexicalGlobalObject);
+
+    if (!argCount.isNumber()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Arg count must be of type number"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto argCountInt = argCount.toInt32(lexicalGlobalObject);
+    if (argCountInt < -1 || argCountInt > 100) {
+        // -1 is used to signal var args
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Arg count must be between -1 and 100"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    if (!safeIntegers.isNumber()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Arg count must be of type number"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto safeIntegersInt = safeIntegers.toInt32(lexicalGlobalObject);
+    if (safeIntegersInt < 0 || safeIntegersInt > 2) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "safeIntegers must be between 0 and 2"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    if (!deterministic.isBoolean()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "deterministic must be of type boolean"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto deterministicBool = deterministic.toBoolean(lexicalGlobalObject);
+
+    if (!directOnly.isBoolean()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "directOnly must be of type boolean"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto directOnlyBool = directOnly.toBoolean(lexicalGlobalObject);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
 }

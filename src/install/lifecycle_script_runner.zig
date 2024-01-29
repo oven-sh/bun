@@ -139,7 +139,6 @@ pub const LifecycleScriptSubprocess = struct {
 
         pub fn done(this: *WindowsOutputReader) void {
             std.debug.assert(this.pipe.isClosed());
-            std.debug.assert(!this.pipe.isClosing());
 
             this.finish();
             this.subprocess().onOutputDone();

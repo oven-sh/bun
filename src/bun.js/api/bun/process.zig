@@ -364,7 +364,7 @@ pub const Process = struct {
         const signal_code: ?bun.SignalCode = if (term_signal > 0 and term_signal < @intFromEnum(bun.SignalCode.SIGSYS)) @enumFromInt(term_signal) else null;
         const rusage = uv_getrusage(process);
 
-        if (exit_status != 0) {
+        if (exit_code >= 0) {
             this.close();
             this.onExit(
                 .{
@@ -382,7 +382,7 @@ pub const Process = struct {
         } else {
             this.onExit(
                 .{
-                    .err = bun.sys.Error.fromCode(.INVAL, .waitpid),
+                    .err = bun.sys.Error.fromCode(@intCast(exit_status), .waitpid),
                 },
                 &rusage,
             );

@@ -181,7 +181,7 @@ pub fn WindowsPipeReader(
             }
 
             if (comptime bun.Environment.allow_assert) {
-                if (!bun.isSliceInBuffer(buf.slice()[0..amount.result], buffer.items)) {
+                if (!bun.isSliceInBuffer(buf.slice()[0..amount.result], buffer.allocatedSlice())) {
                     @panic("uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it.");
                 }
             }

@@ -2713,6 +2713,10 @@ pub fn StreamReaderMixin(comptime Type: type, comptime pipe_field_name: std.meta
                 @as(*Pipe, @ptrCast(pipe)),
             );
 
+            if (nread.int() == UV_EOF) {
+                return this.onRead(.{ .result = 0 }, buf);
+            }
+
             this.onRead(
                 if (nread.toError(.recv)) |err| .{ .err = err } else .{ .result = @intCast(nread.int()) },
                 buf,

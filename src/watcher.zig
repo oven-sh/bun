@@ -682,7 +682,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 restart: while (true) {
                     defer Output.flush();
 
-                    var events = try INotify.read();
+                    var events = try this.platform.read();
                     if (events.len == 0) continue :restart;
 
                     // TODO: is this thread safe?
@@ -851,7 +851,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // buf[file_path_to_use_.len] = 0;
                 var buf = file_path_.ptr;
                 const slice: [:0]const u8 = buf[0..file_path_.len :0];
-                index = try INotify.watchPath(slice);
+                index = try this.platform.watchPath(slice);
             }
 
             this.watchlist.appendAssumeCapacity(.{
@@ -931,7 +931,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 bun.copy(u8, &buf, file_path_to_use_);
                 buf[file_path_to_use_.len] = 0;
                 const slice: [:0]u8 = buf[0..file_path_to_use_.len :0];
-                index = try INotify.watchDir(slice);
+                index = try this.platform.watchDir(slice);
             }
 
             this.watchlist.appendAssumeCapacity(.{

@@ -1,2 +1,2 @@
-.\scripts\env.sh
+.\scripts\env.ps1
 ninja -Cbuild

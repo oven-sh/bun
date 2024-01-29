@@ -1115,9 +1115,7 @@ pub const BundleV2 = struct {
                                     },
                                 },
                                 .size = source.contents.len,
-                                .output_path = std.fmt.allocPrint(bun.default_allocator, "{}", .{
-                                    template,
-                                }) catch unreachable,
+                                .output_path = std.fmt.allocPrint(bun.default_allocator, "{}", .{template}) catch unreachable,
                                 .input_path = bun.default_allocator.dupe(u8, source.path.text) catch unreachable,
                                 .input_loader = .file,
                                 .output_kind = .asset,
@@ -9027,12 +9025,16 @@ const LinkerContext = struct {
                 chunk.template.placeholder.hash = chunk.isolated_hash;
 
                 const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
+                platformToUnixInPlace(rel_path);
                 if ((try path_names_map.getOrPut(rel_path)).found_existing) {
                     try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Multiple files share the same output path: {s}", .{rel_path});
                     return error.DuplicateOutputPath;
                 }
+                // resolve any /./ and /../ occurrences
+                // use resolvePosix since we asserted above all seps are '/'
+                const rel_path_fixed = std.fs.path.resolvePosix(c.allocator, &.{rel_path}) catch unreachable;
 
-                chunk.final_rel_path = rel_path;
+                chunk.final_rel_path = rel_path_fixed;
             }
         }
 
@@ -11315,6 +11317,8 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
+                                // normalize windows paths to '/'
+                                platformToUnixInPlace(@constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)
@@ -11720,4 +11724,11 @@ fn targetFromHashbang(buffer: []const u8) ?options.Target {
     }
 
     return null;
+}
+
+fn platformToUnixInPlace(path_buffer: []u8) void {
+    if (std.fs.path.sep == '/') return;
+    for (path_buffer) |*c| {
+        if (c.* == std.fs.path.sep) c.* = '/';
+    }
 }

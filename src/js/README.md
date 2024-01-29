@@ -38,13 +38,13 @@ On top of this, we have some special functions that are handled by the builtin p
 
 - `require` works, but it must be passed a **string literal** that resolves to a module within `src/js`. This call gets replaced with `$getInternalField($internalModuleRegistery, <number>)`, which directly loads the module by its generated numerical ID, skipping the resolver for inter-internal modules.
 
-- `$debug` is exactly like console.log, but is stripped in release builds. It is disabled by default, requiring you to pass one of: `BUN_DEBUG_MODULE_NAME=1`, `BUN_DEBUG_JS=1`, or `BUN_DEBUG_ALL=1`. You can also do `if($debug) {}` to check if debug env var is set.
+- `$debug()` is exactly like console.log, but is stripped in release builds. It is disabled by default, requiring you to pass one of: `BUN_DEBUG_MODULE_NAME=1`, `BUN_DEBUG_JS=1`, or `BUN_DEBUG_ALL=1`. You can also do `if($debug) {}` to check if debug env var is set.
+
+- `$assert()` in debug builds will assert the condition, but it is stripped in release builds. If an assertion fails, the program continues to run, but an error is logged in the console containing the original source condition and any extra messages specified.
 
 - `IS_BUN_DEVELOPMENT` is inlined to be `true` in all development builds.
 
-- `process.platform` is properly inlined and DCE'd. Do use this to run different code on different platforms.
-
-- `$bundleError()` is like Zig's `@compileError`. It will stop a compile from succeeding.
+- `process.platform` and `process.arch` is properly inlined and DCE'd. Do use this to run different code on different platforms.
 
 ## Builtin Modules
 

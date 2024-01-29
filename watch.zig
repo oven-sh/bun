@@ -113,6 +113,8 @@ pub const WindowsWatcher = struct {
         watch_subtree: w.BOOLEAN = 1,
 
         fn handleEvent(this: *DirWatcher, nbytes: w.DWORD) void {
+            const elapsed = clock1.read();
+            std.debug.print("elapsed: {}\n", .{std.fmt.fmtDuration(elapsed)});
             if (nbytes == 0) return;
             var offset: usize = 0;
             while (true) {
@@ -245,17 +247,36 @@ pub const WindowsWatcher = struct {
     }
 };
 
+var clock1: std.time.Timer = undefined;
+const data: [1 << 10]u8 = std.mem.zeroes([1 << 10]u8);
+
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
     var buf: [std.fs.MAX_PATH_BYTES]u16 = undefined;
 
+    const watchdir = "C:\\test\\node_modules";
+    const iconsdir = "C:\\test\\node_modules\\@mui\\icons-material";
+    _ = iconsdir; // autofix
+    const testdir = "C:\\test\\node_modules\\@mui\\icons-material\\mydir";
+    _ = testdir; // autofix
+    const testfile = "C:\\test\\node_modules\\@mui\\icons-material\\myfile.txt";
+
+    // try std.fs.deleteDirAbsolute(dir);
+
     const watcher = try WindowsWatcher.init(allocator);
-    try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, "C:\\bun\\src"));
-    try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, "C:\\bun\\test"));
-    try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, "C:\\bun\\testdir"));
+    try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, watchdir));
+    // try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, "C:\\bun\\src"));
+    // try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, "C:\\bun\\test"));
+    // try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, "C:\\bun\\testdir"));
 
-    std.debug.print("watching...\n", .{});
+    const file = try std.fs.createFileAbsolute(testfile, .{});
+    var handle = try std.Thread.spawn(.{}, WindowsWatcher.run, .{watcher});
+    std.debug.print("watcher started\n", .{});
 
-    try watcher.run();
+    clock1 = try std.time.Timer.start();
+    // try std.fs.makeDirAbsolute(dir);
+    try file.writeAll(&data);
+
+    handle.join();
 }

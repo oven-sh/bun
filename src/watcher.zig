@@ -1,4 +1,3 @@
-const Fs = @import("./fs.zig");
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -6,22 +5,13 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
-const default_allocator = bun.default_allocator;
-const C = bun.C;
-const c = std.c;
 const options = @import("./options.zig");
-const IndexType = @import("./allocators.zig").IndexType;
-
-const os = std.os;
 
 const Mutex = @import("./lock.zig").Lock;
 const Futex = @import("./futex.zig");
 pub const WatchItemIndex = u16;
-const NoWatchItem: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
 const WATCHER_MAX_LIST = 8096;
@@ -78,11 +68,7 @@ pub const INotify = struct {
         std.os.inotify_rm_watch(this.inotify_fd, wd);
     }
 
-    pub fn isRunning(this: *INotify) bool {
-        return this.loaded_inotify;
-    }
-
-    pub fn init(this: *INotify) !void {
+    pub fn init(this: *INotify, _: std.mem.Allocator) !void {
         std.debug.assert(!this.loaded_inotify);
         this.loaded_inotify = true;
 
@@ -196,13 +182,9 @@ const DarwinWatcher = struct {
 
     fd: i32 = 0,
 
-    pub fn init(this: *DarwinWatcher) !void {
+    pub fn init(this: *DarwinWatcher, _: std.mem.Allocator) !void {
         this.fd = try std.os.kqueue();
         if (this.fd == 0) return error.KQueueError;
-    }
-
-    pub fn isRunning(this: *DarwinWatcher) bool {
-        return this.fd != 0;
     }
 
     pub fn stop(this: *DarwinWatcher) void {
@@ -213,25 +195,156 @@ const DarwinWatcher = struct {
     }
 };
 
-pub const Placeholder = struct {
-    pub const EventListIndex = u32;
+pub const WindowsWatcher = struct {
+    iocp: w.HANDLE = undefined,
+    allocator: std.mem.Allocator = undefined,
+    // watchers: Map,
 
-    pub var eventlist: [WATCHER_MAX_LIST]EventListIndex = undefined;
-    pub var eventlist_index: EventListIndex = 0;
+    // const Map = std.AutoArrayHashMap(*w.OVERLAPPED, *DirWatcher);
+    const w = std.os.windows;
+    pub const EventListIndex = c_int;
 
-    pub fn isRunning() bool {
-        return true;
+    const Action = enum(w.DWORD) {
+        Added = 1,
+        Removed,
+        Modified,
+        RenamedOld,
+        RenamedNew,
+    };
+
+    const DirWatcher = extern struct {
+        // this must be the first field
+        overlapped: w.OVERLAPPED = undefined,
+        buf: [64 * 1024]u8 align(@alignOf(w.FILE_NOTIFY_INFORMATION)) = undefined,
+        dirHandle: w.HANDLE,
+        watch_subtree: w.BOOLEAN = 1,
+
+        fn handleEvent(this: *DirWatcher, nbytes: w.DWORD) void {
+            if (nbytes == 0) return;
+            var offset: usize = 0;
+            while (true) {
+                const info_size = @sizeOf(w.FILE_NOTIFY_INFORMATION);
+                const info: *w.FILE_NOTIFY_INFORMATION = @alignCast(@ptrCast(this.buf[offset..].ptr));
+                const name_ptr: [*]u16 = @alignCast(@ptrCast(this.buf[offset + info_size ..]));
+                const filename: []u16 = name_ptr[0 .. info.FileNameLength / @sizeOf(u16)];
+
+                const action: Action = @enumFromInt(info.Action);
+                std.debug.print("filename: {}, action: {s}\n", .{ std.unicode.fmtUtf16le(filename), @tagName(action) });
+
+                if (info.NextEntryOffset == 0) break;
+                offset += @as(usize, info.NextEntryOffset);
+            }
+        }
+
+        fn listen(this: *DirWatcher) !void {
+            const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION;
+            if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, this.watch_subtree, filter, null, &this.overlapped, null) == 0) {
+                const err = w.kernel32.GetLastError();
+                std.debug.print("failed to start watching directory: {s}\n", .{@tagName(err)});
+                @panic("failed to start watching directory");
+            }
+        }
+    };
+
+    pub fn init(this: *WindowsWatcher, allocator: std.mem.Allocator) !void {
+        // const watcher = try allocator.create(WindowsWatcher);
+        // errdefer allocator.destroy(watcher);
+
+        const iocp = try w.CreateIoCompletionPort(w.INVALID_HANDLE_VALUE, null, 0, 1);
+        this.* = .{
+            .iocp = iocp,
+            .allocator = allocator,
+        };
     }
 
-    pub fn init() !void {}
+    pub fn deinit(this: *WindowsWatcher) void {
+        // get all the directory watchers and close their handles
+        // TODO
+        // close the io completion port handle
+        w.kernel32.CloseHandle(this.iocp);
+    }
+
+    pub fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: [:0]const u16) !void {
+        const path_len_bytes: u16 = @truncate(path.len * 2);
+        var nt_name = w.UNICODE_STRING{
+            .Length = path_len_bytes,
+            .MaximumLength = path_len_bytes,
+            .Buffer = @constCast(path.ptr),
+        };
+        var attr = w.OBJECT_ATTRIBUTES{
+            .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+            .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path))
+                null
+            else if (dirFd == w.INVALID_HANDLE_VALUE)
+                std.fs.cwd().fd
+            else
+                dirFd,
+            .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+            .ObjectName = &nt_name,
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        };
+        var handle: w.HANDLE = w.INVALID_HANDLE_VALUE;
+        var io: w.IO_STATUS_BLOCK = undefined;
+        const rc = w.ntdll.NtCreateFile(
+            &handle,
+            w.FILE_LIST_DIRECTORY,
+            &attr,
+            &io,
+            null,
+            0,
+            w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
+            w.FILE_OPEN,
+            w.FILE_DIRECTORY_FILE | w.FILE_OPEN_FOR_BACKUP_INTENT,
+            null,
+            0,
+        );
+
+        if (rc != .SUCCESS) {
+            std.debug.print("failed to open directory for watching: {s}\n", .{@tagName(rc)});
+            @panic("failed to open directory for watching");
+        }
+
+        errdefer _ = w.kernel32.CloseHandle(handle);
+
+        this.iocp = try w.CreateIoCompletionPort(handle, this.iocp, 0, 1);
+
+        const watcher = try this.allocator.create(DirWatcher);
+        errdefer this.allocator.destroy(watcher);
+        watcher.* = .{ .dirHandle = handle };
+        // try this.watchers.put(key, watcher);
+        try watcher.listen();
+    }
+
+    pub fn read(this: *WindowsWatcher) !void {
+        var nbytes: w.DWORD = 0;
+        var key: w.ULONG_PTR = 0;
+        var overlapped: ?*w.OVERLAPPED = null;
+        switch (w.GetQueuedCompletionStatus(this.iocp, &nbytes, &key, &overlapped, w.INFINITE)) {
+            .Normal => {},
+            .Aborted => @panic("aborted"),
+            .Cancelled => @panic("cancelled"),
+            .EOF => @panic("eof"),
+        }
+        if (nbytes == 0) {
+            // exit notification for this watcher - we should probably deallocate it here
+            return;
+        }
+
+        const watcher: *DirWatcher = @ptrCast(overlapped);
+        watcher.handleEvent(nbytes);
+        try watcher.listen();
+    }
 };
 
 const PlatformWatcher = if (Environment.isMac)
     DarwinWatcher
 else if (Environment.isLinux)
     INotify
+else if (Environment.isWindows)
+    WindowsWatcher
 else
-    Placeholder;
+    @compileError("Unsupported platform");
 
 pub const WatchItem = struct {
     file_path: string,
@@ -239,7 +352,7 @@ pub const WatchItem = struct {
     hash: u32,
     eventlist_index: PlatformWatcher.EventListIndex,
     loader: options.Loader,
-    fd: StoredFileDescriptorType,
+    fd: bun.FileDescriptor,
     count: u32,
     parent_hash: u32,
     kind: Kind,
@@ -335,7 +448,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         changed_filepaths: [128]?[:0]u8 = [_]?[:0]u8{null} ** 128,
 
         ctx: ContextType,
-        fs: *Fs.FileSystem,
+        fs: *bun.fs.FileSystem,
         allocator: std.mem.Allocator,
         watchloop_handle: ?std.Thread.Id = null,
         cwd: string,
@@ -348,12 +461,13 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub const HashType = u32;
         pub const WatchListArray = Watchlist;
+        const NoWatchItem: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 
         pub fn getHash(filepath: string) HashType {
             return @as(HashType, @truncate(bun.hash(filepath)));
         }
 
-        pub fn init(ctx: ContextType, fs: *Fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
+        pub fn init(ctx: ContextType, fs: *bun.fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
             const watcher = try allocator.create(Watcher);
             errdefer allocator.destroy(watcher);
 
@@ -367,16 +481,14 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .cwd = fs.top_level_dir,
             };
 
-            try PlatformWatcher.init(&watcher.platform);
+            try PlatformWatcher.init(&watcher.platform, allocator);
 
             return watcher;
         }
 
         pub fn start(this: *Watcher) !void {
-            if (!Environment.isWindows) {
-                std.debug.assert(this.watchloop_handle == null);
-                this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
-            }
+            std.debug.assert(this.watchloop_handle == null);
+            this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
         }
 
         pub fn deinit(this: *Watcher, close_descriptors: bool) void {
@@ -403,10 +515,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         // This must only be called from the watcher thread
         pub fn watchLoop(this: *Watcher) !void {
-            if (Environment.isWindows) {
-                @compileError("watchLoop should not be used on Windows");
-            }
-
             this.watchloop_handle = std.Thread.getCurrentId();
             Output.Source.configureNamedThread("File Watcher");
 
@@ -646,7 +754,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
             } else if (Environment.isWindows) {
-                @compileError("watchLoop should not be used on Windows");
+                @panic("todo windows watchloop");
             }
         }
 
@@ -661,11 +769,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub fn addFile(
             this: *Watcher,
-            fd: StoredFileDescriptorType,
+            fd: bun.FileDescriptor,
             file_path: string,
             hash: HashType,
             loader: options.Loader,
-            dir_fd: StoredFileDescriptorType,
+            dir_fd: bun.FileDescriptor,
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
         ) !void {
@@ -689,7 +797,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         fn appendFileAssumeCapacity(
             this: *Watcher,
-            fd: StoredFileDescriptorType,
+            fd: bun.FileDescriptor,
             file_path: string,
             hash: HashType,
             loader: options.Loader,
@@ -711,7 +819,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
                 var event = std.mem.zeroes(KEvent);
 
-                event.flags = c.EV_ADD | c.EV_CLEAR | c.EV_ENABLE;
+                event.flags = std.c.EV_ADD | std.c.EV_CLEAR | std.c.EV_ENABLE;
                 // we want to know about the vnode
                 event.filter = std.c.EVFILT_VNODE;
 
@@ -761,7 +869,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         fn appendDirectoryAssumeCapacity(
             this: *Watcher,
-            stored_fd: StoredFileDescriptorType,
+            stored_fd: bun.FileDescriptor,
             file_path: string,
             hash: HashType,
             comptime copy_file_path: bool,
@@ -772,7 +880,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 break :brk bun.toFD(dir.fd);
             };
 
-            const parent_hash = Watcher.getHash(Fs.PathName.init(file_path).dirWithTrailingSlash());
+            const parent_hash = Watcher.getHash(bun.fs.PathName.init(file_path).dirWithTrailingSlash());
             var index: PlatformWatcher.EventListIndex = std.math.maxInt(PlatformWatcher.EventListIndex);
 
             const file_path_: string = if (comptime copy_file_path)
@@ -788,7 +896,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
                 var event = std.mem.zeroes(KEvent);
 
-                event.flags = c.EV_ADD | c.EV_CLEAR | c.EV_ENABLE;
+                event.flags = std.c.EV_ADD | std.c.EV_CLEAR | std.c.EV_ENABLE;
                 // we want to know about the vnode
                 event.filter = std.c.EVFILT_VNODE;
 
@@ -846,7 +954,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub fn addDirectory(
             this: *Watcher,
-            fd: StoredFileDescriptorType,
+            fd: bun.FileDescriptor,
             file_path: string,
             hash: HashType,
             comptime copy_file_path: bool,
@@ -865,11 +973,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub fn appendFileMaybeLock(
             this: *Watcher,
-            fd: StoredFileDescriptorType,
+            fd: bun.FileDescriptor,
             file_path: string,
             hash: HashType,
             loader: options.Loader,
-            dir_fd: StoredFileDescriptorType,
+            dir_fd: bun.FileDescriptor,
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
             comptime lock: bool,
@@ -877,7 +985,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (comptime lock) this.mutex.lock();
             defer if (comptime lock) this.mutex.unlock();
             std.debug.assert(file_path.len > 1);
-            const pathname = Fs.PathName.init(file_path);
+            const pathname = bun.fs.PathName.init(file_path);
 
             const parent_dir = pathname.dirWithTrailingSlash();
             const parent_dir_hash: HashType = Watcher.getHash(parent_dir);
@@ -889,7 +997,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                 if (dir_fd.int() > 0) {
                     const fds = watchlist_slice.items(.fd);
-                    if (std.mem.indexOfScalar(StoredFileDescriptorType, fds, dir_fd)) |i| {
+                    if (std.mem.indexOfScalar(bun.FileDescriptor, fds, dir_fd)) |i| {
                         parent_watch_item = @as(WatchItemIndex, @truncate(i));
                     }
                 }
@@ -928,11 +1036,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub fn appendFile(
             this: *Watcher,
-            fd: StoredFileDescriptorType,
+            fd: bun.FileDescriptor,
             file_path: string,
             hash: HashType,
             loader: options.Loader,
-            dir_fd: StoredFileDescriptorType,
+            dir_fd: bun.FileDescriptor,
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
         ) !void {

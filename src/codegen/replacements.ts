@@ -54,6 +54,8 @@ export const globalsToPrefix = [
   "undefined",
 ];
 
+replacements.push({ from: new RegExp(`\\bextends\\s+(${globalsToPrefix.join("|")})`, "g"), to: "extends __no_intrinsic__%1" });
+
 // These enums map to $<enum>IdToLabel and $<enum>LabelToId
 // Make sure to define in ./builtins.d.ts
 export const enums = {
@@ -131,7 +133,7 @@ export function applyReplacements(src: string, length: number) {
   let rest = src.slice(length);
   slice = slice.replace(/([^a-zA-Z0-9_\$])\$([a-zA-Z0-9_]+\b)/gm, `$1__intrinsic__$2`);
   for (const replacement of replacements) {
-    slice = slice.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__"));
+    slice = slice.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__").replaceAll('%', '$'));
   }
   let match;
   if ((match = slice.match(/__intrinsic__(debug|assert)$/)) && rest.startsWith("(")) {
@@ -154,17 +156,17 @@ export function applyReplacements(src: string, length: number) {
       }
       return [
         slice.slice(0, match.index) +
-          "(IS_BUN_DEVELOPMENT?$assert(" +
-          checkSlice.result.slice(1, -1) +
-          "," +
-          JSON.stringify(
-            checkSlice.result
-              .slice(1, -1)
-              .replace(/__intrinsic__/g, "$")
-              .trim(),
-          ) +
-          extraArgs +
-          "):void 0)",
+        "(IS_BUN_DEVELOPMENT?$assert(" +
+        checkSlice.result.slice(1, -1) +
+        "," +
+        JSON.stringify(
+          checkSlice.result
+            .slice(1, -1)
+            .replace(/__intrinsic__/g, "$")
+            .trim(),
+        ) +
+        extraArgs +
+        "):void 0)",
         rest2,
         true,
       ];

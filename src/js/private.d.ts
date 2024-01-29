@@ -1,11 +1,6 @@
 // The types in this file are not publicly defined, but do exist.
 // Stuff like `Bun.fs()` and so on.
 
-/**
- * Works like the zig `@compileError` built-in, but only supports plain strings.
- */
-declare function $bundleError(error: string);
-
 type BunFSWatchOptions = { encoding?: BufferEncoding; persistent?: boolean; recursive?: boolean; signal?: AbortSignal };
 type BunWatchEventType = "rename" | "change" | "error" | "close";
 type BunWatchListener<T> = (event: WatchEventType, filename: T | undefined) => void;
@@ -51,8 +46,8 @@ type BunFS = Omit<typeof import("node:fs") & typeof import("node:fs/promises"), 
     filename: string,
     options:
       | (WatchOptions & {
-          encoding: "buffer";
-        })
+        encoding: "buffer";
+      })
       | "buffer",
     listener?: BunWatchListener<Buffer>,
   ): BunFSWatcher;

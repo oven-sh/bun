@@ -11275,13 +11275,7 @@ pub const Chunk = struct {
                                     else => unreachable,
                                 };
 
-                                const cheap_normalizer = cheapPrefixNormalizer(
-                                    import_prefix,
-                                    if (from_chunk_dir.len == 0)
-                                        file_path
-                                    else
-                                        bun.path.relative(from_chunk_dir, file_path),
-                                );
+                                const cheap_normalizer = cheapPrefixNormalizer(import_prefix, if (from_chunk_dir.len == 0) file_path else bun.path.relative(from_chunk_dir, file_path));
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
                             .none => {},
@@ -11315,13 +11309,8 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
-                                const cheap_normalizer = cheapPrefixNormalizer(
-                                    import_prefix,
-                                    if (from_chunk_dir.len == 0)
-                                        file_path
-                                    else
-                                        bun.path.relative(from_chunk_dir, file_path),
-                                );
+
+                                const cheap_normalizer = cheapPrefixNormalizer(import_prefix, if (from_chunk_dir.len == 0) file_path else bun.path.relative(from_chunk_dir, file_path));
 
                                 if (cheap_normalizer[0].len > 0) {
                                     @memcpy(remain[0..cheap_normalizer[0].len], cheap_normalizer[0]);
@@ -11561,8 +11550,13 @@ const ContentHasher = struct {
 // users can correctly put in a trailing slash if they want
 // this is just being nice
 fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
-    if (prefix.len == 0)
-        return .{ prefix, suffix };
+    // it no prefix is passed, we default it to "./" if the suffix does not start with a dot or slash
+    if (prefix.len == 0) {
+        if (strings.startsWithChar(suffix, '.') or strings.startsWithChar(suffix, '/')) {
+            return .{ prefix, suffix };
+        }
+        return .{ "./", suffix };
+    }
 
     // There are a few cases here we want to handle:
     // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"

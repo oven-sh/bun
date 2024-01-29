@@ -1171,15 +1171,32 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunctionFunction, (JSC::JSGlobalObj
 
     auto directOnlyBool = directOnly.toBoolean(lexicalGlobalObject);
 
-    int nArgsMask = SQLITE_UTF8;
+    int eTextRepMask = SQLITE_UTF8;
     if (deterministicBool) {
-        nArgsMask |= SQLITE_DETERMINISTIC;
+        eTextRepMask |= SQLITE_DETERMINISTIC;
     }
     if (directOnlyBool) {
-        nArgsMask |= SQLITE_DIRECTONLY;
+        eTextRepMask |= SQLITE_DIRECTONLY;
     }
 
     safeIntegersInt = safeIntegersInt < 2 ? safeIntegersInt : static_cast<int>(db->safe_ints);
+
+    int rc = sqlite3_create_function_v2(
+        db,
+        nameString.utf8().data(),
+        argCountInt,
+        eTextRepMask,
+        nullptr, // TODO: pApp
+        nullptr, // TODO: xFunc
+        nullptr, // TODO: xStep
+        nullptr, // TODO: xFinal
+        nullptr, // TODO: xDestroy
+    );
+
+    if (rc != SQLITE_OK) {
+        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
+        return JSValue::encode(JSC::jsUndefined());
+    }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
 }

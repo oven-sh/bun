@@ -21,8 +21,6 @@ const FDImpl = bun.FDImpl;
 
 const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 
-const errno_enoent = if (Environment.isWindows) .UV_ENOENT else .NOENT;
-
 const Constants = @import("./node_fs_constant.zig").Constants;
 const builtin = @import("builtin");
 const os = @import("std").os;
@@ -463,11 +461,6 @@ pub const AsyncReaddirRecursiveTask = struct {
         args: Arguments.Readdir,
         vm: *JSC.VirtualMachine,
     ) JSC.JSValue {
-        if (comptime Environment.isWindows) {
-            globalObject.throwTODO("fs.promises.readdir is not implemented on Windows yet");
-            return .zero;
-        }
-
         var task = AsyncReaddirRecursiveTask.new(.{
             .promise = JSC.JSPromise.Strong.init(globalObject),
             .args = args,
@@ -4275,7 +4268,7 @@ pub const NodeFS = struct {
         )) {
             .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
             .err => |err| brk: {
-                if (!args.throw_if_no_entry and err.getErrno() == errno_enoent) {
+                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
                 }
                 break :brk Maybe(Return.Lstat){ .err = err };
@@ -4759,7 +4752,13 @@ pub const NodeFS = struct {
         comptime is_root: bool,
     ) Maybe(void) {
         const flags = os.O.DIRECTORY | os.O.RDONLY;
-        const fd = switch (Syscall.openat(if (comptime is_root) bun.toFD(std.fs.cwd().fd) else async_task.root_fd, basename, flags, 0)) {
+
+        const atfd = if (comptime is_root) bun.toFD(std.fs.cwd().fd) else async_task.root_fd;
+        const fd = switch (switch (Environment.os) {
+            else => Syscall.openat(atfd, basename, flags, 0),
+            // windows bun.sys.open does not pass iterable=true,
+            .windows => bun.sys.openDirAtWindowsA(atfd, basename, true, false),
+        }) {
             .err => |err| {
                 if (comptime !is_root) {
                     switch (err.getErrno()) {
@@ -4778,7 +4777,6 @@ pub const NodeFS = struct {
                         .err = err.withPath(bun.path.joinZBuf(buf, &path_parts, .auto)),
                     };
                 }
-
                 return .{
                     .err = err.withPath(args.path.slice()),
                 };
@@ -5418,6 +5416,7 @@ pub const NodeFS = struct {
                 return .{ .err = Syscall.Error{
                     .errno = errno,
                     .syscall = .realpath,
+                    .path = args.path.slice(),
                 } };
 
             // Seems like `rc` does not contain the errno?
@@ -5668,7 +5667,7 @@ pub const NodeFS = struct {
                 .result = .{ .stats = Stats.init(result, args.big_int) },
             },
             .err => |err| brk: {
-                if (!args.throw_if_no_entry and err.getErrno() == errno_enoent) {
+                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return .{ .result = .{ .not_found = {} } };
                 }
                 break :brk .{ .err = err };

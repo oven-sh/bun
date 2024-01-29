@@ -349,45 +349,71 @@ pub fn getErrno(rc: anytype) bun.C.E {
     };
 }
 
-// pub fn openOptionsFromFlagsWindows(flags: u32) windows.OpenFileOptions {
-//     const w = windows;
-//     const O = std.os.O;
-
-//     var access_mask: w.ULONG = w.READ_CONTROL | w.FILE_WRITE_ATTRIBUTES | w.SYNCHRONIZE;
-//     if (flags & O.RDWR != 0) {
-//         access_mask |= w.GENERIC_READ | w.GENERIC_WRITE;
-//     } else if (flags & O.WRONLY != 0) {
-//         access_mask |= w.GENERIC_WRITE;
-//     } else {
-//         access_mask |= w.GENERIC_READ | w.GENERIC_WRITE;
-//     }
-
-//     const filter: windows.OpenFileOptions.Filter = if (flags & O.DIRECTORY != 0) .dir_only else .file_only;
-//     const follow_symlinks: bool = flags & O.NOFOLLOW == 0;
-
-//     const creation: w.ULONG = blk: {
-//         if (flags & O.CREAT != 0) {
-//             if (flags & O.EXCL != 0) {
-//                 break :blk w.FILE_CREATE;
-//             }
-//         }
-//         break :blk w.FILE_OPEN;
-//     };
-
-//     return .{
-//         .access_mask = access_mask,
-//         .io_mode = .blocking,
-//         .creation = creation,
-//         .filter = filter,
-//         .follow_symlinks = follow_symlinks,
-//     };
-// }
 const O = std.os.O;
 const w = std.os.windows;
 
+fn normalizePathWindows(
+    dir_fd: bun.FileDescriptor,
+    path: []const u8,
+    buf: *bun.WPathBuffer,
+) Maybe([:0]const u16) {
+    const slash = bun.strings.charIsAnySlash;
+    const ok = brk: {
+        var slash_or_start = true;
+        for (0..path.len) |i| {
+            // if we're starting with a dot or just saw a slash and now a dot
+            if (slash_or_start and path[i] == '.') {
+                // just '.' or ending on '/.'
+                if (i + 1 == path.len) break :brk false;
+                // starting with './' or containing '/./'
+                if (slash(path[i + 1])) break :brk false;
+                if (path.len > i + 2) {
+                    // starting with '../'' or containing '/../'
+                    if (path[i + 1] == '.' and slash(path[i + 2])) break :brk false;
+                }
+            }
+            // two slashes in a row
+            if (slash_or_start and slash(path[i])) break :brk false;
+            slash_or_start = slash(path[i]);
+        }
+        break :brk true;
+    };
+    if (ok) {
+        // no need to normalize, proceed normally
+        return .{
+            .result = bun.strings.toNTPath(buf, path),
+        };
+    }
+    var buf1: bun.PathBuffer = undefined;
+    var buf2: bun.PathBuffer = undefined;
+    if (std.fs.path.isAbsoluteWindows(path)) {
+        const norm = bun.path.normalizeStringWindows(path, &buf1, false, false);
+        return .{
+            .result = bun.strings.toNTPath(buf, norm),
+        };
+    }
+
+    const base_fd = if (dir_fd == bun.invalid_fd)
+        std.fs.cwd().fd
+    else
+        dir_fd.cast();
+
+    const base_path = w.GetFinalPathNameByHandle(base_fd, w.GetFinalPathNameByHandleFormat{}, buf) catch {
+        return .{ .err = .{
+            .errno = @intFromEnum(bun.C.E.BADFD),
+            .syscall = .open,
+        } };
+    };
+    const base_count = bun.simdutf.convert.utf16.to.utf8.le(base_path, &buf1);
+    const norm = bun.path.joinAbsStringBuf(buf1[0..base_count], &buf2, &[_][]const u8{path}, .windows);
+    return .{
+        .result = bun.strings.toNTPath(buf, norm),
+    };
+}
+
 pub fn openDirAtWindows(
     dirFd: bun.FileDescriptor,
-    path: [:0]const u16,
+    path: []const u16,
     iterable: bool,
     no_follow: bool,
 ) Maybe(bun.FileDescriptor) {
@@ -403,7 +429,7 @@ pub fn openDirAtWindows(
     };
     var attr = w.OBJECT_ATTRIBUTES{
         .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path))
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(path))
             null
         else if (dirFd == bun.invalid_fd)
             std.fs.cwd().fd
@@ -432,7 +458,7 @@ pub fn openDirAtWindows(
     );
 
     if (comptime Environment.allow_assert) {
-        log("NtCreateFile({d}, {s}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
+        log("NtCreateFile({d}, {s}, iterable = {}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), iterable, @tagName(rc), @intFromPtr(fd) });
     }
 
     switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -468,8 +494,15 @@ pub noinline fn openDirAtWindowsA(
     no_follow: bool,
 ) Maybe(bun.FileDescriptor) {
     var wbuf: bun.WPathBuffer = undefined;
-    return openDirAtWindows(dirFd, bun.strings.toNTDir(&wbuf, path), iterable, no_follow);
+
+    const norm = switch (normalizePathWindows(dirFd, path, &wbuf)) {
+        .err => |err| return .{ .err = err },
+        .result => |norm| norm,
+    };
+
+    return openDirAtWindows(dirFd, norm, iterable, no_follow);
 }
+
 pub fn openatWindows(dir: bun.FileDescriptor, path: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
     const nonblock = flags & O.NONBLOCK != 0;
     const overwrite = flags & O.WRONLY != 0 and flags & O.APPEND == 0;
@@ -508,6 +541,21 @@ pub fn openatWindows(dir: bun.FileDescriptor, path: []const u16, flags: bun.Mode
     return ntCreateFile(dir, path, access_mask, creation, options);
 }
 
+/// For this function to open an absolute path, it must start with "\??\". Otherwise
+/// you need a reference file descriptor the "invalid_fd" file descriptor is used
+/// to signify that the current working directory should be used.
+///
+/// When using this function I highly recommend reading this first:
+/// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile
+///
+/// It is very very very easy to mess up flags here. Please review existing
+/// examples to this call and the above function that maps unix flags to
+/// the windows ones.
+///
+/// It is very easy to waste HOURS on the subtle semantics of this function.
+///
+/// In the zig standard library, messing up the input to their equivalent
+/// will trigger `unreachable`. Here there will be a debug log with the path.
 pub fn ntCreateFile(
     dir: bun.FileDescriptor,
     path_maybe_leading_dot: []const u16,
@@ -517,7 +565,10 @@ pub fn ntCreateFile(
 ) Maybe(bun.FileDescriptor) {
     var result: windows.HANDLE = undefined;
 
+    // Another problem re: normalization is that you can use relative paths, but no leading '.\' or './''
+    // this path is probably already backslash normalized so we're only going to check for '.\'
     const path = if (bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, ".\\")) path_maybe_leading_dot[2..] else path_maybe_leading_dot;
+    std.debug.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
 
     const path_len_bytes = std.math.cast(u16, path.len * 2) orelse return .{
         .err = .{
@@ -532,14 +583,21 @@ pub fn ntCreateFile(
     };
     var attr = windows.OBJECT_ATTRIBUTES{
         .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
-        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(path))
+        // From the Windows Documentation:
+        //
+        // [ObjectName] must be a fully qualified file specification or the name of a device object,
+        // unless it is the name of a file relative to the directory specified by RootDirectory.
+        // For example, \Device\Floppy1\myfile.dat or \??\B:\myfile.dat could be the fully qualified
+        // file specification, provided that the floppy driver and overlying file system are already
+        // loaded. For more information, see File Names, Paths, and Namespaces.
+        .ObjectName = &nt_name,
+        .RootDirectory = if (bun.strings.hasPrefixComptimeType(u16, path, &windows.nt_object_prefix))
             null
         else if (dir == bun.invalid_fd)
             std.fs.cwd().fd
         else
             dir.cast(),
         .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-        .ObjectName = &nt_name,
         .SecurityDescriptor = null,
         .SecurityQualityOfService = null,
     };
@@ -561,7 +619,19 @@ pub fn ntCreateFile(
         );
 
         if (comptime Environment.allow_assert) {
-            log("NtCreateFile({d}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
+            if (rc == .INVALID_PARAMETER) {
+                // Double check what flags you are passing to this
+                //
+                // - access_mask probably needs w.SYNCHRONIZE,
+                // - options probably needs w.FILE_SYNCHRONOUS_IO_NONALERT
+                // - disposition probably needs w.FILE_OPEN
+                bun.Output.debugWarn("NtCreateFile({d}, {}) = {s} (file) = {d}\nYou are calling this function with the wrong flags!!!", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
+            } else if (rc == .OBJECT_PATH_SYNTAX_BAD or rc == .OBJECT_NAME_INVALID) {
+                // See above comment. For absolute paths you must have \??\ at the start.
+                bun.Output.debugWarn("NtCreateFile({d}, {}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
+            } else {
+                log("NtCreateFile({d}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
+            }
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -1732,6 +1802,18 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
         }
         return Maybe(void).success;
     }
+}
+
+pub fn setFileOffsetToEndWindows(fd: bun.FileDescriptor) Maybe(usize) {
+    if (comptime Environment.isWindows) {
+        var new_ptr: std.os.windows.LARGE_INTEGER = undefined;
+        const rc = kernel32.SetFilePointerEx(fd.cast(), 0, &new_ptr, windows.FILE_END);
+        if (rc == windows.FALSE) {
+            return Maybe(usize).errnoSys(0, .lseek) orelse Maybe(usize){ .result = 0 };
+        }
+        return Maybe(usize){ .result = @intCast(new_ptr) };
+    }
+    @compileError("Not Implemented");
 }
 
 pub fn pipe() Maybe([2]bun.FileDescriptor) {

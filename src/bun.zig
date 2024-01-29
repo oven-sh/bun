@@ -102,6 +102,10 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
         try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
     }
+
+    pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
+        std.debug.assert(FDImpl.decode(fd).kind == kind);
+    }
 };
 
 pub const FDImpl = @import("./fd.zig").FDImpl;
@@ -1100,9 +1104,10 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
-        var temp: [MAX_PATH_BYTES]u8 = undefined;
-        const temp_slice = try std.os.getFdPath(fd, &temp);
-        return path.normalizeBuf(temp_slice, buf, .loose);
+        var wide_buf: WPathBuffer = undefined;
+        const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]);
+        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice, true);
+        return buf[0..res.written];
     }
 
     if (comptime Environment.allow_assert) {
@@ -1659,7 +1664,7 @@ pub const Generation = u16;
 
 pub const zstd = @import("./deps/zstd.zig");
 pub const StringPointer = Schema.Api.StringPointer;
-pub const StandaloneModuleGraph = @import("./standalone_bun.zig").StandaloneModuleGraph;
+pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").StandaloneModuleGraph;
 
 pub const String = @import("./string.zig").String;
 pub const SliceWithUnderlyingString = @import("./string.zig").SliceWithUnderlyingString;

@@ -387,6 +387,47 @@ db.loadExtension("myext");
 
 {% /details %}
 
+## User-Defined Functions (UDF)
+
+SQLite supports [user-defined functions](https://www.sqlite.org/appfunc.html). You can use them to call JavaScript functions from within SQL:
+
+```ts
+import { Database } from "bun:sqlite";
+
+const db = new Database();
+
+db.defineFunction(
+  "getMeow",
+  (name, age) => "Me" + "o".repeat(name.length) + "w".repeat(age),
+);
+
+db.prepare("SELECT getMeow(name, age) AS sound FROM cats");
+```
+
+If the function is deterministic (which means that the function always returns the same result on the same inputs), you can tell SQLite about that. This enables SQLite to perform additional optimizations in some cases:
+
+```ts
+db.defineFunction(
+  "getMeow", {
+    deterministic: true,
+  },
+  (name, age) => "Me" + "o".repeat(name.length) + "w".repeat(age),
+);
+```
+
+Functions with variable number of arguments (varargs) are also supported:
+```ts
+db.defineFunction(
+  "joinWithComma", {
+    varargs: true,
+  },
+  (...args) => args.join(","),
+);
+db.prepare("SELECT joinWithComma(name) AS sound FROM cats");
+db.prepare("SELECT joinWithComma(name, age) AS sound FROM cats");
+db.prepare("SELECT joinWithComma(id, name, age) AS sound FROM cats");
+```
+
 ## Reference
 
 ```ts

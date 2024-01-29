@@ -332,12 +332,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         // User-facing
         watch_events: [128]WatchEvent = undefined,
-        changed_filepaths: [128]?[:0]u8 = std.mem.zeroes([128]?[:0]u8),
+        changed_filepaths: [128]?[:0]u8 = [_]?[:0]u8{null} ** 128,
 
-        fs: *Fs.FileSystem,
-        // this is what kqueue knows about
-        fd: StoredFileDescriptorType,
         ctx: ContextType,
+        fs: *Fs.FileSystem,
         allocator: std.mem.Allocator,
         watchloop_handle: ?std.Thread.Id = null,
         cwd: string,
@@ -345,10 +343,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
         running: bool = true,
         close_descriptors: bool = false,
 
+        evict_list: [WATCHER_MAX_LIST]WatchItemIndex = undefined,
+        evict_list_i: WatchItemIndex = 0,
+
         pub const HashType = u32;
         pub const WatchListArray = Watchlist;
-
-        var evict_list: [WATCHER_MAX_LIST]WatchItemIndex = undefined;
 
         pub fn getHash(filepath: string) HashType {
             return @as(HashType, @truncate(bun.hash(filepath)));
@@ -360,7 +359,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             watcher.* = Watcher{
                 .fs = fs,
-                .fd = .zero,
                 .allocator = allocator,
                 .watched_count = 0,
                 .ctx = ctx,
@@ -447,34 +445,32 @@ pub fn NewWatcher(comptime ContextType: type) type {
             }
         }
 
-        var evict_list_i: WatchItemIndex = 0;
-
-        pub fn removeAtIndex(_: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
+        pub fn removeAtIndex(this: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
             std.debug.assert(index != NoWatchItem);
 
-            evict_list[evict_list_i] = index;
-            evict_list_i += 1;
+            this.evict_list[this.evict_list_i] = index;
+            this.evict_list_i += 1;
 
             if (comptime kind == .directory) {
                 for (parents) |parent| {
                     if (parent == hash) {
-                        evict_list[evict_list_i] = @as(WatchItemIndex, @truncate(parent));
-                        evict_list_i += 1;
+                        this.evict_list[this.evict_list_i] = @as(WatchItemIndex, @truncate(parent));
+                        this.evict_list_i += 1;
                     }
                 }
             }
         }
 
         pub fn flushEvictions(this: *Watcher) void {
-            if (evict_list_i == 0) return;
-            defer evict_list_i = 0;
+            if (this.evict_list_i == 0) return;
+            defer this.evict_list_i = 0;
 
             // swapRemove messes up the order
             // But, it only messes up the order if any elements in the list appear after the item being removed
             // So if we just sort the list by the biggest index first, that should be fine
             std.sort.pdq(
                 WatchItemIndex,
-                evict_list[0..evict_list_i],
+                this.evict_list[0..this.evict_list_i],
                 {},
                 comptime std.sort.desc(WatchItemIndex),
             );
@@ -483,7 +479,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const fds = slice.items(.fd);
             var last_item = NoWatchItem;
 
-            for (evict_list[0..evict_list_i]) |item| {
+            for (this.evict_list[0..this.evict_list_i]) |item| {
                 // catch duplicates, since the list is sorted, duplicates will appear right after each other
                 if (item == last_item) continue;
 
@@ -499,7 +495,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             last_item = NoWatchItem;
             // This is split into two passes because reading the slice while modified is potentially unsafe.
-            for (evict_list[0..evict_list_i]) |item| {
+            for (this.evict_list[0..this.evict_list_i]) |item| {
                 if (item == last_item) continue;
                 this.watchlist.swapRemove(item);
                 last_item = item;

@@ -199,6 +199,18 @@ describe("bundler", () => {
       ARBITRARY: "secret environment stuff!",
     },
   });
+  itBundled("edgecase/ProcessEnvArbitraryBun", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(process.env.ARBITRARY);
+      `,
+    },
+    target: "bun",
+    capture: ["process.env.ARBITRARY"],
+    env: {
+      ARBITRARY: "secret environment stuff!",
+    },
+  });
   itBundled("edgecase/StarExternal", {
     files: {
       "/entry.js": /* js */ `

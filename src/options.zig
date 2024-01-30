@@ -1145,7 +1145,6 @@ pub fn definesFromTransformOptions(
     log: *logger.Log,
     maybe_input_define: ?Api.StringMap,
     target: Target,
-    env_loader: ?*DotEnv.Loader,
     framework_env: ?*const Env,
     NODE_ENV: ?string,
 ) !*defines.Define {
@@ -1164,7 +1163,6 @@ pub fn definesFromTransformOptions(
     var behavior: Api.DotEnvBehavior = .disable;
 
     load_env: {
-        const env = env_loader orelse break :load_env;
         const framework = framework_env orelse break :load_env;
 
         if (Environment.allow_assert) {
@@ -1172,19 +1170,6 @@ pub fn definesFromTransformOptions(
         }
 
         behavior = framework.behavior;
-        if (behavior == .load_all_without_inlining or behavior == .disable)
-            break :load_env;
-
-        try env.copyForDefine(
-            defines.RawDefines,
-            &user_defines,
-            defines.UserDefinesArray,
-            &environment_defines,
-            framework.toAPI().defaults,
-            framework.behavior,
-            framework.prefix,
-            allocator,
-        );
     }
 
     if (behavior != .load_all_without_inlining) {
@@ -1535,7 +1520,6 @@ pub const BundleOptions = struct {
             this.log,
             this.transform_options.define,
             this.target,
-            loader_,
             env,
             node_env: {
                 if (loader_) |e|

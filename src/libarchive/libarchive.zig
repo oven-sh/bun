@@ -489,8 +489,6 @@ pub const Archive = struct {
         var count: u32 = 0;
         const dir_fd = dir.fd;
 
-        const loop = if (Environment.isWindows) bun.Async.Loop.get() else {};
-        _ = loop; // autofix
         var w_path: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
 
         loop: while (true) {

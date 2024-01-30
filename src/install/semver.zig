@@ -1043,17 +1043,27 @@ pub const Version = extern struct {
 
         var i: usize = 0;
 
-        i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
-        if (i == input.len) {
-            result.valid = false;
-            return result;
+        for (0..input.len) |c| {
+            switch (input[c]) {
+                // newlines & whitespace
+                ' ',
+                '\t',
+                '\n',
+                '\r',
+                std.ascii.control_code.vt,
+                std.ascii.control_code.ff,
+
+                // version separators
+                'v',
+                '=',
+                => {},
+                else => {
+                    i = c;
+                    break;
+                },
+            }
         }
 
-        if (input[i] == 'v' or input[i] == '=') {
-            i += 1;
-        }
-
-        i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
         if (i == input.len) {
             result.valid = false;
             return result;

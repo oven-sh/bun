@@ -55,7 +55,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalOb
         return false;
 
     auto string = JSValue::decode(value).toString(globalObject);
-    if (UNLIKELY(string))
+    if (UNLIKELY(!string))
         return false;
 
     object->putDirect(vm, propertyName, string, 0);

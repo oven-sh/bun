@@ -2588,13 +2588,8 @@ pub const PathTemplate = struct {
     }
 
     pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var pathbuf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        var remain = pathbuf[0..self.data.len];
-        @memcpy(remain, self.data);
-        for (remain) |*c| {
-            // self.data uses '/', normalize to platform
-            if (c.* == '/') c.* = std.fs.path.sep;
-        }
+        var remain = self.data;
+        bun.path.posixToPlatformInPlace(@constCast(remain));
         while (strings.indexOfChar(remain, '[')) |j| {
             try writer.writeAll(remain[0..j]);
             remain = remain[j + 1 ..];

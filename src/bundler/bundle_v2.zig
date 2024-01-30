@@ -570,7 +570,7 @@ pub const BundleV2 = struct {
 
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
-            const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
+            const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .posix, false);
             if (rel.len > 0 and rel[0] != '.') {
                 path.pretty = rel;
             }
@@ -668,7 +668,7 @@ pub const BundleV2 = struct {
         const source_index = Index.source(this.graph.input_files.len);
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
-            const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
+            const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .posix, false);
             if (rel.len > 0 and rel[0] != '.') {
                 path.pretty = rel;
             }
@@ -1089,7 +1089,7 @@ pub const BundleV2 = struct {
                     const source = &sources[index];
                     var pathname = source.path.name;
 
-                    const rel = bun.path.relative(this.bundler.options.root_dir, source.path.text);
+                    const rel = bun.path.relativePlatform(this.bundler.options.root_dir, source.path.text, .posix, false);
                     if (rel.len > 0 and rel[0] != '.')
                         pathname = Fs.PathName.init(rel);
 
@@ -2010,7 +2010,7 @@ pub const BundleV2 = struct {
 
             if (path.pretty.ptr == path.text.ptr) {
                 // TODO: outbase
-                const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
+                const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .posix, false);
                 if (rel.len > 0 and rel[0] != '.') {
                     path.pretty = rel;
                 }
@@ -9382,7 +9382,7 @@ const LinkerContext = struct {
             defer max_heap_allocator.reset();
 
             const rel_path = chunk.final_rel_path;
-            if (std.fs.path.dirname(rel_path)) |rel_parent| {
+            if (std.fs.path.dirnamePosix(rel_path)) |rel_parent| {
                 if (rel_parent.len > 0) {
                     root_dir.makePath(rel_parent) catch |err| {
                         c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {} while saving chunk {}", .{
@@ -11087,7 +11087,7 @@ pub const Chunk = struct {
                     shifts.appendAssumeCapacity(shift);
 
                     var count: usize = 0;
-                    var from_chunk_dir = std.fs.path.dirname(chunk.final_rel_path) orelse "";
+                    var from_chunk_dir = std.fs.path.dirnamePosix(chunk.final_rel_path) orelse "";
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
 
@@ -11108,7 +11108,7 @@ pub const Chunk = struct {
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relative(from_chunk_dir, file_path),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
                                 );
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
@@ -11165,7 +11165,7 @@ pub const Chunk = struct {
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relative(from_chunk_dir, file_path),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {
@@ -11255,7 +11255,7 @@ pub const Chunk = struct {
                     var count: usize = 0;
                     const file_path_buf: [4096]u8 = undefined;
                     _ = file_path_buf;
-                    var from_chunk_dir = std.fs.path.dirname(chunk.final_rel_path) orelse "";
+                    var from_chunk_dir = std.fs.path.dirnamePosix(chunk.final_rel_path) orelse "";
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
 
@@ -11285,7 +11285,7 @@ pub const Chunk = struct {
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relative(from_chunk_dir, file_path),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
                                 );
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
@@ -11327,7 +11327,7 @@ pub const Chunk = struct {
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relative(from_chunk_dir, file_path),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {

@@ -5277,9 +5277,30 @@ pub const NodeFS = struct {
         const fd = switch (args.file) {
             .path => brk: {
                 path = args.file.path.sliceZ(pathbuf);
+                bun.path.posixToPlatformInPlace(@constCast(path));
+
+                var is_dirfd_different = false;
+                const dirfd = if (!Environment.isWindows) args.dirfd else blk: {
+                    if (std.mem.startsWith(u8, path, "..\\")) {
+                        is_dirfd_different = true;
+                        var buffer = std.mem.zeroes([std.fs.MAX_PATH_BYTES - 1:0]u8);
+                        const dirfd_path_len = GetFinalPathNameByHandleA(args.dirfd.cast(), &buffer, std.fs.MAX_PATH_BYTES, .NORMALIZED);
+                        const dirfd_path = buffer[0..dirfd_path_len];
+                        const parent_path = std.fs.path.dirname(dirfd_path).?;
+                        const newdir = std.fs.cwd().openDir(parent_path, .{}) catch unreachable;
+                        const newdirfd = bun.toFD(newdir.fd);
+                        path = path[3..];
+                        break :blk newdirfd;
+                    }
+                    break :blk args.dirfd;
+                };
+                defer if (is_dirfd_different) {
+                    var d = dirfd.asDir();
+                    d.close();
+                };
 
                 const open_result = Syscall.openat(
-                    args.dirfd,
+                    dirfd,
                     path,
                     @intFromEnum(args.flag) | os.O.NOCTTY,
                     args.mode,
@@ -6526,3 +6547,5 @@ comptime {
     if (!JSC.is_bindgen)
         _ = Bun__mkdirp;
 }
+
+pub extern "kernel32" fn GetFinalPathNameByHandleA(hFile: ?std.os.windows.HANDLE, lpszFilePath: [*:0]u8, cchFilePath: u32, dwFlags: enum(u32) { NORMALIZED = 0, OPENED = 8 }) callconv(std.os.windows.WINAPI) u32;

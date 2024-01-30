@@ -653,8 +653,7 @@ pub const PathLike = union(enum) {
 
         if (comptime !force) {
             if (sliced[sliced.len - 1] == 0) {
-                var sliced_ptr = sliced.ptr;
-                return sliced_ptr[0 .. sliced.len - 1 :0];
+                return sliced[0 .. sliced.len - 1 :0];
             }
         }
 

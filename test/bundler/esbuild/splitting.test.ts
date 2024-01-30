@@ -1,8 +1,10 @@
-// @known-failing-on-windows: panic "TODO on Windows"
 import assert from "assert";
 import { readdirSync } from "fs";
 import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
+import process from "node:process";
+
+const isWindows = process.platform === 'win32';
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_splitting_test.go
@@ -196,6 +198,7 @@ describe("bundler", () => {
       { file: "/test2.js", stdout: "side effect\n2\n1" },
     ],
   });
+  //
   itBundled("splitting/NestedDirectories", {
     files: {
       "/Users/user/project/src/pages/pageA/page.js": /* js */ `
@@ -249,6 +252,7 @@ describe("bundler", () => {
     },
     run: [{ file: "/test.js", stdout: "5 6\n5 6\ntrue\n7 7" }],
   });
+  //
   itBundled("splitting/MissingLazyExport", {
     files: {
       "/a.js": /* js */ `
@@ -276,7 +280,7 @@ describe("bundler", () => {
       { file: "/out/b.js", stdout: "[null]" },
     ],
     bundleWarnings: {
-      "/common.js": [`Import "missing" will always be undefined because there is no matching export in "empty.js"`],
+      [isWindows ? "\\common.js" : "/common.js"]: [`Import "missing" will always be undefined because there is no matching export in "empty.js"`],
     },
   });
   itBundled("splitting/ReExportESBuildIssue273", {
@@ -309,6 +313,7 @@ describe("bundler", () => {
       "/out/a.js": "imported",
     },
   });
+  //
   itBundled("splitting/DynamicImportOutsideSourceTreeESBuildIssue264", {
     files: {
       "/Users/user/project/src/entry1.js": `import('package')`,

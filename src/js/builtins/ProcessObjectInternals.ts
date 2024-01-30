@@ -363,8 +363,7 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       if (!Reflect.has(internalEnv, k)) {
         envMapList.push(p);
       }
-      internalEnv[k] = String(value);
-      return true;
+      return Reflect.set(internalEnv, k, String(value));
     },
     has(_, p) {
       return typeof p === "string" ? Reflect.has(internalEnv, p.toUpperCase()) : false;

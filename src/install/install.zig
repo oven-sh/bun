@@ -1062,9 +1062,28 @@ pub const PackageInstall = struct {
         _ = package_json_checker.parseExpr() catch return false;
         if (!package_json_checker.has_found_name or !package_json_checker.has_found_version or log.errors > 0) return false;
 
-        // Version is more likely to not match than name, so we check it first.
-        return strings.eql(package_json_checker.found_version, this.package_version) and
-            strings.eql(package_json_checker.found_name, this.package_name);
+        // Check if the version matches
+        if (!strings.eql(package_json_checker.found_version, this.package_version)) {
+            // If it doesn't match, check again but with a leading "v" removed
+            //    v1.0.7
+            //     1.0.7
+            //    ^
+            //    ignore the v
+            if (!(package_json_checker.found_version.len == this.package_version.len + 1 and
+                package_json_checker.found_version[0] == 'v' and
+                strings.eqlLong(
+                package_json_checker.found_version[1..],
+                this.package_version,
+                // avoid checking the length an extra time
+                false,
+            ))) {
+                // if it still doesn't match, return false.
+                return false;
+            }
+        }
+
+        // lastly, check the name.
+        return strings.eql(package_json_checker.found_name, this.package_name);
     }
 
     pub const Result = union(Tag) {

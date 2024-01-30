@@ -701,18 +701,16 @@ console.log(dynamic().NODE_ENV);
 });
 
 test("NODE_ENV default is not propogated in bun run", () => {
-  const getenv = process.platform !== 'win32'
-    ? 'env | grep NODE_ENV && exit 1 || true'
-    : "node -e if(process.env.NODE_ENV)throw(1)";
+  const getenv =
+    process.platform !== "win32" ? "env | grep NODE_ENV && exit 1 || true" : "node -e if(process.env.NODE_ENV)throw(1)";
   const tmp = tempDirWithFiles("default-node-env", {
-    "package.json": '{"scripts":{"show-env":' + JSON.stringify(getenv) + '}}',
+    "package.json": '{"scripts":{"show-env":' + JSON.stringify(getenv) + "}}",
   });
   expect(bunRunAsScript(tmp, "show-env", {}).stdout).toBe("");
 });
 
-
 const todoOnPosix = process.platform !== "win32" ? test.todo : test;
-todoOnPosix('setting process.env coerces the value to a string', () => {
+todoOnPosix("setting process.env coerces the value to a string", () => {
   // @ts-expect-error
   process.env.SET_TO_TRUE = true;
   let did_call = 0;
@@ -720,10 +718,10 @@ todoOnPosix('setting process.env coerces the value to a string', () => {
   process.env.SET_TO_BUN = {
     toString() {
       did_call++;
-      return 'bun!';
-    }
+      return "bun!";
+    },
   };
-  expect(process.env.SET_TO_TRUE).toBe('true');
-  expect(process.env.SET_TO_BUN).toBe('bun!');
+  expect(process.env.SET_TO_TRUE).toBe("true");
+  expect(process.env.SET_TO_BUN).toBe("bun!");
   expect(did_call).toBe(1);
 });

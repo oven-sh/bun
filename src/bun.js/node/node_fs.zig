@@ -5284,7 +5284,7 @@ pub const NodeFS = struct {
                     if (std.mem.startsWith(u8, path, "..\\")) {
                         is_dirfd_different = true;
                         var buffer = std.mem.zeroes([std.fs.MAX_PATH_BYTES - 1:0]u8);
-                        const dirfd_path_len = GetFinalPathNameByHandleA(args.dirfd.cast(), &buffer, std.fs.MAX_PATH_BYTES, .NORMALIZED);
+                        const dirfd_path_len = bun.windows.GetFinalPathNameByHandleA(args.dirfd.cast(), &buffer, std.fs.MAX_PATH_BYTES, .NORMALIZED);
                         const dirfd_path = buffer[0..dirfd_path_len];
                         const parent_path = std.fs.path.dirname(dirfd_path).?;
                         const newdir = std.fs.cwd().openDir(parent_path, .{}) catch unreachable;
@@ -6547,5 +6547,3 @@ comptime {
     if (!JSC.is_bindgen)
         _ = Bun__mkdirp;
 }
-
-pub extern "kernel32" fn GetFinalPathNameByHandleA(hFile: ?std.os.windows.HANDLE, lpszFilePath: [*:0]u8, cchFilePath: u32, dwFlags: enum(u32) { NORMALIZED = 0, OPENED = 8 }) callconv(std.os.windows.WINAPI) u32;

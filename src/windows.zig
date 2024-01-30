@@ -3039,3 +3039,10 @@ pub extern "kernel32" fn GetTempPathW(
     nBufferLength: DWORD, // [in]
     lpBuffer: LPCWSTR, // [out]
 ) DWORD;
+
+pub extern "kernel32" fn GetFinalPathNameByHandleA(
+    hFile: ?std.os.windows.HANDLE,
+    lpszFilePath: [*:0]u8,
+    cchFilePath: u32,
+    dwFlags: enum(u32) { NORMALIZED = 0, OPENED = 8 },
+) callconv(std.os.windows.WINAPI) u32;

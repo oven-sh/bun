@@ -692,7 +692,9 @@ const Task = struct {
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpStackTrace(trace.*);
+                            _ = trace; // autofix
+
+                            // std.debug.dumpStackTrace(trace.*);
                         }
                     }
 
@@ -1061,10 +1063,40 @@ pub const PackageInstall = struct {
         var package_json_checker = json_parser.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
         _ = package_json_checker.parseExpr() catch return false;
         if (!package_json_checker.has_found_name or !package_json_checker.has_found_version or log.errors > 0) return false;
+        const found_version = package_json_checker.found_version;
+        // Check if the version matches
+        if (!strings.eql(found_version, this.package_version)) {
+            const offset = brk: {
+                // ASCII only.
+                for (0..found_version.len) |c| {
+                    switch (found_version[c]) {
+                        // newlines & whitespace
+                        ' ',
+                        '\t',
+                        '\n',
+                        '\r',
+                        std.ascii.control_code.vt,
+                        std.ascii.control_code.ff,
 
-        // Version is more likely to not match than name, so we check it first.
-        return strings.eql(package_json_checker.found_version, this.package_version) and
-            strings.eql(package_json_checker.found_name, this.package_name);
+                        // version separators
+                        'v',
+                        '=',
+                        => {},
+                        else => {
+                            break :brk c;
+                        },
+                    }
+                }
+                // If we didn't find any of these characters, there's no point in checking the version again.
+                // it will never match.
+                return false;
+            };
+
+            if (!strings.eql(found_version[offset..], this.package_version)) return false;
+        }
+
+        // lastly, check the name.
+        return strings.eql(package_json_checker.found_name, this.package_name);
     }
 
     pub const Result = union(Tag) {
@@ -5056,7 +5088,7 @@ pub const PackageManager = struct {
                                 },
                             );
                         } else if (comptime log_level != .silent) {
-                            const fmt = "<r><red>error<r>: {s} extracting tarball for <b>{s}<r>";
+                            const fmt = "<r><red>error<r>: {s} extracting tarball for <b>{s}<r>\n";
                             const args = .{
                                 @errorName(err),
                                 alias,
@@ -6582,6 +6614,7 @@ pub const PackageManager = struct {
                     current_package_json_buf,
                     0,
                 );
+                if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
 
                 const package_json_source = logger.Source.initPathString(
                     package_json_cwd,
@@ -6757,6 +6790,7 @@ pub const PackageManager = struct {
                     current_package_json_buf,
                     0,
                 );
+                if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
 
                 const package_json_source = logger.Source.initPathString(
                     package_json_cwd,
@@ -7462,6 +7496,7 @@ pub const PackageManager = struct {
             current_package_json_buf,
             0,
         );
+        if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
 
         const package_json_source = logger.Source.initPathString(
             package_json_cwd,
@@ -9329,13 +9364,10 @@ pub const PackageManager = struct {
             }
         }
 
-        switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| {
-                try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
-            },
-        }
-
+        try manager.log.printForLogLevel(Output.errorWriter());
         if (manager.log.hasErrors()) Global.crash();
+
+        manager.log.reset();
 
         // This operation doesn't perform any I/O, so it should be relatively cheap.
         manager.lockfile = try manager.lockfile.cleanWithLogger(
@@ -9472,6 +9504,9 @@ pub const PackageManager = struct {
                 log_level,
             );
         }
+
+        try manager.log.printForLogLevel(Output.errorWriter());
+        if (manager.log.hasErrors()) Global.crash();
 
         if (needs_new_lockfile) {
             manager.summary.add = @as(u32, @truncate(manager.lockfile.packages.len));

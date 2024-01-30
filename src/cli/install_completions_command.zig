@@ -446,6 +446,10 @@ pub const InstallCompletionsCommand = struct {
                     0,
                 ) catch break :brk true;
 
+                if (comptime Environment.isWindows) {
+                    try dot_zshrc.seekTo(0);
+                }
+
                 const contents = buf[0..read];
 
                 // Do they possibly have it in the file already?

@@ -69,22 +69,6 @@ pub const verbose_analytics = false;
 pub const disable_compression_in_http_client = false;
 
 pub const enable_keepalive = true;
-// Not sure why...
-// But this is slower!
-// ~/Build/throw
-// ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
-// Benchmark #1: bun create react3 app --force --no-install
-//   Time (mean ± σ):     974.6 ms ±   6.8 ms    [User: 170.5 ms, System: 798.3 ms]
-//   Range (min … max):   960.8 ms … 984.6 ms    10 runs
-
-// ❯ mv /usr/local/opt/libgit2/lib/libgit2.dylib /usr/local/opt/libgit2/lib/libgit2.dylib.1
-
-// ~/Build/throw
-// ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
-// Benchmark #1: bun create react3 app --force --no-install
-//   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
-//   Range (min … max):   299.5 ms … 318.8 ms    10 runs
-pub const use_libgit2 = true;
 
 pub const atomic_file_watcher = env.isLinux;
 
@@ -177,5 +161,4 @@ pub const concurrent_transpiler = !env.isWindows;
 // https://github.com/oven-sh/bun/issues/5426#issuecomment-1813865316
 pub const disable_auto_js_to_ts_in_node_modules = true;
 
-// TODO: implement the IO for rtc for windows
 pub const runtime_transpiler_cache = !env.isWindows;

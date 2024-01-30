@@ -114,6 +114,7 @@ bun install # or npm install
 
 .\scripts\env.ps1
 .\scripts\update-submodules.ps1 # this syncs git submodule state
+.\scripts\make-old-js.ps1 # runs some old code generators
 .\scripts\all-dependencies.ps1 # this builds all dependencies
 
 cd build # this was created by the codegen.ps1 script earlier

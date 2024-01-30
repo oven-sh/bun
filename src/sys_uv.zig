@@ -333,7 +333,7 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
     }
 }
 
-pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {
+pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, position: i64) Maybe(usize) {
     const uv_fd = bun.uvfdcast(fd);
     comptime std.debug.assert(bun.PlatformIOVec == uv.uv_buf_t);
 

@@ -1665,6 +1665,15 @@ pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]const u16 {
     return wbuf[0 .. utf16.len + bun.windows.nt_object_prefix.len :0];
 }
 
+pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]const u16 {
+    if (hasPrefixComptimeType(u16, utf16, &bun.windows.nt_object_prefix)) {
+        @memcpy(wbuf[0..utf16.len], utf16);
+        wbuf[utf16.len] = 0;
+        return wbuf[0..utf16.len :0];
+    }
+    return addNTPathPrefix(wbuf, utf16);
+}
+
 // These are the same because they don't have rules like needing a trailing slash
 pub const toNTDir = toNTPath;
 

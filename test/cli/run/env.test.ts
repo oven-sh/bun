@@ -706,3 +706,21 @@ test("NODE_ENV default is not propogated in bun run", () => {
   });
   expect(bunRunAsScript(tmp, "show-env", {}).stdout).toBe("");
 });
+
+
+const todoOnPosix = process.platform !== "win32" ? test.todo : test;
+todoOnPosix('setting process.env coerces the value to a string', () => {
+  // @ts-expect-error
+  process.env.SET_TO_TRUE = true;
+  let did_call = 0;
+  // @ts-expect-error
+  process.env.SET_TO_BUN = {
+    toString() {
+      did_call++;
+      return 'bun!';
+    }
+  };
+  expect(process.env.SET_TO_TRUE).toBe('true');
+  expect(process.env.SET_TO_BUN).toBe('bun!');
+  expect(did_call).toBe(1);
+});

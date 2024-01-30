@@ -329,7 +329,7 @@ pub const WindowsWatcher = struct {
             @panic("failed to open directory for watching");
         }
 
-        // errdefer _ = w.kernel32.CloseHandle(handle);
+        errdefer _ = w.kernel32.CloseHandle(handle);
 
         // TODO atomic update
         this.iocp = try w.CreateIoCompletionPort(handle, this.iocp, 0, 1);
@@ -790,18 +790,17 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
             } else if (Environment.isWindows) {
-                while (true) {}
-                // while (true) {
-                //     const watcher = try this.platform.next();
-                //     // after handling the watcher's events, it explicitly needs to start reading directory changes again
-                //     defer watcher.prepare() catch |err| {
-                //         Output.prettyErrorln("Failed to (re-)start listening to directory changes: {s}", .{@errorName(err)});
-                //     };
-                //     var iter = watcher.events();
-                //     while (iter.next()) |event| {
-                //         std.debug.print("filename: {}, action: {s}\n", .{ std.unicode.fmtUtf16le(event.filename), @tagName(event.action) });
-                //     }
-                // }
+                while (true) {
+                    const watcher = try this.platform.next();
+                    // after handling the watcher's events, it explicitly needs to start reading directory changes again
+                    defer watcher.prepare() catch |err| {
+                        Output.prettyErrorln("Failed to (re-)start listening to directory changes: {s}", .{@errorName(err)});
+                    };
+                    var iter = watcher.events();
+                    while (iter.next()) |event| {
+                        std.debug.print("filename: {}, action: {s}\n", .{ std.unicode.fmtUtf16le(event.filename), @tagName(event.action) });
+                    }
+                }
             }
         }
 

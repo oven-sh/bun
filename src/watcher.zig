@@ -14,6 +14,9 @@ const Futex = @import("./futex.zig");
 pub const WatchItemIndex = u16;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
+// TODO @gvilums
+// This entire file is a mess - rework it to be more maintainable
+
 const WATCHER_MAX_LIST = 8096;
 
 pub const INotify = struct {
@@ -196,47 +199,67 @@ const DarwinWatcher = struct {
 };
 
 pub const WindowsWatcher = struct {
+    // TODO iocp needs to be updated atomically to allow the main thread to register new watchers while the watcher thread is running
     iocp: w.HANDLE = undefined,
     allocator: std.mem.Allocator = undefined,
-    // watchers: Map,
 
-    // const Map = std.AutoArrayHashMap(*w.OVERLAPPED, *DirWatcher);
     const w = std.os.windows;
     pub const EventListIndex = c_int;
 
     const Action = enum(w.DWORD) {
-        Added = 1,
-        Removed,
-        Modified,
-        RenamedOld,
-        RenamedNew,
+        Added = w.FILE_ACTION_ADDED,
+        Removed = w.FILE_ACTION_REMOVED,
+        Modified = w.FILE_ACTION_MODIFIED,
+        RenamedOld = w.FILE_ACTION_RENAMED_OLD_NAME,
+        RenamedNew = w.FILE_ACTION_RENAMED_NEW_NAME,
     };
 
+    const FileEvent = struct {
+        action: Action,
+        filename: []u16 = undefined,
+    };
+
+    // each directory being watched has an associated DirWatcher
     const DirWatcher = extern struct {
-        // this must be the first field
+        // this must be the first field because we retrieve the DirWatcher from a pointer to its overlapped field
         overlapped: w.OVERLAPPED = undefined,
         buf: [64 * 1024]u8 align(@alignOf(w.FILE_NOTIFY_INFORMATION)) = undefined,
         dirHandle: w.HANDLE,
         watch_subtree: w.BOOLEAN = 1,
 
-        fn handleEvent(this: *DirWatcher, nbytes: w.DWORD) void {
-            if (nbytes == 0) return;
-            var offset: usize = 0;
-            while (true) {
+        const EventIterator = struct {
+            watcher: *DirWatcher,
+            offset: usize = 0,
+            hasNext: bool = true,
+
+            pub fn next(this: *EventIterator) ?FileEvent {
+                if (!this.hasNext) return null;
                 const info_size = @sizeOf(w.FILE_NOTIFY_INFORMATION);
-                const info: *w.FILE_NOTIFY_INFORMATION = @alignCast(@ptrCast(this.buf[offset..].ptr));
-                const name_ptr: [*]u16 = @alignCast(@ptrCast(this.buf[offset + info_size ..]));
+                const info: *w.FILE_NOTIFY_INFORMATION = @alignCast(@ptrCast(this.watcher.buf[this.offset..].ptr));
+                const name_ptr: [*]u16 = @alignCast(@ptrCast(this.watcher.buf[this.offset + info_size ..]));
                 const filename: []u16 = name_ptr[0 .. info.FileNameLength / @sizeOf(u16)];
 
                 const action: Action = @enumFromInt(info.Action);
-                std.debug.print("filename: {}, action: {s}\n", .{ std.unicode.fmtUtf16le(filename), @tagName(action) });
 
-                if (info.NextEntryOffset == 0) break;
-                offset += @as(usize, info.NextEntryOffset);
+                if (info.NextEntryOffset == 0) {
+                    this.hasNext = false;
+                } else {
+                    this.offset += @as(usize, info.NextEntryOffset);
+                }
+
+                return FileEvent{
+                    .action = action,
+                    .filename = filename,
+                };
             }
+        };
+
+        fn events(this: *DirWatcher) EventIterator {
+            return EventIterator{ .watcher = this };
         }
 
-        fn listen(this: *DirWatcher) !void {
+        // invalidates any EventIterators derived from this DirWatcher
+        fn prepare(this: *DirWatcher) !void {
             const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION;
             if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, this.watch_subtree, filter, null, &this.overlapped, null) == 0) {
                 const err = w.kernel32.GetLastError();
@@ -247,9 +270,6 @@ pub const WindowsWatcher = struct {
     };
 
     pub fn init(this: *WindowsWatcher, allocator: std.mem.Allocator) !void {
-        // const watcher = try allocator.create(WindowsWatcher);
-        // errdefer allocator.destroy(watcher);
-
         const iocp = try w.CreateIoCompletionPort(w.INVALID_HANDLE_VALUE, null, 0, 1);
         this.* = .{
             .iocp = iocp,
@@ -264,7 +284,9 @@ pub const WindowsWatcher = struct {
         w.kernel32.CloseHandle(this.iocp);
     }
 
-    pub fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: [:0]const u16) !void {
+    pub fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: [:0]const u16) !*DirWatcher {
+        _ = dirFd;
+        std.debug.print("adding directory to watch: {s}\n", .{std.unicode.fmtUtf16le(path)});
         const path_len_bytes: u16 = @truncate(path.len * 2);
         var nt_name = w.UNICODE_STRING{
             .Length = path_len_bytes,
@@ -273,12 +295,13 @@ pub const WindowsWatcher = struct {
         };
         var attr = w.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-            .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path))
-                null
-            else if (dirFd == w.INVALID_HANDLE_VALUE)
-                std.fs.cwd().fd
-            else
-                dirFd,
+            .RootDirectory = null,
+            // .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path))
+            //     null
+            // else if (dirFd == w.INVALID_HANDLE_VALUE)
+            //     std.fs.cwd().fd
+            // else
+            //     dirFd,
             .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
             .ObjectName = &nt_name,
             .SecurityDescriptor = null,
@@ -312,28 +335,33 @@ pub const WindowsWatcher = struct {
         const watcher = try this.allocator.create(DirWatcher);
         errdefer this.allocator.destroy(watcher);
         watcher.* = .{ .dirHandle = handle };
-        // try this.watchers.put(key, watcher);
-        try watcher.listen();
+
+        std.debug.print("handle: {d}\n", .{@intFromPtr(handle)});
+
+        try watcher.prepare();
+        return watcher;
     }
 
-    pub fn read(this: *WindowsWatcher) !void {
+    // get the next dirwatcher that has events
+    pub fn next(this: *WindowsWatcher) !*DirWatcher {
         var nbytes: w.DWORD = 0;
         var key: w.ULONG_PTR = 0;
         var overlapped: ?*w.OVERLAPPED = null;
-        switch (w.GetQueuedCompletionStatus(this.iocp, &nbytes, &key, &overlapped, w.INFINITE)) {
-            .Normal => {},
-            .Aborted => @panic("aborted"),
-            .Cancelled => @panic("cancelled"),
-            .EOF => @panic("eof"),
-        }
-        if (nbytes == 0) {
-            // exit notification for this watcher - we should probably deallocate it here
-            return;
-        }
+        while (true) {
+            switch (w.GetQueuedCompletionStatus(this.iocp, &nbytes, &key, &overlapped, w.INFINITE)) {
+                .Normal => {},
+                .Aborted => @panic("aborted"),
+                .Cancelled => @panic("cancelled"),
+                .EOF => @panic("eof"),
+            }
+            if (nbytes == 0) {
+                // exit notification for this watcher - we should probably deallocate it here
+                continue;
+            }
 
-        const watcher: *DirWatcher = @ptrCast(overlapped);
-        watcher.handleEvent(nbytes);
-        try watcher.listen();
+            const watcher: *DirWatcher = @ptrCast(overlapped);
+            return watcher;
+        }
     }
 };
 
@@ -345,21 +373,6 @@ else if (Environment.isWindows)
     WindowsWatcher
 else
     @compileError("Unsupported platform");
-
-pub const WatchItem = struct {
-    file_path: string,
-    // filepath hash for quick comparison
-    hash: u32,
-    eventlist_index: PlatformWatcher.EventListIndex,
-    loader: options.Loader,
-    fd: bun.FileDescriptor,
-    count: u32,
-    parent_hash: u32,
-    kind: Kind,
-    package_json: ?*PackageJSON,
-
-    pub const Kind = enum { file, directory };
-};
 
 pub const WatchEvent = struct {
     index: WatchItemIndex,
@@ -413,10 +426,21 @@ pub const WatchEvent = struct {
         this.* = WatchEvent{
             .op = Op{
                 .delete = (event.mask & std.os.linux.IN.DELETE_SELF) > 0 or (event.mask & std.os.linux.IN.DELETE) > 0,
-                .metadata = false,
                 .rename = (event.mask & std.os.linux.IN.MOVE_SELF) > 0,
                 .move_to = (event.mask & std.os.linux.IN.MOVED_TO) > 0,
                 .write = (event.mask & std.os.linux.IN.MODIFY) > 0,
+            },
+            .index = index,
+        };
+    }
+
+    pub fn fromFileNotify(this: *WatchEvent, event: *WindowsWatcher.FileEvent, index: WatchItemIndex) void {
+        const w = std.os.windows;
+        this.* = WatchEvent{
+            .op = Op{
+                .delete = event.Action == w.FILE_ACTION_REMOVED,
+                .rename = event.Action == w.FILE_ACTION_RENAMED_OLD_NAME,
+                .write = event.Action == w.FILE_ACTION_MODIFIED,
             },
             .index = index,
         };
@@ -431,7 +455,40 @@ pub const WatchEvent = struct {
     };
 };
 
-pub const Watchlist = std.MultiArrayList(WatchItem);
+const WatchItem = struct {
+    file_path: string,
+    // filepath hash for quick comparison
+    hash: u32,
+    loader: options.Loader,
+    fd: bun.FileDescriptor,
+    count: u32,
+    parent_hash: u32,
+    kind: Kind,
+    package_json: ?*PackageJSON,
+    platform: Platform.Data = Platform.Data{},
+
+    const Platform = struct {
+        const Linux = struct {
+            eventlist_index: PlatformWatcher.EventListIndex = 0,
+        };
+        const Windows = struct {
+            dir_watcher: ?*WindowsWatcher.DirWatcher = null,
+        };
+        const Darwin = struct {};
+
+        const Data = if (Environment.isMac)
+            Darwin
+        else if (Environment.isLinux)
+            Linux
+        else if (Environment.isWindows)
+            Windows
+        else
+            @compileError("Unsupported platform");
+    };
+
+    pub const Kind = enum { file, directory };
+};
+const Watchlist = std.MultiArrayList(WatchItem);
 
 pub fn NewWatcher(comptime ContextType: type) type {
     return struct {
@@ -461,7 +518,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub const HashType = u32;
         pub const WatchListArray = Watchlist;
-        const NoWatchItem: WatchItemIndex = std.math.maxInt(WatchItemIndex);
+        const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
 
         pub fn getHash(filepath: string) HashType {
             return @as(HashType, @truncate(bun.hash(filepath)));
@@ -542,33 +599,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
             allocator.destroy(this);
         }
 
-        pub fn remove(this: *Watcher, hash: HashType) void {
-            this.mutex.lock();
-            defer this.mutex.unlock();
-            if (this.indexOf(hash)) |index| {
-                const fds = this.watchlist.items(.fd);
-                const fd = fds[index];
-                _ = bun.sys.close(fd);
-                this.watchlist.swapRemove(index);
-            }
-        }
-
-        pub fn removeAtIndex(this: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
-            std.debug.assert(index != NoWatchItem);
-
-            this.evict_list[this.evict_list_i] = index;
-            this.evict_list_i += 1;
-
-            if (comptime kind == .directory) {
-                for (parents) |parent| {
-                    if (parent == hash) {
-                        this.evict_list[this.evict_list_i] = @as(WatchItemIndex, @truncate(parent));
-                        this.evict_list_i += 1;
-                    }
-                }
-            }
-        }
-
         pub fn flushEvictions(this: *Watcher) void {
             if (this.evict_list_i == 0) return;
             defer this.evict_list_i = 0;
@@ -585,23 +615,24 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             var slice = this.watchlist.slice();
             const fds = slice.items(.fd);
-            var last_item = NoWatchItem;
+            var last_item = no_watch_item;
 
             for (this.evict_list[0..this.evict_list_i]) |item| {
                 // catch duplicates, since the list is sorted, duplicates will appear right after each other
                 if (item == last_item) continue;
 
-                // close the file descriptors here. this should automatically remove it from being watched too.
-                _ = bun.sys.close(fds[item]);
-
-                // if (Environment.isLinux) {
-                //     INotify.unwatch(event_list_ids[item]);
-                // }
-
+                if (Environment.isWindows) {
+                    // on windows we need to deallocate the watcher instance
+                    // TODO implement this
+                } else {
+                    // on mac and linux we can just close the file descriptor
+                    // TODO do we need to call inotify_rm_watch on linux?
+                    _ = bun.sys.close(fds[item]);
+                }
                 last_item = item;
             }
 
-            last_item = NoWatchItem;
+            last_item = no_watch_item;
             // This is split into two passes because reading the slice while modified is potentially unsafe.
             for (this.evict_list[0..this.evict_list_i]) |item| {
                 if (item == last_item) continue;
@@ -754,45 +785,18 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
             } else if (Environment.isWindows) {
-                @panic("todo windows watchloop");
-            }
-        }
-
-        pub fn indexOf(this: *Watcher, hash: HashType) ?u32 {
-            for (this.watchlist.items(.hash), 0..) |other, i| {
-                if (hash == other) {
-                    return @as(u32, @truncate(i));
-                }
-            }
-            return null;
-        }
-
-        pub fn addFile(
-            this: *Watcher,
-            fd: bun.FileDescriptor,
-            file_path: string,
-            hash: HashType,
-            loader: options.Loader,
-            dir_fd: bun.FileDescriptor,
-            package_json: ?*PackageJSON,
-            comptime copy_file_path: bool,
-        ) !void {
-            // This must lock due to concurrent transpiler
-            this.mutex.lock();
-            defer this.mutex.unlock();
-
-            if (this.indexOf(hash)) |index| {
-                if (comptime FeatureFlags.atomic_file_watcher) {
-                    // On Linux, the file descriptor might be out of date.
-                    if (fd.int() > 0) {
-                        var fds = this.watchlist.items(.fd);
-                        fds[index] = fd;
+                while (true) {
+                    const watcher = try this.platform.next();
+                    // after handling the watcher's events, it explicitly needs to start reading directory changes again
+                    defer watcher.prepare() catch |err| {
+                        Output.prettyErrorln("Failed to (re-)start listening to directory changes: {s}", .{@errorName(err)});
+                    };
+                    var iter = watcher.events();
+                    while (iter.next()) |event| {
+                        std.debug.print("filename: {}, action: {s}\n", .{ std.unicode.fmtUtf16le(event.filename), @tagName(event.action) });
                     }
                 }
-                return;
             }
-
-            try this.appendFileMaybeLock(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path, false);
         }
 
         fn appendFileAssumeCapacity(
@@ -805,13 +809,23 @@ pub fn NewWatcher(comptime ContextType: type) type {
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
         ) !void {
-            var index: PlatformWatcher.EventListIndex = std.math.maxInt(PlatformWatcher.EventListIndex);
             const watchlist_id = this.watchlist.len;
 
             const file_path_: string = if (comptime copy_file_path)
                 bun.asByteSlice(try this.allocator.dupeZ(u8, file_path))
             else
                 file_path;
+
+            var item = WatchItem{
+                .file_path = file_path_,
+                .fd = fd,
+                .hash = hash,
+                .count = 0,
+                .loader = loader,
+                .parent_hash = parent_hash,
+                .package_json = package_json,
+                .kind = .file,
+            };
 
             if (comptime Environment.isMac) {
                 const KEvent = std.c.Kevent;
@@ -851,20 +865,18 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // buf[file_path_to_use_.len] = 0;
                 var buf = file_path_.ptr;
                 const slice: [:0]const u8 = buf[0..file_path_.len :0];
-                index = try this.platform.watchPath(slice);
+                item.platform.index = try this.platform.watchPath(slice);
+            } else if (comptime Environment.isWindows) {
+                // TODO check if we're already watching a parent directory of this file
+                var pathbuf: bun.WPathBuffer = undefined;
+                const dirpath = std.fs.path.dirnameWindows(file_path) orelse unreachable;
+                const wpath = bun.strings.toNTPath(&pathbuf, dirpath);
+                const watcher = try this.platform.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, wpath);
+                item.platform.dir_watcher = watcher;
+                std.debug.print("watching file: {s}\n", .{file_path_});
             }
 
-            this.watchlist.appendAssumeCapacity(.{
-                .file_path = file_path_,
-                .fd = fd,
-                .hash = hash,
-                .count = 0,
-                .eventlist_index = index,
-                .loader = loader,
-                .parent_hash = parent_hash,
-                .package_json = package_json,
-                .kind = .file,
-            });
+            this.watchlist.appendAssumeCapacity(item);
         }
 
         fn appendDirectoryAssumeCapacity(
@@ -881,7 +893,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
             };
 
             const parent_hash = Watcher.getHash(bun.fs.PathName.init(file_path).dirWithTrailingSlash());
-            var index: PlatformWatcher.EventListIndex = std.math.maxInt(PlatformWatcher.EventListIndex);
 
             const file_path_: string = if (comptime copy_file_path)
                 bun.asByteSlice(try this.allocator.dupeZ(u8, file_path))
@@ -889,6 +900,17 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 file_path;
 
             const watchlist_id = this.watchlist.len;
+
+            var item = WatchItem{
+                .file_path = file_path_,
+                .fd = fd,
+                .hash = hash,
+                .count = 0,
+                .loader = options.Loader.file,
+                .parent_hash = parent_hash,
+                .kind = .directory,
+                .package_json = null,
+            };
 
             if (Environment.isMac) {
                 const KEvent = std.c.Kevent;
@@ -931,44 +953,16 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 bun.copy(u8, &buf, file_path_to_use_);
                 buf[file_path_to_use_.len] = 0;
                 const slice: [:0]u8 = buf[0..file_path_to_use_.len :0];
-                index = try this.platform.watchDir(slice);
+                item.platform.eventlist_index = try this.platform.watchDir(slice);
+            } else if (Environment.isWindows) {
+                var pathbuf: bun.WPathBuffer = undefined;
+                const wpath = bun.strings.toNTPath(&pathbuf, file_path_);
+                const watcher = try this.platform.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, wpath);
+                item.platform.dir_watcher = watcher;
             }
 
-            this.watchlist.appendAssumeCapacity(.{
-                .file_path = file_path_,
-                .fd = fd,
-                .hash = hash,
-                .count = 0,
-                .eventlist_index = index,
-                .loader = options.Loader.file,
-                .parent_hash = parent_hash,
-                .kind = .directory,
-                .package_json = null,
-            });
+            this.watchlist.appendAssumeCapacity(item);
             return @as(WatchItemIndex, @truncate(this.watchlist.len - 1));
-        }
-
-        pub inline fn isEligibleDirectory(this: *Watcher, dir: string) bool {
-            return strings.indexOf(dir, this.fs.top_level_dir) != null and strings.indexOf(dir, "node_modules") == null;
-        }
-
-        pub fn addDirectory(
-            this: *Watcher,
-            fd: bun.FileDescriptor,
-            file_path: string,
-            hash: HashType,
-            comptime copy_file_path: bool,
-        ) !void {
-            this.mutex.lock();
-            defer this.mutex.unlock();
-
-            if (this.indexOf(hash) != null) {
-                return;
-            }
-
-            try this.watchlist.ensureUnusedCapacity(this.allocator, 1);
-
-            _ = try this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path);
         }
 
         pub fn appendFileMaybeLock(
@@ -1034,6 +1028,12 @@ pub fn NewWatcher(comptime ContextType: type) type {
             }
         }
 
+        // Below is platform-independent
+
+        inline fn isEligibleDirectory(this: *Watcher, dir: string) bool {
+            return strings.indexOf(dir, this.fs.top_level_dir) != null and strings.indexOf(dir, "node_modules") == null;
+        }
+
         pub fn appendFile(
             this: *Watcher,
             fd: bun.FileDescriptor,
@@ -1045,6 +1045,90 @@ pub fn NewWatcher(comptime ContextType: type) type {
             comptime copy_file_path: bool,
         ) !void {
             return appendFileMaybeLock(this, fd, file_path, hash, loader, dir_fd, package_json, copy_file_path, true);
+        }
+
+        pub fn addDirectory(
+            this: *Watcher,
+            fd: bun.FileDescriptor,
+            file_path: string,
+            hash: HashType,
+            comptime copy_file_path: bool,
+        ) !void {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+
+            if (this.indexOf(hash) != null) {
+                return;
+            }
+
+            try this.watchlist.ensureUnusedCapacity(this.allocator, 1);
+
+            _ = try this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path);
+        }
+
+        pub fn addFile(
+            this: *Watcher,
+            fd: bun.FileDescriptor,
+            file_path: string,
+            hash: HashType,
+            loader: options.Loader,
+            dir_fd: bun.FileDescriptor,
+            package_json: ?*PackageJSON,
+            comptime copy_file_path: bool,
+        ) !void {
+            // This must lock due to concurrent transpiler
+            this.mutex.lock();
+            defer this.mutex.unlock();
+
+            if (this.indexOf(hash)) |index| {
+                if (comptime FeatureFlags.atomic_file_watcher) {
+                    // On Linux, the file descriptor might be out of date.
+                    if (fd.int() > 0) {
+                        var fds = this.watchlist.items(.fd);
+                        fds[index] = fd;
+                    }
+                }
+                return;
+            }
+
+            try this.appendFileMaybeLock(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path, false);
+        }
+
+        pub fn indexOf(this: *Watcher, hash: HashType) ?u32 {
+            for (this.watchlist.items(.hash), 0..) |other, i| {
+                if (hash == other) {
+                    return @as(u32, @truncate(i));
+                }
+            }
+            return null;
+        }
+
+        pub fn remove(this: *Watcher, hash: HashType) void {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            if (this.indexOf(hash)) |index| {
+                this.removeAtIndex(@truncate(index), hash, &[_]HashType{}, .file);
+                // const fds = this.watchlist.items(.fd);
+                // const fd = fds[index];
+                // _ = bun.sys.close(fd);
+                // this.watchlist.swapRemove(index);
+            }
+        }
+
+        pub fn removeAtIndex(this: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
+            std.debug.assert(index != no_watch_item);
+
+            this.evict_list[this.evict_list_i] = index;
+            this.evict_list_i += 1;
+
+            if (comptime kind == .directory) {
+                for (parents) |parent| {
+                    if (parent == hash) {
+                        this.evict_list[this.evict_list_i] = @as(WatchItemIndex, @truncate(parent));
+                        this.evict_list_i += 1;
+                    }
+                }
+            }
         }
     };
 }

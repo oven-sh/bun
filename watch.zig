@@ -115,7 +115,10 @@ pub const WindowsWatcher = struct {
         fn handleEvent(this: *DirWatcher, nbytes: w.DWORD) void {
             const elapsed = clock1.read();
             std.debug.print("elapsed: {}\n", .{std.fmt.fmtDuration(elapsed)});
-            if (nbytes == 0) return;
+            if (nbytes == 0) {
+                std.debug.print("nbytes == 0\n", .{});
+                return;
+            }
             var offset: usize = 0;
             while (true) {
                 const info_size = @sizeOf(w.FILE_NOTIFY_INFORMATION);
@@ -160,7 +163,8 @@ pub const WindowsWatcher = struct {
         w.kernel32.CloseHandle(this.iocp);
     }
 
-    pub fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: [:0]const u16) !void {
+    pub fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: [:0]const u16) !*DirWatcher {
+        std.debug.print("adding directory to watch: {s}\n", .{std.unicode.fmtUtf16le(path)});
         const flags = w.FILE_LIST_DIRECTORY;
 
         const path_len_bytes: u16 = @truncate(path.len * 2);
@@ -207,11 +211,15 @@ pub const WindowsWatcher = struct {
 
         this.iocp = try w.CreateIoCompletionPort(handle, this.iocp, 0, 1);
 
+        std.debug.print("handle: {d}\n", .{@intFromPtr(handle)});
+
         const watcher = try this.allocator.create(DirWatcher);
         errdefer this.allocator.destroy(watcher);
         watcher.* = .{ .dirHandle = handle };
         // try this.watchers.put(key, watcher);
         try watcher.listen();
+
+        return watcher;
     }
 
     pub fn stop(this: *WindowsWatcher) void {
@@ -255,28 +263,33 @@ pub fn main() !void {
 
     var buf: [std.fs.MAX_PATH_BYTES]u16 = undefined;
 
-    const watchdir = "C:\\test\\node_modules";
+    const watchdir = "C:\\bun";
     const iconsdir = "C:\\test\\node_modules\\@mui\\icons-material";
     _ = iconsdir; // autofix
     const testdir = "C:\\test\\node_modules\\@mui\\icons-material\\mydir";
     _ = testdir; // autofix
     const testfile = "C:\\test\\node_modules\\@mui\\icons-material\\myfile.txt";
+    _ = testfile; // autofix
 
     // try std.fs.deleteDirAbsolute(dir);
 
     const watcher = try WindowsWatcher.init(allocator);
-    try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, watchdir));
+    var handle = try std.Thread.spawn(.{}, WindowsWatcher.run, .{watcher});
+    std.time.sleep(100_000_000);
+    const watched = try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, watchdir));
     // try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, "C:\\bun\\src"));
     // try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, "C:\\bun\\test"));
     // try watcher.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, toNTPath(&buf, "C:\\bun\\testdir"));
 
-    const file = try std.fs.createFileAbsolute(testfile, .{});
-    var handle = try std.Thread.spawn(.{}, WindowsWatcher.run, .{watcher});
+    // const file = try std.fs.createFileAbsolute(testfile, .{});
     std.debug.print("watcher started\n", .{});
 
     clock1 = try std.time.Timer.start();
     // try std.fs.makeDirAbsolute(dir);
-    try file.writeAll(&data);
+    // try file.writeAll(&data);
+
+    // _ = std.os.windows.ntdll.NtClose(watched.dirHandle);
+    _ = watched;
 
     handle.join();
 }

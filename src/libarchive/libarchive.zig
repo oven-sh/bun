@@ -596,20 +596,20 @@ pub const Archive = struct {
                                         },
                                     }
                                 } else {
-                                    break :brk dir.createFileW(pathname, .{ .truncate = true, .mode = mode }) catch |err| {
+                                    break :brk (dir.createFileZ(pathname, .{ .truncate = true, .mode = mode }) catch |err| {
                                         switch (err) {
                                             error.AccessDenied, error.FileNotFound => {
                                                 dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
-                                                break :brk try dir.createFileW(pathname, .{
+                                                break :brk (try dir.createFileZ(pathname, .{
                                                     .truncate = true,
                                                     .mode = mode,
-                                                });
+                                                })).handle;
                                             },
                                             else => {
                                                 return err;
                                             },
                                         }
-                                    };
+                                    }).handle;
                                 }
                             };
                             const file_handle = bun.toLibUVOwnedFD(file_handle_native);
@@ -619,14 +619,15 @@ pub const Archive = struct {
                                 // 'bun i @mui/icons-material' takes like 20 seconds to extract
                                 // mostly spend on waiting for things to close closing
                                 //
-                                // Using Async.Closer defers closing the file to a different thread.
+                                // Using Async.Closer defers closing the file to a different thread,
+                                // which can make the NtSetInformationFile call fail.
                                 //
+                                // Using async closing doesnt actually improve end user performance
+                                // probably because our process is still waiting on AV to do it's thing.
                                 //
-                                //
-                                // The install still takes a long time but this makes it a little bit better.
-                                if (Environment.isWindows) {
-                                    // bun.Async.Closer.close(bun.uvfdcast(file_handle), loop);
-                                } else {}
+                                // But this approach does not actually solve the problem, it just
+                                // defers the close to a different thread. And since we are already
+                                // on a worker thread, that doesn't help us.
                                 _ = bun.sys.close(file_handle);
                             };
 

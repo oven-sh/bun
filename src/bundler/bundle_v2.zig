@@ -9032,9 +9032,12 @@ const LinkerContext = struct {
                 }
                 // resolve any /./ and /../ occurrences
                 // use resolvePosix since we asserted above all seps are '/'
-                const rel_path_fixed = std.fs.path.resolvePosix(c.allocator, &.{rel_path}) catch unreachable;
-
-                chunk.final_rel_path = rel_path_fixed;
+                if (std.mem.indexOf(u8, rel_path, "/./") != null) {
+                    chunk.final_rel_path = std.fs.path.resolvePosix(c.allocator, &.{rel_path}) catch unreachable;
+                    c.allocator.free(rel_path);
+                    continue;
+                }
+                chunk.final_rel_path = rel_path;
             }
         }
 

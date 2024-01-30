@@ -2999,6 +2999,7 @@ pub fn translateWinErrorToErrno(err: win32.Win32Error) bun.C.E {
         .NOT_ENOUGH_MEMORY => .NOMEM,
         .OUTOFMEMORY => .NOMEM,
         .INVALID_PARAMETER => .INVAL,
+        .ALREADY_EXISTS => .EXIST,
 
         else => |t| {
             // if (bun.Environment.isDebug) {

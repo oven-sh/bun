@@ -407,6 +407,8 @@ declare function $streamErrored(): TODO;
 declare function $streamReadable(): TODO;
 declare function $streamWaiting(): TODO;
 declare function $streamWritable(): TODO;
+declare function $stringIndexOfInternal(searchString: string, position?: number): number;
+declare function $stringSubstring(indexStart: number, indexEnd?: number): string;
 declare function $structuredCloneForStream(): TODO;
 declare function $syscall(): TODO;
 declare function $textDecoderStreamDecoder(): TODO;
@@ -538,3 +540,8 @@ declare var $Buffer: {
 declare interface Error {
   code?: string;
 }
+
+declare var $Object: {
+  $create(o: object | null): any;
+  $create(o: object | null, properties: PropertyDescriptorMap & ThisType<any>): any;
+};

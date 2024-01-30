@@ -1,9 +1,8 @@
 // @known-failing-on-windows: 1 failing
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "module";
-import Module from "module";
-import path from "path";
+import Module, { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "node:module";
+import path from "node:path";
 
 test("builtinModules exists", () => {
   expect(Array.isArray(builtinModules)).toBe(true);

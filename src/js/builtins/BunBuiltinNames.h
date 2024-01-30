@@ -150,6 +150,7 @@ using namespace JSC;
     macro(once) \
     macro(options) \
     macro(origin) \
+    macro(originalStructureID) \
     macro(overridableRequire) \
     macro(ownerReadableStream) \
     macro(parse) \
@@ -217,6 +218,7 @@ using namespace JSC;
     macro(strategySizeAlgorithm) \
     macro(stream) \
     macro(structuredCloneForStream) \
+    macro(structureChanged) \
     macro(syscall) \
     macro(textDecoderStreamDecoder) \
     macro(textDecoderStreamTransform) \

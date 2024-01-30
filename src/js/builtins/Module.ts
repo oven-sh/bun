@@ -11,8 +11,12 @@ export function require(this: CommonJSModuleRecord, id: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: CommonJSModuleRecord, id: string) {
-  const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.path, false)));
+export function overridableRequire(this: CommonJSModuleRecord, id: string, type?: { type: string }) {
+  let existing = $requireMap.$get(id);
+  if (existing === undefined) {
+    id = $resolveSync(id, this.path, false);
+    existing = $requireMap.$get(id);
+  }
   if (existing) {
     // Scenario where this is necessary:
     //
@@ -34,11 +38,9 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
     $evaluateCommonJSModule(existing);
     return existing.exports;
   }
-
   if (id.endsWith(".node")) {
     return $internalRequire(id);
   }
-
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
   const mod = $createCommonJSModule(id, {}, false, this);
@@ -49,38 +51,38 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
   //
   // Note: we do not need to wrap this in a try/catch, if it throws the C++ code will
   // clear the module from the map.
-  //
-  var out = this.$require(
-    id,
-    mod,
-    // did they pass a { type } object?
-    $argumentCount(),
-    // the object containing a "type" attribute, if they passed one
-    // maybe this will be "paths" in the future too.
-    arguments[1],
-  );
-
-  // -1 means we need to lookup the module from the ESM registry.
-  if (out === -1) {
+  if (
+    this.$require(
+      id,
+      mod,
+      // Did they pass a { type } object?
+      // Use `@argumentCount()` to avoid cloned arguments allocation.
+      $argumentCount(),
+      // The object containing a "type" attribute, if they passed one
+      // maybe this will be "paths" in the future too.
+      type,
+    ) === -1
+  ) {
+    // -1 means we need to lookup the module from the ESM registry.
     try {
-      out = $requireESM(id);
+      $requireESM(id);
     } catch (exception) {
       // Since the ESM code is mostly JS, we need to handle exceptions here.
       $requireMap.$delete(id);
       throw exception;
     }
-
     const esm = Loader.registry.$get(id);
-
     // If we can pull out a ModuleNamespaceObject, let's do it.
-    if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
+    if (esm && esm.evaluated && (esm.state ?? 0) >= $ModuleReady) {
       const namespace = Loader.getModuleNamespaceObject(esm!.module);
-      return (mod.exports =
-        // if they choose a module
-        namespace.__esModule ? namespace : Object.create(namespace, { __esModule: { value: true } }));
+      const exports = namespace.__esModule
+        ? // If they choose a module.
+          namespace
+        : $Object.$create(namespace, { __esModule: { value: true } });
+      mod.exports = exports;
+      return exports;
     }
   }
-
   $evaluateCommonJSModule(mod);
   return mod.exports;
 }
@@ -93,7 +95,7 @@ export function requireResolve(this: string | { path: string }, id: string) {
 $visibility = "Private";
 export function requireNativeModule(id: string) {
   let esm = Loader.registry.$get(id);
-  if (esm?.evaluated && (esm.state ?? 0) >= $ModuleReady) {
+  if (esm && esm.evaluated && (esm.state ?? 0) >= $ModuleReady) {
     const exports = Loader.getModuleNamespaceObject(esm.module);
     return exports.default;
   }

@@ -692,7 +692,9 @@ const Task = struct {
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpStackTrace(trace.*);
+                            _ = trace; // autofix
+
+                            // std.debug.dumpStackTrace(trace.*);
                         }
                     }
 
@@ -5086,7 +5088,7 @@ pub const PackageManager = struct {
                                 },
                             );
                         } else if (comptime log_level != .silent) {
-                            const fmt = "<r><red>error<r>: {s} extracting tarball for <b>{s}<r>";
+                            const fmt = "<r><red>error<r>: {s} extracting tarball for <b>{s}<r>\n";
                             const args = .{
                                 @errorName(err),
                                 alias,
@@ -9362,13 +9364,10 @@ pub const PackageManager = struct {
             }
         }
 
-        switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| {
-                try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
-            },
-        }
-
+        try manager.log.printForLogLevel(Output.errorWriter());
         if (manager.log.hasErrors()) Global.crash();
+
+        manager.log.reset();
 
         // This operation doesn't perform any I/O, so it should be relatively cheap.
         manager.lockfile = try manager.lockfile.cleanWithLogger(
@@ -9505,6 +9504,9 @@ pub const PackageManager = struct {
                 log_level,
             );
         }
+
+        try manager.log.printForLogLevel(Output.errorWriter());
+        if (manager.log.hasErrors()) Global.crash();
 
         if (needs_new_lockfile) {
             manager.summary.add = @as(u32, @truncate(manager.lockfile.packages.len));

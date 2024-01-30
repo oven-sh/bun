@@ -222,7 +222,8 @@ pub const WindowsWatcher = struct {
     // each directory being watched has an associated DirWatcher
     const DirWatcher = extern struct {
         // this must be the first field because we retrieve the DirWatcher from a pointer to its overlapped field
-        overlapped: w.OVERLAPPED = undefined,
+        // also, even though it is never read or written, it must be initialized to zero, otherwise ReadDirectoryChangesW will fail with INVALID_HANDLE
+        overlapped: w.OVERLAPPED = std.mem.zeroes(w.OVERLAPPED),
         buf: [64 * 1024]u8 align(@alignOf(w.FILE_NOTIFY_INFORMATION)) = undefined,
         dirHandle: w.HANDLE,
         watch_subtree: w.BOOLEAN = 1,
@@ -328,8 +329,9 @@ pub const WindowsWatcher = struct {
             @panic("failed to open directory for watching");
         }
 
-        errdefer _ = w.kernel32.CloseHandle(handle);
+        // errdefer _ = w.kernel32.CloseHandle(handle);
 
+        // TODO atomic update
         this.iocp = try w.CreateIoCompletionPort(handle, this.iocp, 0, 1);
 
         const watcher = try this.allocator.create(DirWatcher);
@@ -339,6 +341,8 @@ pub const WindowsWatcher = struct {
         std.debug.print("handle: {d}\n", .{@intFromPtr(handle)});
 
         try watcher.prepare();
+
+        // TODO signal the watcher loop thread to start reading from the new iocp
         return watcher;
     }
 
@@ -786,17 +790,18 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
             } else if (Environment.isWindows) {
-                while (true) {
-                    const watcher = try this.platform.next();
-                    // after handling the watcher's events, it explicitly needs to start reading directory changes again
-                    defer watcher.prepare() catch |err| {
-                        Output.prettyErrorln("Failed to (re-)start listening to directory changes: {s}", .{@errorName(err)});
-                    };
-                    var iter = watcher.events();
-                    while (iter.next()) |event| {
-                        std.debug.print("filename: {}, action: {s}\n", .{ std.unicode.fmtUtf16le(event.filename), @tagName(event.action) });
-                    }
-                }
+                while (true) {}
+                // while (true) {
+                //     const watcher = try this.platform.next();
+                //     // after handling the watcher's events, it explicitly needs to start reading directory changes again
+                //     defer watcher.prepare() catch |err| {
+                //         Output.prettyErrorln("Failed to (re-)start listening to directory changes: {s}", .{@errorName(err)});
+                //     };
+                //     var iter = watcher.events();
+                //     while (iter.next()) |event| {
+                //         std.debug.print("filename: {}, action: {s}\n", .{ std.unicode.fmtUtf16le(event.filename), @tagName(event.action) });
+                //     }
+                // }
             }
         }
 

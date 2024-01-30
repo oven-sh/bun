@@ -1061,25 +1061,36 @@ pub const PackageInstall = struct {
         var package_json_checker = json_parser.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
         _ = package_json_checker.parseExpr() catch return false;
         if (!package_json_checker.has_found_name or !package_json_checker.has_found_version or log.errors > 0) return false;
-
+        const found_version = package_json_checker.found_version;
         // Check if the version matches
-        if (!strings.eql(package_json_checker.found_version, this.package_version)) {
-            // If it doesn't match, check again but with a leading "v" removed
-            //    v1.0.7
-            //     1.0.7
-            //    ^
-            //    ignore the v
-            if (!(package_json_checker.found_version.len == this.package_version.len + 1 and
-                package_json_checker.found_version[0] == 'v' and
-                strings.eqlLong(
-                package_json_checker.found_version[1..],
-                this.package_version,
-                // avoid checking the length an extra time
-                false,
-            ))) {
-                // if it still doesn't match, return false.
+        if (!strings.eql(found_version, this.package_version)) {
+            const offset = brk: {
+                // ASCII only.
+                for (0..found_version.len) |c| {
+                    switch (found_version[c]) {
+                        // newlines & whitespace
+                        ' ',
+                        '\t',
+                        '\n',
+                        '\r',
+                        std.ascii.control_code.vt,
+                        std.ascii.control_code.ff,
+
+                        // version separators
+                        'v',
+                        '=',
+                        => {},
+                        else => {
+                            break :brk c;
+                        },
+                    }
+                }
+                // If we didn't find any of these characters, there's no point in checking the version again.
+                // it will never match.
                 return false;
-            }
+            };
+
+            if (!strings.eql(found_version[offset..], this.package_version)) return false;
         }
 
         // lastly, check the name.

@@ -59,13 +59,11 @@ update_repo_if_needed() {
     done
 
     printf "Zig was updated to ${zig_version}. Please commit new files."
-
-    # symlink extracted zig to  extracted zig.exe
-    # TODO: Workaround for https://github.com/ziglang/vscode-zig/issues/164
-    ln -sf "${extract_at}/zig" "${extract_at}/zig.exe"
-    chmod +x "${extract_at}/zig.exe"
-
   fi
+  # symlink extracted zig to  extracted zig.exe
+  # TODO: Workaround for https://github.com/ziglang/vscode-zig/issues/164
+  ln -sf "${extract_at}/zig" "${extract_at}/zig.exe"
+  chmod +x "${extract_at}/zig.exe"
 }
 
 if [ -e "${extract_at}/.version" ]; then

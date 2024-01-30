@@ -312,23 +312,23 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`PerformanceEntry`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceEntry)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceMark`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMark)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceMeasure`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMeasure)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceObserver`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceObserverEntryList`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserverEntryList)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceResourceTiming`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceResourceTiming)
 
@@ -356,11 +356,11 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`ReadableStreamBYOBReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBReader)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`ReadableStreamBYOBRequest`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBRequest)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`ReadableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultController)
 

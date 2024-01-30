@@ -555,6 +555,7 @@ pub const CreateCommand = struct {
                         package_json_contents = try MutableString.init(ctx.allocator, size);
                         package_json_contents.list.expandToCapacity();
 
+                        const prev_file_pos = if (comptime Environment.isWindows) try pkg.getPos() else 0;
                         _ = pkg.preadAll(package_json_contents.list.items, 0) catch |err| {
                             package_json_file = null;
 
@@ -565,6 +566,7 @@ pub const CreateCommand = struct {
                             Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
                             break :read_package_json;
                         };
+                        if (comptime Environment.isWindows) try pkg.seekTo(prev_file_pos);
                         // The printer doesn't truncate, so we must do so manually
                         std.os.ftruncate(pkg.handle, 0) catch {};
 

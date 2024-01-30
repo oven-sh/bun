@@ -130,6 +130,11 @@ pub const PlatformIOVec = if (Environment.isWindows)
 else
     std.os.iovec;
 
+pub const PlatformIOVecConst = if (Environment.isWindows)
+    windows.libuv.uv_buf_t
+else
+    std.os.iovec_const;
+
 pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
     if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
     if (Environment.allow_assert) {
@@ -138,6 +143,16 @@ pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
         }
     }
     return .{ .iov_len = @intCast(input.len), .iov_base = @constCast(input.ptr) };
+}
+
+pub fn platformIOVecConstCreate(input: []const u8) PlatformIOVecConst {
+    if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
+    if (Environment.allow_assert) {
+        if (input.len > @as(usize, std.math.maxInt(u32))) {
+            Output.debugWarn("call to bun.PlatformIOVecConst.init with length larger than u32, this will overflow on windows", .{});
+        }
+    }
+    return .{ .iov_len = @intCast(input.len), .iov_base = input.ptr };
 }
 
 pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {
@@ -1422,7 +1437,10 @@ pub fn reloadProcess(
         actions.inherit(posix.STDIN_FD) catch unreachable;
         actions.inherit(posix.STDOUT_FD) catch unreachable;
         actions.inherit(posix.STDERR_FD) catch unreachable;
+
         var attrs = PosixSpawn.Attr.init() catch unreachable;
+        attrs.resetSignals() catch {};
+
         attrs.set(
             C.POSIX_SPAWN_CLOEXEC_DEFAULT |
                 // Apple Extension: If this bit is set, rather
@@ -1438,13 +1456,22 @@ pub fn reloadProcess(
             },
             .result => |_| {},
         }
-    } else {
+    } else if (comptime Environment.isPosix) {
+        const on_before_reload_process_linux = struct {
+            pub extern "C" fn on_before_reload_process_linux() void;
+        }.on_before_reload_process_linux;
+
+        on_before_reload_process_linux();
         const err = std.os.execveZ(
             exec_path,
             newargv,
             envp,
         );
         Output.panic("Unexpected error while reloading: {s}", .{@errorName(err)});
+    } else if (comptime Environment.isWindows) {
+        @panic("TODO on Windows!");
+    } else {
+        @panic("Unsupported platform");
     }
 }
 pub var auto_reload_on_crash = false;

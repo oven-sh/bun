@@ -107,9 +107,9 @@ async function runTest(path) {
 
   const expected_crash_reason = windows
     ? await readFile(resolve(path), "utf-8").then(data => {
-        const match = data.match(/@known-failing-on-windows:(.*)\n/);
-        return match ? match[1].trim() : null;
-      })
+      const match = data.match(/@known-failing-on-windows:(.*)\n/);
+      return match ? match[1].trim() : null;
+    })
     : null;
 
   const start = Date.now();
@@ -195,8 +195,7 @@ async function runTest(path) {
   }
 
   console.log(
-    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${
-      passed ? "\x1b[32m✔" : expected_crash_reason ? "\x1b[33m⚠" : "\x1b[31m✖"
+    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${passed ? "\x1b[32m✔" : expected_crash_reason ? "\x1b[33m⚠" : "\x1b[31m✖"
     } ${name}\x1b[0m${reason ? ` (${reason})` : ""}`,
   );
 
@@ -320,10 +319,9 @@ console.log("\n" + "-".repeat(Math.min(process.stdout.columns || 40, 80)) + "\n"
 console.log(header);
 console.log("\n" + "-".repeat(Math.min(process.stdout.columns || 40, 80)) + "\n");
 
-let report = `# bun test on ${
-  process.env["GITHUB_REF"] ??
+let report = `# bun test on ${process.env["GITHUB_REF"] ??
   spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf-8" }).stdout.trim()
-}
+  }
 
 \`\`\`
 ${header}
@@ -347,8 +345,7 @@ if (regressions.length > 0) {
   report += regressions
     .map(
       ({ path, reason, expected_crash_reason }) =>
-        `- [\`${path}\`](${sectionLink(path)}) ${reason}${
-          expected_crash_reason ? ` (expected: ${expected_crash_reason})` : ""
+        `- [\`${path}\`](${sectionLink(path)}) ${reason}${expected_crash_reason ? ` (expected: ${expected_crash_reason})` : ""
         }`,
     )
     .join("\n");
@@ -403,18 +400,14 @@ console.log("-> test-report.md, test-report.json");
 
 if (ci) {
   if (windows) {
-    if (regressions.length > 0) {
-      action.setFailed(`${regressions.length} regressing tests`);
-    }
     action.setOutput("regressing_tests", regressions.map(({ path }) => `- \`${path}\``).join("\n"));
     action.setOutput("regressing_test_count", regressions.length);
-  } else {
-    if (failing_tests.length > 0) {
-      action.setFailed(`${failing_tests.length} files with failing tests`);
-    }
-    action.setOutput("failing_tests", failingTestDisplay);
-    action.setOutput("failing_tests_count", failing_tests.length);
   }
+  if (failing_tests.length > 0) {
+    action.setFailed(`${failing_tests.length} files with failing tests`);
+  }
+  action.setOutput("failing_tests", failingTestDisplay);
+  action.setOutput("failing_tests_count", failing_tests.length);
   let truncated_report = report;
   if (truncated_report.length > 512 * 1000) {
     truncated_report = truncated_report.slice(0, 512 * 1000) + "\n\n...truncated...";

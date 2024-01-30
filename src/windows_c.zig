@@ -1269,6 +1269,12 @@ pub fn renameAtW(
     new_path_w: []const u16,
     replace_if_exists: bool,
 ) Maybe(void) {
+    if (comptime bun.Environment.allow_assert) {
+        // if the directories are the same and the destination path is absolute, the old path name is kept
+        if (old_dir_fd == new_dir_fd) {
+            std.debug.assert(!std.fs.path.isAbsoluteWindowsWTF16(new_path_w));
+        }
+    }
     const src_fd = switch (bun.sys.ntCreateFile(
         old_dir_fd,
         old_path_w,

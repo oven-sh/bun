@@ -455,7 +455,7 @@ pub const WatchEvent = struct {
     };
 };
 
-const WatchItem = struct {
+pub const WatchItem = struct {
     file_path: string,
     // filepath hash for quick comparison
     hash: u32,
@@ -488,7 +488,8 @@ const WatchItem = struct {
 
     pub const Kind = enum { file, directory };
 };
-const Watchlist = std.MultiArrayList(WatchItem);
+
+pub const Watchlist = std.MultiArrayList(WatchItem);
 
 pub fn NewWatcher(comptime ContextType: type) type {
     return struct {

@@ -2938,7 +2938,7 @@ pub const Win32Error = enum(u16) {
     }
 
     pub fn toSystemErrno(this: Win32Error) ?SystemErrno {
-        return SystemErrno.init(this);
+        return SystemErrno.init(@intFromEnum(translateWinErrorToErrno(@enumFromInt(@intFromEnum(this)))));
     }
 
     pub fn fromNTStatus(status: win32.NTSTATUS) Win32Error {

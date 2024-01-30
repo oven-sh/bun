@@ -704,7 +704,7 @@ pub const SystemErrno = enum(u16) {
         if (comptime @TypeOf(code) == Win32Error) {
             return switch (code) {
                 Win32Error.NOACCESS => SystemErrno.EACCES,
-                @as(Win32Error, @enumFromInt(10013)) => SystemErrno.EACCES,
+                Win32Error.WSAEACCES => SystemErrno.EACCES,
                 Win32Error.ELEVATION_REQUIRED => SystemErrno.EACCES,
                 Win32Error.CANT_ACCESS_FILE => SystemErrno.EACCES,
                 Win32Error.ADDRESS_ALREADY_ASSOCIATED => SystemErrno.EADDRINUSE,
@@ -1314,6 +1314,11 @@ pub fn moveOpenedFileAt(
     // STATUS_NOT_SUPPORTED or (2) only setting IGNORE_READONLY_ATTRIBUTE when >= rs5
     // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
     comptime std.debug.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+
+    if (bun.Environment.allow_assert) {
+        std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '\\') == null); // Call moveOpenedFileAtLoose
+        std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '/') == null); // Call moveOpenedFileAtLoose
+    }
 
     const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + (bun.MAX_PATH_BYTES - 1);
     var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION_EX)) = undefined;

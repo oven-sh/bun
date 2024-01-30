@@ -356,7 +356,7 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
   return new Proxy(internalEnv, {
     get(_, p) {
       return typeof p === "string" ? Reflect.get(internalEnv, p.toUpperCase()) : undefined;
-    },  
+    },
     set(_, p, value) {
       var k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
@@ -386,5 +386,5 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       // .slice() because paranoia that there is a way to call this without the engine cloning it for us
       return envMapList.slice();
     },
-  })
+  });
 }

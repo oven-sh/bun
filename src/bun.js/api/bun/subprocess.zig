@@ -731,6 +731,10 @@ pub const Subprocess = struct {
             if (comptime Environment.isWindows) {
                 if (std.os.windows.kernel32.TerminateProcess(this.pid.process_handle, @intCast(sig)) == 0) {
                     const err = bun.windows.getLastErrno();
+                    if (comptime Environment.allow_assert) {
+                        std.debug.assert(err != .UNKNOWN);
+                    }
+
                     // if the process was already killed don't throw
                     //
                     // "After a process has terminated, call to TerminateProcess with open

@@ -2938,7 +2938,7 @@ pub const Win32Error = enum(u16) {
     }
 
     pub fn toSystemErrno(this: Win32Error) ?SystemErrno {
-        return SystemErrno.init(@intFromEnum(translateWinErrorToErrno(@enumFromInt(@intFromEnum(this)))));
+        return SystemErrno.init(this);
     }
 
     pub fn fromNTStatus(status: win32.NTSTATUS) Win32Error {
@@ -2985,28 +2985,7 @@ pub extern "kernel32" fn SetFileInformationByHandle(
 ) BOOL;
 
 pub fn getLastErrno() bun.C.E {
-    return translateWinErrorToErrno(bun.windows.kernel32.GetLastError());
-}
-
-pub fn translateWinErrorToErrno(err: win32.Win32Error) bun.C.E {
-    return switch (err) {
-        .SUCCESS => .SUCCESS,
-        .FILE_NOT_FOUND => .NOENT,
-        .PATH_NOT_FOUND => .NOENT,
-        .TOO_MANY_OPEN_FILES => .NOMEM,
-        .ACCESS_DENIED => .PERM,
-        .INVALID_HANDLE => .BADF,
-        .NOT_ENOUGH_MEMORY => .NOMEM,
-        .OUTOFMEMORY => .NOMEM,
-        .INVALID_PARAMETER => .INVAL,
-
-        else => |t| {
-            // if (bun.Environment.isDebug) {
-            bun.Output.warn("Called translateWinErrorToErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
-            // }
-            return .UNKNOWN;
-        },
-    };
+    return (bun.C.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
 }
 
 pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {

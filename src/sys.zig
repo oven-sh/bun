@@ -271,11 +271,11 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
         .windows => {
             var wbuf: bun.WPathBuffer = undefined;
-            const rc = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
-            return if (rc != 0)
-                Maybe(void).success
-            else
-                Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
+            return Maybe(void).errnoSysP(
+                kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null),
+                .mkdir,
+                file_path,
+            ) orelse Maybe(void).success;
         },
 
         else => @compileError("mkdir is not implemented on this platform"),
@@ -303,11 +303,11 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
 
     if (comptime Environment.isWindows) {
         var wbuf: bun.WPathBuffer = undefined;
-        const rc = kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null);
-        return if (rc != 0)
-            Maybe(void).success
-        else
-            Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
+        return Maybe(void).errnoSysP(
+            kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null),
+            .mkdir,
+            file_path,
+        ) orelse Maybe(void).success;
     }
 }
 
@@ -315,11 +315,10 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
-            const rc = kernel32.CreateDirectoryW(file_path, null);
-            return if (rc != 0)
-                Maybe(void).success
-            else
-                Maybe(void).errnoSys(rc, .mkdir) orelse Maybe(void).success;
+            return Maybe(void).errnoSys(
+                kernel32.CreateDirectoryW(file_path, null),
+                .mkdir,
+            ) orelse Maybe(void).success;
         },
     };
 }

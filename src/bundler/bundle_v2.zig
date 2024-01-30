@@ -9025,7 +9025,7 @@ const LinkerContext = struct {
                 chunk.template.placeholder.hash = chunk.isolated_hash;
 
                 const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
-                platformToUnixInPlace(rel_path);
+                bun.path.platformToPosixInPlace(rel_path);
                 if ((try path_names_map.getOrPut(rel_path)).found_existing) {
                     try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Multiple files share the same output path: {s}", .{rel_path});
                     return error.DuplicateOutputPath;
@@ -11318,7 +11318,7 @@ pub const Chunk = struct {
                                     else => unreachable,
                                 };
                                 // normalize windows paths to '/'
-                                platformToUnixInPlace(@constCast(file_path));
+                                bun.path.platformToPosixInPlace(@constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)
@@ -11724,11 +11724,4 @@ fn targetFromHashbang(buffer: []const u8) ?options.Target {
     }
 
     return null;
-}
-
-fn platformToUnixInPlace(path_buffer: []u8) void {
-    if (std.fs.path.sep == '/') return;
-    for (path_buffer) |*c| {
-        if (c.* == std.fs.path.sep) c.* = '/';
-    }
 }

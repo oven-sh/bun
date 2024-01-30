@@ -185,10 +185,16 @@ pub const Process = struct {
         return this.status.signalCode();
     }
 
-    pub fn wait(this: *Process, sync: bool) void {
+    pub fn waitPosix(this: *Process, sync: bool) void {
         var rusage = std.mem.zeroes(Rusage);
         const waitpid_result = PosixSpawn.wait4(this.pid, if (sync) 0 else std.os.W.NOHANG, &rusage);
         this.onWaitPid(&waitpid_result, &rusage);
+    }
+
+    pub fn wait(this: *Process, sync: bool) void {
+        if (comptime Environment.isPosix) {
+            this.waitPosix(sync);
+        } else if (comptime Environment.isWindows) {}
     }
 
     pub fn onWaitPidFromWaiterThread(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult)) void {
@@ -526,19 +532,19 @@ pub const PollerPosix = union(enum) {
     detached: void,
 
     pub fn deinit(this: *PollerPosix) void {
-        if (this.poller == .fd) {
-            this.poller.fd.deinit();
-        } else if (this.poller == .waiter_thread) {
-            this.poller.waiter_thread.disable();
+        if (this.* == .fd) {
+            this.fd.deinit();
+        } else if (this.* == .waiter_thread) {
+            this.waiter_thread.disable();
         }
     }
 
     pub fn enableKeepingEventLoopAlive(this: *Poller, event_loop: JSC.EventLoopHandle) void {
         switch (this.*) {
             .fd => |poll| {
-                poll.enableKeepingEventLoopAlive(event_loop);
+                poll.enableKeepingProcessAlive(event_loop);
             },
-            .waiter_thread => |waiter| {
+            .waiter_thread => |*waiter| {
                 waiter.ref(event_loop);
             },
             else => {},
@@ -548,9 +554,9 @@ pub const PollerPosix = union(enum) {
     pub fn disableKeepingEventLoopAlive(this: *PollerPosix, event_loop: JSC.EventLoopHandle) void {
         switch (this.*) {
             .fd => |poll| {
-                poll.disableKeepingEventLoopAlive(event_loop);
+                poll.disableKeepingProcessAlive(event_loop);
             },
-            .waiter_thread => |waiter| {
+            .waiter_thread => |*waiter| {
                 waiter.unref(event_loop);
             },
             else => {},
@@ -559,7 +565,7 @@ pub const PollerPosix = union(enum) {
 
     pub fn hasRef(this: *const PollerPosix) bool {
         return switch (this.*) {
-            .fd => this.fd.hasRef(),
+            .fd => this.fd.canEnableKeepingProcessAlive(),
             .waiter_thread => this.waiter_thread.isActive(),
             else => false,
         };

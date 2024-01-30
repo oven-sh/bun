@@ -35,137 +35,15 @@ pub const LifecycleScriptSubprocess = struct {
 
     const uv = bun.windows.libuv;
 
-    const PosixOutputReader = struct {
-        poll: *Async.FilePoll = undefined,
-        buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
-        is_done: bool = false,
+    pub const OutputReader = bun.io.BufferedOutputReader(LifecycleScriptSubprocess, null);
 
-        // This is a workaround for "Dependency loop detected"
-        parent: *LifecycleScriptSubprocess = undefined,
+    pub fn loop(this: *const LifecycleScriptSubprocess) *bun.uws.Loop {
+        return this.manager.event_loop.loop();
+    }
 
-        pub usingnamespace bun.io.PipeReader(
-            @This(),
-            getFd,
-            getBuffer,
-            null,
-            registerPoll,
-            done,
-            onError,
-        );
-
-        pub fn getFd(this: *PosixOutputReader) bun.FileDescriptor {
-            return this.poll.fd;
-        }
-
-        pub fn getBuffer(this: *PosixOutputReader) *std.ArrayList(u8) {
-            return &this.buffer;
-        }
-
-        fn finish(this: *PosixOutputReader) void {
-            this.poll.flags.insert(.ignore_updates);
-            this.subprocess().manager.event_loop.putFilePoll(this.poll);
-            std.debug.assert(!this.is_done);
-            this.is_done = true;
-        }
-
-        pub fn done(this: *PosixOutputReader) void {
-            this.finish();
-            this.subprocess().onOutputDone();
-        }
-
-        pub fn onError(this: *PosixOutputReader, err: bun.sys.Error) void {
-            this.finish();
-            this.subprocess().onOutputError(err);
-        }
-
-        pub fn registerPoll(this: *PosixOutputReader) void {
-            switch (this.poll.register(this.subprocess().manager.event_loop.loop(), .readable, true)) {
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to register poll for <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
-                        this.subprocess().scriptName(),
-                        this.subprocess().package_name,
-                        err.errno,
-                        @tagName(err.getErrno()),
-                    });
-                },
-                .result => {},
-            }
-        }
-
-        pub inline fn subprocess(this: *PosixOutputReader) *LifecycleScriptSubprocess {
-            return this.parent;
-        }
-
-        pub fn start(this: *PosixOutputReader) JSC.Maybe(void) {
-            const maybe = this.poll.register(this.subprocess().manager.event_loop.loop(), .readable, true);
-            if (maybe != .result) {
-                return maybe;
-            }
-
-            this.read();
-
-            return .{
-                .result = {},
-            };
-        }
-    };
-
-    const WindowsOutputReader = struct {
-        pipe: uv.Pipe = std.mem.zeroes(uv.Pipe),
-        buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
-        is_done: bool = false,
-
-        // This is a workaround for "Dependency loop detected"
-        parent: *LifecycleScriptSubprocess = undefined,
-
-        pub usingnamespace bun.io.PipeReader(
-            @This(),
-            {},
-            getBuffer,
-            null,
-            null,
-            done,
-            onError,
-        );
-
-        pub fn getBuffer(this: *WindowsOutputReader) *std.ArrayList(u8) {
-            return &this.buffer;
-        }
-
-        fn finish(this: *WindowsOutputReader) void {
-            std.debug.assert(!this.is_done);
-            this.is_done = true;
-        }
-
-        pub fn done(this: *WindowsOutputReader) void {
-            std.debug.assert(this.pipe.isClosed());
-
-            this.finish();
-            this.subprocess().onOutputDone();
-        }
-
-        pub fn onError(this: *WindowsOutputReader, err: bun.sys.Error) void {
-            this.finish();
-            this.subprocess().onOutputError(err);
-        }
-
-        pub inline fn subprocess(this: *WindowsOutputReader) *LifecycleScriptSubprocess {
-            return this.parent;
-        }
-
-        pub fn getReadBufferWithStableMemoryAddress(this: *WindowsOutputReader, suggested_size: usize) []u8 {
-            this.buffer.ensureUnusedCapacity(suggested_size) catch bun.outOfMemory();
-            return this.buffer.allocatedSlice()[this.buffer.items.len..];
-        }
-
-        pub fn start(this: *WindowsOutputReader) JSC.Maybe(void) {
-            this.buffer.clearRetainingCapacity();
-            this.is_done = false;
-            return this.startReading();
-        }
-    };
-
-    pub const OutputReader = if (Environment.isPosix) PosixOutputReader else WindowsOutputReader;
+    pub fn eventLoop(this: *const LifecycleScriptSubprocess) *JSC.AnyEventLoop {
+        return &this.manager.event_loop;
+    }
 
     pub fn scriptName(this: *const LifecycleScriptSubprocess) []const u8 {
         std.debug.assert(this.current_script_index < Lockfile.Scripts.names.len);

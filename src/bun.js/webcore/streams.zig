@@ -4154,7 +4154,7 @@ pub fn NewFIFO(comptime EventLoop: JSC.EventLoopKind) type {
     return struct {
         buf: []u8 = &[_]u8{},
         view: JSC.Strong = .{},
-        poll_ref: ?*Async.FilePoll = null,
+
         fd: bun.FileDescriptor = bun.invalid_fd,
         to_read: ?u32 = null,
         close_on_empty_read: bool = false,
@@ -4165,7 +4165,6 @@ pub fn NewFIFO(comptime EventLoop: JSC.EventLoopKind) type {
             .result = .{ .done = {} },
         },
         signal: JSC.WebCore.Signal = .{},
-        is_first_read: bool = true,
         has_adjusted_pipe_size_on_linux: bool = false,
         drained: bool = true,
 

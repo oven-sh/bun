@@ -166,7 +166,7 @@ pub const FilePoll = struct {
     const Process = bun.spawn.Process;
     const Subprocess = JSC.Subprocess;
     const BufferedInput = Subprocess.BufferedInput;
-    const BufferedOutput = Subprocess.BufferedOutput;
+    const BufferedOutput = Subprocess.StreamingOutput;
     const DNSResolver = JSC.DNS.DNSResolver;
     const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
     const Deactivated = opaque {
@@ -376,7 +376,7 @@ pub const FilePoll = struct {
                 loader.onMachportChange();
             },
 
-            @field(Owner.Tag, "PosixOutputReader") => {
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(LifecycleScriptSubprocessOutputReader))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) OutputReader", .{poll.fd});
                 var output: *LifecycleScriptSubprocessOutputReader = ptr.as(LifecycleScriptSubprocessOutputReader);
                 output.onPoll(size_or_offset);

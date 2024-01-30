@@ -1279,7 +1279,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         }
 
         pub fn wait(this: *@This(), sync: bool) void {
-            return this.process.wait(sync);
+            return this.process.waitPosix(sync);
         }
 
         pub fn onProcessExit(this: *@This(), _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {

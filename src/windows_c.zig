@@ -701,8 +701,8 @@ pub const SystemErrno = enum(u16) {
             }
         }
 
-        if (comptime @TypeOf(code) == Win32Error) {
-            return switch (code) {
+        if (comptime @TypeOf(code) == Win32Error or @TypeOf(code) == std.os.windows.Win32Error) {
+            return switch (@as(Win32Error, @enumFromInt(@intFromEnum(code)))) {
                 Win32Error.NOACCESS => SystemErrno.EACCES,
                 Win32Error.WSAEACCES => SystemErrno.EACCES,
                 Win32Error.ELEVATION_REQUIRED => SystemErrno.EACCES,
@@ -803,7 +803,7 @@ pub const SystemErrno = enum(u16) {
                 Win32Error.META_EXPANSION_TOO_LONG => SystemErrno.E2BIG,
                 Win32Error.WSAESOCKTNOSUPPORT => SystemErrno.ESOCKTNOSUPPORT,
                 Win32Error.DELETE_PENDING => SystemErrno.EBUSY,
-                else => return null,
+                else => null,
             };
         }
 

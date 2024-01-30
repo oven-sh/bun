@@ -271,7 +271,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
         .windows => {
             var wbuf: bun.WPathBuffer = undefined;
-            return Maybe(void).errnoSysWin32P(
+            return Maybe(void).errnoSysP(
                 kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null),
                 .mkdir,
                 file_path,
@@ -303,7 +303,7 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
 
     if (comptime Environment.isWindows) {
         var wbuf: bun.WPathBuffer = undefined;
-        return Maybe(void).errnoSysWin32P(
+        return Maybe(void).errnoSysP(
             kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null),
             .mkdir,
             file_path,
@@ -315,7 +315,7 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
-            return Maybe(void).errnoSysWin32(
+            return Maybe(void).errnoSys(
                 kernel32.CreateDirectoryW(file_path, null),
                 .mkdir,
             ) orelse Maybe(void).success;

@@ -193,41 +193,11 @@ pub fn Maybe(comptime ResultType: type) type {
                 },
             };
         }
-
-        pub inline fn errnoSysWin32(rc: bun.windows.BOOL, syscall: Syscall.Tag) ?@This() {
-            if (rc != 0) return null;
-            return switch (bun.windows.getLastErrno()) {
-                .SUCCESS => null,
-                else => |err| @This(){
-                    .err = .{
-                        .errno = translateToErrInt(err),
-                        .syscall = syscall,
-                    },
-                },
-            };
-        }
-
-        pub inline fn errnoSysWin32P(rc: bun.windows.BOOL, syscall: Syscall.Tag, path: anytype) ?@This() {
-            if (std.meta.Child(@TypeOf(path)) == u16) {
-                @compileError("Do not pass WString path to errnoSysWin32P, it needs the path encoded as utf8");
-            }
-            if (rc != 0) return null;
-            return switch (bun.windows.getLastErrno()) {
-                .SUCCESS => null,
-                else => |err| @This(){
-                    .err = .{
-                        .errno = translateToErrInt(err),
-                        .syscall = syscall,
-                    },
-                },
-            };
-        }
     };
 }
 
 fn translateToErrInt(err: anytype) bun.sys.Error.Int {
     return switch (@TypeOf(err)) {
-        bun.windows.Win32Error => @intFromEnum(bun.windows.translateWinErrorToErrno(err)),
         bun.windows.NTSTATUS => @intFromEnum(bun.windows.translateNTStatusToErrno(err)),
         else => @truncate(@intFromEnum(err)),
     };

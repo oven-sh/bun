@@ -66,6 +66,7 @@
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
+#include "PathInlines.h"
 
 extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
 
@@ -469,7 +470,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     JSSourceCode* jsSourceCode = JSSourceCode::create(vm, WTFMove(sourceCode));
     moduleObject->sourceCode.set(vm, moduleObject, jsSourceCode);
 
-    auto index = filenameString.reverseFind('/', filenameString.length());
+    auto index = filenameString.reverseFind(PLATFORM_SEP, filenameString.length());
     String dirnameString;
     if (index != WTF::notFound) {
         dirnameString = filenameString.substring(0, index);
@@ -621,10 +622,14 @@ JSCommonJSModule* JSCommonJSModule::create(
 {
     auto& vm = globalObject->vm();
     JSString* requireMapKey = JSC::jsStringWithCache(vm, key);
-    auto index = key.reverseFind('/', key.length());
-    JSString* dirname = jsEmptyString(vm);
+
+    auto index = key.reverseFind(PLATFORM_SEP, key.length());
+
+    JSString* dirname;
     if (index != WTF::notFound) {
         dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+    } else {
+        dirname = jsEmptyString(vm);
     }
 
     auto* out = JSCommonJSModule::create(
@@ -918,7 +923,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
     BunString typeAttributeStr = { BunStringTag::Dead };
     String typeAttribute = String();
 
-
     // We need to be able to wire in the "type" import attribute from bundled code..
     // so we do it via CommonJS require().
     int32_t previousArgumentCount = callframe->argument(2).asInt32();
@@ -1019,11 +1023,13 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     if (!moduleObject) {
         auto& vm = globalObject->vm();
         auto* requireMapKey = jsStringWithCache(vm, sourceURL);
-        auto index = sourceURL.reverseFind('/', sourceURL.length());
-        JSString* dirname = jsEmptyString(vm);
+        auto index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
+        JSString* dirname;
         JSString* filename = requireMapKey;
         if (index != WTF::notFound) {
             dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+        } else {
+            dirname = jsEmptyString(vm);
         }
 
         moduleObject = JSCommonJSModule::create(
@@ -1089,10 +1095,12 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     JSString* filename = JSC::jsStringWithCache(vm, pathString);
-    auto index = pathString.reverseFind('/', pathString.length());
-    JSString* dirname = jsEmptyString(vm);
+    auto index = pathString.reverseFind(PLATFORM_SEP, pathString.length());
+    JSString* dirname;
     if (index != WTF::notFound) {
         dirname = JSC::jsSubstring(globalObject, filename, 0, index);
+    } else {
+        dirname = jsEmptyString(vm);
     }
 
     auto moduleObject = Bun::JSCommonJSModule::create(

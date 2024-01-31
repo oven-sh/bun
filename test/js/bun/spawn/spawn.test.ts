@@ -94,8 +94,9 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-<<<<<<< Updated upstream
-      it("Uint8Array works as stdin", async () => {
+      <<<<<<< Updated upstream
+      it("Uint8Array works as stdin", async () =>
+      {
         rmSync("/tmp/out.123.txt", { force: true });
         gcTick();
         const { exited } = spawn({
@@ -107,8 +108,9 @@ for (let [gcTick, label] of [
         await exited;
         expect(require("fs").readFileSync("/tmp/out.123.txt", "utf8")).toBe(hugeString);
         gcTick();
-      });
-=======
+      }
+      )
+      =======
       // it("Uint8Array works as stdin", async () => {
       //   rmSync("/tmp/out.123.txt", { force: true });
       //   gcTick();
@@ -127,7 +129,8 @@ for (let [gcTick, label] of [
       // });
 >>>>>>> Stashed changes
 
-      it("check exit code", async () => {
+      it("check exit code", async () =>
+      {
         const exitCode1 = await spawn({
           cmd: ["ls"],
         }).exited;
@@ -139,7 +142,8 @@ for (let [gcTick, label] of [
         expect(exitCode1).toBe(0);
         expect(exitCode2).toBe(1);
         gcTick();
-      });
+      }
+      )
 
       it("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
         const proc = spawn({

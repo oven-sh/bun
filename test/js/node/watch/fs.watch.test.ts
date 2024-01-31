@@ -74,7 +74,7 @@ describe("fs.watch", () => {
     watcher.on("change", (event, filename) => {
       count++;
       try {
-        expect(["rename", "change"]).toContain(event)
+        expect(["rename", "change"]).toContain(event);
         expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
         if (count >= 2) {
           watcher.close();

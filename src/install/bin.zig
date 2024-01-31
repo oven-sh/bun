@@ -448,19 +448,17 @@ pub const Bin = extern struct {
                 destination_wpath.len -= 1;
                 @memcpy(destination_wpath[destination_wpath.len - 3 ..], &[_]u16{ 'e', 'x', 'e' });
 
-                if (node_modules.createFileW(destination_wpath, .{
-                    .exclusive = true,
-                })) |exe_file| {
+                // truncate=false is intentional so that the exe is always rewritten. this helps
+                // - you upgrade to a new version of bin_shim_impl (unlikely but possible)
+                // - if otherwise corrupt it yourself
+                if (node_modules.createFileW(destination_wpath, .{})) |exe_file| {
                     defer exe_file.close();
                     exe_file.writer().writeAll(WinBinLinkingShim.embedded_executable_data) catch |err| {
                         this.err = err;
                         return;
                     };
                 } else |err| {
-                    if (err != error.PathAlreadyExists) {
-                        this.err = err;
-                        return;
-                    }
+                    this.err = err;
                 }
             }
         }

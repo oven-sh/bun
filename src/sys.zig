@@ -470,6 +470,7 @@ pub noinline fn openDirAtWindowsA(
     var wbuf: bun.WPathBuffer = undefined;
     return openDirAtWindows(dirFd, bun.strings.toNTDir(&wbuf, path), iterable, no_follow);
 }
+
 pub fn openatWindows(dir: bun.FileDescriptor, path: []const u16, flags: bun.Mode) Maybe(bun.FileDescriptor) {
     const nonblock = flags & O.NONBLOCK != 0;
     const overwrite = flags & O.WRONLY != 0 and flags & O.APPEND == 0;

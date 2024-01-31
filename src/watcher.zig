@@ -21,7 +21,7 @@ const log = bun.Output.scoped(.watcher, false);
 
 const WATCHER_MAX_LIST = 8096;
 
-pub const INotify = struct {
+const INotify = struct {
     loaded_inotify: bool = false,
     inotify_fd: EventListIndex = 0,
 
@@ -200,13 +200,20 @@ const DarwinWatcher = struct {
     }
 };
 
-pub const WindowsWatcher = struct {
+const WindowsWatcher = struct {
     iocp: w.HANDLE = undefined,
     allocator: std.mem.Allocator = undefined,
     watchers: std.ArrayListUnmanaged(*DirWatcher) = std.ArrayListUnmanaged(*DirWatcher){},
 
     const w = std.os.windows;
     pub const EventListIndex = c_int;
+
+    const Error = error{
+        IocpFailed,
+        ReadDirectoryChangesFailed,
+        CreateFileFailed,
+        InvalidPath,
+    };
 
     const Action = enum(w.DWORD) {
         Added = w.FILE_ACTION_ADDED,
@@ -270,12 +277,12 @@ pub const WindowsWatcher = struct {
         }
 
         // invalidates any EventIterators derived from this DirWatcher
-        fn prepare(this: *DirWatcher) !void {
+        fn prepare(this: *DirWatcher) Error!void {
             const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION;
             if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, 1, filter, null, &this.overlapped, null) == 0) {
                 const err = w.kernel32.GetLastError();
                 log("failed to start watching directory: {s}", .{@tagName(err)});
-                @panic("failed to start watching directory");
+                return Error.ReadDirectoryChangesFailed;
             }
         }
 
@@ -302,13 +309,6 @@ pub const WindowsWatcher = struct {
             .iocp = iocp,
             .allocator = allocator,
         };
-    }
-
-    pub fn deinit(this: *WindowsWatcher) void {
-        // get all the directory watchers and close their handles
-        // TODO
-        // close the io completion port handle
-        w.kernel32.CloseHandle(this.iocp);
     }
 
     fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: []const u8) !*DirWatcher {
@@ -352,8 +352,9 @@ pub const WindowsWatcher = struct {
         );
 
         if (rc != .SUCCESS) {
-            log("failed to open directory for watching: {s}", .{@tagName(rc)});
-            @panic("failed to open directory for watching");
+            const err = bun.windows.Win32Error.fromNTStatus(rc);
+            log("failed to open directory for watching: {s}", .{@tagName(err)});
+            return Error.CreateFileFailed;
         }
 
         errdefer _ = w.kernel32.CloseHandle(handle);
@@ -377,7 +378,7 @@ pub const WindowsWatcher = struct {
     }
 
     pub fn watchFile(this: *WindowsWatcher, path: []const u8) !*DirWatcher {
-        const dirpath = std.fs.path.dirnameWindows(path) orelse @panic("get dir from file");
+        const dirpath = std.fs.path.dirnameWindows(path) orelse return Error.InvalidPath;
         return this.watchDir(dirpath);
     }
 
@@ -421,7 +422,8 @@ pub const WindowsWatcher = struct {
                 if (err == w.Win32Error.IMEOUT) {
                     return null;
                 } else {
-                    @panic("GetQueuedCompletionStatus failed");
+                    log("GetQueuedCompletionStatus failed: {s}", .{@tagName(err)});
+                    return Error.IocpFailed;
                 }
             }
 
@@ -432,10 +434,18 @@ pub const WindowsWatcher = struct {
             if (overlapped) |ptr| {
                 return DirWatcher.fromOverlapped(ptr);
             } else {
-                // this would be an error which we should probaby signal
-                continue;
+                log("GetQueuedCompletionStatus returned no overlapped event", .{});
+                return Error.IocpFailed;
             }
         }
+    }
+
+    pub fn stop(this: *WindowsWatcher) void {
+        for (this.watchers.items) |watcher| {
+            w.CloseHandle(watcher.dirHandle);
+            this.allocator.destroy(watcher);
+        }
+        w.CloseHandle(this.iocp);
     }
 };
 
@@ -562,13 +572,18 @@ pub const WatchItem = struct {
     pub const Kind = enum { file, directory };
 };
 
-pub const Watchlist = std.MultiArrayList(WatchItem);
+pub const WatchList = std.MultiArrayList(WatchItem);
+pub const HashType = u32;
+
+pub fn getHash(filepath: string) HashType {
+    return @as(HashType, @truncate(bun.hash(filepath)));
+}
 
 pub fn NewWatcher(comptime ContextType: type) type {
     return struct {
         const Watcher = @This();
 
-        watchlist: Watchlist,
+        watchlist: WatchList,
         watched_count: usize = 0,
         mutex: Mutex,
 
@@ -590,13 +605,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         evict_list: [WATCHER_MAX_LIST]WatchItemIndex = undefined,
         evict_list_i: WatchItemIndex = 0,
 
-        pub const HashType = u32;
-        pub const WatchListArray = Watchlist;
         const no_watch_item: WatchItemIndex = std.math.maxInt(WatchItemIndex);
-
-        pub fn getHash(filepath: string) HashType {
-            return @as(HashType, @truncate(bun.hash(filepath)));
-        }
 
         pub fn init(ctx: ContextType, fs: *bun.fs.FileSystem, allocator: std.mem.Allocator) !*Watcher {
             const watcher = try allocator.create(Watcher);
@@ -607,7 +616,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .allocator = allocator,
                 .watched_count = 0,
                 .ctx = ctx,
-                .watchlist = Watchlist{},
+                .watchlist = WatchList{},
                 .mutex = Mutex.init(),
                 .cwd = fs.top_level_dir,
             };
@@ -1036,7 +1045,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 break :brk bun.toFD(dir.fd);
             };
 
-            const parent_hash = Watcher.getHash(bun.fs.PathName.init(file_path).dirWithTrailingSlash());
+            const parent_hash = getHash(bun.fs.PathName.init(file_path).dirWithTrailingSlash());
 
             const file_path_: string = if (comptime copy_file_path)
                 bun.asByteSlice(try this.allocator.dupeZ(u8, file_path))
@@ -1125,7 +1134,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const pathname = bun.fs.PathName.init(file_path);
 
             const parent_dir = pathname.dirWithTrailingSlash();
-            const parent_dir_hash: HashType = Watcher.getHash(parent_dir);
+            const parent_dir_hash: HashType = getHash(parent_dir);
 
             var parent_watch_item: ?WatchItemIndex = null;
             const autowatch_parent_dir = (comptime FeatureFlags.watch_directories) and this.isEligibleDirectory(parent_dir);

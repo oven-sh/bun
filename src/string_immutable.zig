@@ -40,15 +40,36 @@ pub inline fn w(comptime str: []const u8) [:0]const u16 {
 }
 
 pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
+    return comptime literal(u16, str);
+}
+
+pub fn literal(comptime T: type, comptime str: string) []const T {
+    if (!@inComptime()) @compileError("strings.literal() should be called in a comptime context");
     return comptime brk: {
-        comptime var output: [str.len]u16 = undefined;
+        comptime var output: [str.len]T = undefined;
 
         for (str, 0..) |c, i| {
             output[i] = c;
         }
 
         const Static = struct {
-            pub const literal: []const u16 = output[0..];
+            pub const literal: []const T = output[0..];
+        };
+        break :brk Static.literal;
+    };
+}
+
+pub fn literalBuf(comptime T: type, comptime str: string) [str.len]T {
+    if (!@inComptime()) @compileError("strings.literalBuf() should be called in a comptime context");
+    return comptime brk: {
+        comptime var output: [str.len]T = undefined;
+
+        for (str, 0..) |c, i| {
+            output[i] = c;
+        }
+
+        const Static = struct {
+            pub const literal: [str.len]T = output;
         };
         break :brk Static.literal;
     };
@@ -211,8 +232,8 @@ pub fn indexOfSigned(self: string, str: string) i32 {
     return @as(i32, @intCast(i));
 }
 
-pub inline fn lastIndexOfChar(self: string, char: u8) ?usize {
-    return std.mem.lastIndexOfScalar(u8, self, char);
+pub inline fn lastIndexOfChar(comptime T: type, self: []const T, char: T) ?usize {
+    return std.mem.lastIndexOfScalar(T, self, char);
 }
 
 pub inline fn lastIndexOf(self: string, str: string) ?usize {
@@ -833,7 +854,7 @@ pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool 
 }
 
 pub fn hasPrefixComptimeType(comptime T: type, self: []const T, comptime alt: []const T) bool {
-    return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], alt, false);
+    return self.len >= alt.len and eqlComptimeCheckLenWithType(T, self[0..alt.len], alt, false);
 }
 
 pub fn hasSuffixComptime(self: string, comptime alt: anytype) bool {
@@ -1706,7 +1727,7 @@ pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     }
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
-    if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
+    if (path_to_use.len > 3 and bun.path.isSepAny(u8, path_to_use[path_to_use.len - 1])) {
         path_to_use = path_to_use[0 .. path_to_use.len - 1];
     }
 
@@ -1740,7 +1761,7 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
 pub fn assertIsValidWindowsPath(utf8: []const u8) void {
     if (Environment.allow_assert and Environment.isWindows) {
-        if (startsWith(utf8, ":/")) {
+        if (hasPrefixComptime(utf8, ":/")) {
             std.debug.panic("Path passed to windows API '{s}' is almost certainly invalid. Where did the drive letter go?", .{
                 utf8,
             });

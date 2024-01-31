@@ -386,7 +386,7 @@ fn normalizePathWindows(
     var buf1: bun.PathBuffer = undefined;
     var buf2: bun.PathBuffer = undefined;
     if (std.fs.path.isAbsoluteWindows(path)) {
-        const norm = bun.path.normalizeStringWindows(path, &buf1, false, false);
+        const norm = bun.path.normalizeStringWindows(u8, path, &buf1, false, false);
         return .{
             .result = bun.strings.toNTPath(buf, norm),
         };

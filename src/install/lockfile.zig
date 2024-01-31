@@ -3344,7 +3344,7 @@ pub const Package = extern struct {
             .workspace => if (strings.hasPrefixComptime(sliced.slice, "workspace:")) brk: {
                 const input = sliced.slice["workspace:".len..];
                 if (!strings.eqlComptime(input, "*")) {
-                    const at = strings.lastIndexOfChar(input, '@') orelse 0;
+                    const at = strings.lastIndexOfChar(u8, input, '@') orelse 0;
                     if (at > 0) {
                         workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch return error.InstallFailed;
                         break :brk String.Builder.stringHash(input[0..at]);
@@ -3372,20 +3372,19 @@ pub const Package = extern struct {
 
         switch (dependency_version.tag) {
             .folder => {
-                dependency_version.value.folder = string_builder.append(
-                    String,
-                    Path.relative(
+                const path = Path.relative(
+                    FileSystem.instance.top_level_dir,
+                    Path.joinAbsString(
                         FileSystem.instance.top_level_dir,
-                        Path.joinAbsString(
-                            FileSystem.instance.top_level_dir,
-                            &[_]string{
-                                source.path.name.dir,
-                                dependency_version.value.folder.slice(buf),
-                            },
-                            .auto,
-                        ),
+                        &[_]string{
+                            source.path.name.dir,
+                            dependency_version.value.folder.slice(buf),
+                        },
+                        .auto,
                     ),
                 );
+
+                dependency_version.value.folder = string_builder.append(String, path);
             },
             .npm => if (comptime tag != null)
                 unreachable
@@ -3687,7 +3686,7 @@ pub const Package = extern struct {
 
                 const without_trailing_slash = strings.withoutTrailingSlash(input_path);
 
-                if (!strings.endsWithComptime(without_trailing_slash, "/*") and !strings.eqlComptime(without_trailing_slash, "*")) {
+                if (!strings.endsWithComptime(without_trailing_slash, "/*") and !strings.endsWithComptime(without_trailing_slash, "\\*") and !strings.eqlComptime(without_trailing_slash, "*")) {
                     log.addError(source, item.loc,
                         \\TODO glob star * in the middle of a path. For now, try something like "packages/*", at the end of the path.
                     ) catch {};
@@ -3884,11 +3883,13 @@ pub const Package = extern struct {
 
                     const workspace_path: string = if (string_builder) |builder| brk: {
                         second_buf_fixed.reset();
-                        const relative = std.fs.path.relative(
-                            second_buf_fixed.allocator(),
+                        const relative = Path.relativePlatform(
                             Fs.FileSystem.instance.top_level_dir,
                             bun.span(entry_path),
-                        ) catch unreachable;
+                            .posix,
+                            true,
+                        );
+                        std.debug.print("relative: {s}\n", .{relative});
                         builder.count(workspace_entry.name);
                         builder.count(relative);
                         builder.cap += bun.MAX_PATH_BYTES;
@@ -5059,6 +5060,26 @@ pub const Serializer = struct {
             }
         };
         const stream = StreamType{ .bytes = bytes };
+
+        if (comptime Environment.allow_assert) {
+            for (this.packages.items(.resolution)) |res| {
+                switch (res.tag) {
+                    .folder => {
+                        std.debug.assert(!strings.containsChar(this.str(&res.value.folder), std.fs.path.sep_windows));
+                    },
+                    .symlink => {
+                        std.debug.assert(!strings.containsChar(this.str(&res.value.symlink), std.fs.path.sep_windows));
+                    },
+                    .local_tarball => {
+                        std.debug.assert(!strings.containsChar(this.str(&res.value.local_tarball), std.fs.path.sep_windows));
+                    },
+                    .workspace => {
+                        std.debug.assert(!strings.containsChar(this.str(&res.value.workspace), std.fs.path.sep_windows));
+                    },
+                    else => {},
+                }
+            }
+        }
 
         try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(writer), writer);
         try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(writer), writer);

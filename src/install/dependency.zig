@@ -845,7 +845,7 @@ pub fn parseWithTag(
             if (strings.hasPrefixComptime(input, "git+")) {
                 input = input["git+".len..];
             }
-            const hash_index = strings.lastIndexOfChar(input, '#');
+            const hash_index = strings.lastIndexOfChar(u8, input, '#');
 
             return .{
                 .literal = sliced.value(),

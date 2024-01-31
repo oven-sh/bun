@@ -88,7 +88,7 @@ pub const FileSystemRouter = struct {
             if (!(root_dir_path_.len == 0 or strings.eqlComptime(root_dir_path_.slice(), "."))) {
                 // resolve relative path if needed
                 const path = root_dir_path_.slice();
-                if (bun.path.Platform.isAbsolute(.auto, path)) {
+                if (bun.path.Platform.isAbsolute(.auto, u8, path)) {
                     root_dir_path = root_dir_path_;
                 } else {
                     var parts = [_][]const u8{path};

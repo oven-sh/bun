@@ -124,7 +124,7 @@ pub const FileSystem = struct {
 
         // Ensure there's a trailing separator in the top level directory
         // This makes path resolution more reliable
-        if (!bun.path.isSepAny(top_level_dir[top_level_dir.len - 1])) {
+        if (!bun.path.isSepAny(u8, top_level_dir[top_level_dir.len - 1])) {
             const tld = try allocator.alloc(u8, top_level_dir.len + 1);
             bun.copy(u8, tld, top_level_dir);
             tld[tld.len - 1] = std.fs.path.sep;
@@ -430,8 +430,12 @@ pub const FileSystem = struct {
         return @call(.always_inline, path_handler.normalizeString, .{ str, true, .auto });
     }
 
+    pub fn normalizePlatform(_: *@This(), str: string, comptime platform: bun.path.Platform) string {
+        return @call(.always_inline, path_handler.normalizeString, .{ str, true, platform });
+    }
+
     pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
-        return @call(.always_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
+        return @call(.always_inline, path_handler.normalizeStringBuf, .{ u8, str, buf, false, .auto, false });
     }
 
     pub fn join(_: *@This(), parts: anytype) string {
@@ -1364,7 +1368,7 @@ pub const NodeJSPathName = struct {
         var ext: string = "";
         var dir = path;
         var is_absolute = true;
-        var _i = getLastSep(path);
+        var _i = getLastSep(u8, path);
         var first = true;
         while (_i) |i| {
             // Stop if we found a non-trailing slash
@@ -1387,11 +1391,11 @@ pub const NodeJSPathName = struct {
 
             path = path[0..i];
 
-            _i = getLastSep(path);
+            _i = getLastSep(u8, path);
         }
 
         // clean trailing slashs
-        if (base.len > 1 and platform.isSeparator(base[base.len - 1])) {
+        if (base.len > 1 and platform.isSeparator(u8, base[base.len - 1])) {
             base = base[0 .. base.len - 1];
         }
 
@@ -1401,7 +1405,7 @@ pub const NodeJSPathName = struct {
         // if only one character ext = "" even if filename it's "."
         if (filename.len > 1) {
             // Strip off the extension
-            if (strings.lastIndexOfChar(filename, '.')) |dot| {
+            if (strings.lastIndexOfChar(u8, filename, '.')) |dot| {
                 if (dot > 0) {
                     filename = filename[0..dot];
                     ext = base[dot..];
@@ -1480,7 +1484,7 @@ pub const PathName = struct {
         return if (this.dir.len == 0) "./" else this.dir.ptr[0 .. this.dir.len + @as(
             usize,
             @intCast(@intFromBool(
-                !bun.path.isSepAny(this.dir[this.dir.len - 1]) and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
+                !bun.path.isSepAny(u8, this.dir[this.dir.len - 1]) and (@intFromPtr(this.dir.ptr) + this.dir.len + 1) == @intFromPtr(this.base.ptr),
             )),
         )];
     }
@@ -1501,12 +1505,12 @@ pub const PathName = struct {
         const has_disk_designator = path.len > 2 and path[1] == ':' and switch (path[0]) {
             'a'...'z', 'A'...'Z' => true,
             else => false,
-        } and bun.path.isSepAny(path[2]);
+        } and bun.path.isSepAny(u8, path[2]);
         if (has_disk_designator) {
             path = path[2..];
         }
 
-        var _i = bun.path.lastIndexOfSep(path);
+        var _i = bun.path.lastIndexOfSep(u8, path);
         while (_i) |i| {
             // Stop if we found a non-trailing slash
             if (i + 1 != path.len and path.len > i + 1) {
@@ -1519,11 +1523,11 @@ pub const PathName = struct {
             // Ignore trailing slashes
             path = path[0..i];
 
-            _i = bun.path.lastIndexOfSep(path);
+            _i = bun.path.lastIndexOfSep(u8, path);
         }
 
         // Strip off the extension
-        if (strings.lastIndexOfChar(base, '.')) |dot| {
+        if (strings.lastIndexOfChar(u8, base, '.')) |dot| {
             ext = base[dot..];
             base = base[0..dot];
         } else {
@@ -1534,7 +1538,7 @@ pub const PathName = struct {
             dir = &([_]u8{});
         }
 
-        if (base.len > 1 and bun.path.isSepAny(base[base.len - 1])) {
+        if (base.len > 1 and bun.path.isSepAny(u8, base[base.len - 1])) {
             base = base[0 .. base.len - 1];
         }
 

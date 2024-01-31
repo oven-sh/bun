@@ -106,14 +106,14 @@ pub const PluginRunner = struct {
         if (Environment.isWindows and
             colon == 1 and
             specifier.len > 3 and
-            bun.path.isSepAny(specifier[2]) and
+            bun.path.isSepAny(u8, specifier[2]) and
             ((specifier[0] > 'a' and specifier[0] < 'z') or (specifier[0] > 'A' and specifier[0] < 'Z')))
             return "";
         return specifier[0..colon];
     }
 
     pub fn couldBePlugin(specifier: string) bool {
-        if (strings.lastIndexOfChar(specifier, '.')) |last_dor| {
+        if (strings.lastIndexOfChar(u8, specifier, '.')) |last_dor| {
             const ext = specifier[last_dor + 1 ..];
             // '.' followed by either a letter or a non-ascii character
             // maybe there are non-ascii file extensions?

@@ -92,7 +92,7 @@ pub const Registry = struct {
                             url.path = pathname;
                         }
                         var needs_to_check_slash = true;
-                        while (strings.lastIndexOfChar(pathname, ':')) |colon| {
+                        while (strings.lastIndexOfChar(u8, pathname, ':')) |colon| {
                             var segment = pathname[colon + 1 ..];
                             pathname = pathname[0..colon];
                             needs_to_check_slash = false;
@@ -130,7 +130,7 @@ pub const Registry = struct {
 
                         // In this case, there is only one.
                         if (needs_to_check_slash) {
-                            if (strings.lastIndexOfChar(pathname, '/')) |last_slash| {
+                            if (strings.lastIndexOfChar(u8, pathname, '/')) |last_slash| {
                                 var remain = pathname[last_slash + 1 ..];
                                 if (strings.indexOfChar(remain, '=')) |eql_i| {
                                     const segment = remain[0..eql_i];

@@ -1365,7 +1365,7 @@ pub const Resolver = struct {
 
                     // If the module "foo" has been marked as external, we also want to treat
                     // paths into that module such as "foo/bar" as external too.
-                    const slash = strings.lastIndexOfChar(query, '/') orelse break;
+                    const slash = strings.lastIndexOfChar(u8, query, '/') orelse break;
                     query = query[0..slash];
                 }
             }
@@ -2550,7 +2550,7 @@ pub const Resolver = struct {
             .status = .not_found,
         };
         const root_path = if (comptime Environment.isWindows)
-            ResolvePath.windowsFilesystemRoot(path)
+            ResolvePath.windowsFilesystemRoot(u8, path)
         else
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer
@@ -3323,7 +3323,7 @@ pub const Resolver = struct {
                     ),
                 ) catch unreachable;
 
-                path = path[0 .. strings.lastIndexOfChar(path, '/') orelse break];
+                path = path[0 .. strings.lastIndexOfChar(u8, path, '/') orelse break];
             }
         }
 
@@ -3728,7 +3728,7 @@ pub const Resolver = struct {
         //
         // See the discussion here for more historical context:
         // https://github.com/microsoft/TypeScript/issues/4595
-        if (strings.lastIndexOfChar(base, '.')) |last_dot| {
+        if (strings.lastIndexOfChar(u8, base, '.')) |last_dot| {
             const ext = base[last_dot..base.len];
             if ((strings.eqlComptime(ext, ".js") or strings.eqlComptime(ext, ".jsx") and (!FeatureFlags.disable_auto_js_to_ts_in_node_modules or !strings.pathContainsNodeModulesFolder(path)))) {
                 const segment = base[0..last_dot];
@@ -4067,7 +4067,7 @@ pub const Dirname = struct {
 
         const root = brk: {
             if (Environment.isWindows) {
-                const root = ResolvePath.windowsFilesystemRoot(path);
+                const root = ResolvePath.windowsFilesystemRoot(u8, path);
                 std.debug.assert(root.len > 0);
                 break :brk root;
             }
@@ -4075,19 +4075,19 @@ pub const Dirname = struct {
         };
 
         var end_index: usize = path.len - 1;
-        while (bun.path.isSepAny(path[end_index])) {
+        while (bun.path.isSepAny(u8, path[end_index])) {
             if (end_index == 0)
                 return root;
             end_index -= 1;
         }
 
-        while (!bun.path.isSepAny(path[end_index])) {
+        while (!bun.path.isSepAny(u8, path[end_index])) {
             if (end_index == 0)
                 return root;
             end_index -= 1;
         }
 
-        if (end_index == 0 and bun.path.isSepAny(path[0]))
+        if (end_index == 0 and bun.path.isSepAny(u8, path[0]))
             return path[0..1];
 
         if (end_index == 0)

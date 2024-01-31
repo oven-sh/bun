@@ -460,6 +460,14 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 }
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+    if (bun.Environment.allow_assert and platform == .windows) {
+        std.debug.assert(std.mem.indexOfScalar(u8, from, '/') == null);
+        std.debug.assert(std.mem.indexOfScalar(u8, to, '/') == null);
+    }
+    if (bun.Environment.allow_assert and platform == .posix) {
+        std.debug.assert(std.mem.indexOfScalar(u8, from, '\\') == null);
+        std.debug.assert(std.mem.indexOfScalar(u8, to, '\\') == null);
+    }
     const normalized_from = if (platform.isAbsolute(from)) brk: {
         const path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
         if (platform == .windows) break :brk path;

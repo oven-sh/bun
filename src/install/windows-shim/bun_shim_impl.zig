@@ -397,7 +397,6 @@ fn launcher(bun_ctx: anytype) noreturn {
     // BUF1: '\??\C:\Users\dave\project\node_modules\.bin\hello.bunx!!!!!!!!!!!!!!!!!!!!!!'
     //                                              ^^        ^     ^
     //                                              S|        |     image_path_b_len + nt_object_prefix.len
-    //                                               |        |
     //                                               |        'ptr' initial value
     //                                              the read ptr
     var read_ptr: [*]u16 = brk: {

@@ -553,6 +553,13 @@ pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
     return slice.len > 0 and @intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and ((@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len));
 }
 
+pub inline fn sliceInBuffer(stable: string, value: string) string {
+    if (std.mem.indexOf(u8, stable, value)) |index| {
+        return stable[index..][0..value.len];
+    }
+    return value;
+}
+
 pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
     if (!isSliceInBuffer(slice, buffer)) return null;
     const r = [_]u32{

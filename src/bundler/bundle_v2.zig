@@ -666,6 +666,7 @@ pub const BundleV2 = struct {
         }
         _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
         const source_index = Index.source(this.graph.input_files.len);
+
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
             const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
@@ -674,6 +675,7 @@ pub const BundleV2 = struct {
             }
         }
         path.* = try path.dupeAlloc(this.graph.allocator);
+        path.pretty = bun.sliceInBuffer(path.text, path.pretty);
         entry.value_ptr.* = source_index.get();
         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
 
@@ -2027,6 +2029,7 @@ pub const BundleV2 = struct {
             }
 
             path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
+            path.pretty = bun.sliceInBuffer(path.text, path.pretty);
             import_record.path = path.*;
             debug("created ParseTask: {s}", .{path.text});
 
@@ -9026,6 +9029,7 @@ const LinkerContext = struct {
 
                 const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
                 bun.path.platformToPosixInPlace(rel_path);
+
                 if ((try path_names_map.getOrPut(rel_path)).found_existing) {
                     try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Multiple files share the same output path: {s}", .{rel_path});
                     return error.DuplicateOutputPath;

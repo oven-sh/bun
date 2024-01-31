@@ -1643,7 +1643,7 @@ pub const Path = struct {
     // This duplicates but only when strictly necessary
     // This will skip allocating if it's already in FilenameStore or DirnameStore
     pub fn dupeAlloc(this: *const Path, allocator: std.mem.Allocator) !Fs.Path {
-        if (this.text.ptr == this.pretty.ptr and this.text.len == this.text.len) {
+        if (this.text.ptr == this.pretty.ptr and this.text.len == this.pretty.len) {
             if (FileSystem.FilenameStore.instance.exists(this.text) or FileSystem.DirnameStore.instance.exists(this.text)) {
                 return this.*;
             }

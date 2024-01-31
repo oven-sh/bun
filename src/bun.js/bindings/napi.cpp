@@ -2089,6 +2089,25 @@ extern "C" napi_status napi_get_element(napi_env env, napi_value objectValue,
     return napi_ok;
 }
 
+extern "C" napi_status napi_delete_element(napi_env env, napi_value objectValue,
+    uint32_t index, bool* result)
+{
+    NAPI_PREMABLE
+
+    JSValue jsValue = toJS(objectValue);
+    if (UNLIKELY(!env || !jsValue || !jsValue.isObject())) {
+        return napi_invalid_arg;
+    }
+
+    JSObject* object = jsValue.getObject();
+
+    auto scope = DECLARE_THROW_SCOPE(object->vm());
+    *result = JSObject::deletePropertyByIndex(object, toJS(env), index);
+    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+
+    return napi_ok;
+}
+
 extern "C" napi_status napi_create_object(napi_env env, napi_value* result)
 {
     NAPI_PREMABLE

@@ -1339,7 +1339,7 @@ pub const RunCommand = struct {
         if (Environment.isWindows) try_bunx_file: {
             const WinBunShimImpl = @import("../install/windows-shim/bun_shim_impl.zig");
             const w = std.os.windows;
-            const debug = Output.scoped(.BunRunXFastPath, true);
+            const debug = Output.scoped(.BunRunXFastPath, false);
 
             // Attempt to find a ".bunx" file on disk, and run it, skipping the wrapper exe.
             // we build the full exe path even though we could do a relative lookup, because in the case we do find it, we have to generate this full path anyways

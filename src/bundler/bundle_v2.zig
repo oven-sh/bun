@@ -11284,7 +11284,8 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
-
+                                // normalize windows paths to '/'
+                                bun.path.platformToPosixInPlace(@constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)

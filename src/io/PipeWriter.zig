@@ -111,7 +111,7 @@ pub fn PosixPipeWriter(
     };
 }
 
-pub fn PosixBufferedOutputWriter(
+pub fn PosixBufferedWriter(
     comptime Parent: type,
     comptime onWrite: fn (*Parent, amount: usize, done: bool) void,
     comptime onError: fn (*Parent, bun.sys.Error) void,
@@ -123,18 +123,18 @@ pub fn PosixBufferedOutputWriter(
         parent: *Parent = undefined,
         is_done: bool = false,
 
-        const PosixOutputWriter = @This();
+        const PosixWriter = @This();
 
-        pub fn getFd(this: *PosixOutputWriter) bun.FileDescriptor {
+        pub fn getFd(this: *PosixWriter) bun.FileDescriptor {
             return this.poll.fd;
         }
 
-        pub fn getBuffer(this: *PosixOutputWriter) []const u8 {
+        pub fn getBuffer(this: *PosixWriter) []const u8 {
             return this.buffer;
         }
 
         fn _onError(
-            this: *PosixOutputWriter,
+            this: *PosixWriter,
             err: bun.sys.Error,
         ) void {
             std.debug.assert(!err.isRetry());
@@ -144,7 +144,7 @@ pub fn PosixBufferedOutputWriter(
         }
 
         fn _onWrite(
-            this: *PosixOutputWriter,
+            this: *PosixWriter,
             written: usize,
             done: bool,
         ) void {
@@ -159,13 +159,13 @@ pub fn PosixBufferedOutputWriter(
             }
         }
 
-        fn _onWritable(this: *PosixOutputWriter) void {
+        fn _onWritable(this: *PosixWriter) void {
             if (this.is_done) {
                 return;
             }
         }
 
-        fn registerPoll(this: *PosixOutputWriter) void {
+        fn registerPoll(this: *PosixWriter) void {
             var poll = this.poll orelse return;
             switch (poll.registerWithFd(bun.uws.Loop.get(), .writable, true, poll.fd)) {
                 .err => |err| {
@@ -177,25 +177,25 @@ pub fn PosixBufferedOutputWriter(
 
         pub const tryWrite = @This()._tryWrite;
 
-        pub fn hasRef(this: *PosixOutputWriter) bool {
+        pub fn hasRef(this: *PosixWriter) bool {
             return !this.is_done and this.poll.canEnableKeepingProcessAlive();
         }
 
-        pub fn enableKeepingProcessAlive(this: *PosixOutputWriter, event_loop: JSC.EventLoopHandle) void {
+        pub fn enableKeepingProcessAlive(this: *PosixWriter, event_loop: JSC.EventLoopHandle) void {
             if (this.is_done) return;
 
             const poll = this.poll orelse return;
             poll.enableKeepingProcessAlive(event_loop);
         }
 
-        pub fn disableKeepingProcessAlive(this: *PosixOutputWriter, event_loop: JSC.EventLoopHandle) void {
+        pub fn disableKeepingProcessAlive(this: *PosixWriter, event_loop: JSC.EventLoopHandle) void {
             const poll = this.poll orelse return;
             poll.disableKeepingProcessAlive(event_loop);
         }
 
         pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable);
 
-        pub fn end(this: *PosixOutputWriter) void {
+        pub fn end(this: *PosixWriter) void {
             if (this.is_done) {
                 return;
             }
@@ -204,7 +204,7 @@ pub fn PosixBufferedOutputWriter(
             clearPoll(this);
         }
 
-        fn clearPoll(this: *PosixOutputWriter) void {
+        fn clearPoll(this: *PosixWriter) void {
             if (this.poll) |poll| {
                 const fd = poll.fd;
                 this.poll = null;
@@ -216,10 +216,11 @@ pub fn PosixBufferedOutputWriter(
             }
         }
 
-        pub fn start(this: *PosixOutputWriter, fd: bun.FileDescriptor) JSC.Maybe(void) {
+        pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, bytes: []const u8) JSC.Maybe(void) {
+            this.buffer = bytes;
             const loop = @as(*Parent, @ptrCast(this.parent)).loop();
             var poll = this.poll orelse brk: {
-                this.poll = Async.FilePoll.init(loop, fd, .writable, PosixOutputWriter, this);
+                this.poll = Async.FilePoll.init(loop, fd, .writable, PosixWriter, this);
                 break :brk this.poll.?;
             };
 
@@ -235,7 +236,7 @@ pub fn PosixBufferedOutputWriter(
     };
 }
 
-pub fn PosixStreamingOutputWriter(
+pub fn PosixStreamingWriter(
     comptime Parent: type,
     comptime onWrite: fn (*Parent, amount: usize, done: bool) void,
     comptime onError: fn (*Parent, bun.sys.Error) void,
@@ -249,18 +250,18 @@ pub fn PosixStreamingOutputWriter(
         is_done: bool = false,
         head: usize = 0,
 
-        const PosixOutputWriter = @This();
+        const PosixWriter = @This();
 
-        pub fn getFd(this: *PosixOutputWriter) bun.FileDescriptor {
+        pub fn getFd(this: *PosixWriter) bun.FileDescriptor {
             return this.poll.?.fd;
         }
 
-        pub fn getBuffer(this: *PosixOutputWriter) []const u8 {
+        pub fn getBuffer(this: *PosixWriter) []const u8 {
             return this.buffer.items[this.head..];
         }
 
         fn _onError(
-            this: *PosixOutputWriter,
+            this: *PosixWriter,
             err: bun.sys.Error,
         ) void {
             std.debug.assert(!err.isRetry());
@@ -269,7 +270,7 @@ pub fn PosixStreamingOutputWriter(
         }
 
         fn _onWrite(
-            this: *PosixOutputWriter,
+            this: *PosixWriter,
             written: usize,
             done: bool,
         ) void {
@@ -284,7 +285,7 @@ pub fn PosixStreamingOutputWriter(
             onWrite(@ptrCast(this.parent), written, done);
         }
 
-        fn _onWritable(this: *PosixOutputWriter) void {
+        fn _onWritable(this: *PosixWriter) void {
             if (this.is_done) {
                 return;
             }
@@ -295,7 +296,7 @@ pub fn PosixStreamingOutputWriter(
             }
         }
 
-        fn registerPoll(this: *PosixOutputWriter) void {
+        fn registerPoll(this: *PosixWriter) void {
             switch (this.poll.?.registerWithFd(@as(*Parent, @ptrCast(this.parent)).loop(), .writable, true, this.poll.fd)) {
                 .err => |err| {
                     onError(this, err);
@@ -304,7 +305,7 @@ pub fn PosixStreamingOutputWriter(
             }
         }
 
-        pub fn tryWrite(this: *PosixOutputWriter, buf: []const u8) WriteResult {
+        pub fn tryWrite(this: *PosixWriter, buf: []const u8) WriteResult {
             if (this.is_done) {
                 return .{ .done = 0 };
             }
@@ -320,7 +321,7 @@ pub fn PosixStreamingOutputWriter(
             return @This()._tryWrite(this, buf);
         }
 
-        pub fn write(this: *PosixOutputWriter, buf: []const u8) WriteResult {
+        pub fn write(this: *PosixWriter, buf: []const u8) WriteResult {
             const rc = tryWrite(this, buf);
             if (rc == .pending) {
                 registerPoll(this);
@@ -350,26 +351,26 @@ pub fn PosixStreamingOutputWriter(
 
         pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable);
 
-        pub fn deinit(this: *PosixOutputWriter) void {
+        pub fn deinit(this: *PosixWriter) void {
             this.buffer.clearAndFree();
             this.clearPoll();
         }
 
-        pub fn hasRef(this: *PosixOutputWriter) bool {
+        pub fn hasRef(this: *PosixWriter) bool {
             return !this.is_done and this.poll.?.canEnableKeepingProcessAlive();
         }
 
-        pub fn enableKeepingProcessAlive(this: *PosixOutputWriter, event_loop: JSC.EventLoopHandle) void {
+        pub fn enableKeepingProcessAlive(this: *PosixWriter, event_loop: JSC.EventLoopHandle) void {
             if (this.is_done) return;
 
             this.poll.?.enableKeepingProcessAlive(event_loop);
         }
 
-        pub fn disableKeepingProcessAlive(this: *PosixOutputWriter, event_loop: JSC.EventLoopHandle) void {
+        pub fn disableKeepingProcessAlive(this: *PosixWriter, event_loop: JSC.EventLoopHandle) void {
             this.poll.?.disableKeepingProcessAlive(event_loop);
         }
 
-        pub fn end(this: *PosixOutputWriter) void {
+        pub fn end(this: *PosixWriter) void {
             if (this.is_done) {
                 return;
             }
@@ -378,7 +379,7 @@ pub fn PosixStreamingOutputWriter(
             clearPoll(this);
         }
 
-        fn clearPoll(this: *PosixOutputWriter) void {
+        fn clearPoll(this: *PosixWriter) void {
             if (this.poll) |poll| {
                 const fd = poll.fd;
                 poll.deinit();
@@ -390,10 +391,10 @@ pub fn PosixStreamingOutputWriter(
             }
         }
 
-        pub fn start(this: *PosixOutputWriter, fd: bun.FileDescriptor) JSC.Maybe(void) {
+        pub fn start(this: *PosixWriter, fd: bun.FileDescriptor) JSC.Maybe(void) {
             const loop = @as(*Parent, @ptrCast(this.parent)).loop();
             var poll = this.poll orelse brk: {
-                this.poll = Async.FilePoll.init(loop, fd, .writable, PosixOutputWriter, this);
+                this.poll = Async.FilePoll.init(loop, fd, .writable, PosixWriter, this);
                 break :brk this.poll.?;
             };
 
@@ -409,5 +410,5 @@ pub fn PosixStreamingOutputWriter(
     };
 }
 
-pub const BufferedOutputWriter = if (bun.Environment.isPosix) PosixBufferedOutputWriter else opaque {};
-pub const StreamingOutputWriter = if (bun.Environment.isPosix) PosixStreamingOutputWriter else opaque {};
+pub const BufferedWriter = if (bun.Environment.isPosix) PosixBufferedWriter else opaque {};
+pub const StreamingWriter = if (bun.Environment.isPosix) PosixStreamingWriter else opaque {};

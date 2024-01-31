@@ -667,53 +667,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             }
 
             pub fn toReadableStream(this: *BufferedOutput, globalThis: *JSC.JSGlobalObject, exited: bool) JSC.WebCore.ReadableStream {
-                if (exited) {
-                    // exited + received EOF => no more read()
-                    if (this.fifo.isClosed()) {
-                        // also no data at all
-                        if (this.internal_buffer.len == 0) {
-                            if (this.internal_buffer.cap > 0) {
-                                if (this.auto_sizer) |auto_sizer| {
-                                    this.internal_buffer.deinitWithAllocator(auto_sizer.allocator);
-                                }
-                            }
-                            // so we return an empty stream
-                            return JSC.WebCore.ReadableStream.fromJS(
-                                JSC.WebCore.ReadableStream.empty(globalThis),
-                                globalThis,
-                            ).?;
-                        }
-
-                        return JSC.WebCore.ReadableStream.fromJS(
-                            JSC.WebCore.ReadableStream.fromBlob(
-                                globalThis,
-                                &this.toBlob(globalThis),
-                                0,
-                            ),
-                            globalThis,
-                        ).?;
-                    }
-                }
-
-                {
-                    const internal_buffer = this.internal_buffer;
-                    this.internal_buffer = bun.ByteList.init("");
-
-                    // There could still be data waiting to be read in the pipe
-                    // so we need to create a new stream that will read from the
-                    // pipe and then return the blob.
-                    const result = JSC.WebCore.ReadableStream.fromJS(
-                        JSC.WebCore.ReadableStream.fromFIFO(
-                            globalThis,
-                            &this.fifo,
-                            internal_buffer,
-                        ),
-                        globalThis,
-                    ).?;
-                    this.fifo.fd = bun.invalid_fd;
-                    this.fifo.poll_ref = null;
-                    return result;
-                }
+               
             }
 
             pub fn close(this: *BufferedOutput) void {

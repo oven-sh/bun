@@ -219,6 +219,8 @@ pub const ReadableStream = struct {
         Direct = 3,
 
         Bytes = 4,
+
+        Pipe = 5,
     };
     pub const Source = union(Tag) {
         Invalid: void,
@@ -239,6 +241,8 @@ pub const ReadableStream = struct {
         Direct: void,
 
         Bytes: *ByteStream,
+
+        Pipe: *ReadableStreamPipe,
     };
 
     extern fn ReadableStreamTag__tagged(globalObject: *JSGlobalObject, possibleReadableStream: JSValue, ptr: *JSValue) Tag;
@@ -296,6 +300,13 @@ pub const ReadableStream = struct {
                 },
             },
 
+            .Pipe => ReadableStream{
+                .value = value,
+                .ptr = .{
+                    .Pipe = ptr.asPtr(ReadableStreamPipe),
+                },
+            },
+
             // .HTTPRequest => ReadableStream{
             //     .value = value,
             //     .ptr = .{
@@ -350,36 +361,19 @@ pub const ReadableStream = struct {
         }
     }
 
-    pub fn fromFIFO(
+    pub fn fromPipe(
         globalThis: *JSGlobalObject,
-        fifo: *FIFO,
-        buffered_data: bun.ByteList,
+        buffered_reader: anytype,
     ) JSC.JSValue {
         JSC.markBinding(@src());
-        var reader = globalThis.allocator().create(FileReader.Source) catch unreachable;
-        reader.* = .{
+        var source = bun.default_allocator.create(ReadableStreamPipe.Source) catch bun.outOfMemory();
+        source.* = .{
             .globalThis = globalThis,
-            .context = .{
-                .buffered_data = buffered_data,
-                .started = true,
-                .lazy_readable = .{
-                    .readable = .{
-                        .FIFO = fifo.*,
-                    },
-                },
-            },
+            .context = undefined,
         };
+        source.context.setup(buffered_reader);
 
-        if (reader.context.lazy_readable.readable.FIFO.poll_ref) |poll| {
-            poll.owner.set(&reader.context.lazy_readable.readable.FIFO);
-            fifo.poll_ref = null;
-        }
-        reader.context.lazy_readable.readable.FIFO.pending.future = undefined;
-        reader.context.lazy_readable.readable.FIFO.auto_sizer = null;
-        reader.context.lazy_readable.readable.FIFO.pending.state = .none;
-        reader.context.lazy_readable.readable.FIFO.drained = buffered_data.len == 0;
-
-        return reader.toJS(globalThis);
+        return source.toJS(globalThis);
     }
 
     pub fn empty(globalThis: *JSGlobalObject) JSC.JSValue {
@@ -3670,6 +3664,150 @@ pub fn ReadableStreamSource(
     };
 }
 
+pub const ReadableStreamPipe = struct {
+    reader: bun.io.BufferedOutputReader(@This(), onReadChunk) = .{},
+    done: bool = false,
+    pending: StreamResult.Pending = .{},
+    pending_value: JSC.Strong = .{},
+    pending_view: []u8 = []u8{},
+
+    pub fn setup(
+        this: *ReadableStreamPipe,
+        other_reader: anytype,
+    ) void {
+        this.* = ReadableStreamPipe{
+            .reader = .{},
+            .done = false,
+        };
+
+        this.reader.fromOutputReader(other_reader, this);
+    }
+
+    pub fn onStart(this: *ReadableStreamPipe) StreamStart {
+        _ = this; // autofix
+
+        return .{ .ready = {} };
+    }
+
+    pub fn parent(this: *@This()) *Source {
+        return @fieldParentPtr(Source, "context", this);
+    }
+
+    pub fn onCancel(this: *ReadableStreamPipe) void {
+        if (this.done) return;
+        this.done = true;
+        this.reader.close();
+    }
+
+    pub fn deinit(this: *ReadableStreamPipe) void {
+        this.reader.deinit();
+        this.pending_value.deinit();
+    }
+
+    pub fn onReadChunk(this: *@This(), buf: []const u8) void {
+        if (this.done) {
+            this.reader.close();
+            return;
+        }
+
+        if (this.pending.state == .pending) {
+            if (buf.len == 0) {
+                this.pending.result = .{ .done = {} };
+                this.pending_value.clear();
+                this.pending_view = &.{};
+                this.reader.buffer().clearAndFree();
+                this.reader.close();
+                this.done = true;
+                this.pending.run();
+                return;
+            }
+
+            if (this.pending_view.len >= buf.len) {
+                @memcpy(this.pending_view[0..buf.len], buf);
+
+                this.pending.result = .{
+                    .into_array = .{
+                        .value = this.pending_value,
+                        .len = buf.len,
+                    },
+                };
+
+                this.pending_value.clear();
+                this.pending_view = &.{};
+                this.pending.run();
+                return;
+            }
+        }
+    }
+
+    pub fn onPull(this: *ReadableStreamPipe, buffer: []u8, array: JSC.JSValue) StreamResult {
+        array.ensureStillAlive();
+        defer array.ensureStillAlive();
+        const drained = this.drain();
+
+        if (drained.len > 0) {
+            this.pending_value.clear();
+            this.pending_view = &.{};
+
+            if (buffer.len >= drained.len) {
+                @memcpy(buffer[0..drained.len], drained);
+                if (this.done) {
+                    return .{ .into_array_and_done = .{ .value = array, .len = drained.len } };
+                } else {
+                    return .{ .into_array = .{ .value = array, .len = drained.len } };
+                }
+            }
+
+            if (this.done) {
+                return .{ .owned_and_done = drained };
+            } else {
+                return .{ .owned = drained };
+            }
+        }
+
+        if (this.done) {
+            return .{ .done = {} };
+        }
+
+        this.pending_value.set(this.parent().globalThis(), array);
+        this.pending_view = buffer;
+
+        return .{ .pending = &this.pending };
+    }
+
+    pub fn drain(this: *ReadableStreamPipe) bun.ByteList {
+        if (this.reader.hasPendingRead()) {
+            return .{};
+        }
+
+        const out = this.reader.buffer();
+        this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
+        return bun.ByteList.fromList(out);
+    }
+
+    pub fn setRefOrUnref(this: *ReadableStreamPipe, enable: bool) void {
+        if (this.done) return;
+        if (enable) {
+            this.reader.enableKeepingProcessAlive(JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop()));
+        } else {
+            this.reader.disableKeepingProcessAlive(JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop()));
+        }
+    }
+
+    pub const Tag = ReadableStream.Tag.Pipe;
+
+    pub const Source = ReadableStreamSource(
+        @This(),
+        "ReadableStreamPipe",
+        onStart,
+        onPull,
+        onCancel,
+        deinit,
+        setRefOrUnref,
+        drain,
+    );
+};
+
 pub const ByteBlobLoader = struct {
     offset: Blob.SizeType = 0,
     store: *Blob.Store,
@@ -4146,376 +4284,6 @@ pub const AutoSizer = struct {
         return this.buffer.ptr[prev_len..@as(usize, this.buffer.cap)];
     }
 };
-
-pub const FIFO = NewFIFO(.js);
-pub const FIFOMini = NewFIFO(.mini);
-
-pub fn NewFIFO(comptime EventLoop: JSC.EventLoopKind) type {
-    return struct {
-        buf: []u8 = &[_]u8{},
-        view: JSC.Strong = .{},
-
-        fd: bun.FileDescriptor = bun.invalid_fd,
-        to_read: ?u32 = null,
-        close_on_empty_read: bool = false,
-        auto_sizer: ?*AutoSizer = null,
-        pending: StreamResult.Pending = StreamResult.Pending{
-            .future = undefined,
-            .state = .none,
-            .result = .{ .done = {} },
-        },
-        signal: JSC.WebCore.Signal = .{},
-        has_adjusted_pipe_size_on_linux: bool = false,
-        drained: bool = true,
-
-        pub const event_loop_kind = EventLoop;
-        pub usingnamespace NewReadyWatcher(@This(), .readable, ready);
-
-        pub fn finish(this: *@This()) void {
-            this.close_on_empty_read = true;
-            if (this.poll_ref) |poll| {
-                poll.flags.insert(.hup);
-                poll.disableKeepingProcessAlive(EventLoop.getVm());
-            }
-
-            this.pending.result = .{ .done = {} };
-            this.pending.run();
-        }
-
-        pub fn close(this: *@This()) void {
-            if (this.poll_ref) |poll| {
-                this.poll_ref = null;
-                poll.deinit();
-            }
-
-            const fd = this.fd;
-            const signal_close = fd != bun.invalid_fd;
-            defer if (signal_close) this.signal.close(null);
-            if (signal_close) {
-                this.fd = bun.invalid_fd;
-                _ = bun.sys.close(fd);
-            }
-
-            this.to_read = null;
-            this.pending.result = .{ .done = {} };
-
-            this.pending.run();
-        }
-
-        pub fn isClosed(this: *@This()) bool {
-            return this.fd == bun.invalid_fd;
-        }
-
-        pub fn getAvailableToReadOnLinux(this: *@This()) u32 {
-            var len: c_int = 0;
-            const rc: c_int = std.c.ioctl(this.fd.cast(), std.os.linux.T.FIONREAD, @as(*c_int, &len));
-            if (rc != 0) {
-                len = 0;
-            }
-
-            if (len > 0) {
-                if (this.poll_ref) |poll| {
-                    poll.flags.insert(.readable);
-                }
-            } else {
-                if (this.poll_ref) |poll| {
-                    poll.flags.remove(.readable);
-                }
-
-                return @as(u32, 0);
-            }
-
-            return @as(u32, @intCast(@max(len, 0)));
-        }
-
-        pub fn adjustPipeCapacityOnLinux(this: *@This(), current: usize, max: usize) void {
-            // we do not un-mark it as readable if there's nothing in the pipe
-            if (!this.has_adjusted_pipe_size_on_linux) {
-                if (current > 0 and max >= std.mem.page_size * 16) {
-                    this.has_adjusted_pipe_size_on_linux = true;
-                    _ = Syscall.setPipeCapacityOnLinux(this.fd, @min(max * 4, Syscall.getMaxPipeSizeOnLinux()));
-                }
-            }
-        }
-
-        pub fn cannotRead(this: *@This(), available: u32) ?ReadResult {
-            if (comptime Environment.isLinux) {
-                if (available > 0 and available != std.math.maxInt(u32)) {
-                    return null;
-                }
-            }
-
-            if (this.poll_ref) |poll| {
-                if (comptime Environment.isMac) {
-                    if (available > 0 and available != std.math.maxInt(u32)) {
-                        poll.flags.insert(.readable);
-                    }
-                }
-
-                const is_readable = poll.isReadable();
-                if (!is_readable and (this.close_on_empty_read or poll.isHUP())) {
-                    // it might be readable actually
-                    this.close_on_empty_read = true;
-                    switch (bun.isReadable(poll.fd)) {
-                        .ready => {
-                            this.close_on_empty_read = false;
-                            return null;
-                        },
-                        // we need to read the 0 at the end or else we are not truly done
-                        .hup => {
-                            this.close_on_empty_read = true;
-                            poll.flags.insert(.hup);
-                            return null;
-                        },
-                        else => {},
-                    }
-
-                    return .done;
-                } else if (!is_readable and poll.isWatching()) {
-                    // if the file was opened non-blocking
-                    // we don't risk anything by attempting to read it!
-                    if (poll.flags.contains(.nonblocking))
-                        return null;
-
-                    // this happens if we've registered a watcher but we haven't
-                    // ticked the event loop since registering it
-                    switch (bun.isReadable(poll.fd)) {
-                        .ready => {
-                            poll.flags.insert(.readable);
-                            return null;
-                        },
-                        .hup => {
-                            poll.flags.insert(.hup);
-                            poll.flags.insert(.readable);
-                            return null;
-                        },
-                        else => {
-                            return .pending;
-                        },
-                    }
-                }
-            }
-
-            if (comptime Environment.isLinux) {
-                if (available == 0) {
-                    std.debug.assert(this.poll_ref == null);
-                    return .pending;
-                }
-            } else if (available == std.math.maxInt(@TypeOf(available)) and this.poll_ref == null) {
-                // we don't know if it's readable or not
-                return switch (bun.isReadable(this.fd)) {
-                    .hup => {
-                        this.close_on_empty_read = true;
-                        return null;
-                    },
-                    .ready => null,
-                    else => ReadResult{ .pending = {} },
-                };
-            }
-
-            return null;
-        }
-
-        pub fn getAvailableToRead(this: *@This(), size_or_offset: i64) ?u32 {
-            if (comptime Environment.isLinux) {
-                return this.getAvailableToReadOnLinux();
-            }
-
-            if (size_or_offset != std.math.maxInt(@TypeOf(size_or_offset)))
-                this.to_read = @as(u32, @intCast(@max(size_or_offset, 0)));
-
-            return this.to_read;
-        }
-
-        const log = bun.Output.scoped(.FIFO, false);
-        pub fn ready(this: *@This(), sizeOrOffset: i64, is_hup: bool) void {
-            log("FIFO ready", .{});
-            if (this.isClosed()) {
-                if (this.isWatching())
-                    this.unwatch(this.poll_ref.?.fd);
-                return;
-            }
-
-            defer {
-                if (comptime EventLoop == .js) JSC.VirtualMachine.get().drainMicrotasks();
-            }
-
-            if (comptime Environment.isMac) {
-                if (sizeOrOffset == 0 and is_hup and this.drained) {
-                    this.close();
-                    return;
-                }
-            } else if (is_hup and this.drained and this.getAvailableToReadOnLinux() == 0) {
-                this.close();
-                return;
-            }
-
-            if (this.buf.len == 0) {
-                var auto_sizer = this.auto_sizer orelse return;
-                if (comptime Environment.isMac) {
-                    if (sizeOrOffset > 0) {
-                        this.buf = auto_sizer.resize(@as(usize, @intCast(sizeOrOffset))) catch return;
-                    } else {
-                        this.buf = auto_sizer.resize(8192) catch return;
-                    }
-                }
-            }
-
-            const read_result = this.read(
-                this.buf,
-                // On Linux, we end up calling ioctl() twice if we don't do this
-                if (comptime Environment.isMac)
-                    // i33 holds the same amount of unsigned space as a u32, so we truncate it there before casting
-                    @as(u32, @intCast(@as(i33, @truncate(sizeOrOffset))))
-                else
-                    null,
-            );
-
-            if (read_result == .read) {
-                if (this.to_read) |*to_read| {
-                    to_read.* = to_read.* -| @as(u32, @truncate(read_result.read.len));
-                }
-            }
-
-            this.pending.result = read_result.toStream(
-                &this.pending,
-                this.buf,
-                this.view.get() orelse .zero,
-                this.close_on_empty_read,
-            );
-            this.pending.run();
-        }
-
-        pub fn readFromJS(
-            this: *@This(),
-            buf_: []u8,
-            view: JSValue,
-            globalThis: *JSC.JSGlobalObject,
-        ) StreamResult {
-            if (this.isClosed()) {
-                return .{ .done = {} };
-            }
-
-            if (!this.isWatching()) {
-                this.watch(this.fd);
-            }
-
-            const read_result = this.read(buf_, this.to_read);
-            if (read_result == .read and read_result.read.len == 0) {
-                this.close();
-                return .{ .done = {} };
-            }
-
-            if (read_result == .read) {
-                if (this.to_read) |*to_read| {
-                    to_read.* = to_read.* -| @as(u32, @truncate(read_result.read.len));
-                }
-            }
-
-            if (read_result == .pending) {
-                this.buf = buf_;
-                this.view.set(globalThis, view);
-                if (!this.isWatching()) this.watch(this.fd);
-                std.debug.assert(this.isWatching());
-                return .{ .pending = &this.pending };
-            }
-
-            return read_result.toStream(&this.pending, buf_, view, this.close_on_empty_read);
-        }
-
-        pub fn read(
-            this: *@This(),
-            buf_: []u8,
-            /// provided via kqueue(), only on macOS
-            kqueue_read_amt: ?u32,
-        ) ReadResult {
-            const available_to_read = this.getAvailableToRead(
-                if (kqueue_read_amt != null)
-                    @as(i64, @intCast(kqueue_read_amt.?))
-                else
-                    std.math.maxInt(i64),
-            );
-
-            if (this.cannotRead(available_to_read orelse std.math.maxInt(u32))) |res| {
-                return switch (res) {
-                    .pending => .{ .pending = {} },
-                    .done => .{ .done = {} },
-                    else => unreachable,
-                };
-            }
-
-            var buf = buf_;
-            std.debug.assert(buf.len > 0);
-
-            if (available_to_read) |amt| {
-                if (amt >= buf.len) {
-                    if (comptime Environment.isLinux) {
-                        this.adjustPipeCapacityOnLinux(amt, buf.len);
-                    }
-
-                    if (this.auto_sizer) |sizer| {
-                        buf = sizer.resize(amt) catch buf_;
-                    }
-                }
-            }
-
-            return this.doRead(buf);
-        }
-
-        fn doRead(
-            this: *@This(),
-            buf: []u8,
-        ) ReadResult {
-            switch (Syscall.read(this.fd, buf)) {
-                .err => |err| {
-                    const retry = E.AGAIN;
-                    const errno: E = brk: {
-                        const _errno = err.getErrno();
-
-                        if (comptime Environment.isLinux) {
-                            if (_errno == .PERM)
-                                // EPERM and its a FIFO on Linux? Trying to read past a FIFO which has already
-                                // sent a 0
-                                // Let's retry later.
-                                return .{ .pending = {} };
-                        }
-
-                        break :brk _errno;
-                    };
-
-                    switch (errno) {
-                        retry => {
-                            return .{ .pending = {} };
-                        },
-                        else => {},
-                    }
-
-                    return .{ .err = err };
-                },
-                .result => |result| {
-                    if (this.poll_ref) |poll| {
-                        if (comptime Environment.isLinux) {
-                            // do not insert .eof here
-                            if (result < buf.len)
-                                poll.flags.remove(.readable);
-                        } else {
-                            // Since we have no way of querying FIFO capacity
-                            // its only okay to read when kqueue says its readable
-                            // otherwise we might block the process
-                            poll.flags.remove(.readable);
-                        }
-                    }
-
-                    if (result == 0) {
-                        return .{ .done = {} };
-                    }
-                    return .{ .read = buf[0..result] };
-                },
-            }
-        }
-    };
-}
-
 pub const File = struct {
     buf: []u8 = &[_]u8{},
     view: JSC.Strong = .{},
@@ -4842,47 +4610,6 @@ pub const File = struct {
     }
 };
 
-pub const PipeReader = struct {
-    reader: BufferedOutputReader = .{},
-
-    pub fn createFromBufferedOutputReader(existing_reader: anytype) JSC.JSValue {
-        std.meta.copy
-
-    }
-
-    pub const BufferedOutputReader = bun.io.BufferedOutputReader(@This(), onReadChunk);
-
-    pub fn create(event_loop: JSC.EventLoopHandle) *Source {
-        _ = event_loop; // autofix
-
-    }
-
-    pub fn parent(this: *@This()) *Source {
-        return @fieldParentPtr(Source, "context", this);
-    }
-
-    pub fn onReadChunk
-
-    pub const Source = ReadableStreamSource(
-        @This(),
-        "PipeReader",
-        onStart,
-        onPullInto,
-        onCancel,
-        deinit,
-        setRefOrUnref,
-        drainInternalBuffer,
-    );
-
-    pub fn onStart(this: *PipeReader) StreamStart {
-        _ = this; // autofix
-    }
-
-    pub fn deinit(this: *PipeReader) void {
-        this.reader.deinit();
-    }
-};
-
 // macOS default pipe size is page_size, 16k, or 64k. It changes based on how much was written
 // Linux default pipe size is 16 pages of memory
 const default_fifo_chunk_size = 64 * 1024;
@@ -4905,22 +4632,11 @@ pub const FileReader = struct {
         return @fieldParentPtr(Source, "context", this);
     }
 
-    pub fn setSignal(this: *FileReader, signal: Signal) void {
-        switch (this.lazy_readable) {
-            .readable => {
-                if (this.lazy_readable.readable == .FIFO)
-                    this.lazy_readable.readable.FIFO.signal = signal;
-            },
-            else => {},
-        }
-    }
-
     pub fn readable(this: *FileReader) *Readable {
         return &this.lazy_readable.readable;
     }
 
     pub const Readable = union(enum) {
-        FIFO: FIFO,
         File: File,
 
         pub const Lazy = union(enum) {

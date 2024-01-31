@@ -687,161 +687,91 @@ pub const Subprocess = struct {
         return array;
     }
 
-    pub const BufferedInput = struct {
-        remain: []const u8 = "",
+    pub const StaticPipeWriter = struct {
+        writer: bun.io.BufferedWriter(StaticPipeWriter, onWrite, onError, onClose) = .{},
         fd: bun.FileDescriptor = bun.invalid_fd,
-        poll_ref: ?*Async.FilePoll = null,
-        written: usize = 0,
-
-        source: union(enum) {
-            blob: JSC.WebCore.AnyBlob,
-            array_buffer: JSC.ArrayBuffer.Strong,
-        },
-
-        pub const event_loop_kind = JSC.EventLoopKind.js;
-
-        pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedInput, .writable, onReady);
-
-        pub fn onReady(this: *BufferedInput, _: i64) void {
-            if (this.fd == bun.invalid_fd) {
-                return;
-            }
-
-            this.write();
-        }
-
-        pub fn writeIfPossible(this: *BufferedInput, comptime is_sync: bool) void {
-            if (comptime !is_sync) {
-
-                // we ask, "Is it possible to write right now?"
-                // we do this rather than epoll or kqueue()
-                // because we don't want to block the thread waiting for the write
-                switch (bun.isWritable(this.fd)) {
-                    .ready => {
-                        if (this.poll_ref) |poll| {
-                            poll.flags.insert(.writable);
-                            poll.flags.insert(.fifo);
-                            std.debug.assert(poll.flags.contains(.poll_writable));
-                        }
-                    },
-                    .hup => {
-                        this.deinit();
-                        return;
-                    },
-                    .not_ready => {
-                        if (!this.isWatching()) this.watch(this.fd);
-                        return;
-                    },
-                }
-            }
-
-            this.writeAllowBlocking(is_sync);
-        }
-
-        pub fn write(this: *BufferedInput) void {
-            this.writeAllowBlocking(false);
-        }
-
-        pub fn writeAllowBlocking(this: *BufferedInput, allow_blocking: bool) void {
-            var to_write = this.remain;
-
-            if (to_write.len == 0) {
-                // we are done!
-                this.closeFDIfOpen();
-                return;
-            }
-
-            if (comptime bun.Environment.allow_assert) {
-                // bun.assertNonBlocking(this.fd);
-            }
-
-            while (to_write.len > 0) {
-                switch (bun.sys.write(this.fd, to_write)) {
-                    .err => |e| {
-                        if (e.isRetry()) {
-                            log("write({d}) retry", .{
-                                to_write.len,
-                            });
-
-                            this.watch(this.fd);
-                            this.poll_ref.?.flags.insert(.fifo);
-                            return;
-                        }
-
-                        if (e.getErrno() == .PIPE) {
-                            this.deinit();
-                            return;
-                        }
-
-                        // fail
-                        log("write({d}) fail: {d}", .{ to_write.len, e.errno });
-                        this.deinit();
-                        return;
-                    },
-
-                    .result => |bytes_written| {
-                        this.written += bytes_written;
-
-                        log(
-                            "write({d}) {d}",
-                            .{
-                                to_write.len,
-                                bytes_written,
-                            },
-                        );
-
-                        this.remain = this.remain[@min(bytes_written, this.remain.len)..];
-                        to_write = to_write[bytes_written..];
-
-                        // we are done or it accepts no more input
-                        if (this.remain.len == 0 or (allow_blocking and bytes_written == 0)) {
-                            this.deinit();
-                            return;
-                        }
-                    },
-                }
-            }
-        }
-
-        fn closeFDIfOpen(this: *BufferedInput) void {
-            if (this.poll_ref) |poll| {
-                this.poll_ref = null;
-                poll.deinit();
-            }
-
-            if (this.fd != bun.invalid_fd) {
-                _ = bun.sys.close(this.fd);
-                this.fd = bun.invalid_fd;
-            }
-        }
-
-        pub fn deinit(this: *BufferedInput) void {
-            this.closeFDIfOpen();
-
-            switch (this.source) {
-                .blob => |*blob| {
-                    blob.detach();
-                },
-                .array_buffer => |*array_buffer| {
-                    array_buffer.deinit();
-                },
-            }
-        }
-    };
-
-    pub const BufferedOutput = struct {
-        reader: bun.io.BufferedOutputReader(BufferedOutput, null) = .{},
+        source: Source = .{ .detached = {} },
         process: *Subprocess = undefined,
-        event_loop: *JSC.EventLoop = undefined,
-        ref_count: u32 = 1,
+        event_loop: *JSC.EventLoop,
 
         pub usingnamespace bun.NewRefCounted(@This(), deinit);
 
-        pub fn onOutputDone(this: *BufferedOutput) void {
+        pub const Source = union(enum) {
+            blob: JSC.WebCore.Blob,
+            array_buffer: JSC.ArrayBuffer.Strong,
+            detached: void,
+
+            pub fn detach(this: *@This()) void {
+                switch (this.*) {
+                    .blob => {
+                        this.blob.detach();
+                    },
+                    .array_buffer => {
+                        this.array_buffer.deinit();
+                    },
+                    else => {},
+                }
+                this.* = .detached;
+            }
+        };
+
+        pub fn onWrite(this: *StaticPipeWriter, amount: usize, is_done: bool) void {
+            _ = amount; // autofix
+            if (is_done) {
+                this.writer.close();
+            }
+        }
+
+        pub fn onError(this: *StaticPipeWriter, err: bun.sys.Error) void {
+            _ = err; // autofix
+            this.source.detach();
+        }
+
+        pub fn onClose(this: *StaticPipeWriter) void {
+            this.source.detach();
+            this.process.onCloseIO(.stdin);
+        }
+
+        pub fn deinit(this: *StaticPipeWriter) void {
+            this.writer.end();
+            this.source.detach();
+            this.destroy();
+        }
+
+        pub fn loop(this: *StaticPipeWriter) *uws.Loop {
+            return this.event_loop.virtual_machine.uwsLoop();
+        }
+
+        pub fn eventLoop(this: *StaticPipeWriter) *JSC.EventLoop {
+            return this.event_loop;
+        }
+    };
+
+    pub const PipeReader = struct {
+        reader: bun.io.BufferedOutputReader(PipeReader, null) = .{},
+        process: *Subprocess = undefined,
+        event_loop: *JSC.EventLoop = undefined,
+        ref_count: u32 = 1,
+        state: union(enum) {
+            pending: void,
+            done: []u8,
+            err: bun.sys.Error,
+        } = .{ .pending = {} },
+
+        pub usingnamespace bun.NewRefCounted(@This(), deinit);
+
+        pub fn onOutputDone(this: *PipeReader) void {
+            const owned = this.toOwnedSlice();
+            this.state = .{ .done = owned };
+            this.reader.close();
+            this.reader.deref();
             this.process.onCloseIO(this.kind());
         }
 
-        pub fn toOwnedSlice(this: *BufferedOutput) []u8 {
+        pub fn toOwnedSlice(this: *PipeReader) []u8 {
+            if (this.state == .done) {
+                return this.state.done;
+            }
             // we do not use .toOwnedSlice() because we don't want to reallocate memory.
             const out = this.reader.buffer.items;
             this.reader.buffer.items = &.{};
@@ -849,13 +779,47 @@ pub const Subprocess = struct {
             return out;
         }
 
-        pub fn onOutputError(this: *BufferedOutput, err: bun.sys.Error) void {
-            _ = this; // autofix
-            Output.panic("BufferedOutput should never error. If it does, it's a bug in the code.\n{}", .{err});
+        pub fn toReadableStream(this: *PipeReader) JSC.JSValue {
+            switch (this.state) {
+                .pending => {
+                    const stream = JSC.WebCore.ReadableStream.fromPipe(this.event_loop.global, &this.reader);
+                    defer this.reader.deref();
+                    this.state = .{ .done = .{} };
+                    return stream;
+                },
+                .done => |bytes| {
+                    const blob = JSC.WebCore.Blob.init(bytes, bun.default_allocator, this.event_loop.global);
+                    this.state = .{ .done = .{} };
+                    return JSC.WebCore.ReadableStream.fromBlob(this.event_loop.global, &blob, 0);
+                },
+                .err => |err| {
+                    _ = err; // autofix
+                    const empty = JSC.WebCore.ReadableStream.empty(this.event_loop.global);
+                    JSC.WebCore.ReadableStream.cancel(JSC.WebCore.ReadableStream.fromJS(empty, this.event_loop.global), this.event_loop.global);
+                    return empty;
+                },
+            }
         }
 
-        fn kind(this: *const BufferedOutput) StdioKind {
-            if (this.process.stdout == .sync_buffered_output and this.process.stdout.sync_buffered_output == this) {
+        pub fn toBuffer(this: *PipeReader) JSC.JSValue {
+            switch (this.state) {
+                .done => |bytes| {
+                    defer this.state = .{ .done = &.{} };
+                    return JSC.MarkedArrayBuffer.fromBytes(bytes, bun.default_allocator, .Uint8Array).toNodeBuffer(this.event_loop.global);
+                },
+                else => {
+                    return JSC.JSValue.undefined;
+                },
+            }
+        }
+
+        pub fn onOutputError(this: *PipeReader, err: bun.sys.Error) void {
+            this.state = .{ .err = err };
+            this.process.onCloseIO(this.kind());
+        }
+
+        fn kind(this: *const PipeReader) StdioKind {
+            if (this.process.stdout == .pipe and this.process.stdout.sync_buffered_output == this) {
                 // are we stdout?
                 return .stdout;
             } else if (this.process.stderr == .sync_buffered_output and this.process.stderr.sync_buffered_output == this) {
@@ -866,164 +830,38 @@ pub const Subprocess = struct {
             @panic("We should be either stdout or stderr");
         }
 
-        pub fn close(this: *BufferedOutput) void {
-            if (!this.reader.is_done)
-                this.reader.close();
+        pub fn close(this: *PipeReader) void {
+            switch (this.state) {
+                .pending => {
+                    this.reader.close();
+                },
+                .done => {},
+                .err => {},
+            }
         }
 
-        pub fn eventLoop(this: *BufferedOutput) *JSC.EventLoop {
+        pub fn eventLoop(this: *PipeReader) *JSC.EventLoop {
             return this.event_loop;
         }
 
-        pub fn loop(this: *BufferedOutput) *uws.Loop {
+        pub fn loop(this: *PipeReader) *uws.Loop {
             return this.event_loop.virtual_machine.uwsLoop();
         }
 
-        fn deinit(this: *BufferedOutput) void {
-            std.debug.assert(this.reader.is_done);
+        fn deinit(this: *PipeReader) void {
+            if (comptime Environment.isPosix) {
+                std.debug.assert(this.reader.is_done);
+            }
 
             if (comptime Environment.isWindows) {
                 std.debug.assert(this.reader.pipe.isClosed());
             }
 
+            if (this.state == .done) {
+                bun.default_allocator.free(this.state.done);
+            }
+
             this.destroy();
-        }
-    };
-
-    pub const StreamingOutput = struct {
-        reader: bun.io.BufferedOutputReader(BufferedOutput, onChunk) = .{},
-        process: *Subprocess = undefined,
-        event_loop: *JSC.EventLoop = undefined,
-        ref_count: u32 = 1,
-
-        pub fn readAll(this: *StreamingOutput) void {
-            _ = this; // autofix
-        }
-
-        pub fn toBlob(this: *StreamingOutput, globalThis: *JSC.JSGlobalObject) JSC.WebCore.Blob {
-            const blob = JSC.WebCore.Blob.init(this.internal_buffer.slice(), bun.default_allocator, globalThis);
-            this.internal_buffer = bun.ByteList.init("");
-            return blob;
-        }
-
-      
-
-        fn signalStreamError(this: *StreamingOutput) void {
-            if (this.status == .err) {
-                // if we are streaming update with error
-                if (this.readable_stream_ref.get()) |readable| {
-                    if (readable.ptr == .Bytes) {
-                        readable.ptr.Bytes.onData(
-                            .{
-                                .err = .{ .Error = this.status.err },
-                            },
-                            bun.default_allocator,
-                        );
-                    }
-                }
-                // after error we dont need the ref anymore
-                this.readable_stream_ref.deinit();
-            }
-        }
-        fn flushBufferedDataIntoReadableStream(this: *StreamingOutput) void {
-            if (this.readable_stream_ref.get()) |readable| {
-                if (readable.ptr != .Bytes) return;
-
-                const internal_buffer = this.internal_buffer;
-                const isDone = this.status != .pending;
-
-                if (internal_buffer.len > 0 or isDone) {
-                    readable.ptr.Bytes.size_hint += internal_buffer.len;
-                    if (isDone) {
-                        readable.ptr.Bytes.onData(
-                            .{
-                                .temporary_and_done = internal_buffer,
-                            },
-                            bun.default_allocator,
-                        );
-                        // no need to keep the ref anymore
-                        this.readable_stream_ref.deinit();
-                    } else {
-                        readable.ptr.Bytes.onData(
-                            .{
-                                .temporary = internal_buffer,
-                            },
-                            bun.default_allocator,
-                        );
-                    }
-                    this.internal_buffer.len = 0;
-                }
-            }
-        }
-
-        fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
-            const this = bun.cast(*StreamingOutput, ctx);
-            if (this.globalThis) |globalThis| {
-                this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis) catch .{};
-            }
-        }
-
-        fn toReadableStream(this: *StreamingOutput, globalThis: *JSC.JSGlobalObject, exited: bool) JSC.WebCore.ReadableStream {
-            if (exited) {
-                // exited + received EOF => no more read()
-                const isClosed = if (Environment.isWindows) this.status != .pending else this.stream.isClosed();
-                if (isClosed) {
-                    // also no data at all
-                    if (this.internal_buffer.len == 0) {
-                        if (this.internal_buffer.cap > 0) {
-                            if (this.auto_sizer) |auto_sizer| {
-                                this.internal_buffer.deinitWithAllocator(auto_sizer.allocator);
-                            }
-                        }
-                        // so we return an empty stream
-                        return JSC.WebCore.ReadableStream.fromJS(
-                            JSC.WebCore.ReadableStream.empty(globalThis),
-                            globalThis,
-                        ).?;
-                    }
-
-                    return JSC.WebCore.ReadableStream.fromJS(
-                        JSC.WebCore.ReadableStream.fromBlob(
-                            globalThis,
-                            &this.toBlob(globalThis),
-                            0,
-                        ),
-                        globalThis,
-                    ).?;
-                }
-            }
-
-            // There could still be data waiting to be read in the pipe
-            // so we need to create a new stream that will read from the
-            // pipe and then return the blob.
-            const result = JSC.WebCore.ReadableStream.fromJS(
-                JSC.WebCore.ReadableStream.fromFIFO(
-                    globalThis,
-                    &this.stream,
-                    internal_buffer,
-                ),
-                globalThis,
-            ).?;
-            this.stream.fd = bun.invalid_fd;
-            this.stream.poll_ref = null;
-            return result;
-        }
-
-        pub fn close(this: *StreamingOutput) void {
-            switch (this.status) {
-                .done => {},
-                .pending => {
-                    bun.markPosixOnly();
-                    this.stream.close();
-                    this.status = .{ .done = {} };
-                },
-                .err => {},
-            }
-
-            if (this.internal_buffer.cap > 0) {
-                this.internal_buffer.listManaged(bun.default_allocator).deinit();
-                this.internal_buffer = .{};
-            }
         }
     };
 
@@ -1031,7 +869,7 @@ pub const Subprocess = struct {
     const BufferedInputType = BufferedInput;
     const Writable = union(enum) {
         pipe: SinkType,
-        pipe_to_readable_stream: struct {
+        pipe: struct {
             pipe: SinkType,
             readable_stream: JSC.WebCore.ReadableStream,
         },

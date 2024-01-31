@@ -38,7 +38,6 @@ pub const meta = @import("./meta.zig");
 pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
-pub const path16 = @import("./resolver/resolve_path16.zig");
 pub const resolver = @import("./resolver//resolver.zig");
 pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;

@@ -5283,12 +5283,17 @@ pub const NodeFS = struct {
                 const dirfd = if (!Environment.isWindows) args.dirfd else blk: {
                     if (std.mem.startsWith(u8, path, "..\\")) {
                         is_dirfd_different = true;
-                        var buffer = std.mem.zeroes([std.fs.MAX_PATH_BYTES - 1:0]u8);
-                        const dirfd_path_len = bun.windows.GetFinalPathNameByHandleA(args.dirfd.cast(), &buffer, std.fs.MAX_PATH_BYTES, .NORMALIZED);
+                        var buffer: bun.WPathBuffer = undefined;
+                        const dirfd_path_len = std.os.windows.kernel32.GetFinalPathNameByHandleW(args.dirfd.cast(), &buffer, buffer.len, 0);
                         const dirfd_path = buffer[0..dirfd_path_len];
-                        const parent_path = std.fs.path.dirname(dirfd_path).?;
-                        const newdir = std.fs.cwd().openDir(parent_path, .{}) catch unreachable;
-                        const newdirfd = bun.toFD(newdir.fd);
+                        const parent_path = bun.path16.dirname(dirfd_path).?;
+                        @constCast(parent_path)[1] = '?'; // change prefix from '\\?\' to '\??\'
+                        const newdirfd = switch (bun.sys.openDirAtWindows(bun.invalid_fd, parent_path, false, true)) {
+                            .result => |fd| fd,
+                            .err => |err| {
+                                return .{ .err = err.withPath(path) };
+                            },
+                        };
                         path = path[3..];
                         break :blk newdirfd;
                     }

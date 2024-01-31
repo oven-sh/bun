@@ -3314,6 +3314,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         }
                     },
                     .directory => {
+                        if (comptime Environment.isWindows) {
+                            // for now ignore directory updates on windows
+                            continue;
+                        }
                         var affected_buf: [128][]const u8 = undefined;
                         var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
 

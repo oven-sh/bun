@@ -199,9 +199,9 @@ const DarwinWatcher = struct {
 };
 
 pub const WindowsWatcher = struct {
-    // TODO iocp needs to be updated atomically to allow the main thread to register new watchers while the watcher thread is running
     iocp: w.HANDLE = undefined,
     allocator: std.mem.Allocator = undefined,
+    watchers: std.ArrayListUnmanaged(*DirWatcher) = std.ArrayListUnmanaged(*DirWatcher){},
 
     const w = std.os.windows;
     pub const EventListIndex = c_int;
@@ -220,13 +220,15 @@ pub const WindowsWatcher = struct {
     };
 
     // each directory being watched has an associated DirWatcher
-    const DirWatcher = extern struct {
-        // this must be the first field because we retrieve the DirWatcher from a pointer to its overlapped field
-        // also, even though it is never read or written, it must be initialized to zero, otherwise ReadDirectoryChangesW will fail with INVALID_HANDLE
+    const DirWatcher = struct {
+        // must be initialized to zero (even though it's never read or written in our code),
+        // otherwise ReadDirectoryChangesW will fail with INVALID_HANDLE
         overlapped: w.OVERLAPPED = std.mem.zeroes(w.OVERLAPPED),
         buf: [64 * 1024]u8 align(@alignOf(w.FILE_NOTIFY_INFORMATION)) = undefined,
         dirHandle: w.HANDLE,
-        watch_subtree: w.BOOLEAN = 1,
+        path: [:0]u16,
+        path_buf: bun.WPathBuffer = undefined,
+        refcount: usize = 1,
 
         const EventIterator = struct {
             watcher: *DirWatcher,
@@ -255,6 +257,12 @@ pub const WindowsWatcher = struct {
             }
         };
 
+        fn fromOverlapped(overlapped: *w.OVERLAPPED) *DirWatcher {
+            const offset = @offsetOf(DirWatcher, "overlapped");
+            const overlapped_byteptr: [*]u8 = @ptrCast(overlapped);
+            return @alignCast(@ptrCast(overlapped_byteptr - offset));
+        }
+
         fn events(this: *DirWatcher) EventIterator {
             return EventIterator{ .watcher = this };
         }
@@ -262,10 +270,26 @@ pub const WindowsWatcher = struct {
         // invalidates any EventIterators derived from this DirWatcher
         fn prepare(this: *DirWatcher) !void {
             const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION;
-            if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, this.watch_subtree, filter, null, &this.overlapped, null) == 0) {
+            if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, 1, filter, null, &this.overlapped, null) == 0) {
                 const err = w.kernel32.GetLastError();
                 std.debug.print("failed to start watching directory: {s}\n", .{@tagName(err)});
                 @panic("failed to start watching directory");
+            }
+        }
+
+        fn ref(this: *DirWatcher) void {
+            std.debug.assert(this.refcount > 0);
+            this.refcount += 1;
+        }
+
+        fn unref(this: *DirWatcher) void {
+            std.debug.assert(this.refcount > 0);
+            this.refcount -= 1;
+            // TODO if refcount reaches 0 we should deallocate
+            // But we can't deallocate right away because we might be in the middle of iterating over the events of this watcher
+            // we probably need some sort of queue that can be emptied by the watcher thread.
+            if (this.refcount == 0) {
+                std.debug.print("TODO: deallocate watcher\n", .{});
             }
         }
     };
@@ -285,7 +309,7 @@ pub const WindowsWatcher = struct {
         w.kernel32.CloseHandle(this.iocp);
     }
 
-    pub fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: [:0]const u16) !*DirWatcher {
+    fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: [:0]const u16) !*DirWatcher {
         _ = dirFd;
         std.debug.print("adding directory to watch: {s}\n", .{std.unicode.fmtUtf16le(path)});
         const path_len_bytes: u16 = @truncate(path.len * 2);
@@ -331,40 +355,81 @@ pub const WindowsWatcher = struct {
 
         errdefer _ = w.kernel32.CloseHandle(handle);
 
-        // TODO atomic update
-        this.iocp = try w.CreateIoCompletionPort(handle, this.iocp, 0, 1);
+        // on success we receive the same iocp handle back that we put in - no need to update it
+        _ = try w.CreateIoCompletionPort(handle, this.iocp, 0, 1);
 
         const watcher = try this.allocator.create(DirWatcher);
         errdefer this.allocator.destroy(watcher);
-        watcher.* = .{ .dirHandle = handle };
+        watcher.* = .{ .dirHandle = handle, .path = undefined };
+        // init path
+        @memcpy(watcher.path_buf[0..path.len], path);
+        watcher.path_buf[path.len] = 0;
+        watcher.path = watcher.path_buf[0..path.len :0];
 
-        std.debug.print("handle: {d}\n", .{@intFromPtr(handle)});
-
+        // TODO think about the different sequences of errors
         try watcher.prepare();
+        try this.watchers.append(this.allocator, watcher);
 
-        // TODO signal the watcher loop thread to start reading from the new iocp
         return watcher;
     }
 
+    pub fn watchFile(this: *WindowsWatcher, path: []const u8) !*DirWatcher {
+        const dirpath = std.fs.path.dirnameWindows(path) orelse @panic("get dir from file");
+        std.debug.print("path: {s}, dirpath: {s}\n", .{ path, dirpath });
+        return this.watchDir(dirpath);
+    }
+
+    pub fn watchDir(this: *WindowsWatcher, path_: []const u8) !*DirWatcher {
+        // strip the trailing slash if it exists
+        var path = path_;
+        if (path.len > 0 and bun.strings.charIsAnySlash(path[path.len - 1])) {
+            path = path[0 .. path.len - 1];
+        }
+        var pathbuf: bun.WPathBuffer = undefined;
+        const wpath = bun.strings.toNTPath(&pathbuf, path);
+        // check if one of the existing watchers covers this path
+        for (this.watchers.items) |watcher| {
+            if (std.mem.indexOf(u16, watcher.path, wpath) == 0) {
+                std.debug.print("found existing watcher\n", .{});
+                watcher.ref();
+                return watcher;
+            }
+        }
+        return this.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, wpath);
+    }
+
+    const Timeout = enum(w.DWORD) {
+        infinite = w.INFINITE,
+        minimal = 1,
+        none = 0,
+    };
+
     // get the next dirwatcher that has events
-    pub fn next(this: *WindowsWatcher) !*DirWatcher {
+    pub fn next(this: *WindowsWatcher, timeout: Timeout) !?*DirWatcher {
         var nbytes: w.DWORD = 0;
         var key: w.ULONG_PTR = 0;
         var overlapped: ?*w.OVERLAPPED = null;
         while (true) {
-            switch (w.GetQueuedCompletionStatus(this.iocp, &nbytes, &key, &overlapped, w.INFINITE)) {
-                .Normal => {},
-                .Aborted => @panic("aborted"),
-                .Cancelled => @panic("cancelled"),
-                .EOF => @panic("eof"),
-            }
-            if (nbytes == 0) {
-                // exit notification for this watcher - we should probably deallocate it here
-                continue;
+            const rc = w.kernel32.GetQueuedCompletionStatus(this.iocp, &nbytes, &key, &overlapped, @intFromEnum(timeout));
+            if (rc == 0) {
+                const err = w.kernel32.GetLastError();
+                if (err == w.Win32Error.IMEOUT) {
+                    return null;
+                } else {
+                    @panic("GetQueuedCompletionStatus failed");
+                }
             }
 
-            const watcher: *DirWatcher = @ptrCast(overlapped);
-            return watcher;
+            // exit notification for this watcher - we should probably deallocate it here
+            if (nbytes == 0) {
+                continue;
+            }
+            if (overlapped) |ptr| {
+                return DirWatcher.fromOverlapped(ptr);
+            } else {
+                // this would be an error which we should probaby signal
+                continue;
+            }
         }
     }
 };
@@ -438,13 +503,12 @@ pub const WatchEvent = struct {
         };
     }
 
-    pub fn fromFileNotify(this: *WatchEvent, event: *WindowsWatcher.FileEvent, index: WatchItemIndex) void {
-        const w = std.os.windows;
+    pub fn fromFileNotify(this: *WatchEvent, event: WindowsWatcher.FileEvent, index: WatchItemIndex) void {
         this.* = WatchEvent{
             .op = Op{
-                .delete = event.Action == w.FILE_ACTION_REMOVED,
-                .rename = event.Action == w.FILE_ACTION_RENAMED_OLD_NAME,
-                .write = event.Action == w.FILE_ACTION_MODIFIED,
+                .delete = event.action == .Removed,
+                .rename = event.action == .RenamedOld,
+                .write = event.action == .Modified,
             },
             .index = index,
         };
@@ -620,6 +684,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             var slice = this.watchlist.slice();
             const fds = slice.items(.fd);
+            const platform_data = slice.items(.platform);
             var last_item = no_watch_item;
 
             for (this.evict_list[0..this.evict_list_i]) |item| {
@@ -629,6 +694,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 if (Environment.isWindows) {
                     // on windows we need to deallocate the watcher instance
                     // TODO implement this
+                    if (platform_data[item].dir_watcher) |watcher| {
+                        watcher.unref();
+                    }
                 } else {
                     // on mac and linux we can just close the file descriptor
                     // TODO do we need to call inotify_rm_watch on linux?
@@ -790,16 +858,84 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
             } else if (Environment.isWindows) {
-                while (true) {
-                    const watcher = try this.platform.next();
-                    // after handling the watcher's events, it explicitly needs to start reading directory changes again
-                    defer watcher.prepare() catch |err| {
-                        Output.prettyErrorln("Failed to (re-)start listening to directory changes: {s}", .{@errorName(err)});
-                    };
-                    var iter = watcher.events();
-                    while (iter.next()) |event| {
-                        std.debug.print("filename: {}, action: {s}\n", .{ std.unicode.fmtUtf16le(event.filename), @tagName(event.action) });
+                restart: while (true) {
+                    var buf: bun.PathBuffer = undefined;
+                    var event_id: usize = 0;
+
+                    // first wait has infinite timeout - we're waiting for the next event and don't want to spin
+                    var timeout = WindowsWatcher.Timeout.infinite;
+                    while (true) {
+                        // std.debug.print("waiting with timeout: {s}\n", .{@tagName(timeout)});
+                        const watcher = try this.platform.next(timeout) orelse break;
+                        // after handling the watcher's events, it explicitly needs to start reading directory changes again
+                        defer watcher.prepare() catch |err| {
+                            Output.prettyErrorln("Failed to (re-)start listening to directory changes: {s}", .{@errorName(err)});
+                        };
+
+                        // after the first wait, we want to start coalescing events, so we wait for a minimal amount of time
+                        timeout = WindowsWatcher.Timeout.minimal;
+
+                        const item_paths = this.watchlist.items(.file_path);
+
+                        std.debug.print("event from watcher: {s}\n", .{std.unicode.fmtUtf16le(watcher.path)});
+                        var iter = watcher.events();
+                        while (iter.next()) |event| {
+                            std.debug.print("filename: {}, action: {s}\n", .{ std.unicode.fmtUtf16le(event.filename), @tagName(event.action) });
+                            // convert the current event file path to utf-8
+                            // skip the \??\ prefix
+                            var idx = bun.simdutf.convert.utf16.to.utf8.le(watcher.path[4..], &buf);
+                            buf[idx] = '\\';
+                            idx += 1;
+                            idx += bun.simdutf.convert.utf16.to.utf8.le(event.filename, buf[idx..]);
+                            const eventpath = buf[0..idx];
+
+                            std.debug.print("eventpath: {s}\n", .{eventpath});
+
+                            // TODO this really needs a more sophisticated search algorithm
+                            for (item_paths, 0..) |path, item_idx| {
+                                std.debug.print("path: {s}\n", .{path});
+                                // check if the current change applies to this item
+                                // if so, add it to the eventlist
+                                if (std.mem.indexOf(u8, path, eventpath) == 0) {
+                                    // this.changed_filepaths[event_id] = path;
+                                    this.watch_events[event_id].fromFileNotify(event, @truncate(item_idx));
+                                    event_id += 1;
+                                }
+                            }
+                        }
                     }
+                    if (event_id == 0) {
+                        continue :restart;
+                    }
+
+                    std.debug.print("event_id: {d}\n", .{event_id});
+
+                    var all_events = this.watch_events[0..event_id];
+                    std.sort.pdq(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
+
+                    var last_event_index: usize = 0;
+                    var last_event_id: INotify.EventListIndex = std.math.maxInt(INotify.EventListIndex);
+
+                    for (all_events, 0..) |_, i| {
+                        // if (all_events[i].name_len > 0) {
+                        // this.changed_filepaths[name_off] = temp_name_list[all_events[i].name_off];
+                        // all_events[i].name_off = name_off;
+                        // name_off += 1;
+                        // }
+
+                        if (all_events[i].index == last_event_id) {
+                            all_events[last_event_index].merge(all_events[i]);
+                            continue;
+                        }
+                        last_event_index = i;
+                        last_event_id = all_events[i].index;
+                    }
+                    if (all_events.len == 0) continue :restart;
+                    all_events = all_events[0 .. last_event_index + 1];
+
+                    std.debug.print("all_events.len: {d}\n", .{all_events.len});
+
+                    this.ctx.onFileUpdate(all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
                 }
             }
         }
@@ -872,13 +1008,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 const slice: [:0]const u8 = buf[0..file_path_.len :0];
                 item.platform.index = try this.platform.watchPath(slice);
             } else if (comptime Environment.isWindows) {
-                // TODO check if we're already watching a parent directory of this file
-                var pathbuf: bun.WPathBuffer = undefined;
-                const dirpath = std.fs.path.dirnameWindows(file_path) orelse unreachable;
-                const wpath = bun.strings.toNTPath(&pathbuf, dirpath);
-                const watcher = try this.platform.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, wpath);
-                item.platform.dir_watcher = watcher;
-                std.debug.print("watching file: {s}\n", .{file_path_});
+                item.platform.dir_watcher = try this.platform.watchFile(file_path_);
             }
 
             this.watchlist.appendAssumeCapacity(item);
@@ -960,15 +1090,14 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 const slice: [:0]u8 = buf[0..file_path_to_use_.len :0];
                 item.platform.eventlist_index = try this.platform.watchDir(slice);
             } else if (Environment.isWindows) {
-                var pathbuf: bun.WPathBuffer = undefined;
-                const wpath = bun.strings.toNTPath(&pathbuf, file_path_);
-                const watcher = try this.platform.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, wpath);
-                item.platform.dir_watcher = watcher;
+                item.platform.dir_watcher = try this.platform.watchDir(file_path_);
             }
 
             this.watchlist.appendAssumeCapacity(item);
             return @as(WatchItemIndex, @truncate(this.watchlist.len - 1));
         }
+
+        // Below is platform-independent
 
         pub fn appendFileMaybeLock(
             this: *Watcher,
@@ -1032,8 +1161,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 }
             }
         }
-
-        // Below is platform-independent
 
         inline fn isEligibleDirectory(this: *Watcher, dir: string) bool {
             return strings.indexOf(dir, this.fs.top_level_dir) != null and strings.indexOf(dir, "node_modules") == null;

@@ -223,6 +223,19 @@ pub const PathWatcherManager = struct {
 
         this.destroy();
     }
+
+    // TODO figure out what win_watcher even does...
+    pub fn onFileUpdate(
+        this: *@This(),
+        events: []GenericWatcher.WatchEvent,
+        changed_files: []?[:0]u8,
+        watchlist: GenericWatcher.Watchlist,
+    ) void {
+        _ = this; // autofix
+        _ = events; // autofix
+        _ = changed_files; // autofix
+        _ = watchlist; // autofix
+    }
 };
 
 pub const PathWatcher = struct {

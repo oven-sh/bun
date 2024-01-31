@@ -3009,10 +3009,24 @@ pub fn translateWinErrorToErrno(err: win32.Win32Error) bun.C.E {
 pub extern "kernel32" fn GetHostNameW(
     lpBuffer: PWSTR,
     nSize: c_int,
-) BOOL;
+) callconv(windows.WINAPI) BOOL;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
 pub extern "kernel32" fn GetTempPathW(
     nBufferLength: DWORD, // [in]
     lpBuffer: LPCWSTR, // [out]
 ) DWORD;
+
+pub extern "kernel32" fn CreateJobObjectA(
+    lpJobAttributes: ?*anyopaque, // [in, optional]
+    lpName: ?LPCSTR, // [in, optional]
+) callconv(windows.WINAPI) HANDLE;
+
+pub extern "kernel32" fn AssignProcessToJobObject(
+    hJob: HANDLE, // [in]
+    hProcess: HANDLE, // [in]
+) callconv(windows.WINAPI) BOOL;
+
+pub extern "kernel32" fn ResumeThread(
+    hJob: HANDLE, // [in]
+) callconv(windows.WINAPI) DWORD;

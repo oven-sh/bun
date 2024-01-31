@@ -288,8 +288,8 @@ pub fn main() !void {
     // try std.fs.makeDirAbsolute(dir);
     // try file.writeAll(&data);
 
-    // _ = std.os.windows.ntdll.NtClose(watched.dirHandle);
-    _ = watched;
+    _ = std.os.windows.ntdll.NtClose(watched.dirHandle);
+    // _ = watched;
 
     handle.join();
 }

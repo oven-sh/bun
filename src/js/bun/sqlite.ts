@@ -101,7 +101,7 @@ class Statement {
   }
 
   #runNoArgs() {
-    this.#raw.run();
+    return this.#raw.run();
   }
 
   #get(...args) {
@@ -143,8 +143,7 @@ class Statement {
   #run(...args) {
     if (args.length === 0) return this.#runNoArgs();
     var arg0 = args[0];
-
-    !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
       ? this.#raw.run(args)
       : this.#raw.run(...args);
   }

@@ -1780,17 +1780,20 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         DO_REBIND(arg0);
     }
 
+    JSValue result = jsUndefined();
     int status = sqlite3_step(stmt);
+
     if (!sqlite3_stmt_readonly(stmt)) {
         castedThis->version_db->version++;
-    }
-
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
+        result = jsNumber(sqlite3_changes(castedThis->version_db->db));
     }
 
     while (status == SQLITE_ROW) {
         status = sqlite3_step(stmt);
+    }
+
+    if (!castedThis->hasExecuted || castedThis->need_update()) {
+        initializeColumnNames(lexicalGlobalObject, castedThis);
     }
 
     if (UNLIKELY(status != SQLITE_DONE && status != SQLITE_OK)) {
@@ -1799,7 +1802,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         return JSValue::encode(jsUndefined());
     }
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsUndefined()));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementToStringFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

@@ -4842,6 +4842,47 @@ pub const File = struct {
     }
 };
 
+pub const PipeReader = struct {
+    reader: BufferedOutputReader = .{},
+
+    pub fn createFromBufferedOutputReader(existing_reader: anytype) JSC.JSValue {
+        std.meta.copy
+
+    }
+
+    pub const BufferedOutputReader = bun.io.BufferedOutputReader(@This(), onReadChunk);
+
+    pub fn create(event_loop: JSC.EventLoopHandle) *Source {
+        _ = event_loop; // autofix
+
+    }
+
+    pub fn parent(this: *@This()) *Source {
+        return @fieldParentPtr(Source, "context", this);
+    }
+
+    pub fn onReadChunk
+
+    pub const Source = ReadableStreamSource(
+        @This(),
+        "PipeReader",
+        onStart,
+        onPullInto,
+        onCancel,
+        deinit,
+        setRefOrUnref,
+        drainInternalBuffer,
+    );
+
+    pub fn onStart(this: *PipeReader) StreamStart {
+        _ = this; // autofix
+    }
+
+    pub fn deinit(this: *PipeReader) void {
+        this.reader.deinit();
+    }
+};
+
 // macOS default pipe size is page_size, 16k, or 64k. It changes based on how much was written
 // Linux default pipe size is 16 pages of memory
 const default_fifo_chunk_size = 64 * 1024;

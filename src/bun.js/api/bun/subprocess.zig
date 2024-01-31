@@ -891,275 +891,13 @@ pub const Subprocess = struct {
     };
 
     pub const StreamingOutput = struct {
-        internal_buffer: bun.ByteList = .{},
-        stream: FIFOType = undefined,
-        auto_sizer: ?JSC.WebCore.AutoSizer = null,
-        /// stream strong ref if any is available
-        readable_stream_ref: if (Environment.isWindows) JSC.WebCore.ReadableStream.Strong else u0 = if (Environment.isWindows) .{} else 0,
-        globalThis: if (Environment.isWindows) ?*JSC.JSGlobalObject else u0 = if (Environment.isWindows) null else 0,
-        status: Status = .{
-            .pending = {},
-        },
-
-        const FIFOType = if (Environment.isWindows) *uv.Pipe else JSC.WebCore.FIFO;
-        pub const Status = union(enum) {
-            pending: void,
-            done: void,
-            err: bun.sys.Error,
-        };
-
-        pub fn init(fd: bun.FileDescriptor) StreamingOutput {
-            if (Environment.isWindows) {
-                @compileError("Cannot use BufferedOutput with fd on Windows please use .initWithPipe");
-            }
-
-            std.debug.assert(fd != .zero and fd != bun.invalid_fd);
-            return StreamingOutput{
-                .internal_buffer = .{},
-                .stream = JSC.WebCore.FIFO{
-                    .fd = fd,
-                },
-            };
-        }
-
-        pub fn initWithPipe(pipe: *uv.Pipe) StreamingOutput {
-            if (!Environment.isWindows) {
-                @compileError("uv.Pipe can only be used on Windows");
-            }
-            return StreamingOutput{ .internal_buffer = .{}, .stream = pipe };
-        }
-
-        pub fn initWithSlice(fd: bun.FileDescriptor, slice: []u8) StreamingOutput {
-            if (Environment.isWindows) {
-                @compileError("Cannot use BufferedOutput with fd on Windows please use .initWithPipeAndSlice");
-            }
-            return StreamingOutput{
-                // fixed capacity
-                .internal_buffer = bun.ByteList.initWithBuffer(slice),
-                .auto_sizer = null,
-                .stream = JSC.WebCore.FIFO{
-                    .fd = fd,
-                },
-            };
-        }
-
-        pub fn initWithPipeAndSlice(pipe: *uv.Pipe, slice: []u8) StreamingOutput {
-            if (!Environment.isWindows) {
-                @compileError("uv.Pipe can only be used on Window");
-            }
-            return StreamingOutput{
-                // fixed capacity
-                .internal_buffer = bun.ByteList.initWithBuffer(slice),
-                .auto_sizer = null,
-                .stream = pipe,
-            };
-        }
-
-        pub fn initWithAllocator(allocator: std.mem.Allocator, fd: bun.FileDescriptor, max_size: u32) StreamingOutput {
-            if (Environment.isWindows) {
-                @compileError("Cannot use BufferedOutput with fd on Windows please use .initWithPipeAndAllocator");
-            }
-            var this = init(fd);
-            this.auto_sizer = .{
-                .max = max_size,
-                .allocator = allocator,
-                .buffer = &this.internal_buffer,
-            };
-            return this;
-        }
-
-        pub fn initWithPipeAndAllocator(allocator: std.mem.Allocator, pipe: *uv.Pipe, max_size: u32) StreamingOutput {
-            if (!Environment.isWindows) {
-                @compileError("uv.Pipe can only be used on Window");
-            }
-            var this = initWithPipe(pipe);
-            this.auto_sizer = .{
-                .max = max_size,
-                .allocator = allocator,
-                .buffer = &this.internal_buffer,
-            };
-            return this;
-        }
-
-        pub fn onRead(this: *StreamingOutput, result: JSC.WebCore.StreamResult) void {
-            if (Environment.isWindows) {
-                @compileError("uv.Pipe can only be used on Window");
-            }
-            switch (result) {
-                .pending => {
-                    this.watch();
-                    return;
-                },
-                .err => |err| {
-                    if (err == .Error) {
-                        this.status = .{ .err = err.Error };
-                    } else {
-                        this.status = .{ .err = bun.sys.Error.fromCode(.CANCELED, .read) };
-                    }
-                    this.stream.close();
-
-                    return;
-                },
-                .done => {
-                    this.status = .{ .done = {} };
-                    this.stream.close();
-                    return;
-                },
-                else => {
-                    const slice = result.slice();
-                    this.internal_buffer.len += @as(u32, @truncate(slice.len));
-                    if (slice.len > 0)
-                        std.debug.assert(this.internal_buffer.contains(slice));
-
-                    if (result.isDone() or (slice.len == 0 and this.stream.poll_ref != null and this.stream.poll_ref.?.isHUP())) {
-                        this.status = .{ .done = {} };
-                        this.stream.close();
-                    }
-                },
-            }
-        }
-
-        fn uvStreamReadCallback(handle: *uv.uv_handle_t, nread: uv.ReturnCodeI64, _: *const uv.uv_buf_t) callconv(.C) void {
-            const this: *StreamingOutput = @ptrCast(@alignCast(handle.data));
-            if (nread.int() == uv.UV_EOF) {
-                this.status = .{ .done = {} };
-                _ = uv.uv_read_stop(@ptrCast(handle));
-                this.flushBufferedDataIntoReadableStream();
-                return;
-            }
-
-            if (nread.toError(.read)) |err| {
-                this.status = .{ .err = err };
-                _ = uv.uv_read_stop(@ptrCast(handle));
-                this.signalStreamError();
-                return;
-            }
-
-            this.internal_buffer.len += @intCast(nread.int());
-            this.flushBufferedDataIntoReadableStream();
-        }
-
-        fn uvStreamAllocCallback(handle: *uv.uv_handle_t, suggested_size: usize, buffer: *uv.uv_buf_t) callconv(.C) void {
-            const this: *StreamingOutput = @ptrCast(@alignCast(handle.data));
-            var size: usize = 0;
-            var available = this.internal_buffer.available();
-            if (this.auto_sizer) |auto_sizer| {
-                size = auto_sizer.max - this.internal_buffer.len;
-                if (size > suggested_size) {
-                    size = suggested_size;
-                }
-
-                if (available.len < size and this.internal_buffer.len < auto_sizer.max) {
-                    this.internal_buffer.ensureUnusedCapacity(auto_sizer.allocator, size) catch bun.outOfMemory();
-                    available = this.internal_buffer.available();
-                }
-            } else {
-                size = available.len;
-                if (size > suggested_size) {
-                    size = suggested_size;
-                }
-            }
-            buffer.* = .{ .base = @ptrCast(available.ptr), .len = @intCast(size) };
-            if (size == 0) {
-                _ = uv.uv_read_stop(@ptrCast(@alignCast(handle)));
-                this.status = .{ .done = {} };
-            }
-        }
+        reader: bun.io.BufferedOutputReader(BufferedOutput, onChunk) = .{},
+        process: *Subprocess = undefined,
+        event_loop: *JSC.EventLoop = undefined,
+        ref_count: u32 = 1,
 
         pub fn readAll(this: *StreamingOutput) void {
-            if (Environment.isWindows) {
-                if (this.status == .pending) {
-                    this.stream.data = this;
-                    _ = uv.uv_read_start(@ptrCast(this.stream), StreamingOutput.uvStreamAllocCallback, StreamingOutput.uvStreamReadCallback);
-                }
-                return;
-            }
-            if (this.auto_sizer) |auto_sizer| {
-                while (@as(usize, this.internal_buffer.len) < auto_sizer.max and this.status == .pending) {
-                    var stack_buffer: [8192]u8 = undefined;
-                    const stack_buf: []u8 = stack_buffer[0..];
-                    var buf_to_use = stack_buf;
-                    const available = this.internal_buffer.available();
-                    if (available.len >= stack_buf.len) {
-                        buf_to_use = available;
-                    }
-
-                    const result = this.stream.read(buf_to_use, this.stream.to_read);
-
-                    switch (result) {
-                        .pending => {
-                            this.watch();
-                            return;
-                        },
-                        .err => |err| {
-                            this.status = .{ .err = err };
-                            this.stream.close();
-
-                            return;
-                        },
-                        .done => {
-                            this.status = .{ .done = {} };
-                            this.stream.close();
-                            return;
-                        },
-                        .read => |slice| {
-                            if (slice.ptr == stack_buf.ptr) {
-                                this.internal_buffer.append(auto_sizer.allocator, slice) catch @panic("out of memory");
-                            } else {
-                                this.internal_buffer.len += @as(u32, @truncate(slice.len));
-                            }
-
-                            if (slice.len < buf_to_use.len) {
-                                this.watch();
-                                return;
-                            }
-                        },
-                    }
-                }
-            } else {
-                while (this.internal_buffer.len < this.internal_buffer.cap and this.status == .pending) {
-                    const buf_to_use = this.internal_buffer.available();
-
-                    const result = this.stream.read(buf_to_use, this.stream.to_read);
-
-                    switch (result) {
-                        .pending => {
-                            this.watch();
-                            return;
-                        },
-                        .err => |err| {
-                            this.status = .{ .err = err };
-                            this.stream.close();
-
-                            return;
-                        },
-                        .done => {
-                            this.status = .{ .done = {} };
-                            this.stream.close();
-                            return;
-                        },
-                        .read => |slice| {
-                            this.internal_buffer.len += @as(u32, @truncate(slice.len));
-
-                            if (slice.len < buf_to_use.len) {
-                                this.watch();
-                                return;
-                            }
-                        },
-                    }
-                }
-            }
-        }
-
-        fn watch(this: *StreamingOutput) void {
-            if (Environment.isWindows) {
-                this.readAll();
-            } else {
-                std.debug.assert(this.stream.fd != bun.invalid_fd);
-                this.stream.pending.set(StreamingOutput, this, onRead);
-                if (!this.stream.isWatching()) this.stream.watch(this.stream.fd);
-            }
-            return;
+            _ = this; // autofix
         }
 
         pub fn toBlob(this: *StreamingOutput, globalThis: *JSC.JSGlobalObject) JSC.WebCore.Blob {
@@ -1168,19 +906,7 @@ pub const Subprocess = struct {
             return blob;
         }
 
-        pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
-            const this = bun.cast(*StreamingOutput, ctx);
-            this.readAll();
-            const internal_buffer = this.internal_buffer;
-            this.internal_buffer = bun.ByteList.init("");
-
-            return .{
-                .owned = .{
-                    .list = internal_buffer.listManaged(bun.default_allocator),
-                    .size_hint = internal_buffer.len,
-                },
-            };
-        }
+      
 
         fn signalStreamError(this: *StreamingOutput) void {
             if (this.status == .err) {
@@ -1238,12 +964,6 @@ pub const Subprocess = struct {
         }
 
         fn toReadableStream(this: *StreamingOutput, globalThis: *JSC.JSGlobalObject, exited: bool) JSC.WebCore.ReadableStream {
-            if (Environment.isWindows) {
-                if (this.readable_stream_ref.get()) |readable| {
-                    return readable;
-                }
-            }
-
             if (exited) {
                 // exited + received EOF => no more read()
                 const isClosed = if (Environment.isWindows) this.status != .pending else this.stream.isClosed();
@@ -1273,46 +993,20 @@ pub const Subprocess = struct {
                 }
             }
 
-            if (Environment.isWindows) {
-                this.globalThis = globalThis;
-                var body = Body.Value{
-                    .Locked = .{
-                        .size_hint = 0,
-                        .task = this,
-                        .global = globalThis,
-                        .onStartStreaming = StreamingOutput.onStartStreamingRequestBodyCallback,
-                        .onReadableStreamAvailable = StreamingOutput.onReadableStreamAvailable,
-                    },
-                };
-                return JSC.WebCore.ReadableStream.fromJS(body.toReadableStream(globalThis), globalThis).?;
-            }
-
-            {
-                const internal_buffer = this.internal_buffer;
-                this.internal_buffer = bun.ByteList.init("");
-
-                // There could still be data waiting to be read in the pipe
-                // so we need to create a new stream that will read from the
-                // pipe and then return the blob.
-                const result = JSC.WebCore.ReadableStream.fromJS(
-                    JSC.WebCore.ReadableStream.fromFIFO(
-                        globalThis,
-                        &this.stream,
-                        internal_buffer,
-                    ),
+            // There could still be data waiting to be read in the pipe
+            // so we need to create a new stream that will read from the
+            // pipe and then return the blob.
+            const result = JSC.WebCore.ReadableStream.fromJS(
+                JSC.WebCore.ReadableStream.fromFIFO(
                     globalThis,
-                ).?;
-                this.stream.fd = bun.invalid_fd;
-                this.stream.poll_ref = null;
-                return result;
-            }
-        }
-
-        fn uvClosedCallback(handler: *anyopaque) callconv(.C) void {
-            const event = bun.cast(*uv.Pipe, handler);
-            var this = bun.cast(*StreamingOutput, event.data);
-            this.readable_stream_ref.deinit();
-            this.closeCallback.run();
+                    &this.stream,
+                    internal_buffer,
+                ),
+                globalThis,
+            ).?;
+            this.stream.fd = bun.invalid_fd;
+            this.stream.poll_ref = null;
+            return result;
         }
 
         pub fn close(this: *StreamingOutput) void {

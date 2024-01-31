@@ -26,6 +26,11 @@ pub fn PosixPipeReader(
         pub fn read(this: *This) void {
             const buffer = @call(.always_inline, vtable.getBuffer, .{this});
             const fd = @call(.always_inline, vtable.getFd, .{this});
+            if (comptime bun.Environment.isLinux) {
+                readFromBlockingPipeWithoutBlockingLinux(this, buffer, fd, 0);
+                return;
+            }
+
             switch (bun.isReadable(fd)) {
                 .ready, .hup => {
                     readFromBlockingPipeWithoutBlocking(this, buffer, fd, 0);
@@ -47,7 +52,23 @@ pub fn PosixPipeReader(
 
         const stack_buffer_len = 64 * 1024;
 
-        fn readFromBlockingPipeWithoutBlocking(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize) void {
+        inline fn drainChunk(parent: *This, resizable_buffer: *std.ArrayList(u8), start_length: usize) void {
+            if (comptime vtable.onReadChunk) |onRead| {
+                if (resizable_buffer.items[start_length..].len > 0) {
+                    const chunk = resizable_buffer.items[start_length..];
+                    resizable_buffer.items.len = start_length;
+                    onRead(parent, chunk);
+                }
+            }
+        }
+
+        const readFromBlockingPipeWithoutBlocking = if (bun.Environment.isLinux)
+            readFromBlockingPipeWithoutBlockingLinux
+        else
+            readFromBlockingPipeWithoutBlockingPOSIX;
+
+        // On Linux, we use preadv2 to read without blocking.
+        fn readFromBlockingPipeWithoutBlockingLinux(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize) void {
             if (size_hint > stack_buffer_len) {
                 resizable_buffer.ensureUnusedCapacity(@intCast(size_hint)) catch bun.outOfMemory();
             }
@@ -62,51 +83,90 @@ pub fn PosixPipeReader(
                     buffer = &stack_buffer;
                 }
 
-                switch (bun.sys.read(fd, buffer)) {
+                switch (bun.sys.readNonblocking(fd, buffer)) {
                     .result => |bytes_read| {
                         if (bytes_read == 0) {
-                            parent.close();
+                            drainChunk(parent, resizable_buffer, start_length);
+                            close(parent);
                             return;
                         }
 
+                        if (comptime vtable.onReadChunk) |onRead| {
+                            onRead(parent, buffer[0..bytes_read]);
+                        } else if (buffer.ptr != &stack_buffer) {
+                            resizable_buffer.items.len += bytes_read;
+                        } else {
+                            resizable_buffer.appendSlice(buffer[0..bytes_read]) catch bun.outOfMemory();
+                        }
+                    },
+                    .err => |err| {
+                        if (err.isRetry()) {
+                            drainChunk(parent, resizable_buffer, start_length);
+
+                            if (comptime vtable.registerPoll) |register| {
+                                register(parent);
+                                return;
+                            }
+                        }
+                        vtable.onError(parent, err);
+                        return;
+                    },
+                }
+            }
+        }
+
+        fn readFromBlockingPipeWithoutBlockingPOSIX(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize) void {
+            if (size_hint > stack_buffer_len) {
+                resizable_buffer.ensureUnusedCapacity(@intCast(size_hint)) catch bun.outOfMemory();
+            }
+
+            const start_length: usize = resizable_buffer.items.len;
+
+            while (true) {
+                var buffer: []u8 = resizable_buffer.unusedCapacitySlice();
+                var stack_buffer: [stack_buffer_len]u8 = undefined;
+
+                if (buffer.len < stack_buffer_len) {
+                    buffer = &stack_buffer;
+                }
+
+                switch (bun.sys.readNonblocking(fd, buffer)) {
+                    .result => |bytes_read| {
+                        if (bytes_read == 0) {
+                            drainChunk(parent, resizable_buffer, start_length);
+                            close(parent);
+                            return;
+                        }
+
+                        if (comptime vtable.onReadChunk) |onRead| {
+                            onRead(parent, buffer[0..bytes_read]);
+                        } else if (buffer.ptr != &stack_buffer) {
+                            resizable_buffer.items.len += bytes_read;
+                        } else {
+                            resizable_buffer.appendSlice(buffer[0..bytes_read]) catch bun.outOfMemory();
+                        }
+
                         switch (bun.isReadable(fd)) {
-                            .ready, .hup => {
-                                if (buffer.ptr == &stack_buffer) {
-                                    resizable_buffer.appendSlice(buffer[0..bytes_read]) catch bun.outOfMemory();
-                                } else {
-                                    resizable_buffer.items.len += bytes_read;
-                                }
-                                continue;
-                            },
-
+                            .ready, .hup => continue,
                             .not_ready => {
-                                if (comptime vtable.onReadChunk) |onRead| {
-                                    if (resizable_buffer.items[start_length..].len > 0) {
-                                        onRead(parent, resizable_buffer.items[start_length..]);
-                                    }
-
-                                    resizable_buffer.items.len = 0;
-
-                                    if (buffer.ptr == &stack_buffer) {
-                                        onRead(parent, buffer[0..bytes_read]);
-                                    }
-                                } else {
-                                    if (buffer.ptr == &stack_buffer) {
-                                        resizable_buffer.appendSlice(buffer[0..bytes_read]) catch bun.outOfMemory();
-                                    } else {
-                                        resizable_buffer.items.len += bytes_read;
-                                    }
-                                }
+                                drainChunk(parent, resizable_buffer, start_length);
 
                                 if (comptime vtable.registerPoll) |register| {
                                     register(parent);
                                 }
-
                                 return;
                             },
                         }
                     },
                     .err => |err| {
+                        if (err.isRetry()) {
+                            drainChunk(parent, resizable_buffer, start_length);
+
+                            if (comptime vtable.registerPoll) |register| {
+                                register(parent);
+                                return;
+                            }
+                        }
                         vtable.onError(parent, err);
                         return;
                     },
@@ -127,11 +187,12 @@ pub fn WindowsPipeReader(
     comptime This: type,
     comptime _: anytype,
     comptime getBuffer: fn (*This) *std.ArrayList(u8),
-    comptime onReadChunk: ?fn (*This, chunk: []u8) void,
+    comptime onReadChunk: fn (*This, chunk: []u8) void,
     comptime registerPoll: ?fn (*This) void,
     comptime done: fn (*This) void,
     comptime onError: fn (*This, bun.sys.Error) void,
 ) type {
+    _ = onReadChunk; // autofix
     return struct {
         pub usingnamespace uv.StreamReaderMixin(This, .pipe);
 
@@ -190,9 +251,7 @@ pub fn WindowsPipeReader(
 
             buffer.items.len += amount.result;
 
-            if (comptime onReadChunk) |onChunk| {
-                onChunk(this, buf[0..amount.result].slice());
-            }
+            onChunk(this, buf[0..amount.result].slice());
         }
 
         pub fn close(this: *This) void {
@@ -212,6 +271,23 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
         parent: *Parent = undefined,
 
         const PosixOutputReader = @This();
+
+        pub fn fromOutputReader(to: *@This(), from: anytype, parent: *Parent) void {
+            to.* = .{
+                .poll = from.poll,
+                .buffer = from.buffer,
+                .is_done = from.is_done,
+                .parent = parent,
+            };
+            to.poll.owner = Async.FilePoll.Owner.init(to);
+            from.buffer = .{
+                .items = &.{},
+                .capacity = 0,
+                .allocator = from.buffer.allocator,
+            };
+            from.is_done = true;
+            from.poll = undefined;
+        }
 
         pub fn setParent(this: *@This(), parent: *Parent) void {
             this.parent = parent;
@@ -297,15 +373,38 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
 }
 const JSC = bun.JSC;
 
+const WindowsOutputReaderVTable = struct {
+    onOutputDone: *const fn (*anyopaque) void,
+    onOutputError: *const fn (*anyopaque, bun.sys.Error) void,
+    onReadChunk: ?*const fn (*anyopaque, chunk: []const u8) void = null,
+};
+
 fn WindowsBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*const fn (*anyopaque, buf: []u8) void) type {
     return struct {
+        /// The pointer to this pipe must be stable.
+        /// It cannot change because we don't know what libuv will do with it.
+        /// To compensate for that,
         pipe: uv.Pipe = std.mem.zeroes(uv.Pipe),
         buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
         is_done: bool = false,
 
-        parent: *Parent = undefined,
+        parent: *anyopaque = undefined,
+        vtable: WindowsOutputReaderVTable = WindowsOutputReaderVTable{
+            .onOutputDone = @ptrCast(Parent.onOutputDone),
+            .onOutputError = @ptrCast(Parent.onOutputError),
+            .onReadChunk = @ptrCast(onReadChunk),
+        },
+
+        pub usingnamespace bun.NewRefCounted(@This(), deinit);
 
         const WindowsOutputReader = @This();
+
+        pub fn fromOutputReader(to: *@This(), from: anytype, parent: *Parent) void {
+            _ = to; // autofix
+            _ = from; // autofix
+            _ = parent; // autofix
+
+        }
 
         pub fn setParent(this: *@This(), parent: *Parent) void {
             this.parent = parent;
@@ -314,11 +413,11 @@ fn WindowsBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*co
             }
         }
 
-        pub fn ref(this: *@This()) void {
+        pub fn enableKeepingProcessAlive(this: *@This(), _: anytype) void {
             this.pipe.ref();
         }
 
-        pub fn unref(this: *@This()) void {
+        pub fn disableKeepingProcessAlive(this: *@This(), _: anytype) void {
             this.pipe.unref();
         }
 
@@ -326,7 +425,7 @@ fn WindowsBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*co
             @This(),
             {},
             getBuffer,
-            if (onReadChunk != null) _onReadChunk else null,
+            _onReadChunk,
             null,
             done,
             onError,
@@ -337,7 +436,8 @@ fn WindowsBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*co
         }
 
         fn _onReadChunk(this: *WindowsOutputReader, buf: []u8) void {
-            onReadChunk.?(this.parent, buf);
+            const onReadChunkFn = this.vtable.onReadChunk orelse return;
+            onReadChunkFn(this.parent, buf);
         }
 
         fn finish(this: *WindowsOutputReader) void {
@@ -349,12 +449,12 @@ fn WindowsBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*co
             std.debug.assert(this.pipe.isClosed());
 
             this.finish();
-            this.parent.onOutputDone();
+            this.vtable.onOutputDone(this.parent);
         }
 
         pub fn onError(this: *WindowsOutputReader, err: bun.sys.Error) void {
             this.finish();
-            this.parent.onOutputError(err);
+            this.vtable.onOutputError(this.parent, err);
         }
 
         pub fn getReadBufferWithStableMemoryAddress(this: *WindowsOutputReader, suggested_size: usize) []u8 {
@@ -368,7 +468,7 @@ fn WindowsBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*co
             return this.startReading();
         }
 
-        pub fn deinit(this: *WindowsOutputReader) void {
+        fn deinit(this: *WindowsOutputReader) void {
             this.buffer.deinit();
             std.debug.assert(this.pipe.isClosed());
         }

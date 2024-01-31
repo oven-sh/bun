@@ -94,9 +94,7 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      <<<<<<< Updated upstream
-      it("Uint8Array works as stdin", async () =>
-      {
+      it("Uint8Array works as stdin", async () => {
         rmSync("/tmp/out.123.txt", { force: true });
         gcTick();
         const { exited } = spawn({
@@ -108,29 +106,9 @@ for (let [gcTick, label] of [
         await exited;
         expect(require("fs").readFileSync("/tmp/out.123.txt", "utf8")).toBe(hugeString);
         gcTick();
-      }
-      )
-      =======
-      // it("Uint8Array works as stdin", async () => {
-      //   rmSync("/tmp/out.123.txt", { force: true });
-      //   gcTick();
-      //   const { exited } = spawn({
-      //     cmd: [bunExe(), help_fixture, "cat"],
-      //     stdin: new TextEncoder().encode(hugeString),
-      //     stdout: Bun.file("/tmp/out.123.txt"),
-      //     env: {
-      //       BUN_DEBUG_QUIET_LOGS: "1",
-      //     },
-      //   });
-      //   gcTick();
-      //   await exited;
-      //   expect(require("fs").readFileSync("/tmp/out.123.txt", "utf8")).toBe(hugeString);
-      //   gcTick();
-      // });
->>>>>>> Stashed changes
+      });
 
-      it("check exit code", async () =>
-      {
+      it("check exit code", async () => {
         const exitCode1 = await spawn({
           cmd: ["ls"],
         }).exited;
@@ -142,11 +120,9 @@ for (let [gcTick, label] of [
         expect(exitCode1).toBe(0);
         expect(exitCode2).toBe(1);
         gcTick();
-      }
-      )
+      });
 
-      it("nothing to stdout and sleeping doesn't keep process open 4ever", async () =>
-      {
+      it("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
         const proc = spawn({
           cmd: ["sleep", "0.1"],
         });
@@ -155,11 +131,9 @@ for (let [gcTick, label] of [
           throw new Error("should not happen");
         }
         gcTick();
-      }
-      )
+      });
 
-      it("check exit code from onExit", async () =>
-      {
+      it("check exit code from onExit", async () => {
         for (let i = 0; i < 1000; i++) {
           var exitCode1, exitCode2;
           await new Promise<void>(resolve => {
@@ -197,8 +171,7 @@ for (let [gcTick, label] of [
           expect(exitCode1).toBe(0);
           expect(exitCode2).toBe(1);
         }
-      }
-      , 60_000_0)
+      }, 60_000_0);
 
       // FIXME: fix the assertion failure
       it.skip("Uint8Array works as stdout", () => {

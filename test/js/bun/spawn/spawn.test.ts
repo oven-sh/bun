@@ -145,7 +145,8 @@ for (let [gcTick, label] of [
       }
       )
 
-      it("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
+      it("nothing to stdout and sleeping doesn't keep process open 4ever", async () =>
+      {
         const proc = spawn({
           cmd: ["sleep", "0.1"],
         });
@@ -154,7 +155,8 @@ for (let [gcTick, label] of [
           throw new Error("should not happen");
         }
         gcTick();
-      });
+      }
+      )
 
       it("check exit code from onExit", async () => {
         for (let i = 0; i < 1000; i++) {

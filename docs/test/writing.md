@@ -109,7 +109,7 @@ $ bun test --todo
 
 ## `test.only`
 
-To run a particular test or suite of tests use `test.only()` or `describe.only()`. Once declared, running `bun test --only` will only execute tests/suites that have been marked with `.only()`.
+To run a particular test or suite of tests use `test.only()` or `describe.only()`. Once declared, running `bun test --only` will only execute tests/suites that have been marked with `.only()`. Running `bun test` without the `--only` option with `test.only()` declared will result in all tests in the given suite being executed _up to_ the test with `.only()`. `describe.only()` functions the same in both execution scenarios.
 
 ```ts
 import { test, describe } from "bun:test";
@@ -133,6 +133,12 @@ The following command will only execute tests #2 and #3.
 
 ```sh
 $ bun test --only
+```
+
+The following command will only execute tests #1, #2 and #3.
+
+```sh
+$ bun test
 ```
 
 ## `test.if`

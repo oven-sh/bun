@@ -1920,7 +1920,10 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
                 switch (err.getErrno()) {
                     .OPNOTSUPP, .NOSYS => {
                         bun.C.Linux.RWFFlagSupport.disable();
-                        break;
+                        switch (bun.isReadable(fd)) {
+                            .hup, .ready => return read(fd, buf),
+                            else => return .{ .err = Error.retry },
+                        }
                     },
                     .INTR => continue,
                     else => return .{ .err = err },
@@ -1950,7 +1953,10 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
                 switch (err.getErrno()) {
                     .OPNOTSUPP, .NOSYS => {
                         bun.C.Linux.RWFFlagSupport.disable();
-                        break;
+                        switch (bun.isWritable(fd)) {
+                            .hup, .ready => return write(fd, buf),
+                            else => return .{ .err = Error.retry },
+                        }
                     },
                     .INTR => continue,
                     else => return .{ .err = err },

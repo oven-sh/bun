@@ -601,7 +601,7 @@ pub const RWFFlagSupport = enum(u8) {
     unsupported = 2,
     supported = 1,
 
-    var rwf_bool = std.atomic.Value().init(RWFFlagSupport.unknown);
+    var rwf_bool = std.atomic.Value(RWFFlagSupport).init(RWFFlagSupport.unknown);
 
     pub fn isLinuxKernelVersionWithBuggyRWF_NONBLOCK() bool {
         return bun.linuxKernelVersion().major == 5 and switch (bun.linuxKernelVersion().minor) {

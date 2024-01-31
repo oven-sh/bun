@@ -5276,7 +5276,10 @@ pub const NodeFS = struct {
 
         const fd = switch (args.file) {
             .path => brk: {
-                path = args.file.path.sliceZ(pathbuf);
+                // On Windows, we potentially mutate the path in posixToPlatformInPlace
+                // We cannot mutate JavaScript strings in-place. That will break many things.
+                // So we must always copy the path string on Windows.
+                path = args.file.path.sliceZWithForceCopy(pathbuf, Environment.isWindows);
                 bun.path.posixToPlatformInPlace(u8, @constCast(path));
 
                 var is_dirfd_different = false;

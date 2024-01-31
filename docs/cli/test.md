@@ -113,10 +113,6 @@ See [Test > Lifecycle](/docs/test/lifecycle) for complete documentation.
 
 ## Mocks
 
-{% callout %}
-Module mocking (`jest.mock()`) is not yet supported. Track support for it [here](https://github.com/oven-sh/bun/issues/5394).
-{% /callout %}
-
 Create mock functions with the `mock` function. Mocks are automatically reset between tests.
 
 ```ts

@@ -5786,7 +5786,6 @@ pub const NodeFS = struct {
 
     pub fn watchFile(_: *NodeFS, args: Arguments.WatchFile, comptime flavor: Flavor) Maybe(Return.WatchFile) {
         std.debug.assert(flavor == .sync);
-
         const watcher = args.createStatWatcher() catch |err| {
             const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);

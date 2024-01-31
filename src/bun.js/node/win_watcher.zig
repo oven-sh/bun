@@ -49,7 +49,7 @@ pub const PathWatcherManager = struct {
 
         const dir = bun.openDirAbsolute(cloned_path[0..cloned_path.len]) catch |err| {
             log("openDirAbsolute({s}) err {}", .{ cloned_path, err });
-            if (err == error.ENOENT) {
+            if (err == error.ENOTDIR) {
                 const file = try bun.openFileZ(cloned_path, .{ .mode = .read_only });
                 const result = PathInfo{
                     .fd = bun.toFD(file.handle),

@@ -27,8 +27,10 @@ pub fn PosixPipeReader(
             const buffer = @call(.always_inline, vtable.getBuffer, .{this});
             const fd = @call(.always_inline, vtable.getFd, .{this});
             if (comptime bun.Environment.isLinux) {
-                readFromBlockingPipeWithoutBlockingLinux(this, buffer, fd, 0);
-                return;
+                if (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
+                    readFromBlockingPipeWithoutBlockingLinux(this, buffer, fd, 0);
+                    return;
+                }
             }
 
             switch (bun.isReadable(fd)) {
@@ -60,11 +62,6 @@ pub fn PosixPipeReader(
                 }
             }
         }
-
-        const readFromBlockingPipeWithoutBlocking = if (bun.Environment.isLinux)
-            readFromBlockingPipeWithoutBlockingLinux
-        else
-            readFromBlockingPipeWithoutBlockingPOSIX;
 
         // On Linux, we use preadv2 to read without blocking.
         fn readFromBlockingPipeWithoutBlockingLinux(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize) void {
@@ -118,6 +115,17 @@ pub fn PosixPipeReader(
                     },
                 }
             }
+        }
+
+        fn readFromBlockingPipeWithoutBlocking(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize) void {
+            if (comptime bun.Environment.isLinux) {
+                if (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
+                    readFromBlockingPipeWithoutBlockingLinux(parent, resizable_buffer, fd, size_hint);
+                    return;
+                }
+            }
+
+            readFromBlockingPipeWithoutBlockingPOSIX(parent, resizable_buffer, fd, size_hint);
         }
 
         fn readFromBlockingPipeWithoutBlockingPOSIX(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize) void {

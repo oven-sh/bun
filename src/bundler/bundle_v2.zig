@@ -570,7 +570,7 @@ pub const BundleV2 = struct {
 
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
-            const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .posix, false);
+            const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
             if (rel.len > 0 and rel[0] != '.') {
                 path.pretty = rel;
             }
@@ -668,7 +668,7 @@ pub const BundleV2 = struct {
         const source_index = Index.source(this.graph.input_files.len);
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
-            const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .posix, false);
+            const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
             if (rel.len > 0 and rel[0] != '.') {
                 path.pretty = rel;
             }
@@ -1089,7 +1089,7 @@ pub const BundleV2 = struct {
                     const source = &sources[index];
                     var pathname = source.path.name;
 
-                    const rel = bun.path.relativePlatform(this.bundler.options.root_dir, source.path.text, .posix, false);
+                    const rel = bun.path.relative(this.bundler.options.root_dir, source.path.text);
                     if (rel.len > 0 and rel[0] != '.')
                         pathname = Fs.PathName.init(rel);
 
@@ -2010,7 +2010,7 @@ pub const BundleV2 = struct {
 
             if (path.pretty.ptr == path.text.ptr) {
                 // TODO: outbase
-                const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .posix, false);
+                const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
                 if (rel.len > 0 and rel[0] != '.') {
                     path.pretty = rel;
                 }
@@ -11285,7 +11285,7 @@ pub const Chunk = struct {
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
+                                        bun.path.relative(from_chunk_dir, file_path),
                                 );
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },

@@ -595,3 +595,46 @@ pub const linux_fs = if (bun.Environment.isLinux) @cImport({
 pub fn ioctl_ficlone(dest_fd: bun.FileDescriptor, srcfd: bun.FileDescriptor) usize {
     return std.os.linux.ioctl(dest_fd.cast(), linux_fs.FICLONE, @intCast(srcfd.int()));
 }
+
+pub const RWFFlagSupport = enum(u8) {
+    unknown = 0,
+    unsupported = 2,
+    supported = 1,
+
+    var rwf_bool = std.atomic.Value().init(RWFFlagSupport.unknown);
+
+    pub fn isLinuxKernelVersionWithBuggyRWF_NONBLOCK() bool {
+        return bun.linuxKernelVersion().major == 5 and switch (bun.linuxKernelVersion().minor) {
+            9, 10 => true,
+            else => false,
+        };
+    }
+
+    pub fn disable() void {
+        rwf_bool.store(.unsupported, .Monotonic);
+    }
+
+    /// Workaround for https://github.com/google/gvisor/issues/2601
+    pub fn isMaybeSupported() bool {
+        if (comptime !bun.Environment.isLinux) return false;
+        switch (rwf_bool.load(.Monotonic)) {
+            .unknown => {
+                if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK()) {
+                    rwf_bool.store(.unsupported, .Monotonic);
+                    return false;
+                }
+
+                rwf_bool.store(.supported, .Monotonic);
+                return true;
+            },
+            .supported => {
+                return true;
+            },
+            else => {
+                return false;
+            },
+        }
+
+        unreachable;
+    }
+};

@@ -1903,19 +1903,12 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
     ) orelse Maybe(void).success;
 }
 
-fn isLinuxKernelVersionWithBuggyRWF_NONBLOCK() bool {
-    return bun.linuxKernelVersion().major == 5 and switch (bun.linuxKernelVersion().minor) {
-        9, 10 => true,
-        else => false,
-    };
-}
-
 /// On Linux, this `preadv2(2)` to attempt to read a blocking file descriptor without blocking.
 ///
 /// On other platforms, this is just a wrapper around `read(2)`.
 pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     if (Environment.isLinux) {
-        while (true) {
+        while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
             const iovec = std.os.iovec{
                 .iov_base = buf.ptr,
                 .iov_len = buf.len,
@@ -1925,19 +1918,12 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             const rc = linux.preadv2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NONBLOCK);
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                 switch (err.getErrno()) {
-                    .NOSYS => return read(fd, buf),
+                    .OPNOTSUPP, .NOSYS => {
+                        bun.C.Linux.RWFFlagSupport.disable();
+                        break;
+                    },
                     .INTR => continue,
                     else => return .{ .err = err },
-                }
-            }
-
-            if (rc == 0 and isLinuxKernelVersionWithBuggyRWF_NONBLOCK()) {
-                // On Linux 5.9 and 5.10, RWF_NONBLOCK is buggy and returns 0 instead of EAGAIN.
-                // we must manually check if hup is set.
-                switch (bun.isReadable(fd)) {
-                    .hup => return .{ .result = 0 },
-                    .not_ready => return .{ .err = .{ .errno = @intFromEnum(bun.C.E.AGAIN), .syscall = .read } },
-                    else => {},
                 }
             }
 
@@ -1953,7 +1939,7 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
 /// On other platforms, this is just a wrapper around `read(2)`.
 pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
     if (Environment.isLinux) {
-        while (true) {
+        while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
             const iovec = std.os.iovec_const{
                 .iov_base = buf.ptr,
                 .iov_len = buf.len,
@@ -1962,19 +1948,12 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
             const rc = linux.pwritev2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NONBLOCK);
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                 switch (err.getErrno()) {
-                    .NOSYS => return write(fd, buf),
+                    .OPNOTSUPP, .NOSYS => {
+                        bun.C.Linux.RWFFlagSupport.disable();
+                        break;
+                    },
                     .INTR => continue,
                     else => return .{ .err = err },
-                }
-            }
-
-            if (rc == 0 and isLinuxKernelVersionWithBuggyRWF_NONBLOCK()) {
-                // On Linux 5.9 and 5.10, RWF_NONBLOCK is buggy and returns 0 instead of EAGAIN.
-                // we must manually check if hup is set.
-                switch (bun.isWritable(fd)) {
-                    .hup => return .{ .result = 0 },
-                    .not_ready => return .{ .err = .{ .errno = @intFromEnum(bun.C.E.AGAIN), .syscall = .write } },
-                    else => {},
                 }
             }
 

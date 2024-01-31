@@ -448,8 +448,6 @@ pub const Bin = extern struct {
                 destination_wpath.len -= 1;
                 @memcpy(destination_wpath[destination_wpath.len - 3 ..], &[_]u16{ 'e', 'x', 'e' });
 
-                std.mem.bytesAsSlice(comptime T: type, bytes: anytype)
-
                 // truncate=false is intentional so that the exe is always rewritten. this helps
                 // - you upgrade to a new version of bin_shim_impl (unlikely but possible)
                 // - if otherwise corrupt it yourself

@@ -346,7 +346,7 @@ declare module "bun:test" {
       options?: number | TestOptions,
     ): void;
     /**
-     * Skips all other tests, except this test.
+     * Skips all other tests, except this test when run with the `--only` option.
      *
      * @param label the label for the test
      * @param fn the test function

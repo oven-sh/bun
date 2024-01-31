@@ -3030,3 +3030,28 @@ pub extern "kernel32" fn AssignProcessToJobObject(
 pub extern "kernel32" fn ResumeThread(
     hJob: HANDLE, // [in]
 ) callconv(windows.WINAPI) DWORD;
+
+pub const JOBOBJECT_ASSOCIATE_COMPLETION_PORT = extern struct {
+    CompletionKey: windows.PVOID,
+    CompletionPort: HANDLE,
+};
+
+pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
+
+pub extern "kernel32" fn SetInformationJobObject(
+    hJob: HANDLE,
+    JobObjectInformationClass: DWORD,
+    lpJobObjectInformation: LPVOID,
+    cbJobObjectInformationLength: DWORD,
+) callconv(windows.WINAPI) BOOL;
+
+// Found experimentally:
+// #include <stdio.h>
+// #include <windows.h>
+// 
+// int main() {
+//         printf("%ld\n", JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO);
+// }
+//
+// Output: 4
+pub const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;

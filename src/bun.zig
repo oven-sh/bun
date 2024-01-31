@@ -1866,13 +1866,23 @@ pub const win32 = struct {
     }
 
     pub fn isWatcherChild() bool {
-        var buf: [1024]u16 = undefined;
-        return w.kernel32.GetEnvironmentVariableW(@constCast(watcherChildEnv.ptr), &buf, 1024) > 0;
+        var buf: [1]u16 = undefined;
+        return windows.GetEnvironmentVariableW(@constCast(watcherChildEnv.ptr), &buf, 1) > 0;
     }
 
     pub fn becomeWatcherManager(allocator: std.mem.Allocator) noreturn {
         // this process will be the parent of the child process that actually runs the script
+        // based on https://devblogs.microsoft.com/oldnewthing/20130405-00/?p=4743
         const job = windows.CreateJobObjectA(null, null);
+        const iocp = windows.CreateIoCompletionPort(windows.INVALID_HANDLE_VALUE, null, 0, 1) orelse @panic("Failed to create iocp");
+        var assoc = windows.JOBOBJECT_ASSOCIATE_COMPLETION_PORT{
+            .CompletionKey = job,
+            .CompletionPort = iocp,
+        };
+        if (windows.SetInformationJobObject(job, windows.JobObjectAssociateCompletionPortInformation, &assoc, @sizeOf(windows.JOBOBJECT_ASSOCIATE_COMPLETION_PORT)) == 0) {
+            @panic("Failed to associate completion port");
+        }
+
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
         spawnProcessCopy(allocator, &procinfo, true, true) catch @panic("Failed to spawn process");
         if (windows.AssignProcessToJobObject(job, procinfo.hProcess) == 0) {
@@ -1882,8 +1892,19 @@ pub const win32 = struct {
             @panic("Failed to resume thread");
         }
         std.debug.print("waiting for job object\n", .{});
-        _ = windows.WaitForSingleObject(job, std.os.windows.INFINITE);
-        @panic("waitforsingleobject returned");
+
+        var completion_code: w.DWORD = 0;
+        var completion_key: w.ULONG_PTR = 0;
+        var overlapped: ?*w.OVERLAPPED = null;
+        while (true) {
+            if (w.kernel32.GetQueuedCompletionStatus(iocp, &completion_code, &completion_key, &overlapped, w.INFINITE) == 0) {
+                @panic("GetQueuedCompletionStatus failed");
+            }
+            if (completion_code == windows.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO and completion_key == @intFromPtr(job)) {
+                break;
+            }
+        }
+        Global.exit(0);
     }
 
     pub fn spawnProcessCopy(

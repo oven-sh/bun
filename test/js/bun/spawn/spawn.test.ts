@@ -158,7 +158,8 @@ for (let [gcTick, label] of [
       }
       )
 
-      it("check exit code from onExit", async () => {
+      it("check exit code from onExit", async () =>
+      {
         for (let i = 0; i < 1000; i++) {
           var exitCode1, exitCode2;
           await new Promise<void>(resolve => {
@@ -196,7 +197,8 @@ for (let [gcTick, label] of [
           expect(exitCode1).toBe(0);
           expect(exitCode2).toBe(1);
         }
-      }, 60_000_0);
+      }
+      , 60_000_0)
 
       // FIXME: fix the assertion failure
       it.skip("Uint8Array works as stdout", () => {

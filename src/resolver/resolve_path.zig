@@ -1932,18 +1932,18 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     return bun.String.createUTF8(out_slice);
 }
 
-pub fn platformToPosixInPlace(path_buffer: []u8) void {
+pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {
     if (std.fs.path.sep == '/') return;
     var idx: usize = 0;
-    while (std.mem.indexOfScalarPos(u8, path_buffer, idx, std.fs.path.sep)) |index| : (idx = index) {
+    while (std.mem.indexOfScalarPos(T, path_buffer, idx, std.fs.path.sep)) |index| : (idx = index) {
         path_buffer[index] = '/';
     }
 }
 
-pub fn posixToPlatformInPlace(path_buffer: []u8) void {
+pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
     if (std.fs.path.sep == '/') return;
     var idx: usize = 0;
-    while (std.mem.indexOfScalarPos(u8, path_buffer, idx, '/')) |index| : (idx = index) {
+    while (std.mem.indexOfScalarPos(T, path_buffer, idx, '/')) |index| : (idx = index) {
         path_buffer[index] = std.fs.path.sep;
     }
 }

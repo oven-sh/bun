@@ -5277,7 +5277,7 @@ pub const NodeFS = struct {
         const fd = switch (args.file) {
             .path => brk: {
                 path = args.file.path.sliceZ(pathbuf);
-                bun.path.posixToPlatformInPlace(@constCast(path));
+                bun.path.posixToPlatformInPlace(u8, @constCast(path));
 
                 var is_dirfd_different = false;
                 const dirfd = if (!Environment.isWindows) args.dirfd else blk: {

@@ -9028,7 +9028,7 @@ const LinkerContext = struct {
                 chunk.template.placeholder.hash = chunk.isolated_hash;
 
                 const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
-                bun.path.platformToPosixInPlace(rel_path);
+                bun.path.platformToPosixInPlace(u8, rel_path);
 
                 if ((try path_names_map.getOrPut(rel_path)).found_existing) {
                     try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Multiple files share the same output path: {s}", .{rel_path});
@@ -11285,7 +11285,7 @@ pub const Chunk = struct {
                                     else => unreachable,
                                 };
                                 // normalize windows paths to '/'
-                                bun.path.platformToPosixInPlace(@constCast(file_path));
+                                bun.path.platformToPosixInPlace(u8, @constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)
@@ -11327,7 +11327,7 @@ pub const Chunk = struct {
                                     else => unreachable,
                                 };
                                 // normalize windows paths to '/'
-                                bun.path.platformToPosixInPlace(@constCast(file_path));
+                                bun.path.platformToPosixInPlace(u8, @constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)

@@ -1896,14 +1896,24 @@ pub const win32 = struct {
         var completion_code: w.DWORD = 0;
         var completion_key: w.ULONG_PTR = 0;
         var overlapped: ?*w.OVERLAPPED = null;
+        var last_pid: w.DWORD = 0;
         while (true) {
             if (w.kernel32.GetQueuedCompletionStatus(iocp, &completion_code, &completion_key, &overlapped, w.INFINITE) == 0) {
                 @panic("GetQueuedCompletionStatus failed");
             }
-            if (completion_code == windows.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO and completion_key == @intFromPtr(job)) {
+            // only care about events concerning our job object (theoretically unnecessary)
+            if (completion_key != @intFromPtr(job)) {
+                continue;
+            }
+            if (completion_code == windows.JOB_OBJECT_MSG_EXIT_PROCESS) {
+                last_pid = @truncate(@intFromPtr(overlapped));
+            } else if (completion_code == windows.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO) {
                 break;
             }
         }
+        // NOTE: for now we always exit with a zero exit code.
+        // This is because there's no straightforward way to communicate the exit code
+        // of subsequently spawned child processes to the original parent process.
         Global.exit(0);
     }
 
@@ -1941,22 +1951,26 @@ pub const win32 = struct {
         }
 
         if (setChild) {
+            var size: usize = 0;
             if (kernelenv) |ptr| {
-                var size: usize = 0;
-                // array is terminated by two nulls
-                while (ptr[size] != 0 or ptr[size + 1] != 0) size += 1;
-                size += 1;
-                // now ptr + size points to the first null
-
-                const buf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
-                @memcpy(buf[0..size], ptr);
-                @memcpy(buf[size .. size + watcherChildEnv.len], watcherChildEnv);
-                buf[size + watcherChildEnv.len] = '=';
-                buf[size + watcherChildEnv.len + 1] = '1';
-                buf[size + watcherChildEnv.len + 2] = 0;
-                buf[size + watcherChildEnv.len + 3] = 0;
-                newenv = buf;
+                // check that env is non-empty
+                if (ptr[0] != 0 or ptr[1] != 0) {
+                    // array is terminated by two nulls
+                    while (ptr[size] != 0 or ptr[size + 1] != 0) size += 1;
+                    size += 1;
+                }
             }
+            // now ptr[size] is the first null
+            const buf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
+            if (kernelenv) |ptr| {
+                @memcpy(buf[0..size], ptr);
+            }
+            @memcpy(buf[size .. size + watcherChildEnv.len], watcherChildEnv);
+            buf[size + watcherChildEnv.len] = '=';
+            buf[size + watcherChildEnv.len + 1] = '1';
+            buf[size + watcherChildEnv.len + 2] = 0;
+            buf[size + watcherChildEnv.len + 3] = 0;
+            newenv = buf;
         }
 
         const env: ?[*]u16 = if (newenv) |e| e.ptr else kernelenv;

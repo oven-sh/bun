@@ -3048,10 +3048,24 @@ pub extern "kernel32" fn SetInformationJobObject(
 // Found experimentally:
 // #include <stdio.h>
 // #include <windows.h>
-// 
+//
 // int main() {
 //         printf("%ld\n", JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO);
+//         printf("%ld\n", JOB_OBJECT_MSG_EXIT_PROCESS);
 // }
 //
-// Output: 4
+// Output:
+// 4
+// 7
 pub const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;
+pub const JOB_OBJECT_MSG_EXIT_PROCESS = 7;
+
+pub extern "kernel32" fn OpenProcess(
+    dwDesiredAccess: DWORD,
+    bInheritHandle: BOOL,
+    dwProcessId: DWORD,
+) callconv(windows.WINAPI) ?HANDLE;
+
+// https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
+pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
+

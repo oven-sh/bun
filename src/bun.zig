@@ -1371,22 +1371,27 @@ pub fn reloadProcess(
     clear_terminal: bool,
 ) noreturn {
     if (clear_terminal) {
-        Output.flush();
-        Output.disableBuffering();
-        Output.resetTerminalAll();
+        // Output.flush();
+        // Output.disableBuffering();
+        // Output.resetTerminalAll();
     }
     const bun = @This();
 
     if (comptime Environment.isWindows) {
         // this assumes that our parent process assigned us to a job object (see runWatcherManager)
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
-        win32.spawnProcessCopy(allocator, &procinfo, false, false) catch @panic("Unexpected error while reloading process\n");
-
-        std.debug.print("exiting\n", .{});
+        win32.spawnProcessCopy(allocator, &procinfo, false, false) catch |err| {
+            Output.panic("Error while reloading process: {s}", .{@errorName(err)});
+        };
 
         // terminate the current process
-        _ = bun.windows.TerminateProcess(@ptrFromInt(std.math.maxInt(usize)), 0);
-        Output.panic("Unexpected error while reloading process\n", .{});
+        const rc = bun.windows.TerminateProcess(@ptrFromInt(std.math.maxInt(usize)), 0);
+        if (rc == 0) {
+            const err = bun.windows.GetLastError();
+            Output.panic("Error while reloading process: {s}", .{@tagName(err)});
+        } else {
+            Output.panic("Unexpected error while reloading process\n", .{});
+        }
     }
     const PosixSpawn = posix.spawn;
     const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
@@ -1874,24 +1879,30 @@ pub const win32 = struct {
         // this process will be the parent of the child process that actually runs the script
         // based on https://devblogs.microsoft.com/oldnewthing/20130405-00/?p=4743
         const job = windows.CreateJobObjectA(null, null);
-        const iocp = windows.CreateIoCompletionPort(windows.INVALID_HANDLE_VALUE, null, 0, 1) orelse @panic("Failed to create iocp");
+        const iocp = windows.CreateIoCompletionPort(windows.INVALID_HANDLE_VALUE, null, 0, 1) orelse {
+            Output.panic("Failed to create IOCP\n", .{});
+        };
         var assoc = windows.JOBOBJECT_ASSOCIATE_COMPLETION_PORT{
             .CompletionKey = job,
             .CompletionPort = iocp,
         };
         if (windows.SetInformationJobObject(job, windows.JobObjectAssociateCompletionPortInformation, &assoc, @sizeOf(windows.JOBOBJECT_ASSOCIATE_COMPLETION_PORT)) == 0) {
-            @panic("Failed to associate completion port");
+            const err = windows.GetLastError();
+            Output.panic("Failed to associate completion port: {s}\n", .{@tagName(err)});
         }
 
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
-        spawnProcessCopy(allocator, &procinfo, true, true) catch @panic("Failed to spawn process");
+        spawnProcessCopy(allocator, &procinfo, true, true) catch |err| {
+            Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
+        };
         if (windows.AssignProcessToJobObject(job, procinfo.hProcess) == 0) {
-            @panic("Failed to assign process to job object");
+            const err = windows.GetLastError();
+            Output.panic("Failed to assign process to job object: {s}\n", .{@tagName(err)});
         }
         if (windows.ResumeThread(procinfo.hThread) == 0) {
-            @panic("Failed to resume thread");
+            const err = windows.GetLastError();
+            Output.panic("Failed to resume child process: {s}\n", .{@tagName(err)});
         }
-        std.debug.print("waiting for job object\n", .{});
 
         var completion_code: w.DWORD = 0;
         var completion_key: w.ULONG_PTR = 0;
@@ -1899,7 +1910,8 @@ pub const win32 = struct {
         var last_pid: w.DWORD = 0;
         while (true) {
             if (w.kernel32.GetQueuedCompletionStatus(iocp, &completion_code, &completion_key, &overlapped, w.INFINITE) == 0) {
-                @panic("GetQueuedCompletionStatus failed");
+                const err = windows.GetLastError();
+                Output.panic("Failed to query completion status: {s}\n", .{@tagName(err)});
             }
             // only care about events concerning our job object (theoretically unnecessary)
             if (completion_key != @intFromPtr(job)) {

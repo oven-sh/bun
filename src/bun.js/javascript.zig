@@ -3315,7 +3315,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     },
                     .directory => {
                         if (comptime Environment.isWindows) {
-                            // for now ignore directory updates on windows
+                            // on windows we receive file events for all items affected by a directory change
+                            // so we only need to clear the directory cache. all other effects will be handled
+                            // by the file events
+                            resolver.bustDirCache(file_path);
                             continue;
                         }
                         var affected_buf: [128][]const u8 = undefined;

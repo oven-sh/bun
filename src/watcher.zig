@@ -14,6 +14,8 @@ const Futex = @import("./futex.zig");
 pub const WatchItemIndex = u16;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
+const log = bun.Output.scoped(.watcher, false);
+
 // TODO @gvilums
 // This entire file is a mess - rework it to be more maintainable
 
@@ -226,8 +228,8 @@ pub const WindowsWatcher = struct {
         overlapped: w.OVERLAPPED = std.mem.zeroes(w.OVERLAPPED),
         buf: [64 * 1024]u8 align(@alignOf(w.FILE_NOTIFY_INFORMATION)) = undefined,
         dirHandle: w.HANDLE,
-        path: [:0]u16,
-        path_buf: bun.WPathBuffer = undefined,
+        path: [:0]u8,
+        path_buf: bun.PathBuffer = undefined,
         refcount: usize = 1,
 
         const EventIterator = struct {
@@ -272,7 +274,7 @@ pub const WindowsWatcher = struct {
             const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION;
             if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, 1, filter, null, &this.overlapped, null) == 0) {
                 const err = w.kernel32.GetLastError();
-                std.debug.print("failed to start watching directory: {s}\n", .{@tagName(err)});
+                log("failed to start watching directory: {s}", .{@tagName(err)});
                 @panic("failed to start watching directory");
             }
         }
@@ -289,7 +291,7 @@ pub const WindowsWatcher = struct {
             // But we can't deallocate right away because we might be in the middle of iterating over the events of this watcher
             // we probably need some sort of queue that can be emptied by the watcher thread.
             if (this.refcount == 0) {
-                std.debug.print("TODO: deallocate watcher\n", .{});
+                log("TODO: deallocate watcher", .{});
             }
         }
     };
@@ -309,14 +311,15 @@ pub const WindowsWatcher = struct {
         w.kernel32.CloseHandle(this.iocp);
     }
 
-    fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: [:0]const u16) !*DirWatcher {
+    fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: []const u8) !*DirWatcher {
         _ = dirFd;
-        std.debug.print("adding directory to watch: {s}\n", .{std.unicode.fmtUtf16le(path)});
-        const path_len_bytes: u16 = @truncate(path.len * 2);
+        var pathbuf: bun.WPathBuffer = undefined;
+        const wpath = bun.strings.toNTPath(&pathbuf, path);
+        const path_len_bytes: u16 = @truncate(wpath.len * 2);
         var nt_name = w.UNICODE_STRING{
             .Length = path_len_bytes,
             .MaximumLength = path_len_bytes,
-            .Buffer = @constCast(path.ptr),
+            .Buffer = @constCast(wpath.ptr),
         };
         var attr = w.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
@@ -349,7 +352,7 @@ pub const WindowsWatcher = struct {
         );
 
         if (rc != .SUCCESS) {
-            std.debug.print("failed to open directory for watching: {s}\n", .{@tagName(rc)});
+            log("failed to open directory for watching: {s}", .{@tagName(rc)});
             @panic("failed to open directory for watching");
         }
 
@@ -375,7 +378,6 @@ pub const WindowsWatcher = struct {
 
     pub fn watchFile(this: *WindowsWatcher, path: []const u8) !*DirWatcher {
         const dirpath = std.fs.path.dirnameWindows(path) orelse @panic("get dir from file");
-        std.debug.print("path: {s}, dirpath: {s}\n", .{ path, dirpath });
         return this.watchDir(dirpath);
     }
 
@@ -385,17 +387,20 @@ pub const WindowsWatcher = struct {
         if (path.len > 0 and bun.strings.charIsAnySlash(path[path.len - 1])) {
             path = path[0 .. path.len - 1];
         }
-        var pathbuf: bun.WPathBuffer = undefined;
-        const wpath = bun.strings.toNTPath(&pathbuf, path);
         // check if one of the existing watchers covers this path
         for (this.watchers.items) |watcher| {
-            if (std.mem.indexOf(u16, watcher.path, wpath) == 0) {
-                std.debug.print("found existing watcher\n", .{});
+            if (bun.path.isParentOrEqual(watcher.path, path) != .unrelated) {
+                // there is an existing watcher that covers this path
+                log("found existing watcher with path: {s}", .{watcher.path});
                 watcher.ref();
                 return watcher;
+            } else if (bun.path.isParentOrEqual(path, watcher.path) != .unrelated) {
+                // the new watcher would cover this existing watcher
+                // TODO there could be multiple existing watchers that are covered by the new watcher
+                // we should deactivate all existing ones and activate the new one
             }
         }
-        return this.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, wpath);
+        return this.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, path);
     }
 
     const Timeout = enum(w.DWORD) {
@@ -865,11 +870,11 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
                     var timeout = WindowsWatcher.Timeout.infinite;
                     while (true) {
-                        // std.debug.print("waiting with timeout: {s}\n", .{@tagName(timeout)});
+                        // log("waiting with timeout: {s}\n", .{@tagName(timeout)});
                         const watcher = try this.platform.next(timeout) orelse break;
                         // after handling the watcher's events, it explicitly needs to start reading directory changes again
                         defer watcher.prepare() catch |err| {
-                            Output.prettyErrorln("Failed to (re-)start listening to directory changes: {s}", .{@errorName(err)});
+                            Output.prettyErrorln("Failed to start listening to directory changes: {s} - Future updates may be missed", .{@errorName(err)});
                         };
 
                         // after the first wait, we want to start coalescing events, so we wait for a minimal amount of time
@@ -877,30 +882,34 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
                         const item_paths = this.watchlist.items(.file_path);
 
-                        std.debug.print("event from watcher: {s}\n", .{std.unicode.fmtUtf16le(watcher.path)});
+                        log("event from watcher: {s}", .{watcher.path});
                         var iter = watcher.events();
+                        @memcpy(buf[0..watcher.path.len], watcher.path);
+                        buf[watcher.path.len] = '\\';
                         while (iter.next()) |event| {
-                            std.debug.print("filename: {}, action: {s}\n", .{ std.unicode.fmtUtf16le(event.filename), @tagName(event.action) });
-                            // convert the current event file path to utf-8
-                            // skip the \??\ prefix
-                            var idx = bun.simdutf.convert.utf16.to.utf8.le(watcher.path[4..], &buf);
-                            buf[idx] = '\\';
-                            idx += 1;
+                            log("raw event (filename: {}, action: {s})", .{ std.unicode.fmtUtf16le(event.filename), @tagName(event.action) });
+                            var idx = watcher.path.len + 1;
                             idx += bun.simdutf.convert.utf16.to.utf8.le(event.filename, buf[idx..]);
                             const eventpath = buf[0..idx];
 
-                            std.debug.print("eventpath: {s}\n", .{eventpath});
+                            log("received event at full path: {s}\n", .{eventpath});
 
-                            // TODO this really needs a more sophisticated search algorithm
-                            for (item_paths, 0..) |path, item_idx| {
-                                std.debug.print("path: {s}\n", .{path});
+                            // TODO this probably needs a more sophisticated search algorithm
+                            for (item_paths, 0..) |path_, item_idx| {
+                                var path = path_;
+                                if (path.len > 0 and bun.strings.charIsAnySlash(path[path.len - 1])) {
+                                    path = path[0 .. path.len - 1];
+                                }
+                                log("checking path: {s}\n", .{path});
                                 // check if the current change applies to this item
                                 // if so, add it to the eventlist
-                                if (std.mem.indexOf(u8, path, eventpath) == 0) {
-                                    // this.changed_filepaths[event_id] = path;
-                                    this.watch_events[event_id].fromFileNotify(event, @truncate(item_idx));
-                                    event_id += 1;
-                                }
+                                const rel = bun.path.isParentOrEqual(eventpath, path);
+                                // skip unrelated items
+                                if (rel == .unrelated) continue;
+                                // if the event is for a parent dir of the item, only emit it if it's a delete or rename
+                                if (rel == .parent and (event.action != .Removed or event.action != .RenamedOld)) continue;
+                                this.watch_events[event_id].fromFileNotify(event, @truncate(item_idx));
+                                event_id += 1;
                             }
                         }
                     }
@@ -908,7 +917,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         continue :restart;
                     }
 
-                    std.debug.print("event_id: {d}\n", .{event_id});
+                    log("event_id: {d}\n", .{event_id});
 
                     var all_events = this.watch_events[0..event_id];
                     std.sort.pdq(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
@@ -933,7 +942,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     if (all_events.len == 0) continue :restart;
                     all_events = all_events[0 .. last_event_index + 1];
 
-                    std.debug.print("all_events.len: {d}\n", .{all_events.len});
+                    log("calling onFileUpdate (all_events.len = {d})", .{all_events.len});
 
                     this.ctx.onFileUpdate(all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
                 }

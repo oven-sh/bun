@@ -198,7 +198,6 @@ describe("bundler", () => {
       { file: "/test2.js", stdout: "side effect\n2\n1" },
     ],
   });
-  //
   itBundled("splitting/NestedDirectories", {
     files: {
       "/Users/user/project/src/pages/pageA/page.js": /* js */ `
@@ -252,7 +251,6 @@ describe("bundler", () => {
     },
     run: [{ file: "/test.js", stdout: "5 6\n5 6\ntrue\n7 7" }],
   });
-  //
   itBundled("splitting/MissingLazyExport", {
     files: {
       "/a.js": /* js */ `
@@ -315,7 +313,6 @@ describe("bundler", () => {
       "/out/a.js": "imported",
     },
   });
-  //
   itBundled("splitting/DynamicImportOutsideSourceTreeESBuildIssue264", {
     files: {
       "/Users/user/project/src/entry1.js": `import('package')`,

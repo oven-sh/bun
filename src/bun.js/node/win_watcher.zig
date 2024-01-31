@@ -48,6 +48,7 @@ pub const PathWatcherManager = struct {
         errdefer bun.default_allocator.free(cloned_path);
 
         const dir = bun.openDirAbsolute(cloned_path[0..cloned_path.len]) catch |err| {
+            log("openDirAbsolute({s}) err {}", .{ cloned_path, err });
             if (err == error.ENOENT) {
                 const file = try bun.openFileZ(cloned_path, .{ .mode = .read_only });
                 const result = PathInfo{
@@ -242,27 +243,34 @@ pub const PathWatcher = struct {
             return;
         }
 
-        const path = if (filename) |file| file[0..bun.len(file) :0] else this.path.path;
+        const path = if (filename) |file| file[0..bun.len(file) :0] else return;
 
-        // we need the absolute path to get the file info
-        var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-        var parts = [_]string{path};
-        const cwd = Path.dirname(this.path.path, .windows);
-        @memcpy(buf[0..cwd.len], cwd);
-        buf[cwd.len] = std.fs.path.sep;
+        // if we are watching a file we already have the file info
+        const path_info = if (this.path.is_file) this.path else brk: {
+            // we need the absolute path to get the file info
+            var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            var parts = [_]string{ this.path.path, path };
+            @memcpy(buf[0..this.path.path.len], this.path.path);
+            buf[this.path.path.len] = std.fs.path.sep;
+            const cwd_z = buf[0 .. this.path.path.len + 1];
+            var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            const file_path = Path.joinAbsStringBuf(
+                cwd_z,
+                &joined_buf,
+                &parts,
+                .windows,
+            );
 
-        var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-        const file_path = Path.joinAbsStringBuf(
-            buf[0 .. cwd.len + 1],
-            &joined_buf,
-            &parts,
-            .windows,
-        );
+            joined_buf[file_path.len] = 0;
+            const file_path_z = joined_buf[0..file_path.len :0];
+            break :brk manager._fdFromAbsolutePathZ(file_path_z) catch return;
+        };
 
-        joined_buf[file_path.len] = 0;
-        const file_path_z = joined_buf[0..file_path.len :0];
-        const path_info = manager._fdFromAbsolutePathZ(file_path_z) catch return;
-        defer manager._decrementPathRef(path);
+        defer {
+            if (!this.path.is_file) {
+                manager._decrementPathRef(path_info.path);
+            }
+        }
         defer this.flush();
         // events always use the relative path
         if (events & uv.UV_RENAME != 0) {

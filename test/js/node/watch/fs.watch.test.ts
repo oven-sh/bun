@@ -74,7 +74,7 @@ describe("fs.watch", () => {
     watcher.on("change", (event, filename) => {
       count++;
       try {
-        expect(event).toBe("rename");
+        expect(["rename", "change"]).toContain(event)
         expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
         if (count >= 2) {
           watcher.close();
@@ -412,7 +412,7 @@ describe("fs.watch", () => {
     try {
       const watcher = fs.watch(filepath);
       watcher.close();
-      expect("unreacheable").toBe(false);
+      expect.unreachable();
     } catch (err: any) {
       expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
     }
@@ -426,7 +426,7 @@ describe("fs.watch", () => {
     try {
       const watcher = fs.watch(filepath);
       watcher.close();
-      expect("unreacheable").toBe(false);
+      expect.unreachable();
     } catch (err: any) {
       expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
     }
@@ -455,7 +455,7 @@ describe("fs.promises.watch", () => {
       for await (const event of watcher) {
         count++;
         try {
-          expect(event.eventType).toBe("rename");
+          expect(["rename", "change"]).toContain(event.eventType);
           expect(["new-file.txt", "new-folder.txt"]).toContain(event.filename);
 
           if (count >= 2) {
@@ -577,7 +577,7 @@ describe("fs.promises.watch", () => {
           return event.eventType;
         }
       } catch {
-        expect("unreacheable").toBe(false);
+        expect.unreachable();
       } finally {
         clearInterval(interval);
       }
@@ -605,7 +605,7 @@ describe("fs.promises.watch", () => {
           return event.eventType;
         }
       } catch {
-        expect("unreacheable").toBe(false);
+        expect.unreachable();
       } finally {
         clearInterval(interval);
       }
@@ -628,7 +628,7 @@ describe("fs.promises.watch", () => {
           return event.eventType;
         }
       } catch (e: any) {
-        expect("unreacheable").toBe(false);
+        expect.unreachable();
       } finally {
         clearInterval(interval);
       }

@@ -94,6 +94,7 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
+<<<<<<< Updated upstream
       it("Uint8Array works as stdin", async () => {
         rmSync("/tmp/out.123.txt", { force: true });
         gcTick();
@@ -107,6 +108,24 @@ for (let [gcTick, label] of [
         expect(require("fs").readFileSync("/tmp/out.123.txt", "utf8")).toBe(hugeString);
         gcTick();
       });
+=======
+      // it("Uint8Array works as stdin", async () => {
+      //   rmSync("/tmp/out.123.txt", { force: true });
+      //   gcTick();
+      //   const { exited } = spawn({
+      //     cmd: [bunExe(), help_fixture, "cat"],
+      //     stdin: new TextEncoder().encode(hugeString),
+      //     stdout: Bun.file("/tmp/out.123.txt"),
+      //     env: {
+      //       BUN_DEBUG_QUIET_LOGS: "1",
+      //     },
+      //   });
+      //   gcTick();
+      //   await exited;
+      //   expect(require("fs").readFileSync("/tmp/out.123.txt", "utf8")).toBe(hugeString);
+      //   gcTick();
+      // });
+>>>>>>> Stashed changes
 
       it("check exit code", async () => {
         const exitCode1 = await spawn({

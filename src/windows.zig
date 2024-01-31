@@ -17,6 +17,7 @@ pub const FALSE = windows.FALSE;
 pub const TRUE = windows.TRUE;
 pub const INVALID_HANDLE_VALUE = windows.INVALID_HANDLE_VALUE;
 pub const FILE_BEGIN = windows.FILE_BEGIN;
+pub const FILE_END = windows.FILE_END;
 pub const FILE_CURRENT = windows.FILE_CURRENT;
 pub const ULONG = windows.ULONG;
 pub const LARGE_INTEGER = windows.LARGE_INTEGER;
@@ -61,6 +62,8 @@ pub const user32 = windows.user32;
 pub const advapi32 = windows.advapi32;
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
+
+pub const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
 
 const std = @import("std");
 pub const HANDLE = win32.HANDLE;
@@ -2982,24 +2985,23 @@ pub extern "kernel32" fn SetFileInformationByHandle(
 ) BOOL;
 
 pub fn getLastErrno() bun.C.E {
-    return translateWinErrorToErrno(bun.windows.kernel32.GetLastError());
+    return (bun.C.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
 }
 
-pub fn translateWinErrorToErrno(err: win32.Win32Error) bun.C.E {
+pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
     return switch (err) {
         .SUCCESS => .SUCCESS,
-        .FILE_NOT_FOUND => .NOENT,
-        .PATH_NOT_FOUND => .NOENT,
-        .TOO_MANY_OPEN_FILES => .NOMEM,
         .ACCESS_DENIED => .PERM,
         .INVALID_HANDLE => .BADF,
-        .NOT_ENOUGH_MEMORY => .NOMEM,
-        .OUTOFMEMORY => .NOMEM,
         .INVALID_PARAMETER => .INVAL,
+        .OBJECT_NAME_COLLISION => .EXIST,
+        .FILE_IS_A_DIRECTORY => .ISDIR,
+        .OBJECT_PATH_NOT_FOUND => .NOENT,
+        .OBJECT_NAME_NOT_FOUND => .NOENT,
 
         else => |t| {
             // if (bun.Environment.isDebug) {
-            bun.Output.warn("Called getLastErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
+            bun.Output.warn("Called translateNTStatusToErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
             // }
             return .UNKNOWN;
         },
@@ -3068,4 +3070,3 @@ pub extern "kernel32" fn OpenProcess(
 
 // https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
 pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
-

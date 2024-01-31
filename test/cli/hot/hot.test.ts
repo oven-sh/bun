@@ -169,7 +169,7 @@ it("should not hot reload when a random file is written", async () => {
 });
 
 it("should hot reload when a file is deleted and rewritten", async () => {
-  const root = hotRunnerRoot + '.tmp.js';
+  const root = hotRunnerRoot + ".tmp.js";
   copyFileSync(hotRunnerRoot, root);
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
@@ -211,7 +211,7 @@ it("should hot reload when a file is deleted and rewritten", async () => {
 });
 
 it("should hot reload when a file is renamed() into place", async () => {
-  const root = hotRunnerRoot + '.tmp.js';
+  const root = hotRunnerRoot + ".tmp.js";
   copyFileSync(hotRunnerRoot, root);
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],

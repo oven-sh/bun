@@ -1207,6 +1207,7 @@ pub const Command = struct {
 
             RootCommandMatcher.case("i"),
             RootCommandMatcher.case("install"),
+            RootCommandMatcher.case("isntall"),
             => brk: {
                 for (args_iter.buf) |arg| {
                     if (arg.len > 0 and (strings.eqlComptime(arg, "-g") or strings.eqlComptime(arg, "--global"))) {

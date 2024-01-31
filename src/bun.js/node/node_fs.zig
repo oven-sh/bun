@@ -5273,6 +5273,7 @@ pub const NodeFS = struct {
 
     pub fn writeFileWithPathBuffer(pathbuf: *[bun.MAX_PATH_BYTES]u8, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
         var path: [:0]const u8 = undefined;
+        var pathbuf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         const fd = switch (args.file) {
             .path => brk: {
@@ -5306,6 +5307,15 @@ pub const NodeFS = struct {
                     var d = dirfd.asDir();
                     d.close();
                 };
+                if (Environment.isWindows) {
+                    // windows openat does not support path traversal, fix it here.
+                    // use pathbuf2 here since without it 'panic: @memcpy arguments alias' triggers
+                    if (std.mem.indexOf(u8, path, "\\.\\") != null or std.mem.indexOf(u8, path, "\\..\\") != null) {
+                        const fixed_path = bun.path.normalizeStringWindows(path, &pathbuf2, false, false);
+                        pathbuf2[fixed_path.len] = 0;
+                        path = pathbuf2[0..fixed_path.len :0];
+                    }
+                }
 
                 const open_result = Syscall.openat(
                     dirfd,

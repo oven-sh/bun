@@ -195,11 +195,6 @@ pub fn PosixPipeReader(
         }
 
         pub fn close(this: *This) void {
-            const fd = getFd(this);
-            if (fd != bun.invalid_fd) {
-                _ = bun.sys.close();
-                this.handle.getPoll().deinit();
-            }
             vtable.done(this);
         }
     };
@@ -377,6 +372,10 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
         }
 
         pub fn done(this: *PosixOutputReader) void {
+            if (this.handle != .closed) {
+                this.handle.close(this, done);
+                return;
+            }
             this.finish();
             this.parent.onOutputDone();
         }
@@ -393,6 +392,7 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
 
         pub fn registerPoll(this: *PosixOutputReader) void {
             const poll = this.handle.getPoll() orelse return;
+            poll.owner.set(this);
             switch (poll.register(this.parent.loop(), .readable, true)) {
                 .err => |err| {
                     this.onError(err);

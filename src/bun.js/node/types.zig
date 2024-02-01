@@ -65,6 +65,15 @@ pub fn Maybe(comptime ResultType: type) type {
             .result = std.mem.zeroes(ReturnType),
         };
 
+        pub fn assert(this: @This()) ReturnType {
+            switch (this) {
+                .err => |err| {
+                    bun.Output.panic("Unexpected error\n{}", .{err});
+                },
+                .result => |result| return result,
+            }
+        }
+
         pub inline fn todo() @This() {
             if (Environment.allow_assert) {
                 if (comptime ResultType == void) {

@@ -929,4 +929,5 @@ pub const retry = bun.C.E.AGAIN;
 pub const PipeReader = @import("./PipeReader.zig").PipeReader;
 pub const BufferedOutputReader = @import("./PipeReader.zig").BufferedOutputReader;
 pub const BufferedWriter = @import("./PipeWriter.zig").BufferedWriter;
+pub const WriteResult = @import("./PipeWriter.zig").WriteResult;
 pub const StreamingWriter = @import("./PipeWriter.zig").StreamingWriter;

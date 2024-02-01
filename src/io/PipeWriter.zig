@@ -236,6 +236,14 @@ pub fn PosixBufferedWriter(
             this.handle.close(this.parent, onClose);
         }
 
+        pub fn updateRef(this: *PosixWriter, value: bool, event_loop: JSC.EventLoopHandle) void {
+            if (value) {
+                this.enableKeepingProcessAlive(event_loop);
+            } else {
+                this.disableKeepingProcessAlive(event_loop);
+            }
+        }
+
         pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, bytes: []const u8, pollable: bool) JSC.Maybe(void) {
             this.buffer = bytes;
             if (!pollable) {
@@ -244,9 +252,9 @@ pub fn PosixBufferedWriter(
                 return JSC.Maybe(void){ .result = {} };
             }
             const loop = @as(*Parent, @ptrCast(this.parent)).loop();
-            var poll = this.poll orelse brk: {
+            var poll = this.getPoll() orelse brk: {
                 this.handle = .{ .poll = Async.FilePoll.init(loop, fd, .writable, PosixWriter, this) };
-                break :brk this.poll.?;
+                break :brk this.handle.poll;
             };
 
             switch (poll.registerWithFd(loop, .writable, true, fd)) {
@@ -479,7 +487,7 @@ pub fn PosixStreamingWriter(
         }
 
         pub fn hasRef(this: *PosixWriter) bool {
-            const poll = this.poll orelse return false;
+            const poll = this.getPoll() orelse return false;
             return !this.is_done and poll.canEnableKeepingProcessAlive();
         }
 
@@ -493,6 +501,14 @@ pub fn PosixStreamingWriter(
         pub fn disableKeepingProcessAlive(this: *PosixWriter, event_loop: JSC.EventLoopHandle) void {
             const poll = this.getPoll() orelse return;
             poll.disableKeepingProcessAlive(event_loop);
+        }
+
+        pub fn updateRef(this: *PosixWriter, event_loop: JSC.EventLoopHandle, value: bool) void {
+            if (value) {
+                this.enableKeepingProcessAlive(event_loop);
+            } else {
+                this.disableKeepingProcessAlive(event_loop);
+            }
         }
 
         pub fn end(this: *PosixWriter) void {
@@ -516,9 +532,9 @@ pub fn PosixStreamingWriter(
             }
 
             const loop = @as(*Parent, @ptrCast(this.parent)).loop();
-            var poll = this.poll orelse brk: {
+            var poll = this.getPoll() orelse brk: {
                 this.handle = .{ .poll = Async.FilePoll.init(loop, fd, .writable, PosixWriter, this) };
-                break :brk this.poll.?;
+                break :brk this.handle.poll;
             };
 
             switch (poll.registerWithFd(loop, .writable, true, fd)) {

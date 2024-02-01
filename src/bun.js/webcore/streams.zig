@@ -189,6 +189,7 @@ pub const ReadableStream = struct {
             .Blob => |blob| blob.parent().decrementCount(),
             .File => |file| file.parent().decrementCount(),
             .Bytes => |bytes| bytes.parent().decrementCount(),
+            .Pipe => |bytes| bytes.parent().decrementCount(),
             else => 0,
         };
 
@@ -422,6 +423,7 @@ pub const StreamStart = union(Tag) {
         as_uint8array: bool,
         stream: bool,
     },
+    PipeSink: void,
     FileSink: struct {
         chunk_size: Blob.SizeType = 16384,
         input_path: PathOrFileDescriptor,
@@ -644,6 +646,11 @@ pub const StreamResult = union(Tag) {
         into_array_and_done,
     };
 
+    pub fn slice16(this: *const StreamResult) []const u16 {
+        const bytes = this.slice();
+        return @as([*]const u16, @ptrCast(@alignCast(bytes.ptr)))[0..std.mem.bytesAsSlice(u16, bytes).len];
+    }
+
     pub fn slice(this: *const StreamResult) []const u8 {
         return switch (this.*) {
             .owned => |owned| owned.slice(),
@@ -672,6 +679,10 @@ pub const StreamResult = union(Tag) {
             result: Writable,
             consumed: Blob.SizeType = 0,
             state: StreamResult.Pending.State = .none,
+
+            pub fn deinit(_: *@This()) void {
+                // TODO:
+            }
 
             pub const Future = union(enum) {
                 promise: struct {
@@ -1477,8 +1488,6 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
                 while (remain.len > 0) {
                     const write_buf = remain[0..@min(remain.len, max_to_write)];
                     const res = bun.sys.write(fd, write_buf);
-                    // this does not fix the issue with writes not showing up
-                    // const res = bun.sys.sys_uv.write(fd, write_buf);
 
                     if (res == .err) {
                         const retry =
@@ -2632,7 +2641,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             defer {
                 if ((comptime @hasField(SinkType, "done")) and this.sink.done) {
-                    callframe.this().unprotect();
+                    this.unprotect();
                 }
             }
 
@@ -3662,27 +3671,279 @@ pub fn ReadableStreamSource(
     };
 }
 
+pub const PipeSink = struct {
+    writer: bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose) = .{},
+    done: bool = false,
+    event_loop_handle: JSC.EventLoopHandle,
+    fd: bun.FileDescriptor = bun.invalid_fd,
+    written: usize = 0,
+
+    pending: StreamResult.Writable.Pending = .{},
+    signal: Signal = Signal{},
+
+    const log = Output.scoped(.Pipe);
+
+    pub usingnamespace bun.NewRefCounted(PipeSink, deinit);
+
+    pub fn onWrite(this: *PipeSink, amount: usize, done: bool) void {
+        log("onWrite({d}, {any})", .{ amount, done });
+        this.written += amount;
+        if (this.pending.state == .pending)
+            this.pending.consumed += amount;
+
+        if (done) {
+            if (this.pending.state == .pending) {
+                this.pending.result = .{ .owned = this.pending.consumed };
+                this.pending.run();
+            }
+        }
+    }
+    pub fn onError(this: *PipeSink, err: bun.sys.Error) void {
+        log("onError({any})", .{err});
+        if (this.pending.state == .pending) {
+            this.pending.result = .{ .err = err };
+
+            this.pending.run();
+        }
+    }
+    pub fn onReady(this: *PipeSink) void {
+        log("onReady()", .{});
+
+        this.signal.ready(null, null);
+    }
+    pub fn onClose(this: *PipeSink) void {
+        log("onClose()", .{});
+
+        this.signal.close(null);
+    }
+
+    pub fn create(
+        event_loop: *JSC.EventLoop,
+        fd: bun.FileDescriptor,
+    ) *PipeSink {
+        return PipeSink.new(.{
+            .event_loop_handle = JSC.EventLoopHandle.init(event_loop),
+            .fd = fd,
+        });
+    }
+
+    pub fn setup(
+        this: *PipeSink,
+        fd: bun.FileDescriptor,
+    ) void {
+        this.fd = fd;
+        this.writer.start(fd, true).assert();
+    }
+
+    pub fn loop(this: *PipeSink) *Async.Loop {
+        return this.event_loop_handle.loop();
+    }
+
+    pub fn eventLoop(this: *PipeSink) JSC.EventLoopHandle {
+        return this.event_loop_handle;
+    }
+
+    pub fn connect(this: *PipeSink, signal: Signal) void {
+        this.signal = signal;
+    }
+
+    pub fn start(this: *PipeSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
+        switch (stream_start) {
+            .PipeSink => {},
+            else => {},
+        }
+
+        this.done = false;
+
+        this.signal.start();
+        return .{ .result = {} };
+    }
+
+    pub fn flush(_: *PipeSink) JSC.Node.Maybe(void) {
+        return .{ .result = {} };
+    }
+
+    pub fn flushFromJS(this: *PipeSink, globalThis: *JSGlobalObject, wait: bool) JSC.Node.Maybe(JSValue) {
+        _ = globalThis; // autofix
+        _ = wait; // autofix
+        if (this.done or this.pending.state == .pending) {
+            return .{ .result = JSC.JSValue.jsUndefined() };
+        }
+        return this.toResult(this.writer.flush());
+    }
+
+    pub fn finalize(this: *PipeSink) void {
+        this.pending.deinit();
+        this.deref();
+    }
+
+    pub fn init(fd: bun.FileDescriptor) *PipeSink {
+        return PipeSink.new(.{
+            .writer = .{},
+            .fd = fd,
+        });
+    }
+
+    pub fn construct(
+        this: *PipeSink,
+        allocator: std.mem.Allocator,
+    ) void {
+        _ = allocator; // autofix
+        this.* = PipeSink{
+            .event_loop_handle = JSC.EventLoopHandle.init(JSC.VirtualMachine.get().eventLoop()),
+        };
+    }
+
+    pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.next) |*next| {
+            return next.writeBytes(data);
+        }
+
+        return this.toResult(this.writer.write(data.slice()));
+    }
+    pub const writeBytes = write;
+    pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.next) |*next| {
+            return next.writeLatin1(data);
+        }
+
+        return this.toResult(this.writer.writeLatin1(data.slice()));
+    }
+    pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.next) |*next| {
+            return next.writeUTF16(data);
+        }
+
+        return this.toResult(this.writer.writeUTF16(data.slice16()));
+    }
+
+    pub fn end(this: *PipeSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+        if (this.next) |*next| {
+            return next.end(err);
+        }
+
+        switch (this.writer.flush()) {
+            .done => {
+                this.writer.end();
+                return .{ .result = {} };
+            },
+            .err => |e| {
+                return .{ .err = e };
+            },
+            .pending => |pending_written| {
+                _ = pending_written; // autofix
+                this.ref();
+                this.done = true;
+                this.writer.close();
+                return .{ .result = {} };
+            },
+            .written => |written| {
+                _ = written; // autofix
+                this.writer.end();
+                return .{ .result = {} };
+            },
+        }
+    }
+    pub fn deinit(this: *PipeSink) void {
+        this.writer.deinit();
+    }
+
+    pub fn toJS(this: *PipeSink, globalThis: *JSGlobalObject) JSValue {
+        return JSSink.createObject(globalThis, this);
+    }
+
+    pub fn endFromJS(this: *PipeSink, globalThis: *JSGlobalObject) JSC.Node.Maybe(JSValue) {
+        if (this.done) {
+            if (this.pending.state == .pending) {
+                return .{ .result = this.pending.future.promise.promise.asValue(globalThis) };
+            }
+
+            return .{ .result = JSValue.jsNumber(this.written) };
+        }
+
+        switch (this.writer.flush()) {
+            .done => {
+                this.writer.end();
+                return .{ .result = JSValue.jsNumber(this.written) };
+            },
+            .err => |err| {
+                this.writer.close();
+                return .{ .err = err };
+            },
+            .pending => |pending_written| {
+                this.written += pending_written;
+                this.done = true;
+                this.pending.result = .{ .owned = pending_written };
+                return .{ .result = this.pending.promise(globalThis).asValue(globalThis) };
+            },
+            .written => |written| {
+                this.writer.end();
+                return .{ .result = JSValue.jsNumber(written) };
+            },
+        }
+    }
+
+    pub fn sink(this: *PipeSink) Sink {
+        return Sink.init(this);
+    }
+
+    pub fn updateRef(this: *PipeSink, value: bool) void {
+        if (value) {
+            this.writer.enableKeepingProcessAlive(this.event_loop_handle);
+        } else {
+            this.writer.disableKeepingProcessAlive(this.event_loop_handle);
+        }
+    }
+
+    pub const JSSink = NewJSSink(@This(), "PipeSink");
+
+    fn toResult(this: *PipeSink, write_result: bun.io.WriteResult) StreamResult.Writable {
+        switch (write_result) {
+            .done => |amt| {
+                if (amt > 0)
+                    return .{ .owned_and_done = @truncate(amt) };
+
+                return .{ .done = {} };
+            },
+            .wrote => |amt| {
+                if (amt > 0)
+                    return .{ .owned = @truncate(amt) };
+
+                return .{ .temporary = @truncate(amt) };
+            },
+            .err => |err| {
+                return .{ .err = err };
+            },
+            .pending => |pending_written| {
+                this.pending.consumed += pending_written;
+                this.pending.result = .{ .owned = pending_written };
+                return .{ .pending = &this.pending };
+            },
+        }
+    }
+};
+
 pub const PipeReader = struct {
     reader: bun.io.BufferedOutputReader(@This(), onReadChunk) = .{},
     done: bool = false,
     pending: StreamResult.Pending = .{},
     pending_value: JSC.Strong = .{},
     pending_view: []u8 = []u8{},
+    fd: bun.io.FileDescriptor = bun.invalid_fd,
 
     pub fn setup(
         this: *PipeReader,
-        other_reader: anytype,
+        fd: bun.io.FileDescriptor,
     ) void {
         this.* = PipeReader{
             .reader = .{},
             .done = false,
+            .fd = fd,
         };
-
-        this.reader.fromOutputReader(other_reader, this);
     }
 
     pub fn onStart(this: *PipeReader) StreamStart {
-        switch (this.reader.start()) {
+        switch (this.reader.start(this.fd, true)) {
             .result => {},
             .err => |e| {
                 return .{ .err = e };
@@ -3752,8 +4013,12 @@ pub const PipeReader = struct {
             this.pending_value.clear();
             this.pending_view = &.{};
 
-            if (buffer.len >= drained.len) {
+            if (buffer.len >= @as(usize, drained.len)) {
                 @memcpy(buffer[0..drained.len], drained);
+
+                // give it back!
+                this.reader.buffer().* = drained;
+
                 if (this.done) {
                     return .{ .into_array_and_done = .{ .value = array, .len = drained.len } };
                 } else {
@@ -3801,7 +4066,7 @@ pub const PipeReader = struct {
 
     pub const Source = ReadableStreamSource(
         @This(),
-        "ReadableStreamPipe",
+        "PipeReader",
         onStart,
         onPull,
         onCancel,
@@ -4355,7 +4620,7 @@ pub const File = struct {
         var fd = if (file.pathlike != .path)
             // We will always need to close the file descriptor.
             switch (Syscall.dup(file.pathlike.fd)) {
-                .result => |_fd| if (Environment.isWindows) bun.toLibUVOwnedFD(_fd) else _fd,
+                .result => |_fd| _fd,
                 .err => |err| {
                     return .{ .err = err.withFd(file.pathlike.fd) };
                 },
@@ -4828,11 +5093,6 @@ pub const FileReader = struct {
             }
         } else if (this.lazy_readable == .empty)
             return .{ .empty = {} };
-
-        if (this.readable().* == .File) {
-            const chunk_size = this.readable().File.calculateChunkSize(std.math.maxInt(usize));
-            return .{ .chunk_size = @as(Blob.SizeType, @truncate(chunk_size)) };
-        }
 
         return .{ .chunk_size = if (this.user_chunk_size == 0) default_fifo_chunk_size else this.user_chunk_size };
     }

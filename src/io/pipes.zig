@@ -33,8 +33,11 @@ pub const PollOrFd = union(enum) {
 
         if (fd != bun.invalid_fd) {
             this.handle = .{ .closed = {} };
+            _ = bun.sys.close(fd);
             if (comptime onCloseFn != void)
                 onCloseFn(@ptrCast(ctx.?));
+        } else {
+            this.handle = .{ .closed = {} };
         }
     }
 };

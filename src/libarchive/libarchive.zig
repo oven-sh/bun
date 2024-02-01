@@ -518,10 +518,6 @@ pub const Archive = struct {
                         break :brk w_path_buf[0..normalized.len :0];
                     } else std.mem.sliceTo(lib.archive_entry_pathname(entry), 0);
 
-                    if (comptime Environment.allow_assert) {
-                        std.debug.assert(pathname[pathname.len] == 0);
-                    }
-
                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
                         if (appender.needs_first_dirname) {
                             if (comptime Environment.isWindows) {
@@ -546,10 +542,6 @@ pub const Archive = struct {
                     const pathname_ = tokenizer.rest();
                     pathname = @as([*]const bun.OSPathChar, @ptrFromInt(@intFromPtr(pathname_.ptr)))[0..pathname_.len :0];
                     if (pathname.len == 0) continue;
-
-                    if (comptime Environment.allow_assert) {
-                        std.debug.assert(pathname[pathname.len] == 0);
-                    }
 
                     const kind = C.kindFromMode(lib.archive_entry_filetype(entry));
 

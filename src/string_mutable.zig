@@ -271,11 +271,11 @@ pub const MutableString = struct {
     }
 
     pub fn lastIndexOfChar(self: *const MutableString, char: u8) ?usize {
-        return strings.lastIndexOfChar(u8, self.list.items, char);
+        return strings.lastIndexOfChar(self.list.items, char);
     }
 
     pub fn lastIndexOf(self: *const MutableString, str: u8) ?usize {
-        return strings.lastIndexOfChar(u8, self.list.items, str);
+        return strings.lastIndexOfChar(self.list.items, str);
     }
 
     pub fn indexOf(self: *const MutableString, str: u8) ?usize {

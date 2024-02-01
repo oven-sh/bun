@@ -1733,7 +1733,7 @@ pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     }
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
-    if (path_to_use.len > 3 and bun.path.isSepAny(u8, path_to_use[path_to_use.len - 1])) {
+    if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
         path_to_use = path_to_use[0 .. path_to_use.len - 1];
     }
 

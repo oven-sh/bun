@@ -698,7 +698,7 @@ pub const Archive = struct {
                                         lib.ARCHIVE_OK => break :possibly_retry,
                                         lib.ARCHIVE_RETRY => {
                                             if (comptime log) {
-                                                Output.prettyErrorln("[libarchive] Error extracting {}, retry {d} / {d}", .{
+                                                Output.err("libarchive error", "extracting {}, retry {d} / {d}", .{
                                                     bun.fmt.fmtOSPath(path_slice),
                                                     retries_remaining,
                                                     5,
@@ -708,7 +708,7 @@ pub const Archive = struct {
                                         else => {
                                             if (comptime log) {
                                                 const archive_error = std.mem.span(lib.archive_error_string(archive));
-                                                Output.prettyErrorln("[libarchive] Error extracting {}: {s}", .{
+                                                Output.err("libarchive error", "Error extracting {}: {s}", .{
                                                     bun.fmt.fmtOSPath(path_slice),
                                                     archive_error,
                                                 });

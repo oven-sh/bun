@@ -64,6 +64,7 @@ pub const advapi32 = windows.advapi32;
 pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
 
 pub const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
+pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
 
 const std = @import("std");
 pub const HANDLE = win32.HANDLE;

@@ -40,34 +40,51 @@ pub inline fn w(comptime str: []const u8) [:0]const u16 {
 }
 
 pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
-    return comptime brk: {
-        comptime var output: [str.len]u16 = undefined;
-
-        for (str, 0..) |c, i| {
-            output[i] = c;
-        }
-
-        const Static = struct {
-            pub const literal: []const u16 = output[0..];
-        };
-        break :brk Static.literal;
-    };
+    return comptime literal(u16, str);
 }
 
-pub fn toUTF16LiteralZ(comptime str: []const u8) [:0]const u16 {
-    return comptime brk: {
-        comptime var output: [str.len + 1]u16 = undefined;
+pub inline fn literal(comptime T: type, comptime str: string) []const T {
+    if (!@inComptime()) @compileError("strings.literal() should be called in a comptime context");
+    comptime var output: [str.len]T = undefined;
 
-        for (str, 0..) |c, i| {
-            output[i] = c;
-        }
-        output[str.len] = 0;
+    for (str, 0..) |c, i| {
+        // TODO(dylan-conway): should we check for non-ascii characters like JSC does with operator""_s
+        output[i] = c;
+    }
 
-        const Static = struct {
-            pub const literal: [:0]const u16 = output[0..str.len :0];
-        };
-        break :brk Static.literal;
+    const Static = struct {
+        pub const literal: []const T = output[0..];
     };
+    return Static.literal;
+}
+
+pub inline fn literalBuf(comptime T: type, comptime str: string) [str.len]T {
+    if (!@inComptime()) @compileError("strings.literalBuf() should be called in a comptime context");
+    comptime var output: [str.len]T = undefined;
+
+    for (str, 0..) |c, i| {
+        // TODO(dylan-conway): should we check for non-ascii characters like JSC does with operator""_s
+        output[i] = c;
+    }
+
+    const Static = struct {
+        pub const literal: [str.len]T = output;
+    };
+    return Static.literal;
+}
+
+pub inline fn toUTF16LiteralZ(comptime str: []const u8) [:0]const u16 {
+    comptime var output: [str.len + 1]u16 = undefined;
+
+    for (str, 0..) |c, i| {
+        output[i] = c;
+    }
+    output[str.len] = 0;
+
+    const Static = struct {
+        pub const literal: [:0]const u16 = output[0..str.len :0];
+    };
+    return Static.literal;
 }
 
 pub const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
@@ -227,8 +244,12 @@ pub fn indexOfSigned(self: string, str: string) i32 {
     return @as(i32, @intCast(i));
 }
 
-pub inline fn lastIndexOfChar(self: string, char: u8) ?usize {
-    return std.mem.lastIndexOfScalar(u8, self, char);
+pub inline fn lastIndexOfChar(self: []const u8, char: u8) ?usize {
+    return lastIndexOfCharT(u8, self, char);
+}
+
+pub inline fn lastIndexOfCharT(comptime T: type, self: []const T, char: T) ?usize {
+    return std.mem.lastIndexOfScalar(T, self, char);
 }
 
 pub inline fn lastIndexOf(self: string, str: string) ?usize {
@@ -860,13 +881,10 @@ pub fn hasPrefixComptimeType(comptime T: type, self: []const T, comptime alt: an
     const rhs = comptime switch (T) {
         u8 => alt,
         u16 => switch (std.meta.Child(@TypeOf(alt))) {
-            u8 => w(alt),
-            else => |t| switch (std.meta.Child(t)) {
-                u8 => w(alt),
-                else => alt,
-            },
+            u16 => alt,
+            else => w(alt),
         },
-        else => unreachable,
+        else => @compileError("Unsupported type given to hasPrefixComptimeType"),
     };
     return self.len >= alt.len and eqlComptimeCheckLenWithType(T, self[0..rhs.len], rhs, false);
 }
@@ -1713,7 +1731,7 @@ pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]const u16 {
 }
 
 pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]const u16 {
-    if (hasPrefixComptimeType(u16, utf16, &bun.windows.nt_object_prefix)) {
+    if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_object_prefix)) {
         @memcpy(wbuf[0..utf16.len], utf16);
         wbuf[utf16.len] = 0;
         return wbuf[0..utf16.len :0];

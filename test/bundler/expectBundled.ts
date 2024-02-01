@@ -789,7 +789,7 @@ function expectBundled(
         const warningText = stderr!.toUnixString();
         const allWarnings = warnParser(warningText).map(([error, source]) => {
           const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
-          const file = fullFilename.slice(id.length + path.basename(outBase).length + 1);
+          const file = fullFilename.slice(id.length + path.basename(outBase).length + 1).replaceAll("\\", "/");
           return { error, file, line, col };
         });
         const expectedWarnings = bundleWarnings

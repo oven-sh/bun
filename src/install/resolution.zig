@@ -9,6 +9,7 @@ const ExtractTarball = @import("./extract_tarball.zig");
 const strings = @import("../string_immutable.zig");
 const VersionedURL = @import("./versioned_url.zig").VersionedURL;
 const bun = @import("root").bun;
+const Path = bun.path;
 
 pub const Resolution = extern struct {
     tag: Tag = .uninitialized,

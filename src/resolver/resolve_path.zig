@@ -966,7 +966,7 @@ pub fn normalizeBufT(comptime T: type, str: []const T, buf: []T, comptime _platf
         return buf[0..1];
     }
 
-    const is_absolute = _platform.isAbsolute(T, str);
+    const is_absolute = _platform.isAbsoluteT(T, str);
 
     const trailing_separator = _platform.getLastSeparatorFuncT()(T, str) == str.len - 1;
 
@@ -1468,7 +1468,7 @@ pub fn normalizeStringWindows(
     comptime allow_above_root: bool,
     comptime preserve_trailing_slash: bool,
 ) []u8 {
-    return normalizeStringWindowsT(str, buf, allow_above_root, preserve_trailing_slash);
+    return normalizeStringWindowsT(u8, str, buf, allow_above_root, preserve_trailing_slash);
 }
 
 pub fn normalizeStringWindowsT(

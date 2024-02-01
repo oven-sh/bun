@@ -598,7 +598,7 @@ pub fn ntCreateFile(
         // file specification, provided that the floppy driver and overlying file system are already
         // loaded. For more information, see File Names, Paths, and Namespaces.
         .ObjectName = &nt_name,
-        .RootDirectory = if (bun.strings.hasPrefixComptimeType(u16, path, &windows.nt_object_prefix))
+        .RootDirectory = if (bun.strings.hasPrefixComptimeType(u16, path, windows.nt_object_prefix))
             null
         else if (dir == bun.invalid_fd)
             std.fs.cwd().fd

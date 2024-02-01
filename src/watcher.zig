@@ -1086,7 +1086,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         inline fn isEligibleDirectory(this: *Watcher, dir: string) bool {
-            return strings.indexOf(dir, this.fs.top_level_dir) != null and strings.indexOf(dir, "node_modules") == null;
+            return strings.contains(dir, this.fs.top_level_dir) and !strings.contains(dir, "node_modules");
         }
 
         pub fn appendFile(

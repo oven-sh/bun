@@ -57,10 +57,6 @@ pub const FolderResolution = union(Tag) {
         return FileSystem.instance.normalize(path);
     }
 
-    pub fn normalizePlatform(path: string, comptime platform: bun.path.Platform) string {
-        return FileSystem.instance.normalizePlatform(path, platform);
-    }
-
     pub fn hash(normalized_path: string) u64 {
         return bun.hash(normalized_path);
     }
@@ -111,9 +107,7 @@ pub const FolderResolution = union(Tag) {
         var abs: string = "";
         var rel: string = "";
         // We consider it valid if there is a package.json in the folder
-
-        // we want this path to have forward slashes for the lockfile
-        const normalized = std.mem.trimRight(u8, normalizePlatform(non_normalized_path, .posix), std.fs.path.sep_str_posix);
+        const normalized = std.mem.trimRight(u8, normalize(non_normalized_path), std.fs.path.sep_str);
 
         if (strings.startsWithChar(normalized, '.')) {
             var tempcat: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -144,7 +138,7 @@ pub const FolderResolution = union(Tag) {
                 else => {},
             }
             bun.copy(u8, remain, normalized);
-            remain[normalized.len..][0.."/package.json".len].* = ("/package.json").*;
+            remain[normalized.len..][0.."/package.json".len].* = (std.fs.path.sep_str ++ "package.json").*;
             remain = remain[normalized.len + "/package.json".len ..];
             abs = joined[0 .. joined.len - remain.len];
             // We store the folder name without package.json

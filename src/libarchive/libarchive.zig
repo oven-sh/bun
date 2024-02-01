@@ -573,7 +573,7 @@ pub const Archive = struct {
                                     try std.os.mkdiratW(dir_fd, pathname, 0o777);
                                 };
                             } else {
-                                std.os.mkdirat(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
+                                std.os.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
                                     if (err == error.PathAlreadyExists or err == error.NotDir) break;
                                     try bun.makePath(dir, std.fs.path.dirname(path_slice) orelse return err);
                                     try std.os.mkdiratZ(dir_fd, pathname, 0o777);

@@ -49,6 +49,7 @@ pub fn literal(comptime T: type, comptime str: string) []const T {
         comptime var output: [str.len]T = undefined;
 
         for (str, 0..) |c, i| {
+            // TODO(dylan-conway): should we check for non-ascii characters like JSC does with operator""_s
             output[i] = c;
         }
 
@@ -65,6 +66,7 @@ pub fn literalBuf(comptime T: type, comptime str: string) [str.len]T {
         comptime var output: [str.len]T = undefined;
 
         for (str, 0..) |c, i| {
+            // TODO(dylan-conway): should we check for non-ascii characters like JSC does with operator""_s
             output[i] = c;
         }
 

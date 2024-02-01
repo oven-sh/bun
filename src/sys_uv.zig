@@ -15,6 +15,7 @@ const E = C.E;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
 const kernel32 = bun.windows;
+const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 
 const uv = bun.windows.libuv;
 
@@ -38,6 +39,8 @@ pub const mkdirOSPath = bun.sys.mkdirOSPath;
 // Note: `req = undefined; req.deinit()` has a saftey-check in a debug build
 
 pub fn open(file_path: [:0]const u8, c_flags: bun.Mode, _perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    assertIsValidWindowsPath(u8, file_path);
+
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
 
@@ -58,6 +61,7 @@ pub fn open(file_path: [:0]const u8, c_flags: bun.Mode, _perm: bun.Mode) Maybe(b
 }
 
 pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
+    assertIsValidWindowsPath(u8, file_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_mkdir(uv.Loop.get(), &req, file_path.ptr, flags, null);
@@ -70,6 +74,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 }
 
 pub fn chmod(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
+    assertIsValidWindowsPath(u8, file_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_chmod(uv.Loop.get(), &req, file_path.ptr, flags, null);
@@ -95,6 +100,7 @@ pub fn fchmod(fd: FileDescriptor, flags: bun.Mode) Maybe(void) {
 }
 
 pub fn chown(file_path: [:0]const u8, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void) {
+    assertIsValidWindowsPath(u8, file_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_chown(uv.Loop.get(), &req, file_path.ptr, uid, gid, null);
@@ -121,6 +127,7 @@ pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void
 }
 
 pub fn access(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
+    assertIsValidWindowsPath(u8, file_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_access(uv.Loop.get(), &req, file_path.ptr, flags, null);
@@ -133,6 +140,7 @@ pub fn access(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 }
 
 pub fn rmdir(file_path: [:0]const u8) Maybe(void) {
+    assertIsValidWindowsPath(u8, file_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_rmdir(uv.Loop.get(), &req, file_path.ptr, null);
@@ -145,6 +153,7 @@ pub fn rmdir(file_path: [:0]const u8) Maybe(void) {
 }
 
 pub fn unlink(file_path: [:0]const u8) Maybe(void) {
+    assertIsValidWindowsPath(u8, file_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_unlink(uv.Loop.get(), &req, file_path.ptr, null);
@@ -157,6 +166,7 @@ pub fn unlink(file_path: [:0]const u8) Maybe(void) {
 }
 
 pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe(usize) {
+    assertIsValidWindowsPath(u8, file_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     // Edge cases: http://docs.libuv.org/en/v1.x/fs.html#c.uv_fs_realpath
@@ -180,6 +190,8 @@ pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe(usize) {
 }
 
 pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
+    assertIsValidWindowsPath(u8, from);
+    assertIsValidWindowsPath(u8, to);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_rename(uv.Loop.get(), &req, from.ptr, to.ptr, null);
@@ -192,6 +204,8 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 }
 
 pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
+    assertIsValidWindowsPath(u8, from);
+    assertIsValidWindowsPath(u8, to);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_link(uv.Loop.get(), &req, from.ptr, to.ptr, null);
@@ -204,6 +218,8 @@ pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 }
 
 pub fn symlinkUV(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void) {
+    assertIsValidWindowsPath(u8, from);
+    assertIsValidWindowsPath(u8, to);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_symlink(uv.Loop.get(), &req, from.ptr, to.ptr, flags, null);
@@ -268,6 +284,7 @@ pub fn fsync(fd: FileDescriptor) Maybe(void) {
 }
 
 pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
+    assertIsValidWindowsPath(u8, path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_stat(uv.Loop.get(), &req, path.ptr, null);
@@ -280,6 +297,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
 }
 
 pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
+    assertIsValidWindowsPath(u8, path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
     const rc = uv.uv_fs_lstat(uv.Loop.get(), &req, path.ptr, null);

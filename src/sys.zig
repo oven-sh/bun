@@ -15,6 +15,7 @@ const C = @import("root").bun.C;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
 const kernel32 = bun.windows;
+const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 
 pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else Syscall;
 
@@ -169,6 +170,8 @@ pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
 }
 
 pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
+    assertIsValidWindowsPath(bun.OSPathChar, destination);
+
     if (comptime Environment.isPosix) {
         const rc = sys.chdir(destination);
         return Maybe(void).errnoSys(rc, .chdir) orelse Maybe(void).success;
@@ -303,8 +306,10 @@ pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
 
     if (comptime Environment.isWindows) {
         var wbuf: bun.WPathBuffer = undefined;
+        const wpath = bun.strings.toWPath(&wbuf, file_path);
+        assertIsValidWindowsPath(u16, wpath);
         return Maybe(void).errnoSysP(
-            kernel32.CreateDirectoryW(bun.strings.toWPath(&wbuf, file_path).ptr, null),
+            kernel32.CreateDirectoryW(wpath.ptr, null),
             .mkdir,
             file_path,
         ) orelse Maybe(void).success;
@@ -315,6 +320,7 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         else => mkdir(file_path, flags),
         .windows => {
+            assertIsValidWindowsPath(bun.OSPathChar, file_path);
             return Maybe(void).errnoSys(
                 kernel32.CreateDirectoryW(file_path, null),
                 .mkdir,
@@ -416,6 +422,7 @@ pub fn openDirAtWindows(
     iterable: bool,
     no_follow: bool,
 ) Maybe(bun.FileDescriptor) {
+    assertIsValidWindowsPath(u16, path);
     const base_flags = w.STANDARD_RIGHTS_READ | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA |
         w.SYNCHRONIZE | w.FILE_TRAVERSE;
     const flags: u32 = if (iterable) base_flags | w.FILE_LIST_DIRECTORY else base_flags;
@@ -568,6 +575,7 @@ pub fn ntCreateFile(
     // this path is probably already backslash normalized so we're only going to check for '.\'
     const path = if (bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, ".\\")) path_maybe_leading_dot[2..] else path_maybe_leading_dot;
     std.debug.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
+    assertIsValidWindowsPath(u16, path);
 
     const path_len_bytes = std.math.cast(u16, path.len * 2) orelse return .{
         .err = .{
@@ -1403,6 +1411,7 @@ pub fn mmap(
 }
 
 pub fn mmapFile(path: [:0]const u8, flags: u32, wanted_size: ?usize, offset: usize) Maybe([]align(mem.page_size) u8) {
+    assertIsValidWindowsPath(u8, path);
     const fd = switch (open(path, os.O.RDWR, 0)) {
         .result => |fd| fd,
         .err => |err| return .{ .err = err },
@@ -1658,6 +1667,7 @@ pub fn existsOSPath(path: bun.OSPathSliceZ) bool {
     }
 
     if (comptime Environment.isWindows) {
+        assertIsValidWindowsPath(bun.OSPathChar, path);
         const result = kernel32.GetFileAttributesW(path.ptr);
         if (Environment.isDebug) {
             log("GetFileAttributesW({}) = {d}", .{ bun.fmt.fmtUTF16(path), result });
@@ -1676,6 +1686,7 @@ pub fn exists(path: []const u8) bool {
     if (comptime Environment.isWindows) {
         var wbuf: bun.WPathBuffer = undefined;
         const path_to_use = bun.strings.toWPath(&wbuf, path);
+        assertIsValidWindowsPath(u16, path_to_use);
         return kernel32.GetFileAttributesW(path_to_use.ptr) != windows.INVALID_FILE_ATTRIBUTES;
     }
 

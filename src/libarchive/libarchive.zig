@@ -708,7 +708,7 @@ pub const Archive = struct {
                                         else => {
                                             if (comptime log) {
                                                 const archive_error = std.mem.span(lib.archive_error_string(archive));
-                                                Output.err("libarchive error", "Error extracting {}: {s}", .{
+                                                Output.err("libarchive error", "extracting {}: {s}", .{
                                                     bun.fmt.fmtOSPath(path_slice),
                                                     archive_error,
                                                 });

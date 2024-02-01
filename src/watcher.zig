@@ -16,9 +16,6 @@ const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
 const log = bun.Output.scoped(.watcher, false);
 
-// TODO @gvilums
-// This entire file is a mess - rework it to be more maintainable
-
 const WATCHER_MAX_LIST = 8096;
 
 const INotify = struct {
@@ -201,6 +198,7 @@ const DarwinWatcher = struct {
 };
 
 const WindowsWatcher = struct {
+    mutex: Mutex = Mutex.init(),
     iocp: w.HANDLE = undefined,
     allocator: std.mem.Allocator = undefined,
     watchers: std.ArrayListUnmanaged(*DirWatcher) = std.ArrayListUnmanaged(*DirWatcher){},
@@ -238,6 +236,7 @@ const WindowsWatcher = struct {
         path: [:0]u8,
         path_buf: bun.PathBuffer = undefined,
         refcount: usize = 1,
+        parent: *WindowsWatcher,
 
         const EventIterator = struct {
             watcher: *DirWatcher,
@@ -298,7 +297,8 @@ const WindowsWatcher = struct {
             // But we can't deallocate right away because we might be in the middle of iterating over the events of this watcher
             // we probably need some sort of queue that can be emptied by the watcher thread.
             if (this.refcount == 0) {
-                log("TODO: deallocate watcher", .{});
+                // closing the handle will send a 0-length notification to the iocp which can then deallocate the watcher
+                w.CloseHandle(this.dirHandle);
             }
         }
     };
@@ -311,8 +311,7 @@ const WindowsWatcher = struct {
         };
     }
 
-    fn addWatchedDirectory(this: *WindowsWatcher, dirFd: w.HANDLE, path: []const u8) !*DirWatcher {
-        _ = dirFd;
+    fn addWatchedDirectory(this: *WindowsWatcher, path: []const u8) !*DirWatcher {
         var pathbuf: bun.WPathBuffer = undefined;
         const wpath = bun.strings.toNTPath(&pathbuf, path);
         const path_len_bytes: u16 = @truncate(wpath.len * 2);
@@ -324,12 +323,6 @@ const WindowsWatcher = struct {
         var attr = w.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
             .RootDirectory = null,
-            // .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(path))
-            //     null
-            // else if (dirFd == w.INVALID_HANDLE_VALUE)
-            //     std.fs.cwd().fd
-            // else
-            //     dirFd,
             .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
             .ObjectName = &nt_name,
             .SecurityDescriptor = null,
@@ -364,13 +357,12 @@ const WindowsWatcher = struct {
 
         const watcher = try this.allocator.create(DirWatcher);
         errdefer this.allocator.destroy(watcher);
-        watcher.* = .{ .dirHandle = handle, .path = undefined };
+        watcher.* = .{ .dirHandle = handle, .parent = this, .path = undefined };
         // init path
         @memcpy(watcher.path_buf[0..path.len], path);
         watcher.path_buf[path.len] = 0;
         watcher.path = watcher.path_buf[0..path.len :0];
 
-        // TODO think about the different sequences of errors
         try watcher.prepare();
         try this.watchers.append(this.allocator, watcher);
 
@@ -383,6 +375,8 @@ const WindowsWatcher = struct {
     }
 
     pub fn watchDir(this: *WindowsWatcher, path_: []const u8) !*DirWatcher {
+        this.mutex.lock();
+        defer this.mutex.unlock();
         // strip the trailing slash if it exists
         var path = path_;
         if (path.len > 0 and bun.strings.charIsAnySlash(path[path.len - 1])) {
@@ -401,7 +395,7 @@ const WindowsWatcher = struct {
                 // we should deactivate all existing ones and activate the new one
             }
         }
-        return this.addWatchedDirectory(std.os.windows.INVALID_HANDLE_VALUE, path);
+        return this.addWatchedDirectory(path);
     }
 
     const Timeout = enum(w.DWORD) {
@@ -427,12 +421,22 @@ const WindowsWatcher = struct {
                 }
             }
 
-            // exit notification for this watcher - we should probably deallocate it here
-            if (nbytes == 0) {
-                continue;
-            }
             if (overlapped) |ptr| {
-                return DirWatcher.fromOverlapped(ptr);
+                const watcher = DirWatcher.fromOverlapped(ptr);
+                // exit notification for this watcher
+                if (nbytes == 0) {
+                    this.mutex.lock();
+                    defer this.mutex.unlock();
+                    this.allocator.destroy(watcher);
+                    for (this.watchers.items, 0..) |_watcher, i| {
+                        if (_watcher == watcher) {
+                            _ = this.watchers.swapRemove(i);
+                            break;
+                        }
+                    }
+                } else {
+                    return watcher;
+                }
             } else {
                 log("GetQueuedCompletionStatus returned no overlapped event", .{});
                 return Error.IocpFailed;
@@ -443,6 +447,9 @@ const WindowsWatcher = struct {
     pub fn stop(this: *WindowsWatcher) void {
         for (this.watchers.items) |watcher| {
             w.CloseHandle(watcher.dirHandle);
+            // this may not be safe, as windows might be writing into the buffer while we deallocate it
+            // the correct way to do this would be to continue running GetQueuedCompletionStatus until we get an exit notification
+            // for all of the watchers, but that might block indefinitely if the shutdown notification is not delivered
             this.allocator.destroy(watcher);
         }
         w.CloseHandle(this.iocp);

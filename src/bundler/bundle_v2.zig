@@ -675,6 +675,7 @@ pub const BundleV2 = struct {
             }
         }
         path.* = try path.dupeAlloc(this.graph.allocator);
+        // TODO: this shouldn't be necessary
         path.pretty = bun.sliceInBuffer(path.text, path.pretty);
         entry.value_ptr.* = source_index.get();
         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
@@ -2029,6 +2030,7 @@ pub const BundleV2 = struct {
             }
 
             path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
+            // TODO: this shouldn't be necessary
             path.pretty = bun.sliceInBuffer(path.text, path.pretty);
             import_record.path = path.*;
             debug("created ParseTask: {s}", .{path.text});

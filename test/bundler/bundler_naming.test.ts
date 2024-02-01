@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
 import assert from "assert";
 import dedent from "dedent";
 import { ESBUILD, itBundled, testForFile } from "./expectBundled";
@@ -269,5 +268,38 @@ describe("bundler", () => {
     run: {
       file: "/out/_.._/hello/file.js",
     },
+  });
+  itBundled("naming/WithPathTraversal", {
+    files: {
+      "/a/hello/entry.js": /* js */ `
+        import data from '../dependency'
+        console.log(data);
+      `,
+      "/a/dependency.js": /* js */ `
+        export default 1;
+      `,
+      "/a/hello/world/entry.js": /* js */ `
+        console.log(2);
+      `,
+      "/a/hello/world/a/a/a/a/a/a/a/entry.js": /* js */ `
+        console.log(3);
+      `,
+    },
+    entryNaming: "foo/../bar/[dir]/file.[ext]",
+    entryPointsRaw: ["./a/hello/entry.js", "./a/hello/world/entry.js", "./a/hello/world/a/a/a/a/a/a/a/entry.js"],
+    run: [
+      {
+        file: "/out/bar/file.js",
+        stdout: "1",
+      },
+      {
+        file: "/out/bar/world/file.js",
+        stdout: "2",
+      },
+      {
+        file: "/out/bar/world/a/a/a/a/a/a/a/file.js",
+        stdout: "3",
+      },
+    ],
   });
 });

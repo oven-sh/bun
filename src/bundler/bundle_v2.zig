@@ -666,6 +666,7 @@ pub const BundleV2 = struct {
         }
         _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
         const source_index = Index.source(this.graph.input_files.len);
+
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
             const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
@@ -674,6 +675,8 @@ pub const BundleV2 = struct {
             }
         }
         path.* = try path.dupeAlloc(this.graph.allocator);
+        // TODO: this shouldn't be necessary
+        path.pretty = bun.sliceInBuffer(path.text, path.pretty);
         entry.value_ptr.* = source_index.get();
         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
 
@@ -1115,9 +1118,7 @@ pub const BundleV2 = struct {
                                     },
                                 },
                                 .size = source.contents.len,
-                                .output_path = std.fmt.allocPrint(bun.default_allocator, "{}", .{
-                                    template,
-                                }) catch unreachable,
+                                .output_path = std.fmt.allocPrint(bun.default_allocator, "{}", .{template}) catch unreachable,
                                 .input_path = bun.default_allocator.dupe(u8, source.path.text) catch unreachable,
                                 .input_loader = .file,
                                 .output_kind = .asset,
@@ -2029,6 +2030,8 @@ pub const BundleV2 = struct {
             }
 
             path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
+            // TODO: this shouldn't be necessary
+            path.pretty = bun.sliceInBuffer(path.text, path.pretty);
             import_record.path = path.*;
             debug("created ParseTask: {s}", .{path.text});
 
@@ -9027,11 +9030,20 @@ const LinkerContext = struct {
                 chunk.template.placeholder.hash = chunk.isolated_hash;
 
                 const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
+                bun.path.platformToPosixInPlace(u8, rel_path);
+
                 if ((try path_names_map.getOrPut(rel_path)).found_existing) {
                     try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Multiple files share the same output path: {s}", .{rel_path});
                     return error.DuplicateOutputPath;
                 }
-
+                // resolve any /./ and /../ occurrences
+                // use resolvePosix since we asserted above all seps are '/'
+                if (Environment.isWindows and std.mem.indexOf(u8, rel_path, "/./") != null) {
+                    var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                    const rel_path_fixed = c.allocator.dupe(u8, bun.path.normalizeBuf(rel_path, &buf, .posix)) catch unreachable;
+                    chunk.final_rel_path = rel_path_fixed;
+                    continue;
+                }
                 chunk.final_rel_path = rel_path;
             }
         }
@@ -9377,7 +9389,7 @@ const LinkerContext = struct {
             defer max_heap_allocator.reset();
 
             const rel_path = chunk.final_rel_path;
-            if (std.fs.path.dirname(rel_path)) |rel_parent| {
+            if (std.fs.path.dirnamePosix(rel_path)) |rel_parent| {
                 if (rel_parent.len > 0) {
                     root_dir.makePath(rel_parent) catch |err| {
                         c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {} while saving chunk {}", .{
@@ -11082,7 +11094,7 @@ pub const Chunk = struct {
                     shifts.appendAssumeCapacity(shift);
 
                     var count: usize = 0;
-                    var from_chunk_dir = std.fs.path.dirname(chunk.final_rel_path) orelse "";
+                    var from_chunk_dir = std.fs.path.dirnamePosix(chunk.final_rel_path) orelse "";
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
 
@@ -11103,7 +11115,7 @@ pub const Chunk = struct {
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relative(from_chunk_dir, file_path),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
                                 );
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
@@ -11160,7 +11172,7 @@ pub const Chunk = struct {
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relative(from_chunk_dir, file_path),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {
@@ -11250,7 +11262,7 @@ pub const Chunk = struct {
                     var count: usize = 0;
                     const file_path_buf: [4096]u8 = undefined;
                     _ = file_path_buf;
-                    var from_chunk_dir = std.fs.path.dirname(chunk.final_rel_path) orelse "";
+                    var from_chunk_dir = std.fs.path.dirnamePosix(chunk.final_rel_path) orelse "";
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
 
@@ -11274,7 +11286,8 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
-
+                                // normalize windows paths to '/'
+                                bun.path.platformToPosixInPlace(u8, @constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)
@@ -11315,12 +11328,14 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
+                                // normalize windows paths to '/'
+                                bun.path.platformToPosixInPlace(u8, @constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relative(from_chunk_dir, file_path),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {

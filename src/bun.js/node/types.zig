@@ -657,12 +657,17 @@ pub const PathLike = union(enum) {
     pub fn sliceZWithForceCopy(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8, comptime force: bool) [:0]const u8 {
         const sliced = this.slice();
 
+        if (Environment.isWindows) {
+            if (std.fs.path.isAbsolute(sliced)) {
+                return resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, sliced) catch @panic("Error while resolving path.");
+            }
+        }
+
         if (sliced.len == 0) return "";
 
         if (comptime !force) {
             if (sliced[sliced.len - 1] == 0) {
-                var sliced_ptr = sliced.ptr;
-                return sliced_ptr[0 .. sliced.len - 1 :0];
+                return sliced[0 .. sliced.len - 1 :0];
             }
         }
 
@@ -672,13 +677,6 @@ pub const PathLike = union(enum) {
     }
 
     pub inline fn sliceZ(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
-        if (Environment.isWindows) {
-            const data = this.slice();
-            if (!std.fs.path.isAbsolute(data)) {
-                return sliceZWithForceCopy(this, buf, false);
-            }
-            return resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, data) catch @panic("Error while resolving path.");
-        }
         return sliceZWithForceCopy(this, buf, false);
     }
 

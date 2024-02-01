@@ -609,9 +609,9 @@ fn launcher(bun_ctx: anytype) noreturn {
 
             // Copy the filename in. There is no leading " but there is a trailing "
             // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-            //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
+            //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^   ^ read_ptr
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
-            const length_of_filename_u8 = (@intFromPtr(read_ptr) - (2 * "\x00".len)) - @intFromPtr(buf1_u8);
+            const length_of_filename_u8 = @intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - nt_object_prefix.len - 6;
             @memcpy(
                 buf2_u8[shebang_arg_len_u8 + 2 * "\"".len ..][0..length_of_filename_u8],
                 buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8],
@@ -623,10 +623,10 @@ fn launcher(bun_ctx: anytype) noreturn {
             //        |    |filename_len                                         where the user args go
             //        |    the quote
             //        shebang_arg_len
-            read_ptr = @ptrFromInt(@intFromPtr(buf2_u8) + shebang_arg_len_u8 + length_of_filename_u8 + 2 * "\"".len);
+            read_ptr = @ptrFromInt(@intFromPtr(buf2_u8) + length_of_filename_u8 + 2 * "\"\"".len + 2 * nt_object_prefix.len);
             if (user_arguments_u8.len > 0) {
                 @memcpy(@as([*]u8, @ptrCast(read_ptr)), user_arguments_u8);
-                read_ptr += user_arguments_u8.len;
+                read_ptr = @ptrFromInt(@intFromPtr(read_ptr) + user_arguments_u8.len);
             }
 
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'

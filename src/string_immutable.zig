@@ -5948,3 +5948,10 @@ pub inline fn indexOfScalar(input: anytype, scalar: std.meta.Child(@TypeOf(input
 pub fn containsScalar(input: anytype, item: std.meta.Child(@TypeOf(input))) bool {
     return indexOfScalar(input, item) != null;
 }
+
+pub fn withoutSuffixComptime(input: []const u8, comptime suffix: []const u8) []const u8 {
+    if (hasSuffixComptime(input, suffix)) {
+        return input[0 .. input.len - suffix.len];
+    }
+    return input;
+}

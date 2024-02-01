@@ -242,7 +242,7 @@ pub const ReadableStream = struct {
 
         Bytes: *ByteStream,
 
-        Pipe: *ReadableStreamPipe,
+        Pipe: *PipeReader,
     };
 
     extern fn ReadableStreamTag__tagged(globalObject: *JSGlobalObject, possibleReadableStream: JSValue, ptr: *JSValue) Tag;
@@ -303,7 +303,7 @@ pub const ReadableStream = struct {
             .Pipe => ReadableStream{
                 .value = value,
                 .ptr = .{
-                    .Pipe = ptr.asPtr(ReadableStreamPipe),
+                    .Pipe = ptr.asPtr(PipeReader),
                 },
             },
 
@@ -366,7 +366,7 @@ pub const ReadableStream = struct {
         buffered_reader: anytype,
     ) JSC.JSValue {
         JSC.markBinding(@src());
-        var source = bun.default_allocator.create(ReadableStreamPipe.Source) catch bun.outOfMemory();
+        var source = bun.default_allocator.create(PipeReader.Source) catch bun.outOfMemory();
         source.* = .{
             .globalThis = globalThis,
             .context = undefined,
@@ -440,9 +440,9 @@ pub const StreamStart = union(Tag) {
         chunk_size,
         ArrayBufferSink,
         FileSink,
+        PipeSink,
         HTTPSResponseSink,
         HTTPResponseSink,
-        UVStreamSink,
         ready,
     };
 
@@ -498,12 +498,12 @@ pub const StreamStart = union(Tag) {
                     empty = false;
                 }
 
-                if (value.get(globalThis, "stream")) |as_array| {
+                if (value.fastGet(globalThis, .stream)) |as_array| {
                     stream = as_array.toBoolean();
                     empty = false;
                 }
 
-                if (value.get(globalThis, "highWaterMark")) |chunkSize| {
+                if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
                     if (chunkSize.isNumber()) {
                         empty = false;
                         chunk_size = @as(JSC.WebCore.Blob.SizeType, @intCast(@max(0, @as(i51, @truncate(chunkSize.toInt64())))));
@@ -523,12 +523,12 @@ pub const StreamStart = union(Tag) {
             .FileSink => {
                 var chunk_size: JSC.WebCore.Blob.SizeType = 0;
 
-                if (value.getTruthy(globalThis, "highWaterMark")) |chunkSize| {
+                if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
                     if (chunkSize.isNumber())
                         chunk_size = @as(JSC.WebCore.Blob.SizeType, @intCast(@max(0, @as(i51, @truncate(chunkSize.toInt64())))));
                 }
 
-                if (value.getTruthy(globalThis, "path")) |path| {
+                if (value.fastGet(globalThis, .path)) |path| {
                     if (!path.isString()) {
                         return .{
                             .err = Syscall.Error{
@@ -586,7 +586,7 @@ pub const StreamStart = union(Tag) {
                 var empty = true;
                 var chunk_size: JSC.WebCore.Blob.SizeType = 2048;
 
-                if (value.getTruthy(globalThis, "highWaterMark")) |chunkSize| {
+                if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {
                     if (chunkSize.isNumber()) {
                         empty = false;
                         chunk_size = @as(JSC.WebCore.Blob.SizeType, @intCast(@max(256, @as(i51, @truncate(chunkSize.toInt64())))));
@@ -3662,7 +3662,7 @@ pub fn ReadableStreamSource(
     };
 }
 
-pub const ReadableStreamPipe = struct {
+pub const PipeReader = struct {
     reader: bun.io.BufferedOutputReader(@This(), onReadChunk) = .{},
     done: bool = false,
     pending: StreamResult.Pending = .{},
@@ -3670,10 +3670,10 @@ pub const ReadableStreamPipe = struct {
     pending_view: []u8 = []u8{},
 
     pub fn setup(
-        this: *ReadableStreamPipe,
+        this: *PipeReader,
         other_reader: anytype,
     ) void {
-        this.* = ReadableStreamPipe{
+        this.* = PipeReader{
             .reader = .{},
             .done = false,
         };
@@ -3681,8 +3681,13 @@ pub const ReadableStreamPipe = struct {
         this.reader.fromOutputReader(other_reader, this);
     }
 
-    pub fn onStart(this: *ReadableStreamPipe) StreamStart {
-        _ = this; // autofix
+    pub fn onStart(this: *PipeReader) StreamStart {
+        switch (this.reader.start()) {
+            .result => {},
+            .err => |e| {
+                return .{ .err = e };
+            },
+        }
 
         return .{ .ready = {} };
     }
@@ -3691,13 +3696,13 @@ pub const ReadableStreamPipe = struct {
         return @fieldParentPtr(Source, "context", this);
     }
 
-    pub fn onCancel(this: *ReadableStreamPipe) void {
+    pub fn onCancel(this: *PipeReader) void {
         if (this.done) return;
         this.done = true;
         this.reader.close();
     }
 
-    pub fn deinit(this: *ReadableStreamPipe) void {
+    pub fn deinit(this: *PipeReader) void {
         this.reader.deinit();
         this.pending_value.deinit();
     }
@@ -3738,7 +3743,7 @@ pub const ReadableStreamPipe = struct {
         }
     }
 
-    pub fn onPull(this: *ReadableStreamPipe, buffer: []u8, array: JSC.JSValue) StreamResult {
+    pub fn onPull(this: *PipeReader, buffer: []u8, array: JSC.JSValue) StreamResult {
         array.ensureStillAlive();
         defer array.ensureStillAlive();
         const drained = this.drain();
@@ -3773,7 +3778,7 @@ pub const ReadableStreamPipe = struct {
         return .{ .pending = &this.pending };
     }
 
-    pub fn drain(this: *ReadableStreamPipe) bun.ByteList {
+    pub fn drain(this: *PipeReader) bun.ByteList {
         if (this.reader.hasPendingRead()) {
             return .{};
         }
@@ -3783,7 +3788,7 @@ pub const ReadableStreamPipe = struct {
         return bun.ByteList.fromList(out);
     }
 
-    pub fn setRefOrUnref(this: *ReadableStreamPipe, enable: bool) void {
+    pub fn setRefOrUnref(this: *PipeReader, enable: bool) void {
         if (this.done) return;
         if (enable) {
             this.reader.enableKeepingProcessAlive(JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop()));

@@ -277,8 +277,6 @@ pub const Subprocess = struct {
     const Readable = union(enum) {
         fd: bun.FileDescriptor,
         memfd: bun.FileDescriptor,
-        sync_buffered_output: *BufferedOutput,
-
         pipe: Pipe,
         inherit: void,
         ignore: void,
@@ -320,7 +318,7 @@ pub const Subprocess = struct {
 
         pub const Pipe = union(enum) {
             stream: JSC.WebCore.ReadableStream,
-            buffer: StreamingOutput,
+            buffer: PipeReader,
             detached: void,
 
             pub fn finish(this: *@This()) void {
@@ -759,6 +757,17 @@ pub const Subprocess = struct {
         } = .{ .pending = {} },
 
         pub usingnamespace bun.NewRefCounted(@This(), deinit);
+
+        pub fn readAll(this: *PipeReader) void {
+            if (this.state == .pending)
+                this.reader.read();
+        }
+
+        pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *JSC.EventLoop) JSC.Maybe(void) {
+            this.process = process;
+            this.event_loop = event_loop;
+            return this.reader.start();
+        }
 
         pub fn onOutputDone(this: *PipeReader) void {
             const owned = this.toOwnedSlice();

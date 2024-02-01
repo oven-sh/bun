@@ -397,8 +397,10 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
             }
         }
 
-        pub fn start(this: *PosixOutputReader) bun.JSC.Maybe(void) {
-            const maybe = this.poll.register(this.parent.loop(), .readable, true);
+        pub fn start(this: *PosixOutputReader, fd: bun.FileDescriptor) bun.JSC.Maybe(void) {
+            const poll = Async.FilePoll.init(this.parent.loop(), fd, .readable, @This(), this);
+            this.poll = poll;
+            const maybe = poll.register(this.parent.loop(), .readable, true);
             if (maybe != .result) {
                 return maybe;
             }
@@ -515,7 +517,7 @@ pub const GenericWindowsBufferedOutputReader = struct {
         return this._buffer.allocatedSlice()[this._buffer.items.len..];
     }
 
-    pub fn start(this: *WindowsOutputReader) JSC.Maybe(void) {
+    pub fn start(this: *@This(), _: bun.FileDescriptor) bun.JSC.Maybe(void) {
         this.buffer.clearRetainingCapacity();
         this.is_done = false;
     }
@@ -577,13 +579,13 @@ pub fn WindowsBufferedOutputReader(comptime Parent: type, comptime onReadChunk: 
             reader.deref();
         }
 
-        pub fn start(this: *@This()) bun.JSC.Maybe(void) {
+        pub fn start(this: *@This(), fd: bun.FileDescriptor) bun.JSC.Maybe(void) {
             const reader = this.reader orelse brk: {
                 this.reader = this.newReader();
                 break :brk this.reader.?;
             };
 
-            return reader.start();
+            return reader.start(fd);
         }
 
         pub fn end(this: *@This()) void {

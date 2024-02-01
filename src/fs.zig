@@ -430,10 +430,6 @@ pub const FileSystem = struct {
         return @call(.always_inline, path_handler.normalizeString, .{ str, true, .auto });
     }
 
-    pub fn normalizePlatform(_: *@This(), str: string, comptime platform: bun.path.Platform) string {
-        return @call(.always_inline, path_handler.normalizeString, .{ str, true, platform });
-    }
-
     pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
         return @call(.always_inline, path_handler.normalizeStringBuf, .{ u8, str, buf, false, .auto, false });
     }

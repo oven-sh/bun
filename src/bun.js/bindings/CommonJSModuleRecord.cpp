@@ -306,7 +306,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterPath, (JSC::JSGlobalObject * globalObject, JSC::E
     if (UNLIKELY(!thisObject)) {
         return JSValue::encode(jsUndefined());
     }
-    return JSValue::encode(thisObject->m_id.get());
+    return JSValue::encode(thisObject->m_dirname.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -343,7 +343,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterPath,
     if (!thisObject)
         return false;
 
-    thisObject->m_id.set(globalObject->vm(), thisObject, JSValue::decode(value).toString(globalObject));
+    thisObject->m_dirname.set(globalObject->vm(), thisObject, JSValue::decode(value).toString(globalObject));
     return true;
 }
 

@@ -445,7 +445,7 @@ function expectBundled(
       backend = plugins !== undefined ? "api" : "cli";
     }
 
-    const root = path.join(outBase, id.replaceAll("/", path.sep));
+    const root = path.join(outBase, id);
     if (DEBUG) console.log("root:", root);
 
     const entryPaths = entryPoints.map(file => path.join(root, file));
@@ -789,7 +789,7 @@ function expectBundled(
         const warningText = stderr!.toUnixString();
         const allWarnings = warnParser(warningText).map(([error, source]) => {
           const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
-          const file = fullFilename.slice(id.length + path.basename(outBase).length + 1);
+          const file = fullFilename.slice(id.length + path.basename(outBase).length + 1).replaceAll("\\", "/");
           return { error, file, line, col };
         });
         const expectedWarnings = bundleWarnings
@@ -1176,7 +1176,7 @@ for (const [key, blob] of build.outputs) {
     // check reference
     if (matchesReference) {
       const { ref } = matchesReference;
-      const theirRoot = path.join(outBase, ref.id.replaceAll("/", path.sep));
+      const theirRoot = path.join(outBase, ref.id);
       if (!existsSync(theirRoot)) {
         expectBundled(ref.id, ref.options, false, true);
         if (!existsSync(theirRoot)) {
@@ -1287,7 +1287,7 @@ for (const [key, blob] of build.outputs) {
           if (typeof run.stdout === "string") {
             const expected = dedent(run.stdout).trim();
             if (expected !== result) {
-              console.log(`runtime failed file=${file}`);
+              console.log(`runtime failed file: ${file}`);
               console.log(`reference stdout:`);
               console.log(result);
               console.log(`---`);
@@ -1295,7 +1295,7 @@ for (const [key, blob] of build.outputs) {
             expect(result).toBe(expected);
           } else {
             if (!run.stdout.test(result)) {
-              console.log(`runtime failed file=${file}`);
+              console.log(`runtime failed file: ${file}`);
               console.log(`reference stdout:`);
               console.log(result);
               console.log(`---`);
@@ -1330,7 +1330,7 @@ export function itBundled(
 ): BundlerTestRef {
   if (typeof opts === "function") {
     const fn = opts;
-    opts = opts({ root: path.join(outBase, id.replaceAll("/", path.sep)), getConfigRef });
+    opts = opts({ root: path.join(outBase, id), getConfigRef });
     // @ts-expect-error
     opts._referenceFn = fn;
   }

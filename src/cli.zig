@@ -1137,6 +1137,14 @@ pub const Command = struct {
             if (comptime Command.Tag.uses_global_options.get(command)) {
                 ctx.args = try Arguments.parse(allocator, &ctx, command);
             }
+
+            if (comptime Environment.isWindows) {
+                if (ctx.debug.hot_reload == .watch and !bun.isWatcherChild()) {
+                    // this is noreturn
+                    bun.becomeWatcherManager(allocator);
+                }
+            }
+
             return ctx;
         }
     };
@@ -1160,15 +1168,12 @@ pub const Command = struct {
         }
     };
 
-    const exe_suffix = if (Environment.isWindows) ".exe" else "";
-
     pub fn isBunX(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "bunx" ++ exe_suffix) or
-            (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug" ++ exe_suffix));
+        return strings.endsWithComptime(argv0, "bunx") or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug"));
     }
 
     pub fn isNode(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "node" ++ exe_suffix);
+        return strings.endsWithComptime(argv0, "node");
     }
 
     pub fn which() Tag {
@@ -1176,10 +1181,15 @@ pub const Command = struct {
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
-        // symlink is argv[0]
-        if (isBunX(argv0)) return .BunxCommand;
+        const without_exe = if (Environment.isWindows)
+            strings.withoutSuffixComptime(argv0, ".exe")
+        else
+            argv0;
 
-        if (isNode(argv0)) {
+        // symlink is argv[0]
+        if (isBunX(without_exe)) return .BunxCommand;
+
+        if (isNode(without_exe)) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
             pretend_to_be_node = true;
             return .RunAsNodeCommand;
@@ -1618,7 +1628,7 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
 
                 if (ctx.positionals.len > 0) {
-                    if (try RunCommand.exec(ctx, false, true)) {
+                    if (try RunCommand.exec(ctx, false, true, false)) {
                         return;
                     }
 
@@ -1735,7 +1745,7 @@ pub const Command = struct {
                 }
 
                 if (ctx.positionals.len > 0 and extension.len == 0) {
-                    if (try RunCommand.exec(ctx, true, false)) {
+                    if (try RunCommand.exec(ctx, true, false, true)) {
                         return;
                     }
 
@@ -1781,61 +1791,71 @@ pub const Command = struct {
 
         var absolute_script_path: ?string = null;
 
+        // TODO: optimize this pass for Windows. we can make better use of system apis available
         var file_path = script_name_to_search;
-        const file_: anyerror!std.fs.File = brk: {
-            if (std.fs.path.isAbsoluteWindows(script_name_to_search)) {
-                var win_resolver = resolve_path.PosixToWinNormalizer{};
-                var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
-                if (comptime Environment.isWindows) {
-                    resolved = resolve_path.normalizeString(resolved, true, .windows);
-                }
-                absolute_script_path = resolved;
-                break :brk bun.openFile(
-                    resolved,
-                    .{ .mode = .read_only },
-                );
-            } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
-                const file_pathZ = brk2: {
-                    @memcpy(script_name_buf[0..file_path.len], file_path);
+        {
+            const file = bun.toLibUVOwnedFD(((brk: {
+                if (std.fs.path.isAbsolute(script_name_to_search)) {
+                    var win_resolver = resolve_path.PosixToWinNormalizer{};
+                    var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
+                    if (comptime Environment.isWindows) {
+                        resolved = resolve_path.normalizeString(resolved, true, .windows);
+                    }
+                    absolute_script_path = resolved;
+                    break :brk bun.openFile(
+                        resolved,
+                        .{ .mode = .read_only },
+                    );
+                } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
+                    const file_pathZ = brk2: {
+                        @memcpy(script_name_buf[0..file_path.len], file_path);
+                        script_name_buf[file_path.len] = 0;
+                        break :brk2 script_name_buf[0..file_path.len :0];
+                    };
+
+                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+                } else {
+                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    const cwd = bun.getcwd(&path_buf) catch return false;
+                    path_buf[cwd.len] = std.fs.path.sep;
+                    var parts = [_]string{script_name_to_search};
+                    file_path = resolve_path.joinAbsStringBuf(
+                        path_buf[0 .. cwd.len + 1],
+                        &script_name_buf,
+                        &parts,
+                        .auto,
+                    );
+                    if (file_path.len == 0) return false;
                     script_name_buf[file_path.len] = 0;
-                    break :brk2 script_name_buf[0..file_path.len :0];
-                };
+                    const file_pathZ = script_name_buf[0..file_path.len :0];
+                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+                }
+            }) catch return false).handle);
+            defer _ = bun.sys.close(file);
 
-                break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
-            } else {
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd = bun.getcwd(&path_buf) catch return false;
-                path_buf[cwd.len] = std.fs.path.sep;
-                var parts = [_]string{script_name_to_search};
-                file_path = resolve_path.joinAbsStringBuf(
-                    path_buf[0 .. cwd.len + 1],
-                    &script_name_buf,
-                    &parts,
-                    .auto,
-                );
-                if (file_path.len == 0) return false;
-                script_name_buf[file_path.len] = 0;
-                const file_pathZ = script_name_buf[0..file_path.len :0];
-                break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+            switch (bun.sys.fstat(file)) {
+                .result => |stat| {
+                    // directories cannot be run. if only there was a faster way to check this
+                    if (bun.S.ISDIR(@intCast(stat.mode))) return false;
+                },
+                .err => return false,
             }
-        };
 
-        const file = file_ catch return false;
+            Global.configureAllocator(.{ .long_running = true });
 
-        Global.configureAllocator(.{ .long_running = true });
+            // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
+            absolute_script_path = absolute_script_path orelse brk: {
+                if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
 
-        // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
-        absolute_script_path = absolute_script_path orelse brk: {
-            if (comptime !Environment.isWindows) break :brk bun.getFdPath(file.handle, &script_name_buf) catch return false;
-
-            var fd_path_buf: bun.PathBuffer = undefined;
-            const path = bun.getFdPath(file.handle, &fd_path_buf) catch return false;
-            break :brk resolve_path.normalizeString(
-                resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(&script_name_buf, path) catch @panic("Could not resolve path"),
-                true,
-                .windows,
-            );
-        };
+                var fd_path_buf: bun.PathBuffer = undefined;
+                const path = bun.getFdPath(file, &fd_path_buf) catch return false;
+                break :brk resolve_path.normalizeString(
+                    resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(&script_name_buf, path) catch @panic("Could not resolve path"),
+                    true,
+                    .windows,
+                );
+            };
+        }
 
         if (!ctx.debug.loaded_bunfig) {
             bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};

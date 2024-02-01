@@ -64,6 +64,7 @@ pub const advapi32 = windows.advapi32;
 pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
 
 pub const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
+pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
 
 const std = @import("std");
 pub const HANDLE = win32.HANDLE;
@@ -3011,10 +3012,62 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
 pub extern "kernel32" fn GetHostNameW(
     lpBuffer: PWSTR,
     nSize: c_int,
-) BOOL;
+) callconv(windows.WINAPI) BOOL;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
 pub extern "kernel32" fn GetTempPathW(
     nBufferLength: DWORD, // [in]
     lpBuffer: LPCWSTR, // [out]
 ) DWORD;
+
+pub extern "kernel32" fn CreateJobObjectA(
+    lpJobAttributes: ?*anyopaque, // [in, optional]
+    lpName: ?LPCSTR, // [in, optional]
+) callconv(windows.WINAPI) HANDLE;
+
+pub extern "kernel32" fn AssignProcessToJobObject(
+    hJob: HANDLE, // [in]
+    hProcess: HANDLE, // [in]
+) callconv(windows.WINAPI) BOOL;
+
+pub extern "kernel32" fn ResumeThread(
+    hJob: HANDLE, // [in]
+) callconv(windows.WINAPI) DWORD;
+
+pub const JOBOBJECT_ASSOCIATE_COMPLETION_PORT = extern struct {
+    CompletionKey: windows.PVOID,
+    CompletionPort: HANDLE,
+};
+
+pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
+
+pub extern "kernel32" fn SetInformationJobObject(
+    hJob: HANDLE,
+    JobObjectInformationClass: DWORD,
+    lpJobObjectInformation: LPVOID,
+    cbJobObjectInformationLength: DWORD,
+) callconv(windows.WINAPI) BOOL;
+
+// Found experimentally:
+// #include <stdio.h>
+// #include <windows.h>
+//
+// int main() {
+//         printf("%ld\n", JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO);
+//         printf("%ld\n", JOB_OBJECT_MSG_EXIT_PROCESS);
+// }
+//
+// Output:
+// 4
+// 7
+pub const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;
+pub const JOB_OBJECT_MSG_EXIT_PROCESS = 7;
+
+pub extern "kernel32" fn OpenProcess(
+    dwDesiredAccess: DWORD,
+    bInheritHandle: BOOL,
+    dwProcessId: DWORD,
+) callconv(windows.WINAPI) ?HANDLE;
+
+// https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
+pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;

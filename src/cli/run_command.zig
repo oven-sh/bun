@@ -1098,7 +1098,12 @@ pub const RunCommand = struct {
         }
     }
 
-    pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
+    pub fn exec(
+        ctx_: Command.Context,
+        comptime bin_dirs_only: bool,
+        comptime log_errors: bool,
+        comptime did_try_open_with_bun_js: bool,
+    ) !bool {
         var ctx = ctx_;
         // Step 1. Figure out what we're trying to run
         var positionals = ctx.positionals;
@@ -1138,7 +1143,7 @@ pub const RunCommand = struct {
             return true;
         }
 
-        if (log_errors or force_using_bun) {
+        if (!did_try_open_with_bun_js and (log_errors or force_using_bun)) {
             if (script_name_to_search.len > 0) {
                 possibly_open_with_bun_js: {
                     const ext = std.fs.path.extension(script_name_to_search);

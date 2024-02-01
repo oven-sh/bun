@@ -69,6 +69,8 @@ pub fn setThreadName(name: StringTypes.stringZ) void {
         _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
+    } else if (Environment.isWindows) {
+        // _ = std.os.SetThreadDescription(std.os.GetCurrentThread(), name);
     }
 }
 

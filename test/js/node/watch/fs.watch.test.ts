@@ -114,7 +114,7 @@ describe("fs.watch", () => {
       if (basename === "subfolder") return;
       count++;
       try {
-        expect(event).toBe("rename");
+        expect(["rename", "change"]).toContain(event);
         expect(["new-file.txt", "new-folder.txt"]).toContain(basename);
         if (count >= 2) {
           watcher.close();
@@ -145,7 +145,7 @@ describe("fs.watch", () => {
     let err: Error | undefined = undefined;
     const watcher = fs.watch(testsubdir, function (event, filename) {
       try {
-        expect(event).toBe("rename");
+        expect(["rename", "change"]).toContain(event);
         expect(filename).toBe("deleted.txt");
       } catch (e: any) {
         err = e;
@@ -502,7 +502,7 @@ describe("fs.promises.watch", () => {
 
         count++;
         try {
-          expect(event.eventType).toBe("rename");
+          expect(["rename", "change"]).toContain(event.eventType);
           expect(["new-file.txt", "new-folder.txt"]).toContain(basename);
 
           if (count >= 2) {

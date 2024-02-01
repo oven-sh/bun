@@ -88,7 +88,6 @@ pub const PathWatcherManager = struct {
             .watcher_count = 0,
         });
         errdefer this.destroy();
-
         return this;
     }
 

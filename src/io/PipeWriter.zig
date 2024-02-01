@@ -52,7 +52,9 @@ pub fn PosixPipeWriter(
 
         fn writeNonBlocking(fd: bun.FileDescriptor, buf: []const u8) JSC.Maybe(usize) {
             if (comptime bun.Environment.isLinux) {
-                return bun.sys.writeNonblocking(fd, buf);
+                if (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
+                    return bun.sys.writeNonblocking(fd, buf);
+                }
             }
 
             switch (bun.isWritable(fd)) {

@@ -2550,7 +2550,7 @@ pub const Resolver = struct {
             .status = .not_found,
         };
         const root_path = if (comptime Environment.isWindows)
-            ResolvePath.windowsFilesystemRoot(u8, path)
+            ResolvePath.windowsFilesystemRoot(path)
         else
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer

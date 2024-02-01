@@ -119,10 +119,12 @@ pub fn printMetadata() void {
 
     const analytics_platform = Platform.forOS();
 
+    const maybe_baseline = if (Environment.baseline) " (baseline)" else "";
+
     crash_report_writer.print(
         \\
         \\<r>----- bun meta -----
-    ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ " {s}\n" ++
+    ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ maybe_baseline ++ " {s}\n" ++
         \\{s}: {}
         \\
     , .{

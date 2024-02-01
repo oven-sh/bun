@@ -2589,6 +2589,7 @@ pub const PathTemplate = struct {
 
     pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var remain = self.data;
+        bun.path.posixToPlatformInPlace(u8, @constCast(remain));
         while (strings.indexOfChar(remain, '[')) |j| {
             try writer.writeAll(remain[0..j]);
             remain = remain[j + 1 ..];

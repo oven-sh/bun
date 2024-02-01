@@ -555,7 +555,7 @@ pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
 
 pub inline fn sliceInBuffer(stable: string, value: string) string {
     if (allocators.sliceRange(stable, value)) |start_len| {
-        return stable[start_len[0]..][0..start_len[1]];
+        return value;
     }
     if (strings.indexOf(stable, value)) |index| {
         return stable[index..][0..value.len];

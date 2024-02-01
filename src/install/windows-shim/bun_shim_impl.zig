@@ -34,7 +34,7 @@
 //! Prior Art:
 //! - https://github.com/ScoopInstaller/Shim/blob/master/src/shim.cs
 //!
-//! The compiled binary is 10240 bytes and is `@embedFile`d into Bun itself.
+//! The compiled binary is 10752 bytes and is `@embedFile`d into Bun itself.
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
 const std = @import("std");
 const builtin = @import("builtin");
@@ -148,6 +148,9 @@ const FailReason = enum {
     InvalidShimValidation,
     InvalidShimBounds,
     CouldNotDirectLaunch,
+    BinNotFound,
+    InterpreterNotFound,
+    ElevationRequired,
 
     pub fn render(reason: FailReason) []const u8 {
         return switch (reason) {
@@ -159,6 +162,12 @@ const FailReason = enum {
             .InvalidShimDataSize => "bin metadata is corrupt (size)",
             .InvalidShimValidation => "bin metadata is corrupt (validate)",
             .InvalidShimBounds => "bin metadata is corrupt (bounds)",
+            // The difference between these two is that one is with a shebang (#!/usr/bin/env node) and
+            // the other is without. This is a helpful distinction because it can detect if something
+            // like node or bun is not in %path%, vs the actual executable was not installed in node_modules.
+            .InterpreterNotFound => "interpreter executable could not be found",
+            .BinNotFound => "bin executable does not exist on disk",
+            .ElevationRequired => "process requires elevation",
             .CreateProcessFailed => "could not create process",
 
             .CouldNotDirectLaunch => if (!is_standalone)
@@ -678,17 +687,27 @@ fn launcher(bun_ctx: anytype) noreturn {
         &process,
     );
     if (did_process_spawn == 0) {
+        const spawn_err = k32.GetLastError();
         if (dbg) {
-            const spawn_err = k32.GetLastError();
             printError("CreateProcessW failed: {s}\n", .{@tagName(spawn_err)});
         }
-        // TODO: ERROR_ELEVATION_REQUIRED must take a fallback path, this path is potentially slower:
-        // This likely will not be an issue anyone runs into for a while, because it implies
-        // the shebang depends on something that requires UAC, which .... why?
-        //
-        // https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/how-it-works#user
-        // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
-        fail(.CreateProcessFailed);
+        switch (spawn_err) {
+            .FILE_NOT_FOUND => if (flags.has_shebang)
+                fail(.InterpreterNotFound)
+            else
+                fail(.BinNotFound),
+
+            // TODO: ERROR_ELEVATION_REQUIRED must take a fallback path, this path is potentially slower:
+            // This likely will not be an issue anyone runs into for a while, because it implies
+            // the shebang depends on something that requires UAC, which .... why?
+            //
+            // https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/how-it-works#user
+            // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
+            .ELEVATION_REQUIRED => fail(.ElevationRequired),
+
+            else => fail(.CreateProcessFailed),
+        }
+        comptime unreachable;
     }
 
     _ = k32.WaitForSingleObject(process.hProcess, w.INFINITE);

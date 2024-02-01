@@ -322,7 +322,7 @@ const WindowsWatcher = struct {
         none = 0,
     };
 
-    // get the next dirwatcher that has events
+    // wait until new events are available
     pub fn next(this: *WindowsWatcher, timeout: Timeout) !?EventIterator {
         try this.watcher.prepare();
 
@@ -776,27 +776,31 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
                     var timeout = WindowsWatcher.Timeout.infinite;
                     while (true) {
-                        log("waiting with timeout: {s}\n", .{@tagName(timeout)});
                         var iter = try this.platform.next(timeout) orelse break;
                         // after the first wait, we want to start coalescing events, so we wait for a minimal amount of time
-                        timeout = WindowsWatcher.Timeout.none;
+                        timeout = WindowsWatcher.Timeout.minimal;
                         const item_paths = this.watchlist.items(.file_path);
-                        log("number of items: {d}\n", .{item_paths.len});
+                        log("number of watched items: {d}", .{item_paths.len});
                         while (iter.next()) |event| {
-                            log("raw event (filename: {}, action: {s})", .{ std.unicode.fmtUtf16le(event.filename), @tagName(event.action) });
-                            var idx = baseidx;
-                            idx += bun.simdutf.convert.utf16.to.utf8.le(event.filename, buf[idx..]);
-                            const eventpath = buf[0..idx];
+                            const convert_res = bun.strings.copyUTF16IntoUTF8(buf[baseidx..], []const u16, event.filename, false);
+                            const eventpath = buf[0 .. baseidx + convert_res.written];
 
-                            log("received event at full path: {s}\n", .{eventpath});
+                            log("watcher update event: (filename: {s}, action: {s}", .{ eventpath, @tagName(event.action) });
 
-                            // TODO this probably needs a more sophisticated search algorithm
+                            // TODO this probably needs a more sophisticated search algorithm in the future
+                            // Possible approaches:
+                            // - Keep a sorted list of the watched paths and perform a binary search. We could use a bool to keep
+                            //   track of whether the list is sorted and only sort it when we detect a change.
+                            // - Use a prefix tree. Potentially more efficient for large numbers of watched paths, but complicated
+                            //   to implement and maintain.
+                            // - others that i'm not thinking of
+
                             for (item_paths, 0..) |path_, item_idx| {
                                 var path = path_;
                                 if (path.len > 0 and bun.strings.charIsAnySlash(path[path.len - 1])) {
                                     path = path[0 .. path.len - 1];
                                 }
-                                log("checking path: {s}\n", .{path});
+                                // log("checking path: {s}\n", .{path});
                                 // check if the current change applies to this item
                                 // if so, add it to the eventlist
                                 const rel = bun.path.isParentOrEqual(eventpath, path);
@@ -813,7 +817,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         continue :restart;
                     }
 
-                    log("event_id: {d}\n", .{event_id});
+                    // log("event_id: {d}\n", .{event_id});
 
                     var all_events = this.watch_events[0..event_id];
                     std.sort.pdq(WatchEvent, all_events, {}, WatchEvent.sortByIndex);
@@ -1159,10 +1163,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
             defer this.mutex.unlock();
             if (this.indexOf(hash)) |index| {
                 this.removeAtIndex(@truncate(index), hash, &[_]HashType{}, .file);
-                // const fds = this.watchlist.items(.fd);
-                // const fd = fds[index];
-                // _ = bun.sys.close(fd);
-                // this.watchlist.swapRemove(index);
             }
         }
 

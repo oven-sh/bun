@@ -54,14 +54,10 @@ const ParentEqual = enum {
     unrelated,
 };
 
-pub fn isParentOrEqual(parent_: []const u8, child_: []const u8) ParentEqual {
+pub fn isParentOrEqual(parent_: []const u8, child: []const u8) ParentEqual {
     var parent = parent_;
-    if (parent.len > 0 and isSepAny(parent[parent.len - 1])) {
+    while (parent.len > 0 and isSepAny(parent[parent.len - 1])) {
         parent = parent[0 .. parent.len - 1];
-    }
-    var child = child_;
-    if (child.len > 0 and isSepAny(child[child.len - 1])) {
-        child = child[0 .. child.len - 1];
     }
     if (std.mem.indexOf(u8, child, parent) != 0) return .unrelated;
     if (child.len == parent.len) return .equal;

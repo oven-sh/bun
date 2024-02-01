@@ -9,17 +9,15 @@ const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Output = bun.Output;
+const Watcher = @import("../../watcher.zig");
 
 var default_manager: ?*PathWatcherManager = null;
 
 // TODO: make this a generic so we can reuse code with path_watcher
 // TODO: we probably should use native instead of libuv abstraction here for better performance
 pub const PathWatcherManager = struct {
-    const GenericWatcher = @import("../../watcher.zig");
     const options = @import("../../options.zig");
-    pub const Watcher = GenericWatcher.NewWatcher(*PathWatcherManager);
     const log = Output.scoped(.PathWatcherManager, false);
-    main_watcher: *Watcher,
 
     watchers: bun.BabyList(?*PathWatcher) = .{},
     watcher_count: u32 = 0,
@@ -85,54 +83,30 @@ pub const PathWatcherManager = struct {
         var this = PathWatcherManager.new(.{
             .file_paths = bun.StringHashMap(PathInfo).init(bun.default_allocator),
             .watchers = watchers,
-            .main_watcher = undefined,
             .vm = vm,
             .watcher_count = 0,
         });
         errdefer this.destroy();
 
-        this.main_watcher = try Watcher.init(
-            this,
-            vm.bundler.fs,
-            bun.default_allocator,
-        );
-
-        errdefer this.main_watcher.deinit(false);
-
-        try this.main_watcher.start();
         return this;
     }
 
-    fn _addDirectory(this: *PathWatcherManager, _: *PathWatcher, path: PathInfo) !void {
-        const fd = path.fd;
-        try this.main_watcher.addDirectory(fd, path.path, path.hash, false);
-    }
-
     fn registerWatcher(this: *PathWatcherManager, watcher: *PathWatcher) !void {
-        {
-            if (this.watcher_count == this.watchers.len) {
-                this.watcher_count += 1;
-                this.watchers.push(bun.default_allocator, watcher) catch |err| {
-                    this.watcher_count -= 1;
-                    return err;
-                };
-            } else {
-                var watchers = this.watchers.slice();
-                for (watchers, 0..) |w, i| {
-                    if (w == null) {
-                        watchers[i] = watcher;
-                        this.watcher_count += 1;
-                        break;
-                    }
+        if (this.watcher_count == this.watchers.len) {
+            this.watcher_count += 1;
+            this.watchers.push(bun.default_allocator, watcher) catch |err| {
+                this.watcher_count -= 1;
+                return err;
+            };
+        } else {
+            var watchers = this.watchers.slice();
+            for (watchers, 0..) |w, i| {
+                if (w == null) {
+                    watchers[i] = watcher;
+                    this.watcher_count += 1;
+                    break;
                 }
             }
-        }
-
-        const path = watcher.path;
-        if (path.is_file) {
-            try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, .zero, null, false);
-        } else {
-            try this._addDirectory(watcher, path);
         }
     }
 
@@ -152,7 +126,6 @@ pub const PathWatcherManager = struct {
                 path.refs -= 1;
                 if (path.refs == 0) {
                     const path_ = path.path;
-                    this.main_watcher.remove(path.hash);
                     _ = this.file_paths.remove(path_);
                     bun.default_allocator.free(path_);
                 }
@@ -198,8 +171,6 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        this.main_watcher.deinit(false);
-
         if (this.watcher_count > 0) {
             while (this.watchers.popOrNull()) |watcher| {
                 if (watcher) |w| {
@@ -242,7 +213,7 @@ pub const PathWatcher = struct {
     const log = Output.scoped(.PathWatcher, false);
 
     pub const ChangeEvent = struct {
-        hash: PathWatcherManager.Watcher.HashType = 0,
+        hash: Watcher.HashType = 0,
         event_type: EventType = .change,
         time_stamp: i64 = 0,
     };
@@ -330,7 +301,7 @@ pub const PathWatcher = struct {
         return this;
     }
 
-    pub fn emit(this: *PathWatcher, path: string, hash: PathWatcherManager.Watcher.HashType, time_stamp: i64, is_file: bool, event_type: EventType) void {
+    pub fn emit(this: *PathWatcher, path: string, hash: Watcher.HashType, time_stamp: i64, is_file: bool, event_type: EventType) void {
         const time_diff = time_stamp - this.last_change_event.time_stamp;
         // skip consecutive duplicates
         if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != hash) {

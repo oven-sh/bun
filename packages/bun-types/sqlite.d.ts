@@ -520,21 +520,21 @@ declare module "bun:sqlite" {
     get(...params: ParamsType): ReturnType | null;
 
     /**
-     * Execute the prepared statement. This returns `undefined`.
+     * Execute the prepared statement. Returns the number of rows changed for INSERT, UPDATE or DELETE statements.
      *
      * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
      *
      * @example
      * ```ts
-     * const stmt = db.prepare("UPDATE foo SET bar = ?");
+     * const stmt = db.prepare("INSERT INTO foo (col1) VALUES(?1)");
      * stmt.run("baz");
-     * // => undefined
+     * // => 1
      *
      * stmt.run();
-     * // => undefined
+     * // => 1
      *
      * stmt.run("foo");
-     * // => undefined
+     * // => 1
      * ```
      *
      * The following types can be used when binding parameters:

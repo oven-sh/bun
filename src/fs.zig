@@ -1663,12 +1663,12 @@ pub const Path = struct {
             new_path.namespace = this.namespace;
             new_path.is_symlink = this.is_symlink;
             return new_path;
-        } else if (allocators.sliceRange(this.pretty, this.text)) |start_end| {
+        } else if (allocators.sliceRange(this.pretty, this.text)) |start_len| {
             if (FileSystem.FilenameStore.instance.exists(this.text) or FileSystem.DirnameStore.instance.exists(this.text)) {
                 return this.*;
             }
             var new_path = Fs.Path.init(try FileSystem.FilenameStore.instance.append([]const u8, this.text));
-            new_path.pretty = this.text[start_end[0]..start_end[1]];
+            new_path.pretty = this.text[start_len[0]..][0..start_len[1]];
             new_path.namespace = this.namespace;
             new_path.is_symlink = this.is_symlink;
             return new_path;

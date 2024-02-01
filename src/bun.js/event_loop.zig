@@ -626,6 +626,41 @@ comptime {
 }
 
 pub const DeferredRepeatingTask = *const (fn (*anyopaque) bool);
+pub const DeferredTaskQueue = struct {
+    map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
+
+    pub fn postTask(this: *DeferredTaskQueue, ctx: ?*anyopaque, task: DeferredRepeatingTask) bool {
+        const existing = this.map.getOrPutValue(bun.default_allocator, ctx, task) catch bun.outOfMemory();
+        return existing.found_existing;
+    }
+
+    pub fn unregisterTask(this: *EventLoop, ctx: ?*anyopaque) bool {
+        return this.map.swapRemove(ctx);
+    }
+
+    pub fn run(this: *DeferredTaskQueue) void {
+        var i: usize = 0;
+        var last = this.map.count();
+        while (i < last) {
+            const key = this.map.keys()[i] orelse {
+                this.map.swapRemoveAt(i);
+                last = this.map.count();
+                continue;
+            };
+
+            if (!this.map.values()[i](key)) {
+                this.map.swapRemoveAt(i);
+                last = this.map.count();
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    pub fn deinit(this: *DeferredTaskQueue) void {
+        this.map.deinit(bun.default_allocator);
+    }
+};
 pub const EventLoop = struct {
     tasks: if (JSC.is_bindgen) void else Queue = undefined,
 
@@ -646,9 +681,8 @@ pub const EventLoop = struct {
     virtual_machine: *JSC.VirtualMachine = undefined,
     waker: ?Waker = null,
     start_server_on_next_tick: bool = false,
-    defer_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     forever_timer: ?*uws.Timer = null,
-    deferred_microtask_map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},
+    deferred_tasks: DeferredTaskQueue = .{},
     uws_loop: if (Environment.isWindows) *uws.Loop else void = undefined,
 
     timer_reference_pool: ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool = null,
@@ -685,34 +719,6 @@ pub const EventLoop = struct {
 
     pub fn drainMicrotasks(this: *EventLoop) void {
         this.drainMicrotasksWithGlobal(this.global);
-    }
-
-    pub fn registerDeferredTask(this: *EventLoop, ctx: ?*anyopaque, task: DeferredRepeatingTask) bool {
-        const existing = this.deferred_microtask_map.getOrPutValue(this.virtual_machine.allocator, ctx, task) catch unreachable;
-        return existing.found_existing;
-    }
-
-    pub fn unregisterDeferredTask(this: *EventLoop, ctx: ?*anyopaque) bool {
-        return this.deferred_microtask_map.swapRemove(ctx);
-    }
-
-    fn drainDeferredTasks(this: *EventLoop) void {
-        var i: usize = 0;
-        var last = this.deferred_microtask_map.count();
-        while (i < last) {
-            const key = this.deferred_microtask_map.keys()[i] orelse {
-                this.deferred_microtask_map.swapRemoveAt(i);
-                last = this.deferred_microtask_map.count();
-                continue;
-            };
-
-            if (!this.deferred_microtask_map.values()[i](key)) {
-                this.deferred_microtask_map.swapRemoveAt(i);
-                last = this.deferred_microtask_map.count();
-            } else {
-                i += 1;
-            }
-        }
     }
 
     pub fn tickQueueWithCount(this: *EventLoop, comptime queue_name: []const u8) u32 {

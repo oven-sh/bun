@@ -2348,26 +2348,24 @@ const AutoFlusher = struct {
 
     pub fn registerDeferredMicrotaskWithType(comptime Type: type, this: *Type, vm: *JSC.VirtualMachine) void {
         if (this.auto_flusher.registered) return;
-        this.auto_flusher.registered = true;
-        std.debug.assert(!vm.eventLoop().registerDeferredTask(this, @ptrCast(&Type.onAutoFlush)));
+        registerDeferredMicrotaskWithTypeUnchecked(Type, this, vm);
     }
 
     pub fn unregisterDeferredMicrotaskWithType(comptime Type: type, this: *Type, vm: *JSC.VirtualMachine) void {
         if (!this.auto_flusher.registered) return;
-        this.auto_flusher.registered = false;
-        std.debug.assert(vm.eventLoop().unregisterDeferredTask(this));
+        unregisterDeferredMicrotaskWithTypeUnchecked(Type, this, vm);
     }
 
     pub fn unregisterDeferredMicrotaskWithTypeUnchecked(comptime Type: type, this: *Type, vm: *JSC.VirtualMachine) void {
         std.debug.assert(this.auto_flusher.registered);
-        std.debug.assert(vm.eventLoop().unregisterDeferredTask(this));
+        std.debug.assert(vm.eventLoop().deferred_tasks.unregisterTask(this));
         this.auto_flusher.registered = false;
     }
 
     pub fn registerDeferredMicrotaskWithTypeUnchecked(comptime Type: type, this: *Type, vm: *JSC.VirtualMachine) void {
         std.debug.assert(!this.auto_flusher.registered);
         this.auto_flusher.registered = true;
-        std.debug.assert(!vm.eventLoop().registerDeferredTask(this, @ptrCast(&Type.onAutoFlush)));
+        std.debug.assert(!vm.eventLoop().deferred_tasks.postTask(this, @ptrCast(&Type.onAutoFlush)));
     }
 };
 

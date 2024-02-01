@@ -42,6 +42,7 @@ pub const resolver = @import("./resolver//resolver.zig");
 pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
+pub const allocators = @import("./allocators.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -553,7 +554,10 @@ pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
 }
 
 pub inline fn sliceInBuffer(stable: string, value: string) string {
-    if (std.mem.indexOf(u8, stable, value)) |index| {
+    if (allocators.sliceRange(stable, value)) |start_len| {
+        return stable[start_len[0]..][0..start_len[1]];
+    }
+    if (strings.indexOf(stable, value)) |index| {
         return stable[index..][0..value.len];
     }
     return value;

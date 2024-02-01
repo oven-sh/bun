@@ -28,7 +28,7 @@
   "zig.buildOnSave": false,
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
-  // "zig.path": "${workspaceFolder}/.cache/zig/zig.exe",
+  "zig.path": "${workspaceFolder}/.cache/zig/zig.exe",
   "zig.formattingProvider": "zls",
   "zig.zls.enableInlayHints": false,
   "[zig]": {

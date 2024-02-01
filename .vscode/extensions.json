@@ -4,10 +4,8 @@
     "ziglang.vscode-zig",
 
     // C/C++
-    "ms-vscode.cpptools",
-    "ms-vscode.cpptools-extension-pack",
-    "ms-vscode.cmake-tools",
     "clang.clangd",
+    "ms-vscode.cmake-tools",
     "xaver.clang-format",
     "vadimcn.vscode-lldb",
 

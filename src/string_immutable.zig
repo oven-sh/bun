@@ -657,6 +657,14 @@ pub fn startsWith(self: string, str: string) bool {
     return eqlLong(self[0..str.len], str, false);
 }
 
+pub fn startsWithGeneric(comptime T: type, self: []const T, str: []const T) bool {
+    if (str.len > self.len) {
+        return false;
+    }
+
+    return eqlLong(bun.reinterpretSlice(u8, self[0..str.len]), str, false);
+}
+
 pub inline fn endsWith(self: string, str: string) bool {
     return str.len == 0 or @call(.always_inline, std.mem.endsWith, .{ u8, self, str });
 }
@@ -848,8 +856,19 @@ pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool 
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], comptime toUTF16Literal(alt), false);
 }
 
-pub fn hasPrefixComptimeType(comptime T: type, self: []const T, comptime alt: []const T) bool {
-    return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], alt, false);
+pub fn hasPrefixComptimeType(comptime T: type, self: []const T, comptime alt: anytype) bool {
+    const rhs = comptime switch (T) {
+        u8 => alt,
+        u16 => switch (std.meta.Child(@TypeOf(alt))) {
+            u8 => w(alt),
+            else => |t| switch (std.meta.Child(t)) {
+                u8 => w(alt),
+                else => alt,
+            },
+        },
+        else => unreachable,
+    };
+    return self.len >= alt.len and eqlComptimeCheckLenWithType(T, self[0..rhs.len], rhs, false);
 }
 
 pub fn hasSuffixComptime(self: string, comptime alt: anytype) bool {
@@ -1650,10 +1669,22 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     }
 }
 
-fn windowsPathIsPosixAbsolute(utf8: []const u8) bool {
-    if (utf8.len == 0) return false;
-    if (!charIsAnySlash(utf8[0])) return false;
-    if (utf8.len > 1 and charIsAnySlash(utf8[1])) return false;
+/// '/hello' -> true
+/// '\hello' -> true
+/// 'C:/hello' -> false
+/// '\??\C:\hello' -> false
+fn windowsPathIsPosixAbsolute(comptime T: type, chars: []const T) bool {
+    if (chars.len == 0) return false;
+    if (!(chars[0] == '/' or chars[0] == '\\')) return false;
+    if (chars.len > 1 and
+        (chars[1] == '/' or chars[1] == '\\')) return false;
+    if (chars.len > 2 and
+        chars[2] == ':') return false;
+    if (chars.len > 4 and
+        chars[1] == '?' and
+        chars[2] == '?' and
+        (chars[3] == '/' or chars[3] == '\\'))
+        return windowsPathIsPosixAbsolute(T, chars[4..]);
     return true;
 }
 
@@ -1754,11 +1785,16 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathMaybeDir(wbuf, utf8, true);
 }
 
-pub fn assertIsValidWindowsPath(utf8: []const u8) void {
+pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
     if (Environment.allow_assert and Environment.isWindows) {
-        if (startsWith(utf8, ":/")) {
+        if (windowsPathIsPosixAbsolute(T, path)) {
+            std.debug.panic("Do not pass posix paths to windows APIs, was given '{s}' (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)", .{
+                if (T == u8) path else std.unicode.fmtUtf16le(path),
+            });
+        }
+        if (hasPrefixComptimeType(T, path, ":/")) {
             std.debug.panic("Path passed to windows API '{s}' is almost certainly invalid. Where did the drive letter go?", .{
-                utf8,
+                if (T == u8) path else std.unicode.fmtUtf16le(path),
             });
         }
     }
@@ -1766,8 +1802,6 @@ pub fn assertIsValidWindowsPath(utf8: []const u8) void {
 
 pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]const u16 {
     std.debug.assert(wbuf.len > 0);
-
-    assertIsValidWindowsPath(utf8);
 
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
         utf8,

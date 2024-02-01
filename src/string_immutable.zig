@@ -1744,7 +1744,7 @@ pub const toNTDir = toNTPath;
 
 pub fn toExtendedPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     std.debug.assert(wbuf.len > 4);
-    wbuf[0..4].* = [_]u16{ '\\', '\\', '?', '\\' };
+    wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
 }
 
@@ -5965,4 +5965,11 @@ pub inline fn indexOfScalar(input: anytype, scalar: std.meta.Child(@TypeOf(input
 /// Generic. Works on []const u8, []const u16, etc
 pub fn containsScalar(input: anytype, item: std.meta.Child(@TypeOf(input))) bool {
     return indexOfScalar(input, item) != null;
+}
+
+pub fn withoutSuffixComptime(input: []const u8, comptime suffix: []const u8) []const u8 {
+    if (hasSuffixComptime(input, suffix)) {
+        return input[0 .. input.len - suffix.len];
+    }
+    return input;
 }

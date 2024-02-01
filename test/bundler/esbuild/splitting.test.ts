@@ -1,8 +1,10 @@
-// @known-failing-on-windows: panic "TODO on Windows"
 import assert from "assert";
 import { readdirSync } from "fs";
 import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
+import process from "node:process";
+
+const isWindows = process.platform === "win32";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_splitting_test.go
@@ -276,7 +278,9 @@ describe("bundler", () => {
       { file: "/out/b.js", stdout: "[null]" },
     ],
     bundleWarnings: {
-      "/common.js": [`Import "missing" will always be undefined because there is no matching export in "empty.js"`],
+      [isWindows ? "\\common.js" : "/common.js"]: [
+        `Import "missing" will always be undefined because there is no matching export in "empty.js"`,
+      ],
     },
   });
   itBundled("splitting/ReExportESBuildIssue273", {

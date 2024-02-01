@@ -3158,26 +3158,26 @@ declare module "bun" {
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
    */
-  function deflateSync(data: Uint8Array, options?: ZlibCompressionOptions): Uint8Array;
+  function deflateSync(data: Uint8Array | string | ArrayBuffer, options?: ZlibCompressionOptions): Uint8Array;
   /**
    * Compresses a chunk of data with `zlib` GZIP algorithm.
    * @param data The buffer of data to compress
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
    */
-  function gzipSync(data: Uint8Array, options?: ZlibCompressionOptions): Uint8Array;
+  function gzipSync(data: Uint8Array | string | ArrayBuffer, options?: ZlibCompressionOptions): Uint8Array;
   /**
    * Decompresses a chunk of data with `zlib` INFLATE algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
-  function inflateSync(data: Uint8Array): Uint8Array;
+  function inflateSync(data: Uint8Array | string | ArrayBuffer): Uint8Array;
   /**
    * Decompresses a chunk of data with `zlib` GUNZIP algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
-  function gunzipSync(data: Uint8Array): Uint8Array;
+  function gunzipSync(data: Uint8Array | string | ArrayBuffer): Uint8Array;
 
   type Target =
     /**

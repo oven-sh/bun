@@ -1,5 +1,5 @@
 import { gc as bunGC, unsafe, which } from "bun";
-import { expect } from "bun:test";
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { readlink, readFile } from "fs/promises";
 import { isAbsolute } from "path";
 import { openSync, closeSync } from "node:fs";
@@ -323,3 +323,109 @@ declare global {
 Buffer.prototype.toUnixString = function () {
   return this.toString("utf-8").replaceAll("\r\n", "\n");
 };
+
+export function dockerExe(): string | null {
+  return which("docker") || which("podman") || null;
+}
+
+export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
+  let deadline = Date.now() + Math.max(1, timeout);
+  let error: unknown;
+  while (Date.now() < deadline) {
+    error = await new Promise(resolve => {
+      Bun.connect({
+        hostname: "localhost",
+        port,
+        socket: {
+          data: socket => {
+            resolve(undefined);
+            socket.end();
+          },
+          end: () => resolve(new Error("Socket closed")),
+          error: (_, cause) => resolve(new Error("Socket error", { cause })),
+          connectError: (_, cause) => resolve(new Error("Socket connect error", { cause })),
+        },
+      });
+    });
+    if (error) {
+      await Bun.sleep(1000);
+    } else {
+      return;
+    }
+  }
+  throw error;
+}
+
+export async function describeWithContainer(
+  label: string,
+  {
+    image,
+    env = {},
+    args = [],
+    archs,
+  }: {
+    image: string;
+    env?: Record<string, string>;
+    args?: string[];
+    archs?: NodeJS.Architecture[];
+  },
+  fn: (port: number) => void,
+) {
+  describe(label, () => {
+    const docker = dockerExe();
+    if (!docker) {
+      test.skip(`docker is not installed, skipped: ${image}`, () => {});
+      return;
+    }
+    const { arch, platform } = process;
+    if ((archs && !archs?.includes(arch)) || platform === "win32") {
+      test.skip(`docker image is not supported on ${platform}/${arch}, skipped: ${image}`, () => {});
+      return false;
+    }
+    let containerId: string;
+    {
+      const envs = Object.entries(env).map(([k, v]) => `-e${k}=${v}`);
+      const { exitCode, stdout, stderr } = Bun.spawnSync({
+        cmd: [docker, "run", "--rm", "-dPit", ...envs, image, ...args],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (exitCode !== 0) {
+        process.stderr.write(stderr);
+        test.skip(`docker container for ${image} failed to start`, () => {});
+        return false;
+      }
+      containerId = stdout.toString("utf-8").trim();
+    }
+    let port: number;
+    {
+      const { exitCode, stdout, stderr } = Bun.spawnSync({
+        cmd: [docker, "port", containerId],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (exitCode !== 0) {
+        process.stderr.write(stderr);
+        test.skip(`docker container for ${image} failed to find a port`, () => {});
+        return false;
+      }
+      const [firstPort] = stdout
+        .toString("utf-8")
+        .trim()
+        .split("\n")
+        .map(line => parseInt(line.split(":").pop()!));
+      port = firstPort;
+    }
+    beforeAll(async () => {
+      await waitForPort(port);
+    });
+    afterAll(() => {
+      Bun.spawnSync({
+        cmd: [docker, "rm", "-f", containerId],
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+    });
+    fn(port);
+  });
+}

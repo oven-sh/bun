@@ -430,6 +430,9 @@ pub const FilePoll = struct {
         was_ever_registered,
         ignore_updates,
 
+        /// Was O_NONBLOCK set on the file descriptor?
+        nonblock,
+
         pub fn poll(this: Flags) Flags {
             return switch (this) {
                 .readable => .poll_readable,

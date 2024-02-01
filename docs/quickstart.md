@@ -124,12 +124,12 @@ Update `index.ts` to use `figlet` in the `fetch` handler.
 + import figlet from "figlet";
 
   const server = Bun.serve({
-    fetch() {
+    port: 3000,
+    fetch(req) {
 +     const body = figlet.textSync("Bun!");
 +     return new Response(body);
 -     return new Response("Bun!");
     },
-    port: 3000,
   });
 ```
 

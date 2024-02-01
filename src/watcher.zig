@@ -924,7 +924,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // buf[file_path_to_use_.len] = 0;
                 var buf = file_path_.ptr;
                 const slice: [:0]const u8 = buf[0..file_path_.len :0];
-                item.index = try this.platform.watchPath(slice);
+                item.eventlist_index = try this.platform.watchPath(slice);
             }
 
             this.watchlist.appendAssumeCapacity(item);

@@ -1,9 +1,9 @@
-// @known-failing-on-windows: 1 failing
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { bunEnv, bunExe, nodeExe } from "harness";
 import { Server, WebSocket, WebSocketServer } from "ws";
+import path from "node:path";
 
 const strings = [
   {
@@ -362,7 +362,7 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
 }
 
 async function listen(): Promise<URL> {
-  const { pathname } = new URL("../../web/websocket/websocket-server-echo.mjs", import.meta.url);
+  const pathname = path.resolve(import.meta.dir, "../../web/websocket/websocket-server-echo.mjs");
   const server = spawn({
     cmd: [nodeExe() ?? bunExe(), pathname],
     cwd: import.meta.dir,

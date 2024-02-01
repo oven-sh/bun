@@ -1989,8 +1989,6 @@ pub const win32 = struct {
 
         const image_pathZ = wbuf[0..image_path.Length :0];
 
-        // TODO environment variables
-
         const kernelenv = w.kernel32.GetEnvironmentStringsW();
         var newenv: ?[]u16 = null;
         defer {

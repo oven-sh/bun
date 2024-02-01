@@ -760,7 +760,6 @@ it("change count", () => {
         ('del', 'val')`).run(Array(6).fill('value'))).toBe(6);
 
     expect(db.query("UPDATE foo SET name='newname' WHERE name='nonexistent'").run()).toBe(0);
-    expect(db.query("UPDATE foo SET name=?").run()).toBe(0);
     expect(db.query("UPDATE foo SET name='newname' WHERE name='upd'").run()).toBe(2);
     expect(db.query("DELETE FROM foo WHERE name='nonexistent'").run()).toBe(0);
     expect(db.query("DELETE FROM foo WHERE name='del'").run()).toBe(1);

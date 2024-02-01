@@ -48,6 +48,23 @@ inline fn @"is ../"(slice: []const u8) bool {
     return strings.hasPrefixComptime(slice, "../");
 }
 
+const ParentEqual = enum {
+    parent,
+    equal,
+    unrelated,
+};
+
+pub fn isParentOrEqual(parent_: []const u8, child: []const u8) ParentEqual {
+    var parent = parent_;
+    while (parent.len > 0 and isSepAny(parent[parent.len - 1])) {
+        parent = parent[0 .. parent.len - 1];
+    }
+    if (std.mem.indexOf(u8, child, parent) != 0) return .unrelated;
+    if (child.len == parent.len) return .equal;
+    if (isSepAny(child[parent.len])) return .parent;
+    return .unrelated;
+}
+
 pub fn getIfExistsLongestCommonPathGeneric(input: []const []const u8, comptime platform: Platform) ?[]const u8 {
     const separator = comptime platform.separator();
     const isPathSeparator = comptime platform.getSeparatorFunc();

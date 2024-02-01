@@ -54,6 +54,22 @@ pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
     };
 }
 
+pub fn toUTF16LiteralZ(comptime str: []const u8) [:0]const u16 {
+    return comptime brk: {
+        comptime var output: [str.len + 1]u16 = undefined;
+
+        for (str, 0..) |c, i| {
+            output[i] = c;
+        }
+        output[str.len] = 0;
+
+        const Static = struct {
+            pub const literal: [:0]const u16 = output[0..str.len :0];
+        };
+        break :brk Static.literal;
+    };
+}
+
 pub const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
 pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
     switch (comptime str.len) {

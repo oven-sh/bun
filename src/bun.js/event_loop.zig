@@ -714,7 +714,7 @@ pub const EventLoop = struct {
         JSC.markBinding(@src());
 
         JSC__JSGlobalObject__drainMicrotasks(globalObject);
-        this.drainDeferredTasks();
+        this.deferred_tasks.run();
     }
 
     pub fn drainMicrotasks(this: *EventLoop) void {

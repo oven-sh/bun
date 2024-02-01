@@ -52,6 +52,7 @@
   },
 
   // JavaScript
+  "prettier.enable": false,
   "eslint.workingDirectories": ["${workspaceFolder}/packages/bun-types"],
   "[javascript]": {
     "editor.defaultFormatter": "biomejs.biome",

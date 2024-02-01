@@ -30,10 +30,13 @@ shebang: ?Shebang,
 /// These arbitrary numbers will probably not show up in the other fields.
 /// This will reveal off-by-one mistakes.
 pub const VersionFlag = enum(u13) {
-    pub const current = .v2;
+    pub const current = .v3;
 
     v1 = 5474,
+    // Fix bug where paths were not joined correctly
     v2 = 5475,
+    // Added an error message for when the process is not found
+    v3 = 5476,
     _,
 };
 

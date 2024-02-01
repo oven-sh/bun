@@ -37,7 +37,7 @@ const S = JSAst.S;
 const debug = Output.scoped(.migrate, false);
 
 pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Log, bun_lockfile_path: stringZ) LoadFromDiskResult {
-    const dirname = bun_lockfile_path[0 .. strings.lastIndexOfChar(u8, bun_lockfile_path, '/') orelse 0];
+    const dirname = bun_lockfile_path[0 .. strings.lastIndexOfChar(bun_lockfile_path, '/') orelse 0];
     // check for package-lock.json, yarn.lock, etc...
     // if it exists, do an in-memory migration
     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -396,7 +396,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 builder.append(
                     String,
                     if (comptime Environment.isWindows)
-                        bun.path.normalizeBuf(u8, k, &path_buf, .windows)
+                        bun.path.normalizeBuf(k, &path_buf, .windows)
                     else
                         k,
                 ),
@@ -847,7 +847,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                                 builder.append(String, dep_resolved))
                                                 .sliced(this.buffers.string_bytes.items);
 
-                                            const hash_index = strings.lastIndexOfChar(u8, str.slice, '#') orelse return error.InvalidNPMLockfile;
+                                            const hash_index = strings.lastIndexOfChar(str.slice, '#') orelse return error.InvalidNPMLockfile;
 
                                             const commit = str.sub(str.slice[hash_index + 1 ..]).value();
                                             break :res Resolution.init(.{
@@ -867,7 +867,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                                                 builder.append(String, dep_resolved))
                                                 .sliced(this.buffers.string_bytes.items);
 
-                                            const hash_index = strings.lastIndexOfChar(u8, str.slice, '#') orelse return error.InvalidNPMLockfile;
+                                            const hash_index = strings.lastIndexOfChar(str.slice, '#') orelse return error.InvalidNPMLockfile;
 
                                             const commit = str.sub(str.slice[hash_index + 1 ..]).value();
                                             break :res Resolution.init(.{

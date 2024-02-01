@@ -93,7 +93,7 @@ pub const Repository = extern struct {
             if (!formatter.repository.resolved.isEmpty()) {
                 try writer.writeAll("#");
                 var resolved = formatter.repository.resolved.slice(formatter.buf);
-                if (strings.lastIndexOfChar(u8, resolved, '-')) |i| {
+                if (strings.lastIndexOfChar(resolved, '-')) |i| {
                     resolved = resolved[i + 1 ..];
                 }
                 try writer.writeAll(resolved);

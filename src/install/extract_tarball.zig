@@ -170,7 +170,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         }
 
         if (comptime Environment.isWindows) {
-            if (strings.lastIndexOfChar(u8, tmp, ':')) |i| {
+            if (strings.lastIndexOfChar(tmp, ':')) |i| {
                 tmp = tmp[i + 1 ..];
             }
         }

@@ -234,7 +234,11 @@ pub fn indexOfSigned(self: string, str: string) i32 {
     return @as(i32, @intCast(i));
 }
 
-pub inline fn lastIndexOfChar(comptime T: type, self: []const T, char: T) ?usize {
+pub inline fn lastIndexOfChar(self: []const u8, char: u8) ?usize {
+    return lastIndexOfCharT(u8, self, char);
+}
+
+pub inline fn lastIndexOfCharT(comptime T: type, self: []const T, char: T) ?usize {
     return std.mem.lastIndexOfScalar(T, self, char);
 }
 

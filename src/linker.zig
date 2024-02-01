@@ -735,7 +735,7 @@ pub const Linker = struct {
                     }
 
                     var base = linker.fs.relativeTo(source_path);
-                    if (strings.lastIndexOfChar(u8, base, '.')) |dot| {
+                    if (strings.lastIndexOfChar(base, '.')) |dot| {
                         base = base[0..dot];
                     }
 

@@ -191,7 +191,7 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
     if (std.fs.path.dirname(specifier)) |dir_path| {
         const root_len = switch (Environment.os) {
             else => "/".len,
-            .windows => bun.path.windowsFilesystemRoot(u8, dir_path).len,
+            .windows => bun.path.windowsFilesystemRoot(dir_path).len,
         };
         var parent = dir.makeOpenPath(dir_path[root_len..], .{}) catch |e| {
             Output.debug("Failed to dump source string: makeOpenPath({s}[{d}..]) {}", .{ dir_path, root_len, e });

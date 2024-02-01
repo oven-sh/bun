@@ -239,7 +239,7 @@ pub const BunxCommand = struct {
             "tsc"
         else if (update_request.version.tag == .github)
             update_request.version.value.github.repo.slice(update_request.version_buf)
-        else if (strings.lastIndexOfChar(u8, update_request.name, '/')) |index|
+        else if (strings.lastIndexOfChar(update_request.name, '/')) |index|
             update_request.name[index + 1 ..]
         else
             update_request.name;

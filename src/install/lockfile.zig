@@ -3344,7 +3344,7 @@ pub const Package = extern struct {
             .workspace => if (strings.hasPrefixComptime(sliced.slice, "workspace:")) brk: {
                 const input = sliced.slice["workspace:".len..];
                 if (!strings.eqlComptime(input, "*")) {
-                    const at = strings.lastIndexOfChar(u8, input, '@') orelse 0;
+                    const at = strings.lastIndexOfChar(input, '@') orelse 0;
                     if (at > 0) {
                         workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch return error.InstallFailed;
                         break :brk String.Builder.stringHash(input[0..at]);

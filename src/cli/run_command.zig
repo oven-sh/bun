@@ -785,7 +785,7 @@ pub const RunCommand = struct {
 
         {
             var remain = cwd;
-            while (strings.lastIndexOfChar(u8, remain, std.fs.path.sep)) |i| {
+            while (strings.lastIndexOfChar(remain, std.fs.path.sep)) |i| {
                 new_path_len += strings.withoutTrailingSlash(remain).len + "node_modules.bin".len + 1 + 2; // +2 for path separators, +1 for path delimiter
                 remain = remain[0..i];
             } else {
@@ -817,7 +817,7 @@ pub const RunCommand = struct {
             }
 
             var remain = cwd;
-            while (strings.lastIndexOfChar(u8, remain, std.fs.path.sep)) |i| {
+            while (strings.lastIndexOfChar(remain, std.fs.path.sep)) |i| {
                 try new_path.appendSlice(strings.withoutTrailingSlash(remain));
                 try new_path.appendSlice(bun.pathLiteral("/node_modules/.bin"));
                 try new_path.append(std.fs.path.delimiter);

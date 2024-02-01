@@ -78,7 +78,7 @@ const ScanOpts = struct {
 
         const cwd_str = cwd_str: {
             // If its absolute return as is
-            if (ResolvePath.Platform.auto.isAbsolute(u8, cwd_str_raw.slice())) {
+            if (ResolvePath.Platform.auto.isAbsolute(cwd_str_raw.slice())) {
                 const cwd_str = cwd_str_raw.clone(allocator) catch {
                     globalThis.throwOutOfMemory();
                     return null;

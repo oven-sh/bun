@@ -662,7 +662,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 const is_sentinel = @TypeOf(new_cwd_) == [:0]const u8;
 
                 const new_cwd: [:0]const u8 = brk: {
-                    if (ResolvePath.Platform.auto.isAbsolute(u8, new_cwd_)) {
+                    if (ResolvePath.Platform.auto.isAbsolute(new_cwd_)) {
                         if (is_sentinel) {
                             @memcpy(ResolvePath.join_buf[0..new_cwd_.len], new_cwd_[0..new_cwd_.len]);
                             ResolvePath.join_buf[new_cwd_.len] = 0;
@@ -6332,7 +6332,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                                                     for (filepath_args) |filepath| {
                                                         const path = filepath[0..bun.len(filepath)];
-                                                        const resolved_path = if (ResolvePath.Platform.auto.isAbsolute(u8, path)) path else bun.path.join(&[_][]const u8{ cwd, path }, .auto);
+                                                        const resolved_path = if (ResolvePath.Platform.auto.isAbsolute(path)) path else bun.path.join(&[_][]const u8{ cwd, path }, .auto);
                                                         const is_root = brk: {
                                                             const normalized = bun.path.normalizeString(resolved_path, false, .auto);
                                                             const dirname = ResolvePath.dirname(normalized, .auto);
@@ -6452,7 +6452,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                     for (this.state.exec.filepath_args) |root_raw| {
                                         const root = root_raw[0..std.mem.len(root_raw)];
                                         const root_path_string = bun.PathString.init(root[0..root.len]);
-                                        const is_absolute = ResolvePath.Platform.auto.isAbsolute(u8, root);
+                                        const is_absolute = ResolvePath.Platform.auto.isAbsolute(root);
                                         var task = ShellRmTask.create(root_path_string, this, cwd, &this.state.exec.error_signal, is_absolute);
                                         task.schedule();
                                         // task.
@@ -6777,7 +6777,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             defer this.postRun();
 
                             print("DirTask: {s}", .{this.path});
-                            switch (this.task_manager.removeEntry(this, ResolvePath.Platform.auto.isAbsolute(u8, this.path[0..this.path.len]))) {
+                            switch (this.task_manager.removeEntry(this, ResolvePath.Platform.auto.isAbsolute(this.path[0..this.path.len]))) {
                                 .err => |err| {
                                     print("DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
                                     this.task_manager.err_mutex.lock();

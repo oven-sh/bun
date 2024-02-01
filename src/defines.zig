@@ -206,7 +206,7 @@ pub const Define = struct {
             const user_define_key = user_define.key_ptr.*;
             // If it has a dot, then it's a DotDefine.
             // e.g. process.env.NODE_ENV
-            if (strings.lastIndexOfChar(u8, user_define_key, '.')) |last_dot| {
+            if (strings.lastIndexOfChar(user_define_key, '.')) |last_dot| {
                 const tail = user_define_key[last_dot + 1 .. user_define_key.len];
                 const remainder = user_define_key[0..last_dot];
                 const count = std.mem.count(u8, remainder, ".") + 1;

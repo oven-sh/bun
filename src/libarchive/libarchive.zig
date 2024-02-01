@@ -508,7 +508,7 @@ pub const Archive = struct {
                     // Ideally, we find a way to tell libarchive to not convert the strings to wide characters and also to not
                     // replace path separators. We can do both of these with our own normalization and utf8/utf16 string conversion code.
                     var pathname: bun.OSPathSliceZ = if (comptime Environment.isWindows) brk: {
-                        const normalized = bun.path.normalizeBuf(
+                        const normalized = bun.path.normalizeBufT(
                             u16,
                             std.mem.span(lib.archive_entry_pathname_w(entry)),
                             &w_path_buf,

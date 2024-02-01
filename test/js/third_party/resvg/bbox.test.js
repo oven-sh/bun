@@ -1,4 +1,3 @@
-// @known-failing-on-windows: code 3765269347
 import { test, expect } from "bun:test";
 import { Resvg } from "@resvg/resvg-js";
 

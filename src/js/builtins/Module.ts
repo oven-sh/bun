@@ -12,7 +12,7 @@ export function require(this: CommonJSModuleRecord, id: string) {
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: CommonJSModuleRecord, id: string) {
-  const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.path, false)));
+  const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.id, false)));
   if (existing) {
     // Scenario where this is necessary:
     //

@@ -4655,6 +4655,9 @@ enum class BuiltinNamesMap : uint8_t {
     toString,
     redirect,
     inspectCustom,
+    highWaterMark,
+    path,
+    stream,
 };
 
 static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -4691,6 +4694,19 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::inspectCustom: {
         return Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
+    }
+    case BuiltinNamesMap::highWaterMark: {
+        return clientData->builtinNames().highWaterMarkPublicName();
+    }
+    case BuiltinNamesMap::path: {
+        return clientData->builtinNames().pathPublicName();
+    }
+    case BuiltinNamesMap::stream: {
+        return clientData->builtinNames().streamPublicName();
+    }
+    default: {
+        ASSERT_NOT_REACHED();
+        return Identifier();
     }
     }
 }

@@ -4459,6 +4459,9 @@ pub const JSValue = enum(JSValueReprInt) {
         toString,
         redirect,
         inspectCustom,
+        highWaterMark,
+        path,
+        stream,
     };
 
     // intended to be more lightweight than ZigString
@@ -4557,6 +4560,12 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
+        if (comptime bun.Environment.isDebug) {
+            if (bun.ComptimeEnumMap(BuiltinName).has(property)) {
+                Output.debugWarn("get() called with a builtin property name. Use fastGet() instead: {s}", .{property});
+            }
+        }
+
         if (get(this, global, property)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull()) return null;
             return prop;

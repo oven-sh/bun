@@ -5284,8 +5284,9 @@ pub const NodeFS = struct {
                 bun.path.posixToPlatformInPlace(u8, @constCast(path));
 
                 var is_dirfd_different = false;
-                const dirfd = if (!Environment.isWindows) args.dirfd else blk: {
-                    if (std.mem.startsWith(u8, path, "..\\")) {
+                var dirfd = args.dirfd;
+                if (Environment.isWindows) {
+                    while (std.mem.startsWith(u8, path, "..\\")) {
                         is_dirfd_different = true;
                         var buffer: bun.WPathBuffer = undefined;
                         const dirfd_path_len = std.os.windows.kernel32.GetFinalPathNameByHandleW(args.dirfd.cast(), &buffer, buffer.len, 0);
@@ -5299,10 +5300,9 @@ pub const NodeFS = struct {
                             },
                         };
                         path = path[3..];
-                        break :blk newdirfd;
+                        dirfd = newdirfd;
                     }
-                    break :blk args.dirfd;
-                };
+                }
                 defer if (is_dirfd_different) {
                     var d = dirfd.asDir();
                     d.close();

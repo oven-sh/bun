@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { bunRun, bunRunAsScript, bunTest, tempDirWithFiles, bunExe, bunEnv } from "harness";
 import path from "path";

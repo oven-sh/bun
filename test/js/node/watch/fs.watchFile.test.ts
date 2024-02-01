@@ -37,7 +37,6 @@ describe("fs.watchFile", () => {
   });
   test("it watches a file", async () => {
     let entries: any = [];
-    console.log(testDir, path.join(testDir, "watch.txt"));
     fs.watchFile(path.join(testDir, "watch.txt"), { interval: 50 }, (curr, prev) => {
       entries.push([curr, prev]);
     });
@@ -52,8 +51,7 @@ describe("fs.watchFile", () => {
     fs.unwatchFile(path.join(testDir, "watch.txt"));
 
     expect(entries.length).toBeGreaterThan(0);
-    console.log(entries);
-
+    
     expect(entries[0][0].size).toBe(6);
     expect(entries[0][1].size).toBe(5);
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);

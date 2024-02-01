@@ -86,8 +86,8 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
 }
 
 $visibility = "Private";
-export function requireResolve(this: string | { path: string }, id: string) {
-  return $resolveSync(id, typeof this === "string" ? this : this?.path, false);
+export function requireResolve(this: string | { id: string }, id: string) {
+  return $resolveSync(id, typeof this === "string" ? this : this?.id, false);
 }
 
 $visibility = "Private";

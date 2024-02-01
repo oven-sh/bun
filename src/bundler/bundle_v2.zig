@@ -9038,7 +9038,7 @@ const LinkerContext = struct {
                 }
                 // resolve any /./ and /../ occurrences
                 // use resolvePosix since we asserted above all seps are '/'
-                if (std.mem.indexOf(u8, rel_path, "/./") != null) {
+                if (Environment.isWindows and std.mem.indexOf(u8, rel_path, "/./") != null) {
                     var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
                     const rel_path_fixed = c.allocator.dupe(u8, bun.path.normalizeBuf(rel_path, &buf, .posix)) catch unreachable;
                     chunk.final_rel_path = rel_path_fixed;

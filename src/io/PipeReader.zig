@@ -198,12 +198,14 @@ pub fn PosixPipeReader(
             const fd = getFd(this);
             if (fd != bun.invalid_fd) {
                 _ = bun.sys.close();
-                this.poll.deinit();
+                this.handle.getPoll().deinit();
             }
             vtable.done(this);
         }
     };
 }
+
+const PollOrFd = @import("./pipes.zig").PollOrFd;
 
 const uv = bun.windows.libuv;
 pub fn WindowsPipeReader(
@@ -299,7 +301,7 @@ pub const PipeReader = if (bun.Environment.isWindows) WindowsPipeReader else Pos
 const Async = bun.Async;
 pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*const fn (*Parent, chunk: []const u8) void) type {
     return struct {
-        poll: *Async.FilePoll = undefined,
+        handle: PollOrFd = .{ .closed = {} },
         _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
         is_done: bool = false,
         parent: *Parent = undefined,
@@ -308,25 +310,25 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
 
         pub fn fromOutputReader(to: *@This(), from: anytype, parent: *Parent) void {
             to.* = .{
-                .poll = from.poll,
+                .handle = from.handle,
                 .buffer = from.buffer,
                 .is_done = from.is_done,
                 .parent = parent,
             };
-            to.poll.owner = Async.FilePoll.Owner.init(to);
+            to.setParent(parent);
             from.buffer = .{
                 .items = &.{},
                 .capacity = 0,
                 .allocator = from.buffer.allocator,
             };
             from.is_done = true;
-            from.poll = undefined;
+            from.handle = .{ .closed = {} };
         }
 
         pub fn setParent(this: *@This(), parent: *Parent) void {
             this.parent = parent;
             if (!this.is_done) {
-                this.poll.owner = Async.FilePoll.Owner.init(this);
+                this.handle.setOwner(this);
             }
         }
 
@@ -345,7 +347,7 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
         }
 
         pub fn getFd(this: *PosixOutputReader) bun.FileDescriptor {
-            return this.poll.fd;
+            return this.handle.getFd();
         }
 
         // No-op on posix.
@@ -359,16 +361,17 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
         }
 
         pub fn disableKeepingProcessAlive(this: *@This(), event_loop_ctx: anytype) void {
-            this.poll.ref(event_loop_ctx);
+            const poll = this.handle.getPoll() orelse return;
+            poll.ref(event_loop_ctx);
         }
 
         pub fn enableKeepingProcessAlive(this: *@This(), event_loop_ctx: anytype) void {
-            this.poll.unref(event_loop_ctx);
+            const poll = this.handle.getPoll() orelse return;
+            poll.unref(event_loop_ctx);
         }
 
         fn finish(this: *PosixOutputReader) void {
-            this.poll.flags.insert(.ignore_updates);
-            this.parent.eventLoop().putFilePoll(this.poll);
+            this.handle.close(null, {});
             std.debug.assert(!this.is_done);
             this.is_done = true;
         }
@@ -380,7 +383,7 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
 
         pub fn deinit(this: *PosixOutputReader) void {
             this.buffer.deinit();
-            this.poll.deinit();
+            this.handle.close(null, {});
         }
 
         pub fn onError(this: *PosixOutputReader, err: bun.sys.Error) void {
@@ -389,7 +392,8 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
         }
 
         pub fn registerPoll(this: *PosixOutputReader) void {
-            switch (this.poll.register(this.parent.loop(), .readable, true)) {
+            const poll = this.handle.getPoll() orelse return;
+            switch (poll.register(this.parent.loop(), .readable, true)) {
                 .err => |err| {
                     this.onError(err);
                 },
@@ -397,14 +401,23 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
             }
         }
 
-        pub fn start(this: *PosixOutputReader, fd: bun.FileDescriptor) bun.JSC.Maybe(void) {
+        pub fn start(this: *PosixOutputReader, fd: bun.FileDescriptor, is_pollable: bool) bun.JSC.Maybe(void) {
+            if (!is_pollable) {
+                this.buffer.clearRetainingCapacity();
+                this.is_done = false;
+                this.handle.close(null, {});
+                this.handle = .{ .fd = fd };
+                return .{ .result = {} };
+            }
+
             const poll = Async.FilePoll.init(this.parent.loop(), fd, .readable, @This(), this);
-            this.poll = poll;
             const maybe = poll.register(this.parent.loop(), .readable, true);
             if (maybe != .result) {
+                poll.deinit();
                 return maybe;
             }
 
+            this.handle = .{ .poll = poll };
             this.read();
 
             return .{
@@ -442,13 +455,6 @@ pub const GenericWindowsBufferedOutputReader = struct {
     pub usingnamespace bun.NewRefCounted(@This(), deinit);
 
     const WindowsOutputReader = @This();
-
-    pub fn fromOutputReader(to: *@This(), from: anytype, parent: anytype) void {
-        _ = to; // autofix
-        _ = from; // autofix
-        _ = parent; // autofix
-
-    }
 
     pub fn setParent(this: *@This(), parent: anytype) void {
         this.parent = parent;
@@ -517,9 +523,11 @@ pub const GenericWindowsBufferedOutputReader = struct {
         return this._buffer.allocatedSlice()[this._buffer.items.len..];
     }
 
-    pub fn start(this: *@This(), _: bun.FileDescriptor) bun.JSC.Maybe(void) {
+    pub fn start(this: *@This(), _: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
         this.buffer.clearRetainingCapacity();
         this.is_done = false;
+        this.unpause();
+        return .{ .result = {} };
     }
 
     fn deinit(this: *WindowsOutputReader) void {
@@ -537,6 +545,17 @@ pub fn WindowsBufferedOutputReader(comptime Parent: type, comptime onReadChunk: 
             .onOutputError = Parent.onOutputError,
             .onReadChunk = onReadChunk,
         };
+
+        pub fn fromOutputReader(to: *@This(), from: anytype, parent: anytype) void {
+            var reader = from.reader orelse {
+                bun.Output.debugWarn("fromOutputReader: reader is null", .{});
+                return;
+            };
+            reader.vtable = vtable;
+            reader.parent = parent;
+            to.reader = reader;
+            from.reader = null;
+        }
 
         pub inline fn buffer(this: @This()) *std.ArrayList(u8) {
             const reader = this.newReader();

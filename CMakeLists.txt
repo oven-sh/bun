@@ -233,7 +233,7 @@ endif()
 if(UNIX AND NOT APPLE)
     execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
 
-    if(${LINUX_DISTRO} MATCHES "NAME=\"(Arch|Manjaro) Linux\"\n")
+    if(${LINUX_DISTRO} MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux\"\n")
         set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
     endif()
 endif()

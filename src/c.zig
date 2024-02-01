@@ -27,7 +27,6 @@ pub const darwin = @import("./darwin_c.zig");
 pub const linux = @import("./linux_c.zig");
 pub extern "c" fn chmod([*c]const u8, mode_t) c_int;
 pub extern "c" fn fchmod(std.c.fd_t, mode_t) c_int;
-pub extern "c" fn umask(mode_t) mode_t;
 pub extern "c" fn fchmodat(c_int, [*c]const u8, mode_t, c_int) c_int;
 pub extern "c" fn fchown(std.c.fd_t, std.c.uid_t, std.c.gid_t) c_int;
 pub extern "c" fn lchown(path: [*:0]const u8, std.c.uid_t, std.c.gid_t) c_int;

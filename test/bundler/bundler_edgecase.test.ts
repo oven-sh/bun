@@ -1,5 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
+import { sep } from "path";
 import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
@@ -36,7 +37,7 @@ describe("bundler", () => {
     },
     target: "bun",
     run: {
-      stdout: "a/b",
+      stdout: `a${sep}b`,
     },
   });
   itBundled("edgecase/ImportStarFunction", {

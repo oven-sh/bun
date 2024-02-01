@@ -2540,11 +2540,10 @@ pub const UVLoop = extern struct {
     pub fn run(this: *UVLoop) void {
         us_loop_run(this);
     }
-    pub const tick = run;
 
-    pub fn wait(this: *UVLoop) void {
-        us_loop_run(this);
-    }
+    // TODO: remove these two aliases
+    pub const tick = run;
+    pub const wait = run;
 
     pub fn inc(this: *UVLoop) void {
         this.uv_loop.inc();

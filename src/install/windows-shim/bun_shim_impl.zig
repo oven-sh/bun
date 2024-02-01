@@ -34,7 +34,8 @@
 //! Prior Art:
 //! - https://github.com/ScoopInstaller/Shim/blob/master/src/shim.cs
 //!
-//! The compiled binary is 10240 bytes and is `@embedFile`d into Bun itself
+//! The compiled binary is 10240 bytes and is `@embedFile`d into Bun itself.
+//! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
 const std = @import("std");
 const builtin = @import("builtin");
 
@@ -243,7 +244,7 @@ noinline fn failWithReason(reason: FailReason) noreturn {
 
 const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
 
-inline fn launcher(bun_ctx: anytype) noreturn {
+fn launcher(bun_ctx: anytype) noreturn {
     // peb! w.teb is a couple instructions of inline asm
     const teb: *w.TEB = @call(.always_inline, w.teb, .{});
     const peb = teb.ProcessEnvironmentBlock;
@@ -394,32 +395,54 @@ inline fn launcher(bun_ctx: anytype) noreturn {
     //
     // we do this by reusing the memory in the first buffer
     // BUF1: '\??\C:\Users\dave\project\node_modules\.bin\hello.bunx!!!!!!!!!!!!!!!!!!!!!!'
-    //                                              ^^        ^    ^
-    //                                              S|        |    image_path_b_len
+    //                                              ^^        ^     ^
+    //                                              S|        |     image_path_b_len + nt_object_prefix.len
     //                                               |        'ptr' initial value
     //                                              the read ptr
-    var read_ptr = brk: {
-        var left = image_path_b_len / 2 - (if (is_standalone) 2 * ".exe".len else ".bunx".len);
-        var ptr: [*]u16 = buf1_u16[left..];
-        inline for (0..1) |_| {
-            while (true) {
-                if (ptr[0] == '\\') {
-                    break;
-                }
+    var read_ptr: [*]u16 = brk: {
+        var left = image_path_b_len / 2 - (if (is_standalone) ".exe".len else ".bunx".len) - 1;
+        var ptr: [*]u16 = buf1_u16[nt_object_prefix.len + left ..];
+        if (dbg) debug("left = {d}, at {}, after {}\n", .{ left, ptr[0], ptr[1] });
+
+        // if this is false, potential out of bounds memory access
+        std.debug.assert(@intFromPtr(ptr) - left * @sizeOf(std.meta.Child(@TypeOf(ptr))) >= @intFromPtr(buf1_u16));
+        // we start our search right before the . as we know the extension is '.bunx'
+        std.debug.assert(ptr[1] == '.');
+
+        while (true) {
+            if (dbg) debug("1 - {}\n", .{std.unicode.fmtUtf16le(ptr[0..1])});
+            if (ptr[0] == '\\') {
                 left -= 1;
-                if (left == 0) {
-                    fail(.NoDirname);
-                }
-                ptr -= 2;
-                std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
+                // ptr is of type [*]u16, which means -= operates on number of ITEMS, not BYTES
+                ptr -= 1;
+                break;
             }
+            left -= 1;
+            if (left == 0) {
+                fail(.NoDirname);
+            }
+            ptr -= 1;
+            std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
         }
-        // in this state, ptr is pointing to what is marked 'S' above
-        // adding one to get to the read ptr
-        ptr = @ptrFromInt(@intFromPtr(ptr) + @sizeOf(u16));
-        break :brk ptr;
+        // inlined loop to do this again, because the completion case is different
+        // using `inline for` caused comptime issues that made the code much harder to read
+        while (true) {
+            if (dbg) debug("2 - {}\n", .{std.unicode.fmtUtf16le(ptr[0..1])});
+            if (ptr[0] == '\\') {
+                // ptr is at the position marked s, so move forward one *character*
+                break :brk ptr + 1;
+            }
+            left -= 1;
+            if (left == 0) {
+                fail(.NoDirname);
+            }
+            ptr -= 1;
+            std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
+        }
+        comptime unreachable;
     };
     std.debug.assert(read_ptr[0] != '\\');
+    std.debug.assert((read_ptr - 1)[0] == '\\');
 
     const read_max_len = buf1.len * 2 - (@intFromPtr(read_ptr) - @intFromPtr(buf1_u16));
 

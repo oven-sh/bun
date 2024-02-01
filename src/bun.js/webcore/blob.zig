@@ -1519,21 +1519,27 @@ pub const Blob = struct {
         return ptr.toJS(globalObject);
     }
 
-    pub fn findOrCreateFileFromPath(path_: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
+    pub fn findOrCreateFileFromPath(path_or_fd: *JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
         var vm = globalThis.bunVM();
         const allocator = bun.default_allocator;
 
         const path: JSC.Node.PathOrFileDescriptor = brk: {
-            switch (path_.*) {
+            switch (path_or_fd.*) {
                 .path => {
-                    const slice = path_.path.slice();
+                    const slice = path_or_fd.path.slice();
+
+                    if (Environment.isWindows and bun.strings.eqlComptime(slice, "/dev/null")) {
+                        // it is okay to use rodata here, because the '.string' case
+                        // in PathLike.deinit does not free anything.
+                        path_or_fd.* = .{ .path = .{ .string = bun.PathString.init("\\\\.\\NUL") } };
+                    }
 
                     if (vm.standalone_module_graph) |graph| {
                         if (graph.find(slice)) |file| {
                             defer {
-                                if (path_.path != .string) {
-                                    path_.deinit();
-                                    path_.* = .{ .path = .{ .string = bun.PathString.empty } };
+                                if (path_or_fd.path != .string) {
+                                    path_or_fd.deinit();
+                                    path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
                                 }
                             }
 
@@ -1541,13 +1547,13 @@ pub const Blob = struct {
                         }
                     }
 
-                    path_.toThreadSafe();
-                    const copy = path_.*;
-                    path_.* = .{ .path = .{ .string = bun.PathString.empty } };
+                    path_or_fd.toThreadSafe();
+                    const copy = path_or_fd.*;
+                    path_or_fd.* = .{ .path = .{ .string = bun.PathString.empty } };
                     break :brk copy;
                 },
                 .fd => {
-                    switch (bun.FDTag.get(path_.fd)) {
+                    switch (bun.FDTag.get(path_or_fd.fd)) {
                         .stdin => return Blob.initWithStore(
                             vm.rareData().stdin(),
                             globalThis,
@@ -1562,7 +1568,7 @@ pub const Blob = struct {
                         ),
                         else => {},
                     }
-                    break :brk path_.*;
+                    break :brk path_or_fd.*;
                 },
             }
         };
@@ -2894,14 +2900,9 @@ pub const Blob = struct {
             return JSValue.jsBoolean(true);
         }
 
-        if (comptime Environment.isWindows) {
-            this.globalThis.throwTODO("exists is not implemented on Windows");
-            return JSValue.jsUndefined();
-        }
-
         // We say regular files and pipes exist.
         // This is mostly meant for "Can we use this in new Response(file)?"
-        return JSValue.jsBoolean(bun.isRegularFile(store.data.file.mode) or std.os.S.ISFIFO(store.data.file.mode));
+        return JSValue.jsBoolean(bun.isRegularFile(store.data.file.mode) or bun.C.S.ISFIFO(store.data.file.mode));
     }
 
     // This mostly means 'can it be read?'
@@ -3635,7 +3636,10 @@ pub const Blob = struct {
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             // instead of erroring, invalid characters will become a U+FFFD replacement character
-            if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch unreachable) |external| {
+            if (strings.toUTF16Alloc(bun.default_allocator, buf, false, false) catch {
+                global.throwOutOfMemory();
+                return .zero;
+            }) |external| {
                 if (lifetime != .temporary)
                     this.setIsASCIIFlag(false);
 
@@ -3735,7 +3739,7 @@ pub const Blob = struct {
             var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
             const allocator = stack_fallback.get();
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
-            if (strings.toUTF16Alloc(allocator, buf, false) catch null) |external| {
+            if (strings.toUTF16Alloc(allocator, buf, false, false) catch null) |external| {
                 if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
                 const result = ZigString.init16(external).toJSONObject(global);
                 allocator.free(external);
@@ -4393,7 +4397,7 @@ pub const InternalBlob = struct {
 
     pub fn toStringOwned(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
         const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);
-        if (strings.toUTF16Alloc(globalThis.allocator(), bytes_without_bom, false) catch &[_]u16{}) |out| {
+        if (strings.toUTF16Alloc(globalThis.allocator(), bytes_without_bom, false, false) catch &[_]u16{}) |out| {
             const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);
             return_value.ensureStillAlive();
             this.deinit();

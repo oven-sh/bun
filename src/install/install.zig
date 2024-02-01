@@ -692,7 +692,9 @@ const Task = struct {
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpStackTrace(trace.*);
+                            _ = trace; // autofix
+
+                            // std.debug.dumpStackTrace(trace.*);
                         }
                     }
 
@@ -1061,10 +1063,40 @@ pub const PackageInstall = struct {
         var package_json_checker = json_parser.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
         _ = package_json_checker.parseExpr() catch return false;
         if (!package_json_checker.has_found_name or !package_json_checker.has_found_version or log.errors > 0) return false;
+        const found_version = package_json_checker.found_version;
+        // Check if the version matches
+        if (!strings.eql(found_version, this.package_version)) {
+            const offset = brk: {
+                // ASCII only.
+                for (0..found_version.len) |c| {
+                    switch (found_version[c]) {
+                        // newlines & whitespace
+                        ' ',
+                        '\t',
+                        '\n',
+                        '\r',
+                        std.ascii.control_code.vt,
+                        std.ascii.control_code.ff,
 
-        // Version is more likely to not match than name, so we check it first.
-        return strings.eql(package_json_checker.found_version, this.package_version) and
-            strings.eql(package_json_checker.found_name, this.package_name);
+                        // version separators
+                        'v',
+                        '=',
+                        => {},
+                        else => {
+                            break :brk c;
+                        },
+                    }
+                }
+                // If we didn't find any of these characters, there's no point in checking the version again.
+                // it will never match.
+                return false;
+            };
+
+            if (!strings.eql(found_version[offset..], this.package_version)) return false;
+        }
+
+        // lastly, check the name.
+        return strings.eql(package_json_checker.found_name, this.package_name);
     }
 
     pub const Result = union(Tag) {
@@ -1416,11 +1448,12 @@ pub const PackageInstall = struct {
                                 // Windows limits hardlinks to 1023 per file
                                 if (bun.windows.CreateHardLinkW(dest, src, null) == 0) {
                                     if (bun.windows.CopyFileW(src, dest, 0) == 0) {
-                                        if (bun.windows.Win32Error.get().toSystemErrno()) |_| {
-                                            // TODO: make this better
-                                            return error.FailedToCopyFile;
+                                        const e = bun.windows.Win32Error.get();
+                                        if (e.toSystemErrno()) |err| {
+                                            return bun.errnoToZigErr(err);
                                         }
-
+                                        // If this code path is reached, it should have a toSystemErrno mapping
+                                        Output.warn("Failed to copy file during installation: {s}", .{@tagName(e)});
                                         return error.FailedToCopyFile;
                                     }
                                 }
@@ -5056,7 +5089,7 @@ pub const PackageManager = struct {
                                 },
                             );
                         } else if (comptime log_level != .silent) {
-                            const fmt = "<r><red>error<r>: {s} extracting tarball for <b>{s}<r>";
+                            const fmt = "<r><red>error<r>: {s} extracting tarball for <b>{s}<r>\n";
                             const args = .{
                                 @errorName(err),
                                 alias,
@@ -6553,11 +6586,6 @@ pub const PackageManager = struct {
     }
 
     pub inline fn link(ctx: Command.Context) !void {
-        if (comptime Environment.isWindows) {
-            Output.prettyErrorln("<r><red>error:<r> bun link is not supported on Windows yet", .{});
-            Global.crash();
-        }
-
         var manager = PackageManager.init(ctx, .link) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 try attemptToCreatePackageJSON();
@@ -6587,6 +6615,7 @@ pub const PackageManager = struct {
                     current_package_json_buf,
                     0,
                 );
+                if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
 
                 const package_json_source = logger.Source.initPathString(
                     package_json_cwd,
@@ -6647,12 +6676,37 @@ pub const PackageManager = struct {
                     }
                 }
 
-                // create the symlink
-                node_modules.symLink(Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), name, .{ .is_directory = true }) catch |err| {
-                    if (manager.options.log_level != .silent)
-                        Output.prettyErrorln("<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {s}", .{@errorName(err)});
-                    Global.crash();
-                };
+                if (comptime Environment.isWindows) {
+                    // create the junction
+                    const top_level = Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash();
+                    var link_path_buf: bun.PathBuffer = undefined;
+                    @memcpy(
+                        link_path_buf[0..top_level.len],
+                        top_level,
+                    );
+                    link_path_buf[top_level.len] = 0;
+                    const link_path = link_path_buf[0..top_level.len :0];
+                    const global_path = try manager.globalLinkDirPath();
+                    const dest_path = Path.joinAbsStringZ(global_path, &.{name}, .windows);
+                    switch (bun.sys.sys_uv.symlinkUV(
+                        link_path,
+                        dest_path,
+                        bun.windows.libuv.UV_FS_SYMLINK_JUNCTION,
+                    )) {
+                        .err => |err| {
+                            Output.prettyErrorln("<r><red>error:<r> failed to create junction to node_modules in global dir due to error {}", .{err});
+                            Global.crash();
+                        },
+                        .result => {},
+                    }
+                } else {
+                    // create the symlink
+                    node_modules.symLink(Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), name, .{ .is_directory = true }) catch |err| {
+                        if (manager.options.log_level != .silent)
+                            Output.prettyErrorln("<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {s}", .{@errorName(err)});
+                        Global.crash();
+                    };
+                }
             }
 
             // Step 3b. Link any global bins
@@ -6708,11 +6762,6 @@ pub const PackageManager = struct {
     }
 
     pub inline fn unlink(ctx: Command.Context) !void {
-        if (comptime Environment.isWindows) {
-            Output.prettyErrorln("<r><red>error:<r> bun unlink is not supported on Windows yet", .{});
-            Global.crash();
-        }
-
         var manager = PackageManager.init(ctx, .unlink) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 try attemptToCreatePackageJSON();
@@ -6742,6 +6791,7 @@ pub const PackageManager = struct {
                     current_package_json_buf,
                     0,
                 );
+                if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
 
                 const package_json_source = logger.Source.initPathString(
                     package_json_cwd,
@@ -6769,7 +6819,7 @@ pub const PackageManager = struct {
 
             switch (Syscall.lstat(Path.joinAbsStringZ(try manager.globalLinkDirPath(), &.{name}, .auto))) {
                 .result => |stat| {
-                    if (!std.os.S.ISLNK(stat.mode)) {
+                    if (!bun.S.ISLNK(@intCast(stat.mode))) {
                         Output.prettyErrorln("<r><green>success:<r> package \"{s}\" is not globally linked, so there's nothing to do.", .{name});
                         Global.exit(0);
                     }
@@ -7447,6 +7497,7 @@ pub const PackageManager = struct {
             current_package_json_buf,
             0,
         );
+        if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
 
         const package_json_source = logger.Source.initPathString(
             package_json_cwd,
@@ -9314,13 +9365,10 @@ pub const PackageManager = struct {
             }
         }
 
-        switch (Output.enable_ansi_colors) {
-            inline else => |enable_ansi_colors| {
-                try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors);
-            },
-        }
-
+        try manager.log.printForLogLevel(Output.errorWriter());
         if (manager.log.hasErrors()) Global.crash();
+
+        manager.log.reset();
 
         // This operation doesn't perform any I/O, so it should be relatively cheap.
         manager.lockfile = try manager.lockfile.cleanWithLogger(
@@ -9457,6 +9505,9 @@ pub const PackageManager = struct {
                 log_level,
             );
         }
+
+        try manager.log.printForLogLevel(Output.errorWriter());
+        if (manager.log.hasErrors()) Global.crash();
 
         if (needs_new_lockfile) {
             manager.summary.add = @as(u32, @truncate(manager.lockfile.packages.len));

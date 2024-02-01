@@ -1062,7 +1062,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     // this function encodes to UTF-16 if > 127
                     // so we don't need to worry about latin1 non-ascii code points
                     // we avoid trim since we wanna keep the utf8 validation intact
-                    const utf16_bytes_ = strings.toUTF16AllocNoTrim(bun.default_allocator, data_, true) catch {
+                    const utf16_bytes_ = strings.toUTF16AllocNoTrim(bun.default_allocator, data_, true, false) catch {
                         this.terminate(ErrorCode.invalid_utf8);
                         return;
                     };

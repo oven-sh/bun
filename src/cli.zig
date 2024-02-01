@@ -196,7 +196,10 @@ pub const Arguments = struct {
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
-    };
+    } ++ if (Environment.isWindows) [_]ParamType{
+        // clap.parseParam("--native-shell                    Use cmd.exe to interpret package.json scripts") catch unreachable,
+        clap.parseParam("--no-native-shell                    Use Bun shell (TODO: flip this switch)") catch unreachable,
+    } else .{};
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const bunx_commands = [_]ParamType{
@@ -835,6 +838,13 @@ pub const Arguments = struct {
         if (output_file != null)
             ctx.debug.output_file = output_file.?;
 
+        if (cmd == .RunCommand) {
+            ctx.debug.use_native_shell = if (Environment.isWindows)
+                !args.flag("--no-native-shell")
+            else
+                true;
+        }
+
         return opts;
     }
 };
@@ -1028,6 +1038,8 @@ pub const Command = struct {
         offline_mode_setting: ?Bunfig.OfflineMode = null,
         run_in_bun: bool = false,
         loaded_bunfig: bool = false,
+        /// Disables using bun.shell.Interpreter for `bun run`, instead spawning cmd.exe
+        use_native_shell: bool = false,
 
         // technical debt
         macros: MacroOptions = MacroOptions.unspecified,
@@ -1287,31 +1299,28 @@ pub const Command = struct {
             }
         }
 
-        // there's a bug with openSelfExe() on Windows
-        if (comptime !bun.Environment.isWindows) {
-            // bun build --compile entry point
-            if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-                var ctx = Command.Context{
-                    .args = std.mem.zeroes(Api.TransformOptions),
-                    .log = log,
-                    .start_time = start_time,
-                    .allocator = bun.default_allocator,
-                };
+        // bun build --compile entry point
+        if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
+            var ctx = Command.Context{
+                .args = std.mem.zeroes(Api.TransformOptions),
+                .log = log,
+                .start_time = start_time,
+                .allocator = bun.default_allocator,
+            };
 
-                ctx.args.target = Api.Target.bun;
-                if (bun.argv().len > 1) {
-                    ctx.passthrough = bun.argv()[1..];
-                } else {
-                    ctx.passthrough = &[_]string{};
-                }
-
-                try @import("./bun_js.zig").Run.bootStandalone(
-                    ctx,
-                    graph.entryPoint().name,
-                    graph,
-                );
-                return;
+            ctx.args.target = Api.Target.bun;
+            if (bun.argv().len > 1) {
+                ctx.passthrough = bun.argv()[1..];
+            } else {
+                ctx.passthrough = &[_]string{};
             }
+
+            try @import("./bun_js.zig").Run.bootStandalone(
+                ctx,
+                graph.entryPoint().name,
+                graph,
+            );
+            return;
         }
 
         const tag = which();
@@ -1778,6 +1787,8 @@ pub const Command = struct {
 
         const script_name_to_search = ctx.args.entry_points[0];
 
+        var absolute_script_path: ?string = null;
+
         var file_path = script_name_to_search;
         const file_: anyerror!std.fs.File = brk: {
             if (std.fs.path.isAbsoluteWindows(script_name_to_search)) {
@@ -1786,6 +1797,7 @@ pub const Command = struct {
                 if (comptime Environment.isWindows) {
                     resolved = resolve_path.normalizeString(resolved, true, .windows);
                 }
+                absolute_script_path = resolved;
                 break :brk bun.openFile(
                     resolved,
                     .{ .mode = .read_only },
@@ -1821,7 +1833,17 @@ pub const Command = struct {
         Global.configureAllocator(.{ .long_running = true });
 
         // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
-        const absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
+        absolute_script_path = absolute_script_path orelse brk: {
+            if (comptime !Environment.isWindows) break :brk bun.getFdPath(file.handle, &script_name_buf) catch return false;
+
+            var fd_path_buf: bun.PathBuffer = undefined;
+            const path = bun.getFdPath(file.handle, &fd_path_buf) catch return false;
+            break :brk resolve_path.normalizeString(
+                resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(&script_name_buf, path) catch @panic("Could not resolve path"),
+                true,
+                .windows,
+            );
+        };
 
         if (!ctx.debug.loaded_bunfig) {
             bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
@@ -1829,7 +1851,7 @@ pub const Command = struct {
 
         BunJS.Run.boot(
             ctx.*,
-            absolute_script_path,
+            absolute_script_path.?,
         ) catch |err| {
             if (Output.enable_ansi_colors) {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};

@@ -141,12 +141,15 @@ pub fn Maybe(comptime ResultType: type) type {
         }
 
         pub inline fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
+            if (comptime Environment.isWindows) {
+                if (rc != 0) return null;
+            }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @truncate(@intFromEnum(err)),
+                        .errno = translateToErrInt(err),
                         .syscall = syscall,
                     },
                 },
@@ -157,19 +160,22 @@ pub fn Maybe(comptime ResultType: type) type {
             return @This(){
                 // always truncate
                 .err = .{
-                    .errno = @truncate(@intFromEnum(err)),
+                    .errno = translateToErrInt(err),
                     .syscall = syscall,
                 },
             };
         }
 
         pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
+            if (comptime Environment.isWindows) {
+                if (rc != 0) return null;
+            }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @truncate(@intFromEnum(err)),
+                        .errno = translateToErrInt(err),
                         .syscall = syscall,
                         .fd = fd,
                     },
@@ -181,18 +187,28 @@ pub fn Maybe(comptime ResultType: type) type {
             if (std.meta.Child(@TypeOf(path)) == u16) {
                 @compileError("Do not pass WString path to errnoSysP, it needs the path encoded as utf8");
             }
+            if (comptime Environment.isWindows) {
+                if (rc != 0) return null;
+            }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
                     .err = .{
-                        .errno = @truncate(@intFromEnum(err)),
+                        .errno = translateToErrInt(err),
                         .syscall = syscall,
                         .path = bun.asByteSlice(path),
                     },
                 },
             };
         }
+    };
+}
+
+fn translateToErrInt(err: anytype) bun.sys.Error.Int {
+    return switch (@TypeOf(err)) {
+        bun.windows.NTSTATUS => @intFromEnum(bun.windows.translateNTStatusToErrno(err)),
+        else => @truncate(@intFromEnum(err)),
     };
 }
 

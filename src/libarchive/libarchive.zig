@@ -471,7 +471,7 @@ pub const Archive = struct {
 
     pub fn extractToDir(
         file_buffer: []const u8,
-        dir_: std.fs.Dir,
+        dir: std.fs.Dir,
         ctx: ?*Archive.Context,
         comptime ContextType: type,
         appender: ContextType,
@@ -487,8 +487,9 @@ pub const Archive = struct {
         _ = stream.openRead();
         const archive = stream.archive;
         var count: u32 = 0;
-        const dir = dir_;
         const dir_fd = dir.fd;
+
+        var w_path: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
 
         loop: while (true) {
             const r = @as(Status, @enumFromInt(lib.archive_read_next_header(archive, &entry)));
@@ -561,7 +562,7 @@ pub const Archive = struct {
                         Kind.sym_link => {
                             const link_target = lib.archive_entry_symlink(entry).?;
                             if (comptime Environment.isWindows) {
-                                @panic("TODO on Windows");
+                                @panic("TODO on Windows: Extracting archives containing symbolic links.");
                             }
                             std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
                                 switch (err) {
@@ -577,25 +578,58 @@ pub const Archive = struct {
                         },
                         Kind.file => {
                             const mode: bun.Mode = if (comptime Environment.isWindows) 0 else @intCast(lib.archive_entry_perm(entry));
-                            const file = dir.createFileZ(pathname, .{ .truncate = true, .mode = mode }) catch |err| brk: {
-                                switch (err) {
-                                    error.AccessDenied, error.FileNotFound => {
-                                        dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
-                                        break :brk try dir.createFileZ(pathname, .{
-                                            .truncate = true,
-                                            .mode = mode,
-                                        });
-                                    },
-                                    else => {
-                                        return err;
-                                    },
+
+                            const file_handle_native = brk: {
+                                if (Environment.isWindows) {
+                                    const flags = std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC;
+                                    const os_path = bun.strings.toWPathNormalized(&w_path, slice);
+                                    switch (bun.sys.openatWindows(bun.toFD(dir_fd), os_path, flags)) {
+                                        .result => |fd| break :brk fd,
+                                        .err => |e| switch (e.errno) {
+                                            @intFromEnum(bun.C.E.PERM), @intFromEnum(bun.C.E.NOENT) => {
+                                                dir.makePath(std.fs.path.dirname(slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
+                                                break :brk try bun.sys.openatWindows(bun.toFD(dir_fd), os_path, flags).unwrap();
+                                            },
+                                            else => {
+                                                return bun.errnoToZigErr(e.errno);
+                                            },
+                                        },
+                                    }
+                                } else {
+                                    break :brk (dir.createFileZ(pathname, .{ .truncate = true, .mode = mode }) catch |err| {
+                                        switch (err) {
+                                            error.AccessDenied, error.FileNotFound => {
+                                                dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
+                                                break :brk (try dir.createFileZ(pathname, .{
+                                                    .truncate = true,
+                                                    .mode = mode,
+                                                })).handle;
+                                            },
+                                            else => {
+                                                return err;
+                                            },
+                                        }
+                                    }).handle;
                                 }
                             };
-                            const file_handle = bun.toLibUVOwnedFD(file.handle);
+                            const file_handle = bun.toLibUVOwnedFD(file_handle_native);
 
-                            defer {
-                                if (comptime close_handles) _ = bun.sys.close(file_handle);
-                            }
+                            defer if (comptime close_handles) {
+                                // On windows, AV hangs these closes really badly.
+                                // 'bun i @mui/icons-material' takes like 20 seconds to extract
+                                // mostly spend on waiting for things to close closing
+                                //
+                                // Using Async.Closer defers closing the file to a different thread,
+                                // which can make the NtSetInformationFile call fail.
+                                //
+                                // Using async closing doesnt actually improve end user performance
+                                // probably because our process is still waiting on AV to do it's thing.
+                                //
+                                // But this approach does not actually solve the problem, it just
+                                // defers the close to a different thread. And since we are already
+                                // on a worker thread, that doesn't help us.
+                                _ = bun.sys.close(file_handle);
+                            };
 
                             const entry_size = @max(lib.archive_entry_size(entry), 0);
                             const size = @as(usize, @intCast(entry_size));

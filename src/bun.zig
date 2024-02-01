@@ -102,6 +102,18 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     pub fn format(fd: FileDescriptor, comptime fmt_: string, options_: std.fmt.FormatOptions, writer: anytype) !void {
         try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
     }
+
+    pub fn assertValid(fd: FileDescriptor) void {
+        FDImpl.decode(fd).assertValid();
+    }
+
+    pub fn isValid(fd: FileDescriptor) bool {
+        return FDImpl.decode(fd).isValid();
+    }
+
+    pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
+        std.debug.assert(FDImpl.decode(fd).kind == kind);
+    }
 };
 
 pub const FDImpl = @import("./fd.zig").FDImpl;
@@ -118,6 +130,11 @@ pub const PlatformIOVec = if (Environment.isWindows)
 else
     std.os.iovec;
 
+pub const PlatformIOVecConst = if (Environment.isWindows)
+    windows.libuv.uv_buf_t
+else
+    std.os.iovec_const;
+
 pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
     if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
     if (Environment.allow_assert) {
@@ -126,6 +143,16 @@ pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
         }
     }
     return .{ .iov_len = @intCast(input.len), .iov_base = @constCast(input.ptr) };
+}
+
+pub fn platformIOVecConstCreate(input: []const u8) PlatformIOVecConst {
+    if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
+    if (Environment.allow_assert) {
+        if (input.len > @as(usize, std.math.maxInt(u32))) {
+            Output.debugWarn("call to bun.PlatformIOVecConst.init with length larger than u32, this will overflow on windows", .{});
+        }
+    }
+    return .{ .iov_len = @intCast(input.len), .iov_base = input.ptr };
 }
 
 pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {
@@ -1091,9 +1118,10 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
-        var temp: [MAX_PATH_BYTES]u8 = undefined;
-        const temp_slice = try std.os.getFdPath(fd, &temp);
-        return path.normalizeBuf(temp_slice, buf, .loose);
+        var wide_buf: WPathBuffer = undefined;
+        const wide_slice = try std.os.windows.GetFinalPathNameByHandle(fd, .{}, wide_buf[0..]);
+        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice, true);
+        return buf[0..res.written];
     }
 
     if (comptime Environment.allow_assert) {
@@ -1424,7 +1452,10 @@ pub fn reloadProcess(
         actions.inherit(posix.STDIN_FD) catch unreachable;
         actions.inherit(posix.STDOUT_FD) catch unreachable;
         actions.inherit(posix.STDERR_FD) catch unreachable;
+
         var attrs = PosixSpawn.Attr.init() catch unreachable;
+        attrs.resetSignals() catch {};
+
         attrs.set(
             C.POSIX_SPAWN_CLOEXEC_DEFAULT |
                 // Apple Extension: If this bit is set, rather
@@ -1440,13 +1471,22 @@ pub fn reloadProcess(
             },
             .result => |_| {},
         }
-    } else {
+    } else if (comptime Environment.isPosix) {
+        const on_before_reload_process_linux = struct {
+            pub extern "C" fn on_before_reload_process_linux() void;
+        }.on_before_reload_process_linux;
+
+        on_before_reload_process_linux();
         const err = std.os.execveZ(
             exec_path,
             newargv,
             envp,
         );
         Output.panic("Unexpected error while reloading: {s}", .{@errorName(err)});
+    } else if (comptime Environment.isWindows) {
+        @panic("TODO on Windows!");
+    } else {
+        @panic("Unsupported platform");
     }
 }
 pub var auto_reload_on_crash = false;
@@ -1665,7 +1705,7 @@ pub const Generation = u16;
 
 pub const zstd = @import("./deps/zstd.zig");
 pub const StringPointer = Schema.Api.StringPointer;
-pub const StandaloneModuleGraph = @import("./standalone_bun.zig").StandaloneModuleGraph;
+pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").StandaloneModuleGraph;
 
 pub const String = @import("./string.zig").String;
 pub const SliceWithUnderlyingString = @import("./string.zig").SliceWithUnderlyingString;
@@ -2625,3 +2665,9 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     copy(u8, output_buffer[0..size], user[0..size]);
     return output_buffer[0..size];
 }
+
+/// This struct is a workaround a Windows terminal bug.
+/// TODO: when https://github.com/microsoft/terminal/issues/16606 is resolved, revert this commit.
+pub var buffered_stdin = std.io.BufferedReader(4096, std.fs.File.Reader){
+    .unbuffered_reader = std.fs.File.Reader{ .context = .{ .handle = if (Environment.isWindows) undefined else 0 } },
+};

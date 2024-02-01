@@ -269,7 +269,7 @@ import { $ } from "bun";
 
 const search = "bun";
 
-for await (let line of await $`cat list.txt | grep ${search}`.lines()) {
+for await (let line of $`cat list.txt | grep ${search}`.lines()) {
   console.log(line);
 }
 ```

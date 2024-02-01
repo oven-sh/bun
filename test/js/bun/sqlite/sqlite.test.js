@@ -5,7 +5,6 @@ import { spawnSync } from "bun";
 import { bunExe } from "harness";
 import { tmpdir } from "os";
 import path from "path";
-import { last } from "lodash";
 
 const tmpbase = tmpdir() + path.sep;
 

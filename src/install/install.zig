@@ -1448,11 +1448,12 @@ pub const PackageInstall = struct {
                                 // Windows limits hardlinks to 1023 per file
                                 if (bun.windows.CreateHardLinkW(dest, src, null) == 0) {
                                     if (bun.windows.CopyFileW(src, dest, 0) == 0) {
-                                        if (bun.windows.Win32Error.get().toSystemErrno()) |_| {
-                                            // TODO: make this better
-                                            return error.FailedToCopyFile;
+                                        const e = bun.windows.Win32Error.get();
+                                        if (e.toSystemErrno()) |err| {
+                                            return bun.errnoToZigErr(err);
                                         }
-
+                                        // If this code path is reached, it should have a toSystemErrno mapping
+                                        Output.warn("Failed to copy file during installation: {s}", .{@tagName(e)});
                                         return error.FailedToCopyFile;
                                     }
                                 }

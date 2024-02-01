@@ -3391,7 +3391,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                             file_ent.entry.cache.fd = .zero;
                                             file_ent.entry.need_stat = true;
                                             path_string = file_ent.entry.abs_path;
-                                            file_hash = @This().Watcher.getHash(path_string.slice());
+                                            file_hash = GenericWatcher.getHash(path_string.slice());
                                             for (hashes, 0..) |hash, entry_id| {
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id] != .zero) {
@@ -3419,7 +3419,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                                             @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len..][0..changed_name.len], changed_name);
                                             const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
-                                            file_hash = @This().Watcher.getHash(path_slice);
+                                            file_hash = GenericWatcher.getHash(path_slice);
                                             break :brk path_slice;
                                         }
                                     };

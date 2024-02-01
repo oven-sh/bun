@@ -1399,9 +1399,9 @@ pub fn reloadProcess(
     clear_terminal: bool,
 ) noreturn {
     if (clear_terminal) {
-        // Output.flush();
-        // Output.disableBuffering();
-        // Output.resetTerminalAll();
+        Output.flush();
+        Output.disableBuffering();
+        Output.resetTerminalAll();
     }
     const bun = @This();
 
@@ -1469,7 +1469,9 @@ pub fn reloadProcess(
             .err => |err| {
                 Output.panic("Unexpected error while reloading: {d} {s}", .{ err.errno, @tagName(err.getErrno()) });
             },
-            .result => |_| {},
+            .result => |_| {
+                Output.panic("Unexpected error while reloading: posix_spawn returned a result", .{});
+            },
         }
     } else if (comptime Environment.isPosix) {
         const on_before_reload_process_linux = struct {
@@ -1483,10 +1485,8 @@ pub fn reloadProcess(
             envp,
         );
         Output.panic("Unexpected error while reloading: {s}", .{@errorName(err)});
-    } else if (comptime Environment.isWindows) {
-        @panic("TODO on Windows!");
     } else {
-        @panic("Unsupported platform");
+        @compileError("unsupported platform for reloadProcess");
     }
 }
 pub var auto_reload_on_crash = false;

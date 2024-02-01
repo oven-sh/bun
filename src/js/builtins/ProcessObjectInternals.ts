@@ -344,3 +344,47 @@ export function setMainModule(value) {
   $putByIdDirectPrivate(this, "main", value);
   return true;
 }
+
+type InternalEnvMap = Record<string, string>;
+
+export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string>) {
+  // The use of String(key) here is intentional because Node.js as of v21.5.0 will throw
+  // on symbol keys as it seems they assume the user uses string keys:
+  //
+  // it throws "Cannot convert a Symbol value to a string"
+
+  return new Proxy(internalEnv, {
+    get(_, p) {
+      return typeof p === "string" ? Reflect.get(internalEnv, p.toUpperCase()) : undefined;
+    },
+    set(_, p, value) {
+      var k = String(p).toUpperCase();
+      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      if (!Reflect.has(internalEnv, k)) {
+        envMapList.push(p);
+      }
+      return Reflect.set(internalEnv, k, String(value));
+    },
+    has(_, p) {
+      return typeof p === "string" ? Reflect.has(internalEnv, p.toUpperCase()) : false;
+    },
+    deleteProperty(_, p) {
+      return typeof p === "string" ? Reflect.deleteProperty(internalEnv, p.toUpperCase()) : true;
+    },
+    defineProperty(_, p, attributes) {
+      var k = String(p).toUpperCase();
+      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      if (!Reflect.has(internalEnv, k)) {
+        envMapList.push(p);
+      }
+      return Reflect.defineProperty(internalEnv, k, attributes);
+    },
+    getOwnPropertyDescriptor(target, p) {
+      return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p.toUpperCase()) : undefined;
+    },
+    ownKeys() {
+      // .slice() because paranoia that there is a way to call this without the engine cloning it for us
+      return envMapList.slice();
+    },
+  });
+}

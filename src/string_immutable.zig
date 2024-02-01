@@ -5312,7 +5312,6 @@ pub fn convertUTF16toUTF8InBuffer(
     input: []const u16,
 ) ![]const u8 {
     // See above
-
     if (input.len == 0) return &[_]u8{};
     const result = bun.simdutf.convert.utf16.to.utf8.le(input, buf);
     // switch (result.status) {

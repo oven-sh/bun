@@ -5,7 +5,13 @@
 
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSArrayInlines.h>
+#include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/JSStringInlines.h>
+
 #include "BunClientData.h"
+
 using namespace JSC;
 
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
@@ -48,7 +54,11 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalOb
     if (!object)
         return false;
 
-    object->putDirect(vm, propertyName, JSValue::decode(value), 0);
+    auto string = JSValue::decode(value).toString(globalObject);
+    if (UNLIKELY(!string))
+        return false;
+
+    object->putDirect(vm, propertyName, string, 0);
     return true;
 }
 
@@ -125,19 +135,30 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         object = constructEmptyObject(globalObject, globalObject->objectPrototype());
     }
 
+#if OS(WINDOWS)
+    JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
+#endif
+
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
     bool hasTZ = false;
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;
         size_t len = Bun__getEnvKey(list, i, &chars);
         auto name = String::fromUTF8(chars, len);
+#if OS(WINDOWS)
+        keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
+#endif
         if (name == TZ) {
             hasTZ = true;
             continue;
         }
         ASSERT(len > 0);
-
-        Identifier identifier = Identifier::fromString(vm, name);
+#if OS(WINDOWS)
+        String idName = name.convertToASCIIUppercase();
+#else
+        String idName = name;
+#endif
+        Identifier identifier = Identifier::fromString(vm, idName);
 
         // CustomGetterSetter doesn't support indexed properties yet.
         // This causes strange issues when the environment variable name is an integer.
@@ -165,6 +186,26 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         vm,
         Identifier::fromString(vm, TZ), JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), TZAttrs);
 
+#if OS(WINDOWS)
+    JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::MarkedArgumentBuffer args;
+    args.append(object);
+    args.append(keyArray);
+    auto clientData = WebCore::clientData(vm);
+    JSC::CallData callData = JSC::getCallData(getSourceEvent);
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::call(globalObject, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (returnedException) {
+        throwException(globalObject, scope, returnedException.get());
+        return jsUndefined();
+    }
+
+    RELEASE_AND_RETURN(scope, result);
+#else
     return object;
+#endif
 }
 }

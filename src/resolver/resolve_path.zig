@@ -2126,15 +2126,26 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
 pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {
     if (std.fs.path.sep == '/') return;
     var idx: usize = 0;
-    while (std.mem.indexOfScalarPos(T, path_buffer, idx, std.fs.path.sep)) |index| : (idx = index) {
+    while (std.mem.indexOfScalarPos(T, path_buffer, idx, std.fs.path.sep)) |index| : (idx = index + 1) {
         path_buffer[index] = '/';
     }
+}
+
+pub fn platformToPosixBuf(comptime T: type, path: []const T, buf: []T) []T {
+    if (std.fs.path.sep == '/') return;
+    var idx: usize = 0;
+    while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep)) |index| : (idx = index + 1) {
+        @memcpy(buf[idx..index], path[idx..index]);
+        buf[index] = '/';
+    }
+    @memcpy(buf[idx..path.len], path[idx..path.len]);
+    return buf[0..path.len];
 }
 
 pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
     if (std.fs.path.sep == '/') return;
     var idx: usize = 0;
-    while (std.mem.indexOfScalarPos(T, path_buffer, idx, '/')) |index| : (idx = index) {
+    while (std.mem.indexOfScalarPos(T, path_buffer, idx, '/')) |index| : (idx = index + 1) {
         path_buffer[index] = std.fs.path.sep;
     }
 }

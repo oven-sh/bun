@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { FileSystemRouter } from "bun";
 import { it, expect } from "bun:test";
 import path, { dirname, resolve } from "path";
@@ -79,7 +78,7 @@ it("should find files", () => {
     // https://github.com/oven-sh/bun/issues/8276
     // https://github.com/oven-sh/bun/issues/8278
     ...Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`/files/a${i}`, `${dir}/files/a${i}.tsx`])),
-  }
+  };
 
   for (const route in fixture) {
     if (!(route in routes)) {

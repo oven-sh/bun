@@ -249,6 +249,7 @@ pub const FileSystemRouter = struct {
         };
 
         this.arena.deinit();
+        this.router.deinit();
         globalThis.allocator().destroy(this.arena);
 
         this.arena = arena;
@@ -380,6 +381,7 @@ pub const FileSystemRouter = struct {
             dir.deref();
         }
 
+        this.router.deinit();
         this.arena.deinit();
     }
 };

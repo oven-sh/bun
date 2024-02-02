@@ -290,7 +290,6 @@ ENV CCACHE_DIR=/ccache
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/zstd ${BUN_DIR}/src/deps/zstd
-COPY .prettierrc.cjs ${BUN_DIR}/.prettierrc.cjs
 
 WORKDIR $BUN_DIR
 
@@ -378,7 +377,7 @@ RUN --mount=type=cache,target=/ccache  mkdir ${BUN_DIR}/build \
 
 FROM bun-base-with-zig as bun-codegen-for-zig
 
-COPY package.json bun.lockb Makefile .gitmodules .prettierrc.cjs ${BUN_DIR}/
+COPY package.json bun.lockb Makefile .gitmodules ${BUN_DIR}/
 COPY src/runtime ${BUN_DIR}/src/runtime
 COPY src/runtime.js src/runtime.bun.js ${BUN_DIR}/src/
 COPY packages/bun-error ${BUN_DIR}/packages/bun-error

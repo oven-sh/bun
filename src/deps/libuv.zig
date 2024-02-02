@@ -621,7 +621,6 @@ pub const Loop = extern struct {
 
     pub fn get() *Loop {
         if (threadlocal_loop) |loop| return loop;
-        std.debug.print("InitLoop on {x} thread\n", .{std.Thread.getCurrentId()});
         if (bun.windows.libuv.Loop.init(&threadlocal_loop_data)) |e| {
             std.debug.panic("Failed to initialize libuv loop: {s}", .{@tagName(e)});
         }

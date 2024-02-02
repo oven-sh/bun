@@ -105,7 +105,7 @@ describe("web worker", () => {
     const result = await waitForWorkerResult(worker, "hello");
 
     expect(result.argv).toHaveLength(2);
-    expect(result.execArgv).toHaveLength(0);
+    expect(result.execArgv).toEqual(process.execArgv);
   });
 
   test("argv / execArgv options", async () => {
@@ -120,7 +120,7 @@ describe("web worker", () => {
     const result = await waitForWorkerResult(worker, "hello");
 
     expect(result).toEqual({
-      argv: [original_argv[0], original_argv[1].replace(/\/[^/]+$/, "/worker-fixture-argv.js"), ...worker_argv],
+      argv: [original_argv[0], original_argv[1].replace(import.meta.file, "worker-fixture-argv.js"), ...worker_argv],
       execArgv: worker_execArgv,
     });
     // ensure they didn't change for the main thread

@@ -369,37 +369,6 @@ pub fn normalizePathWindows(
     var wbuf: if (T == u16) void else bun.WPathBuffer = undefined;
     const path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(&wbuf, path_);
 
-    // const slash = bun.path.makeIsSepAnyT(u16);
-    // const ok = brk: {
-    //     var slash_or_start = true;
-    //     for (0..path.len) |i| {
-    //         // if we're starting with a dot or just saw a slash and now a dot
-    //         if (slash_or_start and path[i] == '.') {
-    //             // just '.' or ending on '/.'
-    //             if (i + 1 == path.len) break :brk false;
-    //             // starting with './' or containing '/./'
-    //             if (slash(path[i + 1])) break :brk false;
-    //             if (path.len > i + 2) {
-    //                 // starting with '../'' or containing '/../'
-    //                 if (path[i + 1] == '.' and slash(path[i + 2])) break :brk false;
-    //             }
-    //         }
-    //         // two slashes in a row
-    //         if (slash_or_start and slash(path[i])) break :brk false;
-    //         slash_or_start = slash(path[i]);
-    //     }
-    //     break :brk true;
-    // };
-    // if (ok) {
-    //     // no need to normalize, proceed normally
-    //     @memcpy(buf[0..path.len], path);
-    //     buf[path.len] = 0;
-    //     return .{
-    //         // .result = bun.strings.toNTPath(buf, path),
-    //         .result = buf[0..path.len :0],
-    //     };
-    // }
-
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
         return .{

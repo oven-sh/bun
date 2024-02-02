@@ -586,6 +586,7 @@ pub const MatchedRoute = struct {
             if (this.asset_prefix) |prefix| prefix.slice() else "",
             @TypeOf(&writer),
             &writer,
+            .posix,
         );
         return ZigString.init(buf[0..writer.context.pos])
             .withEncoding()

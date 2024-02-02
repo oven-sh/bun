@@ -459,7 +459,7 @@ const RouteLoader = struct {
                                 // length is extended by one
                                 // entry.dir is a string with a trailing slash
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(entry.dir.ptr[base_dir.len - 1] == '/');
+                                    std.debug.assert(bun.path.isSepAny(entry.dir[base_dir.len - 1]));
                                 }
 
                                 const public_dir = entry.dir.ptr[base_dir.len - 1 .. entry.dir.len];
@@ -645,9 +645,19 @@ pub const Route = struct {
         else
             entry.abs_path.slice();
 
+        if (comptime Environment.isWindows) {
+            if (abs_path_str.len > 0) {
+                var ptr = @constCast(abs_path_str);
+                while (strings.indexOfChar(ptr, '\\')) |i| {
+                    ptr[i] = '/';
+                    ptr = ptr[i + 1 ..];
+                }
+            }
+        }
+
         const base = base_[0 .. base_.len - extname.len];
 
-        const public_dir = std.mem.trim(u8, public_dir_, "/");
+        const public_dir = std.mem.trim(u8, public_dir_, std.fs.path.sep_str);
 
         // this is a path like
         // "/pages/index.js"
@@ -671,6 +681,14 @@ pub const Route = struct {
             buf = buf[extname.len..];
             break :brk route_file_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(&route_file_buf)];
         };
+
+        if (comptime Environment.isWindows) {
+            var ptr = @constCast(public_path);
+            while (strings.indexOfChar(ptr, '\\')) |i| {
+                ptr[i] = '/';
+                ptr = ptr[i + 1 ..];
+            }
+        }
 
         var name = public_path[0 .. public_path.len - extname.len];
 
@@ -752,7 +770,21 @@ pub const Route = struct {
             };
 
             abs_path_str = FileSystem.DirnameStore.instance.append(@TypeOf(_abs), _abs) catch unreachable;
+            if (comptime Environment.isWindows) {
+                var ptr = @constCast(abs_path_str);
+                while (strings.indexOfChar(ptr, '\\')) |i| {
+                    ptr[i] = '/';
+                    ptr = ptr[i + 1 ..];
+                }
+            }
             entry.abs_path = PathString.init(abs_path_str);
+        }
+
+        if (comptime Environment.allow_assert and Environment.isWindows) {
+            std.debug.assert(!strings.containsChar(name, '\\'));
+            std.debug.assert(!strings.containsChar(public_path, '\\'));
+            std.debug.assert(!strings.containsChar(match_name, '\\'));
+            std.debug.assert(!strings.containsChar(entry.abs_path.slice(), '\\'));
         }
 
         return Route{

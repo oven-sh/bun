@@ -457,6 +457,15 @@ pub const FileSystem = struct {
         });
     }
 
+    pub fn relativePlatform(_: *@This(), from: string, to: string, comptime platform: path_handler.Platform) string {
+        return @call(.always_inline, path_handler.relativePlatform, .{
+            from,
+            to,
+            platform,
+            false,
+        });
+    }
+
     pub fn relativeTo(f: *@This(), to: string) string {
         return @call(.always_inline, path_handler.relative, .{
             f.top_level_dir,

@@ -3750,6 +3750,7 @@ pub const ServerWebSocket = struct {
         if (onOpenHandler.isEmptyOrUndefinedOrNull()) return;
         const this_value = this.getThisValue();
         var args = [_]JSValue{this_value};
+        defer globalObject.bunVM().drainMicrotasks();
 
         var corker = Corker{
             .args = &args,
@@ -3893,7 +3894,7 @@ pub const ServerWebSocket = struct {
                 .globalObject = globalObject,
                 .callback = handler.onDrain,
             };
-
+            defer globalObject.bunVM().drainMicrotasks();
             this.websocket.cork(&corker, Corker.run);
             const result = corker.result;
 
@@ -4004,15 +4005,17 @@ pub const ServerWebSocket = struct {
 
         if (!handler.onClose.isEmptyOrUndefinedOrNull()) {
             var str = ZigString.init(message);
+            const globalObject = handler.globalObject;
+            defer globalObject.bunVM().drainMicrotasks();
             str.markUTF8();
             const result = handler.onClose.call(
-                handler.globalObject,
-                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toValueGC(handler.globalObject) },
+                globalObject,
+                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toValueGC(globalObject) },
             );
 
             if (result.toError()) |err| {
                 log("onClose error", .{});
-                handler.globalObject.bunVM().runErrorHandler(err, null);
+                globalObject.bunVM().runErrorHandler(err, null);
             }
         }
 

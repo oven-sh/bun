@@ -6379,13 +6379,18 @@ pub const NodeFS = struct {
                 else => |result| result,
             };
             if (stat_ & windows.FILE_ATTRIBUTE_REPARSE_POINT == 0) {
-                const result = windows.CopyFileW(src, dest, @intFromBool(mode.shouldntOverwrite()));
-                if (result == bun.windows.FALSE) {
-                    if (Maybe(Return.CopyFile).errnoSysP(result, .copyfile, this.osPathIntoSyncErrorBuf(src))) |e| {
+                if (windows.CopyFileW(src, dest, @intFromBool(mode.shouldntOverwrite())) == 0) {
+                    const err = windows.GetLastError();
+                    const errpath = switch (err) {
+                        .FILE_EXISTS, .ALREADY_EXISTS => dest,
+                        else => src,
+                    };
+                    if (Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(errpath))) |e| {
                         return e;
                     }
+                    // should be unreachable
+                    return Maybe(Return.CopyFile).todo();
                 }
-
                 return ret.success;
             } else {
                 const handle = switch (bun.sys.openatWindows(bun.invalid_fd, src, os.O.RDONLY)) {
@@ -6395,15 +6400,22 @@ pub const NodeFS = struct {
                 var wbuf: bun.WPathBuffer = undefined;
                 const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), &wbuf, wbuf.len, 0);
                 if (len == 0) {
-                    @panic("TODO");
+                    if (Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest))) |e| {
+                        return e;
+                    }
+                    // should be unreachable
+                    return Maybe(Return.CopyFile).todo();
                 }
                 const flags = if (stat_ & windows.FILE_ATTRIBUTE_DIRECTORY != 0)
                     std.os.windows.SYMBOLIC_LINK_FLAG_DIRECTORY
                 else
                     0;
                 if (windows.CreateSymbolicLinkW(dest, wbuf[0..len :0], flags) == 0) {
-                    std.debug.print("err: {s}\n", .{@tagName(std.os.windows.kernel32.GetLastError())});
-                    @panic("TODO 2");
+                    if (Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest))) |e| {
+                        return e;
+                    }
+                    // should be unreachable
+                    return Maybe(Return.CopyFile).todo();
                 }
                 return ret.success;
             }

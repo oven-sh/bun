@@ -175,7 +175,6 @@ pub const FilePoll = struct {
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
 
     pub const Owner = bun.TaggedPointerUnion(.{
-        FileReader,
         FileSink,
 
         // ShellBufferedWriter,
@@ -187,9 +186,7 @@ pub const FilePoll = struct {
         // ShellBufferedOutput,
         // ShellBufferedOutputMini,
 
-        ProcessPipeReader,
         StaticPipeWriter,
-        FileSink,
 
         Deactivated,
         DNSResolver,
@@ -347,10 +344,6 @@ pub const FilePoll = struct {
             //     var loader = ptr.as(ShellSubprocessCapturedBufferedWriterMini);
             //     loader.onPoll(size_or_offset, 0);
             // },
-            @field(Owner.Tag, bun.meta.typeBase(@typeName(ProcessPipeReader))) => {
-                var handler: *ProcessPipeReader = ptr.as(ProcessPipeReader);
-                handler.onPoll(size_or_offset);
-            },
             @field(Owner.Tag, bun.meta.typeBase(@typeName(StaticPipeWriter))) => {
                 var handler: *StaticPipeWriter = ptr.as(StaticPipeWriter);
                 handler.onPoll(size_or_offset);
@@ -577,6 +570,11 @@ pub const FilePoll = struct {
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disableKeepingProcessAlive(this: *FilePoll, event_loop_ctx_: anytype) void {
+        if (comptime @TypeOf(event_loop_ctx_) == *JSC.EventLoop) {
+            disableKeepingProcessAlive(this, JSC.EventLoopHandle.init(event_loop_ctx_));
+            return;
+        }
+
         if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
             event_loop_ctx_.loop().subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_active_count))));
         } else {
@@ -594,7 +592,19 @@ pub const FilePoll = struct {
         return this.flags.contains(.keeps_event_loop_alive) and this.flags.contains(.has_incremented_poll_count);
     }
 
+    pub fn setKeepingProcessAlive(this: *FilePoll, event_loop_ctx_: anytype, value: bool) void {
+        if (value) {
+            this.enableKeepingProcessAlive(event_loop_ctx_);
+        } else {
+            this.disableKeepingProcessAlive(event_loop_ctx_);
+        }
+    }
     pub fn enableKeepingProcessAlive(this: *FilePoll, event_loop_ctx_: anytype) void {
+        if (comptime @TypeOf(event_loop_ctx_) == *JSC.EventLoop) {
+            enableKeepingProcessAlive(this, JSC.EventLoopHandle.init(event_loop_ctx_));
+            return;
+        }
+
         if (this.flags.contains(.closed))
             return;
 

@@ -20,8 +20,8 @@ pub const LifecycleScriptSubprocess = struct {
 
     finished_fds: u8 = 0,
     process: ?*Process = null,
-    stdout: OutputReader = .{},
-    stderr: OutputReader = .{},
+    stdout: OutputReader = OutputReader.init(@This()),
+    stderr: OutputReader = OutputReader.init(@This()),
     manager: *PackageManager,
     envp: [:null]?[*:0]u8,
 
@@ -35,7 +35,7 @@ pub const LifecycleScriptSubprocess = struct {
 
     const uv = bun.windows.libuv;
 
-    pub const OutputReader = bun.io.BufferedReader(LifecycleScriptSubprocess);
+    pub const OutputReader = bun.io.BufferedReader;
 
     pub fn loop(this: *const LifecycleScriptSubprocess) *bun.uws.Loop {
         return this.manager.event_loop.loop();
@@ -92,6 +92,8 @@ pub const LifecycleScriptSubprocess = struct {
         const original_script = this.scripts[next_script_index].?;
         const cwd = bun.path.z(original_script.cwd, &cwd_z_buf);
         const env = manager.env;
+        this.stdout.setParent(this);
+        this.stderr.setParent(this);
 
         if (manager.scripts_node) |scripts_node| {
             manager.setNodeName(
@@ -162,20 +164,11 @@ pub const LifecycleScriptSubprocess = struct {
 
         if (comptime Environment.isPosix) {
             if (spawned.stdout) |stdout| {
-                this.stdout = .{
-                    .parent = this,
-                    .poll = Async.FilePoll.init(manager, stdout, .{}, OutputReader, &this.stdout),
-                };
-                try this.stdout.start().unwrap();
+                try this.stdout.start(stdout, true).unwrap();
             }
 
             if (spawned.stderr) |stderr| {
-                this.stderr = .{
-                    .parent = this,
-                    .poll = Async.FilePoll.init(manager, stderr, .{}, OutputReader, &this.stderr),
-                };
-
-                try this.stderr.start().unwrap();
+                try this.stdout.start(stderr, true).unwrap();
             }
         } else if (comptime Environment.isWindows) {
             if (spawned.stdout == .buffer) {
@@ -205,21 +198,21 @@ pub const LifecycleScriptSubprocess = struct {
 
     pub fn printOutput(this: *LifecycleScriptSubprocess) void {
         if (!this.manager.options.log_level.isVerbose()) {
-            if (this.stdout.buffer.items.len +| this.stderr.buffer.items.len == 0) {
+            if (this.stdout.buffer().items.len +| this.stderr.buffer().items.len == 0) {
                 return;
             }
 
             Output.disableBuffering();
             Output.flush();
 
-            if (this.stdout.buffer.items.len > 0) {
-                Output.errorWriter().print("{s}\n", .{this.stdout.buffer.items}) catch {};
-                this.stdout.buffer.clearAndFree();
+            if (this.stdout.buffer().items.len > 0) {
+                Output.errorWriter().print("{s}\n", .{this.stdout.buffer().items}) catch {};
+                this.stdout.buffer().clearAndFree();
             }
 
-            if (this.stderr.buffer.items.len > 0) {
-                Output.errorWriter().print("{s}\n", .{this.stderr.buffer.items}) catch {};
-                this.stderr.buffer.clearAndFree();
+            if (this.stderr.buffer().items.len > 0) {
+                Output.errorWriter().print("{s}\n", .{this.stderr.buffer().items}) catch {};
+                this.stderr.buffer().clearAndFree();
             }
 
             Output.enableBuffering();
@@ -350,8 +343,8 @@ pub const LifecycleScriptSubprocess = struct {
         this.resetPolls();
 
         if (!this.manager.options.log_level.isVerbose()) {
-            this.stdout.buffer.clearAndFree();
-            this.stderr.buffer.clearAndFree();
+            this.stdout.deinit();
+            this.stderr.deinit();
         }
 
         this.destroy();

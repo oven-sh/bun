@@ -111,8 +111,8 @@ pub const ProcessExitHandler = struct {
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocess))) => {
-                const subprocess = this.ptr.as(ShellSubprocess);
-                subprocess.onProcessExit(process, status, rusage);
+                // const subprocess = this.ptr.as(ShellSubprocess);
+                // subprocess.onProcessExit(process, status, rusage);
             },
             else => {
                 @panic("Internal Bun error: ProcessExitHandler has an invalid tag. Please file a bug report.");

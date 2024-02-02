@@ -119,7 +119,7 @@ pub const ReadableStream = struct {
 
         switch (stream.ptr) {
             .Blob => |blobby| {
-                var blob = JSC.WebCore.Blob.initWithStore(blobby.store, globalThis);
+                var blob = JSC.WebCore.Blob.initWithStore(blobby.store orelse return null, globalThis);
                 blob.offset = blobby.offset;
                 blob.size = blobby.remain;
                 blob.store.?.ref();
@@ -339,6 +339,7 @@ pub const ReadableStream = struct {
                 var reader = FileReader.Source.new(.{
                     .globalThis = globalThis,
                     .context = .{
+                        .event_loop = JSC.EventLoopHandle.init(globalThis.bunVM().eventLoop()),
                         .lazy = .{
                             .blob = store,
                         },
@@ -357,7 +358,9 @@ pub const ReadableStream = struct {
         JSC.markBinding(@src());
         var source = FileReader.Source.new(.{
             .globalThis = globalThis,
-            .context = .{},
+            .context = .{
+                .event_loop = JSC.EventLoopHandle.init(globalThis.bunVM().eventLoop()),
+            },
         });
         source.context.reader.from(buffered_reader, &source.context);
 
@@ -2861,7 +2864,7 @@ pub const FileSink = struct {
             .fd = fd,
             .event_loop_handle = JSC.EventLoopHandle.init(event_loop_handle),
         });
-        this.writer.setParent(this);
+        this.writer.parent = this;
 
         return this;
     }
@@ -2992,16 +2995,17 @@ pub const FileSink = struct {
 };
 
 pub const FileReader = struct {
-    reader: IOReader = .{},
+    reader: IOReader = IOReader.init(FileReader),
     done: bool = false,
     pending: StreamResult.Pending = .{},
     pending_value: JSC.Strong = .{},
     pending_view: []u8 = &.{},
     fd: bun.FileDescriptor = bun.invalid_fd,
-
+    started: bool = false,
+    event_loop: JSC.EventLoopHandle,
     lazy: Lazy = .{ .none = {} },
 
-    pub const IOReader = bun.io.BufferedReader(@This());
+    pub const IOReader = bun.io.BufferedReader;
     pub const Poll = IOReader;
     pub const tag = ReadableStream.Tag.File;
 
@@ -3010,13 +3014,12 @@ pub const FileReader = struct {
         blob: *Blob.Store,
     };
 
-    pub fn eventLoop(this: *FileReader) JSC.EventLoopHandle {
-        return this.parent().globalThis.bunVM().eventLoop();
+    pub fn eventLoop(this: *const FileReader) JSC.EventLoopHandle {
+        return this.event_loop;
     }
 
-    pub fn loop(this: *FileReader) *uws.Loop {
-        _ = this; // autofix
-        return uws.Loop.get();
+    pub fn loop(this: *const FileReader) *Async.Loop {
+        return this.eventLoop().loop();
     }
 
     pub fn setup(
@@ -3028,6 +3031,8 @@ pub const FileReader = struct {
             .done = false,
             .fd = fd,
         };
+
+        this.event_loop = this.parent().globalThis.bunVM().eventLoop();
     }
 
     pub fn onStart(this: *FileReader) StreamStart {
@@ -3037,6 +3042,9 @@ pub const FileReader = struct {
                 return .{ .err = e };
             },
         }
+
+        this.started = true;
+        this.event_loop = JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop());
 
         return .{ .ready = {} };
     }
@@ -3125,7 +3133,7 @@ pub const FileReader = struct {
             return .{ .done = {} };
         }
 
-        this.pending_value.set(this.parent().globalThis(), array);
+        this.pending_value.set(this.parent().globalThis, array);
         this.pending_view = buffer;
 
         return .{ .pending = &this.pending };
@@ -3175,10 +3183,11 @@ pub const FileReader = struct {
 
 pub const ByteBlobLoader = struct {
     offset: Blob.SizeType = 0,
-    store: *Blob.Store,
+    store: ?*Blob.Store = null,
     chunk_size: Blob.SizeType = 1024 * 1024 * 2,
     remain: Blob.SizeType = 1024 * 1024 * 2,
     done: bool = false,
+    pulled: bool = false,
 
     pub const tag = ReadableStream.Tag.Blob;
 
@@ -3197,7 +3206,10 @@ pub const ByteBlobLoader = struct {
         this.* = ByteBlobLoader{
             .offset = blobe.offset,
             .store = blobe.store.?,
-            .chunk_size = if (user_chunk_size > 0) @min(user_chunk_size, blobe.size) else @min(1024 * 1024 * 2, blobe.size),
+            .chunk_size = @min(
+                if (user_chunk_size > 0) @min(user_chunk_size, blobe.size) else blobe.size,
+                1024 * 1024 * 2,
+            ),
             .remain = blobe.size,
             .done = false,
         };
@@ -3210,16 +3222,18 @@ pub const ByteBlobLoader = struct {
     pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSC.JSValue) StreamResult {
         array.ensureStillAlive();
         defer array.ensureStillAlive();
+        this.pulled = true;
+        const store = this.store orelse return .{ .done = {} };
         if (this.done) {
             return .{ .done = {} };
         }
 
-        var temporary = this.store.sharedView();
-        temporary = temporary[this.offset..];
+        var temporary = store.sharedView();
+        temporary = temporary[@min(this.offset, temporary.len)..];
 
         temporary = temporary[0..@min(buffer.len, @min(temporary.len, this.remain))];
         if (temporary.len == 0) {
-            this.store.deref();
+            this.clearStore();
             this.done = true;
             return .{ .done = {} };
         }
@@ -3237,19 +3251,26 @@ pub const ByteBlobLoader = struct {
         return .{ .into_array = .{ .value = array, .len = copied } };
     }
 
-    pub fn onCancel(_: *ByteBlobLoader) void {}
+    pub fn onCancel(this: *ByteBlobLoader) void {
+        this.clearStore();
+    }
 
     pub fn deinit(this: *ByteBlobLoader) void {
-        if (!this.done) {
-            this.done = true;
-            this.store.deref();
-        }
+        this.clearStore();
 
         this.parent().destroy();
     }
 
+    fn clearStore(this: *ByteBlobLoader) void {
+        if (this.store) |store| {
+            this.store = null;
+            store.deref();
+        }
+    }
+
     pub fn drain(this: *ByteBlobLoader) bun.ByteList {
-        var temporary = this.store.sharedView();
+        const store = this.store orelse return .{};
+        var temporary = store.sharedView();
         temporary = temporary[this.offset..];
         temporary = temporary[0..@min(16384, @min(temporary.len, this.remain))];
 
@@ -3358,7 +3379,7 @@ pub const ByteStream = struct {
     pub fn unpipe(this: *@This()) void {
         this.pipe.ctx = null;
         this.pipe.onPipe = null;
-        this.parent().decrementCount();
+        _ = this.parent().decrementCount();
     }
 
     pub fn onData(
@@ -3379,8 +3400,8 @@ pub const ByteStream = struct {
         std.debug.assert(!this.has_received_last_chunk);
         this.has_received_last_chunk = stream.isDone();
 
-        if (this.pipe.ctx != null) {
-            this.pipe.onPipe.?(this.pipe.ctx.?, stream, allocator);
+        if (this.pipe.ctx) |ctx| {
+            this.pipe.onPipe.?(ctx, stream, allocator);
             return;
         }
 

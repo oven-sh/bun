@@ -1,24 +1,22 @@
 const bun = @import("root").bun;
 const std = @import("std");
 
-const PipeReaderVTable = struct {
-    getFd: *const fn (*anyopaque) bun.FileDescriptor,
-    getBuffer: *const fn (*anyopaque) *std.ArrayList(u8),
-    onReadChunk: ?*const fn (*anyopaque, chunk: []u8) void = null,
-    registerPoll: ?*const fn (*anyopaque) void = null,
-    done: *const fn (*anyopaque) void,
-    onError: *const fn (*anyopaque, bun.sys.Error) void,
-};
-
 /// Read a blocking pipe without blocking the current thread.
 pub fn PosixPipeReader(
     comptime This: type,
-    comptime vtable: PipeReaderVTable,
+    comptime vtable: struct {
+        getFd: *const fn (*This) bun.FileDescriptor,
+        getBuffer: *const fn (*This) *std.ArrayList(u8),
+        onReadChunk: ?*const fn (*This, chunk: []u8) void = null,
+        registerPoll: ?*const fn (*This) void = null,
+        done: *const fn (*This) void,
+        onError: *const fn (*This, bun.sys.Error) void,
+    },
 ) type {
     return struct {
         pub fn read(this: *This) void {
-            const buffer = @call(.always_inline, vtable.getBuffer, .{this});
-            const fd = @call(.always_inline, vtable.getFd, .{this});
+            const buffer = vtable.getBuffer(this);
+            const fd = vtable.getFd(this);
             if (comptime bun.Environment.isLinux) {
                 if (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
                     readFromBlockingPipeWithoutBlockingLinux(this, buffer, fd, 0);
@@ -40,7 +38,7 @@ pub fn PosixPipeReader(
 
         pub fn onPoll(parent: *This, size_hint: isize) void {
             const resizable_buffer = vtable.getBuffer(parent);
-            const fd = @call(.always_inline, vtable.getFd, .{parent});
+            const fd = vtable.getFd(parent);
 
             readFromBlockingPipeWithoutBlocking(parent, resizable_buffer, fd, size_hint);
         }
@@ -48,7 +46,7 @@ pub fn PosixPipeReader(
         const stack_buffer_len = 64 * 1024;
 
         inline fn drainChunk(parent: *This, resizable_buffer: *std.ArrayList(u8), start_length: usize) void {
-            if (comptime vtable.onReadChunk) |onRead| {
+            if (vtable.onReadChunk) |onRead| {
                 if (resizable_buffer.items[start_length..].len > 0) {
                     const chunk = resizable_buffer.items[start_length..];
                     onRead(parent, chunk);
@@ -63,6 +61,7 @@ pub fn PosixPipeReader(
             }
 
             const start_length: usize = resizable_buffer.items.len;
+            const streaming = parent.vtable.isStreamingEnabled();
 
             while (true) {
                 var buffer: []u8 = resizable_buffer.unusedCapacitySlice();
@@ -88,8 +87,8 @@ pub fn PosixPipeReader(
                             buffer = resizable_buffer.items;
                         }
 
-                        if (comptime vtable.onReadChunk) |onRead| {
-                            onRead(parent, buffer);
+                        if (streaming) {
+                            parent.vtable.onReadChunk(buffer);
                         } else if (buffer.ptr != &stack_buffer) {
                             resizable_buffer.items.len += bytes_read;
                         }
@@ -127,6 +126,7 @@ pub fn PosixPipeReader(
             }
 
             const start_length: usize = resizable_buffer.items.len;
+            const streaming = parent.vtable.isStreamingEnabled();
 
             while (true) {
                 var buffer: []u8 = resizable_buffer.unusedCapacitySlice();
@@ -153,8 +153,8 @@ pub fn PosixPipeReader(
                             buffer = resizable_buffer.items;
                         }
 
-                        if (comptime vtable.onReadChunk) |onRead| {
-                            onRead(parent, buffer);
+                        if (streaming) {
+                            parent.vtable.onReadChunk(buffer);
                         } else if (buffer.ptr != &stack_buffer) {
                             resizable_buffer.items.len += bytes_read;
                         }
@@ -290,46 +290,59 @@ const Async = bun.Async;
 
 // This is a runtime type instead of comptime due to bugs in Zig.
 // https://github.com/ziglang/zig/issues/18664
-//
 const BufferedReaderVTable = struct {
     parent: *anyopaque = undefined,
     fns: *const Fn = undefined,
+
+    pub fn init(comptime Type: type) BufferedReaderVTable {
+        return .{
+            .fns = Fn.init(Type),
+        };
+    }
 
     pub const Fn = struct {
         onReadChunk: ?*const fn (*anyopaque, chunk: []const u8) void = null,
         onReaderDone: *const fn (*anyopaque) void,
         onReaderError: *const fn (*anyopaque, bun.sys.Error) void,
-        loop: *const fn (*anyopaque) JSC.EventLoopHandle,
+        loop: *const fn (*anyopaque) *Async.Loop,
         eventLoop: *const fn (*anyopaque) JSC.EventLoopHandle,
+
+        pub fn init(comptime Type: type) *const BufferedReaderVTable.Fn {
+            const loop_fn = &struct {
+                pub fn loop_fn(this: *anyopaque) *Async.Loop {
+                    return Type.loop(@alignCast(@ptrCast(this)));
+                }
+            }.loop_fn;
+
+            const eventLoop_fn = &struct {
+                pub fn eventLoop_fn(this: *anyopaque) JSC.EventLoopHandle {
+                    return JSC.EventLoopHandle.init(Type.eventLoop(@alignCast(@ptrCast(this))));
+                }
+            }.eventLoop_fn;
+            return comptime &BufferedReaderVTable.Fn{
+                .onReadChunk = if (@hasDecl(Type, "onReadChunk")) @ptrCast(&Type.onReadChunk) else null,
+                .onReaderDone = @ptrCast(&Type.onReaderDone),
+                .onReaderError = @ptrCast(&Type.onReaderError),
+                .eventLoop = eventLoop_fn,
+                .loop = loop_fn,
+            };
+        }
     };
 
-    pub fn init(comptime Type: type) *const BufferedReaderVTable.Fn {
-        const loop_fn = &struct {
-            pub fn doLoop(this: *anyopaque) *Async.Loop {
-                return Type.loop(@alignCast(@ptrCast(this)));
-            }
-        }.loop;
-
-        const eventLoop = &struct {
-            pub fn doLoop(this: *anyopaque) JSC.EventLoopHandle {
-                return JSC.EventLoopHandle.init(Type.eventLoop(@alignCast(@ptrCast(this))));
-            }
-        }.eventLoop;
-        return comptime &BufferedReaderVTable.Fn{
-            .onReadChunk = if (@hasDecl(Type, "onReadChunk")) @ptrCast(&Type.onReadChunk) else null,
-            .onReaderDone = @ptrCast(&Type.onReaderDone),
-            .onReaderError = @ptrCast(&Type.onReaderError),
-            .eventLoop = eventLoop,
-            .loop = loop_fn,
-        };
-    }
-
-    pub fn loop(this: @This()) JSC.EventLoopHandle {
+    pub fn eventLoop(this: @This()) JSC.EventLoopHandle {
         return this.fns.eventLoop(this.parent);
     }
 
+    pub fn loop(this: @This()) *Async.Loop {
+        return this.fns.loop(this.parent);
+    }
+
+    pub fn isStreamingEnabled(this: @This()) bool {
+        return this.fns.onReadChunk != null;
+    }
+
     pub fn onReadChunk(this: @This(), chunk: []const u8) void {
-        this.fns.onReadChunk(this.parent, chunk);
+        this.fns.onReadChunk.?(this.parent, chunk);
     }
 
     pub fn onReaderDone(this: @This()) void {
@@ -345,39 +358,43 @@ const PosixBufferedReader = struct {
     handle: PollOrFd = .{ .closed = {} },
     _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     is_done: bool = false,
-    vtable: BufferedReaderVTable = .{},
+    vtable: BufferedReaderVTable,
 
-    pub fn @"for"(comptime Type: type) PosixBufferedReader {
+    pub fn init(comptime Type: type) PosixBufferedReader {
         return .{
             .vtable = BufferedReaderVTable.init(Type),
         };
     }
 
-    pub fn from(to: *@This(), other: anytype, parent_: *anyopaque) void {
+    pub fn updateRef(this: *const PosixBufferedReader, value: bool) void {
+        const poll = this.handle.getPoll() orelse return;
+        poll.setKeepingProcessAlive(this.vtable.eventLoop(), value);
+    }
+
+    pub fn from(to: *@This(), other: *PosixBufferedReader, parent_: *anyopaque) void {
         to.* = .{
             .handle = other.handle,
             ._buffer = other.buffer().*,
             .is_done = other.is_done,
-            ._parent = parent_,
+            .vtable = .{
+                .fns = to.vtable.fns,
+                .parent = parent_,
+            },
         };
         other.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
-        to.setParent(parent_);
-
         other.is_done = true;
         other.handle = .{ .closed = {} };
     }
 
-    pub fn setParent(this: *@This(), parent_: *anyopaque) void {
-        this._parent = parent_;
-        if (!this.is_done) {
-            this.handle.setOwner(this);
-        }
+    pub fn setParent(this: *PosixBufferedReader, parent_: *anyopaque) void {
+        this.vtable.parent = parent_;
+        this.handle.setOwner(this);
     }
 
     pub usingnamespace PosixPipeReader(@This(), .{
         .getFd = @ptrCast(&getFd),
         .getBuffer = @ptrCast(&buffer),
-        .onReadChunk = if (vtable.onReadChunk != null) @ptrCast(&_onReadChunk) else null,
+        .onReadChunk = @ptrCast(&_onReadChunk),
         .registerPoll = @ptrCast(&registerPoll),
         .done = @ptrCast(&done),
         .onError = @ptrCast(&onError),
@@ -398,7 +415,7 @@ const PosixBufferedReader = struct {
     }
 
     pub fn buffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
-        return &this._buffer;
+        return &@as(*PosixBufferedReader, @alignCast(@ptrCast(this)))._buffer;
     }
 
     pub fn disableKeepingProcessAlive(this: *@This(), event_loop_ctx: anytype) void {
@@ -456,7 +473,7 @@ const PosixBufferedReader = struct {
             return .{ .result = {} };
         }
 
-        const poll = Async.FilePoll.init(this.loop(), fd, .readable, @This(), this);
+        const poll = Async.FilePoll.init(this.eventLoop(), fd, .{}, @This(), this);
         const maybe = poll.register(this.loop(), .readable, true);
         if (maybe != .result) {
             poll.deinit();
@@ -476,32 +493,24 @@ const PosixBufferedReader = struct {
         return false;
     }
 
-    pub fn loop(this: *const PosixBufferedReader) JSC.EventLoopHandle {
-        return vtable.loop(this._parent);
+    pub fn loop(this: *const PosixBufferedReader) *Async.Loop {
+        return this.vtable.loop();
+    }
+
+    pub fn eventLoop(this: *const PosixBufferedReader) JSC.EventLoopHandle {
+        return this.vtable.eventLoop();
     }
 };
-
-pub fn PosixBufferedReader(comptime vtable: anytype) type {
-    return PosixBufferedReaderWithVTable(.{
-        .onReaderDone = @ptrCast(&vtable.onReaderDone),
-        .onReaderError = @ptrCast(&vtable.onReaderError),
-        .onReadChunk = if (@hasDecl(vtable, "onReadChunk")) @ptrCast(&vtable.onReadChunk) else null,
-        .loop = &struct {
-            pub fn doLoop(this: *anyopaque) JSC.EventLoopHandle {
-                _ = this; // autofix
-                // return JSC.EventLoopHandle.init(Parent.eventLoop(@alignCast(@ptrCast(this))));
-                return undefined;
-            }
-        }.doLoop,
-    });
-}
 
 const JSC = bun.JSC;
 
 const WindowsOutputReaderVTable = struct {
     onReaderDone: *const fn (*anyopaque) void,
     onReaderError: *const fn (*anyopaque, bun.sys.Error) void,
-    onReadChunk: ?*const fn (*anyopaque, chunk: []const u8) void = null,
+    onReadChunk: ?*const fn (
+        *anyopaque,
+        chunk: []const u8,
+    ) void = null,
 };
 
 pub const GenericWindowsBufferedReader = struct {

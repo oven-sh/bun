@@ -545,12 +545,15 @@ pub const Body = struct {
 
                 switch (readable.ptr) {
                     .Blob => |blob| {
+                        var store = blob.store orelse {
+                            return Body.Value{ .Blob = Blob.initEmpty(globalThis) };
+                        };
+                        store.ref();
                         readable.forceDetach(globalThis);
 
                         const result: Value = .{
-                            .Blob = Blob.initWithStore(blob.store, globalThis),
+                            .Blob = Blob.initWithStore(store, globalThis),
                         };
-                        blob.store.ref();
 
                         if (!blob.done) {
                             blob.done = true;

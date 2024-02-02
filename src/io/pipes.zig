@@ -38,12 +38,12 @@ pub const PollOrFd = union(enum) {
         }
 
         if (fd != bun.invalid_fd) {
-            this.handle = .{ .closed = {} };
+            this.* = .{ .closed = {} };
             _ = bun.sys.close(fd);
-            if (comptime onCloseFn != void)
-                onCloseFn(@ptrCast(ctx.?));
+            if (comptime @TypeOf(onCloseFn) != void)
+                onCloseFn(@alignCast(@ptrCast(ctx.?)));
         } else {
-            this.handle = .{ .closed = {} };
+            this.* = .{ .closed = {} };
         }
     }
 };

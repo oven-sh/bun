@@ -1753,12 +1753,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         result = jsNumber(sqlite3_changes(castedThis->version_db->db));
     }
 
-    while (status == SQLITE_ROW) {
-        status = sqlite3_step(stmt);
-    }
-
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
+    if (status == SQLITE_ROW) {
+        status = sqlite3_reset(stmt);
     }
 
     if (UNLIKELY(status != SQLITE_DONE && status != SQLITE_OK)) {

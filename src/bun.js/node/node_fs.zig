@@ -6598,9 +6598,9 @@ pub const NodeFS = struct {
                         args,
                         task,
                         src_buf,
-                        src_dir_len + 1 + cname.len,
+                        @truncate(src_dir_len + 1 + cname.len),
                         dest_buf,
-                        dest_dir_len + 1 + cname.len,
+                        @truncate(dest_dir_len + 1 + cname.len),
                     );
                     if (!should_continue) return false;
                 },

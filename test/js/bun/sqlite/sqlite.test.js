@@ -669,3 +669,77 @@ it("empty blob", () => {
     },
   ]);
 });
+
+it("multiple statements with a schema change", () => {
+  const db = new Database(":memory:");
+  db.run(
+    `
+    CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT); 
+    CREATE TABLE bar (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+
+    INSERT INTO foo (name) VALUES ('foo');
+    INSERT INTO foo (name) VALUES ('bar');
+
+    INSERT INTO bar (name) VALUES ('foo');
+    INSERT INTO bar (name) VALUES ('bar');
+  `,
+  );
+
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      name: "foo",
+    },
+    {
+      id: 2,
+      name: "bar",
+    },
+  ]);
+
+  expect(db.query("SELECT * FROM bar").all()).toEqual([
+    {
+      id: 1,
+      name: "foo",
+    },
+    {
+      id: 2,
+      name: "bar",
+    },
+  ]);
+});
+
+it("multiple statements", () => {
+  const fixtures = [
+    "INSERT INTO foo (name) VALUES ('foo')",
+    "INSERT INTO foo (name) VALUES ('barabc')",
+    "INSERT INTO foo (name) VALUES ('!bazaspdok')",
+  ];
+  for (let separator of [";", ";\n", "\n;", "\r\n;", ";\r\n", ";\t", "\t;", "\r\n;"]) {
+    for (let spaceOffset of [1, 0, -1]) {
+      for (let spacesCount = 0; spacesCount < 8; spacesCount++) {
+        const db = new Database(":memory:");
+        db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+
+        const prefix = spaceOffset < 0 ? " ".repeat(spacesCount) : "";
+        const suffix = spaceOffset > 0 ? " ".repeat(spacesCount) : "";
+        const query = fixtures.join(prefix + separator + suffix);
+        db.run(query);
+
+        expect(db.query("SELECT * FROM foo").all()).toEqual([
+          {
+            id: 1,
+            name: "foo",
+          },
+          {
+            id: 2,
+            name: "barabc",
+          },
+          {
+            id: 3,
+            name: "!bazaspdok",
+          },
+        ]);
+      }
+    }
+  }
+});

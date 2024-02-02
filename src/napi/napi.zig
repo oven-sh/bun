@@ -560,6 +560,7 @@ pub export fn napi_has_element(env: napi_env, object: napi_value, index: c_uint,
     return .ok;
 }
 pub extern fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
+pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
 pub extern fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: [*c]const napi_property_descriptor) napi_status;
 pub export fn napi_is_array(_: napi_env, value: napi_value, result: *bool) napi_status {
     log("napi_is_array", .{});
@@ -1203,8 +1204,12 @@ pub export fn napi_get_node_version(_: napi_env, version: **const napi_node_vers
 }
 pub export fn napi_get_uv_event_loop(env: napi_env, loop: **JSC.EventLoop) napi_status {
     log("napi_get_uv_event_loop", .{});
-    // lol
-    loop.* = env.bunVM().eventLoop();
+    if (bun.Environment.isWindows) {
+        loop.* = @ptrCast(@alignCast(env.bunVM().uvLoop()));
+    } else {
+        // there is no uv event loop on posix, we use our event loop handle.
+        loop.* = env.bunVM().eventLoop();
+    }
     return .ok;
 }
 pub extern fn napi_fatal_exception(env: napi_env, err: napi_value) napi_status;

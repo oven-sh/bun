@@ -42,6 +42,7 @@ pub const resolver = @import("./resolver//resolver.zig");
 pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
+pub const allocators = @import("./allocators.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -103,6 +104,14 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
         try FDImpl.format(FDImpl.decode(fd), fmt_, options_, writer);
     }
 
+    pub fn assertValid(fd: FileDescriptor) void {
+        FDImpl.decode(fd).assertValid();
+    }
+
+    pub fn isValid(fd: FileDescriptor) bool {
+        return FDImpl.decode(fd).isValid();
+    }
+
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
         std.debug.assert(FDImpl.decode(fd).kind == kind);
     }
@@ -122,6 +131,11 @@ pub const PlatformIOVec = if (Environment.isWindows)
 else
     std.os.iovec;
 
+pub const PlatformIOVecConst = if (Environment.isWindows)
+    windows.libuv.uv_buf_t
+else
+    std.os.iovec_const;
+
 pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
     if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
     if (Environment.allow_assert) {
@@ -130,6 +144,16 @@ pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
         }
     }
     return .{ .iov_len = @intCast(input.len), .iov_base = @constCast(input.ptr) };
+}
+
+pub fn platformIOVecConstCreate(input: []const u8) PlatformIOVecConst {
+    if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
+    if (Environment.allow_assert) {
+        if (input.len > @as(usize, std.math.maxInt(u32))) {
+            Output.debugWarn("call to bun.PlatformIOVecConst.init with length larger than u32, this will overflow on windows", .{});
+        }
+    }
+    return .{ .iov_len = @intCast(input.len), .iov_base = input.ptr };
 }
 
 pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {
@@ -527,6 +551,16 @@ pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
 pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
     return slice.len > 0 and @intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and ((@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len));
+}
+
+pub inline fn sliceInBuffer(stable: string, value: string) string {
+    if (allocators.sliceRange(stable, value)) |_| {
+        return value;
+    }
+    if (strings.indexOf(stable, value)) |index| {
+        return stable[index..][0..value.len];
+    }
+    return value;
 }
 
 pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
@@ -1383,9 +1417,31 @@ pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
 pub fn reloadProcess(
     allocator: std.mem.Allocator,
     clear_terminal: bool,
-) void {
-    const PosixSpawn = posix.spawn;
+) noreturn {
+    if (clear_terminal) {
+        Output.flush();
+        Output.disableBuffering();
+        Output.resetTerminalAll();
+    }
     const bun = @This();
+
+    if (comptime Environment.isWindows) {
+        // this assumes that our parent process assigned us to a job object (see runWatcherManager)
+        var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
+        win32.spawnProcessCopy(allocator, &procinfo, false, false) catch |err| {
+            Output.panic("Error while reloading process: {s}", .{@errorName(err)});
+        };
+
+        // terminate the current process
+        const rc = bun.windows.TerminateProcess(@ptrFromInt(std.math.maxInt(usize)), 0);
+        if (rc == 0) {
+            const err = bun.windows.GetLastError();
+            Output.panic("Error while reloading process: {s}", .{@tagName(err)});
+        } else {
+            Output.panic("Unexpected error while reloading process\n", .{});
+        }
+    }
+    const PosixSpawn = posix.spawn;
     const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
     for (bun.argv(), dupe_argv) |src, *dest| {
         dest.* = (allocator.dupeZ(u8, src) catch unreachable).ptr;
@@ -1410,20 +1466,16 @@ pub fn reloadProcess(
     // we clone envp so that the memory address of environment variables isn't the same as the libc one
     const envp = @as([*:null]?[*:0]const u8, @ptrCast(environ.ptr));
 
-    // Clear the terminal
-    if (clear_terminal) {
-        Output.flush();
-        Output.disableBuffering();
-        Output.resetTerminalAll();
-    }
-
     // macOS doesn't have CLOEXEC, so we must go through posix_spawn
     if (comptime Environment.isMac) {
         var actions = PosixSpawn.Actions.init() catch unreachable;
         actions.inherit(posix.STDIN_FD) catch unreachable;
         actions.inherit(posix.STDOUT_FD) catch unreachable;
         actions.inherit(posix.STDERR_FD) catch unreachable;
+
         var attrs = PosixSpawn.Attr.init() catch unreachable;
+        attrs.resetSignals() catch {};
+
         attrs.set(
             C.POSIX_SPAWN_CLOEXEC_DEFAULT |
                 // Apple Extension: If this bit is set, rather
@@ -1437,15 +1489,24 @@ pub fn reloadProcess(
             .err => |err| {
                 Output.panic("Unexpected error while reloading: {d} {s}", .{ err.errno, @tagName(err.getErrno()) });
             },
-            .result => |_| {},
+            .result => |_| {
+                Output.panic("Unexpected error while reloading: posix_spawn returned a result", .{});
+            },
         }
-    } else {
+    } else if (comptime Environment.isPosix) {
+        const on_before_reload_process_linux = struct {
+            pub extern "C" fn on_before_reload_process_linux() void;
+        }.on_before_reload_process_linux;
+
+        on_before_reload_process_linux();
         const err = std.os.execveZ(
             exec_path,
             newargv,
             envp,
         );
         Output.panic("Unexpected error while reloading: {s}", .{@errorName(err)});
+    } else {
+        @compileError("unsupported platform for reloadProcess");
     }
 }
 pub var auto_reload_on_crash = false;
@@ -1853,9 +1914,12 @@ pub const posix = struct {
 };
 
 pub const win32 = struct {
+    const w = std.os.windows;
     pub var STDOUT_FD: FileDescriptor = undefined;
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
+
+    const watcherChildEnv: [:0]const u16 = strings.toUTF16LiteralZ("_BUN_WATCHER_CHILD");
 
     pub fn stdio(i: anytype) FileDescriptor {
         return switch (i) {
@@ -1867,6 +1931,158 @@ pub const win32 = struct {
     }
 
     pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
+
+    pub fn isWatcherChild() bool {
+        var buf: [1]u16 = undefined;
+        return windows.GetEnvironmentVariableW(@constCast(watcherChildEnv.ptr), &buf, 1) > 0;
+    }
+
+    pub fn becomeWatcherManager(allocator: std.mem.Allocator) noreturn {
+        // this process will be the parent of the child process that actually runs the script
+        // based on https://devblogs.microsoft.com/oldnewthing/20130405-00/?p=4743
+        const job = windows.CreateJobObjectA(null, null);
+        const iocp = windows.CreateIoCompletionPort(windows.INVALID_HANDLE_VALUE, null, 0, 1) orelse {
+            Output.panic("Failed to create IOCP\n", .{});
+        };
+        var assoc = windows.JOBOBJECT_ASSOCIATE_COMPLETION_PORT{
+            .CompletionKey = job,
+            .CompletionPort = iocp,
+        };
+        if (windows.SetInformationJobObject(job, windows.JobObjectAssociateCompletionPortInformation, &assoc, @sizeOf(windows.JOBOBJECT_ASSOCIATE_COMPLETION_PORT)) == 0) {
+            const err = windows.GetLastError();
+            Output.panic("Failed to associate completion port: {s}\n", .{@tagName(err)});
+        }
+
+        var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
+        spawnProcessCopy(allocator, &procinfo, true, true) catch |err| {
+            Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
+        };
+        if (windows.AssignProcessToJobObject(job, procinfo.hProcess) == 0) {
+            const err = windows.GetLastError();
+            Output.panic("Failed to assign process to job object: {s}\n", .{@tagName(err)});
+        }
+        if (windows.ResumeThread(procinfo.hThread) == 0) {
+            const err = windows.GetLastError();
+            Output.panic("Failed to resume child process: {s}\n", .{@tagName(err)});
+        }
+
+        var completion_code: w.DWORD = 0;
+        var completion_key: w.ULONG_PTR = 0;
+        var overlapped: ?*w.OVERLAPPED = null;
+        var last_pid: w.DWORD = 0;
+        while (true) {
+            if (w.kernel32.GetQueuedCompletionStatus(iocp, &completion_code, &completion_key, &overlapped, w.INFINITE) == 0) {
+                const err = windows.GetLastError();
+                Output.panic("Failed to query completion status: {s}\n", .{@tagName(err)});
+            }
+            // only care about events concerning our job object (theoretically unnecessary)
+            if (completion_key != @intFromPtr(job)) {
+                continue;
+            }
+            if (completion_code == windows.JOB_OBJECT_MSG_EXIT_PROCESS) {
+                last_pid = @truncate(@intFromPtr(overlapped));
+            } else if (completion_code == windows.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO) {
+                break;
+            }
+        }
+        // NOTE: for now we always exit with a zero exit code.
+        // This is because there's no straightforward way to communicate the exit code
+        // of subsequently spawned child processes to the original parent process.
+        Global.exit(0);
+    }
+
+    pub fn spawnProcessCopy(
+        allocator: std.mem.Allocator,
+        procinfo: *std.os.windows.PROCESS_INFORMATION,
+        suspended: bool,
+        setChild: bool,
+    ) !void {
+        var flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT;
+        if (suspended) {
+            // see CREATE_SUSPENDED at
+            // https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags
+            flags |= 0x00000004;
+        }
+
+        const image_path = &w.peb().ProcessParameters.ImagePathName;
+        var wbuf: WPathBuffer = undefined;
+        @memcpy(wbuf[0..image_path.Length], image_path.Buffer);
+        wbuf[image_path.Length] = 0;
+
+        const image_pathZ = wbuf[0..image_path.Length :0];
+
+        const kernelenv = w.kernel32.GetEnvironmentStringsW();
+        var newenv: ?[]u16 = null;
+        defer {
+            if (kernelenv) |envptr| {
+                _ = w.kernel32.FreeEnvironmentStringsW(envptr);
+            }
+            if (newenv) |ptr| {
+                allocator.free(ptr);
+            }
+        }
+
+        if (setChild) {
+            var size: usize = 0;
+            if (kernelenv) |ptr| {
+                // check that env is non-empty
+                if (ptr[0] != 0 or ptr[1] != 0) {
+                    // array is terminated by two nulls
+                    while (ptr[size] != 0 or ptr[size + 1] != 0) size += 1;
+                    size += 1;
+                }
+            }
+            // now ptr[size] is the first null
+            const buf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
+            if (kernelenv) |ptr| {
+                @memcpy(buf[0..size], ptr);
+            }
+            @memcpy(buf[size .. size + watcherChildEnv.len], watcherChildEnv);
+            buf[size + watcherChildEnv.len] = '=';
+            buf[size + watcherChildEnv.len + 1] = '1';
+            buf[size + watcherChildEnv.len + 2] = 0;
+            buf[size + watcherChildEnv.len + 3] = 0;
+            newenv = buf;
+        }
+
+        const env: ?[*]u16 = if (newenv) |e| e.ptr else kernelenv;
+
+        var startupinfo = w.STARTUPINFOW{
+            .cb = @sizeOf(w.STARTUPINFOW),
+            .lpReserved = null,
+            .lpDesktop = null,
+            .lpTitle = null,
+            .dwX = 0,
+            .dwY = 0,
+            .dwXSize = 0,
+            .dwYSize = 0,
+            .dwXCountChars = 0,
+            .dwYCountChars = 0,
+            .dwFillAttribute = 0,
+            .dwFlags = w.STARTF_USESTDHANDLES,
+            .wShowWindow = 0,
+            .cbReserved2 = 0,
+            .lpReserved2 = null,
+            .hStdInput = std.io.getStdIn().handle,
+            .hStdOutput = std.io.getStdOut().handle,
+            .hStdError = std.io.getStdErr().handle,
+        };
+        const rc = w.kernel32.CreateProcessW(
+            image_pathZ,
+            w.kernel32.GetCommandLineW(),
+            null,
+            null,
+            1,
+            flags,
+            env,
+            null,
+            &startupinfo,
+            procinfo,
+        );
+        if (rc == 0) {
+            Output.panic("Unexpected error while reloading process\n", .{});
+        }
+    }
 };
 
 pub usingnamespace if (@import("builtin").target.os.tag != .windows) posix else win32;

@@ -121,7 +121,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn dupeForJS(utf8: []const u8, allocator: std.mem.Allocator) !ZigString {
-        if (try strings.toUTF16Alloc(allocator, utf8, false)) |utf16| {
+        if (try strings.toUTF16Alloc(allocator, utf8, false, false)) |utf16| {
             var out = ZigString.init16(utf16);
             out.mark();
             out.markUTF16();
@@ -432,13 +432,6 @@ pub const ZigString = extern struct {
 
         pub const byteSlice = Slice.slice;
 
-        pub fn from(input: []u8, allocator: std.mem.Allocator) Slice {
-            return .{
-                .ptr = input.ptr,
-                .len = @as(u32, @truncate(input.len)),
-                .allocator = NullableAllocator.init(allocator),
-            };
-        }
 
         pub fn fromUTF8NeverFree(input: []const u8) Slice {
             return .{

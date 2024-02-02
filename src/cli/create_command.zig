@@ -555,6 +555,7 @@ pub const CreateCommand = struct {
                         package_json_contents = try MutableString.init(ctx.allocator, size);
                         package_json_contents.list.expandToCapacity();
 
+                        const prev_file_pos = if (comptime Environment.isWindows) try pkg.getPos() else 0;
                         _ = pkg.preadAll(package_json_contents.list.items, 0) catch |err| {
                             package_json_file = null;
 
@@ -565,6 +566,7 @@ pub const CreateCommand = struct {
                             Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
                             break :read_package_json;
                         };
+                        if (comptime Environment.isWindows) try pkg.seekTo(prev_file_pos);
                         // The printer doesn't truncate, so we must do so manually
                         std.os.ftruncate(pkg.handle, 0) catch {};
 
@@ -2253,18 +2255,30 @@ const GitHandler = struct {
     ) !bool {
         const git_start = std.time.nanoTimestamp();
 
-        // This feature flag is disabled.
-        // using libgit2 is slower than the CLI.
-        // [481.00ms] git
-        // [89.00ms] git
-        // if (comptime FeatureFlags.use_libgit2) {
-        // }
+        // Not sure why...
+        // But using libgit for this operation is slower than the CLI!
+        // Used to have a feature flag to try it but was removed:
+        // https://github.com/oven-sh/bun/commit/deafd3d0d42fb8d7ddf2b06cde2d7c7ee8bc7144
+        //
+        // ~/Build/throw
+        // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
+        // Benchmark #1: bun create react3 app --force --no-install
+        //   Time (mean ± σ):     974.6 ms ±   6.8 ms    [User: 170.5 ms, System: 798.3 ms]
+        //   Range (min … max):   960.8 ms … 984.6 ms    10 runs
+        //
+        // ❯ mv /usr/local/opt/libgit2/lib/libgit2.dylib /usr/local/opt/libgit2/lib/libgit2.dylib.1
+        //
+        // ~/Build/throw
+        // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
+        // Benchmark #1: bun create react3 app --force --no-install
+        //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
+        //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
 
         if (which(&bun_path_buf, PATH, destination, "git")) |git| {
             const git_commands = .{
-                &[_]string{ bun.asByteSlice(git), "init", "--quiet" },
-                &[_]string{ bun.asByteSlice(git), "add", destination, "--ignore-errors" },
-                &[_]string{ bun.asByteSlice(git), "commit", "-am", "Initial commit (via bun create)", "--quiet" },
+                &[_]string{ git, "init", "--quiet" },
+                &[_]string{ git, "add", destination, "--ignore-errors" },
+                &[_]string{ git, "commit", "-am", "Initial commit (via bun create)", "--quiet" },
             };
 
             if (comptime verbose) {

@@ -392,40 +392,41 @@ pub const Bin = extern struct {
                     };
                     defer file.close();
 
-                    const first_content_chunk = contents: {
-                        const fd = bun.sys.openatWindows(
-                            this.package_installed_node_modules,
-                            if (link_global)
-                                bun.strings.toWPathNormalized(
-                                    &filename3_buf,
-                                    target_path[this.relative_path_to_bin_for_windows_global_link_offset..],
-                                )
-                            else
-                                target_wpath,
-                            std.os.O.RDONLY,
-                        ).unwrap() catch |err| {
-                            this.err = err;
-                            return;
+                    const shebang = shebang: {
+                        const first_content_chunk = contents: {
+                            const fd = bun.sys.openatWindows(
+                                this.package_installed_node_modules,
+                                if (link_global)
+                                    bun.strings.toWPathNormalized(
+                                        &filename3_buf,
+                                        target_path[this.relative_path_to_bin_for_windows_global_link_offset..],
+                                    )
+                                else
+                                    target_wpath,
+                                std.os.O.RDONLY,
+                            ).unwrap() catch break :contents null;
+                            defer _ = bun.sys.close(fd);
+                            const reader = fd.asFile().reader();
+                            const read = reader.read(&read_in_buf) catch break :contents null;
+                            if (read == 0) {
+                                break :contents null;
+                            }
+                            break :contents read_in_buf[0..read];
                         };
-                        defer _ = bun.sys.close(fd);
-                        const reader = fd.asFile().reader();
-                        const read = reader.read(&read_in_buf) catch |err| {
-                            this.err = err;
-                            return;
-                        };
-                        if (read == 0) {
-                            this.err = error.FileNotFound;
-                            return;
+
+                        if (first_content_chunk) |chunk| {
+                            break :shebang WinBinLinkingShim.Shebang.parse(chunk, target_wpath) catch {
+                                this.err = error.InvalidBinContent;
+                                return;
+                            };
+                        } else {
+                            break :shebang WinBinLinkingShim.Shebang.parseFromBinPath(target_wpath);
                         }
-                        break :contents read_in_buf[0..read];
                     };
 
                     const shim = WinBinLinkingShim{
                         .bin_path = target_wpath,
-                        .shebang = WinBinLinkingShim.Shebang.parse(first_content_chunk, target_wpath) catch {
-                            this.err = error.InvalidBinContent;
-                            return;
-                        },
+                        .shebang = shebang,
                     };
 
                     const len = shim.encodedLength();
@@ -448,19 +449,17 @@ pub const Bin = extern struct {
                 destination_wpath.len -= 1;
                 @memcpy(destination_wpath[destination_wpath.len - 3 ..], &[_]u16{ 'e', 'x', 'e' });
 
-                if (node_modules.createFileW(destination_wpath, .{
-                    .exclusive = true,
-                })) |exe_file| {
+                // truncate=false is intentional so that the exe is always rewritten. this helps
+                // - you upgrade to a new version of bin_shim_impl (unlikely but possible)
+                // - if otherwise corrupt it yourself
+                if (node_modules.createFileW(destination_wpath, .{})) |exe_file| {
                     defer exe_file.close();
                     exe_file.writer().writeAll(WinBinLinkingShim.embedded_executable_data) catch |err| {
                         this.err = err;
                         return;
                     };
                 } else |err| {
-                    if (err != error.PathAlreadyExists) {
-                        this.err = err;
-                        return;
-                    }
+                    this.err = err;
                 }
             }
         }

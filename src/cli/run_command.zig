@@ -271,6 +271,7 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         silent: bool,
+        use_native_shell: bool,
     ) !bool {
         const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
@@ -303,6 +304,28 @@ pub const RunCommand = struct {
             combined_script = combined_script_buf;
         }
 
+        if (Environment.isWindows and !use_native_shell) {
+            if (!silent) {
+                if (Environment.isDebug) {
+                    Output.prettyError("[bun shell] ", .{});
+                }
+                Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
+                Output.flush();
+            }
+
+            const mini = bun.JSC.MiniEventLoop.initGlobal(env);
+            bun.shell.InterpreterMini.initAndRunFromSource(mini, name, combined_script) catch |err| {
+                if (!silent) {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+                }
+
+                Output.flush();
+                Global.exit(1);
+            };
+
+            return true;
+        }
+
         var argv = [_]string{
             shell_bin,
             if (Environment.isWindows) "/c" else "-c",
@@ -324,7 +347,13 @@ pub const RunCommand = struct {
         child_process.stdin_behavior = .Inherit;
         child_process.stdout_behavior = .Inherit;
 
-        const result = child_process.spawnAndWait() catch |err| {
+        if (Environment.isWindows) {
+            try @import("../child_process_windows.zig").spawnWindows(&child_process);
+        } else {
+            try child_process.spawn();
+        }
+
+        const result = child_process.wait() catch |err| {
             if (!silent) {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
             }
@@ -1069,7 +1098,12 @@ pub const RunCommand = struct {
         }
     }
 
-    pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
+    pub fn exec(
+        ctx_: Command.Context,
+        comptime bin_dirs_only: bool,
+        comptime log_errors: bool,
+        comptime did_try_open_with_bun_js: bool,
+    ) !bool {
         var ctx = ctx_;
         // Step 1. Figure out what we're trying to run
         var positionals = ctx.positionals;
@@ -1109,7 +1143,7 @@ pub const RunCommand = struct {
             return true;
         }
 
-        if (log_errors or force_using_bun) {
+        if (!did_try_open_with_bun_js and (log_errors or force_using_bun)) {
             if (script_name_to_search.len > 0) {
                 possibly_open_with_bun_js: {
                     const ext = std.fs.path.extension(script_name_to_search);
@@ -1249,6 +1283,7 @@ pub const RunCommand = struct {
                             this_bundler.env,
                             &.{},
                             ctx.debug.silent,
+                            ctx.debug.use_native_shell,
                         )) {
                             return false;
                         }
@@ -1262,6 +1297,7 @@ pub const RunCommand = struct {
                         this_bundler.env,
                         passthrough,
                         ctx.debug.silent,
+                        ctx.debug.use_native_shell,
                     )) return false;
 
                     temp_script_buffer[0.."post".len].* = "post".*;
@@ -1275,6 +1311,7 @@ pub const RunCommand = struct {
                             this_bundler.env,
                             &.{},
                             ctx.debug.silent,
+                            ctx.debug.use_native_shell,
                         )) {
                             return false;
                         }
@@ -1307,7 +1344,7 @@ pub const RunCommand = struct {
         if (Environment.isWindows) try_bunx_file: {
             const WinBunShimImpl = @import("../install/windows-shim/bun_shim_impl.zig");
             const w = std.os.windows;
-            const debug = Output.scoped(.BunRunXFastPath, true);
+            const debug = Output.scoped(.BunRunXFastPath, false);
 
             // Attempt to find a ".bunx" file on disk, and run it, skipping the wrapper exe.
             // we build the full exe path even though we could do a relative lookup, because in the case we do find it, we have to generate this full path anyways

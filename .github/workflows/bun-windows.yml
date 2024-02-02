@@ -435,6 +435,22 @@ jobs:
           } catch {}
           $ErrorActionPreference = "Stop"
       - uses: sarisia/actions-status-discord@v1
+        if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
+        with:
+          title: ""
+          webhook: ${{ secrets.DISCORD_WEBHOOK_WINTEST }}
+          status: "failure"
+          noprefix: true
+          nocontext: true
+          description: |
+            ### ❌🪟 [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
+
+            @${{ github.actor }}, there are **${{ steps.test.outputs.failing_test_count }} failing tests** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
+
+            ${{ steps.test.outputs.failing_tests }}
+
+            [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})
+      - uses: sarisia/actions-status-discord@v1
         if: always() && steps.test.outputs.regressing_tests != '' && github.event_name == 'pull_request'
         with:
           title: ""

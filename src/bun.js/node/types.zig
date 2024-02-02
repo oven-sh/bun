@@ -150,6 +150,9 @@ pub fn Maybe(comptime ResultType: type) type {
         }
 
         pub inline fn errnoSys(rc: anytype, syscall: Syscall.Tag) ?@This() {
+            if (comptime Environment.isWindows) {
+                if (rc != 0) return null;
+            }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
@@ -173,6 +176,9 @@ pub fn Maybe(comptime ResultType: type) type {
         }
 
         pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: bun.FileDescriptor) ?@This() {
+            if (comptime Environment.isWindows) {
+                if (rc != 0) return null;
+            }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
                 else => |err| @This(){
@@ -189,6 +195,9 @@ pub fn Maybe(comptime ResultType: type) type {
         pub inline fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
             if (std.meta.Child(@TypeOf(path)) == u16) {
                 @compileError("Do not pass WString path to errnoSysP, it needs the path encoded as utf8");
+            }
+            if (comptime Environment.isWindows) {
+                if (rc != 0) return null;
             }
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,
@@ -207,7 +216,6 @@ pub fn Maybe(comptime ResultType: type) type {
 
 fn translateToErrInt(err: anytype) bun.sys.Error.Int {
     return switch (@TypeOf(err)) {
-        bun.windows.Win32Error => @intFromEnum(bun.windows.translateWinErrorToErrno(err)),
         bun.windows.NTSTATUS => @intFromEnum(bun.windows.translateNTStatusToErrno(err)),
         else => @truncate(@intFromEnum(err)),
     };
@@ -432,7 +440,7 @@ pub const StringOrBuffer = union(enum) {
         defer global.vm().reportExtraMemory(out.len);
 
         return .{
-            .encoded_slice = JSC.ZigString.Slice.from(out, bun.default_allocator),
+            .encoded_slice = JSC.ZigString.Slice.init(bun.default_allocator, out),
         };
     }
 
@@ -658,12 +666,17 @@ pub const PathLike = union(enum) {
     pub fn sliceZWithForceCopy(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8, comptime force: bool) [:0]const u8 {
         const sliced = this.slice();
 
+        if (Environment.isWindows) {
+            if (std.fs.path.isAbsolute(sliced)) {
+                return resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, sliced) catch @panic("Error while resolving path.");
+            }
+        }
+
         if (sliced.len == 0) return "";
 
         if (comptime !force) {
             if (sliced[sliced.len - 1] == 0) {
-                var sliced_ptr = sliced.ptr;
-                return sliced_ptr[0 .. sliced.len - 1 :0];
+                return sliced[0 .. sliced.len - 1 :0];
             }
         }
 
@@ -673,13 +686,6 @@ pub const PathLike = union(enum) {
     }
 
     pub inline fn sliceZ(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
-        if (Environment.isWindows) {
-            const data = this.slice();
-            if (!std.fs.path.isAbsolute(data)) {
-                return sliceZWithForceCopy(this, buf, false);
-            }
-            return resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(buf, data) catch @panic("Error while resolving path.");
-        }
         return sliceZWithForceCopy(this, buf, false);
     }
 

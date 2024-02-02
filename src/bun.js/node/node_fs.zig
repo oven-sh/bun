@@ -4486,7 +4486,11 @@ pub const NodeFS = struct {
     }
 
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime _: Flavor) Maybe(Return.Open) {
-        const path = args.path.sliceZ(&this.sync_error_buf);
+        const path = if (Environment.isWindows and bun.strings.eqlComptime(args.path.slice(), "/dev/null"))
+            "\\\\.\\NUL"
+        else
+            args.path.sliceZ(&this.sync_error_buf);
+
         return switch (Syscall.open(path, @intFromEnum(args.flags), args.mode)) {
             .err => |err| .{
                 .err = err.withPath(args.path.slice()),
@@ -5269,13 +5273,52 @@ pub const NodeFS = struct {
 
     pub fn writeFileWithPathBuffer(pathbuf: *[bun.MAX_PATH_BYTES]u8, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
         var path: [:0]const u8 = undefined;
+        var pathbuf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         const fd = switch (args.file) {
             .path => brk: {
-                path = args.file.path.sliceZ(pathbuf);
+                // On Windows, we potentially mutate the path in posixToPlatformInPlace
+                // We cannot mutate JavaScript strings in-place. That will break many things.
+                // So we must always copy the path string on Windows.
+                path = args.file.path.sliceZWithForceCopy(pathbuf, Environment.isWindows);
+                bun.path.posixToPlatformInPlace(u8, @constCast(path));
+
+                var is_dirfd_different = false;
+                var dirfd = args.dirfd;
+                if (Environment.isWindows) {
+                    while (std.mem.startsWith(u8, path, "..\\")) {
+                        is_dirfd_different = true;
+                        var buffer: bun.WPathBuffer = undefined;
+                        const dirfd_path_len = std.os.windows.kernel32.GetFinalPathNameByHandleW(args.dirfd.cast(), &buffer, buffer.len, 0);
+                        const dirfd_path = buffer[0..dirfd_path_len];
+                        const parent_path = bun.Dirname.dirname(u16, dirfd_path).?;
+                        if (std.mem.startsWith(u16, parent_path, &bun.windows.nt_maxpath_prefix)) @constCast(parent_path)[1] = '?';
+                        const newdirfd = switch (bun.sys.openDirAtWindows(bun.invalid_fd, parent_path, false, true)) {
+                            .result => |fd| fd,
+                            .err => |err| {
+                                return .{ .err = err.withPath(path) };
+                            },
+                        };
+                        path = path[3..];
+                        dirfd = newdirfd;
+                    }
+                }
+                defer if (is_dirfd_different) {
+                    var d = dirfd.asDir();
+                    d.close();
+                };
+                if (Environment.isWindows) {
+                    // windows openat does not support path traversal, fix it here.
+                    // use pathbuf2 here since without it 'panic: @memcpy arguments alias' triggers
+                    if (std.mem.indexOf(u8, path, "\\.\\") != null or std.mem.indexOf(u8, path, "\\..\\") != null) {
+                        const fixed_path = bun.path.normalizeStringWindows(path, &pathbuf2, false, false);
+                        pathbuf2[fixed_path.len] = 0;
+                        path = pathbuf2[0..fixed_path.len :0];
+                    }
+                }
 
                 const open_result = Syscall.openat(
-                    args.dirfd,
+                    dirfd,
                     path,
                     @intFromEnum(args.flag) | os.O.NOCTTY,
                     args.mode,
@@ -5986,7 +6029,16 @@ pub const NodeFS = struct {
         }
 
         const flags = os.O.DIRECTORY | os.O.RDONLY;
-        const fd = switch (Syscall.openatOSPath(bun.toFD((std.fs.cwd().fd)), src, flags, 0)) {
+        var wbuf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
+        const fd = switch (Syscall.openatOSPath(
+            bun.toFD((std.fs.cwd().fd)),
+            if (Environment.isWindows and std.fs.path.isAbsoluteWindowsWTF16(src))
+                bun.strings.addNTPathPrefixIfNeeded(&wbuf, src)
+            else
+                src,
+            flags,
+            0,
+        )) {
             .err => |err| {
                 return .{ .err = err.withPath(this.osPathIntoSyncErrorBuf(src)) };
             },
@@ -6323,9 +6375,13 @@ pub const NodeFS = struct {
 
         if (Environment.isWindows) {
             const result = windows.CopyFileW(src, dest, @intFromBool(mode.shouldntOverwrite()));
-            if (Maybe(Return.CopyFile).errnoSysP(result, .copyfile, this.osPathIntoSyncErrorBuf(src))) |e| {
-                return e;
+            if (result == bun.windows.FALSE) {
+                if (Maybe(Return.CopyFile).errnoSysP(result, .copyfile, this.osPathIntoSyncErrorBuf(src))) |e| {
+                    return e;
+                }
             }
+
+            return ret.success;
         }
 
         return ret.todo();

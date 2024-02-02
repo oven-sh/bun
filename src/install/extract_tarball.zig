@@ -17,6 +17,7 @@ const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const Environment = bun.Environment;
+const w = std.os.windows;
 
 const ExtractTarball = @This();
 
@@ -157,7 +158,7 @@ threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
-    var tmpdir = this.temp_dir;
+    const tmpdir = this.temp_dir;
     var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     const name = this.name.slice();
     const basename = brk: {
@@ -183,8 +184,21 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     var resolved: string = "";
     const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
-    {
-        var extract_destination = tmpdir.makeOpenPath(std.mem.span(tmpname), .{}) catch |err| {
+    const extract_fd_on_windows = brk: {
+        var extract_destination = switch (Environment.os) {
+            .windows => makeOpenPathAccessMaskW(
+                tmpdir,
+                std.mem.span(tmpname),
+                w.STANDARD_RIGHTS_READ |
+                    w.FILE_READ_ATTRIBUTES |
+                    w.FILE_READ_EA |
+                    w.SYNCHRONIZE |
+                    w.FILE_TRAVERSE |
+                    w.DELETE,
+                false,
+            ),
+            else => tmpdir.makeOpenPath(std.mem.span(tmpname), .{}),
+        } catch |err| {
             this.package_manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -195,7 +209,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             return error.InstallFailed;
         };
 
-        defer extract_destination.close();
+        errdefer if (Environment.isWindows) extract_destination.close();
+        defer if (!Environment.isWindows) extract_destination.close();
 
         if (PackageManager.verbose_install) {
             Output.prettyErrorln("[{s}] Start extracting {s}<r>", .{ name, tmpname });
@@ -276,7 +291,11 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             Output.prettyErrorln("[{s}] Extracted<r>", .{name});
             Output.flush();
         }
-    }
+
+        if (Environment.isWindows) {
+            break :brk bun.toFD(extract_destination.fd);
+        }
+    };
     const folder_name = switch (this.resolution.tag) {
         .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version),
         .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved),
@@ -295,33 +314,23 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     // Now that we've extracted the archive, we rename.
     if (comptime Environment.isWindows) {
-        // TODO(dylan-conway) make this less painful
-        var from_buf: bun.PathBuffer = undefined;
-        const tmpdir_path = try bun.getFdPath(tmpdir.fd, &from_buf);
-        const from_path = Path.joinAbsStringZ(tmpdir_path, &.{bun.sliceTo(tmpname, 0)}, .auto);
+        defer _ = bun.sys.close(extract_fd_on_windows);
 
-        var to_buf: bun.PathBuffer = undefined;
-        const cache_dir_path = try bun.getFdPath(cache_dir.fd, &to_buf);
-        const to_path = Path.joinAbsStringBufZ(cache_dir_path, &to_buf, &.{folder_name}, .auto);
+        var folder_name_wbuf: bun.WPathBuffer = undefined;
+        const folder_name_w = bun.strings.toWPathNormalized(&folder_name_wbuf, folder_name);
 
-        var from_path_buf_w: bun.WPathBuffer = undefined;
-        const from_path_w = bun.strings.toWPath(&from_path_buf_w, from_path);
-        var to_path_buf_w: bun.WPathBuffer = undefined;
-        const to_path_w = bun.strings.toWPath(&to_path_buf_w, to_path);
-
-        if (bun.windows.MoveFileExW(
-            from_path_w,
-            to_path_w,
-            bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH,
-        ) == bun.windows.FALSE) {
-            this.package_manager.log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                this.package_manager.allocator,
-                "moving \"{s}\" to cache dir failed:  From: {s}\n    To: {s}",
-                .{ name, tmpname, folder_name },
-            ) catch unreachable;
-            return error.InstallFailed;
+        switch (bun.C.moveOpenedFileAtLoose(extract_fd_on_windows, bun.toFD(cache_dir.fd), folder_name_w, false)) {
+            .err => |err| {
+                this.package_manager.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.package_manager.allocator,
+                    "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {}",
+                    .{ name, err, tmpname, std.unicode.fmtUtf16le(folder_name_w) },
+                ) catch unreachable;
+                return error.InstallFailed;
+            },
+            .result => {},
         }
     } else {
         switch (bun.sys.renameat(bun.toFD(tmpdir.fd), bun.sliceTo(tmpname, 0), bun.toFD(cache_dir.fd), folder_name)) {
@@ -351,7 +360,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         ) catch unreachable;
         return error.InstallFailed;
     };
-
     defer final_dir.close();
     // and get the fd path
     const final_path = bun.getFdPath(
@@ -432,4 +440,93 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         .json_buf = json_buf,
         .json_len = json_len,
     };
+}
+
+// TODO(@paperdave): upstream making this public into zig std
+// there is zero reason this must be copied
+//
+/// Calls makeOpenDirAccessMaskW iteratively to make an entire path
+/// (i.e. creating any parent directories that do not exist).
+/// Opens the dir if the path already exists and is a directory.
+/// This function is not atomic, and if it returns an error, the file system may
+/// have been modified regardless.
+fn makeOpenPathAccessMaskW(self: std.fs.Dir, sub_path: []const u8, access_mask: u32, no_follow: bool) std.os.OpenError!std.fs.Dir {
+    var it = try std.fs.path.componentIterator(sub_path);
+    // If there are no components in the path, then create a dummy component with the full path.
+    var component = it.last() orelse std.fs.path.NativeUtf8ComponentIterator.Component{
+        .name = "",
+        .path = sub_path,
+    };
+
+    while (true) {
+        const sub_path_w = try w.sliceToPrefixedFileW(self.fd, component.path);
+        const is_last = it.peekNext() == null;
+        var result = makeOpenDirAccessMaskW(self, sub_path_w.span().ptr, access_mask, .{
+            .no_follow = no_follow,
+            .create_disposition = if (is_last) w.FILE_OPEN_IF else w.FILE_CREATE,
+        }) catch |err| switch (err) {
+            error.FileNotFound => |e| {
+                component = it.previous() orelse return e;
+                continue;
+            },
+            else => |e| return e,
+        };
+
+        component = it.next() orelse return result;
+        // Don't leak the intermediate file handles
+        result.close();
+    }
+}
+const MakeOpenDirAccessMaskWOptions = struct {
+    no_follow: bool,
+    create_disposition: u32,
+};
+
+fn makeOpenDirAccessMaskW(self: std.fs.Dir, sub_path_w: [*:0]const u16, access_mask: u32, flags: MakeOpenDirAccessMaskWOptions) std.os.OpenError!std.fs.Dir {
+    var result = std.fs.Dir{
+        .fd = undefined,
+    };
+
+    const path_len_bytes = @as(u16, @intCast(std.mem.sliceTo(sub_path_w, 0).len * 2));
+    var nt_name = w.UNICODE_STRING{
+        .Length = path_len_bytes,
+        .MaximumLength = path_len_bytes,
+        .Buffer = @constCast(sub_path_w),
+    };
+    var attr = w.OBJECT_ATTRIBUTES{
+        .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(sub_path_w)) null else self.fd,
+        .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+        .ObjectName = &nt_name,
+        .SecurityDescriptor = null,
+        .SecurityQualityOfService = null,
+    };
+    const open_reparse_point: w.DWORD = if (flags.no_follow) w.FILE_OPEN_REPARSE_POINT else 0x0;
+    var io: w.IO_STATUS_BLOCK = undefined;
+    const rc = w.ntdll.NtCreateFile(
+        &result.fd,
+        access_mask,
+        &attr,
+        &io,
+        null,
+        w.FILE_ATTRIBUTE_NORMAL,
+        w.FILE_SHARE_READ | w.FILE_SHARE_WRITE,
+        flags.create_disposition,
+        w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
+        null,
+        0,
+    );
+
+    switch (rc) {
+        .SUCCESS => return result,
+        .OBJECT_NAME_INVALID => return error.BadPathName,
+        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+        .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
+        .NOT_A_DIRECTORY => return error.NotDir,
+        // This can happen if the directory has 'List folder contents' permission set to 'Deny'
+        // and the directory is trying to be opened for iteration.
+        .ACCESS_DENIED => return error.AccessDenied,
+        .INVALID_PARAMETER => return error.BadPathName,
+        else => return w.unexpectedStatus(rc),
+    }
 }

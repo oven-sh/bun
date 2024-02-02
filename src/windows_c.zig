@@ -695,16 +695,16 @@ pub const SystemErrno = enum(u16) {
                 return init(@as(Win32Error, @enumFromInt(code)));
             } else {
                 if (comptime bun.Environment.allow_assert)
-                    bun.Output.debug("Unknown error code: {any}\n", .{code});
+                    bun.Output.debugWarn("Unknown error code: {any}\n", .{code});
 
                 return null;
             }
         }
 
-        if (comptime @TypeOf(code) == Win32Error) {
-            return switch (code) {
+        if (comptime @TypeOf(code) == Win32Error or @TypeOf(code) == std.os.windows.Win32Error) {
+            return switch (@as(Win32Error, @enumFromInt(@intFromEnum(code)))) {
                 Win32Error.NOACCESS => SystemErrno.EACCES,
-                @as(Win32Error, @enumFromInt(10013)) => SystemErrno.EACCES,
+                Win32Error.WSAEACCES => SystemErrno.EACCES,
                 Win32Error.ELEVATION_REQUIRED => SystemErrno.EACCES,
                 Win32Error.CANT_ACCESS_FILE => SystemErrno.EACCES,
                 Win32Error.ADDRESS_ALREADY_ASSOCIATED => SystemErrno.EADDRINUSE,
@@ -803,7 +803,7 @@ pub const SystemErrno = enum(u16) {
                 Win32Error.META_EXPANSION_TOO_LONG => SystemErrno.E2BIG,
                 Win32Error.WSAESOCKTNOSUPPORT => SystemErrno.ESOCKTNOSUPPORT,
                 Win32Error.DELETE_PENDING => SystemErrno.EBUSY,
-                else => return null,
+                else => null,
             };
         }
 
@@ -1269,6 +1269,12 @@ pub fn renameAtW(
     new_path_w: []const u16,
     replace_if_exists: bool,
 ) Maybe(void) {
+    if (comptime bun.Environment.allow_assert) {
+        // if the directories are the same and the destination path is absolute, the old path name is kept
+        if (old_dir_fd == new_dir_fd) {
+            std.debug.assert(!std.fs.path.isAbsoluteWindowsWTF16(new_path_w));
+        }
+    }
     const src_fd = switch (bun.sys.ntCreateFile(
         old_dir_fd,
         old_path_w,
@@ -1308,6 +1314,11 @@ pub fn moveOpenedFileAt(
     // STATUS_NOT_SUPPORTED or (2) only setting IGNORE_READONLY_ATTRIBUTE when >= rs5
     // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
     comptime std.debug.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+
+    if (bun.Environment.allow_assert) {
+        std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '\\') == null); // Call moveOpenedFileAtLoose
+        std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '/') == null); // Call moveOpenedFileAtLoose
+    }
 
     const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + (bun.MAX_PATH_BYTES - 1);
     var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION_EX)) = undefined;

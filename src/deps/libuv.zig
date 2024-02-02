@@ -616,26 +616,16 @@ pub const Loop = extern struct {
         bun.default_allocator.destroy(ptr);
     }
 
-    // threadlocal var threadlocal_loop_data: Loop = undefined;
-    // threadlocal var threadlocal_loop: ?*Loop = null;
+    threadlocal var threadlocal_loop_data: Loop = undefined;
+    threadlocal var threadlocal_loop: ?*Loop = null;
 
-    /// UV loop is not thread local.
     pub fn get() *Loop {
-        // TODO(@paperdave):
-        // This should not work. UV is not threadsafe. Repeat, UV is NOT THREADSAFE.
-        // but... this on average seems to be more stable than having a threadlocal loop ._.
-        // really, the solution is to fix many other places like node_fs to not use
-        // the `bun.sys.sys_uv` wrapper api, as i think there is issue doing these
-        // cross-thread sync calls.
-        return uv_default_loop();
-
-        // the correct code looks more like?:
-        // if (threadlocal_loop) |loop| return loop;
-        // if (bun.windows.libuv.Loop.init(&threadlocal_loop_data)) |e| {
-        //     std.debug.panic("Failed to initialize libuv loop: {s}", .{@tagName(e)});
-        // }
-        // threadlocal_loop = &threadlocal_loop_data;
-        // return &threadlocal_loop_data;
+        if (threadlocal_loop) |loop| return loop;
+        if (bun.windows.libuv.Loop.init(&threadlocal_loop_data)) |e| {
+            std.debug.panic("Failed to initialize libuv loop: {s}", .{@tagName(e)});
+        }
+        threadlocal_loop = &threadlocal_loop_data;
+        return &threadlocal_loop_data;
     }
 
     pub fn tick(this: *Loop) void {
@@ -1802,7 +1792,6 @@ pub const uv_calloc_func = ?*const fn (usize, usize) callconv(.C) ?*anyopaque;
 pub const uv_free_func = ?*const fn (?*anyopaque) callconv(.C) void;
 pub extern fn uv_library_shutdown() void;
 pub extern fn uv_replace_allocator(malloc_func: uv_malloc_func, realloc_func: uv_realloc_func, calloc_func: uv_calloc_func, free_func: uv_free_func) c_int;
-pub extern fn uv_default_loop() *uv_loop_t;
 pub extern fn uv_loop_init(loop: *uv_loop_t) ReturnCode;
 pub extern fn uv_loop_close(loop: *uv_loop_t) c_int;
 pub extern fn uv_loop_new() *uv_loop_t;

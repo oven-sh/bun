@@ -70,5 +70,14 @@ pub fn main() void {
         bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
     }
 
+    if (Environment.isWindows) {
+        _ = bun.windows.libuv.uv_replace_allocator(
+            @ptrCast(&bun.Mimalloc.mi_malloc),
+            @ptrCast(&bun.Mimalloc.mi_realloc),
+            @ptrCast(&bun.Mimalloc.mi_calloc),
+            @ptrCast(&bun.Mimalloc.mi_free),
+        );
+    }
+
     bun.CLI.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
 }

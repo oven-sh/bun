@@ -247,7 +247,7 @@ for (const [name, copy] of impls) {
       let prev = process.cwd();
       process.chdir(basename);
 
-      await copy(basename + "/from", basename + "/result", {
+      await copy(join(basename, "from"), join(basename, "result"), {
         filter,
         recursive: true,
       });

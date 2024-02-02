@@ -1841,6 +1841,7 @@ pub const EventLoopHandle = union(enum) {
                 .js => .{ .js = context.js },
                 .mini => .{ .mini = &context.mini },
             },
+            EventLoopHandle => context,
             else => @compileError("Invalid context type for EventLoopHandle.init " ++ @typeName(Context)),
         };
     }

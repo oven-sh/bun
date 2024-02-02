@@ -27,7 +27,7 @@ pub const EnvStr = interpret.EnvStr;
 pub const Interpreter = eval.Interpreter;
 pub const InterpreterMini = eval.InterpreterMini;
 pub const Subprocess = subproc.ShellSubprocess;
-pub const SubprocessMini = subproc.ShellSubprocessMini;
+// pub const SubprocessMini = subproc.ShellSubprocessMini;
 
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;

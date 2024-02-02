@@ -81,7 +81,7 @@ pub const Rusage = if (Environment.isWindows) win_rusage else std.os.rusage;
 const Subprocess = JSC.Subprocess;
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const ShellSubprocess = bun.shell.ShellSubprocess;
-const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
+// const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
 pub const ProcessExitHandler = struct {
     ptr: TaggedPointer = TaggedPointer.Null,
 
@@ -89,7 +89,7 @@ pub const ProcessExitHandler = struct {
         Subprocess,
         LifecycleScriptSubprocess,
         ShellSubprocess,
-        ShellSubprocessMini,
+        // ShellSubprocessMini,
     });
 
     pub fn init(this: *ProcessExitHandler, ptr: anytype) void {
@@ -1427,11 +1427,11 @@ pub fn spawnProcessWindows(
 //         return this.process.event_loop;
 //     }
 
-//     fn onOutputDone(this: *TaskProcess) void {
+//     fn onReaderDone(this: *TaskProcess) void {
 //         this.maybeFinish();
 //     }
 
-//     fn onOutputError(this: *TaskProcess, err: bun.sys.Error) void {
+//     fn onReaderError(this: *TaskProcess, err: bun.sys.Error) void {
 //         this.pending_error = err;
 
 //         this.maybeFinish();
@@ -1515,12 +1515,12 @@ pub fn spawnProcessWindows(
 
 //         pub fn done(this: *BufferedOutput, _: []u8) void {
 //             this.finish();
-//             onOutputDone(this.parent);
+//             onReaderDone(this.parent);
 //         }
 
 //         pub fn onError(this: *BufferedOutput, err: bun.sys.Error) void {
 //             this.finish();
-//             onOutputError(this.parent, err);
+//             onReaderError(this.parent, err);
 //         }
 
 //         pub fn registerPoll(this: *BufferedOutput) void {

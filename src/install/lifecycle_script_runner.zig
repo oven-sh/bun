@@ -35,7 +35,7 @@ pub const LifecycleScriptSubprocess = struct {
 
     const uv = bun.windows.libuv;
 
-    pub const OutputReader = bun.io.BufferedOutputReader(LifecycleScriptSubprocess, null);
+    pub const OutputReader = bun.io.BufferedReader(LifecycleScriptSubprocess);
 
     pub fn loop(this: *const LifecycleScriptSubprocess) *bun.uws.Loop {
         return this.manager.event_loop.loop();
@@ -50,14 +50,14 @@ pub const LifecycleScriptSubprocess = struct {
         return Lockfile.Scripts.names[this.current_script_index];
     }
 
-    pub fn onOutputDone(this: *LifecycleScriptSubprocess) void {
+    pub fn onReaderDone(this: *LifecycleScriptSubprocess) void {
         std.debug.assert(this.finished_fds < 2);
         this.finished_fds += 1;
 
         this.maybeFinished();
     }
 
-    pub fn onOutputError(this: *LifecycleScriptSubprocess, err: bun.sys.Error) void {
+    pub fn onReaderError(this: *LifecycleScriptSubprocess, err: bun.sys.Error) void {
         std.debug.assert(this.finished_fds < 2);
         this.finished_fds += 1;
 

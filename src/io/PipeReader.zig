@@ -6,12 +6,12 @@ pub fn PosixPipeReader(
     comptime This: type,
     // Originally this was the comptime vtable struct like the below
     // But that caused a Zig compiler segfault as of 0.12.0-dev.1604+caae40c21
-    comptime getFd: fn (*This) bun.FileDescriptor,
-    comptime getBuffer: fn (*This) *std.ArrayList(u8),
-    comptime onReadChunk: ?fn (*This, chunk: []u8) void,
-    comptime registerPoll: ?fn (*This) void,
-    comptime done: fn (*This) void,
-    comptime onError: fn (*This, bun.sys.Error) void,
+    comptime getFd: *const fn (*This) bun.FileDescriptor,
+    comptime getBuffer: *const fn (*This) *std.ArrayList(u8),
+    comptime onReadChunk: ?*const fn (*This, chunk: []u8) void,
+    comptime registerPoll: ?*const fn (*This) void,
+    comptime done: *const fn (*This) void,
+    comptime onError: *const fn (*This, bun.sys.Error) void,
 ) type {
     return struct {
         const vtable = .{
@@ -294,34 +294,38 @@ pub fn WindowsPipeReader(
 
 pub const PipeReader = if (bun.Environment.isWindows) WindowsPipeReader else PosixPipeReader;
 const Async = bun.Async;
-pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*const fn (*Parent, chunk: []const u8) void) type {
+
+fn PosixBufferedReaderWithVTable(comptime Parent: type, comptime vtable: struct {
+    onReadChunk: ?*const fn (*anyopaque, chunk: []const u8) void = null,
+    onReaderDone: *const fn (*anyopaque) void,
+    onReaderError: *const fn (*anyopaque, bun.sys.Error) void,
+    loop: *const fn (*anyopaque) JSC.EventLoopHandle,
+}) type {
+    _ = Parent; // autofix
     return struct {
         handle: PollOrFd = .{ .closed = {} },
         _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
         is_done: bool = false,
-        parent: *Parent = undefined,
+        _parent: *anyopaque = undefined,
 
         const PosixOutputReader = @This();
 
-        pub fn fromOutputReader(to: *@This(), from: anytype, parent: *Parent) void {
+        pub fn from(to: *@This(), other: anytype, parent_: *anyopaque) void {
             to.* = .{
-                .handle = from.handle,
-                .buffer = from.buffer,
-                .is_done = from.is_done,
-                .parent = parent,
+                .handle = other.handle,
+                ._buffer = other.buffer().*,
+                .is_done = other.is_done,
+                ._parent = parent_,
             };
-            to.setParent(parent);
-            from.buffer = .{
-                .items = &.{},
-                .capacity = 0,
-                .allocator = from.buffer.allocator,
-            };
-            from.is_done = true;
-            from.handle = .{ .closed = {} };
+            other.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
+            to.setParent(parent_);
+
+            other.is_done = true;
+            other.handle = .{ .closed = {} };
         }
 
-        pub fn setParent(this: *@This(), parent: *Parent) void {
-            this.parent = parent;
+        pub fn setParent(this: *@This(), parent_: *anyopaque) void {
+            this._parent = parent_;
             if (!this.is_done) {
                 this.handle.setOwner(this);
             }
@@ -331,14 +335,14 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
             @This(),
             getFd,
             buffer,
-            if (onReadChunk != null) _onReadChunk else null,
+            if (vtable.onReadChunk != null) _onReadChunk else null,
             registerPoll,
             done,
             onError,
         );
 
         fn _onReadChunk(this: *PosixOutputReader, chunk: []u8) void {
-            onReadChunk.?(this.parent, chunk);
+            vtable.onReadChunk.?(this._parent, chunk);
         }
 
         pub fn getFd(this: *PosixOutputReader) bun.FileDescriptor {
@@ -377,23 +381,23 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
                 return;
             }
             this.finish();
-            this.parent.onOutputDone();
+            vtable.onReaderDone(this._parent);
         }
 
         pub fn deinit(this: *PosixOutputReader) void {
-            this.buffer.deinit();
+            this.buffer().deinit();
             this.handle.close(null, {});
         }
 
         pub fn onError(this: *PosixOutputReader, err: bun.sys.Error) void {
             this.finish();
-            this.parent.onOutputError(err);
+            vtable.onReaderError(this._parent, err);
         }
 
         pub fn registerPoll(this: *PosixOutputReader) void {
             const poll = this.handle.getPoll() orelse return;
             poll.owner.set(this);
-            switch (poll.register(this.parent.loop(), .readable, true)) {
+            switch (poll.register(this.loop(), .readable, true)) {
                 .err => |err| {
                     this.onError(err);
                 },
@@ -403,15 +407,15 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
 
         pub fn start(this: *PosixOutputReader, fd: bun.FileDescriptor, is_pollable: bool) bun.JSC.Maybe(void) {
             if (!is_pollable) {
-                this.buffer.clearRetainingCapacity();
+                this.buffer().clearRetainingCapacity();
                 this.is_done = false;
                 this.handle.close(null, {});
                 this.handle = .{ .fd = fd };
                 return .{ .result = {} };
             }
 
-            const poll = Async.FilePoll.init(this.parent.loop(), fd, .readable, @This(), this);
-            const maybe = poll.register(this.parent.loop(), .readable, true);
+            const poll = Async.FilePoll.init(this.loop(), fd, .readable, @This(), this);
+            const maybe = poll.register(this.loop(), .readable, true);
             if (maybe != .result) {
                 poll.deinit();
                 return maybe;
@@ -429,18 +433,35 @@ pub fn PosixBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*
         pub fn hasPendingRead(_: *const PosixOutputReader) bool {
             return false;
         }
+
+        pub fn loop(this: *const PosixOutputReader) JSC.EventLoopHandle {
+            return vtable.loop(this._parent);
+        }
     };
+}
+
+pub fn PosixBufferedReader(comptime Parent: type) type {
+    return PosixBufferedReaderWithVTable(Parent, .{
+        .onReaderDone = @ptrCast(&Parent.onReaderDone),
+        .onReaderError = @ptrCast(&Parent.onReaderError),
+        .onReadChunk = if (@hasDecl(Parent, "onReadChunk")) @ptrCast(&Parent.onReadChunk) else null,
+        .loop = &struct {
+            pub fn doLoop(this: *anyopaque) JSC.EventLoopHandle {
+                return JSC.EventLoopHandle.init(Parent.eventLoop(@alignCast(@ptrCast(this))));
+            }
+        }.doLoop,
+    });
 }
 
 const JSC = bun.JSC;
 
 const WindowsOutputReaderVTable = struct {
-    onOutputDone: *const fn (*anyopaque) void,
-    onOutputError: *const fn (*anyopaque, bun.sys.Error) void,
+    onReaderDone: *const fn (*anyopaque) void,
+    onReaderError: *const fn (*anyopaque, bun.sys.Error) void,
     onReadChunk: ?*const fn (*anyopaque, chunk: []const u8) void = null,
 };
 
-pub const GenericWindowsBufferedOutputReader = struct {
+pub const GenericWindowsBufferedReader = struct {
     /// The pointer to this pipe must be stable.
     /// It cannot change because we don't know what libuv will do with it.
     /// To compensate for that,
@@ -449,15 +470,19 @@ pub const GenericWindowsBufferedOutputReader = struct {
     is_done: bool = false,
 
     has_inflight_read: bool = false,
-    parent: ?*anyopaque = null,
+    _parent: ?*anyopaque = null,
     vtable: WindowsOutputReaderVTable = undefined,
 
     pub usingnamespace bun.NewRefCounted(@This(), deinit);
 
+    pub fn parent(this: *const GenericWindowsBufferedReader) *anyopaque {
+        return this._parent;
+    }
+
     const WindowsOutputReader = @This();
 
-    pub fn setParent(this: *@This(), parent: anytype) void {
-        this.parent = parent;
+    pub fn setParent(this: *@This(), parent_: anytype) void {
+        this._parent = parent_;
         if (!this.is_done) {
             this.pipe.data = this;
         }
@@ -493,8 +518,7 @@ pub const GenericWindowsBufferedOutputReader = struct {
         this.has_inflight_read = false;
 
         const onReadChunkFn = this.vtable.onReadChunk orelse return;
-        const parent = this.parent orelse return;
-        onReadChunkFn(parent, buf);
+        onReadChunkFn(this.parent() orelse return, buf);
     }
 
     fn finish(this: *WindowsOutputReader) void {
@@ -507,14 +531,14 @@ pub const GenericWindowsBufferedOutputReader = struct {
         std.debug.assert(this.pipe.isClosed());
 
         this.finish();
-        if (this.parent) |parent|
-            this.vtable.onOutputDone(parent);
+        if (this.parent()) |p|
+            this.vtable.onReaderDone(p);
     }
 
     pub fn onError(this: *WindowsOutputReader, err: bun.sys.Error) void {
         this.finish();
-        if (this.parent) |parent|
-            this.vtable.onOutputError(parent, err);
+        if (this.parent()) |p|
+            this.vtable.onReaderError(p, err);
     }
 
     pub fn getReadBufferWithStableMemoryAddress(this: *WindowsOutputReader, suggested_size: usize) []u8 {
@@ -524,37 +548,37 @@ pub const GenericWindowsBufferedOutputReader = struct {
     }
 
     pub fn start(this: *@This(), _: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
-        this.buffer.clearRetainingCapacity();
+        this.buffer().clearRetainingCapacity();
         this.is_done = false;
         this.unpause();
         return .{ .result = {} };
     }
 
     fn deinit(this: *WindowsOutputReader) void {
-        this.buffer.deinit();
+        this.buffer().deinit();
         std.debug.assert(this.pipe.isClosed());
     }
 };
 
-pub fn WindowsBufferedOutputReader(comptime Parent: type, comptime onReadChunk: ?*const fn (*anyopaque, chunk: []const u8) void) type {
+pub fn WindowsBufferedReader(comptime Parent: type, comptime onReadChunk: ?*const fn (*anyopaque, chunk: []const u8) void) type {
     return struct {
-        reader: ?*GenericWindowsBufferedOutputReader = null,
+        reader: ?*GenericWindowsBufferedReader = null,
 
         const vtable = WindowsOutputReaderVTable{
-            .onOutputDone = Parent.onOutputDone,
-            .onOutputError = Parent.onOutputError,
+            .onReaderDone = Parent.onReaderDone,
+            .onReaderError = Parent.onReaderError,
             .onReadChunk = onReadChunk,
         };
 
-        pub fn fromOutputReader(to: *@This(), from: anytype, parent: anytype) void {
-            var reader = from.reader orelse {
-                bun.Output.debugWarn("fromOutputReader: reader is null", .{});
+        pub fn from(to: *@This(), other: anytype, parent: anytype) void {
+            var reader = other.reader orelse {
+                bun.Output.debugWarn("from: reader is null", .{});
                 return;
             };
             reader.vtable = vtable;
             reader.parent = parent;
             to.reader = reader;
-            from.reader = null;
+            other.reader = null;
         }
 
         pub inline fn buffer(this: @This()) *std.ArrayList(u8) {
@@ -563,8 +587,8 @@ pub fn WindowsBufferedOutputReader(comptime Parent: type, comptime onReadChunk: 
             return reader.buffer();
         }
 
-        fn newReader(_: *const @This()) *GenericWindowsBufferedOutputReader {
-            return GenericWindowsBufferedOutputReader.new(.{
+        fn newReader(_: *const @This()) *GenericWindowsBufferedReader {
+            return GenericWindowsBufferedReader.new(.{
                 .vtable = vtable,
             });
         }
@@ -619,14 +643,10 @@ pub fn WindowsBufferedOutputReader(comptime Parent: type, comptime onReadChunk: 
         }
     };
 }
-// a trick to get ZLS to autocomplete it.
-fn BufferedOutputReaderType() type {
-    if (bun.Environment.isPosix) {
-        return PosixBufferedOutputReader;
-    } else if (bun.Environment.isWindows) {
-        return WindowsBufferedOutputReader;
-    }
 
+pub const BufferedReader = if (bun.Environment.isPosix)
+    PosixBufferedReader
+else if (bun.Environment.isWindows)
+    WindowsBufferedReader
+else
     @compileError("Unsupported platform");
-}
-pub const BufferedOutputReader = BufferedOutputReaderType();

@@ -4532,6 +4532,12 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
+        if (comptime bun.Environment.isDebug) {
+            if (bun.ComptimeEnumMap(BuiltinName).has(property)) {
+                Output.debugWarn("get() called with a builtin property name. Use fastGet() instead: {s}", .{property});
+            }
+        }
+
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @as(u32, @intCast(property.len)));
         return if (@intFromEnum(value) != 0) value else return null;
     }
@@ -4560,12 +4566,6 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
-        if (comptime bun.Environment.isDebug) {
-            if (bun.ComptimeEnumMap(BuiltinName).has(property)) {
-                Output.debugWarn("get() called with a builtin property name. Use fastGet() instead: {s}", .{property});
-            }
-        }
-
         if (get(this, global, property)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull()) return null;
             return prop;

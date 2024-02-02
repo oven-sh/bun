@@ -203,10 +203,10 @@ public:
     JSC::JSValue HTTPSResponseSinkPrototype() { return m_JSHTTPSResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableHTTPSResponseSinkControllerPrototype() { return m_JSHTTPSResponseControllerPrototype.getInitializedOnMainThread(this); }
 
-    JSC::Structure* UVStreamSinkStructure() { return m_JSUVStreamSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* UVStreamSink() { return m_JSUVStreamSinkClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue UVStreamSinkPrototype() { return m_JSUVStreamSinkClassStructure.prototypeInitializedOnMainThread(this); }
-    JSC::JSValue JSReadableUVStreamSinkControllerPrototype() { return m_JSUVStreamSinkControllerPrototype.getInitializedOnMainThread(this); }
+    JSC::Structure* FileSinkStructure() { return m_JSFileSinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* FileSink() { return m_JSFileSinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue FileSinkPrototype() { return m_JSFileSinkClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::JSValue JSReadableFileSinkControllerPrototype() { return m_JSFileSinkControllerPrototype.getInitializedOnMainThread(this); }
 
     JSC::Structure* JSBufferListStructure() { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* JSBufferList() { return m_JSBufferListClassStructure.constructorInitializedOnMainThread(this); }
@@ -477,7 +477,7 @@ public:
     LazyClassStructure m_JSFileSinkClassStructure;
     LazyClassStructure m_JSHTTPResponseSinkClassStructure;
     LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
-    LazyClassStructure m_JSUVStreamSinkClassStructure;
+    LazyClassStructure m_JSFileSinkClassStructure;
     LazyClassStructure m_JSReadableStateClassStructure;
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_NapiClassStructure;
@@ -510,7 +510,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
-    LazyProperty<JSGlobalObject, JSObject> m_JSUVStreamSinkControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
     LazyProperty<JSGlobalObject, Structure> m_JSBufferSubclassStructure;

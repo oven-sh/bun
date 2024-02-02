@@ -1488,7 +1488,7 @@ pub const Error = struct {
             @as(Int, @intCast(@intFromEnum(E.AGAIN)))
         else
             @as(Int, @intCast(@intFromEnum(E.INTR))),
-        .syscall = .retry,
+        .syscall = .read,
     };
 
     pub inline fn getErrno(this: Error) E {

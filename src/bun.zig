@@ -2496,5 +2496,5 @@ pub inline fn markPosixOnly() if (Environment.isPosix) void else noreturn {
 
 pub fn linuxKernelVersion() Semver.Version {
     if (comptime !Environment.isLinux) @compileError("linuxKernelVersion() is only available on Linux");
-    return @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+    return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
 }

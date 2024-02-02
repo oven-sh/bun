@@ -150,23 +150,22 @@ pub const FilePoll = struct {
     };
 
     const FileReader = JSC.WebCore.FileReader;
-    const FileSink = JSC.WebCore.FileSink;
-    const FileSinkMini = JSC.WebCore.FileSinkMini;
-    const FIFO = JSC.WebCore.FIFO;
-    const FIFOMini = JSC.WebCore.FIFOMini;
+    // const FIFO = JSC.WebCore.FIFO;
+    // const FIFOMini = JSC.WebCore.FIFOMini;
 
-    const ShellBufferedWriter = bun.shell.Interpreter.BufferedWriter;
-    const ShellBufferedWriterMini = bun.shell.InterpreterMini.BufferedWriter;
-    const ShellBufferedInput = bun.shell.ShellSubprocess.BufferedInput;
-    const ShellBufferedInputMini = bun.shell.SubprocessMini.BufferedInput;
-    const ShellSubprocessCapturedBufferedWriter = bun.shell.ShellSubprocess.BufferedOutput.CapturedBufferedWriter;
-    const ShellSubprocessCapturedBufferedWriterMini = bun.shell.SubprocessMini.BufferedOutput.CapturedBufferedWriter;
-    const ShellBufferedOutput = bun.shell.Subprocess.BufferedOutput;
-    const ShellBufferedOutputMini = bun.shell.SubprocessMini.BufferedOutput;
+    // const ShellBufferedWriter = bun.shell.Interpreter.BufferedWriter;
+    // const ShellBufferedWriterMini = bun.shell.InterpreterMini.BufferedWriter;
+    // const ShellBufferedInput = bun.shell.ShellSubprocess.BufferedInput;
+    // const ShellBufferedInputMini = bun.shell.SubprocessMini.BufferedInput;
+    // const ShellSubprocessCapturedBufferedWriter = bun.shell.ShellSubprocess.BufferedOutput.CapturedBufferedWriter;
+    // const ShellSubprocessCapturedBufferedWriterMini = bun.shell.SubprocessMini.BufferedOutput.CapturedBufferedWriter;
+    // const ShellBufferedOutput = bun.shell.Subprocess.BufferedOutput;
+    // const ShellBufferedOutputMini = bun.shell.SubprocessMini.BufferedOutput;
     const Process = bun.spawn.Process;
     const Subprocess = JSC.Subprocess;
-    const BufferedInput = Subprocess.BufferedInput;
-    const BufferedOutput = Subprocess.StreamingOutput;
+    const ProcessPipeReader = Subprocess.PipeReader.Poll;
+    const StaticPipeWriter = Subprocess.StaticPipeWriter.Poll;
+    const FileSink = JSC.WebCore.FileSink.Poll;
     const DNSResolver = JSC.DNS.DNSResolver;
     const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
     const Deactivated = opaque {
@@ -178,20 +177,20 @@ pub const FilePoll = struct {
     pub const Owner = bun.TaggedPointerUnion(.{
         FileReader,
         FileSink,
-        FileSinkMini,
 
-        ShellBufferedWriter,
-        ShellBufferedWriterMini,
-        ShellBufferedInput,
-        ShellBufferedInputMini,
-        ShellSubprocessCapturedBufferedWriter,
-        ShellSubprocessCapturedBufferedWriterMini,
-        ShellBufferedOutput,
-        ShellBufferedOutputMini,
+        // ShellBufferedWriter,
+        // ShellBufferedWriterMini,
+        // ShellBufferedInput,
+        // ShellBufferedInputMini,
+        // ShellSubprocessCapturedBufferedWriter,
+        // ShellSubprocessCapturedBufferedWriterMini,
+        // ShellBufferedOutput,
+        // ShellBufferedOutputMini,
 
-        BufferedInput,
-        FIFO,
-        FIFOMini,
+        ProcessPipeReader,
+        StaticPipeWriter,
+        FileSink,
+
         Deactivated,
         DNSResolver,
         GetAddrInfoRequest,
@@ -319,34 +318,46 @@ pub const FilePoll = struct {
 
         var ptr = poll.owner;
         switch (ptr.tag()) {
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(FIFO))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FIFO", .{poll.fd});
-                ptr.as(FIFO).ready(size_or_offset, poll.flags.contains(.hup));
-            },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedInput))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedInput", .{poll.fd});
-                ptr.as(ShellBufferedInput).onPoll(size_or_offset, 0);
-            },
+            // @field(Owner.Tag, bun.meta.typeBaseName(@typeName(FIFO))) => {
+            //     log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FIFO", .{poll.fd});
+            //     ptr.as(FIFO).ready(size_or_offset, poll.flags.contains(.hup));
+            // },
+            // @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedInput))) => {
+            //     log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedInput", .{poll.fd});
+            //     ptr.as(ShellBufferedInput).onPoll(size_or_offset, 0);
+            // },
 
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriter))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedWriter", .{poll.fd});
-                var loader = ptr.as(ShellBufferedWriter);
-                loader.onPoll(size_or_offset, 0);
+            // @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriter))) => {
+            //     log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedWriter", .{poll.fd});
+            //     var loader = ptr.as(ShellBufferedWriter);
+            //     loader.onPoll(size_or_offset, 0);
+            // },
+            // @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriterMini))) => {
+            //     log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedWriterMini", .{poll.fd});
+            //     var loader = ptr.as(ShellBufferedWriterMini);
+            //     loader.onPoll(size_or_offset, 0);
+            // },
+            // @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocessCapturedBufferedWriter))) => {
+            //     log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocessCapturedBufferedWriter", .{poll.fd});
+            //     var loader = ptr.as(ShellSubprocessCapturedBufferedWriter);
+            //     loader.onPoll(size_or_offset, 0);
+            // },
+            // @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocessCapturedBufferedWriterMini))) => {
+            //     log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocessCapturedBufferedWriterMini", .{poll.fd});
+            //     var loader = ptr.as(ShellSubprocessCapturedBufferedWriterMini);
+            //     loader.onPoll(size_or_offset, 0);
+            // },
+            @field(Owner.Tag, bun.meta.typeBase(@typeName(ProcessPipeReader))) => {
+                var handler: *ProcessPipeReader = ptr.as(ProcessPipeReader);
+                handler.onPoll(size_or_offset);
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriterMini))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedWriterMini", .{poll.fd});
-                var loader = ptr.as(ShellBufferedWriterMini);
-                loader.onPoll(size_or_offset, 0);
+            @field(Owner.Tag, bun.meta.typeBase(@typeName(StaticPipeWriter))) => {
+                var handler: *StaticPipeWriter = ptr.as(StaticPipeWriter);
+                handler.onPoll(size_or_offset);
             },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocessCapturedBufferedWriter))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocessCapturedBufferedWriter", .{poll.fd});
-                var loader = ptr.as(ShellSubprocessCapturedBufferedWriter);
-                loader.onPoll(size_or_offset, 0);
-            },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocessCapturedBufferedWriterMini))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocessCapturedBufferedWriterMini", .{poll.fd});
-                var loader = ptr.as(ShellSubprocessCapturedBufferedWriterMini);
-                loader.onPoll(size_or_offset, 0);
+            @field(Owner.Tag, bun.meta.typeBase(@typeName(FileSink))) => {
+                var handler: *FileSink = ptr.as(FileSink);
+                handler.onPoll(size_or_offset);
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(Process))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Process", .{poll.fd});

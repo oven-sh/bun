@@ -3046,9 +3046,9 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(prototype);
         });
 
-    m_JSUVStreamSinkControllerPrototype.initLater(
+    m_JSFileSinkControllerPrototype.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::UVStreamSink);
+            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::FileSink);
             init.set(prototype);
         });
 
@@ -3220,11 +3220,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
-    m_JSUVStreamSinkClassStructure.initLater(
+    m_JSFileSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::UVStreamSink);
-            auto* structure = JSUVStreamSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSUVStreamSinkConstructor::create(init.vm, init.global, JSUVStreamSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
+            auto* structure = JSFileSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSFileSinkConstructor::create(init.vm, init.global, JSFileSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
@@ -3845,7 +3845,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_JSFileSinkControllerPrototype.visit(visitor);
     thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
-    thisObject->m_JSUVStreamSinkControllerPrototype.visit(visitor);
+    thisObject->m_JSFileSinkControllerPrototype.visit(visitor);
     thisObject->m_navigatorObject.visit(visitor);
     thisObject->m_nativeMicrotaskTrampoline.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);

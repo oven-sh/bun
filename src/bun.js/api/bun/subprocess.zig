@@ -22,7 +22,6 @@ const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const Body = JSC.WebCore.Body;
 
 const PosixSpawn = bun.posix.spawn;
-const CloseCallbackHandler = JSC.WebCore.UVStreamSink.CloseCallbackHandler;
 const Rusage = bun.posix.spawn.Rusage;
 const Process = bun.posix.spawn.Process;
 const WaiterThread = bun.posix.spawn.WaiterThread;
@@ -402,6 +401,7 @@ pub const Subprocess = struct {
         }
 
         pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
+            _ = exited; // autofix
             switch (this.*) {
                 // should only be reachable when the entire output is buffered.
                 .memfd => return this.toBufferedValue(globalThis),
@@ -412,7 +412,7 @@ pub const Subprocess = struct {
                 .pipe => |pipe| {
                     defer pipe.detach();
                     this.* = .{ .closed = {} };
-                    return pipe.toJS(this, globalThis, exited);
+                    return pipe.toJS(globalThis);
                 },
                 else => {
                     return JSValue.jsUndefined();
@@ -599,13 +599,17 @@ pub const Subprocess = struct {
     }
 
     pub const StaticPipeWriter = struct {
-        writer: bun.io.BufferedWriter(StaticPipeWriter, onWrite, onError, onClose) = .{},
+        writer: IOWriter = .{},
         fd: bun.FileDescriptor = bun.invalid_fd,
         source: Source = .{ .detached = {} },
         process: *Subprocess = undefined,
         event_loop: *JSC.EventLoop,
+        ref_count: u32 = 1,
 
         pub usingnamespace bun.NewRefCounted(@This(), deinit);
+
+        pub const IOWriter = bun.io.BufferedWriter(StaticPipeWriter, onWrite, onError, onClose);
+        pub const Poll = IOWriter;
 
         pub fn updateRef(this: *StaticPipeWriter, add: bool) void {
             if (add) {
@@ -692,7 +696,7 @@ pub const Subprocess = struct {
     };
 
     pub const PipeReader = struct {
-        reader: bun.io.BufferedOutputReader(PipeReader, null) = .{},
+        reader: IOReader = .{},
         process: *Subprocess = undefined,
         event_loop: *JSC.EventLoop = undefined,
         ref_count: u32 = 1,
@@ -703,11 +707,15 @@ pub const Subprocess = struct {
         } = .{ .pending = {} },
         fd: bun.FileDescriptor = bun.invalid_fd,
 
-        pub usingnamespace bun.NewRefCounted(@This(), deinit);
+        pub const IOReader = bun.io.BufferedReader(PipeReader);
+        pub const Poll = IOReader;
+
+        // pub usingnamespace bun.NewRefCounted(@This(), deinit);
 
         pub fn detach(this: *PipeReader) void {
             this.process = undefined;
-            this.deref();
+            this.reader.is_done = true;
+            this.deinit();
         }
 
         pub fn create(event_loop: *JSC.EventLoop, process: *Subprocess, fd: bun.FileDescriptor) *PipeReader {
@@ -729,7 +737,9 @@ pub const Subprocess = struct {
             return this.reader.start();
         }
 
-        pub fn onOutputDone(this: *PipeReader) void {
+        pub const toJS = toReadableStream;
+
+        pub fn onReaderDone(this: *PipeReader) void {
             const owned = this.toOwnedSlice();
             this.state = .{ .done = owned };
             this.reader.close();
@@ -765,13 +775,13 @@ pub const Subprocess = struct {
             switch (this.state) {
                 .pending => {
                     const stream = JSC.WebCore.ReadableStream.fromPipe(globalObject, &this.reader);
-                    defer this.reader.deref();
-                    this.state = .{ .done = .{} };
+                    defer this.deref();
+                    this.state = .{ .done = &.{} };
                     return stream;
                 },
                 .done => |bytes| {
                     const blob = JSC.WebCore.Blob.init(bytes, bun.default_allocator, globalObject);
-                    this.state = .{ .done = .{} };
+                    this.state = .{ .done = &.{} };
                     return JSC.WebCore.ReadableStream.fromBlob(globalObject, &blob, 0);
                 },
                 .err => |err| {
@@ -795,7 +805,7 @@ pub const Subprocess = struct {
             }
         }
 
-        pub fn onOutputError(this: *PipeReader, err: bun.sys.Error) void {
+        pub fn onReaderError(this: *PipeReader, err: bun.sys.Error) void {
             if (this.state == .done) {
                 bun.default_allocator.free(this.state.done);
             }
@@ -852,7 +862,7 @@ pub const Subprocess = struct {
     };
 
     const Writable = union(enum) {
-        pipe: *JSC.WebCore.PipeSink,
+        pipe: *JSC.WebCore.FileSink,
         fd: bun.FileDescriptor,
         buffer: *StaticPipeWriter,
         memfd: bun.FileDescriptor,
@@ -921,7 +931,7 @@ pub const Subprocess = struct {
             switch (stdio) {
                 .pipe => {
                     return Writable{
-                        .pipe = JSC.WebCore.PipeSink.create(event_loop, fd.?),
+                        .pipe = JSC.WebCore.FileSink.create(event_loop, fd.?),
                     };
                 },
 

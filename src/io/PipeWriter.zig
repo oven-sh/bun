@@ -279,7 +279,7 @@ pub fn PosixStreamingWriter(
     return struct {
         buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
         handle: PollOrFd = .{ .closed = {} },
-        parent: *anyopaque = undefined,
+        parent: *Parent = undefined,
         head: usize = 0,
         is_done: bool = false,
 
@@ -307,7 +307,7 @@ pub fn PosixStreamingWriter(
             std.debug.assert(!err.isRetry());
             this.is_done = true;
 
-            onError(@ptrCast(this.parent), err);
+            onError(@alignCast(@ptrCast(this.parent)), err);
             this.close();
         }
 
@@ -377,7 +377,7 @@ pub fn PosixStreamingWriter(
                 var byte_list = bun.ByteList.fromList(this.buffer);
                 defer this.buffer = byte_list.listManaged(bun.default_allocator);
 
-                byte_list.writeUTF16(bun.default_allocator, buf) catch {
+                _ = byte_list.writeUTF16(bun.default_allocator, buf) catch {
                     return .{ .err = bun.sys.Error.oom };
                 };
             }
@@ -403,7 +403,7 @@ pub fn PosixStreamingWriter(
                 var byte_list = bun.ByteList.fromList(this.buffer);
                 defer this.buffer = byte_list.listManaged(bun.default_allocator);
 
-                byte_list.writeLatin1(bun.default_allocator, buf) catch {
+                _ = byte_list.writeLatin1(bun.default_allocator, buf) catch {
                     return .{ .err = bun.sys.Error.oom };
                 };
             }
@@ -472,7 +472,10 @@ pub fn PosixStreamingWriter(
                 .done => |amt| {
                     return .{ .done = amt };
                 },
+                else => {},
             }
+
+            return rc;
         }
 
         pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable);

@@ -8,6 +8,12 @@ pub const PollOrFd = union(enum) {
     fd: bun.FileDescriptor,
     closed: void,
 
+    pub fn setOwner(this: *const PollOrFd, owner: anytype) void {
+        if (this.* == .poll) {
+            this.poll.owner.set(owner);
+        }
+    }
+
     pub fn getFd(this: *const PollOrFd) bun.FileDescriptor {
         return switch (this.*) {
             .closed => bun.invalid_fd,

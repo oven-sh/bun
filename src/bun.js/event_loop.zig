@@ -100,9 +100,11 @@ pub fn WorkTask(comptime Context: type) type {
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
 
+        pub usingnamespace bun.New(@This());
+
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var vm = globalThis.bunVM();
-            var this = bun.new(This, .{
+            var this = This.new(.{
                 .event_loop = vm.eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
@@ -145,8 +147,7 @@ pub fn WorkTask(comptime Context: type) type {
 
         pub fn deinit(this: *This) void {
             this.ref.unref(this.event_loop.virtual_machine);
-
-            bun.destroyWithAlloc(this.allocator, this);
+            this.destroy();
         }
     };
 }
@@ -490,6 +491,12 @@ pub const GarbageCollectionController = struct {
         this.gc_timer = uws.Timer.createFallthrough(actual, this);
         this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
 
+        if (comptime Environment.isDebug) {
+            if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
+                vm.eventLoop().debug.track_last_fn_name = true;
+            }
+        }
+
         var gc_timer_interval: i32 = 1000;
         if (vm.bundler.env.map.get("BUN_GC_TIMER_INTERVAL")) |timer| {
             if (std.fmt.parseInt(i32, timer, 10)) |parsed| {
@@ -655,6 +662,33 @@ pub const EventLoop = struct {
 
     timer_reference_pool: ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool = null,
 
+    debug: Debug = .{},
+
+    pub const Debug = if (Environment.isDebug) struct {
+        is_inside_tick_queue: bool = false,
+        js_call_count_outside_tick_queue: usize = 0,
+        drain_microtasks_count_outside_tick_queue: usize = 0,
+        _prev_is_inside_tick_queue: bool = false,
+        last_fn_name: bun.String = bun.String.empty,
+        track_last_fn_name: bool = false,
+
+        pub fn enter(this: *Debug) void {
+            this._prev_is_inside_tick_queue = this.is_inside_tick_queue;
+            this.is_inside_tick_queue = true;
+            this.js_call_count_outside_tick_queue = 0;
+            this.drain_microtasks_count_outside_tick_queue = 0;
+        }
+
+        pub fn exit(this: *Debug) void {
+            this.is_inside_tick_queue = this._prev_is_inside_tick_queue;
+            this._prev_is_inside_tick_queue = false;
+            this.js_call_count_outside_tick_queue = 0;
+            this.drain_microtasks_count_outside_tick_queue = 0;
+            this.last_fn_name.deref();
+            this.last_fn_name = bun.String.empty;
+        }
+    } else struct {};
+
     pub inline fn getVmImpl(this: *EventLoop) *JSC.VirtualMachine {
         return this.virtual_machine;
     }
@@ -683,6 +717,10 @@ pub const EventLoop = struct {
 
         JSC__JSGlobalObject__drainMicrotasks(globalObject);
         this.drainDeferredTasks();
+
+        if (comptime bun.Environment.isDebug) {
+            this.debug.drain_microtasks_count_outside_tick_queue += @as(usize, @intFromBool(!this.debug.is_inside_tick_queue));
+        }
     }
 
     pub fn drainMicrotasks(this: *EventLoop) void {
@@ -717,10 +755,77 @@ pub const EventLoop = struct {
         }
     }
 
+    /// When you call a JavaScript function from outside the event loop task
+    /// queue
+    ///
+    /// It has to be wrapped in `runCallback` to ensure that microtasks are
+    /// drained and errors are handled.
+    ///
+    /// Otherwise, you will risk a large number of microtasks being queued and
+    /// not being drained, which can lead to catastrophic memory usage and
+    /// application slowdown.
+    pub fn runCallback(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) void {
+        if (comptime Environment.isDebug) {
+            this.debug.enter();
+        }
+        defer {
+            if (comptime Environment.isDebug) {
+                this.debug.exit();
+            }
+        }
+
+        var global_vm = globalObject.vm();
+
+        const result = callback.callWithThis(globalObject, thisValue, arguments);
+
+        if (result.toError()) |err| {
+            this.virtual_machine.onUnhandledError(globalObject, err);
+        }
+        global_vm.releaseWeakRefs();
+        this.drainMicrotasksWithGlobal(globalObject);
+    }
+
     pub fn tickQueueWithCount(this: *EventLoop, comptime queue_name: []const u8) u32 {
         var global = this.global;
         var global_vm = global.vm();
         var counter: usize = 0;
+
+        if (comptime Environment.isDebug) {
+            if (this.debug.js_call_count_outside_tick_queue > this.debug.drain_microtasks_count_outside_tick_queue) {
+                if (this.debug.track_last_fn_name) {
+                    bun.Output.panic(
+                        \\<b>{d} JavaScript functions<r> were called outside of the microtask queue without draining microtasks.
+                        \\
+                        \\Last function name: {}
+                        \\
+                        \\Use EventLoop.runCallback() to run JavaScript functions outside of the microtask queue.
+                        \\
+                        \\Failing to do this can lead to a large number of microtasks being queued and not being drained, which can lead to a large amount of memory being used and application slowdown.
+                    ,
+                        .{
+                            this.debug.js_call_count_outside_tick_queue - this.debug.drain_microtasks_count_outside_tick_queue,
+                            this.debug.last_fn_name,
+                        },
+                    );
+                } else {
+                    bun.Output.panic(
+                        \\<b>{d} JavaScript functions<r> were called outside of the microtask queue without draining microtasks. To track the last function name, set the BUN_TRACK_LAST_FN_NAME environment variable.
+                        \\
+                        \\Use EventLoop.runCallback() to run JavaScript functions outside of the microtask queue.
+                        \\
+                        \\Failing to do this can lead to a large number of microtasks being queued and not being drained, which can lead to a large amount of memory being used and application slowdown.
+                    ,
+                        .{this.debug.js_call_count_outside_tick_queue - this.debug.drain_microtasks_count_outside_tick_queue},
+                    );
+                }
+            }
+            this.debug.enter();
+        }
+        defer {
+            if (comptime Environment.isDebug) {
+                this.debug.exit();
+            }
+        }
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {

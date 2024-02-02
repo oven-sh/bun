@@ -2093,6 +2093,14 @@ inline fn createEach(
 }
 
 fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, function: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
+    if (comptime Environment.isDebug) {
+        vm.eventLoop().debug.enter();
+    }
+    defer {
+        if (comptime Environment.isDebug) {
+            vm.eventLoop().debug.exit();
+        }
+    }
     globalObject.clearTerminationException();
     const result = function.call(globalObject, args);
     result.ensureStillAlive();

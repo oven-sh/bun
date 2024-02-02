@@ -5813,6 +5813,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         ) void {
             JSC.markBinding(@src());
             this.pending_requests += 1;
+            if (comptime Environment.isDebug) {
+                this.vm.eventLoop().debug.enter();
+            }
+            defer {
+                if (comptime Environment.isDebug) {
+                    this.vm.eventLoop().debug.exit();
+                }
+            }
 
             req.setYield(false);
             var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");

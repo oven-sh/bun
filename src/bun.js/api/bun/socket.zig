@@ -1391,6 +1391,7 @@ fn NewSocket(comptime ssl: bool) type {
             const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
                 this_value,
             });
+            defer globalObject.bunVM().drainMicrotasks();
 
             if (result.toError()) |err| {
                 this.detached = true;

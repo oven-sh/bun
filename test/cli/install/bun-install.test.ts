@@ -124,9 +124,15 @@ it("should report connection errors", async () => {
   }
   const server = listen({
     socket: {
-      data: end,
-      drain: end,
-      open: end,
+      data: function data(socket) {
+        socket.end();
+      },
+      drain: function drain(socket) {
+        socket.end();
+      },
+      open: function open(socket) {
+        socket.end();
+      },
     },
     hostname: "localhost",
     port: 0,

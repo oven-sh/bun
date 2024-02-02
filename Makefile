@@ -823,7 +823,6 @@ fmt: fmt-cpp fmt-zig
 api:
 	./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 	$(ZIG) fmt src/api/schema.zig
-	$(PRETTIER) --config=.prettierrc.cjs --write src/api/schema.js src/api/schema.d.ts
 
 .PHONY: node-fallbacks
 node-fallbacks:

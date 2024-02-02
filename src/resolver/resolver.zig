@@ -3279,7 +3279,7 @@ pub const Resolver = struct {
         const str = brk: {
             if (std.fs.path.isAbsolute(sliced.slice())) break :brk sliced.slice();
             const dir_path_buf = bufs(.node_modules_paths_buf);
-            break :brk r.fs.joinBuf(&[_]string{ r.fs.top_level_dir, sliced.slice() }, dir_path_buf);
+            break :brk bun.path.joinStringBuf(dir_path_buf, &[_]string{ r.fs.top_level_dir, sliced.slice() }, .auto);
         };
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
@@ -3297,11 +3297,9 @@ pub const Resolver = struct {
 
                     break :brk [2]string{ path_without_trailing_slash, "/node_modules" };
                 };
-                list.append(
-                    bun.String.createUTF8(
-                        bun.strings.concat(stack_fallback_allocator.get(), &path_parts) catch unreachable,
-                    ),
-                ) catch unreachable;
+                const nodemodules_path = bun.strings.concat(stack_fallback_allocator.get(), &path_parts) catch unreachable;
+                bun.path.posixToPlatformInPlace(u8, nodemodules_path);
+                list.append(bun.String.createUTF8(nodemodules_path)) catch unreachable;
                 dir_info = (r.readDirInfo(std.fs.path.dirname(path_without_trailing_slash) orelse break) catch null) orelse break;
             }
         } else {

@@ -1122,7 +1122,8 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
 
     var count: usize = 0;
     for (parts) |part| {
-        count += if (part.len > 0) part.len + 1 else 0;
+        if (part.len == 0) continue;
+        count += part.len + 1;
     }
 
     if (count * 2 > temp_buf.len) {
@@ -1133,9 +1134,7 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
     temp_buf[0] = 0;
 
     for (parts) |part| {
-        if (part.len == 0) {
-            continue;
-        }
+        if (part.len == 0) continue;
 
         if (written > 0) {
             temp_buf[written] = platform.separator();

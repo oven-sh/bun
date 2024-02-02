@@ -1548,31 +1548,16 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         initializeColumnNames(lexicalGlobalObject, castedThis);
     }
 
-    size_t columnCount = castedThis->columnNames->size();
     JSValue result = jsUndefined();
-    if (status == SQLITE_ROW) {
-        // this is a count from UPDATE or another query like that
-        if (columnCount == 0) {
-            result = jsNumber(sqlite3_changes(castedThis->version_db->db));
-
-            while (status == SQLITE_ROW) {
-                status = sqlite3_step(stmt);
-            }
-        } else {
-
-            JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
-            {
-                while (status == SQLITE_ROW) {
-                    JSC::JSValue result = constructResultObject(lexicalGlobalObject, castedThis);
-                    resultArray->push(lexicalGlobalObject, result);
-                    status = sqlite3_step(stmt);
-                }
-            }
-            result = resultArray;
+    JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+    {
+        while (status == SQLITE_ROW) {
+            JSC::JSValue result = constructResultObject(lexicalGlobalObject, castedThis);
+            resultArray->push(lexicalGlobalObject, result);
+            status = sqlite3_step(stmt);
         }
-    } else if (status == SQLITE_DONE) {
-        result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
     }
+    result = resultArray;
 
     if (UNLIKELY(status != SQLITE_DONE && status != SQLITE_OK)) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
@@ -1715,37 +1700,18 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
         initializeColumnNames(lexicalGlobalObject, castedThis);
     }
 
-    size_t columnCount = castedThis->columnNames->size();
-    JSValue result = jsNull();
-    if (status == SQLITE_ROW) {
-        // this is a count from UPDATE or another query like that
-        if (columnCount == 0) {
-            while (status == SQLITE_ROW) {
-                status = sqlite3_step(stmt);
-            }
-
-            result = jsNumber(sqlite3_column_count(stmt));
-
-        } else {
-            JSC::ObjectInitializationScope initializationScope(vm);
-            JSC::GCDeferralContext deferralContext(vm);
-
-            JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
-            {
-
-                while (status == SQLITE_ROW) {
-                    JSC::JSValue row = constructResultRow(lexicalGlobalObject, castedThis, initializationScope, &deferralContext);
-                    resultArray->push(lexicalGlobalObject, row);
-                    status = sqlite3_step(stmt);
-                }
-            }
-
-            result = resultArray;
+    JSValue result = jsUndefined();
+    JSC::ObjectInitializationScope initializationScope(vm);
+    JSC::GCDeferralContext deferralContext(vm);
+    JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+    {
+        while (status == SQLITE_ROW) {
+            JSC::JSValue row = constructResultRow(lexicalGlobalObject, castedThis, initializationScope, &deferralContext);
+            resultArray->push(lexicalGlobalObject, row);
+            status = sqlite3_step(stmt);
         }
-    } else if (status == SQLITE_DONE && columnCount != 0) {
-        // breaking change in Bun v0.6.8
-        result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
     }
+    result = resultArray;
 
     if (UNLIKELY(status != SQLITE_DONE && status != SQLITE_OK)) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
@@ -1753,7 +1719,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
         return JSValue::encode(jsUndefined());
     }
 
-    // sqlite3_reset(stmt);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 

@@ -3278,7 +3278,8 @@ pub const Resolver = struct {
 
         const str = brk: {
             if (std.fs.path.isAbsolute(sliced.slice())) break :brk sliced.slice();
-            break :brk bun.path.join(&[_]string{ r.fs.top_level_dir, sliced.slice() }, .auto);
+            const dir_path_buf = bufs(.node_modules_paths_buf);
+            break :brk bun.path.joinStringBuf(dir_path_buf, &[_]string{ r.fs.top_level_dir, sliced.slice() }, .auto);
         };
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();

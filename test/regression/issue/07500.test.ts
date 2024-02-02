@@ -15,7 +15,8 @@ test("7500 - Bun.stdin.text() doesn't read all data", async () => {
   const bunCommand = `${bunExe()} ${join(import.meta.dir, "7500-repro-fixture.js")}`;
   const shellCommand = `${cat} ${filename} | ${bunCommand}`.replace(/\\/g, "\\\\");
 
-  const cmd = process.platform === "win32" ? ["pwsh.exe", `-Command { '${shellCommand}' }`] : ["bash", "-c", shellCommand];
+  const cmd =
+    process.platform === "win32" ? ["pwsh.exe", `-Command { '${shellCommand}' }`] : ["bash", "-c", shellCommand];
   const proc = Bun.spawnSync({
     cmd,
     stdin: "inherit",

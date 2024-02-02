@@ -51,10 +51,10 @@ const ScanOpts = struct {
                         return null;
                     };
 
-                    break :cwd_str_raw ZigString.Slice.from(duped, allocator);
+                    break :cwd_str_raw ZigString.Slice.init(allocator, duped);
                 }
 
-                // Conver to utf-16
+                // Convert to utf-16
                 const utf16 = bun.strings.toUTF16AllocForReal(
                     allocator,
                     cwd_zig_str.slice(),
@@ -67,7 +67,7 @@ const ScanOpts = struct {
                 };
 
                 const ptr: [*]u8 = @ptrCast(utf16.ptr);
-                break :cwd_str_raw ZigString.Slice.from(ptr[0 .. utf16.len * 2], allocator);
+                break :cwd_str_raw ZigString.Slice.init(allocator, ptr[0 .. utf16.len * 2]);
             }
 
             // `.toSlice()` internally converts to WTF-8

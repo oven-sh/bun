@@ -431,7 +431,7 @@ pub const StringOrBuffer = union(enum) {
         defer global.vm().reportExtraMemory(out.len);
 
         return .{
-            .encoded_slice = JSC.ZigString.Slice.from(out, bun.default_allocator),
+            .encoded_slice = JSC.ZigString.Slice.init(bun.default_allocator, out),
         };
     }
 

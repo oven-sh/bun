@@ -65,7 +65,7 @@ Below we create a new `DataView` and set the first byte to 5.
 
 ```ts
 const buf = new ArrayBuffer(4);
-// [0x0, 0x0, 0x0, 0x0]
+// [0b00000000, 0b00000000, 0b00000000, 0b00000000]
 
 const dv = new DataView(buf);
 dv.setUint8(0, 3); // write value 3 at byte offset 0

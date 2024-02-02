@@ -312,7 +312,7 @@ pub const FDImpl = packed struct {
                 const fd = this.system();
                 try writer.print("{d}", .{fd});
                 if (env.isDebug and fd >= 3) print_with_path: {
-                    var path_buf: [1024]u8 = undefined;
+                    var path_buf: bun.PathBuffer = undefined;
                     const path = std.os.getFdPath(fd, &path_buf) catch break :print_with_path;
                     try writer.print("[{s}]", .{path});
                 }

@@ -263,11 +263,6 @@ pub const AsyncCpTask = struct {
         vm: *JSC.VirtualMachine,
         arena: bun.ArenaAllocator,
     ) JSC.JSValue {
-        // if (comptime Environment.isWindows) {
-        // globalObject.throwTODO("fs.promises.cp is not implemented on Windows yet");
-        // return .zero;
-        // }
-
         var task = bun.new(
             AsyncCpTask,
             AsyncCpTask{
@@ -6385,11 +6380,11 @@ pub const NodeFS = struct {
                         .FILE_EXISTS, .ALREADY_EXISTS => dest,
                         else => src,
                     };
-                    if (Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(errpath))) |e| {
-                        return e;
-                    }
-                    // should be unreachable
-                    return Maybe(Return.CopyFile).todo();
+                    return Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(errpath)) orelse .{ .err = .{
+                        .errno = @intFromEnum(C.SystemErrno.ENOENT),
+                        .syscall = .copyfile,
+                        .path = this.osPathIntoSyncErrorBuf(src),
+                    } };
                 }
                 return ret.success;
             } else {
@@ -6400,22 +6395,24 @@ pub const NodeFS = struct {
                 var wbuf: bun.WPathBuffer = undefined;
                 const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), &wbuf, wbuf.len, 0);
                 if (len == 0) {
-                    if (Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest))) |e| {
-                        return e;
-                    }
-                    // should be unreachable
-                    return Maybe(Return.CopyFile).todo();
+                    return Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse .{ .err = .{
+                        .errno = @intFromEnum(C.SystemErrno.ENOENT),
+                        .syscall = .copyfile,
+                        .path = this.osPathIntoSyncErrorBuf(dest),
+                    } };
                 }
                 const flags = if (stat_ & windows.FILE_ATTRIBUTE_DIRECTORY != 0)
                     std.os.windows.SYMBOLIC_LINK_FLAG_DIRECTORY
                 else
                     0;
                 if (windows.CreateSymbolicLinkW(dest, wbuf[0..len :0], flags) == 0) {
-                    if (Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest))) |e| {
-                        return e;
-                    }
-                    // should be unreachable
-                    return Maybe(Return.CopyFile).todo();
+                    return Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse .{
+                        .err = .{
+                            .errno = @intFromEnum(C.SystemErrno.ENOENT),
+                            .syscall = .copyfile,
+                            .path = this.osPathIntoSyncErrorBuf(dest),
+                        },
+                    };
                 }
                 return ret.success;
             }
@@ -6428,12 +6425,8 @@ pub const NodeFS = struct {
     /// calls "_copySingleFileSync") will be dispatched as a separate task.
     pub fn cpAsync(this: *NodeFS, task: *AsyncCpTask) void {
         const args = task.args;
-        // var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        // var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var src_buf: bun.OSPathBuffer = undefined;
         var dest_buf: bun.OSPathBuffer = undefined;
-        // const src = args.src.sliceZ(&src_buf);
-        // const dest = args.dest.sliceZ(&dest_buf);
         const src = args.src.osPath(@ptrCast(&src_buf));
         const dest = args.dest.osPath(@ptrCast(&dest_buf));
 

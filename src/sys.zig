@@ -527,7 +527,7 @@ pub noinline fn openDirAtWindowsA(
 /// will trigger `unreachable`. Here there will be a debug log with the path.
 pub fn openFileAtWindowsNtPath(
     dir: bun.FileDescriptor,
-    path: [:0]const u16,
+    path: []const u16,
     access_mask: w.ULONG,
     disposition: w.ULONG,
     options: w.ULONG,

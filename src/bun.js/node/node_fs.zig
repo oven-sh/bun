@@ -6029,13 +6029,9 @@ pub const NodeFS = struct {
         }
 
         const flags = os.O.DIRECTORY | os.O.RDONLY;
-        var wbuf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
         const fd = switch (Syscall.openatOSPath(
             bun.toFD((std.fs.cwd().fd)),
-            if (Environment.isWindows and std.fs.path.isAbsoluteWindowsWTF16(src))
-                bun.strings.addNTPathPrefixIfNeeded(&wbuf, src)
-            else
-                src,
+            src,
             flags,
             0,
         )) {
@@ -6374,14 +6370,43 @@ pub const NodeFS = struct {
         }
 
         if (Environment.isWindows) {
-            const result = windows.CopyFileW(src, dest, @intFromBool(mode.shouldntOverwrite()));
-            if (result == bun.windows.FALSE) {
-                if (Maybe(Return.CopyFile).errnoSysP(result, .copyfile, this.osPathIntoSyncErrorBuf(src))) |e| {
-                    return e;
+            const stat_ = reuse_stat orelse switch (windows.GetFileAttributesW(src)) {
+                windows.INVALID_FILE_ATTRIBUTES => return .{ .err = .{
+                    .errno = @intFromEnum(C.SystemErrno.ENOENT),
+                    .syscall = .copyfile,
+                    .path = this.osPathIntoSyncErrorBuf(src),
+                } },
+                else => |result| result,
+            };
+            if (stat_ & windows.FILE_ATTRIBUTE_REPARSE_POINT == 0) {
+                const result = windows.CopyFileW(src, dest, @intFromBool(mode.shouldntOverwrite()));
+                if (result == bun.windows.FALSE) {
+                    if (Maybe(Return.CopyFile).errnoSysP(result, .copyfile, this.osPathIntoSyncErrorBuf(src))) |e| {
+                        return e;
+                    }
                 }
-            }
 
-            return ret.success;
+                return ret.success;
+            } else {
+                const handle = switch (bun.sys.openatWindows(bun.invalid_fd, src, os.O.RDONLY)) {
+                    .err => |err| return .{ .err = err },
+                    .result => |src_fd| src_fd,
+                };
+                var wbuf: bun.WPathBuffer = undefined;
+                const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), &wbuf, wbuf.len, 0);
+                if (len == 0) {
+                    @panic("TODO");
+                }
+                const flags = if (stat_ & windows.FILE_ATTRIBUTE_DIRECTORY != 0)
+                    std.os.windows.SYMBOLIC_LINK_FLAG_DIRECTORY
+                else
+                    0;
+                if (windows.CreateSymbolicLinkW(dest, wbuf[0..len :0], flags) == 0) {
+                    std.debug.print("err: {s}\n", .{@tagName(std.os.windows.kernel32.GetLastError())});
+                    @panic("TODO 2");
+                }
+                return ret.success;
+            }
         }
 
         return ret.todo();
@@ -6410,7 +6435,8 @@ pub const NodeFS = struct {
                 } });
                 return;
             }
-            if ((attributes & windows.FILE_ATTRIBUTE_DIRECTORY) == 0) {
+            const file_or_symlink = (attributes & windows.FILE_ATTRIBUTE_DIRECTORY) == 0 or (attributes & windows.FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+            if (file_or_symlink) {
                 const r = this._copySingleFileSync(
                     src,
                     dest,
@@ -6501,7 +6527,6 @@ pub const NodeFS = struct {
             }
         }
 
-        // TODO probably makes sense to use native windows functions here ?
         const open_flags = os.O.DIRECTORY | os.O.RDONLY;
         const fd = switch (Syscall.openatOSPath(bun.invalid_fd, src, open_flags, 0)) {
             .err => |err| {

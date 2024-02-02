@@ -69,6 +69,11 @@ pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
 const std = @import("std");
 pub const HANDLE = win32.HANDLE;
 
+pub extern "kernel32" fn GetFileInformationByHandle(
+    hFile: HANDLE,
+    lpFileInformation: *windows.BY_HANDLE_FILE_INFORMATION,
+) callconv(windows.WINAPI) BOOL;
+
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilevaliddata
 pub extern "kernel32" fn SetFileValidData(
     hFile: win32.HANDLE,

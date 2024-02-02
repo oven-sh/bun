@@ -531,7 +531,7 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
     // with drive letter
     const c = path[0];
     if (path[1] == ':') {
-        if ('a' <= c and c <= 'z' or 'A' <= c and c <= 'Z') {
+        if (isDriveLetterT(T, c)) {
             return .{ 2, 0 };
         }
     }

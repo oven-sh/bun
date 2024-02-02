@@ -432,13 +432,6 @@ pub const ZigString = extern struct {
 
         pub const byteSlice = Slice.slice;
 
-        pub fn from(input: []u8, allocator: std.mem.Allocator) Slice {
-            return .{
-                .ptr = input.ptr,
-                .len = @as(u32, @truncate(input.len)),
-                .allocator = NullableAllocator.init(allocator),
-            };
-        }
 
         pub fn fromUTF8NeverFree(input: []const u8) Slice {
             return .{

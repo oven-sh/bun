@@ -22,24 +22,19 @@ const PosixSpawn = bun.spawn;
 const util = @import("./util.zig");
 
 pub const Stdio = util.Stdio;
-
+const FileSink = JSC.WebCore.FileSink;
 // pub const ShellSubprocess = NewShellSubprocess(.js);
 // pub const ShellSubprocessMini = NewShellSubprocess(.mini);
 
 pub const ShellSubprocess = NewShellSubprocess(.js, bun.shell.interpret.Interpreter.Cmd);
 // pub const ShellSubprocessMini = NewShellSubprocess(.mini, bun.shell.interpret.InterpreterMini.Cmd);
-const BufferedOutput = opaque {};
-const BufferedInput = opaque {};
+const BufferedOutput = struct {};
+const BufferedInput = struct {};
 
 pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime ShellCmd: type) type {
     const GlobalRef = switch (EventLoopKind) {
         .js => *JSC.JSGlobalObject,
         .mini => *JSC.MiniEventLoop,
-    };
-
-    const FileSink = switch (EventLoopKind) {
-        .js => JSC.WebCore.FileSink,
-        .mini => JSC.WebCore.FileSinkMini,
     };
 
     const Vm = switch (EventLoopKind) {
@@ -211,7 +206,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             pub fn finalize(this: *Writable) void {
                 return switch (this.*) {
                     .pipe => |pipe| {
-                        pipe.close();
+                        pipe.deref();
                     },
                     .pipe_to_readable_stream => |*pipe_to_readable_stream| {
                         _ = pipe_to_readable_stream.pipe.end(null);
@@ -259,9 +254,9 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 switch (this.*) {
                     .pipe => {
                         if (this.pipe == .buffer) {
-                            if (this.pipe.buffer.fifo.poll_ref) |poll| {
-                                poll.enableKeepingProcessAlive(get_vm.get());
-                            }
+                            // if (this.pipe.buffer.fifo.poll_ref) |poll| {
+                            //     poll.enableKeepingProcessAlive(get_vm.get());
+                            // }
                         }
                     },
                     else => {},
@@ -272,9 +267,9 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 switch (this.*) {
                     .pipe => {
                         if (this.pipe == .buffer) {
-                            if (this.pipe.buffer.fifo.poll_ref) |poll| {
-                                poll.enableKeepingProcessAlive(get_vm.get());
-                            }
+                            // if (this.pipe.buffer.fifo.poll_ref) |poll| {
+                            //     poll.enableKeepingProcessAlive(get_vm.get());
+                            // }
                         }
                     },
                     else => {},
@@ -287,31 +282,18 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 
                 pub fn finish(this: *@This()) void {
                     if (this.* == .stream and this.stream.ptr == .File) {
-                        this.stream.ptr.File.finish();
+                        // this.stream.ptr.File.deref();
                     }
                 }
 
                 pub fn done(this: *@This()) void {
                     if (this.* == .stream) {
-                        if (this.stream.ptr == .File) this.stream.ptr.File.setSignal(JSC.WebCore.Signal{});
+                        // if (this.stream.ptr == .File) this.stream.ptr.File.
                         this.stream.done();
                         return;
                     }
 
                     this.buffer.close();
-                }
-
-                pub fn toJS(this: *@This(), readable: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
-                    if (this.* != .stream) {
-                        const stream = this.buffer.toReadableStream(globalThis, exited);
-                        this.* = .{ .stream = stream };
-                    }
-
-                    if (this.stream.ptr == .File) {
-                        this.stream.ptr.File.setSignal(JSC.WebCore.Signal.init(readable));
-                    }
-
-                    return this.stream.toJS();
                 }
             };
 
@@ -332,7 +314,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                             BufferedOutput.initWithAllocator(subproc, &subproc_readable_ptr.pipe.buffer, kind, allocator, fd.?, max_size);
                             subproc_readable_ptr.pipe.buffer.out = stdio.inherit.captured.?;
                             subproc_readable_ptr.pipe.buffer.writer = BufferedOutput.CapturedBufferedWriter{
-                                .src = BufferedOutput.WriterSrc{
+                                .src = WriterSrc{
                                     .inner = &subproc_readable_ptr.pipe.buffer,
                                 },
                                 .fd = if (kind == .stdout) bun.STDOUT_FD else bun.STDERR_FD,
@@ -395,7 +377,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                             return;
                         }
 
-                        this.pipe.buffer.close();
+                        // this.pipe.buffer.close();
                     },
                     else => {},
                 }
@@ -466,7 +448,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         pub const CapturedBufferedWriter = bun.shell.eval.NewBufferedWriter(
             WriterSrc,
             struct {
-                parent: *BufferedOutput,
+                parent: *Out,
                 pub inline fn onDone(this: @This(), e: ?bun.sys.Error) void {
                     this.parent.onBufferedWriterDone(e);
                 }
@@ -475,7 +457,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         );
 
         const WriterSrc = struct {
-            inner: *BufferedOutput,
+            inner: *Out,
 
             pub inline fn bufToWrite(this: WriterSrc, written: usize) []const u8 {
                 if (written >= this.inner.internal_buffer.len) return "";
@@ -487,6 +469,25 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 if (this.inner.status != .done and this.inner.status != .err) return false;
                 return written >= this.inner.internal_buffer.len;
             }
+        };
+
+        pub const Out = struct {
+            internal_buffer: bun.ByteList = .{},
+            owns_internal_buffer: bool = true,
+            subproc: *Subprocess,
+            out_type: OutKind,
+
+            writer: ?CapturedBufferedWriter = null,
+
+            status: Status = .{
+                .pending = {},
+            },
+
+            pub const Status = union(enum) {
+                pending: void,
+                done: void,
+                err: bun.sys.Error,
+            };
         };
 
         // pub const BufferedOutput = struct {
@@ -507,11 +508,11 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         //     writer: ?CapturedBufferedWriter = null,
         //     out: ?*bun.ByteList = null,
 
-        //     pub const Status = union(enum) {
-        //         pending: void,
-        //         done: void,
-        //         err: bun.sys.Error,
-        //     };
+        // pub const Status = union(enum) {
+        //     pending: void,
+        //     done: void,
+        //     err: bun.sys.Error,
+        // };
 
         //     pub fn init(subproc: *Subprocess, out_type: OutKind, fd: bun.FileDescriptor) BufferedOutput {
         //         return BufferedOutput{
@@ -676,150 +677,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         //     }
         // };
 
-        // pub const BufferedInput = struct {
-        //     remain: []const u8 = "",
-        //     subproc: *Subprocess,
-        //     fd: bun.FileDescriptor = bun.invalid_fd,
-        //     poll_ref: ?*Async.FilePoll = null,
-        //     written: usize = 0,
-
-        //     source: union(enum) {
-        //         blob: JSC.WebCore.AnyBlob,
-        //         array_buffer: JSC.ArrayBuffer.Strong,
-        //     },
-
-        //     pub const event_loop_kind = EventLoopKind;
-        //     pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedInput, .writable, onReady);
-
-        //     pub fn onReady(this: *BufferedInput, _: i64) void {
-        //         if (this.fd == bun.invalid_fd) {
-        //             return;
-        //         }
-
-        //         this.write();
-        //     }
-
-        //     pub fn writeIfPossible(this: *BufferedInput, comptime is_sync: bool) void {
-        //         if (comptime !is_sync) {
-
-        //             // we ask, "Is it possible to write right now?"
-        //             // we do this rather than epoll or kqueue()
-        //             // because we don't want to block the thread waiting for the write
-        //             switch (bun.isWritable(this.fd)) {
-        //                 .ready => {
-        //                     if (this.poll_ref) |poll| {
-        //                         poll.flags.insert(.writable);
-        //                         poll.flags.insert(.fifo);
-        //                         std.debug.assert(poll.flags.contains(.poll_writable));
-        //                     }
-        //                 },
-        //                 .hup => {
-        //                     this.deinit();
-        //                     return;
-        //                 },
-        //                 .not_ready => {
-        //                     if (!this.isWatching()) this.watch(this.fd);
-        //                     return;
-        //                 },
-        //             }
-        //         }
-
-        //         this.writeAllowBlocking(is_sync);
-        //     }
-
-        //     pub fn write(this: *BufferedInput) void {
-        //         this.writeAllowBlocking(false);
-        //     }
-
-        //     pub fn writeAllowBlocking(this: *BufferedInput, allow_blocking: bool) void {
-        //         var to_write = this.remain;
-
-        //         if (to_write.len == 0) {
-        //             // we are done!
-        //             this.closeFDIfOpen();
-        //             return;
-        //         }
-
-        //         if (comptime bun.Environment.allow_assert) {
-        //             // bun.assertNonBlocking(this.fd);
-        //         }
-
-        //         while (to_write.len > 0) {
-        //             switch (bun.sys.write(this.fd, to_write)) {
-        //                 .err => |e| {
-        //                     if (e.isRetry()) {
-        //                         log("write({d}) retry", .{
-        //                             to_write.len,
-        //                         });
-
-        //                         this.watch(this.fd);
-        //                         this.poll_ref.?.flags.insert(.fifo);
-        //                         return;
-        //                     }
-
-        //                     if (e.getErrno() == .PIPE) {
-        //                         this.deinit();
-        //                         return;
-        //                     }
-
-        //                     // fail
-        //                     log("write({d}) fail: {d}", .{ to_write.len, e.errno });
-        //                     this.deinit();
-        //                     return;
-        //                 },
-
-        //                 .result => |bytes_written| {
-        //                     this.written += bytes_written;
-
-        //                     log(
-        //                         "write({d}) {d}",
-        //                         .{
-        //                             to_write.len,
-        //                             bytes_written,
-        //                         },
-        //                     );
-
-        //                     this.remain = this.remain[@min(bytes_written, this.remain.len)..];
-        //                     to_write = to_write[bytes_written..];
-
-        //                     // we are done or it accepts no more input
-        //                     if (this.remain.len == 0 or (allow_blocking and bytes_written == 0)) {
-        //                         this.deinit();
-        //                         return;
-        //                     }
-        //                 },
-        //             }
-        //         }
-        //     }
-
-        //     fn closeFDIfOpen(this: *BufferedInput) void {
-        //         if (this.poll_ref) |poll| {
-        //             this.poll_ref = null;
-        //             poll.deinit();
-        //         }
-
-        //         if (this.fd != bun.invalid_fd) {
-        //             _ = bun.sys.close(this.fd);
-        //             this.fd = bun.invalid_fd;
-        //         }
-        //     }
-
-        //     pub fn deinit(this: *BufferedInput) void {
-        //         this.closeFDIfOpen();
-
-        //         switch (this.source) {
-        //             .blob => |*blob| {
-        //                 blob.detach();
-        //             },
-        //             .array_buffer => |*array_buffer| {
-        //                 array_buffer.deinit();
-        //             },
-        //         }
-        //         if (this.subproc.cmd_parent) |cmd| {
-        //             cmd.bufferedInputClose();
-        //         }
-        //     }
-        // };
+        pub const StaticPipeWriter = JSC.Subprocess.NewStaticPipeWriter(Subprocess);
 
         pub fn getIO(this: *Subprocess, comptime out_kind: OutKind) *Readable {
             switch (out_kind) {
@@ -1077,9 +935,8 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             spawn_args_: SpawnArgs,
             out: **@This(),
         ) bun.shell.Result(void) {
-            if (comptime true) {
-                @panic("TODO");
-            }
+            if (comptime true) @panic("TODO");
+
             const globalThis = GlobalHandle.init(globalThis_);
             if (comptime Environment.isWindows) {
                 return .{ .err = globalThis.throwTODO("spawn() is not yet implemented on Windows") };

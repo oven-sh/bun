@@ -282,7 +282,7 @@ describe("worker_threads", () => {
     const result = await promise;
 
     expect(result).toEqual({
-      argv: [original_argv[0], original_argv[1].replace(import.meta.file, 'worker-fixture-argv.js'), ...worker_argv],
+      argv: [original_argv[0], original_argv[1].replace(import.meta.file, "worker-fixture-argv.js"), ...worker_argv],
       execArgv: worker_execArgv,
     });
 

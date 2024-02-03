@@ -175,13 +175,14 @@ const Handlers = struct {
 
         pub fn exit(this: *Scope, ssl: bool, wrapped: WrappedType) void {
             var vm = this.handlers.vm;
-            defer vm.drainMicrotasks();
+            defer vm.eventLoop().exit();
             this.handlers.markInactive(ssl, this.socket_context, wrapped);
         }
     };
 
     pub fn enter(this: *Handlers, context: ?*uws.SocketContext) Scope {
         this.markActive();
+        this.vm.eventLoop().enter();
         return .{
             .handlers = this,
             .socket_context = context,
@@ -1202,7 +1203,8 @@ fn NewSocket(comptime ssl: bool) type {
             const callback = handlers.onWritable;
             if (callback == .zero) return;
             var vm = handlers.vm;
-            defer vm.drainMicrotasks();
+            vm.eventLoop().enter();
+            defer vm.eventLoop().exit();
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1249,12 +1251,11 @@ fn NewSocket(comptime ssl: bool) type {
             defer this.markInactive();
 
             const handlers = this.handlers;
-            var vm = handlers.vm;
+            const vm = handlers.vm;
             this.poll_ref.unrefOnNextTick(vm);
 
             const callback = handlers.onConnectError;
             const globalObject = handlers.globalObject;
-            defer vm.drainMicrotasks();
             const err = JSC.SystemError{
                 .errno = errno,
                 .message = bun.String.static("Failed to connect"),
@@ -1266,6 +1267,10 @@ fn NewSocket(comptime ssl: bool) type {
                 // .code = bun.String.static(@tagName(bun.sys.getErrno(errno))),
                 // .code = bun.String.static(@tagName(@as(bun.C.E, @enumFromInt(errno)))),
             };
+            vm.eventLoop().enter();
+            defer {
+                vm.eventLoop().exit();
+            }
 
             if (callback == .zero) {
                 if (handlers.promise.trySwap()) |promise| {
@@ -1388,6 +1393,9 @@ fn NewSocket(comptime ssl: bool) type {
             } else {
                 if (callback == .zero) return;
             }
+            const vm = handlers.vm;
+            vm.eventLoop().enter();
+            defer vm.eventLoop().exit();
             const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
                 this_value,
             });

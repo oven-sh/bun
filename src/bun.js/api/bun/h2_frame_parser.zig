@@ -433,27 +433,7 @@ const Handlers = struct {
             return false;
         }
 
-        const result = callback.callWithThis(this.globalObject, thisValue, data);
-        if (result.isAnyError()) {
-            this.vm.onUnhandledError(this.globalObject, result);
-        }
-
-        return true;
-    }
-
-    pub fn callErrorHandler(this: *Handlers, thisValue: JSValue, err: []const JSValue) bool {
-        const onError = this.onError;
-        if (onError == .zero) {
-            if (err.len > 0)
-                this.vm.onUnhandledError(this.globalObject, err[0]);
-
-            return false;
-        }
-
-        const result = onError.callWithThis(this.globalObject, thisValue, err);
-        if (result.isAnyError()) {
-            this.vm.onUnhandledError(this.globalObject, result);
-        }
+        this.vm.eventLoop().runCallback(callback, this.globalObject, thisValue, data);
 
         return true;
     }

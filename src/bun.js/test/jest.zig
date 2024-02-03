@@ -942,6 +942,11 @@ pub const DescribeScope = struct {
                         this,
                     );
                     const result = callJSFunctionForTestRunner(vm, globalObject, cb, &.{done_func});
+                    if (result.toError()) |err| {
+                        Jest.runner.?.pending_test = pending_test;
+                        Jest.runner.?.did_pending_test_fail = orig_did_pending_test_fail;
+                        return err;
+                    }
                     vm.waitFor(&this.done);
                     break :brk result;
                 },
@@ -2093,10 +2098,14 @@ inline fn createEach(
 }
 
 fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, function: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
+    vm.eventLoop().enter();
+    defer {
+        vm.eventLoop().exit();
+    }
+
     globalObject.clearTerminationException();
     const result = function.call(globalObject, args);
     result.ensureStillAlive();
-    globalObject.vm().releaseWeakRefs();
-    vm.drainMicrotasks();
+
     return result;
 }

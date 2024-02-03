@@ -154,7 +154,7 @@ pub const enum_lsxpack_flag = c_uint;
 // /// limitation: we currently does not support total header size > 64KB.
 pub const struct_lsxpack_header = extern struct {
     /// the buffer for headers
-    buf: [*]u8 = undefined,
+    buf: ?[*]u8 = null,
     /// hash value for name
     name_hash: __uint32_t = 0,
     /// hash value for name + value
@@ -205,11 +205,11 @@ pub fn lsxpack_header_prepare_decode(arg_hdr: *lsxpack_header_t, arg_out: [*c]u8
 }
 
 pub fn lsxpack_header_get_name(hdr: *lsxpack_header_t) []const u8 {
-    if (hdr.name_len != 0) return hdr.buf[@as(usize, @intCast(hdr.name_offset)) .. @as(usize, @intCast(hdr.name_offset)) + hdr.name_len];
+    if (hdr.name_len != 0) return hdr.buf.?[@as(usize, @intCast(hdr.name_offset)) .. @as(usize, @intCast(hdr.name_offset)) + hdr.name_len];
     return "";
 }
 pub fn lsxpack_header_get_value(hdr: *lsxpack_header_t) []const u8 {
-    if (hdr.val_len != 0) return hdr.buf[@as(usize, @intCast(hdr.val_offset)) .. @as(usize, @intCast(hdr.val_offset)) + hdr.val_len];
+    if (hdr.val_len != 0) return hdr.buf.?[@as(usize, @intCast(hdr.val_offset)) .. @as(usize, @intCast(hdr.val_offset)) + hdr.val_len];
     return "";
 }
 pub fn lsxpack_header_get_dec_size(hdr: ?*const lsxpack_header_t) callconv(.C) usize {

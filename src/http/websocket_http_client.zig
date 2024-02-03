@@ -916,6 +916,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         header_fragment: ?u8 = null,
 
         initial_data_handler: ?*InitialDataHandler = null,
+        event_loop: *JSC.EventLoop = undefined,
 
         pub const name = if (ssl) "WebSocketClientTLS" else "WebSocketClient";
 
@@ -1057,8 +1058,19 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.clearData();
                 return;
             };
+            if (comptime Environment.isDebug) {
+                this.event_loop.debug.enter();
+            }
+            defer {
+                if (comptime Environment.isDebug) {
+                    this.event_loop.debug.enter();
+                }
+            }
+
             switch (kind) {
                 .Text => {
+                    defer this.event_loop.drainMicrotasks();
+
                     // this function encodes to UTF-16 if > 127
                     // so we don't need to worry about latin1 non-ascii code points
                     // we avoid trim since we wanna keep the utf8 validation intact
@@ -1079,6 +1091,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     }
                 },
                 .Binary, .Ping, .Pong => {
+                    defer this.event_loop.drainMicrotasks();
                     JSC.markBinding(@src());
                     out.didReceiveBytes(data_.ptr, data_.len, @as(u8, @intFromEnum(kind)));
                 },
@@ -1768,6 +1781,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 .globalThis = globalThis,
                 .send_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
                 .receive_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
+                .event_loop = globalThis.bunVM().eventLoop(),
             });
             if (!Socket.adoptPtr(
                 tcp,

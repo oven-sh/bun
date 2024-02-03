@@ -551,15 +551,30 @@ pub const FileSystem = struct {
             return switch (Environment.os) {
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
                 .windows => win_tempdir_cache orelse {
-                    const value = bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse brk: {
+                    const value = bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse brk: {
+                        if (bun.getenvZ("SystemRoot") orelse bun.getenvZ("windir")) |windir| {
+                            break :brk bun.fmt.allocPrint(
+                                bun.default_allocator,
+                                "{s}\\Temp",
+                                .{strings.withoutTrailingSlash(windir)},
+                            ) catch bun.outOfMemory();
+                        }
+
                         if (bun.getenvZ("USERPROFILE")) |profile| {
                             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
                             const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                            break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
+                            break :brk bun.default_allocator.dupe(u8, out) catch bun.outOfMemory();
                         }
 
-                        break :brk "C:\\Windows\\Temp";
+                        var tmp_buf: bun.PathBuffer = undefined;
+                        const cwd = std.os.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
+                        const root = bun.path.windowsFilesystemRoot(cwd);
+                        break :brk bun.fmt.allocPrint(
+                            bun.default_allocator,
+                            "{s}\\Windows\\Temp",
+                            .{strings.withoutTrailingSlash(root)},
+                        ) catch bun.outOfMemory();
                     };
                     win_tempdir_cache = value;
                     return value;

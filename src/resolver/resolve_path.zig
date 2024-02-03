@@ -653,9 +653,14 @@ pub fn normalizeStringGenericT(
 
 pub fn NormalizeOptions(comptime T: type) type {
     return struct {
+        const This = @This();
         allow_above_root: bool = false,
         separator: T = std.fs.path.sep,
-        isSeparator: fn (T) bool = makeIsSepAnyT(T),
+        isSeparator: fn (T) bool = struct {
+            fn call(char: T) bool {
+                return char == This.separator;
+            }
+        }.call,
         preserve_trailing_slash: bool = false,
         zero_terminate: bool = false,
         add_nt_prefix: bool = false,
@@ -669,6 +674,8 @@ pub fn normalizeStringGenericTZ(
     comptime options: NormalizeOptions(T),
 ) if (options.zero_terminate) [:0]T else []T {
     const isWindows, const sep_str = comptime .{ options.separator == std.fs.path.sep_windows, &[_]u8{options.separator} };
+
+    std.debug.print("isWindows: {}, sep_str: {s}\n", .{ isWindows, sep_str });
 
     if (isWindows and bun.Environment.isDebug) {
         // this is here to catch a potential mistake by the caller
@@ -707,14 +714,14 @@ pub fn normalizeStringGenericTZ(
                 path_begin = volLen + 1;
 
                 // it is just a volume name
-                // if (buf_i >= path_.len) {
-                //     if (options.zero_terminate) {
-                //         buf[buf_i] = 0;
-                //         return buf[0..buf_i :0];
-                //     } else {
-                //         return buf[0..buf_i];
-                //     }
-                // }
+                if (path_begin >= path_.len) {
+                    if (options.zero_terminate) {
+                        buf[buf_i] = 0;
+                        return buf[0..buf_i :0];
+                    } else {
+                        return buf[0..buf_i];
+                    }
+                }
             } else {
                 // drive letter
                 buf[buf_i] = path_[0];
@@ -1471,14 +1478,6 @@ pub fn isSepAny(char: u8) bool {
 pub fn isSepAnyT(comptime T: type, char: anytype) bool {
     if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepAnyT");
     return @call(.always_inline, isSepPosixT, .{ T, char }) or @call(.always_inline, isSepWin32T, .{ T, char });
-}
-
-pub fn makeIsSepAnyT(comptime T: type) fn (char: T) bool {
-    return struct {
-        pub fn call(char: T) bool {
-            return @call(.always_inline, isSepAnyT, .{ T, char });
-        }
-    }.call;
 }
 
 pub fn lastIndexOfSeparatorWindows(slice: []const u8) ?usize {

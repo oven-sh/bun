@@ -31,8 +31,8 @@ private:
     JSC::WriteBarrier<JSC::Unknown> m_function;
     JSC::WriteBarrier<JSC::Unknown> m_functionName;
     JSC::WriteBarrier<JSC::Unknown> m_sourceURL;
-    JSC::JSValue m_lineNumber;
-    JSC::JSValue m_columnNumber;
+    int32_t m_lineNumber = -1;
+    int32_t m_columnNumber = -1;
     unsigned int m_flags;
 
 public:
@@ -70,15 +70,15 @@ public:
     JSC::JSValue function() const { return m_function.get(); }
     JSC::JSValue functionName() const { return m_functionName.get(); }
     JSC::JSValue sourceURL() const { return m_sourceURL.get(); }
-    JSC::JSValue lineNumber() const { return m_lineNumber; }
-    JSC::JSValue columnNumber() const { return m_columnNumber; }
+    int32_t lineNumber() const { return m_lineNumber; }
+    int32_t columnNumber() const { return m_columnNumber; }
     bool isEval() const { return m_flags & static_cast<unsigned int>(Flags::IsEval); }
     bool isConstructor() const { return m_flags & static_cast<unsigned int>(Flags::IsConstructor); }
     bool isStrict() const { return m_flags & static_cast<unsigned int>(Flags::IsStrict); }
     bool isNative() const { return m_flags & static_cast<unsigned int>(Flags::IsNative); }
 
-    void setLineNumber(JSC::JSValue lineNumber) { m_lineNumber = lineNumber; }
-    void setColumnNumber(JSC::JSValue columnNumber) { m_columnNumber = columnNumber; }
+    void setLineNumber(int32_t lineNumber) { m_lineNumber = lineNumber; }
+    void setColumnNumber(int32_t columnNumber) { m_columnNumber = columnNumber; }
 
     void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb);
 

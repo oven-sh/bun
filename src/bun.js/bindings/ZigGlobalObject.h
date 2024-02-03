@@ -376,7 +376,16 @@ public:
     // mutable WriteBarrier<Unknown> m_JSBunDebuggerValue;
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
+    // Error.prepareStackTrace
     mutable WriteBarrier<JSC::Unknown> m_errorConstructorPrepareStackTraceValue;
+
+    // The original, unmodified Error.prepareStackTrace.
+    //
+    // We set a default value for this to mimick Node.js behavior It is a
+    // separate from the user-facing value so that we can tell if the user
+    // really set it or if it's just the default value.
+    //
+    LazyProperty<JSGlobalObject, JSC::JSFunction> m_errorConstructorPrepareStackTraceInternalValue;
 
     Structure* memoryFootprintStructure()
     {

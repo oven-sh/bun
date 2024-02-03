@@ -514,7 +514,7 @@ pub const Request = struct {
             if (value_type == .DOMWrapper) {
                 if (value.as(Request)) |request| {
                     if (values_to_try.len == 1) {
-                        request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url));
+                        request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url), value);
                         return req;
                     }
 
@@ -714,9 +714,9 @@ pub const Request = struct {
     pub fn doClone(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
+        callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        var cloned = this.clone(getAllocator(globalThis), globalThis);
+        var cloned = this.clone(getAllocator(globalThis), globalThis, callframe.this());
         return cloned.toJS(globalThis);
     }
 
@@ -766,11 +766,60 @@ pub const Request = struct {
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
         preserve_url: bool,
+        req_jsvalue: JSC.JSValue,
     ) void {
         _ = allocator;
         this.ensureURL() catch {};
 
-        const body = InitRequestBodyValue(this.body.value.clone(globalThis)) catch {
+        const body = InitRequestBodyValue(
+            switch (this.body.value.clone(globalThis)) {
+                .Empty => brk: {
+                    const stream = stream: {
+                        if (Request.bodyGetCached(req_jsvalue)) |existing_stream_value| {
+                            const existing_stream = JSC.WebCore.ReadableStream.fromJS(existing_stream_value, globalThis) orelse break :stream null;
+                            if (existing_stream.isDisturbed(globalThis)) {
+                                break :stream null;
+                            }
+
+                            break :stream existing_stream;
+                        }
+
+                        if (this.body.value.Locked.readable) |stream| {
+                            if (stream.isDisturbed(globalThis)) {
+                                break :stream null;
+                            }
+
+                            break :stream stream;
+                        }
+
+                        if (this.body.value.Locked.promise == null) {
+                            const stream_value = this.body.value.toReadableStream(globalThis);
+                            break :stream JSC.WebCore.ReadableStream.fromJS(stream_value, globalThis);
+                        }
+
+                        break :stream null;
+                    };
+
+                    if (stream) |s| {
+                        if (s.tee(globalThis)) |teed| {
+                            Request.bodySetCached(req_jsvalue, globalThis, teed[0].value);
+
+                            teed[1].value.protect();
+
+                            break :brk Body.Value{
+                                .Locked = .{
+                                    .readable = teed[1],
+                                    .global = globalThis,
+                                },
+                            };
+                        }
+                    }
+
+                    break :brk .{ .Empty = {} };
+                },
+                else => |result| result,
+            },
+        ) catch {
             globalThis.throw("Failed to clone request", .{});
             return;
         };
@@ -788,9 +837,9 @@ pub const Request = struct {
         }
     }
 
-    pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Request {
+    pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject, this_jsvalue: JSC.JSValue) *Request {
         const req = allocator.create(Request) catch unreachable;
-        this.cloneInto(req, allocator, globalThis, false);
+        this.cloneInto(req, allocator, globalThis, false, this_jsvalue);
         return req;
     }
 };

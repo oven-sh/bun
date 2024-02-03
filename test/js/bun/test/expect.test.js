@@ -109,7 +109,9 @@ describe("expect()", () => {
     expect({}).toEqual({});
     expect({}).toStrictEqual({});
     expect({}).toEqual({ a: undefined });
+    expect({ a: undefined }).toEqual({});
     expect({}).not.toStrictEqual({ a: undefined });
+    expect({ a: undefined }).not.toStrictEqual({});
 
     class C {
       hi = 34;

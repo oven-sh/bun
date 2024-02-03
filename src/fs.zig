@@ -559,6 +559,14 @@ pub const FileSystem = struct {
                             break :brk bun.default_allocator.dupe(u8, out) catch bun.outOfMemory();
                         }
 
+                        if (bun.getenvZ("SystemRoot") orelse bun.getenvZ("windir")) |windir| {
+                            break :brk bun.fmt.allocPrint(
+                                bun.default_allocator,
+                                "{s}\\Temp",
+                                .{windir},
+                            ) catch bun.outOfMemory();
+                        }
+
                         var tmp_buf: bun.PathBuffer = undefined;
                         const cwd = std.os.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
                         const root = bun.path.windowsFilesystemRoot(cwd);

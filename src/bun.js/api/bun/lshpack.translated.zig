@@ -341,7 +341,7 @@ pub fn lshpack_encode(enc: [*c]struct_lshpack_enc, dst: [*]u8, dst_len: usize, i
     const ptr = lshpack_enc_encode(enc, dst, dst + dst_len, input);
     const end = @intFromPtr(ptr) - @intFromPtr(dst);
     if (end <= 0) {
-        return error.UnableToDecode;
+        return error.UnableToEncode;
     }
     return end;
 }

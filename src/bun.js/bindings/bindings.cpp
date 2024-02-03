@@ -1057,15 +1057,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSC::Structure* o2Structure = o2->structure();
         if (!o2Structure->hasNonReifiedStaticProperties() && o2Structure->canPerformFastPropertyEnumeration()) {
 
-            size_t count1 = 0;
-
             bool result = true;
-            if constexpr (isStrict) {
-                if (o2Structure->inlineSize() + o2Structure->outOfLineSize() != o1Structure->inlineSize() + o1Structure->outOfLineSize()) {
-                    return false;
-                }
-            }
-
+            int64_t count1 = 0;
             bool sameStructure = o2Structure->id() == o1Structure->id();
 
             if (sameStructure) {

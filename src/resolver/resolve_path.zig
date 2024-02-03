@@ -653,12 +653,14 @@ pub fn normalizeStringGenericT(
 
 pub fn NormalizeOptions(comptime T: type) type {
     return struct {
-        const This = @This();
         allow_above_root: bool = false,
         separator: T = std.fs.path.sep,
         isSeparator: fn (T) bool = struct {
             fn call(char: T) bool {
-                return char == This.separator;
+                return if (comptime std.fs.path.sep == std.fs.path.sep_windows)
+                    char == '\\' or char == '/'
+                else
+                    char == '/';
             }
         }.call,
         preserve_trailing_slash: bool = false,

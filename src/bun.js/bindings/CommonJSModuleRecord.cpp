@@ -471,6 +471,9 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     moduleObject->sourceCode.set(vm, moduleObject, jsSourceCode);
 
     auto index = filenameString.reverseFind(PLATFORM_SEP, filenameString.length());
+    // filenameString is coming from js, any separator could be used
+    if (index == WTF::notFound)
+        index = filenameString.reverseFind(NOT_PLATFORM_SEP, filenameString.length());
     String dirnameString;
     if (index != WTF::notFound) {
         dirnameString = filenameString.substring(0, index);

@@ -531,7 +531,7 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
     // with drive letter
     const c = path[0];
     if (path[1] == ':') {
-        if ('a' <= c and c <= 'z' or 'A' <= c and c <= 'Z') {
+        if (isDriveLetterT(T, c)) {
             return .{ 2, 0 };
         }
     }
@@ -578,15 +578,27 @@ pub fn windowsFilesystemRoot(path: []const u8) []const u8 {
     return windowsFilesystemRootT(u8, path);
 }
 
+pub fn isDriveLetter(c: u8) bool {
+    return isDriveLetterT(u8, c);
+}
+
+pub fn isDriveLetterT(comptime T: type, c: T) bool {
+    return 'a' <= c and c <= 'z' or 'A' <= c and c <= 'Z';
+}
+
 // path.relative lets you do relative across different share drives
 pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
-    if (path.len < 3)
+    // minimum: `C:`
+    if (path.len < 2)
         return if (isSepAnyT(T, path[0])) path[0..1] else path[0..0];
     // with drive letter
     const c = path[0];
-    if (path[1] == ':' and isSepAnyT(T, path[2])) {
-        if ('a' <= c and c <= 'z' or 'A' <= c and c <= 'Z') {
-            return path[0..3];
+    if (path[1] == ':') {
+        if (isDriveLetterT(T, c)) {
+            if (path.len > 2 and isSepAnyT(T, path[2]))
+                return path[0..3]
+            else
+                return path[0..2];
         }
     }
     // UNC
@@ -759,7 +771,7 @@ pub fn normalizeStringGenericT(
 
     if (preserve_trailing_slash) {
         // Was there a trailing slash? Let's keep it.
-        if (buf_i > 0 and path_[path_.len - 1] == separator and buf[buf_i] != separator) {
+        if (buf_i > 0 and path_[path_.len - 1] == separator and buf[buf_i - 1] != separator) {
             buf[buf_i] = separator;
             buf_i += 1;
         }
@@ -1004,7 +1016,7 @@ pub fn normalizeStringBuf(
     buf: []u8,
     comptime allow_above_root: bool,
     comptime _platform: Platform,
-    comptime preserve_trailing_slash: anytype,
+    comptime preserve_trailing_slash: bool,
 ) []u8 {
     return normalizeStringBufT(u8, str, buf, allow_above_root, _platform, preserve_trailing_slash);
 }
@@ -1015,7 +1027,7 @@ pub fn normalizeStringBufT(
     buf: []T,
     comptime allow_above_root: bool,
     comptime _platform: Platform,
-    comptime preserve_trailing_slash: anytype,
+    comptime preserve_trailing_slash: bool,
 ) []T {
     const platform = comptime _platform.resolve();
 
@@ -2114,15 +2126,26 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
 pub fn platformToPosixInPlace(comptime T: type, path_buffer: []T) void {
     if (std.fs.path.sep == '/') return;
     var idx: usize = 0;
-    while (std.mem.indexOfScalarPos(T, path_buffer, idx, std.fs.path.sep)) |index| : (idx = index) {
+    while (std.mem.indexOfScalarPos(T, path_buffer, idx, std.fs.path.sep)) |index| : (idx = index + 1) {
         path_buffer[index] = '/';
     }
+}
+
+pub fn platformToPosixBuf(comptime T: type, path: []const T, buf: []T) []T {
+    if (std.fs.path.sep == '/') return;
+    var idx: usize = 0;
+    while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep)) |index| : (idx = index + 1) {
+        @memcpy(buf[idx..index], path[idx..index]);
+        buf[index] = '/';
+    }
+    @memcpy(buf[idx..path.len], path[idx..path.len]);
+    return buf[0..path.len];
 }
 
 pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
     if (std.fs.path.sep == '/') return;
     var idx: usize = 0;
-    while (std.mem.indexOfScalarPos(T, path_buffer, idx, '/')) |index| : (idx = index) {
+    while (std.mem.indexOfScalarPos(T, path_buffer, idx, '/')) |index| : (idx = index + 1) {
         path_buffer[index] = std.fs.path.sep;
     }
 }

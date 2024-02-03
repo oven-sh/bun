@@ -1291,7 +1291,7 @@ pub const PackageInstall = struct {
 
                             progress_.refresh();
 
-                            Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
+                            Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
                     };
@@ -1316,7 +1316,7 @@ pub const PackageInstall = struct {
 
                             progress_.refresh();
 
-                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
                     } else {
@@ -1330,7 +1330,7 @@ pub const PackageInstall = struct {
 
                             progress_.refresh();
 
-                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
                     }
@@ -1378,8 +1378,8 @@ pub const PackageInstall = struct {
 
         defer subdir.close();
 
-        var buf: if (Environment.isWindows) bun.WPathBuffer else [0]u16 = undefined;
-        var buf2: if (Environment.isWindows) bun.WPathBuffer else [0]u16 = undefined;
+        var buf: bun.windows.WPathBuffer = undefined;
+        var buf2: bun.windows.WPathBuffer = undefined;
         var to_copy_buf: []u16 = undefined;
         var to_copy_buf2: []u16 = undefined;
         if (comptime Environment.isWindows) {

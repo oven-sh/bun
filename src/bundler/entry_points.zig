@@ -315,12 +315,20 @@ pub const MacroEntryPoint = struct {
                 \\Bun.registerMacro({d}, Macros['{s}']);
             ,
                 .{
-                    dir_to_use,
-                    import_path.filename,
+                    bun.fmt.fmtPath(u8, dir_to_use, .{
+                        .escape_backslashes = true,
+                    }),
+                    bun.fmt.fmtPath(u8, import_path.filename, .{
+                        .escape_backslashes = true,
+                    }),
                     function_name,
                     function_name,
-                    dir_to_use,
-                    import_path.filename,
+                    bun.fmt.fmtPath(u8, dir_to_use, .{
+                        .escape_backslashes = true,
+                    }),
+                    bun.fmt.fmtPath(u8, import_path.filename, .{
+                        .escape_backslashes = true,
+                    }),
                     macro_id,
                     function_name,
                 },

@@ -45,23 +45,76 @@ pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !vo
     }
 }
 
+pub fn formatUTF16TypeEscapeBackslashes(comptime Slice: type, slice_: Slice, writer: anytype) !void {
+    var chunk = getSharedBuffer();
+
+    // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
+    shared_temp_buffer_ptr = null;
+    defer {
+        if (shared_temp_buffer_ptr) |existing| {
+            if (existing != chunk.ptr) {
+                bun.default_allocator.destroy(@as(*SharedTempBuffer, @ptrCast(chunk.ptr)));
+            }
+        } else {
+            shared_temp_buffer_ptr = @ptrCast(chunk.ptr);
+        }
+    }
+
+    var slice = slice_;
+
+    while (slice.len > 0) {
+        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice, true);
+        if (result.read == 0 or result.written == 0)
+            break;
+
+        const to_write = chunk[0..result.written];
+        var ptr = to_write;
+        while (strings.indexOfChar(ptr, '\\')) |i| {
+            try writer.writeAll(ptr[0 .. i + 1]);
+            try writer.writeAll("\\");
+            ptr = ptr[i + 1 ..];
+        }
+        try writer.writeAll(ptr);
+        slice = slice[result.read..];
+    }
+}
+
 pub fn formatUTF16(slice_: []align(1) const u16, writer: anytype) !void {
     return formatUTF16Type([]align(1) const u16, slice_, writer);
 }
 
 pub const FormatUTF16 = struct {
     buf: []const u16,
-    pub fn format(self: @This(), comptime _: []const u8, opts: anytype, writer: anytype) !void {
-        _ = opts;
-        try formatUTF16Type([]const u16, self.buf, writer);
+    escape_backslashes: bool = false,
+    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+        if (self.escape_backslashes) {
+            try formatUTF16TypeEscapeBackslashes([]const u16, self.buf, writer);
+        } else {
+            try formatUTF16Type([]const u16, self.buf, writer);
+        }
     }
 };
 
 pub const FormatUTF8 = struct {
     buf: []const u8,
+    escape_backslashes: bool = false,
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
-        try writer.writeAll(self.buf);
+        if (self.escape_backslashes) {
+            var ptr = self.buf;
+            while (strings.indexOfChar(ptr, '\\')) |i| {
+                try writer.writeAll(ptr[0 .. i + 1]);
+                try writer.writeAll("\\");
+                ptr = ptr[i + 1 ..];
+            }
+            try writer.writeAll(ptr);
+        } else {
+            try writer.writeAll(self.buf);
+        }
     }
+};
+
+pub const PathFormatOptions = struct {
+    escape_backslashes: bool = false,
 };
 
 pub fn fmtUTF16(buf: []const u16) FormatUTF16 {
@@ -70,8 +123,29 @@ pub fn fmtUTF16(buf: []const u16) FormatUTF16 {
 
 pub const FormatOSPath = if (Environment.isWindows) FormatUTF16 else FormatUTF8;
 
-pub fn fmtOSPath(buf: bun.OSPathSlice) FormatOSPath {
-    return FormatOSPath{ .buf = buf };
+pub fn fmtOSPath(buf: bun.OSPathSlice, options: PathFormatOptions) FormatOSPath {
+    return FormatOSPath{
+        .buf = buf,
+        .escape_backslashes = options.escape_backslashes,
+    };
+}
+
+pub fn fmtPath(
+    comptime T: type,
+    path: []const T,
+    options: PathFormatOptions,
+) if (T == u8) FormatUTF8 else FormatUTF16 {
+    if (T == u8) {
+        return FormatUTF8{
+            .buf = path,
+            .escape_backslashes = options.escape_backslashes,
+        };
+    }
+
+    return FormatUTF16{
+        .buf = path,
+        .escape_backslashes = options.escape_backslashes,
+    };
 }
 
 pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {

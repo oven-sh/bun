@@ -532,3 +532,10 @@ test("Error.captureStackTrace inside error constructor works", () => {
     throw new AnotherError();
   }).toThrow();
 });
+
+import "harness";
+import { join } from "path";
+
+test("Error.prepareStackTrace has a default implementation which behaves the same as being unset", () => {
+  expect([join(import.meta.dirname, "error-prepare-stack-default-fixture.js")]).toRun();
+});

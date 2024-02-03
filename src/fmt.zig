@@ -113,22 +113,27 @@ pub const FormatUTF8 = struct {
     }
 };
 
+pub const PathFormatOptions = struct {
+    escape_backslashes: bool = false,
+};
+
 pub fn fmtUTF16(buf: []const u16) FormatUTF16 {
     return FormatUTF16{ .buf = buf };
 }
 
 pub const FormatOSPath = if (Environment.isWindows) FormatUTF16 else FormatUTF8;
 
-pub fn fmtOSPath(buf: bun.OSPathSlice) FormatOSPath {
-    return FormatOSPath{ .buf = buf };
+pub fn fmtOSPath(buf: bun.OSPathSlice, options: PathFormatOptions) FormatOSPath {
+    return FormatOSPath{
+        .buf = buf,
+        .escape_backslashes = options.escape_backslashes,
+    };
 }
 
 pub fn fmtPath(
     comptime T: type,
     path: []const T,
-    options: struct {
-        escape_backslashes: bool = false,
-    },
+    options: PathFormatOptions,
 ) if (T == u8) FormatUTF8 else FormatUTF16 {
     if (T == u8) {
         return FormatUTF8{

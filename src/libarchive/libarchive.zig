@@ -548,7 +548,7 @@ pub const Archive = struct {
                     const path_slice: bun.OSPathSlice = pathname.ptr[0..pathname.len];
 
                     if (comptime log) {
-                        Output.prettyln(" {}", .{bun.fmt.fmtOSPath(path_slice)});
+                        Output.prettyln(" {}", .{bun.fmt.fmtOSPath(path_slice, .{})});
                     }
 
                     count += 1;
@@ -699,7 +699,7 @@ pub const Archive = struct {
                                         lib.ARCHIVE_RETRY => {
                                             if (comptime log) {
                                                 Output.err("libarchive error", "extracting {}, retry {d} / {d}", .{
-                                                    bun.fmt.fmtOSPath(path_slice),
+                                                    bun.fmt.fmtOSPath(path_slice, .{}),
                                                     retries_remaining,
                                                     5,
                                                 });
@@ -709,7 +709,7 @@ pub const Archive = struct {
                                             if (comptime log) {
                                                 const archive_error = std.mem.span(lib.archive_error_string(archive));
                                                 Output.err("libarchive error", "extracting {}: {s}", .{
-                                                    bun.fmt.fmtOSPath(path_slice),
+                                                    bun.fmt.fmtOSPath(path_slice, .{}),
                                                     archive_error,
                                                 });
                                             }

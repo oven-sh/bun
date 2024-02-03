@@ -5273,7 +5273,7 @@ pub fn concatWithLength(
     allocator: std.mem.Allocator,
     args: []const string,
     length: usize,
-) !string {
+) ![]u8 {
     const out = try allocator.alloc(u8, length);
     var remain = out;
     for (args) |arg| {
@@ -5287,7 +5287,7 @@ pub fn concatWithLength(
 pub fn concat(
     allocator: std.mem.Allocator,
     args: []const string,
-) !string {
+) ![]u8 {
     var length: usize = 0;
     for (args) |arg| {
         length += arg.len;

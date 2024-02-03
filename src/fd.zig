@@ -185,9 +185,9 @@ pub const FDImpl = packed struct {
         if (env.os != .windows or this.kind == .uv) {
             // This branch executes always on linux (uv() is no-op),
             // or on Windows when given a UV file descriptor.
-            const fd = bun.toFD(this.uv());
-            if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD) {
-                log("close({}) SKIPPED", .{this});
+            const fd = this.uv();
+            if (fd == 1 or fd == 2) {
+                log("close({}) SKIPPED", .{fd});
                 return null;
             }
         }
@@ -210,6 +210,11 @@ pub const FDImpl = packed struct {
         if (allow_assert) {
             std.debug.assert(this.value.as_system != invalid_value); // probably a UAF
         }
+
+        // Format the file descriptor for logging BEFORE closing it.
+        // Otherwise the file descriptor is always invalid after closing it.
+        var buf: [1050]u8 = undefined;
+        const this_fmt = if (env.isDebug) std.fmt.bufPrint(&buf, "{}", .{this}) catch unreachable;
 
         const result: ?bun.sys.Error = switch (env.os) {
             .linux => result: {
@@ -262,12 +267,12 @@ pub const FDImpl = packed struct {
             if (result) |err| {
                 if (err.errno == @intFromEnum(os.E.BADF)) {
                     // TODO(@paperdave): Zig Compiler Bug, if you remove `this` from the log. An error is correctly printed, but with the wrong reference trace
-                    bun.Output.debugWarn("close({}) = EBADF. This is an indication of a file descriptor UAF", .{this});
+                    bun.Output.debugWarn("close({s}) = EBADF. This is an indication of a file descriptor UAF", .{this_fmt});
                 } else {
-                    log("close({}) = {}", .{ this, err });
+                    log("close({s}) = {}", .{ this_fmt, err });
                 }
             } else {
-                log("close({})", .{this});
+                log("close({s})", .{this_fmt});
             }
         }
 
@@ -304,7 +309,13 @@ pub const FDImpl = packed struct {
         }
         switch (env.os) {
             else => {
-                try writer.print("{d}", .{this.system()});
+                const fd = this.system();
+                try writer.print("{d}", .{fd});
+                if (env.isDebug and fd >= 3) print_with_path: {
+                    var path_buf: bun.PathBuffer = undefined;
+                    const path = std.os.getFdPath(fd, &path_buf) catch break :print_with_path;
+                    try writer.print("[{s}]", .{path});
+                }
             },
             .windows => {
                 switch (this.kind) {

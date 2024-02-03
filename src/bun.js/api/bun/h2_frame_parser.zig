@@ -520,7 +520,7 @@ const Handlers = struct {
 };
 
 pub const H2FrameParser = struct {
-    pub const log = Output.scoped(.H2FrameParser, true);
+    pub const log = Output.scoped(.H2FrameParser, false);
     pub usingnamespace JSC.Codegen.JSH2FrameParser;
 
     strong_ctx: JSC.Strong = .{},

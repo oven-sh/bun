@@ -500,7 +500,7 @@ pub const CreateCommand = struct {
 
                                     progress_.refresh();
 
-                                    Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
+                                    Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                                     Global.exit(1);
                                 };
                             };
@@ -520,7 +520,7 @@ pub const CreateCommand = struct {
                             }
 
                             CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
-                                Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
+                                Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                                 Global.exit(1);
                             };
                         }

@@ -21403,6 +21403,9 @@ fn NewParser_(
                     continue;
                 }
 
+                // The following calls to `joinWithComma` are only enabled during bundling. We do this
+                // to avoid changing line numbers too much for source maps
+
                 switch (stmt.data) {
                     .s_empty => continue,
 
@@ -21426,7 +21429,7 @@ fn NewParser_(
                         // Merge adjacent expression statements
                         if (output.items.len > 0) {
                             var prev_stmt = &output.items[output.items.len - 1];
-                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall() and p.options.bundle) {
                                 prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
                                     s_expr.does_not_affect_tree_shaking;
                                 prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
@@ -21473,7 +21476,7 @@ fn NewParser_(
                     },
                     .s_switch => |s_switch| {
                         // Absorb a previous expression statement
-                        if (output.items.len > 0) {
+                        if (output.items.len > 0 and p.options.bundle) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
@@ -21483,7 +21486,7 @@ fn NewParser_(
                     },
                     .s_if => |s_if| {
                         // Absorb a previous expression statement
-                        if (output.items.len > 0) {
+                        if (output.items.len > 0 and p.options.bundle) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
@@ -21496,7 +21499,7 @@ fn NewParser_(
 
                     .s_return => |ret| {
                         // Merge return statements with the previous expression statement
-                        if (output.items.len > 0 and ret.value != null) {
+                        if (output.items.len > 0 and ret.value != null and p.options.bundle) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
@@ -21514,7 +21517,7 @@ fn NewParser_(
 
                     .s_throw => {
                         // Merge throw statements with the previous expression statement
-                        if (output.items.len > 0) {
+                        if (output.items.len > 0 and p.options.bundle) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 prev_stmt.* = p.s(S.Throw{

@@ -51,7 +51,7 @@ describe("fs.watchFile", () => {
     fs.unwatchFile(path.join(testDir, "watch.txt"));
 
     expect(entries.length).toBeGreaterThan(0);
-    
+
     expect(entries[0][0].size).toBe(6);
     expect(entries[0][1].size).toBe(5);
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);

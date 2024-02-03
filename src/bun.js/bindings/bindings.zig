@@ -4031,7 +4031,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return jsNumberFromInt32(@as(i32, @intCast(i)));
         }
 
-        return jsNumberFromDouble(@as(f64, @floatFromInt(@as(i52, @truncate(i)))));
+        return jsNumberFromDouble(@floatFromInt(i));
     }
 
     pub inline fn toJS(this: JSValue, _: *const JSGlobalObject) JSValue {
@@ -4047,7 +4047,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn jsNumberFromPtrSize(i: usize) JSValue {
-        return jsNumberFromDouble(@as(f64, @floatFromInt(@as(i52, @intCast(@as(u51, @truncate(i)))))));
+        return jsNumberFromDouble(@floatFromInt(i));
     }
 
     pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {

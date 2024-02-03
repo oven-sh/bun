@@ -67,6 +67,10 @@ pub const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
 pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
 
 const std = @import("std");
+const Environment = bun.Environment;
+pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
+pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
+
 pub const HANDLE = win32.HANDLE;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilevaliddata

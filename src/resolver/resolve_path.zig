@@ -675,8 +675,6 @@ pub fn normalizeStringGenericTZ(
 ) if (options.zero_terminate) [:0]T else []T {
     const isWindows, const sep_str = comptime .{ options.separator == std.fs.path.sep_windows, &[_]u8{options.separator} };
 
-    std.debug.print("isWindows: {}, sep_str: {s}\n", .{ isWindows, sep_str });
-
     if (isWindows and bun.Environment.isDebug) {
         // this is here to catch a potential mistake by the caller
         //

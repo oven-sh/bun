@@ -663,6 +663,7 @@ pub const EventLoop = struct {
     timer_reference_pool: ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool = null,
 
     debug: Debug = .{},
+    entered_event_loop_count: isize = 0,
 
     pub const Debug = if (Environment.isDebug) struct {
         is_inside_tick_queue: bool = false,
@@ -687,7 +688,30 @@ pub const EventLoop = struct {
             this.last_fn_name.deref();
             this.last_fn_name = bun.String.empty;
         }
-    } else struct {};
+    } else struct {
+        pub inline fn enter(_: Debug) void {}
+        pub inline fn exit(_: Debug) void {}
+    };
+
+    pub fn enter(this: *EventLoop) void {
+        log("enter() = {d}", .{this.entered_event_loop_count});
+        this.entered_event_loop_count += 1;
+        this.debug.enter();
+    }
+
+    pub fn exit(this: *EventLoop) void {
+        const count = this.entered_event_loop_count;
+        log("exit() = {d}", .{count - 1});
+
+        defer this.debug.exit();
+
+        if (count == 1) {
+            this.global.vm().releaseWeakRefs();
+            this.drainMicrotasksWithGlobal(this.global);
+        }
+
+        this.entered_event_loop_count -= 1;
+    }
 
     pub inline fn getVmImpl(this: *EventLoop) *JSC.VirtualMachine {
         return this.virtual_machine;
@@ -765,24 +789,14 @@ pub const EventLoop = struct {
     /// not being drained, which can lead to catastrophic memory usage and
     /// application slowdown.
     pub fn runCallback(this: *EventLoop, callback: JSC.JSValue, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, arguments: []const JSC.JSValue) void {
-        if (comptime Environment.isDebug) {
-            this.debug.enter();
-        }
-        defer {
-            if (comptime Environment.isDebug) {
-                this.debug.exit();
-            }
-        }
-
-        var global_vm = globalObject.vm();
+        this.enter();
+        defer this.exit();
 
         const result = callback.callWithThis(globalObject, thisValue, arguments);
 
         if (result.toError()) |err| {
             this.virtual_machine.onUnhandledError(globalObject, err);
         }
-        global_vm.releaseWeakRefs();
-        this.drainMicrotasksWithGlobal(globalObject);
     }
 
     pub fn tickQueueWithCount(this: *EventLoop, comptime queue_name: []const u8) u32 {
@@ -819,13 +833,8 @@ pub const EventLoop = struct {
                     );
                 }
             }
-            this.debug.enter();
         }
-        defer {
-            if (comptime Environment.isDebug) {
-                this.debug.exit();
-            }
-        }
+
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
@@ -1334,31 +1343,39 @@ pub const EventLoop = struct {
 
     pub fn tick(this: *EventLoop) void {
         JSC.markBinding(@src());
-
-        const ctx = this.virtual_machine;
-        this.tickConcurrent();
-        this.processGCTimer();
-
-        const global = ctx.global;
-        const global_vm = ctx.jsc;
-
-        while (true) {
-            while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
-                this.tickConcurrent();
-            } else {
-                global_vm.releaseWeakRefs();
-                this.drainMicrotasksWithGlobal(global);
-                this.tickConcurrent();
-                if (this.tasks.count > 0) continue;
+        {
+            this.entered_event_loop_count += 1;
+            this.debug.enter();
+            defer {
+                this.entered_event_loop_count -= 1;
+                this.debug.exit();
             }
-            break;
-        }
 
-        while (this.tickWithCount() > 0) {
+            const ctx = this.virtual_machine;
             this.tickConcurrent();
-        }
+            this.processGCTimer();
 
-        this.global.handleRejectedPromises();
+            const global = ctx.global;
+            const global_vm = ctx.jsc;
+
+            while (true) {
+                while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
+                    this.tickConcurrent();
+                } else {
+                    global_vm.releaseWeakRefs();
+                    this.drainMicrotasksWithGlobal(global);
+                    this.tickConcurrent();
+                    if (this.tasks.count > 0) continue;
+                }
+                break;
+            }
+
+            while (this.tickWithCount() > 0) {
+                this.tickConcurrent();
+            }
+
+            this.global.handleRejectedPromises();
+        }
     }
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {

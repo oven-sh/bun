@@ -3205,7 +3205,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         if (readable.ptr == .Bytes) {
                             std.debug.assert(this.request_body_buf.items.len == 0);
                             var vm = this.server.vm;
-                            defer vm.drainMicrotasks();
+                            vm.eventLoop().enter();
+                            defer vm.eventLoop().exit();
 
                             if (!last) {
                                 readable.ptr.Bytes.onData(

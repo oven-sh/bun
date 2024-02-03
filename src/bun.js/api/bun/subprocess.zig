@@ -2796,10 +2796,9 @@ pub const Subprocess = struct {
         var vm = this.globalThis.bunVM();
         const is_sync = this.flags.is_sync;
 
-        defer {
-            if (!is_sync)
-                vm.drainMicrotasks();
-        }
+        if (!is_sync) vm.eventLoop().enter();
+        defer if (!is_sync) vm.eventLoop().exit();
+
         this.wait(false);
     }
 

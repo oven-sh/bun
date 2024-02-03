@@ -3751,7 +3751,9 @@ pub const ServerWebSocket = struct {
         if (onOpenHandler.isEmptyOrUndefinedOrNull()) return;
         const this_value = this.getThisValue();
         var args = [_]JSValue{this_value};
-        defer globalObject.bunVM().drainMicrotasks();
+        const loop = globalObject.bunVM().eventLoop();
+        loop.enter();
+        defer loop.exit();
 
         var corker = Corker{
             .args = &args,
@@ -3812,7 +3814,9 @@ pub const ServerWebSocket = struct {
         if (onMessageHandler.isEmptyOrUndefinedOrNull()) return;
         var globalObject = this.handler.globalObject;
         // This is the start of a task.
-        defer globalObject.bunVM().drainMicrotasks();
+        const loop = globalObject.bunVM().eventLoop();
+        loop.enter();
+        defer loop.exit();
 
         const arguments = [_]JSValue{
             this.getThisValue(),
@@ -3895,7 +3899,9 @@ pub const ServerWebSocket = struct {
                 .globalObject = globalObject,
                 .callback = handler.onDrain,
             };
-            defer globalObject.bunVM().drainMicrotasks();
+            const loop = globalObject.bunVM().eventLoop();
+            loop.enter();
+            defer loop.exit();
             this.websocket.cork(&corker, Corker.run);
             const result = corker.result;
 
@@ -3923,7 +3929,9 @@ pub const ServerWebSocket = struct {
         var globalThis = handler.globalObject;
 
         // This is the start of a task.
-        defer globalThis.bunVM().drainMicrotasks();
+        const loop = globalThis.bunVM().eventLoop();
+        loop.enter();
+        defer loop.exit();
 
         const result = cb.call(
             globalThis,
@@ -3963,7 +3971,9 @@ pub const ServerWebSocket = struct {
         var globalThis = handler.globalObject;
 
         // This is the start of a task.
-        defer globalThis.bunVM().drainMicrotasks();
+        const loop = globalThis.bunVM().eventLoop();
+        loop.enter();
+        defer loop.exit();
 
         const result = cb.call(
             globalThis,
@@ -4007,7 +4017,9 @@ pub const ServerWebSocket = struct {
         if (!handler.onClose.isEmptyOrUndefinedOrNull()) {
             var str = ZigString.init(message);
             const globalObject = handler.globalObject;
-            defer globalObject.bunVM().drainMicrotasks();
+            const loop = globalObject.bunVM().eventLoop();
+            loop.enter();
+            defer loop.exit();
             str.markUTF8();
             const result = handler.onClose.call(
                 globalObject,

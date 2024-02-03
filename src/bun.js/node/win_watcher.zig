@@ -274,9 +274,7 @@ pub const PathWatcher = struct {
         // events always use the relative path
         if (events & uv.UV_RENAME != 0) {
             this.emit(path, path_info.hash, timestamp, path_info.is_file, .rename);
-        }
-
-        if (events & uv.UV_CHANGE != 0) {
+        } else if (events & uv.UV_CHANGE != 0) {
             this.emit(path, path_info.hash, timestamp, path_info.is_file, .change);
         }
     }

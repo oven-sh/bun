@@ -805,7 +805,7 @@ pub const H2FrameParser = struct {
             .uint31 = windowSize.uint31,
         };
         cleanWindowSize.write(@TypeOf(writer), writer);
-        this.write(&buffer);
+        this.write(&buffer);   
     }
 
     pub fn dispatch(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) void {

@@ -857,6 +857,7 @@ class ClientHttp2Session extends Http2Session {
     },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
+      console.log("goaway", errorCode, lastStreamId, opaqueData?.toString());
       self.emit("goaway", errorCode, lastStreamId, opaqueData);
       if (errorCode !== 0) {
         for (let [_, stream] of self.#streams) {
@@ -923,7 +924,6 @@ class ClientHttp2Session extends Http2Session {
 
     // TODO: make a native bindings on data and write and fallback to non-native
     socket.on("data", this.#onRead.bind(this));
-
     // redirect the queued buffers
     const queue = this.#queue;
     while (queue.length) {

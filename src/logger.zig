@@ -63,8 +63,6 @@ pub const Kind = enum(i8) {
     }
 };
 
-// Do not mark these as packed
-// https://github.com/ziglang/zig/issues/15715
 pub const Loc = struct {
     start: i32 = -1,
 
@@ -562,8 +560,6 @@ pub const Msg = struct {
     }
 };
 
-// Do not mark these as packed
-// https://github.com/ziglang/zig/issues/15715
 pub const Range = struct {
     loc: Loc = Loc.Empty,
     len: i32 = 0,

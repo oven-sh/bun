@@ -176,12 +176,7 @@ pub const PosixSpawn = struct {
         }
 
         pub fn deinit(self: *PosixSpawnAttr) void {
-            if (comptime bun.Environment.isMac) {
-                // https://github.com/ziglang/zig/issues/12964
-                _ = system.posix_spawnattr_destroy(&self.attr);
-            } else {
-                _ = system.posix_spawnattr_destroy(&self.attr);
-            }
+            _ = system.posix_spawnattr_destroy(&self.attr);
         }
 
         pub fn get(self: PosixSpawnAttr) !u16 {
@@ -224,12 +219,7 @@ pub const PosixSpawn = struct {
         }
 
         pub fn deinit(self: *PosixSpawnActions) void {
-            if (comptime bun.Environment.isMac) {
-                // https://github.com/ziglang/zig/issues/12964
-                _ = system.posix_spawn_file_actions_destroy(&self.actions);
-            } else {
-                _ = system.posix_spawn_file_actions_destroy(&self.actions);
-            }
+            _ = system.posix_spawn_file_actions_destroy(&self.actions);
 
             self.* = undefined;
         }

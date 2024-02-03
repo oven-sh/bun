@@ -7371,9 +7371,7 @@ pub const Macro = struct {
                 }
             };
 
-            // TODO: can change back to `return CallData.callWrapper(.{`
-            // when https://github.com/ziglang/zig/issues/16242 is fixed
-            return CallData.callWrapper(CallArgs{
+            return CallData.callWrapper(.{
                 macro,
                 log,
                 allocator,

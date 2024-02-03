@@ -29,7 +29,7 @@ dependency_id: DependencyID,
 skip_verify: bool = false,
 integrity: Integrity = .{},
 url: strings.StringOrTinyString,
-package_manager: *PackageManager,
+package_manager: *PackageManager = &PackageManager.instance,
 
 pub inline fn run(this: ExtractTarball, bytes: []const u8) !Install.ExtractData {
     if (!this.skip_verify and this.integrity.tag.isSupported()) {

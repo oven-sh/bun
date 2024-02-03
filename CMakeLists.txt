@@ -26,6 +26,9 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEBUG ON)
     set(DEFAULT_ZIG_OPTIMIZE "Debug")
     set(bun "bun-debug")
+
+    # COMPILE_COMMANDS
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(DEBUG OFF)
     set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")

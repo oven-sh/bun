@@ -556,10 +556,17 @@ pub const FileSystem = struct {
                             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
                             const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                            break :brk bun.default_allocator.dupe(u8, out) catch unreachable;
+                            break :brk bun.default_allocator.dupe(u8, out) catch bun.outOfMemory();
                         }
 
-                        break :brk "C:\\Windows\\Temp";
+                        var tmp_buf: bun.PathBuffer = undefined;
+                        const cwd = std.os.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
+                        const root = bun.path.windowsFilesystemRoot(cwd);
+                        break :brk bun.fmt.allocPrint(
+                            bun.default_allocator,
+                            "{s}\\Windows\\Temp",
+                            .{strings.withoutTrailingSlash(root)},
+                        ) catch bun.outOfMemory();
                     };
                     win_tempdir_cache = value;
                     return value;

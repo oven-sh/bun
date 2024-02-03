@@ -520,7 +520,7 @@ const Handlers = struct {
 };
 
 pub const H2FrameParser = struct {
-    pub const log = Output.scoped(.H2FrameParser, false);
+    pub const log = Output.scoped(.H2FrameParser, true);
     pub usingnamespace JSC.Codegen.JSH2FrameParser;
 
     strong_ctx: JSC.Strong = .{},
@@ -548,6 +548,9 @@ pub const H2FrameParser = struct {
 
     hpack: ?*lshpack.HPACK = null,
 
+    threadlocal var shared_request_buffer: [16384]u8 = undefined;
+
+    threadlocal var shared_header_buffer: [MAX_HPACK_HEADER_SIZE]u8 = undefined;
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
 
     const Stream = struct {
@@ -805,7 +808,7 @@ pub const H2FrameParser = struct {
             .uint31 = windowSize.uint31,
         };
         cleanWindowSize.write(@TypeOf(writer), writer);
-        this.write(&buffer);   
+        this.write(&buffer);
     }
 
     pub fn dispatch(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) void {

@@ -319,7 +319,7 @@ pub const LSHPACK_HDR_TOBE_INDEXED: c_int = 255;
 pub const enum_lshpack_static_hdr_idx = c_uint;
 pub extern fn lshpack_enc_init([*c]struct_lshpack_enc) c_int;
 pub extern fn lshpack_enc_cleanup([*c]struct_lshpack_enc) void;
-pub extern fn lshpack_enc_encode(henc: [*c]struct_lshpack_enc, dst: [*c]const u8, dst_end: [*c]u8, input: ?*struct_lsxpack_header) [*c]u8;
+pub extern fn lshpack_enc_encode(henc: [*c]struct_lshpack_enc, dst: [*c]u8, dst_end: [*c]u8, input: ?*struct_lsxpack_header) [*c]u8;
 pub extern fn lshpack_enc_set_max_capacity([*c]struct_lshpack_enc, c_uint) void;
 pub extern fn lshpack_enc_use_hist([*c]struct_lshpack_enc, on: c_int) c_int;
 pub extern fn lshpack_enc_hist_used([*c]const struct_lshpack_enc) c_int;

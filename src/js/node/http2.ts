@@ -857,7 +857,6 @@ class ClientHttp2Session extends Http2Session {
     },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
-      console.log("goaway", errorCode, lastStreamId, opaqueData?.toString());
       self.emit("goaway", errorCode, lastStreamId, opaqueData);
       if (errorCode !== 0) {
         for (let [_, stream] of self.#streams) {

@@ -358,6 +358,52 @@ describe("expect()", () => {
     expect(obj8).toEqual(obj7);
   });
 
+  test("deepEquals and deleted indexes", () => {
+    var a1 = [1];
+    var a2 = [];
+    expect(a1).not.toStrictEqual(a2);
+    expect(a2).not.toStrictEqual(a1);
+    expect(a1).not.toEqual(a2);
+    expect(a2).not.toEqual(a1);
+    delete a1[0];
+    expect(a1).not.toStrictEqual(a2);
+    expect(a2).not.toStrictEqual(a1);
+    expect(a1).toEqual(a2);
+    expect(a2).toEqual(a1);
+
+    var a3 = [];
+    var a4 = [];
+    expect(a3).toStrictEqual(a4);
+    expect(a4).toStrictEqual(a3);
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
+    delete a3[0];
+    expect(a3).toStrictEqual(a4);
+    expect(a4).toStrictEqual(a3);
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
+    a3[0] = 1;
+    expect(a3).not.toStrictEqual(a4);
+    expect(a4).not.toStrictEqual(a3);
+    expect(a3).not.toEqual(a4);
+    expect(a4).not.toEqual(a3);
+    a4[0] = 1;
+    expect(a3).toStrictEqual(a4);
+    expect(a4).toStrictEqual(a3);
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
+    delete a4[0];
+    expect(a3).not.toStrictEqual(a4);
+    expect(a4).not.toStrictEqual(a3);
+    expect(a3).not.toEqual(a4);
+    expect(a4).not.toEqual(a3);
+    delete a3[0];
+    expect(a3).toStrictEqual(a4);
+    expect(a4).toStrictEqual(a3);
+    expect(a3).toEqual(a4);
+    expect(a4).toEqual(a3);
+  });
+
   test("deepEquals works with accessors", () => {
     {
       let l1 = [1, undefined, 2];

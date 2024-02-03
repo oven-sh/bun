@@ -579,18 +579,23 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
 }
 
 // error.stack calls this function
-static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
+static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, Vector<StackFrame>& stackTrace, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorInstance)
 {
-    auto* lexicalGlobalObject = errorInstance->globalObject();
-    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     WTF::String name = "Error"_s;
     WTF::String message;
 
-    // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
-    if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
-        name = instance->sanitizedNameString(lexicalGlobalObject);
-        message = instance->sanitizedMessageString(lexicalGlobalObject);
+    if (errorInstance) {
+        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
+        if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
+            auto* lexicalGlobalObject = errorInstance->globalObject();
+            name = instance->sanitizedNameString(lexicalGlobalObject);
+            message = instance->sanitizedMessageString(lexicalGlobalObject);
+        }
+    }
+
+    if (UNLIKELY(!globalObject)) {
+        globalObject = Bun__getDefaultGlobal();
     }
 
     return Bun::formatStackTrace(vm, globalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
@@ -648,11 +653,14 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
 
     RETURN_IF_EXCEPTION(scope, String());
 
+    if (errorObject && !value.isEmpty()) {
+        errorObject->putDirect(vm, vm.propertyNames->stack, value, 0);
+    }
+
     if (value.isString()) {
         return value.toWTFString(lexicalGlobalObject);
     }
 
-    RETURN_IF_EXCEPTION(scope, String());
     return String();
 }
 
@@ -662,33 +670,33 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsi
         return String();
     }
 
-    if (!errorInstance) {
-        return String();
-    }
+    Zig::GlobalObject* globalObject = nullptr;
 
-    auto* lexicalGlobalObject = errorInstance->globalObject();
-    Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    if (errorInstance) {
+        auto* lexicalGlobalObject = errorInstance->globalObject();
+        globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
-    // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
-    if (!globalObject) {
-        // node:vm will use a different JSGlobalObject
-        globalObject = Bun__getDefaultGlobal();
+        // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
+        if (!globalObject) {
+            // node:vm will use a different JSGlobalObject
+            globalObject = Bun__getDefaultGlobal();
 
-        auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
-        if (JSValue prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s))) {
-            if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
-                return computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
+            auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
+            if (JSValue prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s))) {
+                if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
+                    return computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
+                }
+            }
+        } else {
+            if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
+                if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
+                    return computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
+                }
             }
         }
-    } else {
-        if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
-            if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
-                return computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-            }
-        }
     }
 
-    return computeErrorInfoWithoutPrepareStackTrace(vm, stackTrace, line, column, sourceURL, errorInstance);
+    return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, stackTrace, line, column, sourceURL, errorInstance);
 }
 
 static void resetOnEachMicrotaskTick(JSC::VM& vm, Zig::GlobalObject* globalObject);

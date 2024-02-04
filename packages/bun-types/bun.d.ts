@@ -2474,6 +2474,25 @@ declare module "bun" {
     requestIP(request: Request): SocketAddress | null;
 
     /**
+     * Undo a call to {@link Server.unref}
+     *
+     * If the Server has already been stopped, this does nothing.
+     *
+     * If {@link Server.ref} is called multiple times, this does nothing. Think of it as a boolean toggle.
+     */
+    ref(): void;
+
+    /**
+     * Don't keep the process alive if this server is the only thing left.
+     * Active connections may continue to keep the process alive.
+     *
+     * By default, the server is ref'd.
+     *
+     * To prevent new connections from being accepted, use {@link Server.stop}
+     */
+    unref(): void;
+
+    /**
      * How many requests are in-flight right now?
      */
     readonly pendingRequests: number;

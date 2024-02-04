@@ -351,9 +351,12 @@ var optionsSymbol = Symbol("options");
 var serverSymbol = Symbol("server");
 function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
+  EventEmitter.$call(this);
 
   this.listening = false;
-  EventEmitter.$call(this);
+  this._unref = false;
+  this[serverSymbol] = undefined;
+
   if (typeof options === "function") {
     callback = options;
     options = {};
@@ -426,6 +429,18 @@ function Server(options, callback) {
 }
 Object.setPrototypeOf((Server.prototype = {}), EventEmitter.prototype);
 Object.setPrototypeOf(Server, EventEmitter);
+
+Server.prototype.ref = function () {
+  this._unref = false;
+  this[serverSymbol]?.ref?.();
+  return this;
+};
+
+Server.prototype.unref = function () {
+  this._unref = true;
+  this[serverSymbol]?.unref?.();
+  return this;
+};
 
 Server.prototype.closeAllConnections = function () {
   const server = this[serverSymbol];
@@ -571,6 +586,11 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
       },
     });
     isHTTPS = this[serverSymbol].protocol === "https";
+
+    if (this?._unref) {
+      this[serverSymbol]?.unref?.();
+    }
+
     setTimeout(emitListeningNextTick, 1, this, onListen, null, this[serverSymbol].hostname, this[serverSymbol].port);
   } catch (err) {
     server.emit("error", err);

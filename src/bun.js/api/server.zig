@@ -5755,14 +5755,26 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (this.poll_ref.isActive()) return;
 
             this.poll_ref.ref(this.vm);
-            this.vm.eventLoop().start_server_on_next_tick = true;
         }
 
         pub fn unref(this: *ThisServer) void {
             if (!this.poll_ref.isActive()) return;
 
-            this.poll_ref.unrefOnNextTick(this.vm);
-            this.vm.eventLoop().start_server_on_next_tick = false;
+            this.poll_ref.unref(this.vm);
+        }
+
+        pub fn doRef(this: *ThisServer, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            const this_value = callframe.this();
+            this.ref();
+
+            return this_value;
+        }
+
+        pub fn doUnref(this: *ThisServer, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            const this_value = callframe.this();
+            this.unref();
+
+            return this_value;
         }
 
         pub fn onBunInfoRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {

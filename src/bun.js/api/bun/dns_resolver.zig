@@ -956,7 +956,7 @@ pub const CAresNameInfo = struct {
     }
 
     pub fn deinit(this: *@This()) void {
-        this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
+        this.poll_ref.unref(this.globalThis.bunVM());
         // freed
         bun.default_allocator.free(this.name);
 
@@ -1374,7 +1374,7 @@ pub const CAresReverse = struct {
     }
 
     pub fn deinit(this: *@This()) void {
-        this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
+        this.poll_ref.unref(this.globalThis.bunVM());
         bun.default_allocator.free(this.name);
 
         if (this.allocated)
@@ -1393,12 +1393,20 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         next: ?*@This() = null,
         name: []const u8,
 
-        pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, name: []const u8) !*@This() {
-            const this = try allocator.create(@This());
+        pub usingnamespace bun.New(@This());
+
+        pub fn init(globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator, name: []const u8) !*@This() {
             var poll_ref = Async.KeepAlive.init();
             poll_ref.ref(globalThis.bunVM());
-            this.* = .{ .globalThis = globalThis, .promise = JSC.JSPromise.Strong.init(globalThis), .poll_ref = poll_ref, .allocated = true, .name = name };
-            return this;
+            return @This().new(
+                .{
+                    .globalThis = globalThis,
+                    .promise = JSC.JSPromise.Strong.init(globalThis),
+                    .poll_ref = poll_ref,
+                    .allocated = true,
+                    .name = name,
+                },
+            );
         }
 
         pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*cares_type) void {
@@ -1445,11 +1453,11 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         }
 
         pub fn deinit(this: *@This()) void {
-            this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
+            this.poll_ref.unref(this.globalThis.bunVM());
             bun.default_allocator.free(this.name);
 
             if (this.allocated)
-                this.globalThis.allocator().destroy(this);
+                this.destroy();
         }
     };
 }
@@ -1562,7 +1570,8 @@ pub const DNSLookup = struct {
 
     pub fn deinit(this: *DNSLookup) void {
         log("deinit", .{});
-        this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
+        this.poll_ref.unref(this.globalThis.bunVM());
+
         if (this.allocated)
             this.globalThis.allocator().destroy(this);
     }

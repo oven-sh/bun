@@ -423,3 +423,12 @@ describe("Server", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// By not timing out, this test passes.
+test("Bun.serve().unref() works", async () => {
+  expect([path.join(import.meta.dir, "unref-fixture.ts")]).toRun();
+});
+
+test("unref keeps process alive for ongoing connections", async () => {
+  expect([path.join(import.meta.dir, "unref-fixture-2.ts")]).toRun();
+});

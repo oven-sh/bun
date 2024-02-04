@@ -284,8 +284,12 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
                     const kind = blk: {
                         const attrs = dir_info.FileAttributes;
-                        if (attrs & w.FILE_ATTRIBUTE_DIRECTORY != 0) break :blk Entry.Kind.directory;
-                        if (attrs & w.FILE_ATTRIBUTE_REPARSE_POINT != 0) break :blk Entry.Kind.sym_link;
+                        const isdir = attrs & w.FILE_ATTRIBUTE_DIRECTORY != 0;
+                        const islink = attrs & w.FILE_ATTRIBUTE_REPARSE_POINT != 0;
+                        // on windows symlinks can be directories, too. We prioritize the
+                        // "sym_link" kind over the "directory" kind
+                        if (islink) break :blk Entry.Kind.sym_link;
+                        if (isdir) break :blk Entry.Kind.directory;
                         break :blk Entry.Kind.file;
                     };
 

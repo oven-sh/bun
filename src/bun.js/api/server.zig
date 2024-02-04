@@ -4938,7 +4938,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         const httplog = Output.scoped(.Server, false);
 
         listener: ?*App.ListenSocket = null,
-        listener_ref: bool = true,
         thisObject: JSC.JSValue = JSC.JSValue.zero,
         app: *App = undefined,
         vm: *JSC.VirtualMachine = undefined,

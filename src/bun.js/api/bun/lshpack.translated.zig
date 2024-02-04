@@ -317,19 +317,19 @@ pub const LSHPACK_HDR_VIA: c_int = 60;
 pub const LSHPACK_HDR_WWW_AUTHENTICATE: c_int = 61;
 pub const LSHPACK_HDR_TOBE_INDEXED: c_int = 255;
 pub const enum_lshpack_static_hdr_idx = c_uint;
-pub extern fn lshpack_enc_init([*c]struct_lshpack_enc) c_int;
-pub extern fn lshpack_enc_cleanup([*c]struct_lshpack_enc) void;
-pub extern fn lshpack_enc_encode(henc: [*c]struct_lshpack_enc, dst: [*c]u8, dst_end: [*c]u8, input: ?*struct_lsxpack_header) [*c]u8;
-pub extern fn lshpack_enc_set_max_capacity([*c]struct_lshpack_enc, c_uint) void;
-pub extern fn lshpack_enc_use_hist([*c]struct_lshpack_enc, on: c_int) c_int;
-pub extern fn lshpack_enc_hist_used([*c]const struct_lshpack_enc) c_int;
-pub extern fn lshpack_dec_init([*c]struct_lshpack_dec) void;
-pub extern fn lshpack_dec_cleanup([*c]struct_lshpack_dec) void;
-pub extern fn lshpack_dec_decode(dec: [*c]struct_lshpack_dec, src: *[*c]const u8, src_end: [*c]const u8, output: ?*struct_lsxpack_header) c_int;
-pub extern fn lshpack_dec_set_max_capacity([*c]struct_lshpack_dec, c_uint) void;
+pub extern fn lshpack_enc_init(*struct_lshpack_enc) c_int;
+pub extern fn lshpack_enc_cleanup(*struct_lshpack_enc) void;
+pub extern fn lshpack_enc_encode(henc: *struct_lshpack_enc, dst: [*]u8, dst_end: [*]u8, input: ?*struct_lsxpack_header) [*c]u8;
+pub extern fn lshpack_enc_set_max_capacity(*struct_lshpack_enc, c_uint) void;
+pub extern fn lshpack_enc_use_hist(*struct_lshpack_enc, on: c_int) c_int;
+pub extern fn lshpack_enc_hist_used(*const struct_lshpack_enc) c_int;
+pub extern fn lshpack_dec_init(*struct_lshpack_dec) void;
+pub extern fn lshpack_dec_cleanup(*struct_lshpack_dec) void;
+pub extern fn lshpack_dec_decode(dec: *struct_lshpack_dec, src: *[*]const u8, src_end: [*]const u8, output: ?*struct_lsxpack_header) c_int;
+pub extern fn lshpack_dec_set_max_capacity(*struct_lshpack_dec, c_uint) void;
 pub extern fn lshpack_enc_get_stx_tab_id(?*struct_lsxpack_header) c_uint;
-pub fn lshpack_decode(dec: [*c]struct_lshpack_dec, src: [*]const u8, src_len: usize, output: ?*struct_lsxpack_header) !usize {
-    var s: [*c]const u8 = src;
+pub fn lshpack_decode(dec: *struct_lshpack_dec, src: [*]const u8, src_len: usize, output: ?*struct_lsxpack_header) !usize {
+    var s: [*]const u8 = src;
     const rc: c_int = lshpack_dec_decode(dec, &s, s + src_len, output);
     if (rc != 0) {
         return error.UnableToDecode;
@@ -337,7 +337,7 @@ pub fn lshpack_decode(dec: [*c]struct_lshpack_dec, src: [*]const u8, src_len: us
     return @intFromPtr(s) - @intFromPtr(src);
 }
 
-pub fn lshpack_encode(enc: [*c]struct_lshpack_enc, dst: [*]u8, dst_len: usize, input: ?*struct_lsxpack_header) !usize {
+pub fn lshpack_encode(enc: *struct_lshpack_enc, dst: [*]u8, dst_len: usize, input: ?*struct_lsxpack_header) !usize {
     const ptr = lshpack_enc_encode(enc, dst, dst + dst_len, input);
     const end = @intFromPtr(ptr) - @intFromPtr(dst);
     if (end <= 0) {

@@ -1680,6 +1680,6 @@ it("#4415.4 IncomingMessage es5", () => {
 if (process.platform !== "win32") {
   // By not timing out, this test passes.
   test(".unref() works", async () => {
-    expect([path.join(import.meta.dir, "node-http-ref-fixture.js")]).toRun();
+    expect([joinPath(import.meta.dir, "node-http-ref-fixture.js")]).toRun();
   });
 }

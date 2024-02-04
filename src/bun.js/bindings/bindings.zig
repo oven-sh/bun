@@ -432,7 +432,6 @@ pub const ZigString = extern struct {
 
         pub const byteSlice = Slice.slice;
 
-
         pub fn fromUTF8NeverFree(input: []const u8) Slice {
             return .{
                 .ptr = input.ptr,
@@ -3565,6 +3564,14 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn callWithGlobalThis(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
+        if (comptime bun.Environment.isDebug) {
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
+            if (loop.debug.track_last_fn_name and !loop.debug.is_inside_tick_queue) {
+                loop.debug.last_fn_name.deref();
+                loop.debug.last_fn_name = this.getName(globalThis);
+            }
+        }
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
             this,
@@ -3576,6 +3583,14 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn callWithThis(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
+        if (comptime bun.Environment.isDebug) {
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
+            if (loop.debug.track_last_fn_name and !loop.debug.is_inside_tick_queue) {
+                loop.debug.last_fn_name.deref();
+                loop.debug.last_fn_name = this.getName(globalThis);
+            }
+        }
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
             this,
@@ -4031,7 +4046,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return jsNumberFromInt32(@as(i32, @intCast(i)));
         }
 
-        return jsNumberFromDouble(@as(f64, @floatFromInt(@as(i52, @truncate(i)))));
+        return jsNumberFromDouble(@floatFromInt(i));
     }
 
     pub inline fn toJS(this: JSValue, _: *const JSGlobalObject) JSValue {
@@ -4047,7 +4062,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn jsNumberFromPtrSize(i: usize) JSValue {
-        return jsNumberFromDouble(@as(f64, @floatFromInt(@as(i52, @intCast(@as(u51, @truncate(i)))))));
+        return jsNumberFromDouble(@floatFromInt(i));
     }
 
     pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {

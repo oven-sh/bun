@@ -2796,10 +2796,9 @@ pub const Subprocess = struct {
         var vm = this.globalThis.bunVM();
         const is_sync = this.flags.is_sync;
 
-        defer {
-            if (!is_sync)
-                vm.drainMicrotasks();
-        }
+        if (!is_sync) vm.eventLoop().enter();
+        defer if (!is_sync) vm.eventLoop().exit();
+
         this.wait(false);
     }
 
@@ -2965,15 +2964,12 @@ pub const Subprocess = struct {
                 waitpid_value,
             };
 
-            const result = callback.callWithThis(
+            globalThis.bunVM().eventLoop().runCallback(
+                callback,
                 globalThis,
                 this_value,
                 &args,
             );
-
-            if (result.isAnyError()) {
-                globalThis.bunVM().onUnhandledError(globalThis, result);
-            }
         }
     }
 
@@ -3386,15 +3382,12 @@ pub const Subprocess = struct {
             .data => |data| {
                 IPC.log("Received IPC message from child", .{});
                 if (this.ipc_callback.get()) |cb| {
-                    const result = cb.callWithThis(
+                    this.globalThis.bunVM().eventLoop().runCallback(
+                        cb,
                         this.globalThis,
                         this.this_jsvalue,
                         &[_]JSValue{ data, this.this_jsvalue },
                     );
-                    data.ensureStillAlive();
-                    if (result.isAnyError()) {
-                        this.globalThis.bunVM().onUnhandledError(this.globalThis, result);
-                    }
                 }
             },
         }

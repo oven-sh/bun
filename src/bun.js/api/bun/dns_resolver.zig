@@ -1935,8 +1935,8 @@ pub const DNSResolver = struct {
         poll: *Async.FilePoll,
     ) void {
         var vm = this.vm;
-        defer vm.drainMicrotasks();
-
+        vm.eventLoop().enter();
+        defer vm.eventLoop().exit();
         var channel = this.channel orelse {
             _ = this.polls.orderedRemove(poll.fd.int());
             poll.deinit();

@@ -1,37 +1,35 @@
 // Bun Snapshot v1, https://goo.gl/fbAQLP
 
 exports[`error.cause 1`] = `
-"1 | // @known-failing-on-windows: 1 failing
-2 | import { test, expect } from "bun:test";
-3 | 
-4 | test("error.cause", () => {
-5 |   const err = new Error("error 1");
-6 |   const err2 = new Error("error 2", { cause: err });
+"1 | import { test, expect } from "bun:test";
+2 | 
+3 | test("error.cause", () => {
+4 |   const err = new Error("error 1");
+5 |   const err2 = new Error("error 2", { cause: err });
                    ^
 error: error 2
-      at [dir]/inspect-error.test.js:6:16
+      at [dir]/inspect-error.test.js:5:16
 
-1 | // @known-failing-on-windows: 1 failing
-2 | import { test, expect } from "bun:test";
-3 | 
-4 | test("error.cause", () => {
-5 |   const err = new Error("error 1");
+1 | import { test, expect } from "bun:test";
+2 | 
+3 | test("error.cause", () => {
+4 |   const err = new Error("error 1");
                   ^
 error: error 1
-      at [dir]/inspect-error.test.js:5:15
+      at [dir]/inspect-error.test.js:4:15
 "
 `;
 
 exports[`Error 1`] = `
-"10 |       .replaceAll("//", "/"),
-11 |   ).toMatchSnapshot();
-12 | });
-13 | 
-14 | test("Error", () => {
-15 |   const err = new Error("my message");
+" 9 |       .replaceAll("//", "/"),
+10 |   ).toMatchSnapshot();
+11 | });
+12 | 
+13 | test("Error", () => {
+14 |   const err = new Error("my message");
                    ^
 error: my message
-      at [dir]/inspect-error.test.js:15:15
+      at [dir]/inspect-error.test.js:14:15
 "
 `;
 

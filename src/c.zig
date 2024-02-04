@@ -375,7 +375,9 @@ pub fn getRelease(buf: []u8) []const u8 {
         if (err != 0) {
             return "unknown";
         }
-        return bun.sliceTo(&info.version, 0);
+        const release = bun.sliceTo(&info.release, 0);
+        @memcpy(buf[0..release.len], release);
+        return buf[0..release.len];
     }
 }
 

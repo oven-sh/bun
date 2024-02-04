@@ -654,7 +654,6 @@ pub const EventLoop = struct {
     global: *JSGlobalObject = undefined,
     virtual_machine: *JSC.VirtualMachine = undefined,
     waker: ?Waker = null,
-    start_server_on_next_tick: bool = false,
     defer_count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     forever_timer: ?*uws.Timer = null,
     deferred_microtask_map: std.AutoArrayHashMapUnmanaged(?*anyopaque, DeferredRepeatingTask) = .{},

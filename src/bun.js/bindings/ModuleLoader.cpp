@@ -1,3 +1,5 @@
+#include "JavaScriptCore/JSArray.h"
+#include "JavaScriptCore/JSCast.h"
 #include "root.h"
 #include "headers-handwritten.h"
 
@@ -40,6 +42,15 @@ namespace Bun {
 using namespace JSC;
 using namespace Zig;
 using namespace WebCore;
+extern "C" bool Bun__isAbsolutePath(BunString* path);
+
+enum class HotReload : uint8_t {
+    none = 0,
+    hot = 1,
+    watch = 2
+};
+
+extern "C" HotReload Bun__watchMode;
 
 static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, bool wasModuleMock = false);
 
@@ -107,7 +118,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
     };
 }
 
-static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JSC::JSObject* object)
+static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JSC::JSObject* object, BunString watchedFile)
 {
     OnLoadResult result {};
     result.type = OnLoadResultTypeObject;
@@ -242,6 +253,46 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     result.value.sourceText.value = JSValue {};
     result.value.sourceText.string = {};
 
+    if (Bun__watchMode != HotReload::none) {
+        if (JSC::JSValue watchedFilePathsValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "watchedFilePaths"_s))) {
+            if (!watchedFilePathsValue.isUndefinedOrNull()) {
+                if (!isJSArray(watchedFilePathsValue)) {
+                    throwException(globalObject, scope, createError(globalObject, "Expected watchedFilePaths to be an array of strings"_s));
+                    result.value.error = scope.exception();
+                    return result;
+                }
+
+                JSC::JSArray* watchedFilePathsObject = jsCast<JSArray*>(watchedFilePathsValue);
+                const auto length = watchedFilePathsObject->length();
+                if (length > 0) {
+                    JSValue first = watchedFilePathsObject->getIndex(globalObject, 0);
+                    if (first.isString()) {
+                        auto watchedFile = first.toWTFString(globalObject);
+                        if (watchedFile.isEmpty()) {
+                            throwException(globalObject, scope, createError(globalObject, "Expected watchedFilePaths string to not be empty"_s));
+                            result.value.error = scope.exception();
+                            return result;
+                        }
+
+                        auto str = Bun::toStringRef(globalObject, first);
+                        if (!Bun__isAbsolutePath(&str)) {
+                            throwException(globalObject, scope, createError(globalObject, "Expected watchedFilePaths string to be an absolute path"_s));
+                            str.deref();
+                            result.value.error = scope.exception();
+                            return result;
+                        }
+
+                        result.value.sourceText.watchedFilePath = str;
+                    } else {
+                        throwException(globalObject, scope, createError(globalObject, "Expected watchedFilePaths to be an array of strings"_s));
+                        result.value.error = scope.exception();
+                        return result;
+                    }
+                }
+            }
+        }
+    }
+
     if (JSC::JSValue contentsValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "contents"_s))) {
         if (contentsValue.isString()) {
             if (JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject)) {
@@ -256,7 +307,9 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
 
     if (UNLIKELY(result.value.sourceText.value.isEmpty())) {
         throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
+        result.value.sourceText.watchedFilePath.deref();
         result.value.error = scope.exception();
+
         return result;
     }
 
@@ -331,7 +384,14 @@ static JSValue handleVirtualModuleResult(
 
     switch (onLoadResult.type) {
     case OnLoadResultTypeCode: {
-        Bun__transpileVirtualModule(globalObject, specifier, referrer, &onLoadResult.value.sourceText.string, onLoadResult.value.sourceText.loader, res);
+        Bun__transpileVirtualModule(
+            globalObject,
+            specifier,
+            referrer,
+            &onLoadResult.value.sourceText.string,
+            onLoadResult.value.sourceText.loader,
+            &onLoadResult.value.sourceText.watchedFilePath,
+            res);
         if (!res->success) {
             return reject(JSValue::decode(reinterpret_cast<EncodedJSValue>(res->result.err.ptr)));
         }

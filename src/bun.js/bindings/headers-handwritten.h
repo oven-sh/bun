@@ -305,6 +305,7 @@ extern "C" bool Bun__transpileVirtualModule(
     const BunString* referrer,
     ZigString* sourceCode,
     BunLoaderType loader,
+    BunString* watchedFilePath,
     ErrorableResolvedSource* result);
 
 extern "C" JSC::EncodedJSValue Bun__runVirtualModule(

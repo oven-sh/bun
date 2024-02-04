@@ -1,3 +1,4 @@
+#include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
 
@@ -30,6 +31,7 @@ struct CodeString {
     ZigString string;
     JSC::JSValue value;
     BunLoaderType loader;
+    BunString watchedFilePath = Zig::BunStringEmpty;
 };
 
 union OnLoadResultValue {

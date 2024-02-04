@@ -2393,8 +2393,10 @@ pub const ModuleLoader = struct {
         referrer_ptr: *const bun.String,
         source_code: *ZigString,
         loader_: Api.Loader,
+        watched_file_path: ?*bun.String,
         ret: *ErrorableResolvedSource,
     ) bool {
+        _ = watched_file_path; // autofix
         JSC.markBinding(@src());
         const jsc_vm = globalObject.bunVM();
         std.debug.assert(jsc_vm.plugin_runner != null);
@@ -2871,4 +2873,15 @@ export fn Bun__resolveEmbeddedNodeFile(vm: *JSC.VirtualMachine, in_out_str: *bun
 
     in_out_str.* = bun.String.createUTF8(bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename));
     return true;
+}
+
+pub export fn Bun__isAbsolutePath(str: *bun.String) bool {
+    const utf8 = str.toUTF8(bun.default_allocator);
+    defer utf8.deinit();
+
+    if (str.hasPrefixComptime("file:") or str.hasPrefixComptime("data:") or str.hasPrefixComptime("blob:") or str.hasPrefixComptime("http:") or str.hasPrefixComptime("https:")) {
+        return false;
+    }
+
+    return std.fs.path.isAbsolute(utf8.slice());
 }

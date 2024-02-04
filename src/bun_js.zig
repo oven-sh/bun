@@ -288,6 +288,7 @@ pub const Run = struct {
     pub fn start(this: *Run) void {
         var vm = this.vm;
         vm.hot_reload = this.ctx.debug.hot_reload;
+
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
         if (this.ctx.runtime_options.eval_script.len > 0) {

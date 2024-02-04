@@ -242,8 +242,7 @@ const codes = {}; // exported from errors.js
     if (!ArrayIsArray(expected)) expected = [expected];
 
     let msg = "The ";
-    if (StringPrototypeEndsWith(name, " argument"))
-      msg += `${name} `; // For cases like 'first argument'
+    if (StringPrototypeEndsWith(name, " argument")) msg += `${name} `; // For cases like 'first argument'
     else msg += `"${name}" ${StringPrototypeIncludes(name, ".") ? "property" : "argument"} `;
     msg += "must be ";
 

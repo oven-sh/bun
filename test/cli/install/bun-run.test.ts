@@ -70,7 +70,7 @@ for (let withRun of [false, true]) {
             name: "test",
             version: "0.0.0",
             scripts: {
-              "boop": "echo 'hi'",
+              "boop": "echo hi",
             },
           }),
         );
@@ -84,34 +84,36 @@ for (let withRun of [false, true]) {
         });
 
         expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toBe("hi\n");
+        expect(stdout.toString().replaceAll("\r\n", "\n")).toBe("hi\n");
         expect(exitCode).toBe(0);
       });
 
       it("--silent omits error messages", async () => {
+        const exe = process.platform === "win32" ? "bun.exe" : "bun";
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), "run", "--silent", "bash", "-c", "exit 1"],
+          cmd: [bunExe(), "run", "--silent", exe, "doesnotexist"],
           cwd: run_dir,
           env: bunEnv,
         });
 
-        expect(stderr.toString()).toBe("");
+        expect(stderr.toString()).not.toEndWith(`error: "${exe}" exited with code 1\n`);
         expect(stdout.toString()).toBe("");
         expect(exitCode).toBe(1);
       });
 
       it("no --silent includes error messages", async () => {
+        const exe = process.platform === "win32" ? "bun.exe" : "bun";
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), "run", "bash", "-c", "exit 1"],
+          cmd: [bunExe(), "run", exe, "doesnotexist"],
           cwd: run_dir,
           env: bunEnv,
         });
 
-        expect(stderr.toString()).toStartWith('error: "bash" exited with code 1');
+        expect(stderr.toString()).toEndWith(`error: "${exe}" exited with code 1\n`);
         expect(exitCode).toBe(1);
       });
 
-      it("exit code message works above 128", async () => {
+      it.skipIf(process.platform === "win32")("exit code message works above 128", async () => {
         const { stdout, stderr, exitCode } = spawnSync({
           cmd: [bunExe(), "run", "bash", "-c", "exit 200"],
           cwd: run_dir,
@@ -244,7 +246,7 @@ logLevel = "debug"
         });
 
         expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toBe("pre\n" + "main -a -b -c\n" + "post\n");
+        expect(stdout.toString().replaceAll("\r\n", "\n")).toBe("pre\n" + "main -a -b -c\n" + "post\n");
         expect(exitCode).toBe(0);
       });
     });

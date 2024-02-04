@@ -1,11 +1,21 @@
 {
   "name": "bun-types",
-  "repository": "https://github.com/oven-sh/bun",
   "license": "MIT",
+  "main": "",
+  "types": "index.d.ts",
+  "description": "Type definitions for Bun, an incredibly fast JavaScript runtime",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oven-sh/bun",
+    "directory": "packages/bun-types"
+  },
+  "files": [
+    "*.d.ts"
+  ],
+  "homepage": "https://bun.sh",
   "dependencies": {
-    "@types/node": "*",
-    "@types/ws": "*",
-    "undici-types": "~5.26.4"
+    "@types/node": "~20.11.3",
+    "@types/ws": "~8.5.10"
   },
   "devDependencies": {
     "@definitelytyped/dtslint": "^0.0.199",
@@ -13,13 +23,15 @@
     "prettier": "^2.4.1",
     "typescript": "^5.0.2"
   },
-  "private": true,
   "scripts": {
     "prebuild": "echo $(pwd)",
-    "build": "rm -rf ./dist && bun run bundle && bun run fmt",
-    "bundle": "bun scripts/bundle.ts ./dist",
+    "build": "bun scripts/build.ts && bun run fmt",
     "test": "tsc",
-    "fmt": "echo $(which prettier) && prettier --write './**/*.{ts,tsx,js,jsx}'"
+    "fmt": "echo $(which biome) && biome format --write ."
   },
-  "types": "index.d.ts"
+  "keywords": [
+    "bun",
+    "bun.js",
+    "types"
+  ]
 }

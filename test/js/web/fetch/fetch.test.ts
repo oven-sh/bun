@@ -11,7 +11,7 @@ import net from "net";
 
 const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
 
-const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8");
+const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
 
 let server: Server;
 function startServer({ fetch, ...options }: ServeOptions) {

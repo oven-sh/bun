@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { spawn } from "bun";
 import { expect, it, test } from "bun:test";
 import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
@@ -129,7 +128,7 @@ it("crypto.getRandomValues", () => {
   });
 
   // run it on a large input
-  expect(!!crypto.getRandomValues(new Uint8Array(8096)).find(a => a > 0)).toBe(true);
+  expect(!!crypto.getRandomValues(new Uint8Array(8192)).find(a => a > 0)).toBe(true);
 
   {
     // any additional input into getRandomValues() makes it unbuffered

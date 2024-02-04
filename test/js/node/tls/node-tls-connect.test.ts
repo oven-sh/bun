@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import tls, { TLSSocket, connect, checkServerIdentity, createServer, Server } from "tls";
 import { join } from "path";
 import { AddressInfo } from "ws";

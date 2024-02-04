@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import "reflect-metadata";
 
 describe("decorator metadata", () => {
@@ -457,9 +456,9 @@ describe("decorator metadata", () => {
         p3: readonly ["hello", "world"],
         p4: typeof c,
         p5: readonly [number, string],
-        // prettier-ignore
+        // biome-ignore: format ignore
         p6: (string | string),
-        // prettier-ignore
+        // biome-ignore: format ignoreormat ignore
         p7: (string & string),
         p8: boolean extends true ? "a" : "b",
         // @ts-ignore

@@ -1136,7 +1136,7 @@ pub const Fetch = struct {
                         defer BoringSSL.X509_free(x509);
                         const globalObject = this.global_this;
                         const js_cert = X509.toJS(x509, globalObject);
-                        var hostname: bun.String = bun.String.create(certificate_info.hostname);
+                        var hostname: bun.String = bun.String.createUTF8(certificate_info.hostname);
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();
@@ -1205,9 +1205,9 @@ pub const Fetch = struct {
 
             // some times we don't have metadata so we also check http.url
             if (this.metadata) |metadata| {
-                path = bun.String.create(metadata.url);
+                path = bun.String.createUTF8(metadata.url);
             } else if (this.http) |http_| {
-                path = bun.String.create(http_.url.href);
+                path = bun.String.createUTF8(http_.url.href);
             } else {
                 path = bun.String.empty;
             }

@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
 import { bunEnv, bunExe } from "harness";
@@ -18,7 +17,7 @@ test("running extensionless file works", async () => {
   expect(stdout.toString("utf8")).toEqual("hello world\n");
 });
 
-test("running shebang typescript file works", async () => {
+test.skipIf(process.platform === "win32")("running shebang typescript file works", async () => {
   const dir = join(realpathSync(tmpdir()), "bun-run-test2");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "cool"), `#!${bunExe()}\nconst x: Test = 2; console.log('hello world');`, { mode: 0o777 });

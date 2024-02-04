@@ -30,6 +30,7 @@ pub const Expect = @import("./bun.js/test/expect.zig");
 pub const Snapshot = @import("./bun.js/test/snapshot.zig");
 pub const API = struct {
     pub const Glob = @import("./bun.js/api/glob.zig");
+    pub const Shell = @import("./shell/shell.zig");
     pub const JSBundler = @import("./bun.js/api/JSBundler.zig").JSBundler;
     pub const BuildArtifact = @import("./bun.js/api/JSBundler.zig").BuildArtifact;
     pub const JSTranspiler = @import("./bun.js/api/JSTranspiler.zig");
@@ -40,7 +41,7 @@ pub const API = struct {
     pub const DebugHTTPServer = @import("./bun.js/api/server.zig").DebugHTTPServer;
     pub const DebugHTTPSServer = @import("./bun.js/api/server.zig").DebugHTTPSServer;
     pub const AnyRequestContext = @import("./bun.js/api/server.zig").AnyRequestContext;
-    pub const Bun = @import("./bun.js/api/bun.zig");
+    pub const Bun = @import("./bun.js/api/BunObject.zig");
     pub const FileSystemRouter = @import("./bun.js/api/filesystem_router.zig").FileSystemRouter;
     pub const MatchedRoute = @import("./bun.js/api/filesystem_router.zig").MatchedRoute;
     pub const TCPSocket = @import("./bun.js/api/bun/socket.zig").TCPSocket;
@@ -80,8 +81,8 @@ pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     if (comptime is_bindgen) unreachable;
     __jsc_log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }
-pub const Subprocess = @import("./bun.js/api/bun.zig").Subprocess;
-pub const ResourceUsage = @import("./bun.js/api/bun.zig").ResourceUsage;
+pub const Subprocess = API.Bun.Subprocess;
+pub const ResourceUsage = API.Bun.ResourceUsage;
 
 /// Generated code! To regenerate, run:
 ///

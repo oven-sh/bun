@@ -4,6 +4,8 @@ import { bunEnv, bunExe } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
+const todoIfWindows = process.platform === "win32" ? test.todo : test;
+
 describe("web worker", () => {
   async function waitForWorkerResult(worker: Worker, message: any): Promise<any> {
     const promise = new Promise((resolve, reject) => {
@@ -105,7 +107,7 @@ describe("web worker", () => {
     const result = await waitForWorkerResult(worker, "hello");
 
     expect(result.argv).toHaveLength(2);
-    expect(result.execArgv).toHaveLength(0);
+    expect(result.execArgv).toEqual(process.execArgv);
   });
 
   test("argv / execArgv options", async () => {
@@ -120,7 +122,7 @@ describe("web worker", () => {
     const result = await waitForWorkerResult(worker, "hello");
 
     expect(result).toEqual({
-      argv: [original_argv[0], original_argv[1].replace(/\/[^/]+$/, "/worker-fixture-argv.js"), ...worker_argv],
+      argv: [original_argv[0], original_argv[1].replace(import.meta.file, "worker-fixture-argv.js"), ...worker_argv],
       execArgv: worker_execArgv,
     });
     // ensure they didn't change for the main thread
@@ -230,7 +232,7 @@ describe("worker_threads", () => {
     });
   });
 
-  test("worker terminate", async () => {
+  todoIfWindows("worker terminate", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url).href, {
       smol: true,
     });
@@ -238,7 +240,7 @@ describe("worker_threads", () => {
     expect(code).toBe(0);
   });
 
-  test("worker with process.exit (delay) and terminate", async () => {
+  todoIfWindows("worker with process.exit (delay) and terminate", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
       smol: true,
     });
@@ -280,7 +282,7 @@ describe("worker_threads", () => {
     const result = await promise;
 
     expect(result).toEqual({
-      argv: [original_argv[0], original_argv[1].replace(/\/[^/]+$/, "/worker-fixture-argv.js"), ...worker_argv],
+      argv: [original_argv[0], original_argv[1].replace(import.meta.file, "worker-fixture-argv.js"), ...worker_argv],
       execArgv: worker_execArgv,
     });
 

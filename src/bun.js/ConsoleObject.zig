@@ -72,6 +72,9 @@ pub const MessageType = enum(u32) {
 var stderr_mutex: bun.Lock = bun.Lock.init();
 var stdout_mutex: bun.Lock = bun.Lock.init();
 
+threadlocal var stderr_lock_count: u16 = 0;
+threadlocal var stdout_lock_count: u16 = 0;
+
 /// https://console.spec.whatwg.org/#formatter
 pub fn messageWithTypeAndLevel(
     //console_: ConsoleObject.Type,
@@ -92,15 +95,32 @@ pub fn messageWithTypeAndLevel(
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same time
     // We do this the slightly annoying way to avoid assigning a pointer
     if (level == .Warning or level == .Error or message_type == .Assert) {
-        stderr_mutex.lock();
+        if (stderr_lock_count == 0) {
+            stderr_mutex.lock();
+        }
+
+        stderr_lock_count += 1;
     } else {
-        stdout_mutex.lock();
+        if (stdout_lock_count == 0) {
+            stdout_mutex.lock();
+        }
+
+        stdout_lock_count += 1;
     }
+
     defer {
         if (level == .Warning or level == .Error or message_type == .Assert) {
-            stderr_mutex.unlock();
+            stderr_lock_count -= 1;
+
+            if (stderr_lock_count == 0) {
+                stderr_mutex.unlock();
+            }
         } else {
-            stdout_mutex.unlock();
+            stdout_lock_count -= 1;
+
+            if (stdout_lock_count == 0) {
+                stdout_mutex.unlock();
+            }
         }
     }
 
@@ -264,12 +284,12 @@ const TablePrinter = struct {
         );
 
         pub fn write(this: VisibleCharacterCounter, bytes: []const u8) WriteError!usize {
-            this.width.* += strings.visibleUTF8Width(bytes);
+            this.width.* += strings.visible.width.exclude_ansi_colors.utf8(bytes);
             return bytes.len;
         }
 
         pub fn writeAll(this: VisibleCharacterCounter, bytes: []const u8) WriteError!void {
-            this.width.* += strings.visibleUTF8Width(bytes);
+            this.width.* += strings.width.exclude_ansi_colors.utf8(bytes);
         }
     };
 
@@ -300,7 +320,7 @@ const TablePrinter = struct {
     fn updateColumnsForRow(this: *TablePrinter, columns: *std.ArrayList(Column), row_key: RowKey, row_value: JSValue) !void {
         // update size of "(index)" column
         const row_key_len: u32 = switch (row_key) {
-            .str => |value| @intCast(value.visibleWidth()),
+            .str => |value| @intCast(value.visibleWidthExcludeANSIColors()),
             .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
         };
         columns.items[0].width = @max(columns.items[0].width, row_key_len);
@@ -380,7 +400,7 @@ const TablePrinter = struct {
         try writer.writeAll("│");
         {
             const len: u32 = switch (row_key) {
-                .str => |value| @truncate(value.visibleWidth()),
+                .str => |value| @truncate(value.visibleWidthExcludeANSIColors()),
                 .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
             };
             const needed = columns.items[0].width -| len;
@@ -524,7 +544,7 @@ const TablePrinter = struct {
         {
             for (columns.items) |*col| {
                 // also update the col width with the length of the column name itself
-                col.width = @max(col.width, @as(u32, @intCast(col.name.visibleWidth())));
+                col.width = @max(col.width, @as(u32, @intCast(col.name.visibleWidthExcludeANSIColors())));
             }
 
             try writer.writeAll("┌");
@@ -537,7 +557,7 @@ const TablePrinter = struct {
 
             for (columns.items, 0..) |col, i| {
                 if (i > 0) try writer.writeAll("│");
-                const len = col.name.visibleWidth();
+                const len = col.name.visibleWidthExcludeANSIColors();
                 const needed = col.width -| len;
                 try writer.writeByteNTimes(' ', 1);
                 if (comptime enable_ansi_colors) {
@@ -1087,22 +1107,24 @@ pub const Formatter = struct {
 
             return .{
                 .tag = switch (js_type) {
-                    JSValue.JSType.ErrorInstance => .Error,
-                    JSValue.JSType.NumberObject => .Double,
-                    JSValue.JSType.DerivedArray, JSValue.JSType.Array => .Array,
-                    JSValue.JSType.DerivedStringObject, JSValue.JSType.String, JSValue.JSType.StringObject => .String,
-                    JSValue.JSType.RegExpObject => .String,
-                    JSValue.JSType.Symbol => .Symbol,
-                    JSValue.JSType.BooleanObject => .Boolean,
-                    JSValue.JSType.JSFunction => .Function,
-                    JSValue.JSType.JSWeakMap, JSValue.JSType.JSMap => .Map,
-                    JSValue.JSType.JSMapIterator => .MapIterator,
-                    JSValue.JSType.JSSetIterator => .SetIterator,
-                    JSValue.JSType.JSWeakSet, JSValue.JSType.JSSet => .Set,
-                    JSValue.JSType.JSDate => .JSON,
-                    JSValue.JSType.JSPromise => .Promise,
-                    JSValue.JSType.Object,
-                    JSValue.JSType.FinalObject,
+                    .ErrorInstance => .Error,
+                    .NumberObject => .Double,
+                    .DerivedArray, JSValue.JSType.Array => .Array,
+                    .DerivedStringObject, JSValue.JSType.String, JSValue.JSType.StringObject => .String,
+                    .RegExpObject => .String,
+                    .Symbol => .Symbol,
+                    .BooleanObject => .Boolean,
+                    .JSFunction => .Function,
+                    .JSWeakMap, JSValue.JSType.JSMap => .Map,
+                    .JSMapIterator => .MapIterator,
+                    .JSSetIterator => .SetIterator,
+                    .JSWeakSet, JSValue.JSType.JSSet => .Set,
+                    .JSDate => .JSON,
+                    .JSPromise => .Promise,
+
+                    .Object,
+                    .FinalObject,
+                    .ProxyObject,
                     .ModuleNamespaceObject,
                     => .Object,
 
@@ -1112,17 +1134,17 @@ pub const Formatter = struct {
                         .GlobalObject,
 
                     .ArrayBuffer,
-                    JSValue.JSType.Int8Array,
-                    JSValue.JSType.Uint8Array,
-                    JSValue.JSType.Uint8ClampedArray,
-                    JSValue.JSType.Int16Array,
-                    JSValue.JSType.Uint16Array,
-                    JSValue.JSType.Int32Array,
-                    JSValue.JSType.Uint32Array,
-                    JSValue.JSType.Float32Array,
-                    JSValue.JSType.Float64Array,
-                    JSValue.JSType.BigInt64Array,
-                    JSValue.JSType.BigUint64Array,
+                    .Int8Array,
+                    .Uint8Array,
+                    .Uint8ClampedArray,
+                    .Int16Array,
+                    .Uint16Array,
+                    .Int32Array,
+                    .Uint32Array,
+                    .Float32Array,
+                    .Float64Array,
+                    .BigInt64Array,
+                    .BigUint64Array,
                     .DataView,
                     => .TypedArray,
 

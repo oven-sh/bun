@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { bunExe, bunEnv as env } from "harness";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { join, relative } from "path";
@@ -53,7 +52,7 @@ it("should remove existing package", async () => {
     }),
   );
   const { exited: exited1 } = spawn({
-    cmd: [bunExe(), "add", `file:${pkg1_path}`],
+    cmd: [bunExe(), "add", `file:${pkg1_path}`.replace(/\\/g, "\\\\")],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -62,7 +61,7 @@ it("should remove existing package", async () => {
   });
   expect(await exited1).toBe(0);
   const { exited: exited2 } = spawn({
-    cmd: [bunExe(), "add", `file:${pkg2_path}`],
+    cmd: [bunExe(), "add", `file:${pkg2_path}`.replace(/\\/g, "\\\\")],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -180,7 +179,7 @@ it("should not reject missing package", async () => {
   );
   const pkg_path = relative(package_dir, remove_dir);
   const { exited: addExited } = spawn({
-    cmd: [bunExe(), "add", `file:${pkg_path}`],
+    cmd: [bunExe(), "add", `file:${pkg_path}`.replace(/\\/g, "\\\\")],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -247,7 +246,7 @@ it("should retain a new line in the end of package.json", async () => {
   );
   const pkg_path = relative(package_dir, remove_dir);
   const { exited: addExited } = spawn({
-    cmd: [bunExe(), "add", `file:${pkg_path}`],
+    cmd: [bunExe(), "add", `file:${pkg_path}`.replace(/\\/g, "\\\\")],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",

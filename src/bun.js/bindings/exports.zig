@@ -142,6 +142,7 @@ pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSSink;
 pub const JSHTTPSResponseSink = JSC.WebCore.HTTPSResponseSink.JSSink;
 pub const JSHTTPResponseSink = JSC.WebCore.HTTPResponseSink.JSSink;
 pub const JSFileSink = JSC.WebCore.FileSink.JSSink;
+pub const JSUVStreamSink = JSC.WebCore.UVStreamSink.JSSink;
 
 // WebSocket
 pub const WebSocketHTTPClient = @import("../../http/websocket_http_client.zig").WebSocketHTTPClient;
@@ -885,7 +886,7 @@ comptime {
     @export(ErrorCode.JSErrorObject, .{ .name = "Zig_ErrorCodeJSErrorObject" });
 }
 
-const Bun = @import("../api/bun.zig");
+const Bun = JSC.API.Bun;
 pub const BunTimer = Bun.Timer;
 pub const Formatter = ConsoleObject.Formatter;
 pub const HTTPServerRequestContext = JSC.API.HTTPServer.RequestContext;
@@ -915,6 +916,7 @@ comptime {
         JSHTTPResponseSink.shim.ref();
         JSHTTPSResponseSink.shim.ref();
         JSFileSink.shim.ref();
+        JSUVStreamSink.shim.ref();
         JSReadableStreamBytes.shim.ref();
         JSReadableStreamFile.shim.ref();
         _ = ZigString__free;

@@ -1,10 +1,13 @@
-// @known-failing-on-windows: 1 failing
 import { expect, it, describe } from "bun:test";
 import { Database, constants, SQLiteError } from "bun:sqlite";
 import { existsSync, fstat, realpathSync, rmSync, writeFileSync } from "fs";
 import { spawnSync } from "bun";
 import { bunExe } from "harness";
 import { tmpdir } from "os";
+import path from "path";
+
+const tmpbase = tmpdir() + path.sep;
+
 var encode = text => new TextEncoder().encode(text);
 
 it("Database.open", () => {
@@ -18,7 +21,7 @@ it("Database.open", () => {
 
   // in a file which doesn't exist
   try {
-    Database.open(`/tmp/database-${Math.random()}.sqlite`, constants.SQLITE_OPEN_READWRITE);
+    Database.open(tmpbase + `database-${Math.random()}.sqlite`, constants.SQLITE_OPEN_READWRITE);
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -26,7 +29,7 @@ it("Database.open", () => {
 
   // in a file which doesn't exist
   try {
-    Database.open(`/tmp/database-${Math.random()}.sqlite`, { readonly: true });
+    Database.open(tmpbase + `database-${Math.random()}.sqlite`, { readonly: true });
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -34,7 +37,7 @@ it("Database.open", () => {
 
   // in a file which doesn't exist
   try {
-    Database.open(`/tmp/database-${Math.random()}.sqlite`, { readwrite: true });
+    Database.open(tmpbase + `database-${Math.random()}.sqlite`, { readwrite: true });
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -42,7 +45,7 @@ it("Database.open", () => {
 
   // create works
   {
-    var db = Database.open(`/tmp/database-${Math.random()}.sqlite`, {
+    var db = Database.open(tmpbase + `database-${Math.random()}.sqlite`, {
       create: true,
     });
     db.close();
@@ -424,7 +427,7 @@ it("db.transaction()", () => {
 
 // this bug was fixed by ensuring FinalObject has no more than 64 properties
 it("inlineCapacity #987", async () => {
-  const path = "/tmp/bun-987.db";
+  const path = tmpbase + "bun-987.db";
   if (!existsSync(path)) {
     const arrayBuffer = await (await fetch("https://github.com/oven-sh/bun/files/9265429/logs.log")).arrayBuffer();
     writeFileSync(path, arrayBuffer);
@@ -647,7 +650,7 @@ it("syntax error sets the byteOffset", () => {
 
 it("Missing DB throws SQLITE_CANTOPEN", () => {
   try {
-    new Database("/definitely/not/found");
+    new Database("./definitely/not/found");
     expect.unreachable();
   } catch (error) {
     expect(error.code).toBe("SQLITE_CANTOPEN");
@@ -665,4 +668,78 @@ it("empty blob", () => {
       blob: new Uint8Array(),
     },
   ]);
+});
+
+it("multiple statements with a schema change", () => {
+  const db = new Database(":memory:");
+  db.run(
+    `
+    CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT); 
+    CREATE TABLE bar (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+
+    INSERT INTO foo (name) VALUES ('foo');
+    INSERT INTO foo (name) VALUES ('bar');
+
+    INSERT INTO bar (name) VALUES ('foo');
+    INSERT INTO bar (name) VALUES ('bar');
+  `,
+  );
+
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      name: "foo",
+    },
+    {
+      id: 2,
+      name: "bar",
+    },
+  ]);
+
+  expect(db.query("SELECT * FROM bar").all()).toEqual([
+    {
+      id: 1,
+      name: "foo",
+    },
+    {
+      id: 2,
+      name: "bar",
+    },
+  ]);
+});
+
+it("multiple statements", () => {
+  const fixtures = [
+    "INSERT INTO foo (name) VALUES ('foo')",
+    "INSERT INTO foo (name) VALUES ('barabc')",
+    "INSERT INTO foo (name) VALUES ('!bazaspdok')",
+  ];
+  for (let separator of [";", ";\n", "\n;", "\r\n;", ";\r\n", ";\t", "\t;", "\r\n;"]) {
+    for (let spaceOffset of [1, 0, -1]) {
+      for (let spacesCount = 0; spacesCount < 8; spacesCount++) {
+        const db = new Database(":memory:");
+        db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+
+        const prefix = spaceOffset < 0 ? " ".repeat(spacesCount) : "";
+        const suffix = spaceOffset > 0 ? " ".repeat(spacesCount) : "";
+        const query = fixtures.join(prefix + separator + suffix);
+        db.run(query);
+
+        expect(db.query("SELECT * FROM foo").all()).toEqual([
+          {
+            id: 1,
+            name: "foo",
+          },
+          {
+            id: 2,
+            name: "barabc",
+          },
+          {
+            id: 3,
+            name: "!bazaspdok",
+          },
+        ]);
+      }
+    }
+  }
 });

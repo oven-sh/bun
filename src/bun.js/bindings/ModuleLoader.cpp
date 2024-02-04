@@ -1,7 +1,8 @@
-#include "JavaScriptCore/JSArray.h"
-#include "JavaScriptCore/JSCast.h"
 #include "root.h"
 #include "headers-handwritten.h"
+
+#include "JavaScriptCore/JSArray.h"
+#include "JavaScriptCore/JSCast.h"
 
 #include "ModuleLoader.h"
 

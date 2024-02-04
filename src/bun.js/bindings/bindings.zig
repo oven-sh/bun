@@ -2144,9 +2144,25 @@ pub const JSPromise = extern struct {
     /// The value can be another Promise
     /// If you want to create a new Promise that is already resolved, see JSPromise.resolvedPromiseValue
     pub fn resolve(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+        if (comptime bun.Environment.isDebug) {
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
+            if (loop.debug.track_last_fn_name and !loop.debug.is_inside_tick_queue) {
+                loop.debug.last_fn_name = String.static("resolve");
+            }
+        }
+
         cppFn("resolve", .{ this, globalThis, value });
     }
     pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+        if (comptime bun.Environment.isDebug) {
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
+            if (loop.debug.track_last_fn_name and !loop.debug.is_inside_tick_queue) {
+                loop.debug.last_fn_name = String.static("reject");
+            }
+        }
+
         cppFn("reject", .{ this, globalThis, value });
     }
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {

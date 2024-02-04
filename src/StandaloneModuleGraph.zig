@@ -271,7 +271,7 @@ pub const StandaloneModuleGraph = struct {
                     Global.exit(1);
                 };
 
-                const file = bun.sys.ntCreateFile(
+                const file = bun.sys.openFileAtWindows(
                     bun.invalid_fd,
                     out,
                     // access_mask
@@ -716,7 +716,7 @@ pub const StandaloneModuleGraph = struct {
                 var nt_path_buf: bun.WPathBuffer = undefined;
                 const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);
 
-                return bun.sys.ntCreateFile(
+                return bun.sys.openFileAtWindows(
                     bun.invalid_fd,
                     nt_path,
                     // access_mask

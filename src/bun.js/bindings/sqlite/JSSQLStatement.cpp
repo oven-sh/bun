@@ -1550,12 +1550,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
 
     JSValue result = jsUndefined();
     JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
-    {
-        while (status == SQLITE_ROW) {
-            JSC::JSValue result = constructResultObject(lexicalGlobalObject, castedThis);
-            resultArray->push(lexicalGlobalObject, result);
-            status = sqlite3_step(stmt);
-        }
+    while (status == SQLITE_ROW) {
+        JSC::JSValue result = constructResultObject(lexicalGlobalObject, castedThis);
+        resultArray->push(lexicalGlobalObject, result);
+        status = sqlite3_step(stmt);
     }
     result = resultArray;
 
@@ -1701,10 +1699,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
     }
 
     JSValue result = jsUndefined();
-    JSC::ObjectInitializationScope initializationScope(vm);
-    JSC::GCDeferralContext deferralContext(vm);
     JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+
     {
+        JSC::ObjectInitializationScope initializationScope(vm);
+        JSC::GCDeferralContext deferralContext(vm);
         while (status == SQLITE_ROW) {
             JSC::JSValue row = constructResultRow(lexicalGlobalObject, castedThis, initializationScope, &deferralContext);
             resultArray->push(lexicalGlobalObject, row);

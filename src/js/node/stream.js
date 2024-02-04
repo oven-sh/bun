@@ -4012,17 +4012,40 @@ var require_writable = __commonJS({
     Writable.prototype[EE.captureRejectionSymbol] = function (err) {
       this.destroy(err);
     };
-    var webStreamsAdapters;
-    function lazyWebStreams() {
-      if (webStreamsAdapters === void 0) webStreamsAdapters = {};
-      return webStreamsAdapters;
-    }
+    
     Writable.fromWeb = function (writableStream, options) {
-      return lazyWebStreams().newStreamWritableFromWritableStream(writableStream, options);
+      return new WritableStream({
+        start() { },
+        write(chunk) {
+             writableStream.write(chunk)
+        },
+        close() {
+           writableStream.end()
+        },
+        abort(reason) {
+          const err = new Error(`Abort: ${reason}`);
+          writableStream.destroy(err);
+        },
+      });
     };
     Writable.toWeb = function (streamWritable) {
-      return lazyWebStreams().newWritableStreamFromStreamWritable(streamWritable);
-    };
+      return new WritableStream({
+        start() { },
+        write(chunk) {
+          try {
+            streamWritable.write(chunk);
+          } catch (e) {
+            this.controller.error(e);
+          }
+        },
+        close() {
+          streamWritable.end();
+        },
+        abort(reason) {
+          streamWritable.destroy(new Error(`Abort: ${reason}`));
+        },
+      });
+    };    
   },
 });
 

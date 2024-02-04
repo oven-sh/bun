@@ -1,4 +1,4 @@
-import http from "stream-http";
+import http from "./node_modules/stream-http";
 export default http;
 export var {
   //

@@ -1,5 +1,5 @@
-export * from "crypto-browserify";
-import * as cryptoBrowserify from "crypto-browserify";
+export * from "./node_modules/crypto-browserify";
+import * as cryptoBrowserify from "./node_modules/crypto-browserify";
 
 export var DEFAULT_ENCODING = "buffer";
 

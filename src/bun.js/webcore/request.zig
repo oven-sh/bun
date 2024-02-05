@@ -707,7 +707,7 @@ pub const Request = struct {
     }
 
     pub fn tryGetBodyReadableStream(
-        this: *Request,
+        _: *Request,
         globalThis: *JSC.JSGlobalObject,
         this_jsvalue: JSC.JSValue,
     ) ?JSValue {
@@ -717,14 +717,6 @@ pub const Request = struct {
                 return null;
             }
             return existing_stream.toJS();
-        }
-
-        if (this.body.value.Locked.readable) |stream| {
-            if (stream.isDisturbed(globalThis)) {
-                return null;
-            }
-
-            return stream.toJS();
         }
 
         return null;

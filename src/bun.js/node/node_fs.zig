@@ -5720,6 +5720,8 @@ pub const NodeFS = struct {
             const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);
             // UV does not normalize slashes in symlink targets, but Node does
             // See https://github.com/oven-sh/bun/issues/8273
+            //
+            // TODO: investigate if simd can be easily used here
             for (target) |*c| {
                 if (c.* == '/') {
                     c.* = '\\';

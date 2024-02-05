@@ -1,7 +1,7 @@
 import fs, { mkdirSync } from "fs";
 import { it, expect, describe } from "bun:test";
 import path, { join } from "path";
-import { gcTick, withoutAggressiveGC, bunExe, bunEnv } from "harness";
+import { gcTick, withoutAggressiveGC, bunExe, bunEnv, isWindows } from "harness";
 import { tmpdir } from "os";
 const tmpbase = tmpdir() + path.sep;
 
@@ -194,7 +194,7 @@ it("Bun.file lastModified update", async () => {
   const lastModified0 = file.lastModified;
 
   // sleep some time and write the file again.
-  await Bun.sleep(process.platform === "win32" ? 1000 : 100);
+  await Bun.sleep(isWindows ? 1000 : 100);
   await Bun.write(file, "test text2.");
   const lastModified1 = file.lastModified;
 

@@ -2,7 +2,7 @@
 import { describe, expect, it } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
-import { bunEnv, bunExe, gc, getMaxFD } from "harness";
+import { bunEnv, bunExe, gc, getMaxFD, isWindows } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -38,8 +38,6 @@ import fs, {
   readvSync,
   fstatSync,
 } from "node:fs";
-
-const isWindows = process.platform === "win32";
 
 import _promises from "node:fs/promises";
 

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -17,7 +17,7 @@ test("running extensionless file works", async () => {
   expect(stdout.toString("utf8")).toEqual("hello world\n");
 });
 
-test.skipIf(process.platform === "win32")("running shebang typescript file works", async () => {
+test.skipIf(isWindows)("running shebang typescript file works", async () => {
   const dir = join(realpathSync(tmpdir()), "bun-run-test2");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "cool"), `#!${bunExe()}\nconst x: Test = 2; console.log('hello world');`, { mode: 0o777 });

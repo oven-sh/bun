@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { expect, it, test } from "bun:test";
-import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, withoutAggressiveGC } from "harness";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -231,11 +231,11 @@ test("navigator", () => {
   const userAgent = `Bun/${version}`;
   expect(navigator.hardwareConcurrency > 0).toBe(true);
   expect(navigator.userAgent).toBe(userAgent);
-  if (process.platform === "darwin") {
+  if (isMacOS) {
     expect(navigator.platform).toBe("MacIntel");
-  } else if (process.platform === "win32") {
+  } else if (isWindows) {
     expect(navigator.platform).toBe("Win32");
-  } else if (process.platform === "linux") {
+  } else if (isLinux) {
     expect(navigator.platform).toBe("Linux x86_64");
   }
 });

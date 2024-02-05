@@ -777,8 +777,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     var timeout = WindowsWatcher.Timeout.infinite;
                     while (true) {
                         var iter = try this.platform.next(timeout) orelse break;
-                        // after the first wait, we want to start coalescing events, so we wait for a minimal amount of time
-                        timeout = WindowsWatcher.Timeout.minimal;
+                        // after the first wait, we want to coalesce further events but don't want to wait for them
+                        // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
+                        // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
+                        timeout = WindowsWatcher.Timeout.none;
                         const item_paths = this.watchlist.items(.file_path);
                         log("number of watched items: {d}", .{item_paths.len});
                         while (iter.next()) |event| {

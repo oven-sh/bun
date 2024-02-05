@@ -1507,6 +1507,17 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32, comptime add_double_ref: bool) ResolvedSource {
+        // refCountedString will panic if the code is empty
+        if (code.len == 0) {
+            return ResolvedSource{
+                .source_code = bun.String.init(""),
+                .specifier = specifier,
+                .source_url = bun.String.init(source_url),
+                .hash = 0,
+                .allocator = null,
+                .needs_deref = false,
+            };
+        }
         var source = this.refCountedString(code, hash_, !add_double_ref);
         if (add_double_ref) {
             source.ref();

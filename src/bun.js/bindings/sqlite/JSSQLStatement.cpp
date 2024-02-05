@@ -1125,6 +1125,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunctionFunction, (JSC::JSGlobalObj
         return JSValue::encode(JSC::jsUndefined());
     }
 
+    if (!callback.isCallable()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Callback must be a function"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
     // TODO: Callback
 
     if (!functionName.isString()) {

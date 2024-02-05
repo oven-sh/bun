@@ -151,7 +151,14 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     proc.stdout_behavior = .Inherit;
     proc.stderr_behavior = .Inherit;
     proc.cwd = cwd;
-    _ = proc.spawnAndWait() catch undefined;
+
+    if (Environment.isWindows) {
+        bun.WindowsSpawnWorkaround.spawnWindows(&proc) catch return;
+    } else {
+        proc.spawn() catch return;
+    }
+
+    _ = proc.wait() catch {};
 }
 
 // We don't want to allocate memory each time
@@ -1434,9 +1441,13 @@ pub const CreateCommand = struct {
                 Output.flush();
             }
 
-            _ = try process.spawnAndWait();
-
-            _ = process.kill() catch undefined;
+            if (Environment.isWindows) {
+                try bun.WindowsSpawnWorkaround.spawnWindows(&process);
+            } else {
+                try process.spawn();
+            }
+            _ = try process.wait();
+            _ = try process.kill();
         }
 
         if (postinstall_tasks.items.len > 0) {

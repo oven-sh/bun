@@ -348,7 +348,7 @@ pub const RunCommand = struct {
         child_process.stdout_behavior = .Inherit;
 
         if (Environment.isWindows) {
-            try @import("../child_process_windows.zig").spawnWindows(&child_process);
+            try bun.WindowsSpawnWorkaround.spawnWindows(&child_process);
         } else {
             try child_process.spawn();
         }
@@ -434,7 +434,13 @@ pub const RunCommand = struct {
         child_process.stdout_behavior = .Inherit;
         const silent = ctx.debug.silent;
 
-        const result = child_process.spawnAndWait() catch |err| {
+        if (Environment.isWindows) {
+            try bun.WindowsSpawnWorkaround.spawnWindows(&child_process);
+        } else {
+            try child_process.spawn();
+        }
+
+        const result = child_process.wait() catch |err| {
             if (err == error.AccessDenied) {
                 if (comptime Environment.isPosix) {
                     var stat = std.mem.zeroes(std.c.Stat);

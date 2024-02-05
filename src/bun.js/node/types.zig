@@ -664,6 +664,8 @@ pub const PathLike = union(enum) {
         }
 
         if (sliced.len == 0) {
+            if (comptime !force) return "";
+
             buf[0] = 0;
             return buf[0..0 :0];
         }

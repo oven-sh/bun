@@ -1545,3 +1545,63 @@ it("should allow cloning the request body with .formData", async () => {
     server.stop(true);
   }
 });
+
+/** prng function */
+function createPRNG(seed?: number) {
+  let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
+  return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
+}
+
+it.only("should allow really silly cloning stuff", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      try {
+        let clones = [];
+
+        let cloned;
+        for (let i = 0; i < 100; i++) {
+          console.log(i);
+          Bun.gc(true);
+          cloned = request.clone();
+          clones.push(cloned);
+          Bun.gc(true);
+        }
+
+        let hashes = [];
+        const hash = new Bun.CryptoHasher("sha1");
+        for (let i = 0; i < clones.length; i++) {
+          console.log(i);
+          const cloned = clones[i];
+          Bun.gc(true);
+          const buffer = await cloned.arrayBuffer();
+          Bun.gc(true);
+          hash.update(buffer);
+          expect(hash.digest("hex")).toBe("16bca1c75327123ff45860425490e830fb527260");
+        }
+
+        return new Response("OK");
+      } catch (e) {
+        console.error(e);
+        return new Response("FAIL", { status: 500 });
+      }
+    },
+  });
+
+  try {
+    // 10mb request body of psuedo random data
+    const random_buffer = new Uint8Array(10 * 1024 * 1024);
+    let prng = createPRNG(12);
+    for (let i = 0; i < random_buffer.length; i++) {
+      random_buffer[i] = (prng() * 256) | 0;
+    }
+
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: random_buffer,
+    });
+    expect(response.status).toBe(200);
+  } finally {
+    server?.stop(true);
+  }
+});

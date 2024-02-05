@@ -1102,9 +1102,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunctionFunction, (JSC::JSGlobalObj
     JSC::JSValue callback = callFrame->argument(1);
     JSC::JSValue functionName = callFrame->argument(2);
     JSC::JSValue argCount = callFrame->argument(3);
-    JSC::JSValue safeIntegers = callFrame->argument(4);
-    JSC::JSValue deterministic = callFrame->argument(5);
-    JSC::JSValue directOnly = callFrame->argument(6);
+    JSC::JSValue deterministic = callFrame->argument(4);
+    JSC::JSValue directOnly = callFrame->argument(5);
 
     if (!dbNumber.isNumber()) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
@@ -1151,17 +1150,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunctionFunction, (JSC::JSGlobalObj
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    if (!safeIntegers.isNumber()) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Arg count must be of type number"_s));
-        return JSValue::encode(JSC::jsUndefined());
-    }
-
-    auto safeIntegersInt = safeIntegers.toInt32(lexicalGlobalObject);
-    if (safeIntegersInt < 0 || safeIntegersInt > 2) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "safeIntegers must be between 0 and 2"_s));
-        return JSValue::encode(JSC::jsUndefined());
-    }
-
     if (!deterministic.isBoolean()) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "deterministic must be of type boolean"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -1183,8 +1171,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunctionFunction, (JSC::JSGlobalObj
     if (directOnlyBool) {
         eTextRepMask |= SQLITE_DIRECTONLY;
     }
-
-    safeIntegersInt = safeIntegersInt < 2 ? safeIntegersInt : static_cast<int>(db->safe_ints);
 
     int rc = sqlite3_create_function_v2(
         db,
@@ -1426,7 +1412,7 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "prepare"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementPrepareStatementFunction, 2 } },
     { "run"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteFunction, 3 } },
     { "isInTransaction"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementIsInTransactionFunction, 1 } },
-    { "defineFunction"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDefineFunctionFunction, 7 } },
+    { "defineFunction"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDefineFunctionFunction, 6 } },
     { "loadExtension"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementLoadExtensionFunction, 2 } },
     { "setCustomSQLite"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSetCustomSQLite, 1 } },
     { "serialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSerialize, 1 } },

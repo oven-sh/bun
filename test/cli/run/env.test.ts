@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { bunRun, bunRunAsScript, bunTest, tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { bunRun, bunRunAsScript, bunTest, tempDirWithFiles, bunExe, bunEnv, isWindows } from "harness";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -579,7 +579,7 @@ describe("--env-file", () => {
   });
 });
 
-test.if(process.platform === "win32")("environment variables are case-insensitive on Windows", () => {
+test.if(isWindows)("environment variables are case-insensitive on Windows", () => {
   const dir = tempDirWithFiles("dotenv", {
     ".env": "FOO=bar\n",
     "index.ts": "console.log(process.env.FOO, process.env.foo, process.env.fOo);",

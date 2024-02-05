@@ -1784,15 +1784,12 @@ pub const Subprocess = struct {
             .data => |data| {
                 IPC.log("Received IPC message from child", .{});
                 if (this.ipc_callback.get()) |cb| {
-                    const result = cb.callWithThis(
+                    this.globalThis.bunVM().eventLoop().runCallback(
+                        cb,
                         this.globalThis,
                         this.this_jsvalue,
                         &[_]JSValue{ data, this.this_jsvalue },
                     );
-                    data.ensureStillAlive();
-                    if (result.isAnyError()) {
-                        this.globalThis.bunVM().onUnhandledError(this.globalThis, result);
-                    }
                 }
             },
         }

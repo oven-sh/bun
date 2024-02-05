@@ -1057,23 +1057,13 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSC::Structure* o2Structure = o2->structure();
         if (!o2Structure->hasNonReifiedStaticProperties() && o2Structure->canPerformFastPropertyEnumeration()) {
 
-            size_t count1 = 0;
-
             bool result = true;
-            if constexpr (isStrict) {
-                if (o2Structure->inlineSize() + o2Structure->outOfLineSize() != o1Structure->inlineSize() + o1Structure->outOfLineSize()) {
-                    return false;
-                }
-            }
-
             bool sameStructure = o2Structure->id() == o1Structure->id();
-
             if (sameStructure) {
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
                     }
-                    count1++;
 
                     JSValue left = o1->getDirect(entry.offset());
                     JSValue right = o2->getDirect(entry.offset());
@@ -1101,11 +1091,12 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     return true;
                 });
             } else {
+                size_t count = 0;
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
                     }
-                    count1++;
+                    count++;
 
                     JSValue left = o1->getDirect(entry.offset());
                     JSValue right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
@@ -1134,7 +1125,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 });
 
                 if (result) {
-                    size_t remain = count1;
+                    size_t remain = count;
                     o2Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                         if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                             return true;
@@ -1168,13 +1159,17 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     o2->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(*scope, false);
 
-    const size_t propertyArrayLength = a1.size();
-    if (propertyArrayLength != a2.size()) {
-        return false;
+    const size_t propertyArrayLength1 = a1.size();
+    const size_t propertyArrayLength2 = a2.size();
+    if constexpr (isStrict) {
+        if (propertyArrayLength1 != propertyArrayLength2) {
+            return false;
+        }
     }
 
     // take a property name from one, try to get it from both
-    for (size_t i = 0; i < propertyArrayLength; i++) {
+    size_t i;
+    for (i = 0; i < propertyArrayLength1; i++) {
         Identifier i1 = a1[i];
         PropertyName propertyName1 = PropertyName(i1);
 
@@ -1203,6 +1198,19 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         RETURN_IF_EXCEPTION(*scope, false);
+    }
+
+    // for the remaining properties in the other object, make sure they are undefined
+    for (; i < propertyArrayLength2; i++) {
+        Identifier i2 = a2[i];
+        PropertyName propertyName2 = PropertyName(i2);
+
+        JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName2);
+        RETURN_IF_EXCEPTION(*scope, false);
+
+        if (!prop2.isUndefined()) {
+            return false;
+        }
     }
 
     return true;

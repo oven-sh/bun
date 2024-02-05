@@ -38,6 +38,7 @@
 #include "BloomFilter.h"
 #include "ProxyParser.h"
 #include "QueryParser.h"
+#include "HttpError.h"
 
 namespace uWS
 {
@@ -346,7 +347,7 @@ namespace uWS
 
 
     /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-    static unsigned int getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool*isAncientHttp) {
+    static unsigned int getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool*isAncientHttp, unsigned int &err) {
         char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
 #ifdef UWS_WITH_PROXY
@@ -382,7 +383,7 @@ namespace uWS
             if (!(postPaddedBuffer = consumeRequestLine(postPaddedBuffer, headers[0], isAncientHttp)))
             {
                 /* Error - invalid request line */
-
+                err = HTTP_ERROR_400_BAD_REQUEST;
                 return 0;
             }
             headers++;
@@ -397,6 +398,10 @@ namespace uWS
                 /* We should not accept whitespace between key and colon, so colon must foloow immediately */
                 if (postPaddedBuffer[0] != ':')
                 {
+                    if(postPaddedBuffer[0] != '\r' || postPaddedBuffer[1] != 'a'){
+                        // in this case we did not encounter the requests end but a invalid request
+                        err = HTTP_ERROR_400_BAD_REQUEST;
+                    }
                     /* Error: invalid chars in field name */
                     return 0;
                 }
@@ -417,6 +422,7 @@ namespace uWS
                             continue;
                         }
                         /* Error - invalid chars in field value */
+                        err = HTTP_ERROR_400_BAD_REQUEST;
                         return 0;
                     }
                     break;
@@ -480,13 +486,14 @@ namespace uWS
 
             /* How much data we CONSUMED (to throw away) */
             unsigned int consumedTotal = 0;
+            unsigned int err = 0;
 
             /* Fence two bytes past end of our buffer (buffer has post padded margins).
              * This is to always catch scan for \r but not for \r\n. */
             data[length] = '\r';
             data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
             bool isAncientHttp = false;
-            for (unsigned int consumed; length && (consumed = getHeaders(data, data + length, req->headers, reserved, &isAncientHttp));)
+            for (unsigned int consumed; length && (consumed = getHeaders(data, data + length, req->headers, reserved, &isAncientHttp, err));)
             {
                 data += consumed;
                 length -= consumed;
@@ -505,7 +512,7 @@ namespace uWS
                 /* Break if no host header (but we can have empty string which is different from nullptr) */
                 if (!req->getHeader("host").data())
                 {
-                    return {0, FULLPTR};
+                    return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
                 }
 
                 /* RFC 9112 6.3
@@ -520,7 +527,7 @@ namespace uWS
                     /* Returning fullptr is the same as calling the errorHandler */
                     /* We could be smart and set an error in the context along with this, to indicate what
                      * http error response we might want to return */
-                    return {0, FULLPTR};
+                    return  {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
                 }
 
                 /* Parse query */
@@ -573,7 +580,7 @@ namespace uWS
                         }
                         if (isParsingInvalidChunkedEncoding(remainingStreamingBytes))
                         {
-                            return {0, FULLPTR};
+                            return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
                         }
                         unsigned int consumed = (length - (unsigned int)dataToConsume.length());
                         data = (char *)dataToConsume.data();
@@ -587,7 +594,7 @@ namespace uWS
                     if (remainingStreamingBytes == UINT_MAX)
                     {
                         /* Parser error */
-                        return {0, FULLPTR};
+                        return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
                     }
 
                     if (!CONSUME_MINIMALLY)
@@ -613,11 +620,14 @@ namespace uWS
                     break;
                 }
             }
+            if(err) {
+                return {err, FULLPTR};
+            }
             return {consumedTotal, user};
         }
 
     public:
-        void *consumePostPadded(char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler, MoveOnlyFunction<void *(void *)> &&errorHandler)
+        std::pair<unsigned int, void *> consumePostPadded(char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler)
         {
             /* This resets BloomFilter by construction, but later we also reset it again.
              * Optimize this to skip resetting twice (req could be made global) */
@@ -636,7 +646,7 @@ namespace uWS
                     }
                     if (isParsingInvalidChunkedEncoding(remainingStreamingBytes))
                     {
-                        return FULLPTR;
+                        return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
                     }
                     data = (char *)dataToConsume.data();
                     length = (unsigned int)dataToConsume.length();
@@ -649,7 +659,7 @@ namespace uWS
                     {
                         void *returnedUser = dataHandler(user, std::string_view(data, length), remainingStreamingBytes == length);
                         remainingStreamingBytes -= length;
-                        return returnedUser;
+                        return {0, returnedUser};
                     }
                     else
                     {
@@ -662,7 +672,7 @@ namespace uWS
 
                         if (returnedUser != user)
                         {
-                            return returnedUser;
+                            return {0, returnedUser};
                         } else {
                             void *returnedUser = dataHandler(user, std::string_view(data, remainingStreamingBytes), true);
 
@@ -672,7 +682,7 @@ namespace uWS
                             remainingStreamingBytes = 0;
 
                             if (returnedUser != user) {
-                                return returnedUser;
+                                return {0, returnedUser};
                             }
                         }
                     }
@@ -692,7 +702,7 @@ namespace uWS
                 std::pair<unsigned int, void *> consumed = fenceAndConsumePostPadded<true>(fallback.data(), (unsigned int)fallback.length(), user, reserved, &req, requestHandler, dataHandler);
                 if (consumed.second != user)
                 {
-                    return consumed.second;
+                    return consumed;
                 }
 
                 if (consumed.first)
@@ -717,7 +727,7 @@ namespace uWS
                             }
                             if (isParsingInvalidChunkedEncoding(remainingStreamingBytes))
                             {
-                                return FULLPTR;
+                                return {HTTP_ERROR_400_BAD_REQUEST, FULLPTR};
                             }
                             data = (char *)dataToConsume.data();
                             length = (unsigned int)dataToConsume.length();
@@ -729,7 +739,7 @@ namespace uWS
                             {
                                 void *returnedUser = dataHandler(user, std::string_view(data, length), remainingStreamingBytes == (unsigned int)length);
                                 remainingStreamingBytes -= length;
-                                return returnedUser;
+                                return {0, returnedUser};
                             }
                             else
                             {
@@ -742,7 +752,7 @@ namespace uWS
 
                                 if (returnedUser != user)
                                 {
-                                    return returnedUser;
+                                    return {0, returnedUser};
                                 }
                             }
                         }
@@ -752,18 +762,16 @@ namespace uWS
                 {
                     if (fallback.length() == MAX_FALLBACK_SIZE)
                     {
-                        // note: you don't really need error handler, just return something strange!
-                        // we could have it return a constant pointer to denote error!
-                        return errorHandler(user);
+                        return {HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, FULLPTR};
                     }
-                    return user;
+                    return {0, user};
                 }
             }
 
             std::pair<unsigned int, void *> consumed = fenceAndConsumePostPadded<false>(data, length, user, reserved, &req, requestHandler, dataHandler);
             if (consumed.second != user)
             {
-                return consumed.second;
+                return consumed;
             }
 
             data += consumed.first;
@@ -777,12 +785,12 @@ namespace uWS
                 }
                 else
                 {
-                    return errorHandler(user);
+                    return {HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, FULLPTR};
                 }
             }
 
             // added for now
-            return user;
+            return {0, user};
         }
     };
 

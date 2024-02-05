@@ -165,7 +165,7 @@ private:
 #endif
 
             /* The return value is entirely up to us to interpret. The HttpParser only care for whether the returned value is DIFFERENT or not from passed user */
-            void *returnedSocket = httpResponseData->consumePostPadded(data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+            auto [err, returnedSocket] = httpResponseData->consumePostPadded(data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
                 /* For every request we reset the timeout and hang until user makes action */
                 /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
                 us_socket_timeout(SSL, (us_socket_t *) s, 0);
@@ -274,10 +274,6 @@ private:
                     }
                 }
                 return user;
-            }, [](void *user) {
-                 /* Close any socket on HTTP errors */
-                us_socket_close(SSL, (us_socket_t *) user, 0, nullptr);
-                return nullptr;
             });
 
             /* Mark that we are no longer parsing Http */
@@ -285,6 +281,12 @@ private:
 
             /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
             if (returnedSocket == FULLPTR) {
+                if(httpContextData->hasInvalidRequestHandler) {
+                    httpContextData->invalidRequestHandler(data, length);
+                }
+                /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
+                us_socket_write(SSL, s, httpErrorResponses[err].data(), (int) httpErrorResponses[err].length(), false);
+                us_socket_shutdown(SSL, s);
                 /* Close any socket on HTTP errors */
                 us_socket_close(SSL, s, 0, nullptr);
                 /* This just makes the following code act as if the socket was closed from error inside the parser. */

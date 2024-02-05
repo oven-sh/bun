@@ -129,6 +129,7 @@ typedef void (*uws_listen_domain_handler)(struct us_listen_socket_t *listen_sock
 
 typedef void (*uws_method_handler)(uws_res_t *response, uws_req_t *request,
                                    void *user_data);
+typedef void (*uws_invalid_request_handler)(const char *request_data, int length, void *userdata);
 typedef void (*uws_filter_handler)(uws_res_t *response, int, void *user_data);
 typedef void (*uws_missing_server_handler)(const char *hostname,
                                            void *user_data);
@@ -162,6 +163,7 @@ void uws_app_trace(int ssl, uws_app_t *app, const char *pattern,
                    uws_method_handler handler, void *user_data);
 void uws_app_any(int ssl, uws_app_t *app, const char *pattern,
                  uws_method_handler handler, void *user_data);
+void uws_app_invalid_request(int ssl, uws_app_t* app, uws_invalid_request_handler handler, void* user_data);
 
 void uws_app_run(int ssl, uws_app_t *);
 

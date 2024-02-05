@@ -153,6 +153,7 @@ pub const ServerConfig = struct {
 
     onError: JSC.JSValue = JSC.JSValue.zero,
     onRequest: JSC.JSValue = JSC.JSValue.zero,
+    onInvalidRequest: JSC.JSValue = JSC.JSValue.zero,
 
     websocket: ?WebSocketServer = null,
 
@@ -916,6 +917,16 @@ pub const ServerConfig = struct {
                     conf.deinit();
                 }
                 return args;
+            }
+            if (arg.getTruthy(global, "invalidRequest")) |onInvalidRequest_| {
+                if (!onInvalidRequest_.isCallable(global.vm())) {
+                    JSC.throwInvalidArguments("Expected invalidRequest() to be a function", .{}, global, exception);
+                    return args;
+                }
+
+                const onInvalidRequest = onInvalidRequest_.withAsyncContextIfNeeded(global);
+                JSC.C.JSValueProtect(global, onInvalidRequest.asObjectRef());
+                args.onInvalidRequest = onInvalidRequest;
             }
         } else {
             JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global, exception);
@@ -5202,6 +5213,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this.config.onError = new_config.onError;
             }
 
+            if (this.config.onInvalidRequest != new_config.onInvalidRequest) {
+                this.config.onInvalidRequest.unprotect();
+                this.config.onInvalidRequest = new_config.onInvalidRequest;
+            }
+
             if (new_config.websocket) |*ws| {
                 ws.handler.flags.ssl = ssl_enabled;
                 if (ws.handler.onMessage != .zero or ws.handler.onOpen != .zero) {
@@ -6027,6 +6043,17 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.toAsync(req, request_object);
         }
 
+        pub fn onInvalidRequest(this: *ThisServer, data: [*c]const u8, length: c_int) void {
+            if (!this.config.onInvalidRequest.isEmptyOrUndefinedOrNull()) {
+                const zigSlice = data[0..@as(usize, @intCast(length))];
+                _ = this.config.onInvalidRequest.callWithThis(
+                    this.globalThis,
+                    this.thisObject,
+                    &.{ZigString.init(zigSlice).toValueGC(this.globalThis)},
+                );
+            }
+        }
+
         pub fn listen(this: *ThisServer) void {
             httplog("listen", .{});
             if (ssl_enabled) {
@@ -6054,6 +6081,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             this.app.any("/*", *ThisServer, this, onRequest);
+            this.app.invalid_request(*ThisServer, this, onInvalidRequest);
 
             if (comptime debug_mode) {
                 this.app.get("/bun:info", *ThisServer, this, onBunInfoRequest);

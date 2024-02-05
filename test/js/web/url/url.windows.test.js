@@ -1,8 +1,6 @@
+import { isWindows } from "harness";
+
 const { fileURLToPath, pathToFileURL } = require("url");
-
-const win = process.platform === "win32";
-
-const wintest = win ? test : test.skip;
 
 function checkURL(url, spec) {
   expect(url.href).toBe(spec.href);
@@ -19,7 +17,7 @@ function checkURL(url, spec) {
 }
 
 describe("new URL", () => {
-  wintest("basic", () => {
+  test.if(isWindows)("basic", () => {
     const url = new URL("file://C:/Users/windo/Code/Test/hello.mjs");
     checkURL(url, {
       href: "file:///C:/Users/windo/Code/Test/hello.mjs",
@@ -35,7 +33,7 @@ describe("new URL", () => {
       hash: "",
     });
   });
-  wintest("three slashes", () => {
+  test.if(isWindows)("three slashes", () => {
     const url = new URL("file:///C:/Users/windo/Code/Test/hello.mjs");
     checkURL(url, {
       href: "file:///C:/Users/windo/Code/Test/hello.mjs",
@@ -51,7 +49,7 @@ describe("new URL", () => {
       hash: "",
     });
   });
-  wintest("four slashes", () => {
+  test.if(isWindows)("four slashes", () => {
     const url = new URL("file:////C:/Users/windo/Code/Test/hello.mjs");
     checkURL(url, {
       href: "file:////C:/Users/windo/Code/Test/hello.mjs",
@@ -67,7 +65,7 @@ describe("new URL", () => {
       hash: "",
     });
   });
-  wintest("normalization", () => {
+  test.if(isWindows)("normalization", () => {
     const url = new URL("file:///C:/Users/windo\\Code//Test/hello.mjs");
     checkURL(url, {
       href: "file:///C:/Users/windo/Code//Test/hello.mjs",
@@ -83,7 +81,7 @@ describe("new URL", () => {
       hash: "",
     });
   });
-  wintest("unc", () => {
+  test.if(isWindows)("unc", () => {
     const url = new URL("file://server/share");
     checkURL(url, {
       href: "file://server/share",
@@ -99,7 +97,7 @@ describe("new URL", () => {
       hash: "",
     });
   });
-  wintest("unc with path", () => {
+  test.if(isWindows)("unc with path", () => {
     const url = new URL("file://server/share/etc");
     checkURL(url, {
       href: "file://server/share/etc",
@@ -118,30 +116,30 @@ describe("new URL", () => {
 });
 
 describe("fileURLToPath", () => {
-  wintest("basic", () => {
+  test.if(isWindows)("basic", () => {
     const path = fileURLToPath(new URL("file:///C:/Users/windo/Code/Test/hello.mjs"));
     expect(path).toBe("C:\\Users\\windo\\Code\\Test\\hello.mjs");
   });
-  wintest("unc", () => {
+  test.if(isWindows)("unc", () => {
     const path = fileURLToPath(new URL("file://server/share"));
     expect(path).toBe("\\\\server\\share");
   });
-  wintest("unc with path", () => {
+  test.if(isWindows)("unc with path", () => {
     const path = fileURLToPath(new URL("file://server/share/etc"));
     expect(path).toBe("\\\\server\\share\\etc");
   });
-  wintest("emoji", () => {
+  test.if(isWindows)("emoji", () => {
     const path = fileURLToPath(new URL("file:///C:/dev/%F0%9F%98%82"));
     expect(path).toBe("C:\\dev\\😂");
   });
-  wintest("unc emoji", () => {
+  test.if(isWindows)("unc emoji", () => {
     const path = fileURLToPath(new URL("file://server/share/%F0%9F%98%82"));
     expect(path).toBe("\\\\server\\share\\😂");
   });
 });
 
 describe("pathToFileURL", () => {
-  wintest("basic", () => {
+  test.if(isWindows)("basic", () => {
     const url = pathToFileURL("C:\\Users\\windo\\Code\\Test\\hello.mjs");
     checkURL(url, {
       href: "file:///C:/Users/windo/Code/Test/hello.mjs",
@@ -157,7 +155,7 @@ describe("pathToFileURL", () => {
       hash: "",
     });
   });
-  wintest("unc", () => {
+  test.if(isWindows)("unc", () => {
     const url = pathToFileURL("\\\\server\\share");
     checkURL(url, {
       href: "file://server/share",
@@ -173,7 +171,7 @@ describe("pathToFileURL", () => {
       hash: "",
     });
   });
-  wintest("unc with path", () => {
+  test.if(isWindows)("unc with path", () => {
     const url = pathToFileURL("\\\\server\\share\\etc");
     checkURL(url, {
       href: "file://server/share/etc",
@@ -189,7 +187,7 @@ describe("pathToFileURL", () => {
       hash: "",
     });
   });
-  wintest("emoji", () => {
+  test.if(isWindows)("emoji", () => {
     const url = pathToFileURL("C:\\dev\\😂");
     checkURL(url, {
       href: "file:///C:/dev/%F0%9F%98%82",
@@ -205,7 +203,7 @@ describe("pathToFileURL", () => {
       hash: "",
     });
   });
-  wintest("unc emoji", () => {
+  test.if(isWindows)("unc emoji", () => {
     const url = pathToFileURL("\\\\server\\share\\😂");
     checkURL(url, {
       href: "file://server/share/%F0%9F%98%82",

@@ -10,10 +10,13 @@
   "dependencies": {
     "@grpc/grpc-js": "1.9.9",
     "@grpc/proto-loader": "0.7.10",
+    "@nut-tree/nut-js": "^3.1.2",
     "@prisma/client": "5.8.0",
     "@resvg/resvg-js": "2.4.1",
     "@swc/core": "1.3.38",
     "@types/ws": "8.5.10",
+    "aws-cdk-lib": "^2.126.0",
+    "axios": "^1.6.7",
     "body-parser": "1.20.2",
     "comlink": "4.4.1",
     "dedent": "0.7.0",
@@ -28,6 +31,8 @@
     "lodash": "4.17.21",
     "mongodb": "6.0.0",
     "msgpackr-extract": "3.0.2",
+    "msw": "^2.1.6",
+    "mws": "^2.0.11",
     "mysql2": "3.7.0",
     "node-gyp": "10.0.1",
     "nodemailer": "6.9.3",
@@ -45,6 +50,7 @@
     "string-width": "7.0.0",
     "supertest": "6.3.3",
     "svelte": "3.55.1",
+    "trek-captcha": "^0.4.0",
     "typescript": "5.0.2",
     "undici": "5.20.0",
     "verdaccio": "5.27.0",
@@ -55,6 +61,7 @@
   },
   "private": true,
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "hello": "bun index.test.ts"
   }
 }

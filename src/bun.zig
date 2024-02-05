@@ -2680,3 +2680,5 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
 pub var buffered_stdin = std.io.BufferedReader(4096, std.fs.File.Reader){
     .unbuffered_reader = std.fs.File.Reader{ .context = .{ .handle = if (Environment.isWindows) undefined else 0 } },
 };
+
+pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");

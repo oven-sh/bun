@@ -58,6 +58,7 @@ var body_value_hive_allocator = BodyValueHiveAllocator.init(bun.default_allocato
 pub fn InitRequestBodyValue(value: Body.Value) !*BodyValueRef {
     return try BodyValueRef.init(value, &body_value_hive_allocator);
 }
+
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
 pub const Request = struct {
     url: bun.String = bun.String.empty,
@@ -703,6 +704,30 @@ pub const Request = struct {
         this: *Request,
     ) *Body.Value {
         return &this.body.value;
+    }
+
+    pub fn tryGetBodyReadableStream(
+        this: *Request,
+        globalThis: *JSC.JSGlobalObject,
+        this_jsvalue: JSC.JSValue,
+    ) ?JSValue {
+        if (Request.bodyGetCached(this_jsvalue)) |existing_stream_value| {
+            const existing_stream = JSC.WebCore.ReadableStream.fromJS(existing_stream_value, globalThis) orelse return null;
+            if (existing_stream.isDisturbed(globalThis)) {
+                return null;
+            }
+            return existing_stream.toJS();
+        }
+
+        if (this.body.value.Locked.readable) |stream| {
+            if (stream.isDisturbed(globalThis)) {
+                return null;
+            }
+
+            return stream.toJS();
+        }
+
+        return null;
     }
 
     pub fn getFetchHeaders(

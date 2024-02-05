@@ -99,6 +99,18 @@ pub const Response = struct {
         return &this.body.value;
     }
 
+    pub fn tryGetBodyReadableStream(
+        this: *Response,
+        globalThis: *JSC.JSGlobalObject,
+        this_jsvalue: JSC.JSValue,
+    ) ?JSValue {
+        _ = this;
+        _ = globalThis;
+        _ = this_jsvalue;
+        bun.todo(@src(), {});
+        return null;
+    }
+
     pub fn getFetchHeaders(
         this: *Response,
     ) ?*FetchHeaders {

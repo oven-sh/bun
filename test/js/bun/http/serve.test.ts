@@ -1416,7 +1416,7 @@ if (process.platform === "linux") {
   });
 }
 
-it("should allow cloning the request body", () => {
+it("should allow cloning the request body", async () => {
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -1433,9 +1433,9 @@ it("should allow cloning the request body", () => {
   });
   try {
     const response = await fetch(`http://${server.hostname}:${server.port}`, {
-    method: "POST",
-    body: JSON.stringify({ a: 1, b: [{ c: 2 }] }),
-  });
+      method: "POST",
+      body: JSON.stringify({ a: 1, b: [{ c: 2 }] }),
+    });
     expect(response.status).toBe(200);
   } finally {
     server.stop(true);
@@ -1513,6 +1513,32 @@ it("should allow cloning the request body with .arrayBuffer", async () => {
     const response = await fetch(`http://${server.hostname}:${server.port}`, {
       method: "POST",
       body: JSON.stringify({ a: 1, b: [{ c: 2 }] }),
+    });
+    expect(response.status).toBe(200);
+  } finally {
+    server.stop(true);
+  }
+});
+
+it("should allow cloning the request body with .formData", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const a = await request.clone().formData();
+      const b = await request.formData();
+      try {
+        expect(a).toEqual(b);
+      } catch (e) {
+        console.error(e);
+        return new Response("FAIL", { status: 500 });
+      }
+      return new Response("OK");
+    },
+  });
+  try {
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: new FormData(),
     });
     expect(response.status).toBe(200);
   } finally {

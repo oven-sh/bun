@@ -266,12 +266,13 @@ class Database {
     // Determine argument count
     if (!varargs) {
       argCount = fn.length;
-      if (!Number.isInteger(argCount) || argCount < 0) throw new TypeError("Expected function.length to be a positive integer");
+      if (!Number.isInteger(argCount) || argCount < 0)
+        throw new TypeError("Expected function.length to be a positive integer");
       if (argCount > 100) throw new RangeError("User-defined functions cannot have more than 100 arguments");
     }
 
     SQL.defineFunction(this.#handle, fn, name, argCount, safeIntegers, deterministic, directOnly);
-  };
+  }
 
   serialize(optionalName) {
     return SQL.serialize(this.#handle, optionalName || "main");

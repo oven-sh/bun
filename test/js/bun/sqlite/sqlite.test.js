@@ -497,17 +497,12 @@ it("db.defineFunction()", () => {
   }
 
   const res = db.query("SELECT catNameLength(name) AS l FROM cats").all();
-  expect(res).toStrictEqual([
-    { "l": 4 },
-    { "l": 5 },
-    { "l": 6 },
-    { "l": 5 },
-  ]);
+  expect(res).toStrictEqual([{ "l": 4 }, { "l": 5 }, { "l": 6 }, { "l": 5 }]);
 });
 
 it("db.defineFunction() with varargs", () => {
   const db = Database.open(":memory:");
-  db.defineFunction("joinStrings", { varargs: true, }, (...args) => args.join(","));
+  db.defineFunction("joinStrings", { varargs: true }, (...args) => args.join(","));
   const res = db.query("SELECT joinStrings('a','b','c') AS joined FROM cats").get().joined;
   expect(res).toBe("a,b,c");
 });

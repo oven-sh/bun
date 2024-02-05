@@ -191,6 +191,25 @@ static Vector<VersionSqlite3*>& databases()
     return _instance->databases;
 }
 
+class SqliteCustomFunction {
+private:
+    JSC::JSGlobalObject* lexicalGlobalObject;
+    sqlite3* db;
+    String name;
+    JSC::JSValue fn;
+public:
+    SqliteCustomFunction(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3* db, String name, JSC::JSValue fn)
+     : lexicalGlobalObject(lexicalGlobalObject), db(db), name(name), fn(fn) {}
+    ~SqliteCustomFunction() {}
+
+    static void xDestroy(void* self) {
+        delete static_cast<SqliteCustomFunction*>(self);
+    }
+    static void xFunc(sqlite3_context* invocation, int argc, sqlite3_value** argv) {
+        // TODO
+    }
+};
+
 extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
 {
     if (!_instance) {
@@ -1129,8 +1148,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunctionFunction, (JSC::JSGlobalObj
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    // TODO: Callback
-
     if (!functionName.isString()) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Function name must be of type string"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -1172,16 +1189,18 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunctionFunction, (JSC::JSGlobalObj
         eTextRepMask |= SQLITE_DIRECTONLY;
     }
 
+    // TODO: Some locking? Weak ref? I guess we have to do _something_ to keep callback / LGO alive?
+    auto* customFunction = new SqliteCustomFunction(lexicalGlobalObject, db, nameString, callback);
     int rc = sqlite3_create_function_v2(
         db,
         nameString.utf8().data(),
         argCountInt,
         eTextRepMask,
-        nullptr, // TODO: pApp
-        nullptr, // TODO: xFunc
-        nullptr, // TODO: xStep
-        nullptr, // TODO: xFinal
-        nullptr, // TODO: xDestroy
+        customFunction,
+        &SqliteCustomFunction::xFunc,
+        nullptr, // xStep unused
+        nullptr, // xFinal unused
+        +[](void* self){ delete static_cast<SqliteCustomFunction*>(self); }
     );
 
     if (rc != SQLITE_OK) {

@@ -257,7 +257,6 @@ class Database {
     if (!name) throw new TypeError("User-defined function name cannot be an empty string");
 
     // Interpret options
-    const safeIntegers = "safeIntegers" in options ? +getBooleanOption(options, "safeIntegers") : 2;
     const deterministic = getBooleanOption(options, "deterministic");
     const directOnly = getBooleanOption(options, "directOnly");
     const varargs = getBooleanOption(options, "varargs");
@@ -271,7 +270,7 @@ class Database {
       if (argCount > 100) throw new RangeError("User-defined functions cannot have more than 100 arguments");
     }
 
-    SQL.defineFunction(this.#handle, fn, name, argCount, safeIntegers, deterministic, directOnly);
+    SQL.defineFunction(this.#handle, fn, name, argCount, deterministic, directOnly);
   }
 
   serialize(optionalName) {

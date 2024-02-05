@@ -5718,13 +5718,13 @@ pub const NodeFS = struct {
 
         if (Environment.isWindows) {
             const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);
+            // UV does not normalize slashes in symlink targets, but Node does
+            // See https://github.com/oven-sh/bun/issues/8273
             for (target) |*c| {
                 if (c.* == '/') {
                     c.* = '\\';
                 }
             }
-            // Symlinks targets on windows must contain backslashes. UV will not normalize this for us.
-            // https://github.com/oven-sh/bun/issues/8273
             return Syscall.symlinkUV(
                 target,
                 args.new_path.sliceZ(&to_buf),

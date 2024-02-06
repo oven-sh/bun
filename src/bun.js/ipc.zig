@@ -27,7 +27,6 @@ pub const Mode = enum {
     }
 
     const Map = std.ComptimeStringMap(Mode, .{
-        .{ "none", .none },
         .{ "advanced", .advanced },
         .{ "json", .json },
     });

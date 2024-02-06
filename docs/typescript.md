@@ -22,8 +22,8 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
     "target": "ESNext",
     "module": "ESNext",
     "moduleDetection": "force",
-    "jsx": "react-jsx", // support JSX
-    "allowJs": true, // allow importing `.js` from `.ts`
+    "jsx": "react-jsx",
+    "allowJs": true,
 
     // Bundler mode
     "moduleResolution": "bundler",

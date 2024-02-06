@@ -598,6 +598,7 @@ it("path.resolve", () => {
   const failures = [];
   const slashRE = /\//g;
   const backslashRE = /\\/g;
+  const isWindows = process.platform === "win32";
 
   const resolveTests = [
     [
@@ -632,7 +633,6 @@ it("path.resolve", () => {
       ],
     ],
   ];
-  const isWindows = false;
   resolveTests.forEach(([resolve, tests]) => {
     tests.forEach(([test, expected]) => {
       const actual = resolve.apply(null, test);

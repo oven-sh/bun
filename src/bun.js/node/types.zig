@@ -654,7 +654,7 @@ pub const PathLike = union(enum) {
         };
     }
 
-    pub fn sliceZWithForceCopy(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8, comptime force: bool) [:0]const u8 {
+    pub fn sliceZWithForceCopy(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8, comptime force: bool) if (force) [:0]u8 else [:0]const u8 {
         const sliced = this.slice();
 
         if (Environment.isWindows) {
@@ -663,7 +663,12 @@ pub const PathLike = union(enum) {
             }
         }
 
-        if (sliced.len == 0) return "";
+        if (sliced.len == 0) {
+            if (comptime !force) return "";
+
+            buf[0] = 0;
+            return buf[0..0 :0];
+        }
 
         if (comptime !force) {
             if (sliced[sliced.len - 1] == 0) {

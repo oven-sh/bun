@@ -5717,8 +5717,18 @@ pub const NodeFS = struct {
         var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         if (Environment.isWindows) {
+            const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);
+            // UV does not normalize slashes in symlink targets, but Node does
+            // See https://github.com/oven-sh/bun/issues/8273
+            //
+            // TODO: investigate if simd can be easily used here
+            for (target) |*c| {
+                if (c.* == '/') {
+                    c.* = '\\';
+                }
+            }
             return Syscall.symlinkUV(
-                args.old_path.sliceZ(&this.sync_error_buf),
+                target,
                 args.new_path.sliceZ(&to_buf),
                 switch (args.link_type) {
                     .file => 0,

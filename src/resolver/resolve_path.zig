@@ -2146,7 +2146,7 @@ pub const PosixToWinNormalizer = struct {
     pub fn resolveCWDWithExternalBufZ(
         buf: *bun.PathBuffer,
         maybe_posix_path: []const u8,
-    ) ![:0]const u8 {
+    ) ![:0]u8 {
         std.debug.assert(std.fs.path.isAbsoluteWindows(maybe_posix_path));
 
         if (bun.Environment.isWindows) {

@@ -177,6 +177,9 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 else => return error.InvalidNPMLockfile,
             };
 
+            // due to package paths and resolved properties for links and workspaces always having
+            // forward slashes, we depend on `processWorkspaceNamesArray` to always return workspace
+            // paths with forward slashes on windows
             const workspace_packages_count = try Lockfile.Package.processWorkspaceNamesArray(
                 &workspaces,
                 allocator,
@@ -387,20 +390,14 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         try this.workspace_paths.ensureTotalCapacity(allocator, wksp.map.unmanaged.entries.len);
         try this.workspace_versions.ensureTotalCapacity(allocator, wksp.map.unmanaged.entries.len);
 
-        var path_buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
         for (wksp.map.keys(), wksp.map.values()) |k, v| {
             const name_hash = stringHash(v.name);
 
-            this.workspace_paths.putAssumeCapacity(
-                name_hash,
-                builder.append(
-                    String,
-                    if (comptime Environment.isWindows)
-                        bun.path.normalizeBuf(k, &path_buf, .windows)
-                    else
-                        k,
-                ),
-            );
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(!strings.containsChar(k, '\\'));
+            }
+
+            this.workspace_paths.putAssumeCapacity(name_hash, builder.append(String, k));
 
             if (v.version) |version_string| {
                 const sliced_version = Semver.SlicedString.init(version_string, version_string);

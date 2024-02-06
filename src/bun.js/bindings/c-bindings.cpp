@@ -15,6 +15,8 @@
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
+#include <lshpack.h>
+
 #if CPU(X86_64) && !OS(WINDOWS)
 extern "C" void bun_warn_avx_missing(const char* url)
 {

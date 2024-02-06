@@ -794,6 +794,27 @@ class ClientHttp2Session extends Http2Session {
         stream[bunHTTP2StreamResponded] = true;
         stream.emit("response", headers, flags);
       }
+
+      let set_cookies = headers["set-cookie"];
+      if (typeof set_cookies === "string") {
+        (headers as Record<string, string | string[]>)["set-cookie"] = [set_cookies];
+      }
+
+      let cookie = headers["cookie"];
+      if ($isArray(cookie)) {
+        headers["cookie"] = (headers["cookie"] as string[]).join(";");
+      }
+      if (stream[bunHTTP2StreamResponded]) {
+        try {
+          stream.emit("trailers", headers, flags);
+        } catch {
+          process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, constants.NGHTTP2_PROTOCOL_ERROR, true);
+        }
+      } else {
+        stream[bunHTTP2StreamResponded] = true;
+        stream.emit("response", headers, flags);
+      }
+    
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;

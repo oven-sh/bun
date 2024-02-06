@@ -550,9 +550,6 @@ pub const H2FrameParser = struct {
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
 
-    threadlocal var shared_header_buffer: [MAX_HPACK_HEADER_SIZE]u8 = undefined;
-    threadlocal var shared_request_buffer: [16384]u8 = undefined;
-
     const Stream = struct {
         id: u32 = 0,
         state: enum(u8) {

@@ -261,7 +261,7 @@ describe("net.Socket read", () => {
 describe("net.Socket write", () => {
   const message = "Hello World!".repeat(1024);
   // on linux connecting to localhost doesn't work as it tries to use ipv6 or something like that
-  let hostname = process.platform === "win32" ? "localhost": "0.0.0.0";
+  let hostname = process.platform === "win32" ? "localhost" : "0.0.0.0";
 
   function runWithServer(cb: (..._: any[]) => void) {
     return (done: (_?: any) => void) => {

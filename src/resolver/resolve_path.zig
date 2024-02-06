@@ -2007,7 +2007,7 @@ pub fn lastIndexOfSep(path: []const u8) ?usize {
 
 pub fn lastIndexOfSepT(comptime T: type, path: []const T) ?usize {
     if (comptime !bun.Environment.isWindows) {
-        return strings.lastIndexOfCharT(T, path, '/');
+        return std.mem.lastIndexOfScalar(T, path, '/');
     }
 
     return std.mem.lastIndexOfAny(T, path, "/\\");

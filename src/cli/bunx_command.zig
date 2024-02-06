@@ -458,7 +458,14 @@ pub const BunxCommand = struct {
         child_process.stderr_behavior = .Inherit;
         child_process.stdin_behavior = .Inherit;
         child_process.stdout_behavior = .Inherit;
-        const term = try child_process.spawnAndWait();
+
+        if (Environment.isWindows) {
+            try bun.WindowsSpawnWorkaround.spawnWindows(&child_process);
+        } else {
+            try child_process.spawn();
+        }
+
+        const term = try child_process.wait();
 
         switch (term) {
             .Exited => |exit_code| {

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.0")
+set(Bun_VERSION "1.0.26")
 set(WEBKIT_TAG c3712c13dcdc091cfe4c7cb8f2c1fd16472e6f92)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -26,6 +26,9 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEBUG ON)
     set(DEFAULT_ZIG_OPTIMIZE "Debug")
     set(bun "bun-debug")
+
+    # COMPILE_COMMANDS
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(DEBUG OFF)
     set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")

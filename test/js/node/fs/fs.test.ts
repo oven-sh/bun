@@ -2,7 +2,7 @@
 import { describe, expect, it } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
-import { bunEnv, bunExe, gc, getMaxFD } from "harness";
+import { bunEnv, bunExe, gc, getMaxFD, isWindows } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -38,8 +38,6 @@ import fs, {
   readvSync,
   fstatSync,
 } from "node:fs";
-
-const isWindows = process.platform === "win32";
 
 import _promises from "node:fs/promises";
 
@@ -1163,6 +1161,15 @@ it("readlink", () => {
   symlinkSync(import.meta.path, actual);
 
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+it.if(isWindows)("symlink on windows with forward slashes", async () => {
+  const r = join(tmpdir(), Math.random().toString(32));
+  await fs.promises.rm(join(r, "files/2024"), { recursive: true, force: true });
+  await fs.promises.mkdir(join(r, "files/2024"), { recursive: true });
+  await fs.promises.writeFile(join(r, "files/2024/123.txt"), "text");
+  await fs.promises.symlink("files/2024/123.txt", join(r, "file-sym.txt"));
+  expect(await fs.promises.readlink(join(r, "file-sym.txt"))).toBe("files\\2024\\123.txt");
 });
 
 it("realpath async", async () => {

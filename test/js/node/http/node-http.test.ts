@@ -1675,3 +1675,11 @@ it("#4415.4 IncomingMessage es5", () => {
   IncomingMessage.call(im, { url: "/foo" });
   expect(im.url).toBe("/foo");
 });
+
+// Windows doesnt support SIGUSR1
+if (process.platform !== "win32") {
+  // By not timing out, this test passes.
+  test(".unref() works", async () => {
+    expect([joinPath(import.meta.dir, "node-http-ref-fixture.js")]).toRun();
+  });
+}

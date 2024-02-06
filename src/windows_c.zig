@@ -1275,7 +1275,7 @@ pub fn renameAtW(
             std.debug.assert(!std.fs.path.isAbsoluteWindowsWTF16(new_path_w));
         }
     }
-    const src_fd = switch (bun.sys.ntCreateFile(
+    const src_fd = switch (bun.sys.openFileAtWindows(
         old_dir_fd,
         old_path_w,
         // access_mask

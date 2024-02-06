@@ -1,5 +1,5 @@
 import path from "path";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, isLinux } from "harness";
 import fs from "fs";
 const cwd = import.meta.dir;
 
@@ -48,9 +48,9 @@ export function generate(type: string) {
     // only affect linux
     .replace(
       "%binaryTargets%",
-      process.platform === "win32" || process.platform === "darwin"
-        ? ""
-        : 'binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x", "linux-musl", "linux-musl-openssl-3.0.x"]',
+      isLinux
+        ? 'binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x", "linux-musl", "linux-musl-openssl-3.0.x"]'
+        : "",
     );
 
   fs.writeFileSync(schema, content);

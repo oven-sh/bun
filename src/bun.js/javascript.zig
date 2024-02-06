@@ -298,7 +298,7 @@ pub export fn Bun__Process__send(
         return .zero;
     }
     const vm = globalObject.bunVM();
-    if (vm.ipc) |ipc_instance| {
+    if (vm.getIPCInstance()) |ipc_instance| {
         const success = ipc_instance.ipc.serializeAndSend(globalObject, callFrame.argument(0));
         return if (success) .undefined else .zero;
     } else {
@@ -319,6 +319,15 @@ pub export fn Bun__Process__disconnect(
     _ = callFrame;
     _ = globalObject;
     return .undefined;
+}
+
+/// When IPC environment variables are passed, the socket is not immediately opened,
+/// but rather we wait for process.on('message') or process.send() to be called, THEN
+/// we open the socket. This is to avoid missing messages at the start of the program.
+pub export fn Bun__ensureProcessIPCInitialized(globalObject: *JSGlobalObject) void {
+    // getIPC() will initialize a "waiting" ipc instance so this is enough.
+    // it will do nothing if IPC is not enabled.
+    _ = globalObject.bunVM().getIPCInstance();
 }
 
 /// This function is called on the main thread
@@ -588,7 +597,7 @@ pub const VirtualMachine = struct {
 
     gc_controller: JSC.GarbageCollectionController = .{},
     worker: ?*JSC.WebWorker = null,
-    ipc: ?*IPCInstance = null,
+    ipc: ?IPCInstanceUnion = null,
 
     debugger: ?Debugger = null,
     has_started_debugger: bool = false,
@@ -761,11 +770,16 @@ pub const VirtualMachine = struct {
             this.hide_bun_stackframes = false;
         }
 
-        if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
+        if (map.map.fetchSwapRemove("NODE_CHANNEL_FD")) |kv| {
             if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
-                this.initIPCInstance(bun.toFD(fd));
+                const mode = if (map.map.fetchSwapRemove("NODE_CHANNEL_SERIALIZATION_MODE")) |mode_kv|
+                    IPC.Mode.fromString(mode_kv.value.value) orelse .json
+                else
+                    .json;
+                IPC.log("initializing IPC layer with fd={d} and mode={s}", .{ fd, @tagName(mode) });
+                this.initIPCInstance(bun.toFD(fd), mode);
             } else {
-                Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
+                Output.printErrorln("Failed to parse IPC number '{s}'", .{kv.value.value});
             }
         }
 
@@ -3010,6 +3024,16 @@ pub const VirtualMachine = struct {
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
 
+    pub const IPCInstanceUnion = union(enum) {
+        /// IPC is put in this "enabled but not started" state when IPC is detected
+        /// but the client JavaScript has not yet done `.on("message")`
+        waiting: struct {
+            fd: bun.FileDescriptor,
+            mode: IPC.Mode,
+        },
+        initialized: *IPCInstance,
+    };
+
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
         uws_context: *uws.SocketContext,
@@ -3035,8 +3059,7 @@ pub const VirtualMachine = struct {
             }
         }
 
-        pub fn handleIPCClose(this: *IPCInstance, _: IPC.Socket) void {
-            JSC.markBinding(@src());
+        pub fn handleIPCClose(this: *IPCInstance) void {
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;
@@ -3049,11 +3072,21 @@ pub const VirtualMachine = struct {
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
     };
 
-    pub fn initIPCInstance(this: *VirtualMachine, fd: bun.FileDescriptor) void {
+    pub fn initIPCInstance(this: *VirtualMachine, fd: bun.FileDescriptor, mode: IPC.Mode) void {
         if (Environment.isWindows) {
             Output.warn("IPC is not supported on Windows", .{});
             return;
         }
+        this.ipc = .{
+            .waiting = .{ .fd = fd, .mode = mode },
+        };
+    }
+
+    pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
+        if (this.ipc == null) return null;
+        if (this.ipc.? != .waiting) return this.ipc.?.initialized;
+        const opts = this.ipc.?.waiting;
+
         this.event_loop.ensureWaker();
         const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
         IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
@@ -3064,15 +3097,18 @@ pub const VirtualMachine = struct {
             .uws_context = context,
             .ipc = undefined,
         };
-        const socket = IPC.Socket.fromFd(context, fd, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
+        const socket = IPC.Socket.fromFd(context, opts.fd, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
         socket.setTimeout(0);
-        instance.ipc = .{ .socket = socket };
+        instance.ipc = .{ .socket = socket, .mode = opts.mode };
 
         const ptr = socket.ext(*IPCInstance);
         ptr.?.* = instance;
-        this.ipc = instance;
+        this.ipc = .{ .initialized = instance };
         instance.ipc.writeVersionPacket();
+
+        return instance;
     }
+
     comptime {
         if (!JSC.is_bindgen)
             _ = Bun__remapStackFramePositions;

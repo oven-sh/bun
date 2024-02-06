@@ -102,6 +102,7 @@ extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
 extern "C" void* Bun__getVM();
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
+extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__Process__send);
 extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__Process__disconnect);
@@ -626,8 +627,10 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 {
     if (eventName.string() == "message"_s) {
         if (isAdded) {
-            if (Bun__GlobalObject__hasIPC(eventEmitter.scriptExecutionContext()->jsGlobalObject())
+            auto global = eventEmitter.scriptExecutionContext()->jsGlobalObject();
+            if (Bun__GlobalObject__hasIPC(global)
                 && eventEmitter.listenerCount(eventName) == 1) {
+                Bun__ensureProcessIPCInitialized(global);
                 eventEmitter.scriptExecutionContext()->refEventLoop();
                 eventEmitter.m_hasIPCRef = true;
             }

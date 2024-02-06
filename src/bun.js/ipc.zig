@@ -17,6 +17,26 @@ pub const log = Output.scoped(.IPC, false);
 pub const ipcHeaderLength = @sizeOf(u8) + @sizeOf(u32);
 pub const ipcVersion = 1;
 
+pub const Mode = enum {
+    none,
+    advanced,
+    json,
+
+    pub fn isSet(mode: Mode) bool {
+        return mode != .none;
+    }
+
+    const Map = std.ComptimeStringMap(Mode, .{
+        .{ "none", .none },
+        .{ "advanced", .advanced },
+        .{ "json", .json },
+    });
+
+    pub fn fromString(s: []const u8) ?Mode {
+        return Map.get(s);
+    }
+};
+
 pub const DecodedIPCMessage = union(enum) {
     version: u32,
     data: JSValue,
@@ -44,11 +64,10 @@ pub const IPCBuffer = struct {
 /// Returns `NotEnoughBytes` if there werent enough bytes
 /// Returns `InvalidFormat` if the message was invalid, probably close the socket in this case
 /// otherwise returns the number of bytes consumed.
-pub fn decodeIPCMessage(
+pub fn decodeIPCMessageAdvanced(
     data: []const u8,
     globalThis: *JSC.JSGlobalObject,
 ) IPCDecodeError!DecodeIPCMessageResult {
-    JSC.markBinding(@src());
     if (data.len < ipcHeaderLength) {
         return IPCDecodeError.NotEnoughBytes;
     }
@@ -92,10 +111,64 @@ pub fn decodeIPCMessage(
     }
 }
 
+fn jsonIPCDataStringFreeCB(context: *anyopaque, _: *anyopaque, _: u32) callconv(.C) void {
+    @as(*bool, @ptrCast(context)).* = true;
+}
+
+pub fn decodeIPCMessageJSON(
+    data: []const u8,
+    globalThis: *JSC.JSGlobalObject,
+) IPCDecodeError!DecodeIPCMessageResult {
+    if (bun.strings.indexOfChar(data, '\n')) |idx| {
+        const json_data = data[0..idx];
+
+        const is_ascii = bun.strings.isAllASCII(json_data);
+        var was_ascii_string_freed = false;
+
+        // Use ExternalString to avoid copying data if possible.
+        // This is only possible for ascii data, as that fits into latin1
+        // otherwise we have to convert it utf-8 into utf16-le.
+        var str = if (is_ascii)
+            bun.String.createExternal(json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB)
+        else
+            bun.String.fromUTF8(json_data);
+        defer {
+            str.deref();
+
+            // release assert
+            if (!(!is_ascii or was_ascii_string_freed)) {
+                @panic("Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun.");
+            }
+        }
+
+        const deserialized = str.toJSByParseJSON(globalThis);
+
+        return .{
+            .bytes_consumed = idx + 1,
+            .message = .{ .data = deserialized },
+        };
+    }
+    return IPCDecodeError.NotEnoughBytes;
+}
+
+pub fn decodeIPCMessage(
+    mode: Mode,
+    data: []const u8,
+    globalThis: *JSC.JSGlobalObject,
+) IPCDecodeError!DecodeIPCMessageResult {
+    switch (mode) {
+        .none => unreachable,
+        .advanced => return decodeIPCMessageAdvanced(data, globalThis),
+        .json => return decodeIPCMessageJSON(data, globalThis),
+    }
+}
+
 pub const Socket = uws.NewSocketHandler(false);
 
 pub const IPCData = struct {
     socket: Socket,
+    mode: Mode,
+
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     outgoing: IPCBuffer = .{},
 
@@ -105,15 +178,17 @@ pub const IPCData = struct {
         if (Environment.allow_assert) {
             std.debug.assert(this.has_written_version == 0);
         }
-        const VersionPacket = extern struct {
-            type: IPCMessageType align(1) = .Version,
-            version: u32 align(1) = ipcVersion,
-        };
-        const bytes = comptime std.mem.asBytes(&VersionPacket{});
-        const n = this.socket.write(bytes, false);
-        if (n != bytes.len) {
-            var list = this.outgoing.list.listManaged(bun.default_allocator);
-            list.appendSlice(bytes) catch @panic("OOM");
+        if (this.mode == .advanced) {
+            const VersionPacket = extern struct {
+                type: IPCMessageType align(1) = .Version,
+                version: u32 align(1) = ipcVersion,
+            };
+            const bytes = comptime std.mem.asBytes(&VersionPacket{});
+            const n = this.socket.write(bytes, false);
+            if (n != bytes.len) {
+                var list = this.outgoing.list.listManaged(bun.default_allocator);
+                list.appendSlice(bytes) catch bun.outOfMemory();
+            }
         }
         if (Environment.allow_assert) {
             this.has_written_version = 1;
@@ -125,26 +200,51 @@ pub const IPCData = struct {
             std.debug.assert(ipc_data.has_written_version == 1);
         }
 
-        const serialized = value.serialize(globalThis) orelse return false;
-        defer serialized.deinit();
-
-        const size: u32 = @intCast(serialized.data.len);
-
-        const payload_length: usize = @sizeOf(IPCMessageType) + @sizeOf(u32) + size;
-
-        ipc_data.outgoing.list.ensureUnusedCapacity(bun.default_allocator, payload_length) catch @panic("OOM");
         const start_offset = ipc_data.outgoing.list.len;
 
-        ipc_data.outgoing.list.writeTypeAsBytesAssumeCapacity(u8, @intFromEnum(IPCMessageType.SerializedMessage));
-        ipc_data.outgoing.list.writeTypeAsBytesAssumeCapacity(u32, size);
-        ipc_data.outgoing.list.appendSliceAssumeCapacity(serialized.data);
+        const payload_length = switch (ipc_data.mode) {
+            .none => unreachable,
+            .advanced => len: {
+                const serialized = value.serialize(globalThis) orelse return false;
+                defer serialized.deinit();
+
+                const size: u32 = @intCast(serialized.data.len);
+
+                const payload_length: usize = @sizeOf(IPCMessageType) + @sizeOf(u32) + size;
+
+                ipc_data.outgoing.list.ensureUnusedCapacity(bun.default_allocator, payload_length) catch bun.outOfMemory();
+
+                ipc_data.outgoing.list.writeTypeAsBytesAssumeCapacity(u8, @intFromEnum(IPCMessageType.SerializedMessage));
+                ipc_data.outgoing.list.writeTypeAsBytesAssumeCapacity(u32, size);
+                ipc_data.outgoing.list.appendSliceAssumeCapacity(serialized.data);
+
+                break :len payload_length;
+            },
+            .json => len: {
+                var out: bun.String = undefined;
+                value.jsonStringify(globalThis, 0, &out);
+                defer out.deref();
+
+                if (out.tag == .Dead) return false;
+
+                const str = out.toUTF8(bun.default_allocator);
+                defer str.deinit();
+
+                const slice = str.slice();
+
+                ipc_data.outgoing.list.ensureUnusedCapacity(bun.default_allocator, slice.len + 1) catch bun.outOfMemory();
+                ipc_data.outgoing.list.appendSliceAssumeCapacity(slice);
+                ipc_data.outgoing.list.appendAssumeCapacity('\n');
+
+                break :len slice.len + 1;
+            },
+        };
 
         std.debug.assert(ipc_data.outgoing.list.len == start_offset + payload_length);
 
         if (start_offset == 0) {
             std.debug.assert(ipc_data.outgoing.cursor == 0);
-
-            const n = ipc_data.socket.write(ipc_data.outgoing.list.ptr[start_offset..payload_length], false);
+            const n = ipc_data.socket.write(ipc_data.outgoing.list.ptr[0..payload_length], false);
             if (n == payload_length) {
                 ipc_data.outgoing.list.len = 0;
             } else if (n > 0) {
@@ -164,7 +264,7 @@ pub const IPCData = struct {
 ///     ipc: IPCData,
 ///
 ///     fn handleIPCMessage(*Context, DecodedIPCMessage) void
-///     fn handleIPCClose(*Context, Socket) void
+///     fn handleIPCClose() void
 /// }
 pub fn NewIPCHandler(comptime Context: type) type {
     return struct {
@@ -183,13 +283,13 @@ pub fn NewIPCHandler(comptime Context: type) type {
 
         pub fn onClose(
             this: *Context,
-            socket: Socket,
+            _: Socket,
             _: c_int,
             _: ?*anyopaque,
         ) void {
-            // ?! does uSockets .close call onClose?
+            // Note: uSockets has already freed the underlying socket, so calling Socket.close() can segfault
             log("onClose\n", .{});
-            this.handleIPCClose(socket);
+            this.handleIPCClose();
         }
 
         pub fn onData(
@@ -208,7 +308,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
                     if (this.globalThis) |global| {
                         break :brk global;
                     }
-                    this.handleIPCClose(socket);
+                    this.handleIPCClose();
                     socket.close(0, null);
                     return;
                 },
@@ -219,15 +319,15 @@ pub fn NewIPCHandler(comptime Context: type) type {
             // fails (not enough bytes) then we allocate to .ipc_buffer
             if (this.ipc.incoming.len == 0) {
                 while (true) {
-                    const result = decodeIPCMessage(data, globalThis) catch |e| switch (e) {
+                    const result = decodeIPCMessage(this.ipc.mode, data, globalThis) catch |e| switch (e) {
                         error.NotEnoughBytes => {
-                            _ = this.ipc.incoming.write(bun.default_allocator, data) catch @panic("OOM");
+                            _ = this.ipc.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
                             log("hit NotEnoughBytes", .{});
                             return;
                         },
                         error.InvalidFormat => {
                             Output.printErrorln("InvalidFormatError during IPC message handling", .{});
-                            this.handleIPCClose(socket);
+                            this.handleIPCClose();
                             socket.close(0, null);
                             return;
                         },
@@ -243,11 +343,11 @@ pub fn NewIPCHandler(comptime Context: type) type {
                 }
             }
 
-            _ = this.ipc.incoming.write(bun.default_allocator, data) catch @panic("OOM");
+            _ = this.ipc.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
 
             var slice = this.ipc.incoming.slice();
             while (true) {
-                const result = decodeIPCMessage(slice, globalThis) catch |e| switch (e) {
+                const result = decodeIPCMessage(this.ipc.mode, slice, globalThis) catch |e| switch (e) {
                     error.NotEnoughBytes => {
                         // copy the remaining bytes to the start of the buffer
                         bun.copy(u8, this.ipc.incoming.ptr[0..slice.len], slice);
@@ -257,7 +357,7 @@ pub fn NewIPCHandler(comptime Context: type) type {
                     },
                     error.InvalidFormat => {
                         Output.printErrorln("InvalidFormatError during IPC message handling", .{});
-                        this.handleIPCClose(socket);
+                        this.handleIPCClose();
                         socket.close(0, null);
                         return;
                     },

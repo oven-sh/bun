@@ -223,7 +223,7 @@ pub const Subprocess = struct {
     has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
     this_jsvalue: JSC.JSValue = .zero,
 
-    ipc_mode: IPCMode,
+    ipc_mode: IPC.Mode,
     ipc_callback: JSC.Strong = .{},
     ipc: IPC.IPCData,
     flags: Flags = .{},
@@ -245,12 +245,6 @@ pub const Subprocess = struct {
     pub const WaitThreadPoll = struct {
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
         poll_ref: Async.KeepAlive = .{},
-    };
-
-    pub const IPCMode = enum {
-        none,
-        bun,
-        // json,
     };
 
     pub fn resourceUsage(
@@ -790,7 +784,11 @@ pub const Subprocess = struct {
 
     pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         if (this.ipc_mode == .none) {
-            global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
+            if (this.hasExited()) {
+                global.throw("Subprocess.send() cannot be used after the process has exited.", .{});
+            } else {
+                global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
+            }
             return .zero;
         }
 
@@ -1974,7 +1972,7 @@ pub const Subprocess = struct {
         var cmd_value = JSValue.zero;
         var detached = false;
         var args = args_;
-        var ipc_mode = IPCMode.none;
+        var ipc_mode: IPC.Mode = .none;
         var ipc_callback: JSValue = .zero;
         var stdio_pipes: std.ArrayListUnmanaged(Stdio.PipeExtra) = .{};
         var pipes_to_close: std.ArrayListUnmanaged(bun.FileDescriptor) = .{};
@@ -2196,17 +2194,37 @@ pub const Subprocess = struct {
                     }
                 }
 
-                if (args.getTruthy(globalThis, "ipc")) |val| {
-                    if (Environment.isWindows) {
-                        globalThis.throwTODO("TODO: IPC is not yet supported on Windows");
-                        return .zero;
-                    }
+                if (!is_sync) {
+                    if (args.getTruthy(globalThis, "ipc")) |val| {
+                        if (val.isCell() and val.isCallable(globalThis.vm())) {
+                            if (Environment.isWindows) {
+                                globalThis.throwInvalidArguments("IPC is not supported on Windows", .{});
+                                return .zero;
+                            }
 
-                    if (val.isCell() and val.isCallable(globalThis.vm())) {
-                        // In the future, we should add a way to use a different IPC serialization format, specifically `json`.
-                        // but the only use case this has is doing interop with node.js IPC and other programs.
-                        ipc_mode = .bun;
-                        ipc_callback = val.withAsyncContextIfNeeded(globalThis);
+                            // In the future, we should add a way to use a different IPC serialization format, specifically `json`.
+                            // but the only use case this has is doing interop with node.js IPC and other programs.
+                            ipc_mode = ipc_mode: {
+                                if (args.get(globalThis, "ipcMode")) |mode_val| {
+                                    if (mode_val.isString()) {
+                                        const mode_str = mode_val.toBunString(globalThis);
+                                        defer mode_str.deref();
+                                        const slice = mode_str.toUTF8(bun.default_allocator);
+                                        defer slice.deinit();
+                                        break :ipc_mode IPC.Mode.fromString(slice.slice()) orelse {
+                                            globalThis.throwInvalidArguments("ipcMode must be \"json\" or \"advanced\"", .{});
+                                            return .zero;
+                                        };
+                                    } else {
+                                        globalThis.throwInvalidArguments("ipcMode must be a 'string'", .{});
+                                        return .zero;
+                                    }
+                                }
+                                break :ipc_mode .advanced;
+                            };
+
+                            ipc_callback = val.withAsyncContextIfNeeded(globalThis);
+                        }
                     }
                 }
 
@@ -2505,14 +2523,13 @@ pub const Subprocess = struct {
         //
         // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
         var socket: IPC.Socket = undefined;
-        if (ipc_mode != .none) {
-            if (comptime is_sync) {
-                globalThis.throwInvalidArguments("IPC is not supported in Bun.spawnSync", .{});
-                return .zero;
-            }
-
+        if ((comptime !is_sync) and ipc_mode != .none) {
             env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in posix_spawn");
-            env_array.appendAssumeCapacity("BUN_INTERNAL_IPC_FD=3");
+            env_array.appendAssumeCapacity("NODE_CHANNEL_FD=3");
+            if (ipc_mode != .json) {
+                std.debug.assert(ipc_mode == .advanced);
+                env_array.appendAssumeCapacity("NODE_CHANNEL_SERIALIZATION_MODE=advanced");
+            }
 
             var fds: [2]uws.LIBUS_SOCKET_DESCRIPTOR = undefined;
             socket = uws.newSocketFromPair(
@@ -2644,13 +2661,13 @@ pub const Subprocess = struct {
             .stdio_pipes = stdio_pipes,
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .ipc_mode = ipc_mode,
-            // will be assigned in the block below
-            .ipc = .{ .socket = socket },
+            .ipc = .{ .socket = socket, .mode = ipc_mode },
             .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else undefined,
             .flags = .{
                 .is_sync = is_sync,
             },
         };
+
         if (ipc_mode != .none) {
             const ptr = socket.ext(*Subprocess);
             ptr.?.* = subprocess;
@@ -3393,8 +3410,7 @@ pub const Subprocess = struct {
         }
     }
 
-    pub fn handleIPCClose(this: *Subprocess, _: IPC.Socket) void {
-        // uSocket is already freed so calling .close() on the socket can segfault
+    pub fn handleIPCClose(this: *Subprocess) void {
         this.ipc_mode = .none;
         this.updateHasPendingActivity();
     }

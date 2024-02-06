@@ -76,20 +76,20 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  // test("rebuilding busts the directory entries cache", () => {
-  //   Bun.gc(true);
-  //   const { exitCode, stderr } = Bun.spawnSync({
-  //     cmd: [bunExe(), join(import.meta.dir, "bundler-reloader-script.ts")],
-  //     env: bunEnv,
-  //     stderr: "pipe",
-  //     stdout: "inherit",
-  //   });
-  //   if (stderr.byteLength > 0) {
-  //     throw new Error(stderr.toString());
-  //   }
-  //   expect(exitCode).toBe(0);
-  //   Bun.gc(true);
-  // });
+  test("rebuilding busts the directory entries cache", () => {
+    Bun.gc(true);
+    const { exitCode, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), join(import.meta.dir, "bundler-reloader-script.ts")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "inherit",
+    });
+    if (stderr.byteLength > 0) {
+      throw new Error(stderr.toString());
+    }
+    expect(exitCode).toBe(0);
+    Bun.gc(true);
+  });
 
   test("outdir + reading out blobs works", async () => {
     Bun.gc(true);

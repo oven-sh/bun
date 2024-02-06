@@ -7118,7 +7118,6 @@ const LinkerContext = struct {
                     if (source.path.isFile()) {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
-                        std.debug.print("pretty for print: {s}\n", .{source.path.pretty});
                         if (Environment.isWindows and Environment.allow_assert) {
                             if (std.mem.indexOfScalar(u8, source.path.pretty, '\\') != null) {
                                 std.debug.panic("Expected pretty file path to have only forward slashes, got '{s}'", .{source.path.pretty});

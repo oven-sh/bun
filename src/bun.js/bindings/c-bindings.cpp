@@ -13,6 +13,7 @@
 #include <uv.h>
 #include <windows.h>
 #endif // !OS(WINDOWS)
+#include <lshpack.h>
 
 #if CPU(X86_64) && !OS(WINDOWS)
 extern "C" void bun_warn_avx_missing(const char* url)
@@ -184,3 +185,90 @@ extern "C" void on_before_reload_process_linux()
 }
 
 #endif
+
+#define LSHPACK_MAX_HEADER_SIZE 65536
+
+static thread_local char shared_header_buffer[LSHPACK_MAX_HEADER_SIZE];
+
+extern "C" {
+typedef void* (*lshpack_wrapper_alloc)(size_t size);
+typedef void (*lshpack_wrapper_free)(void*);
+typedef struct {
+    struct lshpack_enc enc;
+    struct lshpack_dec dec;
+    lshpack_wrapper_free free;
+} lshpack_wrapper;
+
+typedef struct {
+    const char* name;
+    size_t name_len;
+    const char* value;
+    size_t value_len;
+} lshpack_header;
+
+lshpack_wrapper* lshpack_wrapper_init(lshpack_wrapper_alloc alloc, lshpack_wrapper_free free, unsigned max_capacity)
+{
+    lshpack_wrapper* coders = (lshpack_wrapper*)alloc(sizeof(lshpack_wrapper));
+    if (!coders)
+        return nullptr;
+    coders->free = free;
+    if (lshpack_enc_init(&coders->enc) != 0)
+        return nullptr;
+    lshpack_dec_init(&coders->dec);
+    lshpack_enc_set_max_capacity(&coders->enc, max_capacity);
+    lshpack_dec_set_max_capacity(&coders->dec, max_capacity);
+    return coders;
+}
+
+size_t lshpack_wrapper_encode(lshpack_wrapper* self,
+    const unsigned char* name, size_t name_len,
+    const unsigned char* val, size_t val_len,
+    int never_index,
+    unsigned char* buffer, size_t buffer_len, size_t buffer_offset)
+{
+    if (name_len + val_len > LSHPACK_MAX_HEADER_SIZE)
+        return 0;
+
+    lsxpack_header_t hdr;
+    memset(&hdr, 0, sizeof(lsxpack_header_t));
+    memcpy(&shared_header_buffer[0], name, name_len);
+    memcpy(&shared_header_buffer[name_len], val, val_len);
+    lsxpack_header_set_offset2(&hdr, &shared_header_buffer[0], 0, name_len, name_len, val_len);
+    if (never_index) {
+        hdr.indexed_type = 2;
+    }
+    auto* start = buffer + buffer_offset;
+    auto* ptr = lshpack_enc_encode(&self->enc, start, buffer + buffer_len, &hdr);
+    if (!ptr)
+        return 0;
+    return ptr - start;
+}
+
+size_t lshpack_wrapper_decode(lshpack_wrapper* self,
+    const unsigned char* src, size_t src_len,
+    lshpack_header* output)
+{
+    lsxpack_header_t hdr;
+    memset(&hdr, 0, sizeof(lsxpack_header_t));
+    lsxpack_header_prepare_decode(&hdr, &shared_header_buffer[0], 0, LSHPACK_MAX_HEADER_SIZE);
+
+    const unsigned char* s = src;
+
+    auto rc = lshpack_dec_decode(&self->dec, &s, s + src_len, &hdr);
+    if (rc != 0)
+        return 0;
+
+    output->name = lsxpack_header_get_name(&hdr);
+    output->name_len = hdr.name_len;
+    output->value = lsxpack_header_get_value(&hdr);
+    output->value_len = hdr.val_len;
+    return s - src;
+}
+
+void lshpack_wrapper_deinit(lshpack_wrapper* self)
+{
+    lshpack_dec_cleanup(&self->dec);
+    lshpack_enc_cleanup(&self->enc);
+    self->free(self);
+}
+}

@@ -783,8 +783,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, co
     SOCKADDR_STORAGE remote;
     DWORD local_len = sizeof(local);
     DWORD remote_len = sizeof(remote);
-    TIMEVAL timeout = {30000, 0};
-    if (FALSE == WSAConnectByNameA(s, host, port_string, &local_len, (SOCKADDR*)&local, &remote_len, (SOCKADDR*)&remote, &timeout, NULL)) {
+    if (FALSE == WSAConnectByNameA(s, host, port_string, &local_len, (SOCKADDR*)&local, &remote_len, (SOCKADDR*)&remote, NULL, NULL)) {
         closesocket(s);
         return LIBUS_SOCKET_ERROR;
     }

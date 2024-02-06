@@ -784,7 +784,7 @@ pub const HTTPThread = struct {
                     }
                 }
             }
-            this.queued_shutdowns.clearRetainingCapacity(bun.default_allocator);
+            this.queued_shutdowns.clearRetainingCapacity();
         }
 
         var count: usize = 0;

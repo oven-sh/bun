@@ -276,27 +276,6 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 }
             }
 
-            pub const Pipe = union(enum) {
-                stream: JSC.WebCore.ReadableStream,
-                buffer: BufferedOutput,
-
-                pub fn finish(this: *@This()) void {
-                    if (this.* == .stream and this.stream.ptr == .File) {
-                        // this.stream.ptr.File.deref();
-                    }
-                }
-
-                pub fn done(this: *@This()) void {
-                    if (this.* == .stream) {
-                        // if (this.stream.ptr == .File) this.stream.ptr.File.
-                        this.stream.done();
-                        return;
-                    }
-
-                    this.buffer.close();
-                }
-            };
-
             pub fn init(subproc: *Subprocess, comptime kind: OutKind, stdio: Stdio, fd: ?bun.FileDescriptor, allocator: std.mem.Allocator, max_size: u32) Readable {
                 return switch (stdio) {
                     .ignore => Readable{ .ignore = {} },
@@ -872,7 +851,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                     .cwd = GlobalHandle.init(jsc_vm).topLevelDir(),
                     .stdio = .{
                         .{ .ignore = {} },
-                        .{ .pipe = null },
+                        .{ .pipe = {} },
                         .{ .inherit = .{} },
                     },
                     .lazy = false,
@@ -884,8 +863,8 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                 };
 
                 if (comptime is_sync) {
-                    out.stdio[1] = .{ .pipe = null };
-                    out.stdio[2] = .{ .pipe = null };
+                    out.stdio[1] = .{ .pipe = {} };
+                    out.stdio[2] = .{ .pipe = {} };
                 }
                 return out;
             }

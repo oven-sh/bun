@@ -1,10 +1,9 @@
 const std = @import("std");
 const bun = @import("root").bun;
-const unicode = std.unicode;
 
 pub const JavascriptString = []u16;
 pub fn newJavascriptString(comptime text: []const u8) JavascriptString {
-    return unicode.utf8ToUtf16LeStringLiteral(text);
+    return bun.strings.literal(u16, text);
 }
 
 pub const NodeIndex = u32;

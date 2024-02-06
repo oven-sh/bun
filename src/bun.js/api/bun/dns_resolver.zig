@@ -1962,11 +1962,13 @@ pub const DNSResolver = struct {
 
     pub fn onDNSPollUv(watcher: [*c]bun.windows.libuv.uv_poll_t, status: c_int, events: c_int) callconv(.C) void {
         const poll = UvDnsPoll.fromPoll(watcher);
-        const channel = poll.parent.channel orelse {
-            @panic("TODO");
-        };
+        // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
+        const channel = poll.parent.channel.?;
         if (status < 0) {
-            @panic("TODO");
+            // an error occurred. just pretend that the socket is both readable and writable.
+            // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+            channel.process(poll.socket, true, true);
+            return;
         }
         channel.process(
             poll.socket,
@@ -1977,7 +1979,6 @@ pub const DNSResolver = struct {
 
     pub fn onCloseUv(watcher: *anyopaque) callconv(.C) void {
         const poll = UvDnsPoll.fromPoll(@alignCast(@ptrCast(watcher)));
-        // bun.default_allocator.destroy(poll);
         poll.destroy();
     }
 
@@ -2025,7 +2026,9 @@ pub const DNSResolver = struct {
                     .poll = undefined,
                 });
                 if (uv.uv_poll_init_socket(bun.uws.Loop.get().uv_loop, &poll.poll, @ptrCast(fd)) < 0) {
-                    @panic("TODO");
+                    poll.destroy();
+                    _ = this.polls.swapRemove(fd);
+                    return;
                 }
                 poll_entry.value_ptr.* = poll;
             }
@@ -2034,7 +2037,8 @@ pub const DNSResolver = struct {
 
             const uv_events = if (readable) uv.UV_READABLE else 0 | if (writable) uv.UV_WRITABLE else 0;
             if (uv.uv_poll_start(&poll.poll, uv_events, onDNSPollUv) < 0) {
-                @panic("TODO");
+                _ = this.polls.swapRemove(fd);
+                uv.uv_close(@ptrCast(&poll.poll), onCloseUv);
             }
         } else {
             const vm = this.vm;

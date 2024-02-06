@@ -6,6 +6,8 @@
 //
 // Otherwise, you risk a circular dependency or Zig including multiple copies of this file which leads to strange bugs.
 const std = @import("std");
+const bun = @This();
+
 pub const Environment = @import("env.zig");
 
 pub const use_mimalloc = !Environment.isTest;
@@ -35,7 +37,7 @@ pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 pub const meta = @import("./meta.zig");
-pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
+pub usingnamespace @import("./comptime_string_map.zig");
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
 pub const resolver = @import("./resolver//resolver.zig");
@@ -508,7 +510,7 @@ pub inline fn unreachablePanic(comptime fmts: []const u8, args: anytype) noretur
 }
 
 pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8) ?Type {
-    return ComptimeStringMap(Type, Map).get(value);
+    return bun.ComptimeStringMap(Type, Map).get(value);
 }
 
 pub const Bunfig = @import("./bunfig.zig").Bunfig;
@@ -1083,7 +1085,7 @@ pub fn ComptimeEnumMap(comptime T: type) type {
             entries[i] = .{ .@"0" = @tagName(value), .@"1" = value };
             i += 1;
         }
-        return ComptimeStringMap(T, entries);
+        return bun.ComptimeStringMap(T, entries);
     }
 }
 
@@ -1414,8 +1416,6 @@ pub fn reloadProcess(
         Output.disableBuffering();
         Output.resetTerminalAll();
     }
-    const bun = @This();
-
     if (comptime Environment.isWindows) {
         // this assumes that our parent process assigned us to a job object (see runWatcherManager)
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;

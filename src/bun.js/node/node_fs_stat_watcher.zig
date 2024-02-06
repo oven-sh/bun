@@ -62,7 +62,7 @@ pub const StatWatcherScheduler = struct {
 
                 const vm = watcher.globalThis.bunVM();
                 this.timer = uws.Timer.create(
-                    vm.event_loop_handle orelse @panic("UWS Loop was not initialized yet."),
+                    vm.uwsLoop(),
                     this,
                 );
 
@@ -457,6 +457,7 @@ pub const StatWatcher = struct {
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];
         }
+
         var parts = [_]string{slice};
         const file_path = Path.joinAbsStringBuf(
             Fs.FileSystem.instance.top_level_dir,

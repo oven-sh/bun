@@ -3083,6 +3083,10 @@ pub const VirtualMachine = struct {
     }
 
     pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
+        if (Environment.isWindows) {
+            @panic("IPC is not supported on Windows");
+        }
+
         if (this.ipc == null) return null;
         if (this.ipc.? != .waiting) return this.ipc.?.initialized;
         const opts = this.ipc.?.waiting;

@@ -2198,7 +2198,7 @@ pub const Subprocess = struct {
                     if (args.getTruthy(globalThis, "ipc")) |val| {
                         if (val.isCell() and val.isCallable(globalThis.vm())) {
                             if (Environment.isWindows) {
-                                globalThis.throwTODO("IPC is not supported on Windows", .{});
+                                globalThis.throwTODO("IPC is not supported on Windows");
                                 return .zero;
                             }
 
@@ -2525,7 +2525,8 @@ pub const Subprocess = struct {
         var socket: IPC.Socket = undefined;
         if ((comptime !is_sync) and ipc_mode != .none) {
             // each item is a [*]const u8, and then a null at the end.
-            env_array.ensureUnusedCapacity(allocator, 2 + @intFromBool(ipc_mode != .json)) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            env_array.ensureUnusedCapacity(allocator, 2 + @as(usize, @intFromBool(ipc_mode != .json))) catch |err|
+                return globalThis.handleError(err, "in posix_spawn");
 
             env_array.appendAssumeCapacity("NODE_CHANNEL_FD=3");
             if (ipc_mode != .json) {

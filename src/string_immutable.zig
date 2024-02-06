@@ -735,7 +735,7 @@ pub fn withoutTrailingSlashWindowsPath(this: string) []const u8 {
 }
 
 pub fn withTrailingSlash(dir: string, in: string) []const u8 {
-    if (comptime Environment.allow_assert) std.debug.assert(bun.isSliceInBuffer(dir, in));
+    if (comptime Environment.allow_assert) std.debug.assert(bun.isSliceInBuffer(u8, dir, in));
     return in[0..@min(strings.withoutTrailingSlash(in[0..@min(dir.len + 1, in.len)]).len + 1, in.len)];
 }
 

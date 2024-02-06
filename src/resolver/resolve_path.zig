@@ -477,8 +477,9 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
     }
 }
 
-threadlocal var relative_from_buf: [4096]u8 = undefined;
-threadlocal var relative_to_buf: [4096]u8 = undefined;
+threadlocal var relative_from_buf: bun.PathBuffer = undefined;
+threadlocal var relative_to_buf: bun.PathBuffer = undefined;
+
 pub fn relative(from: []const u8, to: []const u8) []const u8 {
     return relativePlatform(from, to, .auto, false);
 }
@@ -736,7 +737,10 @@ pub fn normalizeStringGenericTZ(
                 }
             } else {
                 // drive letter
-                buf[buf_i] = path_[0];
+                buf[buf_i] = switch (path_[0]) {
+                    'a'...'z' => path_[0] & (std.math.maxInt(T) ^ (1 << 5)),
+                    else => path_[0],
+                };
                 buf[buf_i + 1] = ':';
                 buf_i += 2;
                 dotdot = buf_i;
@@ -1180,7 +1184,7 @@ pub fn joinZ(_parts: anytype, comptime _platform: Platform) [:0]const u8 {
 
 pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
     const joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, _platform);
-    std.debug.assert(bun.isSliceInBuffer(joined, buf));
+    std.debug.assert(bun.isSliceInBuffer(u8, joined, buf));
     const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
     buf[joined.len + start_offset] = 0;
     return buf[start_offset..][0..joined.len :0];

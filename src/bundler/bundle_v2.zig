@@ -570,7 +570,7 @@ pub const BundleV2 = struct {
 
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
-            const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
+            const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
             if (rel.len > 0 and rel[0] != '.') {
                 path.pretty = rel;
             }
@@ -669,14 +669,12 @@ pub const BundleV2 = struct {
 
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
-            const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
+            const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
             if (rel.len > 0 and rel[0] != '.') {
                 path.pretty = rel;
             }
         }
         path.* = try path.dupeAlloc(this.graph.allocator);
-        // TODO: this shouldn't be necessary
-        path.pretty = bun.sliceInBuffer(path.text, path.pretty);
         entry.value_ptr.* = source_index.get();
         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
 
@@ -2013,11 +2011,13 @@ pub const BundleV2 = struct {
 
             if (path.pretty.ptr == path.text.ptr) {
                 // TODO: outbase
-                const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
+                const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
                 if (rel.len > 0 and rel[0] != '.') {
-                    path.pretty = rel;
+                    path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
                 }
             }
+            std.debug.print("pretty: {s}\n", .{path.pretty});
+            path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
 
             var secondary_path_to_copy: ?Fs.Path = null;
             if (resolve_result.path_pair.secondary) |*secondary| {
@@ -2029,9 +2029,6 @@ pub const BundleV2 = struct {
                 }
             }
 
-            path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
-            // TODO: this shouldn't be necessary
-            path.pretty = bun.sliceInBuffer(path.text, path.pretty);
             import_record.path = path.*;
             debug("created ParseTask: {s}", .{path.text});
 
@@ -7121,6 +7118,12 @@ const LinkerContext = struct {
                     if (source.path.isFile()) {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
+                        std.debug.print("pretty for print: {s}\n", .{source.path.pretty});
+                        if (Environment.isWindows and Environment.allow_assert) {
+                            if (std.mem.indexOfScalar(u8, source.path.pretty, '\\') != null) {
+                                std.debug.panic("Expected pretty file path to have only forward slashes, got '{s}'", .{source.path.pretty});
+                            }
+                        }
                         break :brk source.path.pretty;
                     } else {
                         // If this isn't in the "file" namespace, just use the full path text
@@ -11293,7 +11296,7 @@ pub const Chunk = struct {
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relative(from_chunk_dir, file_path),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .loose, false),
                                 );
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
@@ -11552,6 +11555,7 @@ const ContentHasher = struct {
     hasher: std.hash.XxHash64 = std.hash.XxHash64.init(0),
 
     pub fn write(self: *ContentHasher, bytes: []const u8) void {
+        std.debug.print("HASH_UPDATE {d}:\n{s}----------\n", .{ bytes.len, std.mem.sliceAsBytes(bytes) });
         self.hasher.update(std.mem.asBytes(&bytes.len));
         self.hasher.update(bytes);
     }
@@ -11563,6 +11567,7 @@ const ContentHasher = struct {
     }
 
     pub fn writeInts(self: *ContentHasher, i: []const u32) void {
+        std.debug.print("HASH_UPDATE: {any}\n", .{i});
         self.hasher.update(std.mem.sliceAsBytes(i));
     }
 

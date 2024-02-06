@@ -548,7 +548,6 @@ pub const H2FrameParser = struct {
 
     hpack: ?*lshpack.HPACK = null,
 
-    threadlocal var shared_header_buffer: [MAX_HPACK_HEADER_SIZE]u8 = undefined;
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
 
     const Stream = struct {

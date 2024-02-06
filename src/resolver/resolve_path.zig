@@ -33,6 +33,7 @@ inline fn nqlAtIndexCaseInsensitive(comptime string_count: comptime_int, index: 
     return false;
 }
 
+// some of these are anytype because of https://github.com/ziglang/zig/issues/15409
 const IsSeparatorFunc = fn (char: u8) bool;
 const IsSeparatorFuncT = fn (comptime T: type, char: anytype) bool;
 const LastSeparatorFunction = fn (slice: []const u8) ?usize;
@@ -1478,8 +1479,7 @@ pub fn isSepWin32(char: u8) bool {
     return isSepWin32T(u8, char);
 }
 
-pub fn isSepWin32T(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepWin32T");
+pub fn isSepWin32T(comptime T: type, char: T) bool {
     return char == std.fs.path.sep_windows;
 }
 
@@ -1487,8 +1487,7 @@ pub fn isSepAny(char: u8) bool {
     return isSepAnyT(u8, char);
 }
 
-pub fn isSepAnyT(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepAnyT");
+pub fn isSepAnyT(comptime T: type, char: T) bool {
     return @call(.always_inline, isSepPosixT, .{ T, char }) or @call(.always_inline, isSepWin32T, .{ T, char });
 }
 
@@ -1496,8 +1495,7 @@ pub fn lastIndexOfSeparatorWindows(slice: []const u8) ?usize {
     return lastIndexOfSeparatorWindowsT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorWindowsT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorWindowsT");
+pub fn lastIndexOfSeparatorWindowsT(comptime T: type, slice: []const T) ?usize {
     return std.mem.lastIndexOfAny(T, slice, comptime strings.literal(T, "\\/"));
 }
 
@@ -1505,8 +1503,7 @@ pub fn lastIndexOfSeparatorPosix(slice: []const u8) ?usize {
     return lastIndexOfSeparatorPosixT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorPosixT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorPosixT");
+pub fn lastIndexOfSeparatorPosixT(comptime T: type, slice: []const T) ?usize {
     return std.mem.lastIndexOfScalar(T, slice, std.fs.path.sep_posix);
 }
 

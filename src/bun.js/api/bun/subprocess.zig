@@ -2202,8 +2202,6 @@ pub const Subprocess = struct {
                                 return .zero;
                             }
 
-                            // In the future, we should add a way to use a different IPC serialization format, specifically `json`.
-                            // but the only use case this has is doing interop with node.js IPC and other programs.
                             ipc_mode = ipc_mode: {
                                 if (args.get(globalThis, "ipcMode")) |mode_val| {
                                     if (mode_val.isString()) {

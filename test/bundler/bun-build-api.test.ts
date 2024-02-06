@@ -108,7 +108,6 @@ describe("Bun.build", () => {
       entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
     });
     const [blob] = x.outputs;
-    console.log(blob);
     expect(blob).toBeTruthy();
     expect(blob.type).toBe("text/javascript;charset=utf-8");
     expect(blob.size).toBeGreaterThan(1);

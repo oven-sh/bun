@@ -227,6 +227,7 @@ pub const IPCData = struct {
 
                 if (out.tag == .Dead) return false;
 
+                // TODO: it would be cool to have a 'toUTF8Into' which can write directly into 'ipc_data.outgoing.list'
                 const str = out.toUTF8(bun.default_allocator);
                 defer str.deinit();
 

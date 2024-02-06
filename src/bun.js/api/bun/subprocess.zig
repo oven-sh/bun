@@ -2198,7 +2198,7 @@ pub const Subprocess = struct {
                     if (args.getTruthy(globalThis, "ipc")) |val| {
                         if (val.isCell() and val.isCallable(globalThis.vm())) {
                             if (Environment.isWindows) {
-                                globalThis.throwInvalidArguments("IPC is not supported on Windows", .{});
+                                globalThis.throwTODO("IPC is not supported on Windows", .{});
                                 return .zero;
                             }
 

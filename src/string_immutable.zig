@@ -205,12 +205,8 @@ pub inline fn indexEqualAny(in: anytype, target: string) ?usize {
 
 pub fn repeatingAlloc(allocator: std.mem.Allocator, count: usize, char: u8) ![]u8 {
     const buf = try allocator.alloc(u8, count);
-    repeatingBuf(buf, char);
+    @memset(buf, char);
     return buf;
-}
-
-pub fn repeatingBuf(self: []u8, char: u8) void {
-    @memset(self, char);
 }
 
 pub fn indexOfCharNeg(self: string, char: u8) i32 {

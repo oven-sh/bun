@@ -4320,6 +4320,8 @@ pub fn NewFIFO(comptime EventLoop: JSC.EventLoopKind) type {
                 }
             }
 
+            if (this.pending.state != .pending) return;
+
             const read_result = this.read(
                 this.buf,
                 // On Linux, we end up calling ioctl() twice if we don't do this

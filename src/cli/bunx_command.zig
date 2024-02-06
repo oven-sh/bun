@@ -266,13 +266,13 @@ pub const BunxCommand = struct {
             force_using_bun,
         );
 
-        const ignore_cwd = this_bundler.env.map.get("BUN_WHICH_IGNORE_CWD") orelse "";
+        const ignore_cwd = this_bundler.env.get("BUN_WHICH_IGNORE_CWD") orelse "";
 
         if (ignore_cwd.len > 0) {
             _ = this_bundler.env.map.map.swapRemove("BUN_WHICH_IGNORE_CWD");
         }
 
-        var PATH = this_bundler.env.map.get("PATH").?;
+        var PATH = this_bundler.env.get("PATH").?;
         const display_version = if (update_request.version.literal.isEmpty())
             "latest"
         else

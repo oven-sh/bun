@@ -153,7 +153,7 @@ pub const ThreadPool = struct {
         } else {
             var cpu_count = @as(u32, @truncate(@max(std.Thread.getCpuCount() catch 2, 2)));
 
-            if (v2.bundler.env.map.get("GOMAXPROCS")) |max_procs| {
+            if (v2.bundler.env.get("GOMAXPROCS")) |max_procs| {
                 if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
                     cpu_count = cpu_count_;
                 } else |_| {}

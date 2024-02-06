@@ -232,18 +232,18 @@ pub const Stdio = union(enum) {
 
             return true;
         } else if (value.as(JSC.WebCore.Blob)) |blob| {
-            return extractStdioBlob(globalThis, .{ .Blob = blob.dupe() }, i, out_stdio);
+            return out_stdio.extractBlob(globalThis, .{ .Blob = blob.dupe() }, i);
         } else if (value.as(JSC.WebCore.Request)) |req| {
             req.getBodyValue().toBlobIfPossible();
-            return extractStdioBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i, out_stdio);
+            return out_stdio.extractBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i);
         } else if (value.as(JSC.WebCore.Response)) |req| {
             req.getBodyValue().toBlobIfPossible();
-            return extractStdioBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i, out_stdio);
+            return out_stdio.extractBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i);
         } else if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |req_const| {
             var req = req_const;
             if (i == 0) {
                 if (req.toAnyBlob(globalThis)) |blob| {
-                    return extractStdioBlob(globalThis, blob, i, out_stdio);
+                    return out_stdio.extractBlob(globalThis, blob, i);
                 }
 
                 switch (req.ptr) {
@@ -282,11 +282,11 @@ pub const Stdio = union(enum) {
         return false;
     }
 
-    pub fn extractStdioBlob(
+    pub fn extractBlob(
+        stdio: *Stdio,
         globalThis: *JSC.JSGlobalObject,
         blob: JSC.WebCore.AnyBlob,
         i: u32,
-        stdio_array: []Stdio,
     ) bool {
         const fd = bun.stdio(i);
 
@@ -294,7 +294,7 @@ pub const Stdio = union(enum) {
             if (blob.store()) |store| {
                 if (store.data.file.pathlike == .fd) {
                     if (store.data.file.pathlike.fd == fd) {
-                        stdio_array[i] = Stdio{ .inherit = .{} };
+                        stdio.* = Stdio{ .inherit = .{} };
                     } else {
                         switch (bun.FDTag.get(i)) {
                             .stdin => {
@@ -313,13 +313,13 @@ pub const Stdio = union(enum) {
                             else => {},
                         }
 
-                        stdio_array[i] = Stdio{ .fd = store.data.file.pathlike.fd };
+                        stdio.* = Stdio{ .fd = store.data.file.pathlike.fd };
                     }
 
                     return true;
                 }
 
-                stdio_array[i] = .{ .path = store.data.file.pathlike.path };
+                stdio.* = .{ .path = store.data.file.pathlike.path };
                 return true;
             }
         }
@@ -329,7 +329,7 @@ pub const Stdio = union(enum) {
             return false;
         }
 
-        stdio_array[i] = .{ .blob = blob };
+        stdio.* = .{ .blob = blob };
         return true;
     }
 };

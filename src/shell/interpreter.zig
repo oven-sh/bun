@@ -3325,23 +3325,23 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
                             } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
                                 if (this.node.redirect.stdin) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{
+                                    if (!spawn_args.stdio[stdin_no].extractBlob(this.base.interpreter.global, .{
                                         .Blob = blob.*,
-                                    }, stdin_no, &spawn_args.stdio)) {
+                                    }, stdin_no)) {
                                         return;
                                     }
                                 }
                                 if (this.node.redirect.stdout) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{
+                                    if (!spawn_args.stdio[stdin_no].extractBlob(this.base.interpreter.global, .{
                                         .Blob = blob.*,
-                                    }, stdout_no, &spawn_args.stdio)) {
+                                    }, stdout_no)) {
                                         return;
                                     }
                                 }
                                 if (this.node.redirect.stderr) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, .{
+                                    if (!spawn_args.stdio[stdin_no].extractBlob(this.base.interpreter.global, .{
                                         .Blob = blob.*,
-                                    }, stderr_no, &spawn_args.stdio)) {
+                                    }, stderr_no)) {
                                         return;
                                     }
                                 }
@@ -3354,17 +3354,17 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Response)) |req| {
                                 req.getBodyValue().toBlobIfPossible();
                                 if (this.node.redirect.stdin) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), stdin_no, &spawn_args.stdio)) {
+                                    if (!spawn_args.stdio[stdout_no].extractBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), stdin_no)) {
                                         return;
                                     }
                                 }
                                 if (this.node.redirect.stdout) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), stdout_no, &spawn_args.stdio)) {
+                                    if (!spawn_args.stdio[stdout_no].extractBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), stdout_no)) {
                                         return;
                                     }
                                 }
                                 if (this.node.redirect.stderr) {
-                                    if (!Subprocess.extractStdioBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), stderr_no, &spawn_args.stdio)) {
+                                    if (!spawn_args.stdio[stdout_no].extractBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), stderr_no)) {
                                         return;
                                     }
                                 }

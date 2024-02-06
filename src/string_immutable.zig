@@ -217,8 +217,7 @@ pub fn indexOfCharNeg(self: string, char: u8) i32 {
 }
 
 pub fn indexOfSigned(self: string, str: string) i32 {
-    const i = std.mem.indexOf(u8, self, str) orelse return -1;
-    return @as(i32, @intCast(i));
+    return @intCast(std.mem.indexOf(u8, self, str) orelse return -1);
 }
 
 pub inline fn lastIndexOfChar(self: []const u8, char: u8) ?usize {

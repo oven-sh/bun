@@ -25,6 +25,7 @@ const PosixSpawn = bun.posix.spawn;
 const Rusage = bun.posix.spawn.Rusage;
 const Process = bun.posix.spawn.Process;
 const WaiterThread = bun.posix.spawn.WaiterThread;
+const Stdio = bun.spawn.Stdio;
 
 pub const ResourceUsage = struct {
     pub usingnamespace JSC.Codegen.JSResourceUsage;
@@ -1419,7 +1420,7 @@ pub const Subprocess = struct {
                             var stdio_iter = stdio_val.arrayIterator(globalThis);
                             var i: u32 = 0;
                             while (stdio_iter.next()) |value| : (i += 1) {
-                                if (!extractStdio(globalThis, i, value, &stdio[i]))
+                                if (!stdio[i].extract(globalThis, i, value))
                                     return JSC.JSValue.jsUndefined();
                                 if (i == 2)
                                     break;
@@ -1428,7 +1429,7 @@ pub const Subprocess = struct {
 
                             while (stdio_iter.next()) |value| : (i += 1) {
                                 var new_item: Stdio = undefined;
-                                if (!extractStdio(globalThis, i, value, &new_item))
+                                if (&new_item.extract(globalThis, i, value))
                                     return JSC.JSValue.jsUndefined();
                                 switch (new_item) {
                                     .pipe => {
@@ -1437,7 +1438,9 @@ pub const Subprocess = struct {
                                             return .zero;
                                         };
                                     },
-                                    else => {},
+                                    else => {
+                                        // TODO: fix leak
+                                    },
                                 }
                             }
                         } else {
@@ -1447,17 +1450,17 @@ pub const Subprocess = struct {
                     }
                 } else {
                     if (args.get(globalThis, "stdin")) |value| {
-                        if (!extractStdio(globalThis, 0, value, &stdio[0]))
+                        if (!stdio[0].extract(globalThis, 0, value))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stderr")) |value| {
-                        if (!extractStdio(globalThis, 2, value, &stdio[2]))
+                        if (!stdio[2].extract(globalThis, 2, value))
                             return .zero;
                     }
 
                     if (args.get(globalThis, "stdout")) |value| {
-                        if (!extractStdio(globalThis, 1, value, &stdio[1]))
+                        if (!stdio[1].extract(globalThis, 1, value))
                             return .zero;
                     }
                 }

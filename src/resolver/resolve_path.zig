@@ -553,9 +553,8 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                     }
                 }
             }
-        } else {
-            // TODO(dylan-conway): use strings.indexOfAny instead of std
-            if (std.mem.indexOfAny(T, path[3..], comptime strings.literal(T, "/\\"))) |idx| {
+        } else if (T == u16) {
+            if (strings.indexOfAny16(path[3..], comptime strings.literal(T, "/\\"))) |idx| {
                 // TODO: handle input "//abc//def" should be picked up as a unc path
                 if (path.len > idx + 4 and !Platform.windows.isSeparatorT(T, path[idx + 4])) {
                     if (std.mem.indexOfAny(T, path[idx + 4 ..], comptime strings.literal(T, "/\\"))) |idx2| {
@@ -565,6 +564,8 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                     }
                 }
             }
+        } else {
+            @compileError("unreachable: " ++ @typeName(T));
         }
     }
     return .{ 0, 0 };

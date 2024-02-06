@@ -307,23 +307,21 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                         return subproc_readable_ptr.*;
                     },
                     .inherit => {
-                        // Same as pipe
-                        if (stdio.inherit.captured != null) {
-                            var subproc_readable_ptr = subproc.getIO(kind);
-                            subproc_readable_ptr.* = Readable{ .pipe = .{ .buffer = undefined } };
-                            BufferedOutput.initWithAllocator(subproc, &subproc_readable_ptr.pipe.buffer, kind, allocator, fd.?, max_size);
-                            subproc_readable_ptr.pipe.buffer.out = stdio.inherit.captured.?;
-                            subproc_readable_ptr.pipe.buffer.writer = BufferedOutput.CapturedBufferedWriter{
-                                .src = WriterSrc{
-                                    .inner = &subproc_readable_ptr.pipe.buffer,
-                                },
-                                .fd = if (kind == .stdout) bun.STDOUT_FD else bun.STDERR_FD,
-                                .parent = .{ .parent = &subproc_readable_ptr.pipe.buffer },
-                            };
-                            return subproc_readable_ptr.*;
-                        }
-
                         return Readable{ .inherit = {} };
+                    },
+                    .captured => |captured| {
+                        var subproc_readable_ptr = subproc.getIO(kind);
+                        subproc_readable_ptr.* = Readable{ .pipe = .{ .buffer = undefined } };
+                        BufferedOutput.initWithAllocator(subproc, &subproc_readable_ptr.pipe.buffer, kind, allocator, fd.?, max_size);
+                        subproc_readable_ptr.pipe.buffer.out = captured;
+                        subproc_readable_ptr.pipe.buffer.writer = BufferedOutput.CapturedBufferedWriter{
+                            .src = WriterSrc{
+                                .inner = &subproc_readable_ptr.pipe.buffer,
+                            },
+                            .fd = if (kind == .stdout) bun.STDOUT_FD else bun.STDERR_FD,
+                            .parent = .{ .parent = &subproc_readable_ptr.pipe.buffer },
+                        };
+                        return subproc_readable_ptr.*;
                     },
                     .path => Readable{ .ignore = {} },
                     .blob, .fd => Readable{ .fd = fd.? },
@@ -1113,15 +1111,6 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         }
 
         const os = std.os;
-
-        pub fn extractStdioBlob(
-            globalThis: *JSC.JSGlobalObject,
-            blob: JSC.WebCore.AnyBlob,
-            i: u32,
-            stdio_array: []Stdio,
-        ) bool {
-            return util.extractStdioBlob(globalThis, blob, i, stdio_array);
-        }
     };
 }
 

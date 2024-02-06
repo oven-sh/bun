@@ -273,7 +273,7 @@ pub const RunCommand = struct {
         silent: bool,
         use_native_shell: bool,
     ) !bool {
-        const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+        const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         const script = original_script;
         var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
@@ -692,7 +692,7 @@ pub const RunCommand = struct {
         if (env == null) {
             this_bundler.env.loadProcess();
 
-            if (this_bundler.env.map.get("NODE_ENV")) |node_env| {
+            if (this_bundler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
                     this_bundler.options.production = true;
                 }
@@ -770,7 +770,7 @@ pub const RunCommand = struct {
             }
         }
 
-        const PATH = this_bundler.env.map.get("PATH") orelse "";
+        const PATH = this_bundler.env.get("PATH") orelse "";
         if (ORIGINAL_PATH) |original_path| {
             original_path.* = PATH;
         }
@@ -869,7 +869,7 @@ pub const RunCommand = struct {
         {
             this_bundler.env.loadProcess();
 
-            if (this_bundler.env.map.get("NODE_ENV")) |node_env| {
+            if (this_bundler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
                     this_bundler.options.production = true;
                 }
@@ -878,7 +878,7 @@ pub const RunCommand = struct {
 
         const ResultList = bun.StringArrayHashMap(void);
 
-        if (this_bundler.env.map.get("SHELL")) |shell| {
+        if (this_bundler.env.get("SHELL")) |shell| {
             shell_out.shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell), shell);
         }
 
@@ -961,7 +961,7 @@ pub const RunCommand = struct {
                     }
 
                     var max_description_len: usize = 20;
-                    if (this_bundler.env.map.get("MAX_DESCRIPTION_LEN")) |max| {
+                    if (this_bundler.env.get("MAX_DESCRIPTION_LEN")) |max| {
                         if (std.fmt.parseInt(usize, max, 10) catch null) |max_len| {
                             max_description_len = max_len;
                         }
@@ -1422,7 +1422,7 @@ pub const RunCommand = struct {
             comptime unreachable;
         }
 
-        const PATH = this_bundler.env.map.get("PATH") orelse "";
+        const PATH = this_bundler.env.get("PATH") orelse "";
         var path_for_which = PATH;
         if (comptime bin_dirs_only) {
             if (ORIGINAL_PATH.len < PATH.len) {

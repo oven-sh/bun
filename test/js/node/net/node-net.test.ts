@@ -261,7 +261,8 @@ describe("net.Socket read", () => {
 
 describe("net.Socket write", () => {
   const message = "Hello World!".repeat(1024);
-  let port = 53213;
+  let port = 50000;
+  let hostname = "localhost";
 
   function runWithServer(cb: (..._: any[]) => void) {
     return (done: (_?: any) => void) => {
@@ -269,13 +270,14 @@ describe("net.Socket write", () => {
 
       function close(socket: _BunSocket<Buffer[]>) {
         expect(Buffer.concat(socket.data).toString("utf8")).toBe(message);
+        server.stop();
         done();
       }
 
       var leaky;
       server = Bun.listen({
         hostname: "0.0.0.0",
-        port: 0,
+        port: port,
         socket: {
           close,
           data(socket, buffer) {
@@ -316,7 +318,7 @@ describe("net.Socket write", () => {
     "should work with .end(data)",
     runWithServer((server, done) => {
       const socket = new Socket()
-        .connect(server.port, server.hostname)
+        .connect(server.port, hostname)
         .on("ready", () => {
           expect(socket).toBeDefined();
           expect(socket.connecting).toBe(false);
@@ -330,7 +332,7 @@ describe("net.Socket write", () => {
     "should work with .write(data).end()",
     runWithServer((server, done) => {
       const socket = new Socket()
-        .connect(server.port, server.hostname, () => {
+        .connect(server.port, hostname, () => {
           expect(socket).toBeDefined();
           expect(socket.connecting).toBe(false);
         })
@@ -344,7 +346,7 @@ describe("net.Socket write", () => {
     "should work with multiple .write()s",
     runWithServer((server, done) => {
       const socket = new Socket()
-        .connect(server.port, server.hostname, () => {
+        .connect(server.port, hostname, () => {
           expect(socket).toBeDefined();
           expect(socket.connecting).toBe(false);
         })

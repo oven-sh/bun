@@ -220,31 +220,11 @@ pub const StatWatcher = struct {
             if (arguments.nextEat()) |options_or_callable| {
                 // options
                 if (options_or_callable.isObject()) {
-                    if (options_or_callable.get(ctx, "persistent")) |persistent_| {
-                        if (!persistent_.isBoolean()) {
-                            JSC.throwInvalidArguments(
-                                "persistent must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
-                        }
-                        persistent = persistent_.toBoolean();
-                    }
+                    // default true
+                    persistent = (options_or_callable.getOptional(ctx, "persistent", bool) catch return null) orelse true;
 
-                    if (options_or_callable.get(ctx, "bigint")) |bigint_| {
-                        if (!bigint_.isBoolean()) {
-                            JSC.throwInvalidArguments(
-                                "bigint must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
-                        }
-                        bigint = bigint_.toBoolean();
-                    }
+                    // default false
+                    bigint = (options_or_callable.getOptional(ctx, "bigint", bool) catch return null) orelse false;
 
                     if (options_or_callable.get(ctx, "interval")) |interval_| {
                         if (!interval_.isNumber()) {

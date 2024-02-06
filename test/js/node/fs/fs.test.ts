@@ -1163,6 +1163,15 @@ it("readlink", () => {
   expect(readlinkSync(actual)).toBe(realpathSync(import.meta.path));
 });
 
+it.if(isWindows)("symlink on windows with forward slashes", async () => {
+  const r = join(tmpdir(), Math.random().toString(32));
+  await fs.promises.rm(join(r, "files/2024"), { recursive: true, force: true });
+  await fs.promises.mkdir(join(r, "files/2024"), { recursive: true });
+  await fs.promises.writeFile(join(r, "files/2024/123.txt"), "text");
+  await fs.promises.symlink("files/2024/123.txt", join(r, "file-sym.txt"));
+  expect(await fs.promises.readlink(join(r, "file-sym.txt"))).toBe("files\\2024\\123.txt");
+});
+
 it("realpath async", async () => {
   const actual = join(tmpdir(), Math.random().toString(32) + "-fs-realpath.txt");
   try {

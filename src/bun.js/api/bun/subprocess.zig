@@ -2524,7 +2524,9 @@ pub const Subprocess = struct {
         // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
         var socket: IPC.Socket = undefined;
         if ((comptime !is_sync) and ipc_mode != .none) {
-            env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            // each item is a [*]const u8, and then a null at the end.
+            env_array.ensureUnusedCapacity(allocator, 2 + @intFromBool(ipc_mode != .json)) catch |err| return globalThis.handleError(err, "in posix_spawn");
+
             env_array.appendAssumeCapacity("NODE_CHANNEL_FD=3");
             if (ipc_mode != .json) {
                 std.debug.assert(ipc_mode == .advanced);

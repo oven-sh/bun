@@ -3,7 +3,7 @@ import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, toHaveBins, toBeValidBin, toBeWorkspaceLink, ospath } from "harness";
 import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile, appendFile } from "fs/promises";
-import { join, relative, normalize, win32 } from "path";
+import { join, relative } from "path";
 import { tmpdir } from "os";
 import {
   dummyAfterAll,
@@ -132,7 +132,48 @@ it("should reject missing package", async () => {
   );
 });
 
-it("should reject invalid path without segfault", async () => {
+it.each(["file://", "file:/", "file:"])("should accept file protocol with prefix %s", async protocolPrefix => {
+  await writeFile(
+    join(add_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.2.3",
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "bar",
+      version: "2.3.4",
+    }),
+  );
+  const add_path = relative(package_dir, add_dir);
+  const dep = `${protocolPrefix}${add_path.replace(/\\/g, "/")}`;
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", dep],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    ` installed foo@${add_path}`,
+    "",
+    " 1 package installed",
+  ]);
+  expect(await exited).toBe(0);
+});
+
+it.each(["fileblah://", "file:///"])("should reject invalid path without segfault", async protocolPrefix => {
   await writeFile(
     join(add_dir, "package.json"),
     JSON.stringify({
@@ -147,8 +188,8 @@ it("should reject invalid path without segfault", async () => {
       version: "0.0.2",
     }),
   );
-  const add_path = relative(package_dir, add_dir);
-  const dep = `file://${add_path}`.replace(/\\/g, "\\\\");
+  const add_path = relative(package_dir, add_dir).replace(/\\/g, "\\\\");
+  const dep = `${protocolPrefix}${add_path}`;
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", dep],
     cwd: package_dir,
@@ -160,8 +201,11 @@ it("should reject invalid path without segfault", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).toContain("bun add");
-  expect(err).toContain("error: MissingPackageJSON");
-  expect(err).toContain(`note: error occured while resolving ${dep}`);
+  if (protocolPrefix === "file:///") {
+    expect(err).toContain("error: MissingPackageJSON");
+  } else {
+    expect(err).toContain(`error: unrecognised dependency format: ${dep}`);
+  }
 
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -1629,7 +1673,7 @@ it("should add dependencies to workspaces directly", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` installed foo@${relative(package_dir, add_dir)}`,
+    ` installed foo@${add_path}`,
     "",
     " 1 package installed",
   ]);

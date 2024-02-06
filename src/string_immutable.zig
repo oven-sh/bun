@@ -39,38 +39,19 @@ pub inline fn w(comptime str: []const u8) [:0]const u16 {
     return Static.literal;
 }
 
-pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
-    return comptime literal(u16, str);
-}
-
 pub inline fn literal(comptime T: type, comptime str: string) []const T {
-    if (!@inComptime()) @compileError("strings.literal() should be called in a comptime context");
-    comptime var output: [str.len]T = undefined;
-
-    for (str, 0..) |c, i| {
-        // TODO(dylan-conway): should we check for non-ascii characters like JSC does with operator""_s
-        output[i] = c;
-    }
-
-    const Static = struct {
-        pub const literal: []const T = output[0..];
+    // literals are already utf-8 by default
+    // make sure we don't get any garbage passed by accident
+    comptime std.debug.assert(std.unicode.utf8ValidateSlice(str));
+    return comptime switch (T) {
+        u8 => str,
+        u16 => std.unicode.utf8ToUtf16LeStringLiteral(str),
+        else => @compileError("unreachable: " ++ @typeName(T)),
     };
-    return Static.literal;
 }
 
 pub inline fn literalBuf(comptime T: type, comptime str: string) [str.len]T {
-    if (!@inComptime()) @compileError("strings.literalBuf() should be called in a comptime context");
-    comptime var output: [str.len]T = undefined;
-
-    for (str, 0..) |c, i| {
-        // TODO(dylan-conway): should we check for non-ascii characters like JSC does with operator""_s
-        output[i] = c;
-    }
-
-    const Static = struct {
-        pub const literal: [str.len]T = output;
-    };
-    return Static.literal;
+    return literal(u8, str)[0..str.len].*;
 }
 
 pub inline fn toUTF16LiteralZ(comptime str: []const u8) [:0]const u16 {
@@ -599,7 +580,7 @@ test "eqlComptimeCheckLen" {
 }
 
 test "eqlComptimeUTF16" {
-    try std.testing.expectEqual(eqlComptimeUTF16(toUTF16Literal("bun-darwin-aarch64.zip"), "bun-darwin-aarch64.zip"), true);
+    try std.testing.expectEqual(eqlComptimeUTF16(literal(u16, "bun-darwin-aarch64.zip"), "bun-darwin-aarch64.zip"), true);
     const sizes = [_]u16{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 23, 22, 24 };
     inline for (sizes) |size| {
         var buf: [size]u16 = undefined;
@@ -858,7 +839,7 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
 }
 
 pub fn eqlComptimeUTF16(self: []const u16, comptime alt: []const u8) bool {
-    return eqlComptimeCheckLenWithType(u16, self, comptime toUTF16Literal(alt), true);
+    return eqlComptimeCheckLenWithType(u16, self, comptime literal(u16, alt), true);
 }
 
 pub fn eqlComptimeIgnoreLen(self: string, comptime alt: anytype) bool {
@@ -874,7 +855,7 @@ pub fn isBunStandaloneFilePath(self: string) bool {
 }
 
 pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool {
-    return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], comptime toUTF16Literal(alt), false);
+    return self.len >= alt.len and eqlComptimeCheckLenWithType(u16, self[0..alt.len], comptime literal(u16, alt), false);
 }
 
 pub fn hasPrefixComptimeType(comptime T: type, self: []const T, comptime alt: anytype) bool {
@@ -2816,20 +2797,20 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
         },
         2 => {
             const first_16 = switch (utf16[0]) {
-                '"' => toUTF16Literal("&quot;"),
-                '&' => toUTF16Literal("&amp;"),
-                '\'' => toUTF16Literal("&#x27;"),
-                '<' => toUTF16Literal("&lt;"),
-                '>' => toUTF16Literal("&gt;"),
+                '"' => literal(u16, "&quot;"),
+                '&' => literal(u16, "&amp;"),
+                '\'' => literal(u16, "&#x27;"),
+                '<' => literal(u16, "&lt;"),
+                '>' => literal(u16, "&gt;"),
                 else => @as([]const u16, utf16[0..1]),
             };
 
             const second_16 = switch (utf16[1]) {
-                '"' => toUTF16Literal("&quot;"),
-                '&' => toUTF16Literal("&amp;"),
-                '\'' => toUTF16Literal("&#x27;"),
-                '<' => toUTF16Literal("&lt;"),
-                '>' => toUTF16Literal("&gt;"),
+                '"' => literal(u16, "&quot;"),
+                '&' => literal(u16, "&amp;"),
+                '\'' => literal(u16, "&#x27;"),
+                '<' => literal(u16, "&lt;"),
+                '>' => literal(u16, "&gt;"),
                 else => @as([]const u16, utf16[1..2]),
             };
 
@@ -2904,11 +2885,11 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                             switch (remaining[i]) {
                                 '"', '&', '\'', '<', '>' => |c| {
                                     const result = switch (c) {
-                                        '"' => toUTF16Literal("&quot;"),
-                                        '&' => toUTF16Literal("&amp;"),
-                                        '\'' => toUTF16Literal("&#x27;"),
-                                        '<' => toUTF16Literal("&lt;"),
-                                        '>' => toUTF16Literal("&gt;"),
+                                        '"' => literal(u16, "&quot;"),
+                                        '&' => literal(u16, "&amp;"),
+                                        '\'' => literal(u16, "&#x27;"),
+                                        '<' => literal(u16, "&lt;"),
+                                        '>' => literal(u16, "&gt;"),
                                         else => unreachable,
                                     };
 
@@ -2954,23 +2935,23 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                             while (i < ascii_u16_vector_size) {
                                 switch (remaining[i]) {
                                     '"' => {
-                                        buf.appendSlice(toUTF16Literal("&quot;")) catch unreachable;
+                                        buf.appendSlice(literal(u16, "&quot;")) catch unreachable;
                                         i += 1;
                                     },
                                     '&' => {
-                                        buf.appendSlice(toUTF16Literal("&amp;")) catch unreachable;
+                                        buf.appendSlice(literal(u16, "&amp;")) catch unreachable;
                                         i += 1;
                                     },
                                     '\'' => {
-                                        buf.appendSlice(toUTF16Literal("&#x27;")) catch unreachable; // modified from escape-html; used to be '&#39'
+                                        buf.appendSlice(literal(u16, "&#x27;")) catch unreachable; // modified from escape-html; used to be '&#39'
                                         i += 1;
                                     },
                                     '<' => {
-                                        buf.appendSlice(toUTF16Literal("&lt;")) catch unreachable;
+                                        buf.appendSlice(literal(u16, "&lt;")) catch unreachable;
                                         i += 1;
                                     },
                                     '>' => {
-                                        buf.appendSlice(toUTF16Literal("&gt;")) catch unreachable;
+                                        buf.appendSlice(literal(u16, "&gt;")) catch unreachable;
                                         i += 1;
                                     },
                                     128...std.math.maxInt(u16) => {
@@ -3029,23 +3010,23 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
             while (ptr != end) {
                 switch (ptr[0]) {
                     '"' => {
-                        buf.appendSlice(toUTF16Literal("&quot;")) catch unreachable;
+                        buf.appendSlice(literal(u16, "&quot;")) catch unreachable;
                         ptr += 1;
                     },
                     '&' => {
-                        buf.appendSlice(toUTF16Literal("&amp;")) catch unreachable;
+                        buf.appendSlice(literal(u16, "&amp;")) catch unreachable;
                         ptr += 1;
                     },
                     '\'' => {
-                        buf.appendSlice(toUTF16Literal("&#x27;")) catch unreachable; // modified from escape-html; used to be '&#39'
+                        buf.appendSlice(literal(u16, "&#x27;")) catch unreachable; // modified from escape-html; used to be '&#39'
                         ptr += 1;
                     },
                     '<' => {
-                        buf.appendSlice(toUTF16Literal("&lt;")) catch unreachable;
+                        buf.appendSlice(literal(u16, "&lt;")) catch unreachable;
                         ptr += 1;
                     },
                     '>' => {
-                        buf.appendSlice(toUTF16Literal("&gt;")) catch unreachable;
+                        buf.appendSlice(literal(u16, "&gt;")) catch unreachable;
                         ptr += 1;
                     },
                     128...std.math.maxInt(u16) => {
@@ -4485,34 +4466,34 @@ test "firstNonASCII" {
 
 test "firstNonASCII16" {
     @setEvalBranchQuota(99999);
-    const yes = std.mem.bytesAsSlice(u16, toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+    const yes = std.mem.bytesAsSlice(u16, literal(u16, "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
     try std.testing.expectEqual(true, firstNonASCII16(@TypeOf(yes), yes) == null);
 
     {
         @setEvalBranchQuota(99999);
-        const no = std.mem.bytesAsSlice(u16, toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdoka🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+        const no = std.mem.bytesAsSlice(u16, literal(u16, "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdoka🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
         try std.testing.expectEqual(@as(u32, 50), firstNonASCII16(@TypeOf(no), no).?);
     }
     {
         @setEvalBranchQuota(99999);
-        const no = std.mem.bytesAsSlice(u16, toUTF16Literal("🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+        const no = std.mem.bytesAsSlice(u16, literal(u16, "🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
         try std.testing.expectEqual(@as(u32, 0), firstNonASCII16(@TypeOf(no), no).?);
     }
     {
         @setEvalBranchQuota(99999);
-        const no = std.mem.bytesAsSlice(u16, toUTF16Literal("a🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+        const no = std.mem.bytesAsSlice(u16, literal(u16, "a🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
         try std.testing.expectEqual(@as(u32, 1), firstNonASCII16(@TypeOf(no), no).?);
     }
     {
         @setEvalBranchQuota(99999);
-        const no = std.mem.bytesAsSlice(u16, toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3"));
+        const no = std.mem.bytesAsSlice(u16, literal(u16, "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3"));
         try std.testing.expectEqual(@as(u32, 366), firstNonASCII16(@TypeOf(no), no).?);
     }
 }
 
 test "print UTF16" {
     var err = std.io.getStdErr();
-    const utf16 = comptime toUTF16Literal("❌ ✅ opkay ");
+    const utf16 = comptime literal(u16, "❌ ✅ opkay ");
     try bun.fmt.str.formatUTF16(utf16, err.writer());
     // std.unicode.fmtUtf16le(utf16le: []const u16)
 }

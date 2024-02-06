@@ -34,7 +34,6 @@ it("should support net.isIPv6()", () => {
 });
 
 describe("net.Socket read", () => {
-  var port = 12345;
   var unix_servers = 0;
   for (let [message, label] of [
     // ["Hello World!".repeat(1024), "long message"],
@@ -261,7 +260,6 @@ describe("net.Socket read", () => {
 
 describe("net.Socket write", () => {
   const message = "Hello World!".repeat(1024);
-  let port = 50000;
   let hostname = "localhost";
 
   function runWithServer(cb: (..._: any[]) => void) {
@@ -277,7 +275,7 @@ describe("net.Socket write", () => {
       var leaky;
       server = Bun.listen({
         hostname: "0.0.0.0",
-        port: port,
+        port: 0,
         socket: {
           close,
           data(socket, buffer) {

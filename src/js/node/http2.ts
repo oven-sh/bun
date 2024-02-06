@@ -679,10 +679,7 @@ function emitAbortedNT(self, streams, streamId, error) {
   self.emit("streamError", error_instance);
 }
 class ClientHttp2Session extends Http2Session {
-  /// close indicates that we called closed
   #closed: boolean = false;
-  /// connected indicates that the connection/socket is connected
-  #connected: boolean = false;
   #queue: Array<Buffer> = [];
   #connections: number = 0;
   [bunHTTP2Socket]: TLSSocket | Socket | null;
@@ -766,33 +763,33 @@ class ClientHttp2Session extends Http2Session {
     ) {
       if (!self) return;
       var stream = self.#streams.get(streamId);
-      if (!stream) return;
-
-      let status: string | number = headers[":status"] as string;
-      if (status) {
-        // client status is always number
-        status = parseInt(status as string, 10);
-        (headers as Record<string, string | number>)[":status"] = status;
-      }
-
-      let set_cookies = headers["set-cookie"];
-      if (typeof set_cookies === "string") {
-        (headers as Record<string, string | string[]>)["set-cookie"] = [set_cookies];
-      }
-
-      let cookie = headers["cookie"];
-      if ($isArray(cookie)) {
-        headers["cookie"] = (headers["cookie"] as string[]).join(";");
-      }
-      if (stream[bunHTTP2StreamResponded]) {
-        try {
-          stream.emit("trailers", headers, flags);
-        } catch {
-          process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, constants.NGHTTP2_PROTOCOL_ERROR, true);
+      if (stream) {
+        let status: string | number = headers[":status"] as string;
+        if (status) {
+          // client status is always number
+          status = parseInt(status as string, 10);
+          (headers as Record<string, string | number>)[":status"] = status;
         }
-      } else {
-        stream[bunHTTP2StreamResponded] = true;
-        stream.emit("response", headers, flags);
+
+        let set_cookies = headers["set-cookie"];
+        if (typeof set_cookies === "string") {
+          (headers as Record<string, string | string[]>)["set-cookie"] = [set_cookies];
+        }
+
+        let cookie = headers["cookie"];
+        if ($isArray(cookie)) {
+          headers["cookie"] = (headers["cookie"] as string[]).join(";");
+        }
+        if (stream[bunHTTP2StreamResponded]) {
+          try {
+            stream.emit("trailers", headers, flags);
+          } catch {
+            process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, constants.NGHTTP2_PROTOCOL_ERROR, true);
+          }
+        } else {
+          stream[bunHTTP2StreamResponded] = true;
+          stream.emit("response", headers, flags);
+        }
       }
 
       let set_cookies = headers["set-cookie"];
@@ -898,13 +895,12 @@ class ClientHttp2Session extends Http2Session {
     write(self: ClientHttp2Session, buffer: Buffer) {
       if (!self) return;
       const socket = self[bunHTTP2Socket];
-      if (!socket) return;
-      if (self.#connected) {
-        // redirect writes to socket
-        socket.write(buffer);
-      } else {
+      if (self.#closed) {
         //queue
         self.#queue.push(buffer);
+      } else {
+        // redirect writes to socket
+        socket.write(buffer);
       }
     },
   };
@@ -924,7 +920,6 @@ class ClientHttp2Session extends Http2Session {
   #onConnect() {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
-    this.#connected = true;
     // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
       if (socket.alpnProtocol !== "h2") {
@@ -1155,7 +1150,6 @@ class ClientHttp2Session extends Http2Session {
   destroy(error?: Error, code?: number) {
     const socket = this[bunHTTP2Socket];
     this.#closed = true;
-    this.#connected = false;
     code = code || constants.NGHTTP2_NO_ERROR;
     if (socket) {
       this.goaway(code, 0, Buffer.alloc(0));

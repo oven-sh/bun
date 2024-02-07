@@ -753,6 +753,14 @@ static int bsd_do_connect(struct addrinfo *rp, int *fd)
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, const char *source_host, int options) {
 #ifdef _WIN32
+    // The caller (sometimes) uses NULL to indicate localhost. This works fine with getaddrinfo, but not with WSAConnectByName
+    if (!host) {
+        host = "localhost";
+    } else if (strcmp(host, "0.0.0.0") == 0 || strcmp(host, "::") == 0 || strcmp(host, "[::]") == 0) {
+        // windows disallows connecting to 0.0.0.0. To emulate POSIX behavior, we connect to localhost instead
+        // Also see https://docs.libuv.org/en/v1.x/tcp.html#c.uv_tcp_connect
+        host = "localhost";
+    }
     // On windows we use WSAConnectByName to speed up connecting to localhost
     // The other implementation also works on windows, but is slower
     char port_string[16];

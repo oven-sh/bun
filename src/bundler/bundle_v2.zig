@@ -573,6 +573,7 @@ pub const BundleV2 = struct {
             const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
             path.pretty = this.graph.allocator.dupe(u8, rel) catch @panic("Ran out of memory");
         }
+        path.assertPrettyIsValid();
 
         var secondary_path_to_copy: ?Fs.Path = null;
         if (resolve_result.path_pair.secondary) |*secondary| {
@@ -2009,6 +2010,7 @@ pub const BundleV2 = struct {
                 const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
                 path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
             }
+            path.assertPrettyIsValid();
             path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
 
             var secondary_path_to_copy: ?Fs.Path = null;
@@ -7110,11 +7112,7 @@ const LinkerContext = struct {
                     if (source.path.isFile()) {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
-                        if (Environment.isWindows and Environment.allow_assert) {
-                            if (std.mem.indexOfScalar(u8, source.path.pretty, '\\') != null) {
-                                std.debug.panic("Expected pretty file path to have only forward slashes, got '{s}'", .{source.path.pretty});
-                            }
-                        }
+                        source.path.assertPrettyIsValid();
                         break :brk source.path.pretty;
                     } else {
                         // If this isn't in the "file" namespace, just use the full path text
@@ -11289,7 +11287,7 @@ pub const Chunk = struct {
                                     if (from_chunk_dir.len == 0)
                                         file_path
                                     else
-                                        bun.path.relativePlatform(from_chunk_dir, file_path, .loose, false),
+                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
                                 );
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
@@ -11324,6 +11322,7 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
+
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)

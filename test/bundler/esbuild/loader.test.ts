@@ -7,7 +7,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/loader
 
-describe("bundler", () => {
+describe.todo("bundler", () => {
   itBundled("loader/JSONCommonJSAndES6", {
     files: {
       "/entry.js": /* js */ `

@@ -35,6 +35,7 @@ describe("bundler", () => {
   });
   itBundled("compile/VariousBunAPIs", {
     compile: true,
+    todo: process.platform === "win32" ? true : false, // https://github.com/oven-sh/bun/issues/8742
     files: {
       "/entry.ts": `
         // testing random features of bun

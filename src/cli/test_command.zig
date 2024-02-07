@@ -719,11 +719,28 @@ pub const TestCommand = struct {
             // Treat arguments as filters and scan the codebase
             const filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..];
 
+            const filter_names_normalized = if (!Environment.isWindows)
+                filter_names
+            else brk: {
+                const normalized = try ctx.allocator.alloc([]const u8, filter_names.len);
+                for (filter_names, normalized) |in, *out| {
+                    const to_normalize = try ctx.allocator.dupe(u8, in);
+                    bun.path.posixToPlatformInPlace(u8, to_normalize);
+                    out.* = to_normalize;
+                }
+                break :brk normalized;
+            };
+            defer if (Environment.isWindows) {
+                for (filter_names_normalized) |i|
+                    ctx.allocator.free(i);
+                ctx.allocator.free(filter_names_normalized);
+            };
+
             var scanner = Scanner{
                 .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
                 .options = &vm.bundler.options,
                 .fs = vm.bundler.fs,
-                .filter_names = filter_names,
+                .filter_names = filter_names_normalized,
                 .results = &results,
             };
             const dir_to_scan = brk: {

@@ -11255,14 +11255,16 @@ pub const Chunk = struct {
             switch (this) {
                 .pieces => |*pieces| {
                     var count: usize = 0;
-                    const file_path_buf: [4096]u8 = undefined;
-                    _ = file_path_buf;
                     var from_chunk_dir = std.fs.path.dirnamePosix(chunk.final_rel_path) orelse "";
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
 
                     for (pieces.slice()) |piece| {
                         count += piece.data_len;
+
+                        if (Environment.allow_assert) {
+                            std.debug.assert(piece.data().len == piece.data_len);
+                        }
 
                         switch (piece.index.kind) {
                             .chunk, .asset => {
@@ -11303,10 +11305,10 @@ pub const Chunk = struct {
                     for (pieces.slice()) |piece| {
                         const data = piece.data();
 
-                        if (data.len > 0)
+                        if (data.len > 0) {
                             @memcpy(remain[0..data.len], data);
-
-                        remain = remain[data.len..];
+                            remain = remain[data.len..];
+                        }
 
                         switch (piece.index.kind) {
                             .asset, .chunk => {
@@ -11323,8 +11325,6 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     else => unreachable,
                                 };
-                                // normalize windows paths to '/'
-                                bun.path.platformToPosixInPlace(u8, @constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
                                     if (from_chunk_dir.len == 0)

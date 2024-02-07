@@ -212,7 +212,7 @@ pub const CommandLineReporter = struct {
 
         if (this.jest.bail == this.summary.fail) {
             this.printSummary();
-            Output.prettyError("\nBailed out after {d} failures<r>\n", .{this.jest.bail});
+            Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.jest.bail, if (this.jest.bail == 1) "" else "s" });
             Global.exit(1);
         }
     }
@@ -1031,7 +1031,7 @@ pub const TestCommand = struct {
 
                     if (reporter.jest.bail == reporter.summary.fail) {
                         reporter.printSummary();
-                        Output.prettyError("\nBailed out after {d} failures<r>\n", .{reporter.jest.bail});
+                        Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
                         Global.exit(1);
                     }
 

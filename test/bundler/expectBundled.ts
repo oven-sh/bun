@@ -621,11 +621,18 @@ function expectBundled(
         .map(x => String(x)) as [string, ...string[]];
 
       if (DEBUG) {
-        writeFileSync(
-          path.join(root, "run.sh"),
-          "#!/bin/sh\n" +
+        if (process.platform !== "win32") {
+          writeFileSync(
+            path.join(root, "run.sh"),
+            "#!/bin/sh\n" +
+              cmd.map(x => (x.match(/^[a-z0-9_:=\./\\-]+$/i) ? x : `"${x.replace(/"/g, '\\"')}"`)).join(" "),
+          );
+        } else {
+          writeFileSync(
+            path.join(root, "run.ps1"),
             cmd.map(x => (x.match(/^[a-z0-9_:=\./\\-]+$/i) ? x : `"${x.replace(/"/g, '\\"')}"`)).join(" "),
-        );
+          );
+        }
         try {
           mkdirSync(path.join(root, ".vscode"), { recursive: true });
         } catch (e) {}
@@ -639,30 +646,22 @@ function expectBundled(
                 ...(compile
                   ? [
                       {
-                        "type": "lldb",
+                        "type": process.platform !== "win32" ? "lldb" : "cppvsdbg",
                         "request": "launch",
                         "name": "run compiled exe",
                         "program": outfile,
                         "args": [],
                         "cwd": root,
-                        "env": {
-                          "FORCE_COLOR": "1",
-                        },
-                        "console": "internalConsole",
                       },
                     ]
                   : []),
                 {
-                  "type": "lldb",
+                  "type": process.platform !== "win32" ? "lldb" : "cppvsdbg",
                   "request": "launch",
                   "name": "bun test",
                   "program": cmd[0],
                   "args": cmd.slice(1),
                   "cwd": root,
-                  "env": {
-                    "FORCE_COLOR": "1",
-                  },
-                  "console": "internalConsole",
                 },
               ],
             },

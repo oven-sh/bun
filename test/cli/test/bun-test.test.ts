@@ -293,7 +293,7 @@ describe("bun test", () => {
           });
         `,
       });
-      expect(stderr).toContain("Bailed out after 1 failures");
+      expect(stderr).toContain("Bailed out after 1 failure");
       expect(stderr).not.toContain("test #2");
     });
 

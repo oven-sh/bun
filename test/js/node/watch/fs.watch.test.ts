@@ -408,27 +408,27 @@ describe("fs.watch", () => {
   test("should throw if no permission to watch the directory", async () => {
     const filepath = path.join(testDir, "permission-dir");
     fs.mkdirSync(filepath, { recursive: true });
-    await fs.promises.chmod(filepath, 0o200);
+    fs.chmodSync(filepath, 0o200);
     try {
       const watcher = fs.watch(filepath);
       watcher.close();
       expect.unreachable();
     } catch (err: any) {
-      expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
+      expect(err.message.indexOf("EPERM") !== -1).toBeTrue();
     }
   });
 
   test("should throw if no permission to watch the file", async () => {
-    const filepath = path.join(testDir, "permission-file");
-    fs.writeFileSync(filepath, "hello.txt");
-    await fs.promises.chmod(filepath, 0o200);
+    const filepath = path.join(testDir, "permission-file.txt");
 
+    fs.writeFileSync(filepath, "hello.txt");
+    fs.chmodSync(filepath, 0o200);
     try {
       const watcher = fs.watch(filepath);
       watcher.close();
       expect.unreachable();
     } catch (err: any) {
-      expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
+      expect(err.message.indexOf("EPERM") !== -1).toBeTrue();
     }
   });
 });

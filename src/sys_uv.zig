@@ -77,6 +77,7 @@ pub fn chmod(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
     assertIsValidWindowsPath(u8, file_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
+    
     const rc = uv.uv_fs_chmod(uv.Loop.get(), &req, file_path.ptr, flags, null);
 
     log("uv chmod({s}, {d}) = {d}", .{ file_path, flags, rc.int() });

@@ -50,6 +50,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             };
         }
     };
+    _ = get_vm; // autofix
 
     // const ShellCmd = switch (EventLoopKind) {
     //     .js => bun.shell.interpret.Interpreter.Cmd,
@@ -73,9 +74,9 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 
         process: *Process,
 
-        stdin: Writable,
-        stdout: Readable,
-        stderr: Readable,
+        stdin: *Writable = undefined,
+        stdout: *Readable = undefined,
+        stderr: *Readable = undefined,
 
         globalThis: GlobalRef,
 
@@ -90,6 +91,9 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 
         pub const OutKind = util.OutKind;
 
+        const Readable = opaque {};
+        const Writable = opaque {};
+
         pub const Flags = packed struct(u3) {
             is_sync: bool = false,
             killed: bool = false,
@@ -97,335 +101,10 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         };
         pub const SignalCode = bun.SignalCode;
 
-        pub const Writable = union(enum) {
-            pipe: *FileSink,
-            pipe_to_readable_stream: struct {
-                pipe: *FileSink,
-                readable_stream: JSC.WebCore.ReadableStream,
-            },
-            fd: bun.FileDescriptor,
-            buffered_input: BufferedInput,
-            inherit: void,
-            ignore: void,
-
-            pub fn ref(this: *Writable) void {
-                switch (this.*) {
-                    .pipe => {
-                        if (this.pipe.poll_ref) |poll| {
-                            poll.enableKeepingProcessAlive(get_vm.get());
-                        }
-                    },
-                    else => {},
-                }
-            }
-
-            pub fn unref(this: *Writable) void {
-                switch (this.*) {
-                    .pipe => {
-                        if (this.pipe.poll_ref) |poll| {
-                            poll.enableKeepingProcessAlive(get_vm.get());
-                        }
-                    },
-                    else => {},
-                }
-            }
-
-            // When the stream has closed we need to be notified to prevent a use-after-free
-            // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
-            pub fn onClose(this: *Writable, _: ?bun.sys.Error) void {
-                this.* = .{
-                    .ignore = {},
-                };
-            }
-            pub fn onReady(_: *Writable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
-            pub fn onStart(_: *Writable) void {}
-
-            pub fn init(subproc: *Subprocess, stdio: Stdio, fd: ?bun.FileDescriptor, globalThis: GlobalRef) !Writable {
-                switch (stdio) {
-                    .pipe => {
-                        // var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
-                        var sink = try GlobalHandle.init(globalThis).allocator().create(FileSink);
-                        sink.* = .{
-                            .fd = fd.?,
-                            .buffer = bun.ByteList{},
-                            .allocator = GlobalHandle.init(globalThis).allocator(),
-                            .auto_close = true,
-                        };
-                        sink.mode = std.os.S.IFIFO;
-                        sink.watch(fd.?);
-                        if (stdio == .pipe) {
-                            if (stdio.pipe) |readable| {
-                                if (comptime EventLoopKind == .mini) @panic("FIXME TODO error gracefully but wait can this even happen");
-                                return Writable{
-                                    .pipe_to_readable_stream = .{
-                                        .pipe = sink,
-                                        .readable_stream = readable,
-                                    },
-                                };
-                            }
-                        }
-
-                        return Writable{ .pipe = sink };
-                    },
-                    .array_buffer, .blob => {
-                        var buffered_input: BufferedInput = .{ .fd = fd.?, .source = undefined, .subproc = subproc };
-                        switch (stdio) {
-                            .array_buffer => |array_buffer| {
-                                buffered_input.source = .{ .array_buffer = array_buffer.buf };
-                            },
-                            .blob => |blob| {
-                                buffered_input.source = .{ .blob = blob };
-                            },
-                            else => unreachable,
-                        }
-                        return Writable{ .buffered_input = buffered_input };
-                    },
-                    .fd => {
-                        return Writable{ .fd = fd.? };
-                    },
-                    .inherit => {
-                        return Writable{ .inherit = {} };
-                    },
-                    .path, .ignore => {
-                        return Writable{ .ignore = {} };
-                    },
-                }
-            }
-
-            pub fn toJS(this: Writable, globalThis: *JSC.JSGlobalObject) JSValue {
-                return switch (this) {
-                    .pipe => |pipe| pipe.toJS(globalThis),
-                    .fd => |fd| JSValue.jsNumber(fd),
-                    .ignore => JSValue.jsUndefined(),
-                    .inherit => JSValue.jsUndefined(),
-                    .buffered_input => JSValue.jsUndefined(),
-                    .pipe_to_readable_stream => this.pipe_to_readable_stream.readable_stream.value,
-                };
-            }
-
-            pub fn finalize(this: *Writable) void {
-                return switch (this.*) {
-                    .pipe => |pipe| {
-                        pipe.deref();
-                    },
-                    .pipe_to_readable_stream => |*pipe_to_readable_stream| {
-                        _ = pipe_to_readable_stream.pipe.end(null);
-                    },
-                    .fd => |fd| {
-                        _ = bun.sys.close(fd);
-                        this.* = .{ .ignore = {} };
-                    },
-                    .buffered_input => {
-                        this.buffered_input.deinit();
-                    },
-                    .ignore => {},
-                    .inherit => {},
-                };
-            }
-
-            pub fn close(this: *Writable) void {
-                return switch (this.*) {
-                    .pipe => {},
-                    .pipe_to_readable_stream => |*pipe_to_readable_stream| {
-                        _ = pipe_to_readable_stream.pipe.end(null);
-                    },
-                    .fd => |fd| {
-                        _ = bun.sys.close(fd);
-                        this.* = .{ .ignore = {} };
-                    },
-                    .buffered_input => {
-                        this.buffered_input.deinit();
-                    },
-                    .ignore => {},
-                    .inherit => {},
-                };
-            }
-        };
-
-        pub const Readable = union(enum) {
-            fd: bun.FileDescriptor,
-
-            pipe: Pipe,
-            inherit: void,
-            ignore: void,
-            closed: void,
-
-            pub fn ref(this: *Readable) void {
-                switch (this.*) {
-                    .pipe => {
-                        if (this.pipe == .buffer) {
-                            // if (this.pipe.buffer.fifo.poll_ref) |poll| {
-                            //     poll.enableKeepingProcessAlive(get_vm.get());
-                            // }
-                        }
-                    },
-                    else => {},
-                }
-            }
-
-            pub fn unref(this: *Readable) void {
-                switch (this.*) {
-                    .pipe => {
-                        if (this.pipe == .buffer) {
-                            // if (this.pipe.buffer.fifo.poll_ref) |poll| {
-                            //     poll.enableKeepingProcessAlive(get_vm.get());
-                            // }
-                        }
-                    },
-                    else => {},
-                }
-            }
-
-            pub fn init(subproc: *Subprocess, comptime kind: OutKind, stdio: Stdio, fd: ?bun.FileDescriptor, allocator: std.mem.Allocator, max_size: u32) Readable {
-                return switch (stdio) {
-                    .ignore => Readable{ .ignore = {} },
-                    .pipe => {
-                        var subproc_readable_ptr = subproc.getIO(kind);
-                        subproc_readable_ptr.* = Readable{ .pipe = .{ .buffer = undefined } };
-                        BufferedOutput.initWithAllocator(subproc, &subproc_readable_ptr.pipe.buffer, kind, allocator, fd.?, max_size);
-                        return subproc_readable_ptr.*;
-                    },
-                    .inherit => {
-                        return Readable{ .inherit = {} };
-                    },
-                    .captured => |captured| {
-                        var subproc_readable_ptr = subproc.getIO(kind);
-                        subproc_readable_ptr.* = Readable{ .pipe = .{ .buffer = undefined } };
-                        BufferedOutput.initWithAllocator(subproc, &subproc_readable_ptr.pipe.buffer, kind, allocator, fd.?, max_size);
-                        subproc_readable_ptr.pipe.buffer.out = captured;
-                        subproc_readable_ptr.pipe.buffer.writer = BufferedOutput.CapturedBufferedWriter{
-                            .src = WriterSrc{
-                                .inner = &subproc_readable_ptr.pipe.buffer,
-                            },
-                            .fd = if (kind == .stdout) bun.STDOUT_FD else bun.STDERR_FD,
-                            .parent = .{ .parent = &subproc_readable_ptr.pipe.buffer },
-                        };
-                        return subproc_readable_ptr.*;
-                    },
-                    .path => Readable{ .ignore = {} },
-                    .blob, .fd => Readable{ .fd = fd.? },
-                    .array_buffer => {
-                        var subproc_readable_ptr = subproc.getIO(kind);
-                        subproc_readable_ptr.* = Readable{
-                            .pipe = .{
-                                .buffer = undefined,
-                            },
-                        };
-                        if (stdio.array_buffer.from_jsc) {
-                            BufferedOutput.initWithArrayBuffer(subproc, &subproc_readable_ptr.pipe.buffer, kind, fd.?, stdio.array_buffer.buf);
-                        } else {
-                            subproc_readable_ptr.pipe.buffer = BufferedOutput.initWithSlice(subproc, kind, fd.?, stdio.array_buffer.buf.slice());
-                        }
-                        return subproc_readable_ptr.*;
-                    },
-                };
-            }
-
-            pub fn onClose(this: *Readable, _: ?bun.sys.Error) void {
-                this.* = .closed;
-            }
-
-            pub fn onReady(_: *Readable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
-
-            pub fn onStart(_: *Readable) void {}
-
-            pub fn close(this: *Readable) void {
-                log("READABLE close", .{});
-                switch (this.*) {
-                    .fd => |fd| {
-                        _ = bun.sys.close(fd);
-                    },
-                    .pipe => {
-                        this.pipe.done();
-                    },
-                    else => {},
-                }
-            }
-
-            pub fn finalize(this: *Readable) void {
-                log("Readable::finalize", .{});
-                switch (this.*) {
-                    .fd => |fd| {
-                        _ = bun.sys.close(fd);
-                    },
-                    .pipe => {
-                        if (this.pipe == .stream and this.pipe.stream.ptr == .File) {
-                            this.close();
-                            return;
-                        }
-
-                        // this.pipe.buffer.close();
-                    },
-                    else => {},
-                }
-            }
-
-            pub fn toJS(this: *Readable, globalThis: *JSC.JSGlobalObject, exited: bool) JSValue {
-                switch (this.*) {
-                    .fd => |fd| {
-                        return JSValue.jsNumber(fd);
-                    },
-                    .pipe => {
-                        return this.pipe.toJS(this, globalThis, exited);
-                    },
-                    else => {
-                        return JSValue.jsUndefined();
-                    },
-                }
-            }
-
-            pub fn toSlice(this: *Readable) ?[]const u8 {
-                switch (this.*) {
-                    .fd => return null,
-                    .pipe => {
-                        this.pipe.buffer.fifo.close_on_empty_read = true;
-                        this.pipe.buffer.readAll();
-
-                        const bytes = this.pipe.buffer.internal_buffer.slice();
-                        // this.pipe.buffer.internal_buffer = .{};
-
-                        if (bytes.len > 0) {
-                            return bytes;
-                        }
-
-                        return "";
-                    },
-                    else => {
-                        return null;
-                    },
-                }
-            }
-
-            pub fn toBufferedValue(this: *Readable, globalThis: *JSC.JSGlobalObject) JSValue {
-                switch (this.*) {
-                    .fd => |fd| {
-                        return JSValue.jsNumber(fd);
-                    },
-                    .pipe => {
-                        this.pipe.buffer.fifo.close_on_empty_read = true;
-                        this.pipe.buffer.readAll();
-
-                        const bytes = this.pipe.buffer.internal_buffer.slice();
-                        this.pipe.buffer.internal_buffer = .{};
-
-                        if (bytes.len > 0) {
-                            // Return a Buffer so that they can do .toString() on it
-                            return JSC.JSValue.createBuffer(globalThis, bytes, bun.default_allocator);
-                        }
-
-                        return JSC.JSValue.createBuffer(globalThis, &.{}, bun.default_allocator);
-                    },
-                    else => {
-                        return JSValue.jsUndefined();
-                    },
-                }
-            }
-        };
-
         pub const CapturedBufferedWriter = bun.shell.eval.NewBufferedWriter(
             WriterSrc,
             struct {
-                parent: *Out,
+                parent: *BufferedOutput,
                 pub inline fn onDone(this: @This(), e: ?bun.sys.Error) void {
                     this.parent.onBufferedWriterDone(e);
                 }
@@ -434,7 +113,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
         );
 
         const WriterSrc = struct {
-            inner: *Out,
+            inner: *BufferedOutput,
 
             pub inline fn bufToWrite(this: WriterSrc, written: usize) []const u8 {
                 if (written >= this.inner.internal_buffer.len) return "";
@@ -448,210 +127,16 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             }
         };
 
-        pub const Out = struct {
-            internal_buffer: bun.ByteList = .{},
-            owns_internal_buffer: bool = true,
-            subproc: *Subprocess,
-            out_type: OutKind,
+        // pub const Pipe = struct {
+        //     writer: Writer = Writer{},
+        //     parent: *Subprocess,
+        //     src: WriterSrc,
 
-            writer: ?CapturedBufferedWriter = null,
+        //     writer: ?CapturedBufferedWriter = null,
 
-            status: Status = .{
-                .pending = {},
-            },
-
-            pub const Status = union(enum) {
-                pending: void,
-                done: void,
-                err: bun.sys.Error,
-            };
-        };
-
-        // pub const BufferedOutput = struct {
-        //     fifo: FIFO = undefined,
-        //     internal_buffer: bun.ByteList = .{},
-        //     auto_sizer: ?JSC.WebCore.AutoSizer = null,
-        //     subproc: *Subprocess,
-        //     out_type: OutKind,
-        //     /// Sometimes the `internal_buffer` may be filled with memory from JSC,
-        //     /// for example an array buffer. In that case we shouldn't dealloc
-        //     /// memory and let the GC do it.
-        //     from_jsc: bool = false,
         //     status: Status = .{
         //         .pending = {},
         //     },
-        //     recall_readall: bool = true,
-        //     /// Used to allow to write to fd and also capture the data
-        //     writer: ?CapturedBufferedWriter = null,
-        //     out: ?*bun.ByteList = null,
-
-        // pub const Status = union(enum) {
-        //     pending: void,
-        //     done: void,
-        //     err: bun.sys.Error,
-        // };
-
-        //     pub fn init(subproc: *Subprocess, out_type: OutKind, fd: bun.FileDescriptor) BufferedOutput {
-        //         return BufferedOutput{
-        //             .out_type = out_type,
-        //             .subproc = subproc,
-        //             .internal_buffer = .{},
-        //             .fifo = FIFO{
-        //                 .fd = fd,
-        //             },
-        //         };
-        //     }
-
-        //     pub fn initWithArrayBuffer(subproc: *Subprocess, out: *BufferedOutput, comptime out_type: OutKind, fd: bun.FileDescriptor, array_buf: JSC.ArrayBuffer.Strong) void {
-        //         out.* = BufferedOutput.initWithSlice(subproc, out_type, fd, array_buf.slice());
-        //         out.from_jsc = true;
-        //         out.fifo.view = array_buf.held;
-        //         out.fifo.buf = out.internal_buffer.ptr[0..out.internal_buffer.cap];
-        //     }
-
-        //     pub fn initWithSlice(subproc: *Subprocess, comptime out_type: OutKind, fd: bun.FileDescriptor, slice: []u8) BufferedOutput {
-        //         return BufferedOutput{
-        //             // fixed capacity
-        //             .internal_buffer = bun.ByteList.initWithBuffer(slice),
-        //             .auto_sizer = null,
-        //             .subproc = subproc,
-        //             .fifo = FIFO{
-        //                 .fd = fd,
-        //             },
-        //             .out_type = out_type,
-        //         };
-        //     }
-
-        //     pub fn initWithAllocator(subproc: *Subprocess, out: *BufferedOutput, comptime out_type: OutKind, allocator: std.mem.Allocator, fd: bun.FileDescriptor, max_size: u32) void {
-        //         out.* = init(subproc, out_type, fd);
-        //         out.auto_sizer = .{
-        //             .max = max_size,
-        //             .allocator = allocator,
-        //             .buffer = &out.internal_buffer,
-        //         };
-        //         out.fifo.auto_sizer = &out.auto_sizer.?;
-        //     }
-
-        //     pub fn onBufferedWriterDone(this: *BufferedOutput, e: ?bun.sys.Error) void {
-        //         _ = e; // autofix
-
-        //         defer this.signalDoneToCmd();
-        //         // if (e) |err| {
-        //         //     this.status = .{ .err = err };
-        //         // }
-        //     }
-
-        //     pub fn isDone(this: *BufferedOutput) bool {
-        //         if (this.status != .done and this.status != .err) return false;
-        //         if (this.writer != null) {
-        //             return this.writer.?.isDone();
-        //         }
-        //         return true;
-        //     }
-
-        //     pub fn signalDoneToCmd(this: *BufferedOutput) void {
-        //         log("signalDoneToCmd ({x}: {s}) isDone={any}", .{ @intFromPtr(this), @tagName(this.out_type), this.isDone() });
-        //         // `this.fifo.close()` will be called from the parent
-        //         // this.fifo.close();
-        //         if (!this.isDone()) return;
-        //         if (this.subproc.cmd_parent) |cmd| {
-        //             if (this.writer != null) {
-        //                 if (this.writer.?.err) |e| {
-        //                     if (this.status != .err) {
-        //                         this.status = .{ .err = e };
-        //                     }
-        //                 }
-        //             }
-        //             cmd.bufferedOutputClose(this.out_type);
-        //         }
-        //     }
-
-        //     /// This is called after it is read (it's confusing because "on read" could
-        //     /// be interpreted as present or past tense)
-        //     pub fn onRead(this: *BufferedOutput, result: JSC.WebCore.StreamResult) void {
-        //         log("ON READ {s} result={s}", .{ @tagName(this.out_type), @tagName(result) });
-        //         defer {
-        //             if (this.status == .err or this.status == .done) {
-        //                 this.signalDoneToCmd();
-        //             } else if (this.recall_readall and this.recall_readall) {
-        //                 this.readAll();
-        //             }
-        //         }
-        //         switch (result) {
-        //             .pending => {
-        //                 this.watch();
-        //                 return;
-        //             },
-        //             .err => |err| {
-        //                 if (err == .Error) {
-        //                     this.status = .{ .err = err.Error };
-        //                 } else {
-        //                     this.status = .{ .err = bun.sys.Error.fromCode(.CANCELED, .read) };
-        //                 }
-        //                 // this.fifo.close();
-        //                 // this.closeFifoSignalCmd();
-        //                 return;
-        //             },
-        //             .done => {
-        //                 this.status = .{ .done = {} };
-        //                 // this.fifo.close();
-        //                 // this.closeFifoSignalCmd();
-        //                 return;
-        //             },
-        //             else => {
-        //                 const slice = switch (result) {
-        //                     .into_array => this.fifo.buf[0..result.into_array.len],
-        //                     else => result.slice(),
-        //                 };
-        //                 log("buffered output ({s}) onRead: {s}", .{ @tagName(this.out_type), slice });
-        //                 this.internal_buffer.len += @as(u32, @truncate(slice.len));
-        //                 if (slice.len > 0)
-        //                     std.debug.assert(this.internal_buffer.contains(slice));
-
-        //                 if (this.writer != null) {
-        //                     this.writer.?.writeIfPossible(false);
-        //                 }
-
-        //                 this.fifo.buf = this.internal_buffer.ptr[@min(this.internal_buffer.len, this.internal_buffer.cap)..this.internal_buffer.cap];
-
-        //                 if (result.isDone() or (slice.len == 0 and this.fifo.poll_ref != null and this.fifo.poll_ref.?.isHUP())) {
-        //                     this.status = .{ .done = {} };
-        //                     // this.fifo.close();
-        //                     // this.closeFifoSignalCmd();
-        //                 }
-        //             },
-        //         }
-        //     }
-
-        //     pub fn readAll(this: *BufferedOutput) void {
-        //         log("ShellBufferedOutput.readAll doing nothing", .{});
-        //         this.watch();
-        //     }
-
-        //     pub fn watch(this: *BufferedOutput) void {
-        //         std.debug.assert(this.fifo.fd != bun.invalid_fd);
-
-        //         this.fifo.pending.set(BufferedOutput, this, onRead);
-        //         if (!this.fifo.isWatching()) this.fifo.watch(this.fifo.fd);
-        //         return;
-        //     }
-
-        //     pub fn close(this: *BufferedOutput) void {
-        //         log("BufferedOutput close", .{});
-        //         switch (this.status) {
-        //             .done => {},
-        //             .pending => {
-        //                 this.fifo.close();
-        //                 this.status = .{ .done = {} };
-        //             },
-        //             .err => {},
-        //         }
-
-        //         if (this.internal_buffer.cap > 0 and !this.from_jsc) {
-        //             this.internal_buffer.listManaged(bun.default_allocator).deinit();
-        //             this.internal_buffer = .{};
-        //         }
-        //     }
         // };
 
         pub const StaticPipeWriter = JSC.Subprocess.NewStaticPipeWriter(Subprocess);
@@ -948,6 +433,9 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             spawn_args: *SpawnArgs,
             out_subproc: **@This(),
         ) bun.shell.Result(*@This()) {
+            if (comptime true) {
+                @panic("TODO");
+            }
             const globalThis = GlobalHandle.init(globalThis_);
             const is_sync = config.is_sync;
 

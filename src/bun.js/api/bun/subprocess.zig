@@ -371,6 +371,7 @@ pub const Subprocess = struct {
                 .memfd => Readable{ .memfd = stdio.memfd },
                 .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, fd.?) },
                 .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
+                .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
             };
         }
 
@@ -649,7 +650,14 @@ pub const Subprocess = struct {
             pub usingnamespace bun.NewRefCounted(@This(), deinit);
             const This = @This();
 
-            pub const IOWriter = bun.io.BufferedWriter(This, onWrite, onError, onClose, getBuffer);
+            pub const IOWriter = bun.io.BufferedWriter(
+                This,
+                onWrite,
+                onError,
+                onClose,
+                getBuffer,
+                null,
+            );
             pub const Poll = IOWriter;
 
             pub fn updateRef(this: *This, add: bool) void {
@@ -665,7 +673,8 @@ pub const Subprocess = struct {
             }
 
             pub fn flush(this: *This) void {
-                this.writer.flush();
+                _ = this; // autofix
+                // this.writer.flush();
             }
 
             pub fn create(event_loop: anytype, subprocess: *ProcessType, fd: bun.FileDescriptor, source: Source) *This {
@@ -678,7 +687,7 @@ pub const Subprocess = struct {
             }
 
             pub fn start(this: *This) JSC.Maybe(void) {
-                return this.writer.start(this.fd, this.source.slice(), this.event_loop, true);
+                return this.writer.start(this.fd, true);
             }
 
             pub fn onWrite(this: *This, amount: usize, is_done: bool) void {
@@ -986,6 +995,9 @@ pub const Subprocess = struct {
                 .path, .ignore => {
                     return Writable{ .ignore = {} };
                 },
+                .capture => {
+                    return Writable{ .ignore = {} };
+                },
             }
         }
 
@@ -993,7 +1005,7 @@ pub const Subprocess = struct {
             return switch (this.*) {
                 .fd => |fd| JSValue.jsNumber(fd),
                 .memfd, .ignore => JSValue.jsUndefined(),
-                .buffer, .inherit => JSValue.jsUndefined(),
+                .capture, .buffer, .inherit => JSValue.jsUndefined(),
                 .pipe => |pipe| {
                     this.* = .{ .ignore = {} };
                     return pipe.toJS(globalThis);
@@ -1429,7 +1441,7 @@ pub const Subprocess = struct {
 
                             while (stdio_iter.next()) |value| : (i += 1) {
                                 var new_item: Stdio = undefined;
-                                if (&new_item.extract(globalThis, i, value))
+                                if (new_item.extract(globalThis, i, value))
                                     return JSC.JSValue.jsUndefined();
                                 switch (new_item) {
                                     .pipe => {

@@ -24,6 +24,15 @@ pub const Stdio = union(enum) {
 
     const log = bun.sys.syslog;
 
+    pub fn byteSlice(this: *const Stdio) []const u8 {
+        return switch (this.*) {
+            .capture => this.capture.slice(),
+            .array_buffer => this.array_buffer.array_buffer.byteSlice(),
+            .blob => this.blob.slice(),
+            else => &[_]u8{},
+        };
+    }
+
     pub fn deinit(this: *Stdio) void {
         switch (this.*) {
             .array_buffer => |*array_buffer| {
@@ -294,7 +303,7 @@ pub const Stdio = union(enum) {
             if (blob.store()) |store| {
                 if (store.data.file.pathlike == .fd) {
                     if (store.data.file.pathlike.fd == fd) {
-                        stdio.* = Stdio{ .inherit = .{} };
+                        stdio.* = Stdio{ .inherit = {} };
                     } else {
                         switch (bun.FDTag.get(i)) {
                             .stdin => {

@@ -2681,7 +2681,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 const HandleIOWrite = struct {
                     fn run(pipeline: *Pipeline, bufw: BufferedWriter) void {
                         pipeline.state = .{ .waiting_write_err = bufw };
-                        pipeline.state.waiting_write_err.writeIfPossible(false);
+                        pipeline.state.waiting_write_err.write();
                     }
                 };
 
@@ -3001,7 +3001,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 const HandleIOWrite = struct {
                     fn run(cmd: *Cmd, bufw: BufferedWriter) void {
                         cmd.state = .{ .waiting_write_err = bufw };
-                        cmd.state.waiting_write_err.writeIfPossible(false);
+                        cmd.state.waiting_write_err.write();
                     }
                 };
                 _ = this.base.shell.writeFailingError(buf, this, HandleIOWrite.run);
@@ -3014,7 +3014,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 //             .parent = BufferedWriter.ParentPtr.init(this),
                 //             .bytelist = val.captured,
                 //         } };
-                //         this.state.waiting_write_err.writeIfPossible(false);
+                //         this.state.waiting_write_err.write();
                 //     },
                 //     .fd => {
                 //         this.state = .{ .waiting_write_err = BufferedWriter{
@@ -3022,7 +3022,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 //             .remain = buf,
                 //             .parent = BufferedWriter.ParentPtr.init(this),
                 //         } };
-                //         this.state.waiting_write_err.writeIfPossible(false);
+                //         this.state.waiting_write_err.write();
                 //     },
                 //     .pipe, .ignore => {
                 //         this.parent.childDone(this, 1);
@@ -4167,7 +4167,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             .bytelist = this.bltn.stdBufferedBytelist(io_kind),
                         },
                     };
-                    this.print_state.?.bufwriter.writeIfPossible(false);
+                    this.print_state.?.bufwriter.write();
                     return Maybe(void).success;
                 }
 
@@ -4240,7 +4240,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             },
                         };
 
-                        this.print_state.?.bufwriter.writeIfPossible(false);
+                        this.print_state.?.bufwriter.write();
 
                         // if (this.print_state.?.isDone()) {
                         //     if (this.print_state.?.bufwriter.err) |e| {
@@ -4333,7 +4333,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                     };
                     this.state = .waiting;
-                    this.io_write_state.?.writeIfPossible(false);
+                    this.io_write_state.?.write();
                     return Maybe(void).success;
                 }
 
@@ -4404,7 +4404,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 },
                             },
                         };
-                        this.state.one_arg.writer.writeIfPossible(false);
+                        this.state.one_arg.writer.write();
                         return Maybe(void).success;
                     }
 
@@ -4469,7 +4469,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                             },
                         };
-                        multiargs.state.waiting_write.writeIfPossible(false);
+                        multiargs.state.waiting_write.write();
                         // yield execution
                         return;
                     };
@@ -4483,7 +4483,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                         },
                     };
-                    multiargs.state.waiting_write.writeIfPossible(false);
+                    multiargs.state.waiting_write.write();
                     return;
                 }
 
@@ -4550,7 +4550,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             },
                         },
                     };
-                    this.state.waiting_write_stderr.buffered_writer.writeIfPossible(false);
+                    this.state.waiting_write_stderr.buffered_writer.write();
                 }
 
                 pub fn start(this: *Cd) Maybe(void) {
@@ -4680,7 +4680,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                     },
                                 },
                             };
-                            this.state.waiting_io.writer.writeIfPossible(false);
+                            this.state.waiting_io.writer.write();
                             return Maybe(void).success;
                         }
 
@@ -4706,7 +4706,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 },
                             },
                         };
-                        this.state.waiting_io.writer.writeIfPossible(false);
+                        this.state.waiting_io.writer.write();
                         return Maybe(void).success;
                     }
 
@@ -4800,7 +4800,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                             },
                         };
-                        this.state.waiting_write_err.writeIfPossible(false);
+                        this.state.waiting_write_err.write();
                         return Maybe(void).success;
                     }
 
@@ -4890,7 +4890,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     if (this.state.exec.output_queue.len == 1 and do_run) {
                         // if (do_run and !this.state.exec.started_output_queue) {
                         this.state.exec.started_output_queue = true;
-                        this.state.exec.output_queue.first.?.data.writer.writeIfPossible(false);
+                        this.state.exec.output_queue.first.?.data.writer.write();
                         return .yield;
                     }
                     return .cont;
@@ -4898,7 +4898,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                 fn scheduleBlockingOutput(this: *Ls) CoroutineResult {
                     if (this.state.exec.output_queue.len > 0) {
-                        this.state.exec.output_queue.first.?.data.writer.writeIfPossible(false);
+                        this.state.exec.output_queue.first.?.data.writer.write();
                         return .yield;
                     }
                     return .cont;
@@ -4919,7 +4919,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         bun.default_allocator.destroy(first);
                     }
                     if (first.next) |next_writer| {
-                        next_writer.data.writer.writeIfPossible(false);
+                        next_writer.data.writer.write();
                         return;
                     }
 
@@ -5789,7 +5789,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 .exit_code = exit_code,
                             },
                         };
-                        this.state.waiting_write_err.writer.writeIfPossible(false);
+                        this.state.waiting_write_err.writer.write();
                         return Maybe(void).success;
                     }
 
@@ -6267,7 +6267,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                         .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                     },
                                                 };
-                                                parse_opts.state.wait_write_err.writeIfPossible(false);
+                                                parse_opts.state.wait_write_err.write();
                                                 return Maybe(void).success;
                                             }
 
@@ -6305,7 +6305,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                                 .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                             },
                                                         };
-                                                        parse_opts.state.wait_write_err.writeIfPossible(false);
+                                                        parse_opts.state.wait_write_err.write();
                                                         continue;
                                                     }
 
@@ -6350,7 +6350,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                                         .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                                     },
                                                                 };
-                                                                parse_opts.state.wait_write_err.writeIfPossible(false);
+                                                                parse_opts.state.wait_write_err.write();
                                                                 return Maybe(void).success;
                                                             }
 
@@ -6389,7 +6389,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                             .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                         },
                                                     };
-                                                    parse_opts.state.wait_write_err.writeIfPossible(false);
+                                                    parse_opts.state.wait_write_err.write();
                                                     return Maybe(void).success;
                                                 }
 
@@ -6412,7 +6412,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                                             .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                         },
                                                     };
-                                                    parse_opts.state.wait_write_err.writeIfPossible(false);
+                                                    parse_opts.state.wait_write_err.write();
                                                     return Maybe(void).success;
                                                 }
 
@@ -6495,7 +6495,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             bun.default_allocator.destroy(first);
                         }
                         if (first.next) |next_writer| {
-                            next_writer.data.writer.writeIfPossible(false);
+                            next_writer.data.writer.write();
                         } else {
                             if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
                                 this.bltn.done(if (this.state.exec.err != null) 1 else 0);
@@ -6684,7 +6684,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
                     // Need to start it
                     if (this.state.exec.output_queue.len == 1) {
-                        this.state.exec.output_queue.first.?.data.writer.writeIfPossible(false);
+                        this.state.exec.output_queue.first.?.data.writer.write();
                     }
                 }
 
@@ -7287,9 +7287,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         /// it. IT DOES NOT CLOSE FILE DESCRIPTORS
         pub const BufferedWriter =
             struct {
-            remain: []const u8 = "",
-            fd: bun.FileDescriptor,
-            poll_ref: ?*bun.Async.FilePoll = null,
+            writer: Writer = .{},
             written: usize = 0,
             parent: ParentPtr,
             err: ?Syscall.Error = null,
@@ -7303,6 +7301,48 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const PipelineMini = bun.shell.InterpreterMini.Pipeline;
             const BuiltinJs = bun.shell.Interpreter.Builtin;
             const BuiltinMini = bun.shell.InterpreterMini.Builtin;
+
+            pub const Writer = bun.io.BufferedWriter(
+                @This(),
+                onWrite,
+                onError,
+                onClose,
+                getBuffer,
+                onReady,
+            );
+
+            pub const Status = union(enum) {
+                pending: void,
+                done: void,
+                err: bun.sys.Error,
+            };
+
+            pub fn getBuffer(this: *BufferedWriter) []const u8 {
+                _ = this; // autofix
+                // TODO:
+                return "";
+            }
+
+            pub fn onWrite(this: *BufferedWriter, amount: usize, done: bool) void {
+                _ = done; // autofix
+                if (this.bytelist) |bytelist| {
+                    bytelist.append(bun.default_allocator, this.getBuffer()[this.getBuffer().len - amount ..]) catch bun.outOfMemory();
+                }
+            }
+
+            pub fn onError(this: *BufferedWriter, err: bun.sys.Error) void {
+                _ = this; // autofix
+                _ = err; // autofix
+
+            }
+            pub fn onReady(this: *BufferedWriter) void {
+                _ = this; // autofix
+
+            }
+            pub fn onClose(this: *BufferedWriter) void {
+                _ = this; // autofix
+
+            }
 
             pub const ParentPtr = struct {
                 const Types = .{
@@ -7373,132 +7413,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             pub const event_loop_kind = EventLoopKind;
             pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedWriter, .writable, onReady);
 
-            pub fn onReady(this: *BufferedWriter, _: i64) void {
-                if (this.fd == bun.invalid_fd) {
-                    return;
-                }
-
-                this.__write();
-            }
-
-            pub fn writeIfPossible(this: *BufferedWriter, comptime is_sync: bool) void {
-                if (this.remain.len == 0) return this.deinit();
-                if (comptime !is_sync) {
-                    // we ask, "Is it possible to write right now?"
-                    // we do this rather than epoll or kqueue()
-                    // because we don't want to block the thread waiting for the write
-                    switch (bun.isWritable(this.fd)) {
-                        .ready => {
-                            if (this.poll_ref) |poll| {
-                                poll.flags.insert(.writable);
-                                poll.flags.insert(.fifo);
-                                std.debug.assert(poll.flags.contains(.poll_writable));
-                            }
-                        },
-                        .hup => {
-                            this.deinit();
-                            return;
-                        },
-                        .not_ready => {
-                            if (!this.isWatching()) this.watch(this.fd);
-                            return;
-                        },
-                    }
-                }
-
-                this.writeAllowBlocking(is_sync);
-            }
-
-            /// Calling this directly will block if the fd is not opened with non
-            /// blocking option. If the fd is blocking, you should call
-            /// `writeIfPossible()` first, which will check if the fd is writable. If so
-            /// it will then call this function, if not, then it will poll for the fd to
-            /// be writable
-            pub fn __write(this: *BufferedWriter) void {
-                this.writeAllowBlocking(false);
-            }
-
-            pub fn writeAllowBlocking(this: *BufferedWriter, allow_blocking: bool) void {
-                var to_write = this.remain;
-
-                if (to_write.len == 0) {
-                    // we are done!
-                    this.deinit();
-                    return;
-                }
-
-                if (comptime bun.Environment.allow_assert) {
-                    // bun.assertNonBlocking(this.fd);
-                }
-
-                while (to_write.len > 0) {
-                    switch (bun.sys.write(this.fd, to_write)) {
-                        .err => |e| {
-                            if (e.isRetry()) {
-                                log("write({d}) retry", .{
-                                    to_write.len,
-                                });
-
-                                this.watch(this.fd);
-                                this.poll_ref.?.flags.insert(.fifo);
-                                return;
-                            }
-
-                            if (e.getErrno() == .PIPE) {
-                                this.deinit();
-                                return;
-                            }
-
-                            // fail
-                            log("write({d}) fail: {d}", .{ to_write.len, e.errno });
-                            this.err = e;
-                            this.deinit();
-                            return;
-                        },
-
-                        .result => |bytes_written| {
-                            if (this.bytelist) |blist| {
-                                blist.append(bun.default_allocator, to_write[0..bytes_written]) catch bun.outOfMemory();
-                            }
-
-                            this.written += bytes_written;
-
-                            log(
-                                "write({d}) {d}",
-                                .{
-                                    to_write.len,
-                                    bytes_written,
-                                },
-                            );
-
-                            this.remain = this.remain[@min(bytes_written, this.remain.len)..];
-                            to_write = to_write[bytes_written..];
-
-                            // we are done or it accepts no more input
-                            if (this.remain.len == 0 or (allow_blocking and bytes_written == 0)) {
-                                this.deinit();
-                                return;
-                            }
-                        },
-                    }
-                }
-            }
-
-            fn close(this: *BufferedWriter) void {
-                if (this.poll_ref) |poll| {
-                    this.poll_ref = null;
-                    poll.deinit();
-                }
-
-                if (this.fd != bun.invalid_fd) {
-                    // _ = bun.sys.close(this.fd);
-                    // this.fd = bun.invalid_fd;
-                }
-            }
-
             pub fn deinit(this: *BufferedWriter) void {
-                this.close();
-                this.parent.onDone(this.err);
+                this.writer.deinit();
             }
         };
     };
@@ -7770,11 +7686,20 @@ pub fn NewBufferedWriter(comptime Src: type, comptime Parent: type, comptime Eve
 
     return struct {
         src: Src,
-        fd: bun.FileDescriptor,
-        poll_ref: ?*bun.Async.FilePoll = null,
         written: usize = 0,
         parent: Parent,
         err: ?Syscall.Error = null,
+        writer: Writer = .{},
+
+        pub const Writer = bun.io.BufferedWriter(
+            @This(),
+            onWrite,
+            onError,
+            // we don't close it
+            null,
+            getBuffer,
+            onReady,
+        );
 
         pub const ParentType = Parent;
 
@@ -7787,141 +7712,48 @@ pub fn NewBufferedWriter(comptime Src: type, comptime Parent: type, comptime Eve
         pub const event_loop_kind = EventLoopKind;
         pub usingnamespace JSC.WebCore.NewReadyWatcher(@This(), .writable, onReady);
 
-        pub fn onReady(this: *@This(), _: i64) void {
-            if (this.fd == bun.invalid_fd) {
+        pub fn onReady(this: *@This()) void {
+            if (this.src.isDone(this.written)) {
+                this.parent.onDone(this.err);
                 return;
             }
 
-            this.__write();
+            const buf = this.getBuffer();
+            this.writer.write(buf);
         }
 
-        pub fn writeIfPossible(this: *@This(), comptime is_sync: bool) void {
-            if (SrcHandler.bufToWrite(this.src, 0).len == 0) return this.deinit();
-            if (comptime !is_sync) {
-                // we ask, "Is it possible to write right now?"
-                // we do this rather than epoll or kqueue()
-                // because we don't want to block the thread waiting for the write
-                switch (bun.isWritable(this.fd)) {
-                    .ready => {
-                        if (this.poll_ref) |poll| {
-                            poll.flags.insert(.writable);
-                            poll.flags.insert(.fifo);
-                            std.debug.assert(poll.flags.contains(.poll_writable));
-                        }
-                    },
-                    .hup => {
-                        this.deinit();
-                        return;
-                    },
-                    .not_ready => {
-                        if (!this.isWatching()) this.watch(this.fd);
-                        return;
-                    },
-                }
-            }
-
-            this.writeAllowBlocking(is_sync);
+        pub fn getBuffer(this: *@This()) []const u8 {
+            return SrcHandler.bufToWrite(this.src, this.written);
         }
 
-        /// Calling this directly will block if the fd is not opened with non
-        /// blocking option. If the fd is blocking, you should call
-        /// `writeIfPossible()` first, which will check if the fd is writable. If so
-        /// it will then call this function, if not, then it will poll for the fd to
-        /// be writable
-        pub fn __write(this: *@This()) void {
-            this.writeAllowBlocking(false);
-        }
-
-        pub fn writeAllowBlocking(this: *@This(), allow_blocking: bool) void {
-            _ = allow_blocking; // autofix
-
-            var to_write = SrcHandler.bufToWrite(this.src, this.written);
-
-            if (to_write.len == 0) {
-                // we are done!
-                // this.closeFDIfOpen();
-                if (SrcHandler.isDone(this.src, this.written)) {
-                    this.deinit();
-                }
+        pub fn write(this: *@This()) void {
+            if (this.src.isDone(this.written)) {
                 return;
             }
 
-            if (comptime bun.Environment.allow_assert) {
-                // bun.assertNonBlocking(this.fd);
-            }
+            const buf = this.getBuffer();
+            this.writer.write(buf);
+        }
 
-            while (to_write.len > 0) {
-                switch (bun.sys.write(this.fd, to_write)) {
-                    .err => |e| {
-                        if (e.isRetry()) {
-                            log("write({d}) retry", .{
-                                to_write.len,
-                            });
+        pub fn onWrite(this: *@This(), amount: usize, done: bool) void {
+            this.written += amount;
 
-                            this.watch(this.fd);
-                            this.poll_ref.?.flags.insert(.fifo);
-                            return;
-                        }
-
-                        if (e.getErrno() == .PIPE) {
-                            this.deinit();
-                            return;
-                        }
-
-                        // fail
-                        log("write({d}) fail: {d}", .{ to_write.len, e.errno });
-                        this.err = e;
-                        this.deinit();
-                        return;
-                    },
-
-                    .result => |bytes_written| {
-                        this.written += bytes_written;
-
-                        log(
-                            "write({d}) {d}",
-                            .{
-                                to_write.len,
-                                bytes_written,
-                            },
-                        );
-
-                        // this.remain = this.remain[@min(bytes_written, this.remain.len)..];
-                        // to_write = to_write[bytes_written..];
-
-                        // // we are done or it accepts no more input
-                        // if (this.remain.len == 0 or (allow_blocking and bytes_written == 0)) {
-                        //     this.deinit();
-                        //     return;
-                        // }
-
-                        to_write = SrcHandler.bufToWrite(this.src, this.written);
-                        if (to_write.len == 0) {
-                            if (SrcHandler.isDone(this.src, this.written)) {
-                                this.deinit();
-                                return;
-                            }
-                        }
-                    },
-                }
+            if (done or this.src.isDone(this.written)) {
+                this.parent.onDone(this.err);
+            } else {
+                const buf = this.getBuffer();
+                this.writer.write(buf);
             }
         }
 
-        fn close(this: *@This()) void {
-            if (this.poll_ref) |poll| {
-                this.poll_ref = null;
-                poll.deinit();
-            }
+        pub fn onError(this: *@This(), err: bun.sys.Error) void {
+            this.err = err;
 
-            if (this.fd != bun.invalid_fd) {
-                // _ = bun.sys.close(this.fd);
-                // this.fd = bun.invalid_fd;
-            }
+            this.parent.onDone(this.err);
         }
 
         pub fn deinit(this: *@This()) void {
-            this.close();
-            this.parent.onDone(this.err);
+            this.writer.deinit();
         }
     };
 }

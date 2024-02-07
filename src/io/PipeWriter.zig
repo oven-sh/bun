@@ -133,8 +133,9 @@ pub fn PosixBufferedWriter(
     comptime Parent: type,
     comptime onWrite: *const fn (*Parent, amount: usize, done: bool) void,
     comptime onError: *const fn (*Parent, bun.sys.Error) void,
-    comptime onClose: *const fn (*Parent) void,
+    comptime onClose: ?*const fn (*Parent) void,
     comptime getBuffer: *const fn (*Parent) []const u8,
+    comptime onWritable: ?*const fn (*Parent) void,
 ) type {
     return struct {
         handle: PollOrFd = .{ .closed = {} },
@@ -171,7 +172,6 @@ pub fn PosixBufferedWriter(
             const parent = this.parent;
 
             onWrite(parent, written, done);
-
             if (done and !was_done) {
                 this.close();
             }
@@ -180,6 +180,10 @@ pub fn PosixBufferedWriter(
         fn _onWritable(this: *PosixWriter) void {
             if (this.is_done) {
                 return;
+            }
+
+            if (onWritable) |cb| {
+                cb(this.parent);
             }
         }
 
@@ -228,7 +232,8 @@ pub fn PosixBufferedWriter(
         }
 
         pub fn close(this: *PosixWriter) void {
-            this.handle.close(this.parent, onClose);
+            if (onClose) |closer|
+                this.handle.close(this.parent, closer);
         }
 
         pub fn updateRef(this: *const PosixWriter, event_loop: anytype, value: bool) void {

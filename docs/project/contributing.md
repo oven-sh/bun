@@ -105,6 +105,14 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 
 {% /codetabs %}
 
+Depending on your system, you may need to install the C++ standard library independently.
+
+{% codetabs %}
+```bash#Ubuntu/Debian
+sudo apt install g++-12
+```
+{%/codetabs %}
+
 ## Building Bun
 
 After cloning the repository, run the following command to run the first build. This may take a while as it will clone submodules and build dependencies.

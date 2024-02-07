@@ -20005,7 +20005,7 @@ fn NewParser_(
                                 // and unreachable or noreturn else.
                                 else => null,
                             };
-                            const descriptor_key = _descriptor_key orelse bun.unreachablePanic("Unexpected AST node type {any}", .{prop.key.?});
+                            const descriptor_key = _descriptor_key orelse unreachable;
 
                             // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
                             // the if statement.

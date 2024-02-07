@@ -23,10 +23,19 @@ async function nodeEchoServer() {
 }
 // X iterations should be enough to detect a leak
 const ITERATIONS = 50;
+// how many time we should run
+const GC_AGRESSIVENESS = 3;
 // lets send a bigish payload
 const PAYLOAD = Buffer.from("a".repeat(128 * 1024));
 
 const info = await nodeEchoServer();
+
+async function runGC() {
+  for(let i = 0; i < GC_AGRESSIVENESS; i++) {
+    await Bun.sleep(10);
+    Bun.gc(true);
+  }
+}
 
 async function runRequests(iterations) {
   for (let j = 0; j < iterations; j++) {
@@ -66,14 +75,12 @@ try {
 
   // warm up
   await runRequests(ITERATIONS);
-  await Bun.sleep(10);
-  Bun.gc(true);
+  await runGC();
   // take a baseline
   const baseline = process.memoryUsage.rss();
   // run requests
   await runRequests(ITERATIONS);
-  await Bun.sleep(10);
-  Bun.gc(true);
+  await runGC();
   // take an end snapshot
   const end = process.memoryUsage.rss();
 

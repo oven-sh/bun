@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import fs from "fs";
 import { join } from "path";
 import { describe, test, expect, jest } from "bun:test";

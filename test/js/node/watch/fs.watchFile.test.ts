@@ -40,8 +40,10 @@ describe("fs.watchFile", () => {
     fs.watchFile(path.join(testDir, "watch.txt"), { interval: 50 }, (curr, prev) => {
       entries.push([curr, prev]);
     });
-    const interval = repeat(() => {
-      fs.writeFileSync(path.join(testDir, "watch.txt"), "hello2");
+    let increment = 0;
+    const interval = repeat(()=> {
+      increment++;
+      fs.writeFileSync(path.join(testDir, "watch.txt"), "hello" + increment);
     });
     await Bun.sleep(200);
     clearInterval(interval);
@@ -59,9 +61,11 @@ describe("fs.watchFile", () => {
     fs.watchFile(path.join(testDir, encodingFileName), { interval: 50 }, (curr, prev) => {
       entries.push([curr, prev]);
     });
-
-    const interval = repeat(() => {
-      fs.writeFileSync(path.join(testDir, encodingFileName), "hello2");
+    
+    let increment = 0;
+    const interval = repeat(()=> {
+      increment++;
+      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
     });
     await Bun.sleep(200);
     clearInterval(interval);
@@ -80,9 +84,11 @@ describe("fs.watchFile", () => {
     fs.watchFile(path.join(testDir, encodingFileName), { interval: 50, bigint: true }, (curr, prev) => {    
       entries.push([curr, prev]);
     });
-
-    const interval = repeat(() => {
-      fs.writeFileSync(path.join(testDir, encodingFileName), "hello2");
+    
+    let increment = 0;
+    const interval = repeat(()=> {
+      increment++;
+      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
     });
     await Bun.sleep(200);
     clearInterval(interval);

@@ -1801,7 +1801,6 @@ pub const Command = struct {
                     if (comptime Environment.isWindows) {
                         resolved = resolve_path.normalizeString(resolved, true, .windows);
                     }
-                    absolute_script_path = resolved;
                     break :brk bun.openFile(
                         resolved,
                         .{ .mode = .read_only },
@@ -1843,8 +1842,7 @@ pub const Command = struct {
 
             Global.configureAllocator(.{ .long_running = true });
 
-            // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
-            absolute_script_path = absolute_script_path orelse brk: {
+            absolute_script_path = brk: {
                 if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
 
                 var fd_path_buf: bun.PathBuffer = undefined;

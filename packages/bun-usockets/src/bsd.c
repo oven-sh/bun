@@ -787,6 +787,19 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, co
         closesocket(s);
         return LIBUS_SOCKET_ERROR;
     }
+
+    // See
+    // - https://stackoverflow.com/questions/60591081/getpeername-always-fails-with-error-code-wsaenotconn
+    // - https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsaconnectbynamea#remarks
+    //
+    // When the WSAConnectByName function returns TRUE, the socket s is in the default state for a connected socket. 
+    // The socket s does not enable previously set properties or options until SO_UPDATE_CONNECT_CONTEXT is set on the socket. 
+    // Use the setsockopt function to set the SO_UPDATE_CONNECT_CONTEXT option.
+    //
+    if (SOCKET_ERROR == setsockopt( s, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0 )) {
+        closesocket(s);
+        return LIBUS_SOCKET_ERROR;
+    }
     return s;
 #else
     struct addrinfo hints, *result;

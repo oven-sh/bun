@@ -25,6 +25,8 @@ const testDir = tempDirWithFiles("watch", {
   [encodingFileName]: "hello",
 });
 
+const skipWindows = process.platform === "win32" ? test.skip : test;
+
 describe("fs.watch", () => {
   test("non-persistent watcher should not block the event loop", done => {
     try {
@@ -405,7 +407,7 @@ describe("fs.watch", () => {
     expect(promise).resolves.toBe("change");
   });
 
-  test("should throw if no permission to watch the directory", async () => {
+  skipWindows("should throw if no permission to watch the directory", async () => {
     const filepath = path.join(testDir, "permission-dir");
     fs.mkdirSync(filepath, { recursive: true });
     fs.chmodSync(filepath, 0o200);
@@ -414,11 +416,11 @@ describe("fs.watch", () => {
       watcher.close();
       expect.unreachable();
     } catch (err: any) {
-      expect(err.message.indexOf("EPERM") !== -1).toBeTrue();
+      expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
     }
   });
 
-  test("should throw if no permission to watch the file", async () => {
+  skipWindows("should throw if no permission to watch the file", async () => {
     const filepath = path.join(testDir, "permission-file.txt");
 
     fs.writeFileSync(filepath, "hello.txt");
@@ -428,7 +430,7 @@ describe("fs.watch", () => {
       watcher.close();
       expect.unreachable();
     } catch (err: any) {
-      expect(err.message.indexOf("EPERM") !== -1).toBeTrue();
+      expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
     }
   });
 });

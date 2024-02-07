@@ -811,7 +811,6 @@ class ClientHttp2Session extends Http2Session {
         stream[bunHTTP2StreamResponded] = true;
         stream.emit("response", headers, flags);
       }
-    
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;

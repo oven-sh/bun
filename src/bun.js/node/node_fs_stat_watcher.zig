@@ -62,7 +62,7 @@ pub const StatWatcherScheduler = struct {
 
                 const vm = watcher.globalThis.bunVM();
                 this.timer = uws.Timer.create(
-                    vm.event_loop_handle orelse @panic("UWS Loop was not initialized yet."),
+                    vm.uwsLoop(),
                     this,
                 );
 
@@ -220,31 +220,11 @@ pub const StatWatcher = struct {
             if (arguments.nextEat()) |options_or_callable| {
                 // options
                 if (options_or_callable.isObject()) {
-                    if (options_or_callable.get(ctx, "persistent")) |persistent_| {
-                        if (!persistent_.isBoolean()) {
-                            JSC.throwInvalidArguments(
-                                "persistent must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
-                        }
-                        persistent = persistent_.toBoolean();
-                    }
+                    // default true
+                    persistent = (options_or_callable.getOptional(ctx, "persistent", bool) catch return null) orelse true;
 
-                    if (options_or_callable.get(ctx, "bigint")) |bigint_| {
-                        if (!bigint_.isBoolean()) {
-                            JSC.throwInvalidArguments(
-                                "bigint must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
-                        }
-                        bigint = bigint_.toBoolean();
-                    }
+                    // default false
+                    bigint = (options_or_callable.getOptional(ctx, "bigint", bool) catch return null) orelse false;
 
                     if (options_or_callable.get(ctx, "interval")) |interval_| {
                         if (!interval_.isNumber()) {
@@ -457,6 +437,7 @@ pub const StatWatcher = struct {
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];
         }
+
         var parts = [_]string{slice};
         const file_path = Path.joinAbsStringBuf(
             Fs.FileSystem.instance.top_level_dir,

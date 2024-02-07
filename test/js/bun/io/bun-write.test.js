@@ -479,3 +479,18 @@ describe("ENOENT", () => {
     });
   });
 });
+
+it("timed output should work", async () => {
+  const producer_file = path.join(import.meta.dir, "timed-stderr-output.js");
+
+  const producer = Bun.spawn([bunExe(), "run", producer_file], {
+    stderr: "pipe",
+  });
+
+  let text = "";
+  for await (const chunk of producer.stderr) {
+    text += [...chunk].map(x => String.fromCharCode(x)).join("");
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  expect(text).toBe("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n");
+});

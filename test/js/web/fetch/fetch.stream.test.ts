@@ -28,6 +28,9 @@ const bigText = Buffer.from("a".repeat(1 * 1024 * 1024));
 const smallText = Buffer.from("Hello".repeat(16));
 const empty = Buffer.alloc(0);
 
+const listen_host = "0.0.0.0";
+const connect_host = process.platform === "win32" ? "localhost" : "0.0.0.0";
+
 describe("fetch() with streaming", () => {
   [-1, 0, 20, 50, 100].forEach(timeout => {
     it(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {
@@ -55,7 +58,7 @@ describe("fetch() with streaming", () => {
           },
         });
 
-        const server_url = `http://${server.hostname}:${server.port}`;
+        const server_url = `http://${connect_host}:${server.port}`;
         try {
           const res = await fetch(server_url, {
             signal: timeout < 0 ? AbortSignal.abort() : AbortSignal.timeout(timeout),
@@ -114,7 +117,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
+      const server_url = `http://${connect_host}:${server.port}`;
       const res = await fetch(server_url);
       try {
         const promise = res.text(); // start buffering
@@ -160,7 +163,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
+      const server_url = `http://${connect_host}:${server.port}`;
       const res = await fetch(server_url);
       try {
         const body = res.body as ReadableStream<Uint8Array>;
@@ -203,7 +206,7 @@ describe("fetch() with streaming", () => {
           });
         },
       });
-      const url = `http://${server.hostname}:${server.port}/`;
+      const url = `http://${connect_host}:${server.port}/`;
       expect(await fetch(`${url}with_headers`).then(res => res.text())).toBe("Hello, World");
       expect(await fetch(url).then(res => res.text())).toBe("Hello, World");
     } finally {
@@ -291,7 +294,7 @@ describe("fetch() with streaming", () => {
       });
 
       async function getReader() {
-        return (await fetch(`http://${server.hostname}:${server.port}`, {})).body?.getReader();
+        return (await fetch(`http://${connect_host}:${server.port}`, {})).body?.getReader();
       }
       gcTick(false);
       const reader = await getReader();
@@ -362,7 +365,7 @@ describe("fetch() with streaming", () => {
         return parseInt(match[1]?.trim(), 10);
       }
 
-      const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+      const res = await fetch(`http://${connect_host}:${server.port}`, {});
       gcTick(false);
       const reader = res.body?.getReader();
       gcTick(false);
@@ -424,7 +427,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
+      const server_url = `http://${connect_host}:${server.port}`;
       async function doRequest() {
         await Bun.sleep(10);
         const res = await fetch(server_url);
@@ -491,7 +494,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
+      const server_url = `http://${connect_host}:${server.port}`;
       const res = await fetch(server_url);
 
       const transform = new TransformStream({
@@ -537,7 +540,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
+      const server_url = `http://${connect_host}:${server.port}`;
       const res = await fetch(server_url);
 
       const reader = res.body?.getReader();
@@ -614,7 +617,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+      let res = await fetch(`http://${connect_host}:${server.port}`, {});
       gcTick(false);
       const reader = res.body?.getReader();
 
@@ -685,7 +688,7 @@ describe("fetch() with streaming", () => {
             },
           });
 
-          const server_url = `http://${server.hostname}:${server.port}`;
+          const server_url = `http://${connect_host}:${server.port}`;
           const res = await fetch(server_url);
           const reader = res.body?.getReader();
           let buffer = Buffer.alloc(0);
@@ -772,7 +775,7 @@ describe("fetch() with streaming", () => {
           },
         });
 
-        let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        let res = await fetch(`http://${connect_host}:${server.port}`, {});
         gcTick(false);
         const reader = res.body?.getReader();
 
@@ -823,13 +826,13 @@ describe("fetch() with streaming", () => {
             );
           },
         });
-        let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        let res = await fetch(`http://${connect_host}:${server.port}`, {});
         gcTick(false);
         const result = await res.text();
         gcTick(false);
         expect(result).toBe(content);
 
-        res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        res = await fetch(`http://${connect_host}:${server.port}`, {});
         gcTick(false);
         const reader = res.body?.getReader();
 
@@ -894,13 +897,13 @@ describe("fetch() with streaming", () => {
             );
           },
         });
-        let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        let res = await fetch(`http://${connect_host}:${server.port}`, {});
         gcTick(false);
         const result = await res.text();
         gcTick(false);
         expect(result).toBe(content);
 
-        res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        res = await fetch(`http://${connect_host}:${server.port}`, {});
         gcTick(false);
         const reader = res.body?.getReader();
 
@@ -944,13 +947,13 @@ describe("fetch() with streaming", () => {
             });
           },
         });
-        let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        let res = await fetch(`http://${connect_host}:${server.port}`, {});
         gcTick(false);
         const result = await res.text();
         gcTick(false);
         expect(result).toBe(content);
 
-        res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        res = await fetch(`http://${connect_host}:${server.port}`, {});
         gcTick(false);
         const reader = res.body?.getReader();
 
@@ -994,13 +997,13 @@ describe("fetch() with streaming", () => {
             });
           },
         });
-        let res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        let res = await fetch(`http://${connect_host}:${server.port}`, {});
         gcTick(false);
         const result = await res.text();
         gcTick(false);
         expect(result).toBe(content);
 
-        res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        res = await fetch(`http://${connect_host}:${server.port}`, {});
         gcTick(false);
         const reader = res.body?.getReader();
 
@@ -1036,7 +1039,7 @@ describe("fetch() with streaming", () => {
 
         server = Bun.listen({
           port: 0,
-          hostname: "0.0.0.0",
+          hostname: listen_host,
           socket: {
             async open(socket) {
               var corked: any[] = [];
@@ -1082,7 +1085,7 @@ describe("fetch() with streaming", () => {
           },
         });
 
-        const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+        const res = await fetch(`http://${connect_host}:${server.port}`, {});
         gcTick(false);
         const reader = res.body?.getReader();
 
@@ -1115,7 +1118,7 @@ describe("fetch() with streaming", () => {
 
         server = Bun.listen({
           port: 0,
-          hostname: "0.0.0.0",
+          hostname: listen_host,
           socket: {
             async open(socket) {
               var corked: any[] = [];
@@ -1160,7 +1163,7 @@ describe("fetch() with streaming", () => {
           },
         });
         try {
-          const res = await fetch(`http://${server.hostname}:${server.port}`, {
+          const res = await fetch(`http://${connect_host}:${server.port}`, {
             signal: AbortSignal.timeout(1000),
           });
           gcTick(false);
@@ -1198,7 +1201,7 @@ describe("fetch() with streaming", () => {
           const content = "Hello".repeat(parts);
           server = Bun.listen({
             port: 0,
-            hostname: "0.0.0.0",
+            hostname: listen_host,
             socket: {
               async open(socket) {
                 var corked: any[] = [];
@@ -1246,7 +1249,7 @@ describe("fetch() with streaming", () => {
           });
 
           try {
-            const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+            const res = await fetch(`http://${connect_host}:${server.port}`, {});
             gcTick(false);
 
             const reader = res.body?.getReader();
@@ -1287,7 +1290,7 @@ describe("fetch() with streaming", () => {
         const { promise, resolve: resolveSocket } = Promise.withResolvers<Socket>();
         server = Bun.listen({
           port: 0,
-          hostname: "0.0.0.0",
+          hostname: listen_host,
           socket: {
             async open(socket) {
               var corked: any[] = [];
@@ -1338,7 +1341,7 @@ describe("fetch() with streaming", () => {
         let socket: Socket | null = null;
 
         try {
-          const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+          const res = await fetch(`http://${connect_host}:${server.port}`, {});
           socket = await promise;
           gcTick(false);
 

@@ -6,7 +6,7 @@ import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
 import { gzipSync } from "zlib";
 import { join } from "path";
-import { gc, withoutAggressiveGC, gcTick } from "harness";
+import { gc, withoutAggressiveGC, gcTick, isWindows } from "harness";
 import net from "net";
 
 const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
@@ -844,7 +844,8 @@ describe("Bun.file", () => {
     }
   }
 
-  describe("bad permissions throws", () => {
+  // skip this test on windows because setting permissions with chmod doesn't work
+  describe.skipIf(isWindows)("bad permissions throws", () => {
     const path = join(tmp_dir, "my-new-file");
     beforeAll(async () => {
       await Bun.write(path, "hey");

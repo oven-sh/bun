@@ -1417,14 +1417,9 @@ pub fn reloadProcess(
     const bun = @This();
 
     if (comptime Environment.isWindows) {
-        // this assumes that our parent process assigned us to a job object (see runWatcherManager)
-        var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
-        win32.spawnProcessCopy(allocator, &procinfo, false, false) catch |err| {
-            Output.panic("Error while reloading process: {s}", .{@errorName(err)});
-        };
-
-        // terminate the current process
-        const rc = bun.windows.TerminateProcess(@ptrFromInt(std.math.maxInt(usize)), 0);
+        // on windows we assume that we have a parent process that is monitoring us and will restart us if we exit with a magic exit code
+        // see becomeWatcherManager
+        const rc = bun.windows.TerminateProcess(@ptrFromInt(std.math.maxInt(usize)), win32.watcher_reload_exit);
         if (rc == 0) {
             const err = bun.windows.GetLastError();
             Output.panic("Error while reloading process: {s}", .{@tagName(err)});
@@ -1911,6 +1906,9 @@ pub const win32 = struct {
     pub var STDIN_FD: FileDescriptor = undefined;
 
     const watcherChildEnv: [:0]const u16 = strings.toUTF16LiteralZ("_BUN_WATCHER_CHILD");
+    // magic exit code to indicate to the watcher manager that the child process should be re-spawned
+    // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
+    const watcher_reload_exit: w.DWORD = 3224497970;
 
     pub fn stdio(i: anytype) FileDescriptor {
         return switch (i) {
@@ -1928,70 +1926,33 @@ pub const win32 = struct {
 
     pub fn becomeWatcherManager(allocator: std.mem.Allocator) noreturn {
         // this process will be the parent of the child process that actually runs the script
-        // based on https://devblogs.microsoft.com/oldnewthing/20130405-00/?p=4743
-        const job = windows.CreateJobObjectA(null, null);
-        const iocp = windows.CreateIoCompletionPort(windows.INVALID_HANDLE_VALUE, null, 0, 1) orelse {
-            Output.panic("Failed to create IOCP\n", .{});
-        };
-        var assoc = windows.JOBOBJECT_ASSOCIATE_COMPLETION_PORT{
-            .CompletionKey = job,
-            .CompletionPort = iocp,
-        };
-        if (windows.SetInformationJobObject(job, windows.JobObjectAssociateCompletionPortInformation, &assoc, @sizeOf(windows.JOBOBJECT_ASSOCIATE_COMPLETION_PORT)) == 0) {
-            const err = windows.GetLastError();
-            Output.panic("Failed to associate completion port: {s}\n", .{@tagName(err)});
-        }
-
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
-        spawnProcessCopy(allocator, &procinfo, true, true) catch |err| {
-            Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
-        };
-        if (windows.AssignProcessToJobObject(job, procinfo.hProcess) == 0) {
-            const err = windows.GetLastError();
-            Output.panic("Failed to assign process to job object: {s}\n", .{@tagName(err)});
-        }
-        if (windows.ResumeThread(procinfo.hThread) == 0) {
-            const err = windows.GetLastError();
-            Output.panic("Failed to resume child process: {s}\n", .{@tagName(err)});
-        }
-
-        var completion_code: w.DWORD = 0;
-        var completion_key: w.ULONG_PTR = 0;
-        var overlapped: ?*w.OVERLAPPED = null;
-        var last_pid: w.DWORD = 0;
         while (true) {
-            if (w.kernel32.GetQueuedCompletionStatus(iocp, &completion_code, &completion_key, &overlapped, w.INFINITE) == 0) {
+            spawnWatcherChild(allocator, &procinfo) catch |err| {
+                Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
+            };
+            w.WaitForSingleObject(procinfo.hProcess, w.INFINITE) catch |err| {
+                Output.panic("Failed to wait for child process: {s}\n", .{@errorName(err)});
+            };
+            var exit_code: w.DWORD = 0;
+            if (w.kernel32.GetExitCodeProcess(procinfo.hProcess, &exit_code) == 0) {
                 const err = windows.GetLastError();
-                Output.panic("Failed to query completion status: {s}\n", .{@tagName(err)});
+                Output.panic("Failed to get exit code of child process: {s}\n", .{@tagName(err)});
             }
-            // only care about events concerning our job object (theoretically unnecessary)
-            if (completion_key != @intFromPtr(job)) {
+            // magic exit code to indicate that the child process should be re-spawned
+            if (exit_code == watcher_reload_exit) {
                 continue;
-            }
-            if (completion_code == windows.JOB_OBJECT_MSG_EXIT_PROCESS) {
-                last_pid = @truncate(@intFromPtr(overlapped));
-            } else if (completion_code == windows.JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO) {
-                break;
+            } else {
+                Global.exitWide(exit_code);
             }
         }
-        // NOTE: for now we always exit with a zero exit code.
-        // This is because there's no straightforward way to communicate the exit code
-        // of subsequently spawned child processes to the original parent process.
-        Global.exit(0);
     }
 
-    pub fn spawnProcessCopy(
+    pub fn spawnWatcherChild(
         allocator: std.mem.Allocator,
         procinfo: *std.os.windows.PROCESS_INFORMATION,
-        suspended: bool,
-        setChild: bool,
     ) !void {
-        var flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT;
-        if (suspended) {
-            // see CREATE_SUSPENDED at
-            // https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags
-            flags |= 0x00000004;
-        }
+        const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT;
 
         const image_path = &w.peb().ProcessParameters.ImagePathName;
         var wbuf: WPathBuffer = undefined;
@@ -2001,40 +1962,33 @@ pub const win32 = struct {
         const image_pathZ = wbuf[0..image_path.Length :0];
 
         const kernelenv = w.kernel32.GetEnvironmentStringsW();
-        var newenv: ?[]u16 = null;
         defer {
             if (kernelenv) |envptr| {
                 _ = w.kernel32.FreeEnvironmentStringsW(envptr);
             }
-            if (newenv) |ptr| {
-                allocator.free(ptr);
-            }
         }
 
-        if (setChild) {
-            var size: usize = 0;
-            if (kernelenv) |ptr| {
-                // check that env is non-empty
-                if (ptr[0] != 0 or ptr[1] != 0) {
-                    // array is terminated by two nulls
-                    while (ptr[size] != 0 or ptr[size + 1] != 0) size += 1;
-                    size += 1;
-                }
+        var size: usize = 0;
+        if (kernelenv) |ptr| {
+            // check that env is non-empty
+            if (ptr[0] != 0 or ptr[1] != 0) {
+                // array is terminated by two nulls
+                while (ptr[size] != 0 or ptr[size + 1] != 0) size += 1;
+                size += 1;
             }
-            // now ptr[size] is the first null
-            const buf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
-            if (kernelenv) |ptr| {
-                @memcpy(buf[0..size], ptr);
-            }
-            @memcpy(buf[size .. size + watcherChildEnv.len], watcherChildEnv);
-            buf[size + watcherChildEnv.len] = '=';
-            buf[size + watcherChildEnv.len + 1] = '1';
-            buf[size + watcherChildEnv.len + 2] = 0;
-            buf[size + watcherChildEnv.len + 3] = 0;
-            newenv = buf;
         }
+        // now ptr[size] is the first null
 
-        const env: ?[*]u16 = if (newenv) |e| e.ptr else kernelenv;
+        const envbuf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
+        defer allocator.free(envbuf);
+        if (kernelenv) |ptr| {
+            @memcpy(envbuf[0..size], ptr);
+        }
+        @memcpy(envbuf[size .. size + watcherChildEnv.len], watcherChildEnv);
+        envbuf[size + watcherChildEnv.len] = '=';
+        envbuf[size + watcherChildEnv.len + 1] = '1';
+        envbuf[size + watcherChildEnv.len + 2] = 0;
+        envbuf[size + watcherChildEnv.len + 3] = 0;
 
         var startupinfo = w.STARTUPINFOW{
             .cb = @sizeOf(w.STARTUPINFOW),
@@ -2063,7 +2017,7 @@ pub const win32 = struct {
             null,
             1,
             flags,
-            env,
+            envbuf.ptr,
             null,
             &startupinfo,
             procinfo,

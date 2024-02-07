@@ -19986,14 +19986,29 @@ fn NewParser_(
 
                         if (prop.ts_decorators.len > 0) {
                             const loc = prop.key.?.loc;
-                            const descriptor_key = switch (prop.key.?.data) {
+                            const _descriptor_key = switch (prop.key.?.data) {
                                 .e_identifier => |k| p.newExpr(E.Identifier{ .ref = k.ref }, loc),
                                 .e_number => |k| p.newExpr(E.Number{ .value = k.value }, loc),
                                 .e_string => |k| p.newExpr(E.String{ .data = k.data }, loc),
                                 .e_index => |k| p.newExpr(E.Index{ .target = k.target, .index = k.index }, loc),
                                 .e_private_identifier => |k| p.newExpr(E.PrivateIdentifier{ .ref = k.ref }, loc),
-                                else => bun.unreachablePanic("Unexpected AST node type {any}", .{prop.key.?}),
+
+                                // This should be unreachable. Due to zig bug using `unreachable` keyword or `noreturn` type will
+                                // result in a segfault at runtime with a release build. Minimum repro:
+                                //
+                                // class Foo {
+                                //   foo;
+                                // }
+                                //
+                                // Workaround: assign to null and say the orelse branch is unreachable. The cause
+                                // of this bug seems to be a combination of release build optimizations with switch expression
+                                // and unreachable or noreturn else.
+                                //
+                                // TODO: when zig is upgraded check if this workaround is still needed. The bug happens
+                                // on macos aarch64
+                                else => null,
                             };
+                            const descriptor_key = _descriptor_key orelse unreachable;
 
                             // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
                             // the if statement.

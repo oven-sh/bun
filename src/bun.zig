@@ -1962,13 +1962,9 @@ pub const win32 = struct {
         const image_pathZ = wbuf[0..image_path.Length :0];
 
         const kernelenv = w.kernel32.GetEnvironmentStringsW();
-        var newenv: ?[]u16 = null;
         defer {
             if (kernelenv) |envptr| {
                 _ = w.kernel32.FreeEnvironmentStringsW(envptr);
-            }
-            if (newenv) |ptr| {
-                allocator.free(ptr);
             }
         }
 
@@ -1982,18 +1978,17 @@ pub const win32 = struct {
             }
         }
         // now ptr[size] is the first null
-        const buf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
-        if (kernelenv) |ptr| {
-            @memcpy(buf[0..size], ptr);
-        }
-        @memcpy(buf[size .. size + watcherChildEnv.len], watcherChildEnv);
-        buf[size + watcherChildEnv.len] = '=';
-        buf[size + watcherChildEnv.len + 1] = '1';
-        buf[size + watcherChildEnv.len + 2] = 0;
-        buf[size + watcherChildEnv.len + 3] = 0;
-        newenv = buf;
 
-        const env: ?[*]u16 = if (newenv) |e| e.ptr else kernelenv;
+        const envbuf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
+        defer allocator.free(envbuf);
+        if (kernelenv) |ptr| {
+            @memcpy(envbuf[0..size], ptr);
+        }
+        @memcpy(envbuf[size .. size + watcherChildEnv.len], watcherChildEnv);
+        envbuf[size + watcherChildEnv.len] = '=';
+        envbuf[size + watcherChildEnv.len + 1] = '1';
+        envbuf[size + watcherChildEnv.len + 2] = 0;
+        envbuf[size + watcherChildEnv.len + 3] = 0;
 
         var startupinfo = w.STARTUPINFOW{
             .cb = @sizeOf(w.STARTUPINFOW),
@@ -2022,7 +2017,7 @@ pub const win32 = struct {
             null,
             1,
             flags,
-            env,
+            envbuf.ptr,
             null,
             &startupinfo,
             procinfo,

@@ -1581,7 +1581,6 @@ pub const BundleV2 = struct {
         waker: ?bun.Async.Waker,
         queue: bun.UnboundedQueue(JSBundleCompletionTask, .next) = .{},
         generation: bun.Generation = 0,
-        initialized: bool = false,
 
         pub var instance: ?*BundleThread = undefined;
     };

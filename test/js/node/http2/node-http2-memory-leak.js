@@ -31,7 +31,7 @@ const PAYLOAD = Buffer.from("a".repeat(128 * 1024));
 const info = await nodeEchoServer();
 
 async function runGC() {
-  for(let i = 0; i < GC_AGRESSIVENESS; i++) {
+  for (let i = 0; i < GC_AGRESSIVENESS; i++) {
     await Bun.sleep(10);
     Bun.gc(true);
   }

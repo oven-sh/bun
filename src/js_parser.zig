@@ -20003,6 +20003,9 @@ fn NewParser_(
                                 // Workaround: assign to null and say the orelse branch is unreachable. The cause
                                 // of this bug seems to be a combination of release build optimizations with switch expression
                                 // and unreachable or noreturn else.
+                                //
+                                // TODO: when zig is upgraded check if this workaround is still needed. The bug happens
+                                // on macos aarch64
                                 else => null,
                             };
                             const descriptor_key = _descriptor_key orelse unreachable;

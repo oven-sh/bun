@@ -1667,6 +1667,15 @@ pub const Path = struct {
     // This duplicates but only when strictly necessary
     // This will skip allocating if it's already in FilenameStore or DirnameStore
     pub fn dupeAlloc(this: *const Path, allocator: std.mem.Allocator) !Fs.Path {
+
+        // The bundler will hash path.pretty, so it needs to be consistent across platforms.
+        // This assertion might be a bit too forceful though.
+        if (Environment.isWindows and Environment.allow_assert) {
+            if (std.mem.indexOfScalar(u8, this.pretty, '\\') != null) {
+                std.debug.panic("Expected pretty file path to have only forward slashes, got '{s}'", .{this.pretty});
+            }
+        }
+
         if (this.text.ptr == this.pretty.ptr and this.text.len == this.pretty.len) {
             if (FileSystem.FilenameStore.instance.exists(this.text) or FileSystem.DirnameStore.instance.exists(this.text)) {
                 return this.*;

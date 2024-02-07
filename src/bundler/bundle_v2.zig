@@ -571,9 +571,7 @@ pub const BundleV2 = struct {
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
             const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-            if (rel.len > 0 and rel[0] != '.') {
-                path.pretty = rel;
-            }
+            path.pretty = this.graph.allocator.dupe(u8, rel) catch @panic("Ran out of memory");
         }
 
         var secondary_path_to_copy: ?Fs.Path = null;
@@ -670,9 +668,7 @@ pub const BundleV2 = struct {
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
             const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-            if (rel.len > 0 and rel[0] != '.') {
-                path.pretty = rel;
-            }
+            path.pretty = this.graph.allocator.dupe(u8, rel) catch @panic("Ran out of memory");
         }
         path.* = try path.dupeAlloc(this.graph.allocator);
         entry.value_ptr.* = source_index.get();
@@ -1090,9 +1086,8 @@ pub const BundleV2 = struct {
                     const source = &sources[index];
                     var pathname = source.path.name;
 
-                    const rel = bun.path.relative(this.bundler.options.root_dir, source.path.text);
-                    if (rel.len > 0 and rel[0] != '.')
-                        pathname = Fs.PathName.init(rel);
+                    // TODO: outbase
+                    pathname = Fs.PathName.init(bun.path.relativePlatform(this.bundler.options.root_dir, source.path.text, .loose, false));
 
                     template.placeholder.name = pathname.base;
                     template.placeholder.dir = pathname.dir;
@@ -1116,8 +1111,8 @@ pub const BundleV2 = struct {
                                     },
                                 },
                                 .size = source.contents.len,
-                                .output_path = std.fmt.allocPrint(bun.default_allocator, "{}", .{template}) catch unreachable,
-                                .input_path = bun.default_allocator.dupe(u8, source.path.text) catch unreachable,
+                                .output_path = std.fmt.allocPrint(bun.default_allocator, "{}", .{template}) catch bun.outOfMemory(),
+                                .input_path = bun.default_allocator.dupe(u8, source.path.text) catch bun.outOfMemory(),
                                 .input_loader = .file,
                                 .output_kind = .asset,
                                 .loader = loader,
@@ -1162,20 +1157,18 @@ pub const BundleV2 = struct {
         // conditions from creating two
         _ = JSC.WorkPool.get();
 
-        if (!BundleThread.created) {
-            BundleThread.created = true;
-
+        if (BundleThread.instance) |existing| {
+            existing.queue.push(completion);
+            existing.waker.?.wake();
+        } else {
             var instance = bun.default_allocator.create(BundleThread) catch unreachable;
             instance.queue = .{};
-            instance.waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("Failed to create waker");
+            instance.waker = null;
             instance.queue.push(completion);
             BundleThread.instance = instance;
 
             var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance});
             thread.detach();
-        } else {
-            BundleThread.instance.queue.push(completion);
-            BundleThread.instance.waker.wake();
         }
 
         completion.poll_ref.ref(globalThis.bunVM());
@@ -1553,17 +1546,17 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn generateInNewThreadWrap(
-        instance: *BundleThread,
-    ) void {
+    pub fn generateInNewThreadWrap(instance: *BundleThread) void {
         Output.Source.configureNamedThread("Bundler");
-        var any = false;
 
+        instance.waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("Failed to create waker");
+
+        var has_bundled = false;
         while (true) {
             while (instance.queue.pop()) |completion| {
                 generateInNewThread(completion, instance.generation) catch |err| {
                     completion.result = .{ .err = err };
-                    const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
+                    const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
                     concurrent_task.* = JSC.ConcurrentTask{
                         .auto_delete = true,
                         .task = completion.task.task(),
@@ -1571,23 +1564,26 @@ pub const BundleV2 = struct {
                     };
                     completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
                 };
-                any = true;
+                has_bundled = true;
             }
             instance.generation +|= 1;
 
-            if (any) {
+            if (has_bundled) {
                 bun.Mimalloc.mi_collect(false);
+                has_bundled = false;
             }
-            _ = instance.waker.wait();
+
+            _ = instance.waker.?.wait();
         }
     }
 
     pub const BundleThread = struct {
-        waker: bun.Async.Waker,
+        waker: ?bun.Async.Waker,
         queue: bun.UnboundedQueue(JSBundleCompletionTask, .next) = .{},
         generation: bun.Generation = 0,
-        pub var created = false;
-        pub var instance: *BundleThread = undefined;
+        initialized: bool = false,
+
+        pub var instance: ?*BundleThread = undefined;
     };
 
     fn generateInNewThread(
@@ -2012,11 +2008,8 @@ pub const BundleV2 = struct {
             if (path.pretty.ptr == path.text.ptr) {
                 // TODO: outbase
                 const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-                if (rel.len > 0 and rel[0] != '.') {
-                    path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
-                }
+                path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
             }
-            std.debug.print("pretty: {s}\n", .{path.pretty});
             path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
 
             var secondary_path_to_copy: ?Fs.Path = null;
@@ -11553,8 +11546,10 @@ const ContentHasher = struct {
     // xxhash64 outperforms Wyhash if the file is > 1KB or so
     hasher: std.hash.XxHash64 = std.hash.XxHash64.init(0),
 
+    const log = bun.Output.scoped(.ContentHasher, true);
+
     pub fn write(self: *ContentHasher, bytes: []const u8) void {
-        std.debug.print("HASH_UPDATE {d}:\n{s}----------\n", .{ bytes.len, std.mem.sliceAsBytes(bytes) });
+        log("HASH_UPDATE {d}:\n{s}\n----------\n", .{ bytes.len, std.mem.sliceAsBytes(bytes) });
         self.hasher.update(std.mem.asBytes(&bytes.len));
         self.hasher.update(bytes);
     }
@@ -11566,7 +11561,7 @@ const ContentHasher = struct {
     }
 
     pub fn writeInts(self: *ContentHasher, i: []const u32) void {
-        std.debug.print("HASH_UPDATE: {any}\n", .{i});
+        log("HASH_UPDATE: {any}\n", .{i});
         self.hasher.update(std.mem.sliceAsBytes(i));
     }
 

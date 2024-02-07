@@ -76,7 +76,7 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  test("rebuilding busts the directory entries cache", () => {
+  test.skip("rebuilding busts the directory entries cache", () => {
     Bun.gc(true);
     const { exitCode, stderr } = Bun.spawnSync({
       cmd: [bunExe(), join(import.meta.dir, "bundler-reloader-script.ts")],

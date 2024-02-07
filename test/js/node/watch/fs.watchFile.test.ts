@@ -76,10 +76,9 @@ describe("fs.watchFile", () => {
   });
 
   test("bigint stats", async () => {
-    const { resolve, promise } = Promise.withResolvers();
-
-    fs.watchFile(path.join(testDir, encodingFileName), { interval: 50, bigint: true }, (curr, prev) => {
-      resolve([curr, prev]);
+    let entries: any = [];
+    fs.watchFile(path.join(testDir, encodingFileName), { interval: 50, bigint: true }, (curr, prev) => {    
+      entries.push([curr, prev]);
     });
 
     const interval = repeat(() => {
@@ -88,11 +87,11 @@ describe("fs.watchFile", () => {
     await Bun.sleep(200);
     clearInterval(interval);
 
-    const entry = (await promise) as [fs.BigIntStats, fs.BigIntStats];
-
     fs.unwatchFile(path.join(testDir, encodingFileName));
 
-    expect(typeof entry[0].mtimeMs === "bigint").toBe(true);
+    expect(entries.length).toBeGreaterThan(0);
+
+    expect(typeof entries[0][0].mtimeMs === "bigint").toBe(true);
   });
 
   test("StatWatcherScheduler stress test (1000 watchers with random times)", async () => {

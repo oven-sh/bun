@@ -265,7 +265,7 @@ pub fn fdatasync(fd: FileDescriptor) Maybe(void) {
 
     log("uv fdatasync({}) = {d}", .{ uv_fd, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fstat, .fd = fd, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .fdatasync, .fd = fd, .from_libuv = true } }
     else
         .{ .result = {} };
 }
@@ -278,7 +278,7 @@ pub fn fsync(fd: FileDescriptor) Maybe(void) {
 
     log("uv fsync({d}) = {d}", .{ uv_fd, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fstat, .fd = fd, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .fsync, .fd = fd, .from_libuv = true } }
     else
         .{ .result = {} };
 }
@@ -304,7 +304,7 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
 
     log("uv lstat({s}) = {d}", .{ path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fstat, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .lstat, .from_libuv = true } }
     else
         .{ .result = req.statbuf };
 }

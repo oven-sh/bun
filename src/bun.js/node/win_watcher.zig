@@ -1,6 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
-const uv = bun.windows.libuv;
+const windows = bun.windows;
+const uv = windows.libuv;
 const Path = @import("../../resolver/resolve_path.zig");
 const Fs = @import("../../fs.zig");
 const Mutex = @import("../../lock.zig").Lock;
@@ -243,7 +244,6 @@ pub const PathWatcher = struct {
         }
 
         const path = if (filename) |file| file[0..bun.len(file) :0] else return;
-
         // if we are watching a file we already have the file info
         const path_info = if (this.path.is_file) this.path else brk: {
             // we need the absolute path to get the file info
@@ -295,8 +295,17 @@ pub const PathWatcher = struct {
             return error.FailedToInitializeFSEvent;
         }
         this.handle.data = this;
+
+        const event_path = brk: {
+            var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const size = bun.sys.readlink(path.path, &outbuf).unwrap() catch break :brk path.path;
+            if (size >= bun.MAX_PATH_BYTES) break :brk path.path;
+            outbuf[size] = 0;
+            break :brk outbuf[0..size];
+        };
+
         // UV_FS_EVENT_RECURSIVE only works for Windows and OSX
-        if (uv.uv_fs_event_start(&this.handle, PathWatcher.uvEventCallback, path.path.ptr, if (recursive) uv.UV_FS_EVENT_RECURSIVE else 0) != 0) {
+        if (uv.uv_fs_event_start(&this.handle, PathWatcher.uvEventCallback, event_path.ptr, if (recursive) uv.UV_FS_EVENT_RECURSIVE else 0) != 0) {
             return error.FailedToStartFSEvent;
         }
         // we handle this in node_fs_watcher

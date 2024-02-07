@@ -40,9 +40,11 @@ describe("fs.watchFile", () => {
     fs.watchFile(path.join(testDir, "watch.txt"), { interval: 50 }, (curr, prev) => {
       entries.push([curr, prev]);
     });
-    await Bun.sleep(100);
-    fs.writeFileSync(path.join(testDir, "watch.txt"), "hello2");
-    await Bun.sleep(100);
+    const interval = repeat(()=> {
+      fs.writeFileSync(path.join(testDir, "watch.txt"), "hello2");
+    });
+    await Bun.sleep(200);
+    clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, "watch.txt"));
 
@@ -57,9 +59,12 @@ describe("fs.watchFile", () => {
     fs.watchFile(path.join(testDir, encodingFileName), { interval: 50 }, (curr, prev) => {
       entries.push([curr, prev]);
     });
-    await Bun.sleep(100);
-    fs.writeFileSync(path.join(testDir, encodingFileName), "hello2");
-    await Bun.sleep(100);
+    
+    const interval = repeat(()=> {
+      fs.writeFileSync(path.join(testDir, encodingFileName), "hello2");
+    });
+    await Bun.sleep(200);
+    clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, encodingFileName));
 
@@ -69,20 +74,25 @@ describe("fs.watchFile", () => {
     expect(entries[0][1].size).toBe(5);
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });
+
   test("bigint stats", async () => {
-    let entries: any = [];
-    fs.watchFile(path.join(testDir, encodingFileName), { interval: 50, bigint: true }, (curr, prev) => {
-      entries.push([curr, prev]);
+    const { resolve, promise } = Promise.withResolvers();
+    
+    fs.watchFile(path.join(testDir, encodingFileName), { interval: 50, bigint: true }, (curr, prev) => {    
+      resolve([curr, prev]);
     });
-    await Bun.sleep(100);
-    fs.writeFileSync(path.join(testDir, encodingFileName), "hello2");
-    await Bun.sleep(100);
+    
+    const interval = repeat(()=> {
+      fs.writeFileSync(path.join(testDir, encodingFileName), "hello2");
+    });
+    await Bun.sleep(200);
+    clearInterval(interval);
+
+    const entry = (await promise) as [fs.BigIntStats, fs.BigIntStats];
 
     fs.unwatchFile(path.join(testDir, encodingFileName));
 
-    expect(entries.length).toBeGreaterThan(0);
-
-    expect(typeof entries[0][0].mtimeMs === "bigint").toBe(true);
+    expect(typeof entry[0].mtimeMs === "bigint").toBe(true);
   });
 
   test("StatWatcherScheduler stress test (1000 watchers with random times)", async () => {

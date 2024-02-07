@@ -1201,6 +1201,10 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
 }
 
 pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.readlink(in, buf);
+    }
+
     while (true) {
         const rc = sys.readlink(in, buf.ptr, buf.len);
 

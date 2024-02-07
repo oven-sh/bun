@@ -1,6 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
-const uv = bun.windows.libuv;
+const windows = bun.windows;
+const uv = windows.libuv;
 const Path = @import("../../resolver/resolve_path.zig");
 const Fs = @import("../../fs.zig");
 const Mutex = @import("../../lock.zig").Lock;
@@ -48,7 +49,8 @@ pub const PathWatcherManager = struct {
         errdefer bun.default_allocator.free(cloned_path);
 
         const dir = bun.openDirAbsolute(cloned_path[0..cloned_path.len]) catch |err| {
-            if (err == error.ENOENT) {
+            log("openDirAbsolute({s}) err {}", .{ cloned_path, err });
+            if (err == error.ENOTDIR) {
                 const file = try bun.openFileZ(cloned_path, .{ .mode = .read_only });
                 const result = PathInfo{
                     .fd = bun.toFD(file.handle),
@@ -87,7 +89,6 @@ pub const PathWatcherManager = struct {
             .watcher_count = 0,
         });
         errdefer this.destroy();
-
         return this;
     }
 
@@ -242,36 +243,36 @@ pub const PathWatcher = struct {
             return;
         }
 
-        const path = if (filename) |file| file[0..bun.len(file) :0] else this.path.path;
+        const path = if (filename) |file| file[0..bun.len(file) :0] else return;
+        // if we are watching a file we already have the file info
+        const path_info = if (this.path.is_file) this.path else brk: {
+            // we need the absolute path to get the file info
+            var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            var parts = [_]string{ this.path.path, path };
+            @memcpy(buf[0..this.path.path.len], this.path.path);
+            buf[this.path.path.len] = std.fs.path.sep;
+            const cwd_z = buf[0 .. this.path.path.len + 1];
+            var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            const file_path = Path.joinAbsStringBuf(
+                cwd_z,
+                &joined_buf,
+                &parts,
+                .windows,
+            );
 
-        // we need the absolute path to get the file info
-        var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-        var parts = [_]string{path};
-        const cwd = Path.dirname(this.path.path, .windows);
-        @memcpy(buf[0..cwd.len], cwd);
-        buf[cwd.len] = std.fs.path.sep;
+            joined_buf[file_path.len] = 0;
+            const file_path_z = joined_buf[0..file_path.len :0];
+            break :brk manager._fdFromAbsolutePathZ(file_path_z) catch return;
+        };
 
-        var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-        const file_path = Path.joinAbsStringBuf(
-            buf[0 .. cwd.len + 1],
-            &joined_buf,
-            &parts,
-            .windows,
-        );
-
-        joined_buf[file_path.len] = 0;
-        const file_path_z = joined_buf[0..file_path.len :0];
-        const path_info = manager._fdFromAbsolutePathZ(file_path_z) catch return;
-        defer manager._decrementPathRef(path);
+        defer {
+            if (!this.path.is_file) {
+                manager._decrementPathRef(path_info.path);
+            }
+        }
         defer this.flush();
         // events always use the relative path
-        if (events & uv.UV_RENAME != 0) {
-            this.emit(path, path_info.hash, timestamp, path_info.is_file, .rename);
-        }
-
-        if (events & uv.UV_CHANGE != 0) {
-            this.emit(path, path_info.hash, timestamp, path_info.is_file, .change);
-        }
+        this.emit(path, path_info.hash, timestamp, path_info.is_file, if (events & uv.UV_RENAME != 0) .rename else .change);
     }
 
     pub fn init(manager: *PathWatcherManager, path: PathWatcherManager.PathInfo, recursive: bool, callback: Callback, updateEndCallback: UpdateEndCallback, ctx: ?*anyopaque) !*PathWatcher {
@@ -290,8 +291,17 @@ pub const PathWatcher = struct {
             return error.FailedToInitializeFSEvent;
         }
         this.handle.data = this;
+
+        const event_path = brk: {
+            var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const size = bun.sys.readlink(path.path, &outbuf).unwrap() catch break :brk path.path;
+            if (size >= bun.MAX_PATH_BYTES) break :brk path.path;
+            outbuf[size] = 0;
+            break :brk outbuf[0..size];
+        };
+
         // UV_FS_EVENT_RECURSIVE only works for Windows and OSX
-        if (uv.uv_fs_event_start(&this.handle, PathWatcher.uvEventCallback, path.path.ptr, if (recursive) uv.UV_FS_EVENT_RECURSIVE else 0) != 0) {
+        if (uv.uv_fs_event_start(&this.handle, PathWatcher.uvEventCallback, event_path.ptr, if (recursive) uv.UV_FS_EVENT_RECURSIVE else 0) != 0) {
             return error.FailedToStartFSEvent;
         }
         // we handle this in node_fs_watcher

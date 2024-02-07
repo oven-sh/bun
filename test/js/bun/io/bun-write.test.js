@@ -310,6 +310,14 @@ it("Bun.write(Bun.stderr, 'new TextEncoder().encode(Bun.write STDERR TEST'))", a
   expect(await Bun.write(Bun.stderr, new TextEncoder().encode("\nBun.write STDERR TEST\n\n"))).toBe(24);
 });
 
+it("Bun.file(0) survives GC", async () => {
+  for (let i = 0; i < 10; i++) {
+    let f = Bun.file(0);
+    await gcTick();
+    expect(Bun.inspect(f)).toContain("FileRef (fd: 0)");
+  }
+});
+
 // FLAKY TEST
 // Since Bun.file is resolved lazily, this needs to specifically be checked
 it("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async done => {

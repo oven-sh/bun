@@ -1553,20 +1553,19 @@ pub const Blob = struct {
                     break :brk copy;
                 },
                 .fd => {
-                    switch (bun.FDTag.get(path_or_fd.fd)) {
-                        .stdin => return Blob.initWithStore(
-                            vm.rareData().stdin(),
+                    const optional_store: ?*Store = switch (bun.FDTag.get(path_or_fd.fd)) {
+                        .stdin => vm.rareData().stdin(),
+                        .stderr => vm.rareData().stderr(),
+                        .stdout => vm.rareData().stdout(),
+                        else => null,
+                    };
+
+                    if (optional_store) |store| {
+                        store.ref();
+                        return Blob.initWithStore(
+                            store,
                             globalThis,
-                        ),
-                        .stderr => return Blob.initWithStore(
-                            vm.rareData().stderr(),
-                            globalThis,
-                        ),
-                        .stdout => return Blob.initWithStore(
-                            vm.rareData().stdout(),
-                            globalThis,
-                        ),
-                        else => {},
+                        );
                     }
                     break :brk path_or_fd.*;
                 },

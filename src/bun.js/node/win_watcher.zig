@@ -272,11 +272,7 @@ pub const PathWatcher = struct {
         }
         defer this.flush();
         // events always use the relative path
-        if (events & uv.UV_RENAME != 0) {
-            this.emit(path, path_info.hash, timestamp, path_info.is_file, .rename);
-        } else if (events & uv.UV_CHANGE != 0) {
-            this.emit(path, path_info.hash, timestamp, path_info.is_file, .change);
-        }
+        this.emit(path, path_info.hash, timestamp, path_info.is_file, if (events & uv.UV_RENAME != 0) .rename else .change);
     }
 
     pub fn init(manager: *PathWatcherManager, path: PathWatcherManager.PathInfo, recursive: bool, callback: Callback, updateEndCallback: UpdateEndCallback, ctx: ?*anyopaque) !*PathWatcher {

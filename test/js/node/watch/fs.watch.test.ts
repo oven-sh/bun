@@ -25,7 +25,7 @@ const testDir = tempDirWithFiles("watch", {
   [encodingFileName]: "hello",
 });
 
-const skipWindows = process.platform === "win32" ? test.skip : test;
+const isWindows = process.platform === "win32";
 
 describe("fs.watch", () => {
   test("non-persistent watcher should not block the event loop", done => {
@@ -407,7 +407,8 @@ describe("fs.watch", () => {
     expect(promise).resolves.toBe("change");
   });
 
-  skipWindows("should throw if no permission to watch the directory", async () => {
+  // on windows 0o200 will be readable (match nodejs behavior)
+  test.skipIf(isWindows)("should throw if no permission to watch the directory", async () => {
     const filepath = path.join(testDir, "permission-dir");
     fs.mkdirSync(filepath, { recursive: true });
     fs.chmodSync(filepath, 0o200);
@@ -420,7 +421,7 @@ describe("fs.watch", () => {
     }
   });
 
-  skipWindows("should throw if no permission to watch the file", async () => {
+  test.skipIf(isWindows)("should throw if no permission to watch the file", async () => {
     const filepath = path.join(testDir, "permission-file.txt");
 
     fs.writeFileSync(filepath, "hello.txt");

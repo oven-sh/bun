@@ -40,7 +40,8 @@ it("remoteAddress works", async () => {
     socket: {
       open(ws) {
         try {
-          expect(ws.remoteAddress).toBe("127.0.0.1");
+          // windows returns the ipv6 address
+          expect(ws.remoteAddress).toMatch(/127.0.0.1/);
           resolve();
         } catch (e) {
           reject(e);

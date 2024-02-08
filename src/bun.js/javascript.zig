@@ -824,7 +824,7 @@ pub const VirtualMachine = struct {
         Output.debug("Reloading...", .{});
         if (this.hot_reload == .watch) {
             Output.flush();
-            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
+            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
         }
 
         if (!strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
@@ -1511,6 +1511,17 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32, comptime add_double_ref: bool) ResolvedSource {
+        // refCountedString will panic if the code is empty
+        if (code.len == 0) {
+            return ResolvedSource{
+                .source_code = bun.String.init(""),
+                .specifier = specifier,
+                .source_url = bun.String.init(source_url),
+                .hash = 0,
+                .allocator = null,
+                .needs_deref = false,
+            };
+        }
         var source = this.refCountedString(code, hash_, !add_double_ref);
         if (add_double_ref) {
             source.ref();
@@ -3211,7 +3222,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
-            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
+            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
 
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }

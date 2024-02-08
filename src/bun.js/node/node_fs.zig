@@ -5717,8 +5717,18 @@ pub const NodeFS = struct {
         var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
         if (Environment.isWindows) {
+            const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);
+            // UV does not normalize slashes in symlink targets, but Node does
+            // See https://github.com/oven-sh/bun/issues/8273
+            //
+            // TODO: investigate if simd can be easily used here
+            for (target) |*c| {
+                if (c.* == '/') {
+                    c.* = '\\';
+                }
+            }
             return Syscall.symlinkUV(
-                args.old_path.sliceZ(&this.sync_error_buf),
+                target,
                 args.new_path.sliceZ(&to_buf),
                 switch (args.link_type) {
                     .file => 0,
@@ -5777,16 +5787,12 @@ pub const NodeFS = struct {
     pub fn watchFile(_: *NodeFS, args: Arguments.WatchFile, comptime flavor: Flavor) Maybe(Return.WatchFile) {
         std.debug.assert(flavor == .sync);
 
-        if (comptime Environment.isWindows) {
-            args.global_this.throwTODO("watch is not supported on Windows yet");
-            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
-        }
-
         const watcher = args.createStatWatcher() catch |err| {
             const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((JSC.SystemError{
                 .message = bun.String.init(buf),
+                .code = bun.String.init(@errorName(err)),
                 .path = bun.String.init(args.path.slice()),
             }).toErrorInstance(args.global_this));
             return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
@@ -5884,6 +5890,8 @@ pub const NodeFS = struct {
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((JSC.SystemError{
                 .message = bun.String.init(buf),
+                .code = bun.String.init(@errorName(err)),
+                .syscall = bun.String.static("watch"),
                 .path = bun.String.init(args.path.slice()),
             }).toErrorInstance(args.global_this));
             return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };

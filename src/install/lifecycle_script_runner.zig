@@ -111,13 +111,8 @@ pub const LifecycleScriptSubprocess = struct {
         this.package_name = original_script.package_name;
         this.current_script_index = next_script_index;
         this.finished_fds = 0;
-        errdefer {
-            if (Environment.isWindows) {
-                if (this.stdout.pipe.isActive()) this.stdout.close();
-                if (this.stderr.pipe.isActive()) this.stderr.close();
-            }
-        }
-        const shell_bin = bun.CLI.RunCommand.findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+
+        const shell_bin = bun.CLI.RunCommand.findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.script.len + 1);
         defer copy_script.deinit();

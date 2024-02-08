@@ -1338,7 +1338,7 @@ pub const Subprocess = struct {
             if (args != .zero and args.isObject()) {
 
                 // This must run before the stdio parsing happens
-                if (args.get(globalThis, "ipc")) |val| {
+                if (args.getTruthy(globalThis, "ipc")) |val| {
                     if (Environment.isWindows) {
                         globalThis.throwTODO("TODO: IPC is not yet supported on Windows");
                         return .zero;

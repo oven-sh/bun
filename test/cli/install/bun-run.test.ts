@@ -1,7 +1,7 @@
 // @known-failing-on-windows: 1 failing
 import { file, spawn, spawnSync } from "bun";
 import { afterEach, beforeEach, expect, it, describe } from "bun:test";
-import { bunEnv, bunExe, bunEnv as env } from "harness";
+import { bunEnv, bunExe, bunEnv as env, isWindows } from "harness";
 import { mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -89,7 +89,7 @@ for (let withRun of [false, true]) {
       });
 
       it("--silent omits error messages", async () => {
-        const exe = process.platform === "win32" ? "bun.exe" : "bun";
+        const exe = isWindows ? "bun.exe" : "bun";
         const { stdout, stderr, exitCode } = spawnSync({
           cmd: [bunExe(), "run", "--silent", exe, "doesnotexist"],
           cwd: run_dir,
@@ -102,7 +102,7 @@ for (let withRun of [false, true]) {
       });
 
       it("no --silent includes error messages", async () => {
-        const exe = process.platform === "win32" ? "bun.exe" : "bun";
+        const exe = isWindows ? "bun.exe" : "bun";
         const { stdout, stderr, exitCode } = spawnSync({
           cmd: [bunExe(), "run", exe, "doesnotexist"],
           cwd: run_dir,
@@ -113,7 +113,7 @@ for (let withRun of [false, true]) {
         expect(exitCode).toBe(1);
       });
 
-      it.skipIf(process.platform === "win32")("exit code message works above 128", async () => {
+      it.skipIf(isWindows)("exit code message works above 128", async () => {
         const { stdout, stderr, exitCode } = spawnSync({
           cmd: [bunExe(), "run", "bash", "-c", "exit 200"],
           cwd: run_dir,

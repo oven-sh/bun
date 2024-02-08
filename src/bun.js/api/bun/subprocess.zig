@@ -626,7 +626,7 @@ pub const Subprocess = struct {
 
         pub fn slice(this: *const Source) []const u8 {
             return switch (this.*) {
-                .blob => this.blob.sharedView(),
+                .blob => this.blob.slice(),
                 .array_buffer => this.array_buffer.slice(),
                 else => @panic("Invalid source"),
             };
@@ -684,8 +684,8 @@ pub const Subprocess = struct {
             }
 
             pub fn flush(this: *This) void {
-                _ = this; // autofix
-                // this.writer.flush();
+                if (this.buffer.len > 0)
+                    this.writer.write();
             }
 
             pub fn create(event_loop: anytype, subprocess: *ProcessType, fd: bun.FileDescriptor, source: Source) *This {
@@ -702,12 +702,13 @@ pub const Subprocess = struct {
             pub fn start(this: *This) JSC.Maybe(void) {
                 this.ref();
 
+                this.buffer = this.source.slice();
                 return this.writer.start(this.fd, true);
             }
 
             pub fn onWrite(this: *This, amount: usize, is_done: bool) void {
                 this.buffer = this.buffer[@min(amount, this.buffer.len)..];
-                if (is_done) {
+                if (is_done or this.buffer.len == 0) {
                     this.writer.close();
                 }
             }
@@ -1772,7 +1773,7 @@ pub const Subprocess = struct {
             }
         }
 
-        while (subprocess.hasPendingActiviytNonThreadsafe()) {
+        while (subprocess.hasPendingActivityNonThreadsafe()) {
             if (subprocess.stdin == .buffer) {
                 subprocess.stdin.buffer.flush();
             }

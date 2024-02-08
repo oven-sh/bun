@@ -3036,6 +3036,10 @@ pub const FileReader = struct {
     }
 
     pub fn onStart(this: *FileReader) StreamStart {
+        if (this.reader.getFd() != bun.invalid_fd and this.fd == bun.invalid_fd) {
+            this.fd = this.reader.getFd();
+        }
+
         switch (this.reader.start(this.fd, true)) {
             .result => {},
             .err => |e| {

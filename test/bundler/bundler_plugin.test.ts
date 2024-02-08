@@ -514,7 +514,7 @@ describe("bundler", () => {
     };
   });
   itBundled("plugin/ManyFiles", ({ root }) => {
-    const FILES = 50;
+    const FILES = process.platform === "win32" ? 50 : 200; // windows is slower at this
     const create = (fn: (i: number) => string) => new Array(FILES).fill(0).map((_, i) => fn(i));
 
     let onResolveCount = 0;

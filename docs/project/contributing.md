@@ -105,6 +105,8 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 
 {% /codetabs %}
 
+> ⚠️ Ubuntu distributions may require installation of the C++ standard library independently. See the [troubleshooting section](#span-file-not-found-on-ubuntu) for more information.
+
 ## Building Bun
 
 After cloning the repository, run the following command to run the first build. This may take a while as it will clone submodules and build dependencies.
@@ -250,6 +252,16 @@ Bun relies on C++20 features like `std::span`, which are not available in GCC ve
 fatal error: 'span' file not found
 #include <span>
          ^~~~~~
+```
+
+The issue may manifest when initially running `bun setup` as Clang being unable to compile a simple program:
+
+```
+The C++ compiler
+
+  "/usr/bin/clang++-16"
+
+is not able to compile a simple test program.
 ```
 
 To fix the error, we need to update the GCC version to 11. To do this, we'll need to check if the latest version is available in the distribution's official repositories or use a third-party repository that provides GCC 11 packages. Here are general steps:

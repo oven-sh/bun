@@ -16,7 +16,7 @@ test("which", () => {
   }
 
   let basedir = join(tmpdir(), "which-test-" + Math.random().toString(36).slice(2));
-  
+
   rmSync(basedir, { recursive: true, force: true });
   mkdirSync(basedir, { recursive: true });
   writeFixture(join(basedir, "myscript.sh"));
@@ -34,7 +34,7 @@ test("which", () => {
     process.chdir(tmpdir());
     try {
       rmdirSync("myscript.sh");
-    } catch{}
+    } catch {}
     // Our cwd is not /tmp
     expect(which("myscript.sh")).toBe(null);
 

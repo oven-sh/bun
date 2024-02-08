@@ -368,6 +368,10 @@ const PosixBufferedReader = struct {
         poll.setKeepingProcessAlive(this.vtable.eventLoop(), value);
     }
 
+    pub inline fn isDone(this: *const PosixBufferedReader) bool {
+        return this.is_done;
+    }
+
     pub fn from(to: *@This(), other: *PosixBufferedReader, parent_: *anyopaque) void {
         to.* = .{
             .handle = other.handle,

@@ -25,6 +25,21 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "bun test [file] --only",
+      "program": "${workspaceFolder}/build/bun-debug",
+      "args": ["test", "--only", "${file}"],
+      "cwd": "${workspaceFolder}/test",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+        "BUN_DEBUG_FileReader": "1",
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "bun test [file] (fast)",
       "program": "${workspaceFolder}/build/bun-debug",
       "args": ["test", "${file}"],

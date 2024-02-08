@@ -18,9 +18,9 @@
     "@types/ws": "~8.5.10"
   },
   "devDependencies": {
+    "@biomejs/biome": "^1.5.3",
     "@definitelytyped/dtslint": "^0.0.199",
     "@definitelytyped/eslint-plugin": "^0.0.197",
-    "prettier": "^2.4.1",
     "typescript": "^5.0.2"
   },
   "scripts": {

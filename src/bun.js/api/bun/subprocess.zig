@@ -2196,7 +2196,7 @@ pub const Subprocess = struct {
                     }
                 }
 
-                if (args.get(globalThis, "ipc")) |val| {
+                if (args.getTruthy(globalThis, "ipc")) |val| {
                     if (Environment.isWindows) {
                         globalThis.throwTODO("TODO: IPC is not yet supported on Windows");
                         return .zero;

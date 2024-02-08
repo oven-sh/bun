@@ -1,10 +1,9 @@
-// @known-failing-on-windows: 1 failing
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
-const todoIfWindows = process.platform === "win32" ? test.todo : test;
+const todoIfWindows = isWindows ? test.todo : test;
 
 describe("web worker", () => {
   async function waitForWorkerResult(worker: Worker, message: any): Promise<any> {

@@ -4,6 +4,11 @@ import { readlink, readFile } from "fs/promises";
 import { isAbsolute } from "path";
 import { openSync, closeSync } from "node:fs";
 
+export const isMacOS = process.platform === "darwin";
+export const isLinux = process.platform === "linux";
+export const isPosix = isMacOS || isLinux;
+export const isWindows = process.platform === "win32";
+
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
   GITHUB_ACTIONS: "false",
@@ -254,7 +259,7 @@ expect.extend({
 });
 
 export function ospath(path: string) {
-  if (process.platform === "win32") {
+  if (isWindows) {
     return path.replace(/\//g, "\\");
   }
   return path;
@@ -263,7 +268,7 @@ export function ospath(path: string) {
 export async function toHaveBins(actual: string[], expectedBins: string[]) {
   const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 
-  if (process.platform === "win32") {
+  if (isWindows) {
     for (var i = 0; i < actual.length; i += 2) {
       if (!actual[i].includes(expectedBins[i / 2]) || !actual[i + 1].includes(expectedBins[i / 2])) {
         return { pass: false, message };
@@ -278,7 +283,7 @@ export async function toHaveBins(actual: string[], expectedBins: string[]) {
 export async function toBeValidBin(actual: string, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
-  if (process.platform === "win32") {
+  if (isWindows) {
     const contents = await readFile(actual + ".bunx", "utf16le");
     const expected = expectedLinkPath.slice(3);
     return { pass: contents.includes(expected), message };
@@ -290,7 +295,7 @@ export async function toBeValidBin(actual: string, expectedLinkPath: string) {
 export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
-  if (process.platform === "win32") {
+  if (isWindows) {
     // junctions on windows will have an absolute path
     const pass = isAbsolute(actual) && actual.includes(expectedLinkPath.split("..").at(-1)!);
     return { pass, message };
@@ -301,7 +306,7 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
 }
 
 export function getMaxFD(): number {
-  if (process.platform === "win32") {
+  if (isWindows) {
     return 0;
   }
   const maxFD = openSync("/dev/null", "r");

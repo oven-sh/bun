@@ -355,7 +355,7 @@ describe("bun test", () => {
           import { test, expect } from "bun:test";
           import { sleep } from "bun";
           test("timeout", async () => {
-            await sleep(5001);
+            await sleep(5010);
           });
         `,
       });

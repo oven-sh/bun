@@ -787,6 +787,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
         "-Dversion=${Bun_VERSION}"
         "-Dcanary=${CANARY}"
+        "-Dreference-trace=100"
         "-Doptimize=${ZIG_OPTIMIZE}"
         "-Dcpu=${CPU_TARGET}"
         "-Dtarget=${ZIG_TARGET}"

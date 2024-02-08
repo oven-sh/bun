@@ -420,12 +420,12 @@ it("ReadableStream.prototype.values", async () => {
 });
 
 it("Bun.file() read text from pipe", async () => {
-  try {
-    unlinkSync("/tmp/fifo");
-  } catch (e) {}
+  // try {
+  //   unlinkSync("/tmp/fifo");
+  // } catch (e) {}
 
   console.log("here");
-  mkfifo("/tmp/fifo", 0o666);
+  const path = mkfifo("fifo", 0o666);
 
   // 65k so its less than the max on linux
   const large = "HELLO!".repeat((((1024 * 65) / "HELLO!".length) | 0) + 1);
@@ -433,7 +433,7 @@ it("Bun.file() read text from pipe", async () => {
   const chunks = [];
 
   const proc = Bun.spawn({
-    cmd: ["bash", join(import.meta.dir + "/", "bun-streams-test-fifo.sh"), "/tmp/fifo"],
+    cmd: ["bash", join(import.meta.dir + "/", "bun-streams-test-fifo.sh"), path],
     stderr: "inherit",
     stdout: null,
     stdin: null,
@@ -446,7 +446,7 @@ it("Bun.file() read text from pipe", async () => {
 
   const prom = (async function () {
     while (chunks.length === 0) {
-      var out = Bun.file("/tmp/fifo").stream();
+      var out = Bun.file(path).stream();
       for await (const chunk of out) {
         chunks.push(chunk);
       }

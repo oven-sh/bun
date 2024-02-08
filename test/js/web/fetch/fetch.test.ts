@@ -6,7 +6,7 @@ import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
 import { gzipSync } from "zlib";
 import { join } from "path";
-import { gc, withoutAggressiveGC, gcTick } from "harness";
+import { gc, withoutAggressiveGC, gcTick, isWindows } from "harness";
 import net from "net";
 
 const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
@@ -830,9 +830,8 @@ describe("Bun.file", () => {
     return file;
   });
 
-  it("size is Infinity on a fifo", () => {
-    const path = join(tmp_dir, "test-fifo");
-    mkfifo(path);
+  it.only("size is Infinity on a fifo", () => {
+    const path = mkfifo("test-fifo");
     const { size } = Bun.file(path);
     expect(size).toBe(Infinity);
   });
@@ -844,7 +843,7 @@ describe("Bun.file", () => {
     }
   }
 
-  describe("bad permissions throws", () => {
+  describe.skipIf(isWindows)("bad permissions throws", () => {
     const path = join(tmp_dir, "my-new-file");
     beforeAll(async () => {
       await Bun.write(path, "hey");

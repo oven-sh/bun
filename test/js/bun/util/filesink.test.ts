@@ -1,7 +1,12 @@
 // @known-failing-on-windows: 1 failing
 import { ArrayBufferSink } from "bun";
 import { describe, expect, it } from "bun:test";
+import { isWindows } from "harness";
 import { mkfifo } from "mkfifo";
+import { join } from "path";
+import { tmpdir } from "os";
+
+const dir = tmpdir();
 
 describe("FileSink", () => {
   const fixtures = [
@@ -43,7 +48,7 @@ describe("FileSink", () => {
   ] as const;
 
   function getPath(label: string) {
-    const path = `/tmp/bun-test-${Bun.hash(label).toString(10)}.txt`;
+    const path = join(dir, `bun-test-${Bun.hash(label).toString(10)}.txt`);
     try {
       require("fs").unlinkSync(path);
     } catch (e) {}
@@ -54,11 +59,11 @@ describe("FileSink", () => {
   var decoder = new TextDecoder();
 
   function getFd(label: string) {
-    const path = `/tmp/bun-test-${Bun.hash(label).toString(10)}.txt`;
-    try {
-      require("fs").unlinkSync(path);
-    } catch (e) {}
-    mkfifo(path, 0o666);
+    const name = `bun-test-${Bun.hash(label).toString(10)}.txt`;
+    // try {
+    //   require("fs").unlinkSync(path);
+    // } catch (e) {}
+    const path = mkfifo(name, 0o666);
     activeFIFO = (async function (stream: ReadableStream<Uint8Array>) {
       var chunks: Uint8Array[] = [];
       for await (const chunk of stream) {

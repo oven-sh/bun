@@ -7,7 +7,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/loader
 
-describe.todo("bundler", () => {
+describe("bundler", () => {
   itBundled("loader/JSONCommonJSAndES6", {
     files: {
       "/entry.js": /* js */ `
@@ -64,6 +64,7 @@ describe.todo("bundler", () => {
     ],
   });
   itBundled("loader/File", {
+    todo: process.platform === "win32", // TODO(@paperdave)
     files: {
       "/entry.js": `
         import path from 'path';
@@ -84,6 +85,7 @@ describe.todo("bundler", () => {
     },
   });
   itBundled("loader/FileMultipleNoCollision", {
+    todo: process.platform === "win32", // TODO(@paperdave)
     files: {
       "/entry.js": /* js */ `
         import path from 'path';
@@ -109,6 +111,7 @@ describe.todo("bundler", () => {
     },
   });
   itBundled("loader/FileMultipleNoCollisionAssetNames", {
+    todo: process.platform === "win32", // TODO(@paperdave)
     files: {
       "/entry.js": /* js */ `
         import path from 'path';

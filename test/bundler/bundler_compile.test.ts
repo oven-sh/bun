@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
 import assert from "assert";
 import dedent from "dedent";
 import { ESBUILD, itBundled, testForFile } from "./expectBundled";
@@ -34,6 +33,7 @@ describe("bundler", () => {
     },
   });
   itBundled("compile/VariousBunAPIs", {
+    todo: process.platform === "win32", // TODO(@paperdave)
     compile: true,
     files: {
       "/entry.ts": `

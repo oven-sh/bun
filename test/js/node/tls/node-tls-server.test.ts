@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import tls, { rootCertificates, connect, createServer, Server, TLSSocket } from "tls";
 import type { PeerCertificate } from "tls";
 import { realpathSync, readFileSync } from "fs";

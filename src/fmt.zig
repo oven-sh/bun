@@ -925,7 +925,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
             return .zero;
         };
 
-        var str = bun.String.create(buffer.list.items);
+        var str = bun.String.createUTF8(buffer.list.items);
         defer str.deref();
         return str.toJS(globalThis);
     }

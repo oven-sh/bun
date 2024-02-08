@@ -2496,7 +2496,9 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
                 ptr.* = t;
 
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(ptr.ref_count == 1);
+                    if (ptr.ref_count != 1) {
+                        std.debug.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
+                    }
                     allocation_logger("new() = {*}", .{ptr});
                 }
 

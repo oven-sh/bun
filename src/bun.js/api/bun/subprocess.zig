@@ -266,7 +266,12 @@ pub const Subprocess = struct {
                 const out: *Readable = &@field(this, @tagName(tag));
                 switch (out.*) {
                     .pipe => |pipe| {
-                        out.* = .{ .ignore = {} };
+                        if (pipe.state == .done) {
+                            out.* = .{ .buffer = pipe.state.done };
+                            pipe.state = .{ .done = &.{} };
+                        } else {
+                            out.* = .{ .ignore = {} };
+                        }
                         pipe.deref();
                     },
                     else => {},
@@ -327,6 +332,7 @@ pub const Subprocess = struct {
         inherit: void,
         ignore: void,
         closed: void,
+        buffer: []u8,
 
         pub fn hasPendingActivity(this: *const Readable) bool {
             return switch (this.*) {
@@ -446,6 +452,11 @@ pub const Subprocess = struct {
                     defer pipe.detach();
                     this.* = .{ .closed = {} };
                     return pipe.toBuffer(globalThis);
+                },
+                .buffer => |buf| {
+                    this.* = .{ .closed = {} };
+
+                    return JSC.MarkedArrayBuffer.fromBytes(buf, bun.default_allocator, .Uint8Array).toNodeBuffer(globalThis);
                 },
                 else => {
                     return JSValue.jsUndefined();
@@ -689,6 +700,8 @@ pub const Subprocess = struct {
             }
 
             pub fn start(this: *This) JSC.Maybe(void) {
+                this.ref();
+
                 return this.writer.start(this.fd, true);
             }
 
@@ -743,6 +756,9 @@ pub const Subprocess = struct {
         pub usingnamespace bun.NewRefCounted(PipeReader, deinit);
 
         pub fn hasPendingActivity(this: *const PipeReader) bool {
+            if (this.state == .pending)
+                return true;
+
             return this.reader.hasPendingRead();
         }
 
@@ -768,9 +784,10 @@ pub const Subprocess = struct {
         }
 
         pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *JSC.EventLoop) JSC.Maybe(void) {
+            this.ref();
             this.process = process;
             this.event_loop = event_loop;
-            return this.reader.start();
+            return this.reader.start(this.fd, true);
         }
 
         pub const toJS = toReadableStream;
@@ -778,7 +795,6 @@ pub const Subprocess = struct {
         pub fn onReaderDone(this: *PipeReader) void {
             const owned = this.toOwnedSlice();
             this.state = .{ .done = owned };
-            this.reader.close();
             if (this.process) |process| {
                 this.process = null;
                 process.onCloseIO(this.kind(process));
@@ -1637,17 +1653,19 @@ pub const Subprocess = struct {
             return .zero;
         };
 
+        const loop = jsc_vm.eventLoop();
+
         // When run synchronously, subprocess isn't garbage collected
         subprocess.* = Subprocess{
             .globalThis = globalThis,
             .process = spawned.toProcess(
-                jsc_vm.eventLoop(),
+                loop,
                 is_sync,
             ),
             .pid_rusage = null,
             .stdin = Writable.init(
                 stdio[0],
-                jsc_vm.eventLoop(),
+                loop,
                 subprocess,
                 spawned.stdin,
             ) catch {
@@ -1656,7 +1674,7 @@ pub const Subprocess = struct {
             },
             .stdout = Readable.init(
                 stdio[1],
-                jsc_vm.eventLoop(),
+                loop,
                 subprocess,
                 spawned.stdout,
                 jsc_vm.allocator,
@@ -1665,7 +1683,7 @@ pub const Subprocess = struct {
             ),
             .stderr = Readable.init(
                 stdio[2],
-                jsc_vm.eventLoop(),
+                loop,
                 subprocess,
                 spawned.stderr,
                 jsc_vm.allocator,
@@ -1725,13 +1743,16 @@ pub const Subprocess = struct {
         }
 
         if (subprocess.stdout == .pipe) {
-            if (is_sync or !lazy) {
+            subprocess.stdout.pipe.start(subprocess, loop).assert();
+            if ((is_sync or !lazy) and subprocess.stdout == .pipe) {
                 subprocess.stdout.pipe.readAll();
             }
         }
 
         if (subprocess.stderr == .pipe) {
-            if (is_sync or !lazy) {
+            subprocess.stderr.pipe.start(subprocess, loop).assert();
+
+            if ((is_sync or !lazy) and subprocess.stderr == .pipe) {
                 subprocess.stderr.pipe.readAll();
             }
         }
@@ -1751,7 +1772,7 @@ pub const Subprocess = struct {
             }
         }
 
-        while (!subprocess.hasExited()) {
+        while (subprocess.hasPendingActiviytNonThreadsafe()) {
             if (subprocess.stdin == .buffer) {
                 subprocess.stdin.buffer.flush();
             }

@@ -16,6 +16,7 @@ pub fn PosixPipeReader(
     return struct {
         pub fn read(this: *This) void {
             const buffer = vtable.getBuffer(this);
+
             const fd = vtable.getFd(this);
             if (comptime bun.Environment.isLinux) {
                 if (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
@@ -46,10 +47,10 @@ pub fn PosixPipeReader(
         const stack_buffer_len = 64 * 1024;
 
         inline fn drainChunk(parent: *This, resizable_buffer: *std.ArrayList(u8), start_length: usize) void {
-            if (vtable.onReadChunk) |onRead| {
+            if (parent.vtable.isStreamingEnabled()) {
                 if (resizable_buffer.items[start_length..].len > 0) {
                     const chunk = resizable_buffer.items[start_length..];
-                    onRead(parent, chunk);
+                    parent.vtable.onReadChunk(chunk);
                 }
             }
         }
@@ -82,15 +83,13 @@ pub fn PosixPipeReader(
 
                         if (buffer.ptr != &stack_buffer) {
                             resizable_buffer.items.len += bytes_read;
-                        } else if (resizable_buffer.items.len > 0) {
+                        } else if (resizable_buffer.items.len > 0 or !streaming) {
                             resizable_buffer.appendSlice(buffer[0..bytes_read]) catch bun.outOfMemory();
                             buffer = resizable_buffer.items;
                         }
 
                         if (streaming) {
                             parent.vtable.onReadChunk(buffer);
-                        } else if (buffer.ptr != &stack_buffer) {
-                            resizable_buffer.items.len += bytes_read;
                         }
                     },
                     .err => |err| {
@@ -148,15 +147,13 @@ pub fn PosixPipeReader(
 
                         if (buffer.ptr != &stack_buffer) {
                             resizable_buffer.items.len += bytes_read;
-                        } else if (resizable_buffer.items.len > 0) {
+                        } else if (resizable_buffer.items.len > 0 or !streaming) {
                             resizable_buffer.appendSlice(buffer[0..bytes_read]) catch bun.outOfMemory();
                             buffer = resizable_buffer.items;
                         }
 
                         if (streaming) {
                             parent.vtable.onReadChunk(buffer);
-                        } else if (buffer.ptr != &stack_buffer) {
-                            resizable_buffer.items.len += bytes_read;
                         }
 
                         switch (bun.isReadable(fd)) {
@@ -599,7 +596,8 @@ pub const GenericWindowsBufferedReader = struct {
         return this._buffer.allocatedSlice()[this._buffer.items.len..];
     }
 
-    pub fn start(this: *@This(), _: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
+    pub fn start(this: *@This(), fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
+        _ = fd; // autofix
         this.buffer().clearRetainingCapacity();
         this.is_done = false;
         this.unpause();

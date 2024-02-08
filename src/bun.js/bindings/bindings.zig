@@ -4558,7 +4558,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         if (comptime bun.Environment.isDebug) {
             if (bun.ComptimeEnumMap(BuiltinName).has(property)) {
-                Output.debugWarn("get() called with a builtin property name. Use fastGet() instead: {s}", .{property});
+                Output.debugWarn("get(\"{s}\") called. Please use fastGet(.{s}) instead!", .{ property, property });
             }
         }
 
@@ -4587,6 +4587,19 @@ pub const JSValue = enum(JSValueReprInt) {
         std.debug.assert(this.isCell());
         const function = this.fastGet(global, BuiltinName.toString) orelse return false;
         return function.isCell() and function.isCallable(global.vm());
+    }
+
+    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
+        if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
+            if (fastGet(this, global, @field(BuiltinName, property))) |prop| {
+                if (prop.isEmptyOrUndefinedOrNull()) return null;
+                return prop;
+            }
+
+            return null;
+        }
+
+        return getTruthy(this, global, property);
     }
 
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {

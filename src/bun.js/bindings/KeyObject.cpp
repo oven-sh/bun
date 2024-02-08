@@ -370,7 +370,7 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
     PrivateKeyPassphrase passphrase = { nullptr, 0 };
 
     auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
-
+    WTF::CString pass_holder;
     if (hasPassphrase) {
         if (passphraseJSValue.isString()) {
             auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
@@ -381,6 +381,7 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
                         auto value = pass.value();
                         passphrase.passphrase = const_cast<char*>(value.data());
                         passphrase.passphrase_len = value.length();
+                        pass_holder = std::move(value);
                     }
                 }
             }
@@ -955,7 +956,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
             PrivateKeyPassphrase passphrase = { nullptr, 0 };
 
             auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
-
+            WTF::CString pass_holder;
             if (hasPassphrase) {
                 if (passphraseJSValue.isString()) {
                     auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
@@ -966,6 +967,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
                                 auto value = pass.value();
                                 passphrase.passphrase = const_cast<char*>(value.data());
                                 passphrase.passphrase_len = value.length();
+                                pass_holder = std::move(value);
                             }
                         }
                     }
@@ -1881,6 +1883,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     }
                     void* passphrase = nullptr;
                     size_t passphrase_len = 0;
+                    WTF::CString pass_holder;
                     if (hasPassphrase) {
                         if (!cipher) {
                             JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
@@ -1896,6 +1899,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                                         auto value = pass.value();
                                         passphrase = const_cast<char*>(value.data());
                                         passphrase_len = value.length();
+                                        pass_holder = std::move(value);
                                     }
                                 }
                             }
@@ -2049,6 +2053,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     void* passphrase = nullptr;
                     size_t passphrase_len = 0;
                     auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
+                    WTF::CString pass_holder;
 
                     if (hasPassphrase) {
                         if (!cipher) {
@@ -2065,6 +2070,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                                         auto value = pass.value();
                                         passphrase = const_cast<char*>(value.data());
                                         passphrase_len = value.length();
+                                        pass_holder = std::move(value);
                                     }
                                 }
                             }
@@ -2190,7 +2196,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                     void* passphrase = nullptr;
                     size_t passphrase_len = 0;
                     auto hasPassphrase = !passphraseJSValue.isUndefinedOrNull() && !passphraseJSValue.isEmpty();
-
+                    WTF::CString pass_holder;
                     if (hasPassphrase) {
                         if (!cipher) {
                             JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
@@ -2206,6 +2212,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                                         auto value = pass.value();
                                         passphrase = const_cast<char*>(value.data());
                                         passphrase_len = value.length();
+                                        pass_holder = std::move(value);
                                     }
                                 }
                             }

@@ -185,7 +185,7 @@ extern "C" void on_before_reload_process_linux()
 
     // reset all signals to default
     sigset_t signal_set;
-    sigfillset(&signal_set);
+    sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
 }
 

@@ -2120,7 +2120,7 @@ pub const PosixToWinNormalizer = struct {
         return maybe_posix_path;
     }
 
-    fn resolveCWDWithExternalBuf(
+    pub fn resolveCWDWithExternalBuf(
         buf: *Buf,
         maybe_posix_path: []const u8,
     ) ![]const u8 {

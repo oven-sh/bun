@@ -1006,10 +1006,10 @@ pub fn GlobWalker_(
         }
 
         inline fn startsWithDot(filepath: []const u8) bool {
-            if (comptime !isWindows) {
-                return filepath[0] == '.';
+            if (comptime isWindows) {
+                return filepath.len > 1 and filepath[1] == '.';
             } else {
-                return filepath[1] == '.';
+                return filepath.len > 0 and filepath[0] == '.';
             }
         }
 

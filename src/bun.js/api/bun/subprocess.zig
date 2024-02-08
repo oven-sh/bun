@@ -678,12 +678,14 @@ pub const Subprocess = struct {
             }
 
             pub fn create(event_loop: anytype, subprocess: *ProcessType, fd: bun.FileDescriptor, source: Source) *This {
-                return This.new(.{
+                const instance = This.new(.{
                     .event_loop = JSC.EventLoopHandle.init(event_loop),
                     .process = subprocess,
                     .fd = fd,
                     .source = source,
                 });
+                instance.writer.setParent(instance);
+                return instance;
             }
 
             pub fn start(this: *This) JSC.Maybe(void) {

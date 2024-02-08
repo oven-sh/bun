@@ -241,6 +241,11 @@ pub fn PosixBufferedWriter(
             poll.setKeepingProcessAlive(event_loop, value);
         }
 
+        pub fn setParent(this: *PosixWriter, parent: *Parent) void {
+            this.parent = parent;
+            this.handle.setOwner(this);
+        }
+
         pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, pollable: bool) JSC.Maybe(void) {
             if (!pollable) {
                 std.debug.assert(this.handle != .poll);
@@ -323,6 +328,11 @@ pub fn PosixStreamingWriter(
             }
 
             onWrite(@ptrCast(this.parent), written, done);
+        }
+
+        pub fn setParent(this: *PosixWriter, parent: *Parent) void {
+            this.parent = parent;
+            this.handle.setOwner(this);
         }
 
         fn _onWritable(this: *PosixWriter) void {

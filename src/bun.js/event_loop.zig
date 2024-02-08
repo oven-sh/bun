@@ -1151,7 +1151,7 @@ pub const EventLoop = struct {
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
-                    bun.markWindowsOnly();
+                    bun.markPosixOnly();
                     var any: *TimerReference = task.get(TimerReference).?;
                     any.runFromJSThread();
                 },

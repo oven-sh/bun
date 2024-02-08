@@ -2146,8 +2146,8 @@ pub const Fetch = struct {
                 @TypeOf(&stream.writer()),
                 &stream.writer(),
                 url.path,
-            ) catch {
-                globalThis.throwOutOfMemory();
+            ) catch |err| {
+                globalThis.throwError(err, "Failed to decode file url");
                 return .zero;
             }];
 
@@ -2158,8 +2158,8 @@ pub const Fetch = struct {
                         if (url_path_decoded[0] == '/') {
                             url_path_decoded = url_path_decoded[1..];
                         }
-                        break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf, url_path_decoded) catch {
-                            globalThis.throwOutOfMemory();
+                        break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf, url_path_decoded) catch |err| {
+                            globalThis.throwError(err, "Failed to resolve file url");
                             return .zero;
                         };
                     }
@@ -2167,8 +2167,8 @@ pub const Fetch = struct {
                 }
 
                 var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd = std.os.getcwd(&cwd_buf) catch {
-                    globalThis.throwOutOfMemory();
+                const cwd = std.os.getcwd(&cwd_buf) catch |err| {
+                    globalThis.throwError(err, "Failed to resolve file url");
                     return .zero;
                 };
 
@@ -2183,8 +2183,8 @@ pub const Fetch = struct {
                     .auto,
                 );
                 if (Environment.isWindows) {
-                    break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf2, fullpath) catch {
-                        globalThis.throwOutOfMemory();
+                    break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf2, fullpath) catch |err| {
+                        globalThis.throwError(err, "Failed to resolve file url");
                         return .zero;
                     };
                 }

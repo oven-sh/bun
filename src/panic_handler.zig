@@ -32,6 +32,8 @@ pub fn NewPanicHandler(comptime panic_func: fn ([]const u8, ?*std.builtin.StackT
             // This exists to ensure we flush all buffered output before panicking.
             Output.flush();
 
+            bun.maybeHandlePanicDuringProcessReload();
+
             Report.fatal(null, msg);
 
             Output.disableBuffering();

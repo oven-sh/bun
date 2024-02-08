@@ -225,7 +225,9 @@ pub fn disableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = false;
 }
 
-pub fn panic(comptime fmt: string, args: anytype) noreturn {
+pub noinline fn panic(comptime fmt: string, args: anytype) noreturn {
+    @setCold(true);
+
     if (Output.isEmojiEnabled()) {
         std.debug.panic(comptime Output.prettyFmt(fmt, true), args);
     } else {

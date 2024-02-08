@@ -105,7 +105,7 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 
 {% /codetabs %}
 
-> ⚠️ Depending on your system, you may need to install the C++ standard library independently. See the [troubleshooting section](#span-file-not-found-on-ubuntu) for more information.
+> ⚠️ Ubuntu distributions may require installation of the C++ standard library independently. See the [troubleshooting section](#span-file-not-found-on-ubuntu) for more information.
 
 ## Building Bun
 

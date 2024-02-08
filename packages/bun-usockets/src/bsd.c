@@ -752,6 +752,64 @@ static int bsd_do_connect(struct addrinfo *rp, int *fd)
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, const char *source_host, int options) {
+#ifdef _WIN32
+    // The caller (sometimes) uses NULL to indicate localhost. This works fine with getaddrinfo, but not with WSAConnectByName
+    if (!host) {
+        host = "localhost";
+    } else if (strcmp(host, "0.0.0.0") == 0 || strcmp(host, "::") == 0 || strcmp(host, "[::]") == 0) {
+        // windows disallows connecting to 0.0.0.0. To emulate POSIX behavior, we connect to localhost instead
+        // Also see https://docs.libuv.org/en/v1.x/tcp.html#c.uv_tcp_connect
+        host = "localhost";
+    }
+    // On windows we use WSAConnectByName to speed up connecting to localhost
+    // The other implementation also works on windows, but is slower
+    char port_string[16];
+    snprintf(port_string, 16, "%d", port);
+    SOCKET s = socket(AF_INET6, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsaconnectbynamea#remarks
+    DWORD zero = 0;
+    if (SOCKET_ERROR == setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&zero, sizeof(DWORD))) {
+        closesocket(s);
+        return LIBUS_SOCKET_ERROR;
+    }
+    if (source_host) {
+        struct addrinfo *interface_result;
+        if (!getaddrinfo(source_host, NULL, NULL, &interface_result)) {
+            int ret = bind(s, interface_result->ai_addr, (socklen_t) interface_result->ai_addrlen);
+            freeaddrinfo(interface_result);
+            if (ret == SOCKET_ERROR) {
+                closesocket(s);
+                return LIBUS_SOCKET_ERROR;
+            }
+        }
+    }
+    SOCKADDR_STORAGE local;
+    SOCKADDR_STORAGE remote;
+    DWORD local_len = sizeof(local);
+    DWORD remote_len = sizeof(remote);
+    if (FALSE == WSAConnectByNameA(s, host, port_string, &local_len, (SOCKADDR*)&local, &remote_len, (SOCKADDR*)&remote, NULL, NULL)) {
+        closesocket(s);
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    // See
+    // - https://stackoverflow.com/questions/60591081/getpeername-always-fails-with-error-code-wsaenotconn
+    // - https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsaconnectbynamea#remarks
+    //
+    // When the WSAConnectByName function returns TRUE, the socket s is in the default state for a connected socket. 
+    // The socket s does not enable previously set properties or options until SO_UPDATE_CONNECT_CONTEXT is set on the socket. 
+    // Use the setsockopt function to set the SO_UPDATE_CONNECT_CONTEXT option.
+    //
+    if (SOCKET_ERROR == setsockopt( s, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0 )) {
+        closesocket(s);
+        return LIBUS_SOCKET_ERROR;
+    }
+    return s;
+#else
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC;
@@ -797,6 +855,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, co
     
     freeaddrinfo(result);
     return fd;
+#endif
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, int options) {

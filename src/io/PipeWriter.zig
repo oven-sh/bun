@@ -191,7 +191,7 @@ pub fn PosixBufferedWriter(
             var poll = this.getPoll() orelse return;
             switch (poll.registerWithFd(bun.uws.Loop.get(), .writable, true, poll.fd)) {
                 .err => |err| {
-                    onError(this, err);
+                    onError(this.parent, err);
                 },
                 .result => {},
             }
@@ -247,11 +247,11 @@ pub fn PosixBufferedWriter(
                 this.handle = .{ .fd = fd };
                 return JSC.Maybe(void){ .result = {} };
             }
-            const loop = @as(*Parent, @ptrCast(this.parent)).loop();
             var poll = this.getPoll() orelse brk: {
-                this.handle = .{ .poll = Async.FilePoll.init(loop, fd, .{}, PosixWriter, this) };
+                this.handle = .{ .poll = Async.FilePoll.init(@as(*Parent, @ptrCast(this.parent)).eventLoop(), fd, .{}, PosixWriter, this) };
                 break :brk this.handle.poll;
             };
+            const loop = @as(*Parent, @ptrCast(this.parent)).eventLoop().loop();
 
             switch (poll.registerWithFd(loop, .writable, true, fd)) {
                 .err => |err| {

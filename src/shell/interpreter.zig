@@ -1472,6 +1472,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn start(this: *Expansion) void {
+                if (comptime true) {
+                    @panic("TODO SHELL");
+                }
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.child_state == .idle);
                     std.debug.assert(this.word_idx == 0);
@@ -3200,6 +3203,9 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             fn initSubproc(this: *Cmd) void {
+                if (comptime true) {
+                    @panic("SHELL TODO");
+                }
                 log("cmd init subproc ({x}, cwd={s})", .{ @intFromPtr(this), this.base.shell.cwd() });
 
                 var arena = &this.spawn_arena;
@@ -3767,6 +3773,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             fn callImplWithType(this: *Builtin, comptime Impl: type, comptime Ret: type, comptime union_field: []const u8, comptime field: []const u8, args_: anytype) Ret {
+                if (comptime true) {
+                    @panic("TODO SHELL");
+                }
+
                 const self = &@field(this.impl, union_field);
                 const args = brk: {
                     var args: std.meta.ArgsTuple(@TypeOf(@field(Impl, field))) = undefined;
@@ -7288,6 +7298,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         pub const BufferedWriter =
             struct {
             writer: Writer = .{},
+            fd: bun.FileDescriptor = bun.invalid_fd,
+            remain: []const u8 = "",
             written: usize = 0,
             parent: ParentPtr,
             err: ?Syscall.Error = null,
@@ -7301,6 +7313,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const PipelineMini = bun.shell.InterpreterMini.Pipeline;
             const BuiltinJs = bun.shell.Interpreter.Builtin;
             const BuiltinMini = bun.shell.InterpreterMini.Builtin;
+
+            pub fn write(this: *@This()) void {
+                _ = this; // autofix
+                if (comptime true) {
+                    @panic("TODO SHELL");
+                }
+            }
 
             pub const Writer = bun.io.BufferedWriter(
                 @This(),
@@ -7438,6 +7457,10 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         }
 
         pub fn start(this: @This()) void {
+            if (comptime true) {
+                @panic("TODO SHELL");
+            }
+
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
@@ -7451,6 +7474,10 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         }
 
         pub fn deinit(this: @This()) void {
+            if (comptime true) {
+                @panic("TODO SHELL");
+            }
+
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
@@ -7467,6 +7494,10 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         }
 
         pub fn childDone(this: @This(), child: anytype, exit_code: ExitCode) void {
+            if (comptime true) {
+                @panic("TODO SHELL");
+            }
+
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {

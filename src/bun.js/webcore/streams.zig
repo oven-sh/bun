@@ -2767,7 +2767,7 @@ pub const FileSink = struct {
         log("onWrite({d}, {any})", .{ amount, done });
         this.written += amount;
         if (this.pending.state == .pending)
-            this.pending.consumed += amount;
+            this.pending.consumed += @truncate(amount);
 
         if (done) {
             if (this.pending.state == .pending) {

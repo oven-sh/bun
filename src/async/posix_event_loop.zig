@@ -173,7 +173,7 @@ pub const FilePoll = struct {
     };
 
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
-
+    const BufferedReader = bun.io.BufferedReader;
     pub const Owner = bun.TaggedPointerUnion(.{
         FileSink,
 
@@ -344,12 +344,17 @@ pub const FilePoll = struct {
             //     var loader = ptr.as(ShellSubprocessCapturedBufferedWriterMini);
             //     loader.onPoll(size_or_offset, 0);
             // },
-            @field(Owner.Tag, bun.meta.typeBase(@typeName(StaticPipeWriter))) => {
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(StaticPipeWriter))) => {
                 var handler: *StaticPipeWriter = ptr.as(StaticPipeWriter);
                 handler.onPoll(size_or_offset);
             },
-            @field(Owner.Tag, bun.meta.typeBase(@typeName(FileSink))) => {
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(FileSink))) => {
                 var handler: *FileSink = ptr.as(FileSink);
+                handler.onPoll(size_or_offset);
+            },
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(BufferedReader))) => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Reader", .{poll.fd});
+                var handler: *BufferedReader = ptr.as(BufferedReader);
                 handler.onPoll(size_or_offset);
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(Process))) => {
@@ -357,11 +362,6 @@ pub const FilePoll = struct {
                 var loader = ptr.as(Process);
 
                 loader.onWaitPidFromEventLoopTask();
-            },
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(JSC.WebCore.FileSink))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FileSink", .{poll.fd});
-                var loader = ptr.as(JSC.WebCore.FileSink);
-                loader.onPoll(size_or_offset, 0);
             },
 
             @field(Owner.Tag, "DNSResolver") => {
@@ -378,12 +378,6 @@ pub const FilePoll = struct {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) GetAddrInfoRequest", .{poll.fd});
                 var loader: *GetAddrInfoRequest = ptr.as(GetAddrInfoRequest);
                 loader.onMachportChange();
-            },
-
-            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(LifecycleScriptSubprocessOutputReader))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) OutputReader", .{poll.fd});
-                var output: *LifecycleScriptSubprocessOutputReader = ptr.as(LifecycleScriptSubprocessOutputReader);
-                output.onPoll(size_or_offset);
             },
 
             else => {

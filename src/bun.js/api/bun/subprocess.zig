@@ -714,7 +714,7 @@ pub const Subprocess = struct {
             }
 
             pub fn loop(this: *This) *uws.Loop {
-                return this.event_loop.virtual_machine.uwsLoop();
+                return this.event_loop.loop();
             }
 
             pub fn eventLoop(this: *This) JSC.EventLoopHandle {
@@ -802,10 +802,10 @@ pub const Subprocess = struct {
                 return this.state.done;
             }
             // we do not use .toOwnedSlice() because we don't want to reallocate memory.
-            const out = this.reader.buffer.items;
-            this.reader.buffer.items = &.{};
-            this.reader.buffer.capacity = 0;
-            return out;
+            const out = this.reader._buffer;
+            this.reader._buffer.items = &.{};
+            this.reader._buffer.capacity = 0;
+            return out.items;
         }
 
         pub fn setFd(this: *PipeReader, fd: bun.FileDescriptor) *PipeReader {
@@ -858,7 +858,7 @@ pub const Subprocess = struct {
             }
             this.state = .{ .err = err };
             if (this.process) |process|
-                process.onCloseIO(this.kind());
+                process.onCloseIO(this.kind(process));
         }
 
         pub fn close(this: *PipeReader) void {
@@ -1005,7 +1005,7 @@ pub const Subprocess = struct {
             return switch (this.*) {
                 .fd => |fd| JSValue.jsNumber(fd),
                 .memfd, .ignore => JSValue.jsUndefined(),
-                .capture, .buffer, .inherit => JSValue.jsUndefined(),
+                .buffer, .inherit => JSValue.jsUndefined(),
                 .pipe => |pipe| {
                     this.* = .{ .ignore = {} };
                     return pipe.toJS(globalThis);

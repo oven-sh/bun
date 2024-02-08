@@ -337,6 +337,8 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
 pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace())) noreturn {
     @setCold(true);
 
+    bun.maybeHandlePanicDuringProcessReload();
+
     error_return_trace = trace_;
 
     if (@atomicRmw(bool, &globalError_ranOnce, .Xchg, true, .Monotonic)) {

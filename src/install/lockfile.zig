@@ -1625,7 +1625,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         Global.crash();
     };
 
-    const file = tmpfile.file();
+    const file = tmpfile.fd.asFile();
     {
         var bytes = std.ArrayList(u8).init(bun.default_allocator);
         defer bytes.deinit();
@@ -1646,7 +1646,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
                     .fd = bun.toFD(file.handle),
                 },
                 .dirfd = bun.invalid_fd,
-                .data = .{ .string = .{ .utf8 = bun.JSC.ZigString.Slice.from(bytes.items, bun.default_allocator) } },
+                .data = .{ .string = .{ .utf8 = bun.JSC.ZigString.Slice.init(bun.default_allocator, bytes.items) } },
             },
             .sync,
         )) {
@@ -2581,7 +2581,7 @@ pub const Package = extern struct {
                         std.os.O.RDONLY,
                         0,
                     ).unwrap();
-                    const json_file = std.fs.File{ .handle = bun.fdcast(json_file_fd) };
+                    const json_file = json_file_fd.asFile();
                     defer json_file.close();
                     const json_stat_size = try json_file.getEndPos();
                     const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
@@ -2613,7 +2613,7 @@ pub const Package = extern struct {
                 const binding_dot_gyp_path = Path.joinAbsStringZ(
                     cwd,
                     &[_]string{"binding.gyp"},
-                    .posix,
+                    .auto,
                 );
 
                 break :brk bun.sys.exists(binding_dot_gyp_path);
@@ -3382,7 +3382,7 @@ pub const Package = extern struct {
                                 source.path.name.dir,
                                 dependency_version.value.folder.slice(buf),
                             },
-                            .posix,
+                            .auto,
                         ),
                     ),
                 );
@@ -3437,7 +3437,7 @@ pub const Package = extern struct {
                                 source.path.name.dir,
                                 workspace,
                             },
-                            .posix,
+                            .auto,
                         ),
                     );
                 });
@@ -3779,9 +3779,12 @@ pub const Package = extern struct {
                 dir_prefix = dir_prefix[0 .. strings.indexOfChar(dir_prefix, '*') orelse continue];
                 if (dir_prefix.len == 0 or
                     strings.eqlComptime(dir_prefix, ".") or
-                    strings.eqlComptime(dir_prefix, "./"))
+                    strings.eqlComptime(dir_prefix, &.{ '.', std.fs.path.sep }))
                 {
-                    dir_prefix = ".";
+                    if (comptime Environment.isWindows)
+                        dir_prefix = Fs.FileSystem.instance.top_level_dir
+                    else
+                        dir_prefix = ".";
                 }
 
                 const entries_option = FileSystem.instance.fs.readDirectory(
@@ -3846,9 +3849,7 @@ pub const Package = extern struct {
                     const workspace_entry = processWorkspaceName(
                         allocator,
                         workspace_allocator,
-                        std.fs.Dir{
-                            .fd = bun.fdcast(dir_fd),
-                        },
+                        dir_fd.asDir(),
                         "",
                         filepath_buf,
                         workspace_name_buf,

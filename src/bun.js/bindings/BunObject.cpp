@@ -30,6 +30,7 @@
 #include "JSDOMException.h"
 #include "JSDOMConvert.h"
 #include "wtf/Compiler.h"
+#include "PathInlines.h"
 
 namespace Bun {
 
@@ -37,6 +38,7 @@ using namespace JSC;
 using namespace WebCore;
 
 extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+extern "C" bool has_bun_garbage_collector_flag_enabled;
 
 static JSValue BunObject_getter_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
 {
@@ -222,6 +224,45 @@ extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
 static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
 {
     return JSValue::decode(JSPasswordObject__create(bunObject->globalObject()));
+}
+
+static JSValue constructBunShell(VM& vm, JSObject* bunObject)
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    JSValue interpreter = BunObject_getter_wrap_ShellInterpreter(vm, bunObject);
+
+    JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto args = JSC::MarkedArgumentBuffer();
+    args.append(interpreter);
+    JSC::JSValue shell = JSC::call(globalObject, createShellFn, args, "BunShell"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (UNLIKELY(!shell.isObject())) {
+        throwTypeError(globalObject, scope, "Internal error: BunShell constructor did not return an object"_s);
+        return {};
+    }
+    auto* bunShell = shell.getObject();
+
+    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, BunObject_callback_braces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+
+    // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
+    // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
+    // auto mainShellFunc = shellShellCodeGenerator;
+    if (has_bun_garbage_collector_flag_enabled) {
+        auto parseIdent
+            = Identifier::fromString(vm, String("parse"_s));
+        auto parseFunc = JSFunction::create(vm, globalObject, 2, String("shellParse"_s), BunObject_callback_shellParse, ImplementationVisibility::Private);
+        bunShell->putDirect(vm, parseIdent, parseFunc);
+
+        auto lexIdent = Identifier::fromString(vm, String("lex"_s));
+        auto lexFunc = JSFunction::create(vm, globalObject, 2, String("lex"_s), BunObject_callback_shellLex, ImplementationVisibility::Private);
+        bunShell->putDirect(vm, lexIdent, lexFunc);
+    }
+
+    return bunShell;
 }
 
 extern "C" EncodedJSValue Bun__DNSResolver__lookup(JSGlobalObject*, JSC::CallFrame*);
@@ -445,12 +486,14 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     auto& globalObject = *reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto& vm = globalObject.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto path = JSC::JSValue::encode(callFrame->argument(0));
+    auto pathValue = callFrame->argument(0);
 
-    JSC::JSString* pathString = JSC::JSValue::decode(path).toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+    WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode({}));
 
-    auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString->value(lexicalGlobalObject));
+    pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
+
+    auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
     auto object = WebCore::DOMURL::create(fileURL.string(), String());
     auto jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
@@ -461,33 +504,42 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue arg0 = callFrame->argument(0);
+    WTF::URL url;
+
     auto path = JSC::JSValue::encode(arg0);
     auto* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(path);
     if (!domURL) {
         if (arg0.isString()) {
-            auto url = WTF::URL(arg0.toWTFString(globalObject));
-            if (UNLIKELY(!url.protocolIsFile())) {
-                throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
-                return JSC::JSValue::encode(JSC::JSValue {});
-            }
+            url = WTF::URL(arg0.toWTFString(globalObject));
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-            RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.fileSystemPath())));
+        } else {
+            throwTypeError(globalObject, scope, "Argument must be a URL"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
         }
-        throwTypeError(globalObject, scope, "Argument must be a URL"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+    } else {
+        url = domURL->href();
     }
 
-    auto& url = domURL->href();
     if (UNLIKELY(!url.protocolIsFile())) {
         throwTypeError(globalObject, scope, "Argument must be a file URL"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    return JSC::JSValue::encode(JSC::jsString(vm, url.fileSystemPath()));
+    auto fileSystemPath = url.fileSystemPath();
+
+#if OS(WINDOWS)
+    if (!isAbsolutePath(fileSystemPath)) {
+        throwTypeError(globalObject, scope, "File URL path must be absolute"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+#endif
+
+    return JSC::JSValue::encode(JSC::jsString(vm, fileSystemPath));
 }
 
 /* Source for BunObject.lut.h
 @begin bunObjectTable
+    $                                              constructBunShell                                                   ReadOnly|DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_getter_wrap_ArrayBufferSink                               DontDelete|PropertyCallback
     CryptoHasher                                   BunObject_getter_wrap_CryptoHasher                                  DontDelete|PropertyCallback
     FFI                                            BunObject_getter_wrap_FFI                                           DontDelete|PropertyCallback

@@ -52,10 +52,9 @@ pub fn copyFile(in: InputType, out: InputType) CopyFileError!void {
                 .NOMEM => return error.OutOfMemory,
                 .NOSPC => return error.NoSpaceLeft,
                 .OVERFLOW => return error.Unseekable,
-                .PERM => return error.PermissionDenied,
                 .TXTBSY => return error.FileBusy,
                 .XDEV => {},
-                .BADF, .INVAL, .OPNOTSUPP, .NOSYS => {
+                .ACCES, .BADF, .INVAL, .OPNOTSUPP, .NOSYS, .PERM => {
                     bun.Output.debug("ioctl_ficlonerange is NOT supported", .{});
                     can_use_ioctl_ficlone_.store(-1, .Monotonic);
                 },
@@ -209,8 +208,6 @@ pub fn copyFileRange(in: fd_t, off_in: u64, out: fd_t, off_out: u64, len: usize,
     var buf: [8 * 4096]u8 = undefined;
     const adjusted_count = @min(buf.len, len);
     const amt_read = try os.pread(in, buf[0..adjusted_count], off_in);
-    // TODO without @as the line below fails to compile for wasm32-wasi:
-    // error: integer value 0 cannot be coerced to type 'os.PWriteError!usize'
-    if (amt_read == 0) return @as(usize, 0);
+    if (amt_read == 0) return 0;
     return os.pwrite(out, buf[0..amt_read], off_out);
 }

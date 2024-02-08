@@ -218,7 +218,8 @@ for (const entrypoint of bundledEntryPoints) {
         throw new Error(`Builtin Bundler: do not use import.meta.require() (in ${file_path}))`);
       })
       .replace(/return \$\nexport /, "return")
-      .replace(/__intrinsic__/g, "@") + "\n";
+      .replace(/__intrinsic__/g, "@")
+      .replace(/__no_intrinsic__/g, "") + "\n";
   captured = captured.replace(
     /function\s*\(.*?\)\s*{/,
     '$&"use strict";' +

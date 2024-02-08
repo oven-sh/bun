@@ -214,7 +214,7 @@ With this plugin, Svelte components can now be directly imported and consumed.
 import "./sveltePlugin.ts";
 import MySvelteComponent from "./component.svelte";
 
-console.log(mySvelteComponent.render());
+console.log(MySvelteComponent.render());
 ```
 
 ## Virtual Modules
@@ -237,7 +237,7 @@ plugin({
 
   setup(build) {
     build.module(
-      // The specifier, which can be any string
+      // The specifier, which can be any string - except a built-in, such as "buffer"
       "my-transpiled-virtual-module",
       // The callback to run when the module is imported or required for the first time
       () => {

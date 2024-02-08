@@ -1,9 +1,8 @@
 declare module "bun:jsc" {
-  type AnyFunction = (..._: any[]) => any;
-
   /**
    * This used to be called "describe" but it could be confused with the test runner.
-   */ function jscDescribe(value: any): string;
+   */
+  function jscDescribe(value: any): string;
   function jscDescribeArray(args: any[]): string;
   function gcAndSweep(): number;
   function fullGC(): number;
@@ -31,13 +30,13 @@ declare module "bun:jsc" {
   function setRandomSeed(value: number): void;
   function isRope(input: string): boolean;
   function callerSourceOrigin(): string;
-  function noFTL(func: AnyFunction): AnyFunction;
-  function noOSRExitFuzzing(func: AnyFunction): AnyFunction;
-  function optimizeNextInvocation(func: AnyFunction): void;
-  function numberOfDFGCompiles(func: AnyFunction): number;
+  function noFTL(func: (...args: any[]) => any): (...args: any[]) => any;
+  function noOSRExitFuzzing(func: (...args: any[]) => any): (...args: any[]) => any;
+  function optimizeNextInvocation(func: (...args: any[]) => any): void;
+  function numberOfDFGCompiles(func: (...args: any[]) => any): number;
   function releaseWeakRefs(): void;
-  function totalCompileTime(func: AnyFunction): number;
-  function reoptimizationRetryCount(func: AnyFunction): number;
+  function totalCompileTime(func: (...args: any[]) => any): number;
+  function reoptimizationRetryCount(func: (...args: any[]) => any): number;
   function drainMicrotasks(): void;
 
   /**
@@ -47,10 +46,8 @@ declare module "bun:jsc" {
    *
    * @param value A JavaScript value, usually an object or array, to be converted.
    * @returns A SharedArrayBuffer that can be sent to another Bun instance.
-   */ function serialize(
-    value: any,
-    options?: { binaryType?: "arraybuffer" },
-  ): SharedArrayBuffer;
+   */
+  function serialize(value: any, options?: { binaryType?: "arraybuffer" }): SharedArrayBuffer;
 
   /**
    * Convert a JavaScript value to a binary representation that can be sent to another Bun instance.
@@ -59,16 +56,15 @@ declare module "bun:jsc" {
    *
    * @param value A JavaScript value, usually an object or array, to be converted.
    * @returns A Buffer that can be sent to another Bun instance.
-   */ function serialize(
-    value: any,
-    options?: { binaryType: "nodebuffer" },
-  ): Buffer;
+   */
+  function serialize(value: any, options?: { binaryType: "nodebuffer" }): Buffer;
 
   /**
    * Convert an ArrayBuffer or Buffer to a JavaScript value compatible with the HTML Structured Clone Algorithm.
    *
    * @param value A serialized value, usually an ArrayBuffer or Buffer, to be converted.
-   */ function deserialize(value: ArrayBufferLike | TypedArray | Buffer): any;
+   */
+  function deserialize(value: ArrayBufferLike | NodeJS.TypedArray | Buffer): any;
 
   /**
    * Set the timezone used by Intl, Date, etc.
@@ -79,7 +75,8 @@ declare module "bun:jsc" {
    *
    * You can also set process.env.TZ to the time zone you want to use.
    * You can also view the current timezone with `Intl.DateTimeFormat().resolvedOptions().timeZone`
-   */ function setTimeZone(timeZone: string): string;
+   */
+  function setTimeZone(timeZone: string): string;
 
   /**
    * Run JavaScriptCore's sampling profiler for a particular function
@@ -91,7 +88,8 @@ declare module "bun:jsc" {
    * - Baseline is the first JIT compilation tier. It's the least optimized, but the fastest to compile
    * - DFG means "Data Flow Graph", which is the second JIT compilation tier. It has some optimizations, but is slower to compile
    * - FTL means "Faster Than Light", which is the third JIT compilation tier. It has the most optimizations, but is the slowest to compile
-   */ function profile(
+   */
+  function profile(
     callback: CallableFunction,
     sampleInterval?: number,
   ): {
@@ -197,7 +195,8 @@ declare module "bun:jsc" {
    * This function is mostly a debugging tool for bun itself.
    *
    * Warning: not all objects returned are supposed to be observable from JavaScript
-   */ function getProtectedObjects(): any[];
+   */
+  function getProtectedObjects(): any[];
 
   /**
    * Start a remote debugging socket server on the given port.
@@ -205,9 +204,11 @@ declare module "bun:jsc" {
    * This exposes JavaScriptCore's built-in debugging server.
    *
    * This is untested. May not be supported yet on macOS
-   */ function startRemoteDebugger(host?: string, port?: number): void;
+   */
+  function startRemoteDebugger(host?: string, port?: number): void;
 
   /**
    * Run JavaScriptCore's sampling profiler
-   */ function startSamplingProfiler(optionalDirectory?: string): void;
+   */
+  function startSamplingProfiler(optionalDirectory?: string): void;
 }

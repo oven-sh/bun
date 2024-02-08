@@ -1,11 +1,10 @@
-// @known-failing-on-windows: 1 failing
 import { spawn } from "bun";
 import { expect, it } from "bun:test";
 import { bunExe, bunEnv, tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
-import { readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import { readFileSync, renameSync, rmSync, unlinkSync, writeFileSync, copyFileSync } from "fs";
 import { join } from "path";
 
-const hotRunnerRoot = join(import.meta.dir, "/hot-runner-root.js");
+const hotRunnerRoot = join(import.meta.dir, "hot-runner-root.js");
 
 it("should hot reload when file is overwritten", async () => {
   const root = hotRunnerRoot;
@@ -169,7 +168,8 @@ it("should not hot reload when a random file is written", async () => {
 });
 
 it("should hot reload when a file is deleted and rewritten", async () => {
-  const root = hotRunnerRoot;
+  const root = hotRunnerRoot + ".tmp.js";
+  copyFileSync(hotRunnerRoot, root);
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
     env: bunEnv,
@@ -182,7 +182,7 @@ it("should hot reload when a file is deleted and rewritten", async () => {
 
   async function onReload() {
     const contents = readFileSync(root, "utf-8");
-    unlinkSync(root);
+    rmSync(root);
     writeFileSync(root, contents);
   }
 
@@ -205,12 +205,13 @@ it("should hot reload when a file is deleted and rewritten", async () => {
 
     if (any) await onReload();
   }
-
+  rmSync(root);
   expect(reloadCounter).toBe(3);
 });
 
 it("should hot reload when a file is renamed() into place", async () => {
-  const root = hotRunnerRoot;
+  const root = hotRunnerRoot + ".tmp.js";
+  copyFileSync(hotRunnerRoot, root);
   const runner = spawn({
     cmd: [bunExe(), "--hot", "run", root],
     env: bunEnv,
@@ -226,6 +227,8 @@ it("should hot reload when a file is renamed() into place", async () => {
     rmSync(root + ".tmpfile", { force: true });
     await 1;
     writeFileSync(root + ".tmpfile", contents);
+    await 1;
+    rmSync(root);
     await 1;
     renameSync(root + ".tmpfile", root);
     await 1;
@@ -250,6 +253,6 @@ it("should hot reload when a file is renamed() into place", async () => {
 
     if (any) await onReload();
   }
-
+  rmSync(root);
   expect(reloadCounter).toBe(3);
 });

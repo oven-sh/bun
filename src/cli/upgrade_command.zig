@@ -438,14 +438,14 @@ pub const UpgradeCommand = struct {
         const use_canary = brk: {
             const default_use_canary = Environment.is_canary;
 
-            if (default_use_canary and strings.containsAny(bun.span(bun.argv()), "--stable"))
+            if (default_use_canary and strings.containsAny(bun.argv(), "--stable"))
                 break :brk false;
 
             break :brk strings.eqlComptime(env_loader.map.get("BUN_CANARY") orelse "0", "1") or
-                strings.containsAny(bun.span(bun.argv()), "--canary") or default_use_canary;
+                strings.containsAny(bun.argv(), "--canary") or default_use_canary;
         };
 
-        const use_profile = strings.containsAny(bun.span(bun.argv()), "--profile");
+        const use_profile = strings.containsAny(bun.argv(), "--profile");
 
         if (!use_canary) {
             var refresher = std.Progress{};
@@ -821,9 +821,39 @@ pub const UpgradeCommand = struct {
                     current_executable_buf[target_dir_.len] = 0;
                 }
 
-                C.moveFileZ(save_dir.fd, exe, target_dir.fd, target_filename) catch |err| {
-                    save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of Bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
+                C.moveFileZ(bun.toFD(save_dir.fd), exe, bun.toFD(target_dir.fd), target_filename) catch |err| {
+                    defer save_dir_.deleteTree(version_name) catch {};
+
+                    if (comptime Environment.isWindows) {
+                        // Attempt to restore the old executable. If this fails, the user will be left without a working copy of bun.
+                        std.os.rename(outdated_filename.?, destination_executable_) catch {
+                            Output.errGeneric(
+                                \\Failed to move new version of Bun due to {s}
+                            ,
+                                .{@errorName(err)},
+                            );
+                            Output.errGeneric(
+                                \\Failed to restore the working copy of Bun. The installation is now corrupt.
+                                \\
+                                \\Please reinstall Bun manually with the following command:
+                                \\   {s}
+                                \\
+                            ,
+                                .{manual_upgrade_command},
+                            );
+                            Global.exit(1);
+                        };
+                    }
+
+                    Output.errGeneric(
+                        \\Failed to move new version of Bun due to {s}
+                        \\
+                        \\Please reinstall Bun manually with the following command:
+                        \\   {s}
+                        \\
+                    ,
+                        .{ @errorName(err), manual_upgrade_command },
+                    );
                     Global.exit(1);
                 };
             }

@@ -123,6 +123,7 @@ myscript.sh
 cold-jsc-start
 cold-jsc-start.d
 
+/testdir
 /test.ts
 /test.js
 
@@ -164,5 +165,4 @@ x64
 **/.verdaccio-db.json
 /test-report.md
 /test-report.json
-
 /src/bun.js/bindings/GeneratedJS2Native.zig

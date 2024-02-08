@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import path from "path";
@@ -423,4 +422,13 @@ describe("Server", () => {
     expect(stderr).toBeEmpty();
     expect(exitCode).toBe(0);
   });
+});
+
+// By not timing out, this test passes.
+test("Bun.serve().unref() works", async () => {
+  expect([path.join(import.meta.dir, "unref-fixture.ts")]).toRun();
+});
+
+test("unref keeps process alive for ongoing connections", async () => {
+  expect([path.join(import.meta.dir, "unref-fixture-2.ts")]).toRun();
 });

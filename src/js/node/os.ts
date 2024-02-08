@@ -4,6 +4,15 @@ var tmpdir = function () {
   var env = Bun.env;
 
   tmpdir = function () {
+    if (process.platform === "win32") {
+      // using node implementation
+      // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/lib/os.js#L186
+      var path = env["TEMP"] || env["TMP"] || (env["SystemRoot"] || env["windir"]) + "\\temp";
+      if (path.length > 1 && path[path.length - 1] === "\\" && !String.prototype.endsWith.$call(path, ":\\")) {
+        path = String.prototype.slice.$call(path, 0, -1);
+      }
+      return path;
+    }
     var path = env["TMPDIR"] || env["TMP"] || env["TEMP"] || "/tmp";
     const length = path.length;
     if (length > 1 && path[length - 1] === "/") path = path.slice(0, -1);

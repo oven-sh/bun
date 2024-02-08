@@ -3,8 +3,9 @@ const { file } = import.meta;
 import { describe, it, expect, test } from "bun:test";
 import path from "node:path";
 import assert from "assert";
+import { isPosix, isWindows } from "harness";
 
-const sep = process.platform === "win32" ? "\\" : "/";
+const sep = isWindows ? "\\" : "/";
 
 const strictEqual = (...args) => {
   assert.strictEqual(...args);
@@ -32,7 +33,7 @@ describe("dirname", () => {
     ];
     for (const [input, expected] of fixtures) {
       expect(path.posix.dirname(input)).toBe(expected);
-      if (process.platform !== "win32") {
+      if (isPosix) {
         expect(path.dirname(input)).toBe(expected);
       }
     }
@@ -452,7 +453,7 @@ it("path.relative", () => {
   const failures = [];
   const cwd = process.cwd();
   const cwdParent = path.dirname(cwd);
-  const parentIsRoot = process.platform === "win32" ? cwdParent.match(/^[A-Z]:\\$/) : cwdParent === "/";
+  const parentIsRoot = isWindows ? cwdParent.match(/^[A-Z]:\\$/) : cwdParent === "/";
 
   const relativeTests = [
     [
@@ -597,6 +598,7 @@ it("path.resolve", () => {
   const failures = [];
   const slashRE = /\//g;
   const backslashRE = /\\/g;
+  const isWindows = process.platform === "win32";
 
   const resolveTests = [
     [
@@ -624,17 +626,13 @@ it("path.resolve", () => {
       [
         [["/var/lib", "../", "file/"], "/var/file"],
         [["/var/lib", "/../", "file/"], "/file"],
-        [
-          ["a/b/c/", "../../.."],
-          process.platform === "win32" ? process.cwd().slice(2).replaceAll("\\", "/") : process.cwd(),
-        ],
-        [["."], process.platform === "win32" ? process.cwd().slice(2).replaceAll("\\", "/") : process.cwd()],
+        [["a/b/c/", "../../.."], isWindows ? process.cwd().slice(2).replaceAll("\\", "/") : process.cwd()],
+        [["."], isWindows ? process.cwd().slice(2).replaceAll("\\", "/") : process.cwd()],
         [["/some/dir", ".", "/absolute/"], "/absolute"],
         [["/foo/tmp.3/", "../tmp.3/cycles/root.js"], "/foo/tmp.3/cycles/root.js"],
       ],
     ],
   ];
-  const isWindows = false;
   resolveTests.forEach(([resolve, tests]) => {
     tests.forEach(([test, expected]) => {
       const actual = resolve.apply(null, test);
@@ -833,6 +831,17 @@ describe("path.posix.parse and path.posix.format", () => {
         base: "Ł.txt",
         ext: ".txt",
         name: "Ł",
+      },
+    },
+    {
+      // https://github.com/oven-sh/bun/issues/8090
+      input: ".prettierrc",
+      expected: {
+        root: "",
+        dir: "",
+        base: ".prettierrc",
+        ext: "",
+        name: ".prettierrc",
       },
     },
   ];

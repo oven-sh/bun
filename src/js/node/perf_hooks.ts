@@ -1,4 +1,14 @@
 // Hardcoded module "node:perf_hooks"
+const { throwNotImplemented } = require("internal/shared");
+
+var {
+  Performance,
+  PerformanceEntry,
+  PerformanceMark,
+  PerformanceMeasure,
+  PerformanceObserver,
+  PerformanceObserverEntryList,
+} = globalThis;
 
 var constants = {
   NODE_PERFORMANCE_GC_MAJOR: 4,
@@ -14,17 +24,114 @@ var constants = {
   NODE_PERFORMANCE_GC_FLAGS_SCHEDULE_IDLE: 64,
 };
 
-var {
-  Performance,
-  PerformanceEntry,
-  PerformanceMark,
-  PerformanceMeasure,
-  PerformanceObserver,
-  PerformanceObserverEntryList,
-} = globalThis;
+// PerformanceEntry is not a valid constructor, so we have to fake it.
+class PerformanceNodeTiming {
+  bootstrapComplete: number = 0;
+  environment: number = 0;
+  idleTime: number = 0;
+  loopExit: number = 0;
+  loopStart: number = 0;
+  nodeStart: number = 0;
+  v8Start: number = 0;
+
+  // we have to fake the properties since it's not real
+  get name() {
+    return "node";
+  }
+
+  get entryType() {
+    return "node";
+  }
+
+  get startTime() {
+    return this.nodeStart;
+  }
+
+  get duration() {
+    return performance.now();
+  }
+
+  toJSON() {
+    return {
+      name: this.name,
+      entryType: this.entryType,
+      startTime: this.startTime,
+      duration: this.duration,
+      bootstrapComplete: this.bootstrapComplete,
+      environment: this.environment,
+      idleTime: this.idleTime,
+      loopExit: this.loopExit,
+      loopStart: this.loopStart,
+      nodeStart: this.nodeStart,
+      v8Start: this.v8Start,
+    };
+  }
+}
+Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
+Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
+
+function createPerformanceNodeTiming() {
+  const object = Object.create(PerformanceNodeTiming.prototype);
+
+  object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
+  object.loopStart = object.idleTime = 1;
+  object.loopExit = -1;
+  return object;
+}
+
+function eventLoopUtilization(utilization1, utilization2) {
+  return {
+    idle: 0,
+    active: 0,
+    utilization: 0,
+  };
+}
+
+// PerformanceEntry is not a valid constructor, so we have to fake it.
+class PerformanceResourceTiming {
+  constructor() {
+    throwNotImplemented("PerformanceResourceTiming");
+  }
+}
+Object.setPrototypeOf(PerformanceResourceTiming.prototype, PerformanceEntry.prototype);
+Object.setPrototypeOf(PerformanceResourceTiming, PerformanceEntry);
 
 export default {
-  performance,
+  performance: {
+    mark(f) {
+      return performance.mark(...arguments);
+    },
+    measure(f) {
+      return performance.measure(...arguments);
+    },
+    clearMarks(f) {
+      return performance.clearMarks(...arguments);
+    },
+    clearMeasures(f) {
+      return performance.clearMeasures(...arguments);
+    },
+    getEntries(f) {
+      return performance.getEntries(...arguments);
+    },
+    getEntriesByName(f) {
+      return performance.getEntriesByName(...arguments);
+    },
+    getEntriesByType(f) {
+      return performance.getEntriesByType(...arguments);
+    },
+    setResourceTimingBufferSize(f) {
+      return performance.setResourceTimingBufferSize(...arguments);
+    },
+    timeOrigin: performance.timeOrigin,
+    toJSON(f) {
+      return performance.toJSON(...arguments);
+    },
+    onresourcetimingbufferfull: performance.onresourcetimingbufferfull,
+    nodeTiming: createPerformanceNodeTiming(),
+    now: () => performance.now(),
+    eventLoopUtilization: eventLoopUtilization,
+    clearResourceTimings: function () {},
+  },
   // performance: {
   //   clearMarks: [Function: clearMarks],
   //   clearMeasures: [Function: clearMeasures],
@@ -47,7 +154,12 @@ export default {
   PerformanceMeasure,
   PerformanceObserver,
   PerformanceObserverEntryList,
-  // PerformanceResourceTiming: [class PerformanceResourceTiming extends PerformanceEntry],
-  // monitorEventLoopDelay: [Function: monitorEventLoopDelay],
-  // createHistogram: [Function: createHistogram],
+  PerformanceNodeTiming,
+  monitorEventLoopDelay() {
+    throwNotImplemented("perf_hooks.monitorEventLoopDelay");
+  },
+  createHistogram() {
+    throwNotImplemented("perf_hooks.createHistogram");
+  },
+  PerformanceResourceTiming,
 };

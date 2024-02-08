@@ -8,8 +8,8 @@ const Syscall = @import("../../sys.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const bun = @import("../../bun.zig");
-const BunString = @import("../../bun.zig").String;
+const bun = @import("root").bun;
+const BunString = bun.String;
 const string = bun.string;
 const JSC = bun.JSC;
 const JSArray = @import("../bindings/bindings.zig").JSArray;
@@ -51,31 +51,23 @@ const ScanOpts = struct {
                         return null;
                     };
 
-                    break :cwd_str_raw ZigString.Slice.from(duped, allocator);
+                    break :cwd_str_raw ZigString.Slice.init(allocator, duped);
                 }
 
-                // Conver to utf-16
-                const utf16 = (bun.strings.toUTF16Alloc(
+                // Convert to utf-16
+                const utf16 = bun.strings.toUTF16AllocForReal(
                     allocator,
                     cwd_zig_str.slice(),
                     // Let windows APIs handle errors with invalid surrogate pairs, etc.
                     false,
+                    false,
                 ) catch {
                     globalThis.throwOutOfMemory();
                     return null;
-                }) orelse brk: {
-                    // All ascii
-                    const output = allocator.alloc(u16, cwd_zig_str.len) catch {
-                        globalThis.throwOutOfMemory();
-                        return null;
-                    };
-
-                    bun.strings.copyU8IntoU16(output, cwd_zig_str.slice());
-                    break :brk output;
                 };
 
                 const ptr: [*]u8 = @ptrCast(utf16.ptr);
-                break :cwd_str_raw ZigString.Slice.from(ptr[0 .. utf16.len * 2], allocator);
+                break :cwd_str_raw ZigString.Slice.init(allocator, ptr[0 .. utf16.len * 2]);
             }
 
             // `.toSlice()` internally converts to WTF-8
@@ -105,7 +97,6 @@ const ScanOpts = struct {
             }
 
             // Convert to an absolute path
-
             var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             const cwd = switch (bun.sys.getcwd((&path_buf))) {
                 .result => |cwd| cwd,

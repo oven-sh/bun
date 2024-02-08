@@ -48,10 +48,7 @@
           "id": "Channel",
           "description": "Logging channel.",
           "type": "object",
-          "properties": [
-            { "name": "source", "$ref": "ChannelSource" },
-            { "name": "level", "$ref": "ChannelLevel" }
-          ]
+          "properties": [{ "name": "source", "$ref": "ChannelSource" }, { "name": "level", "$ref": "ChannelLevel" }]
         },
         {
           "id": "ConsoleMessage",
@@ -1142,10 +1139,7 @@
         {
           "name": "snapshot",
           "description": "Take a heap snapshot.",
-          "returns": [
-            { "name": "timestamp", "type": "number" },
-            { "name": "snapshotData", "$ref": "HeapSnapshotData" }
-          ]
+          "returns": [{ "name": "timestamp", "type": "number" }, { "name": "snapshotData", "$ref": "HeapSnapshotData" }]
         },
         {
           "name": "startTracking",
@@ -1235,10 +1229,7 @@
         { "name": "evaluateForTestInFrontend", "parameters": [{ "name": "script", "type": "string" }] },
         {
           "name": "inspect",
-          "parameters": [
-            { "name": "object", "$ref": "Runtime.RemoteObject" },
-            { "name": "hints", "type": "object" }
-          ]
+          "parameters": [{ "name": "object", "$ref": "Runtime.RemoteObject" }, { "name": "hints", "type": "object" }]
         }
       ]
     },

@@ -83,13 +83,14 @@ const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
+pub const GenericWatcher = @import("../watcher.zig");
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
 
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const Task = JSC.Task;
-const Blob = @import("../blob.zig");
+
 pub const Buffer = MarkedArrayBuffer;
 const Lock = @import("../lock.zig").Lock;
 const BuildMessage = JSC.BuildMessage;
@@ -107,6 +108,8 @@ pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context)
 }
 
 pub const bun_file_import_path = "/node_modules.server.bun";
+
+export var has_bun_garbage_collector_flag_enabled = false;
 
 const SourceMap = @import("../sourcemap/sourcemap.zig");
 const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
@@ -428,22 +431,22 @@ pub const ImportWatcher = union(enum) {
 
     pub fn start(this: ImportWatcher) !void {
         switch (this) {
-            inline .hot => |watcher| try watcher.start(),
-            inline .watch => |watcher| try watcher.start(),
+            inline .hot => |w| try w.start(),
+            inline .watch => |w| try w.start(),
             else => {},
         }
     }
 
-    pub inline fn watchlist(this: ImportWatcher) Watcher.WatchListArray {
+    pub inline fn watchlist(this: ImportWatcher) GenericWatcher.WatchList {
         return switch (this) {
-            inline .hot, .watch => |wacher| wacher.watchlist,
+            inline .hot, .watch => |w| w.watchlist,
             else => .{},
         };
     }
 
-    pub inline fn indexOf(this: ImportWatcher, hash: Watcher.HashType) ?u32 {
+    pub inline fn indexOf(this: ImportWatcher, hash: GenericWatcher.HashType) ?u32 {
         return switch (this) {
-            inline .hot, .watch => |wacher| wacher.indexOf(hash),
+            inline .hot, .watch => |w| w.indexOf(hash),
             else => null,
         };
     }
@@ -452,7 +455,7 @@ pub const ImportWatcher = union(enum) {
         this: ImportWatcher,
         fd: StoredFileDescriptorType,
         file_path: string,
-        hash: Watcher.HashType,
+        hash: GenericWatcher.HashType,
         loader: options.Loader,
         dir_fd: StoredFileDescriptorType,
         package_json: ?*PackageJSON,
@@ -465,7 +468,7 @@ pub const ImportWatcher = union(enum) {
     }
 };
 
-const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
+pub const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
 
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
@@ -482,7 +485,6 @@ pub const VirtualMachine = struct {
     main: string = "",
     main_hash: u32 = 0,
     process: js.JSObjectRef = null,
-    blobs: ?*Blob.Group = null,
     flush_list: std.ArrayList(string),
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
@@ -563,7 +565,6 @@ pub const VirtualMachine = struct {
 
     ref_strings: JSC.RefString.Map = undefined,
     ref_strings_mutex: Lock = undefined,
-    file_blobs: JSC.WebCore.Blob.Store.Map,
 
     source_mappings: SavedSourceMap = undefined,
 
@@ -783,8 +784,10 @@ pub const VirtualMachine = struct {
 
             if (strings.eqlComptime(gc_level, "1")) {
                 this.aggressive_garbage_collection = .mild;
+                has_bun_garbage_collector_flag_enabled = true;
             } else if (strings.eqlComptime(gc_level, "2")) {
                 this.aggressive_garbage_collection = .aggressive;
+                has_bun_garbage_collector_flag_enabled = true;
             }
         }
     }
@@ -822,10 +825,10 @@ pub const VirtualMachine = struct {
         Output.debug("Reloading...", .{});
         if (this.hot_reload == .watch) {
             Output.flush();
-            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
+            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
         }
 
-        if (!strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
+        if (!strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
             Output.flush();
             Output.disableBuffering();
             Output.resetTerminalAll();
@@ -1022,12 +1025,12 @@ pub const VirtualMachine = struct {
             const debugger = other_vm.debugger.?;
 
             if (debugger.unix.len > 0) {
-                var url = bun.String.create(debugger.unix);
+                var url = bun.String.createUTF8(debugger.unix);
                 Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
             }
 
             if (debugger.path_or_port) |path_or_port| {
-                var url = bun.String.create(path_or_port);
+                var url = bun.String.createUTF8(path_or_port);
                 Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url);
             }
 
@@ -1181,7 +1184,6 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1191,7 +1193,6 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
-            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = opts.graph.?,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
@@ -1293,7 +1294,6 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1303,7 +1303,6 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
-            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
@@ -1441,7 +1440,6 @@ pub const VirtualMachine = struct {
             .console = console,
             .log = log,
             .flush_list = std.ArrayList(string).init(allocator),
-            .blobs = if (opts.args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
             .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
             .source_mappings = undefined,
@@ -1451,7 +1449,6 @@ pub const VirtualMachine = struct {
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .ref_strings_mutex = Lock.init(),
-            .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
@@ -1515,6 +1512,17 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32, comptime add_double_ref: bool) ResolvedSource {
+        // refCountedString will panic if the code is empty
+        if (code.len == 0) {
+            return ResolvedSource{
+                .source_code = bun.String.init(""),
+                .specifier = specifier,
+                .source_url = bun.String.init(source_url),
+                .hash = 0,
+                .allocator = null,
+                .needs_deref = false,
+            };
+        }
         var source = this.refCountedString(code, hash_, !add_double_ref);
         if (add_double_ref) {
             source.ref();
@@ -1565,21 +1573,6 @@ pub const VirtualMachine = struct {
         std.debug.assert(input_.len > 0);
         var _was_new = false;
         return this.refCountedStringWithWasNew(&_was_new, input_, hash_, comptime dupe);
-    }
-
-    pub fn preflush(this: *VirtualMachine) void {
-        // We flush on the next tick so that if there were any errors you can still see them
-        this.blobs.?.temporary.reset() catch {};
-    }
-
-    pub fn flush(this: *VirtualMachine) void {
-        this.had_errors = false;
-        for (this.flush_list.items) |item| {
-            this.allocator.free(item);
-        }
-        this.flush_list.shrinkRetainingCapacity(0);
-        this.transpiled_count = 0;
-        this.resolved_count = 0;
     }
 
     pub fn fetchWithoutOnLoadPlugins(
@@ -2166,7 +2159,7 @@ pub const VirtualMachine = struct {
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
-        this.main_hash = bun.JSC.Watcher.getHash(entry_path);
+        this.main_hash = GenericWatcher.getHash(entry_path);
 
         try this.entry_point.generate(
             this.allocator,
@@ -2204,7 +2197,7 @@ pub const VirtualMachine = struct {
     pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
-        this.main_hash = bun.JSC.Watcher.getHash(entry_path);
+        this.main_hash = GenericWatcher.getHash(entry_path);
 
         this.eventLoop().ensureWaker();
 
@@ -3077,6 +3070,7 @@ pub const VirtualMachine = struct {
             .ipc = undefined,
         };
         const socket = IPC.Socket.fromFd(context, fd, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
+        socket.setTimeout(0);
         instance.ipc = .{ .socket = socket };
 
         const ptr = socket.ext(*IPCInstance);
@@ -3097,11 +3091,10 @@ extern fn BunDebugger__willHotReload() void;
 
 pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime reload_immediately: bool) type {
     return struct {
-        const watcher = @import("../watcher.zig");
-        pub const Watcher = watcher.NewWatcher(*@This());
+        pub const Watcher = GenericWatcher.NewWatcher(*@This());
         const Reloader = @This();
 
-        onAccept: std.ArrayHashMapUnmanaged(@This().Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
+        onAccept: std.ArrayHashMapUnmanaged(GenericWatcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
         ctx: *Ctx,
         verbose: bool = false,
 
@@ -3230,7 +3223,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
-            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
+            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
 
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }
@@ -3240,7 +3233,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             // - Directories outside the root directory
             // - Directories inside node_modules
             if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
-                watch.addDirectory(dir_fd, file_path, @This().Watcher.getHash(file_path), false) catch {};
+                watch.addDirectory(dir_fd, file_path, GenericWatcher.getHash(file_path), false) catch {};
             }
         }
 
@@ -3273,9 +3266,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         pub fn onFileUpdate(
             this: *@This(),
-            events: []watcher.WatchEvent,
+            events: []GenericWatcher.WatchEvent,
             changed_files: []?[:0]u8,
-            watchlist: watcher.Watchlist,
+            watchlist: GenericWatcher.WatchList,
         ) void {
             var slice = watchlist.slice();
             const file_paths = slice.items(.file_path);
@@ -3337,6 +3330,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         }
                     },
                     .directory => {
+                        if (comptime Environment.isWindows) {
+                            // on windows we receive file events for all items affected by a directory change
+                            // so we only need to clear the directory cache. all other effects will be handled
+                            // by the file events
+                            resolver.bustDirCache(file_path);
+                            continue;
+                        }
                         var affected_buf: [128][]const u8 = undefined;
                         var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
 
@@ -3387,7 +3387,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         resolver.bustDirCache(file_path);
 
                         if (entries_option) |dir_ent| {
-                            var last_file_hash: @This().Watcher.HashType = std.math.maxInt(@This().Watcher.HashType);
+                            var last_file_hash: GenericWatcher.HashType = std.math.maxInt(GenericWatcher.HashType);
 
                             for (affected) |changed_name_| {
                                 const changed_name: []const u8 = if (comptime Environment.isMac)
@@ -3400,14 +3400,14 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                 var prev_entry_id: usize = std.math.maxInt(usize);
                                 if (loader != .file) {
                                     var path_string: bun.PathString = undefined;
-                                    var file_hash: @This().Watcher.HashType = last_file_hash;
+                                    var file_hash: GenericWatcher.HashType = last_file_hash;
                                     const abs_path: string = brk: {
                                         if (dir_ent.entries.get(@as([]const u8, @ptrCast(changed_name)))) |file_ent| {
                                             // reset the file descriptor
                                             file_ent.entry.cache.fd = .zero;
                                             file_ent.entry.need_stat = true;
                                             path_string = file_ent.entry.abs_path;
-                                            file_hash = @This().Watcher.getHash(path_string.slice());
+                                            file_hash = GenericWatcher.getHash(path_string.slice());
                                             for (hashes, 0..) |hash, entry_id| {
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id] != .zero) {
@@ -3435,7 +3435,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                                             @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len..][0..changed_name.len], changed_name);
                                             const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
-                                            file_hash = @This().Watcher.getHash(path_slice);
+                                            file_hash = GenericWatcher.getHash(path_slice);
                                             break :brk path_slice;
                                         }
                                     };

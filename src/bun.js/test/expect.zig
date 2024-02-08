@@ -4325,10 +4325,14 @@ pub const Expect = struct {
     pub fn hasAssertions(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         _ = callFrame;
         defer globalObject.bunVM().autoGarbageCollect();
-        const error_value = globalObject.createErrorInstance("expected at least one assertion", .{});
+        comptime const fmt = "<d>expect.hasAssertions()<r>\n\nExpected <green>at least one assertion<r> to be called but <red>received none<r>.\n";
+        const outputFmt = if (Output.enable_ansi_colors)
+            Output.prettyFmt(fmt, true)
+        else
+            Output.prettyFmt(fmt, false);
 
         if (Jest.runner.?.pending_test) |pending_test|
-            pending_test.assert_asserts(NeededAssertType.atLeastOne, 0, error_value);
+            pending_test.assert_asserts(NeededAssertType.atLeastOne, 0, globalObject.createErrorInstance(outputFmt, .{}));
 
         return .zero;
     }

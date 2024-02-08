@@ -1338,15 +1338,13 @@ pub const TestRunnerTask = struct {
             NeededAssertType.none => {},
             NeededAssertType.atLeastOne => {
                 if (expect.active_test_expectation_counter.actual == 0) {
-                    Output.prettyErrorln("<r><red>Test fail<r><d>:<r> test <b>{}<r> has no assertions", .{bun.fmt.quote(test_.label)});
-                    Output.flush();
+                    globalThis.*.bunVM().runErrorHandler(this.assert_error, null);
                     result = .{ .fail = 0 };
                 }
             },
             NeededAssertType.equalToNeededAsserts => {
                 if (expect.active_test_expectation_counter.actual != this.needed_asserts) {
-                    Output.prettyErrorln("<r><red>Test fail<r><d>:<r> test <b>{}<r> has {} assertions, but expected {}", .{ bun.fmt.quote(test_.label), expect.active_test_expectation_counter.actual, this.needed_asserts });
-                    Output.flush();
+                    globalThis.*.bunVM().runErrorHandler(this.assert_error, null);
                     result = .{ .fail = expect.active_test_expectation_counter.actual };
                 }
             },

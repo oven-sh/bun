@@ -10,7 +10,7 @@ const libuv = bun.windows.libuv;
 
 const allow_assert = env.allow_assert;
 
-const log = bun.Output.scoped(.fs, false);
+const log = bun.sys.syslog;
 fn handleToNumber(handle: FDImpl.System) FDImpl.SystemAsInt {
     if (env.os == .windows) {
         // intCast fails if 'fd > 2^62'
@@ -213,7 +213,7 @@ pub const FDImpl = packed struct {
 
         // Format the file descriptor for logging BEFORE closing it.
         // Otherwise the file descriptor is always invalid after closing it.
-        var buf: [1050]u8 = undefined;
+        var buf: if (env.isDebug) [1050]u8 else void = undefined;
         const this_fmt = if (env.isDebug) std.fmt.bufPrint(&buf, "{}", .{this}) catch unreachable;
 
         const result: ?bun.sys.Error = switch (env.os) {

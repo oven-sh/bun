@@ -1896,6 +1896,7 @@ pub fn pipe() Maybe([2]bun.FileDescriptor) {
     )) |err| {
         return err;
     }
+    log("pipe() = [{d}, {d}]", .{ fds[0], fds[1] });
     return .{ .result = .{ bun.toFD(fds[0]), bun.toFD(fds[1]) } };
 }
 

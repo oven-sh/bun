@@ -701,8 +701,8 @@ pub const Subprocess = struct {
 
             pub fn start(this: *This) JSC.Maybe(void) {
                 this.ref();
-
                 this.buffer = this.source.slice();
+
                 return this.writer.start(this.fd, true);
             }
 
@@ -760,7 +760,7 @@ pub const Subprocess = struct {
             if (this.state == .pending)
                 return true;
 
-            return this.reader.hasPendingRead();
+            return this.reader.hasPendingActivity();
         }
 
         pub fn detach(this: *PipeReader) void {
@@ -788,6 +788,7 @@ pub const Subprocess = struct {
             this.ref();
             this.process = process;
             this.event_loop = event_loop;
+
             return this.reader.start(this.fd, true);
         }
 
@@ -799,9 +800,8 @@ pub const Subprocess = struct {
             if (this.process) |process| {
                 this.process = null;
                 process.onCloseIO(this.kind(process));
+                this.deref();
             }
-
-            this.deref();
         }
 
         pub fn kind(reader: *const PipeReader, process: *const Subprocess) StdioKind {

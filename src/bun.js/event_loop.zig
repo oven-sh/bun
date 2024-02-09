@@ -785,6 +785,10 @@ pub const EventLoop = struct {
         };
     }
 
+    pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
+        return this.virtual_machine.rareData().pipeReadBuffer();
+    }
+
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
     const log = bun.Output.scoped(.EventLoop, false);
 
@@ -1669,6 +1673,8 @@ pub const MiniEventLoop = struct {
     top_level_dir: []const u8 = "",
     after_event_loop_callback_ctx: ?*anyopaque = null,
     after_event_loop_callback: ?JSC.OpaqueCallback = null,
+    pipe_read_buffer: ?*PipeReadBuffer = null,
+    const PipeReadBuffer = [256 * 1024]u8;
 
     pub threadlocal var global: *MiniEventLoop = undefined;
 
@@ -1700,6 +1706,13 @@ pub const MiniEventLoop = struct {
     pub fn throwError(_: *MiniEventLoop, err: bun.sys.Error) void {
         bun.Output.prettyErrorln("{}", .{err});
         bun.Output.flush();
+    }
+
+    pub fn pipeReadBuffer(this: *MiniEventLoop) []u8 {
+        return this.pipe_read_buffer orelse {
+            this.pipe_read_buffer = this.allocator.create(PipeReadBuffer) catch bun.outOfMemory();
+            return this.pipe_read_buffer.?;
+        };
     }
 
     pub fn onAfterEventLoop(this: *MiniEventLoop) void {
@@ -1884,6 +1897,13 @@ pub const AnyEventLoop = union(enum) {
         };
     }
 
+    pub fn pipeReadBuffer(this: *AnyEventLoop) []u8 {
+        return switch (this.*) {
+            .js => this.js.pipeReadBuffer(),
+            .mini => this.mini.pipeReadBuffer(),
+        };
+    }
+
     pub fn init(
         allocator: std.mem.Allocator,
     ) AnyEventLoop {
@@ -2000,6 +2020,13 @@ pub const EventLoopHandle = union(enum) {
         return switch (this) {
             .js => this.js.usocketsLoop(),
             .mini => this.mini.loop,
+        };
+    }
+
+    pub fn pipeReadBuffer(this: EventLoopHandle) []u8 {
+        return switch (this) {
+            .js => this.js.pipeReadBuffer(),
+            .mini => this.mini.pipeReadBuffer(),
         };
     }
 

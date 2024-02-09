@@ -469,13 +469,6 @@ pub const HTMLRewriter = struct {
                         };
                         return err.toErrorInstance(sink.global);
                     },
-                    error.InvalidStream => {
-                        var err = JSC.SystemError{
-                            .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
-                            .message = bun.String.static("Invalid stream"),
-                        };
-                        return err.toErrorInstance(sink.global);
-                    },
                     else => {
                         var err = JSC.SystemError{
                             .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),

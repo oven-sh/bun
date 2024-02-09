@@ -1645,11 +1645,17 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
 
   $putByIdDirectPrivate(stream, "disturbed", true);
 
-  const chunkSize = Prototype.startSync(nativePtr, autoAllocateChunkSize);
-  var drainValue;
-  const { drain: drainFn, deinit: deinitFn } = Prototype;
-  if (drainFn) {
-    drainValue = drainFn(nativePtr);
+  const chunkSizeOrCompleteBuffer = Prototype.startSync(nativePtr, autoAllocateChunkSize);
+  let chunkSize, drainValue;
+  if ($isTypedArrayView(chunkSizeOrCompleteBuffer)) {
+    chunkSize = 0;
+    drainValue = chunkSizeOrCompleteBuffer;
+  } else {
+    chunkSize = chunkSizeOrCompleteBuffer;
+    const { drain: drainFn } = Prototype;
+    if (drainFn) {
+      drainValue = drainFn(nativePtr);
+    }
   }
 
   // empty file, no need for native back-and-forth on this
@@ -1662,12 +1668,18 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
           controller.enqueue(drainValue);
           controller.close();
         },
+        pull(controller) {
+          controller.close();
+        },
         type: "bytes",
       };
     }
 
     return {
       start(controller) {
+        controller.close();
+      },
+      pull(controller) {
         controller.close();
       },
       type: "bytes",

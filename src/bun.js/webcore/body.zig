@@ -1426,7 +1426,7 @@ pub const BodyValueBufferer = struct {
                         return;
                     }
                     // keep the stream alive until we're done with it
-                    sink.readable_stream_ref = try JSC.WebCore.ReadableStream.Strong.init(stream, sink.global);
+                    sink.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, sink.global);
                     // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
                     stream.detachIfPossible(sink.global);
 

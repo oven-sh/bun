@@ -58,16 +58,16 @@ pub const ReadableStream = struct {
             return this.held.globalThis;
         }
 
-        pub fn init(this: ReadableStream, global: *JSGlobalObject) !Strong {
+        pub fn init(this: ReadableStream, global: *JSGlobalObject) Strong {
             switch (this.ptr) {
                 .Blob => |stream| {
-                    try stream.parent().incrementCount();
+                    stream.parent().incrementCount();
                 },
                 .File => |stream| {
-                    try stream.parent().incrementCount();
+                    stream.parent().incrementCount();
                 },
                 .Bytes => |stream| {
-                    try stream.parent().incrementCount();
+                    stream.parent().incrementCount();
                 },
                 else => {},
             }
@@ -423,6 +423,8 @@ pub const StreamStart = union(Tag) {
     HTTPSResponseSink: void,
     HTTPResponseSink: void,
     ready: void,
+    owned_and_done: bun.ByteList,
+    done: bun.ByteList,
 
     pub const Tag = enum {
         empty,
@@ -433,6 +435,8 @@ pub const StreamStart = union(Tag) {
         HTTPSResponseSink,
         HTTPResponseSink,
         ready,
+        owned_and_done,
+        done,
     };
 
     pub fn toJS(this: StreamStart, globalThis: *JSGlobalObject) JSC.JSValue {
@@ -446,6 +450,12 @@ pub const StreamStart = union(Tag) {
             .err => |err| {
                 globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
                 return JSC.JSValue.jsUndefined();
+            },
+            .owned_and_done => |list| {
+                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
+            },
+            .done => |list| {
+                return JSC.ArrayBuffer.create(globalThis, list.slice(), .Uint8Array);
             },
             else => {
                 return JSC.JSValue.jsUndefined();
@@ -2495,7 +2505,6 @@ pub fn ReadableStreamSource(
     return struct {
         context: Context,
         cancelled: bool = false,
-        deinited: bool = false,
         ref_count: u32 = 1,
         pending_err: ?Syscall.Error = null,
         close_handler: ?*const fn (*anyopaque) void = null,
@@ -2545,7 +2554,7 @@ pub fn ReadableStreamSource(
         }
 
         pub fn cancel(this: *This) void {
-            if (this.cancelled or this.deinited) {
+            if (this.cancelled) {
                 return;
             }
 
@@ -2554,7 +2563,7 @@ pub fn ReadableStreamSource(
         }
 
         pub fn onClose(this: *This) void {
-            if (this.cancelled or this.deinited) {
+            if (this.cancelled) {
                 return;
             }
 
@@ -2564,21 +2573,19 @@ pub fn ReadableStreamSource(
             }
         }
 
-        pub fn incrementCount(this: *This) !void {
-            if (this.deinited) {
-                return error.InvalidStream;
-            }
+        pub fn incrementCount(this: *This) void {
             this.ref_count += 1;
         }
 
         pub fn decrementCount(this: *This) u32 {
-            if (this.ref_count == 0 or this.deinited) {
-                return 0;
+            if (comptime Environment.isDebug) {
+                if (this.ref_count == 0) {
+                    @panic("Attempted to decrement ref count below zero");
+                }
             }
 
             this.ref_count -= 1;
             if (this.ref_count == 0) {
-                this.deinited = true;
                 deinit_fn(&this.context);
                 return 0;
             }
@@ -2639,7 +2646,9 @@ pub fn ReadableStreamSource(
                         globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
                         return JSC.JSValue.jsUndefined();
                     },
-                    else => unreachable,
+                    else => |rc| {
+                        return rc.toJS(globalThis);
+                    },
                 }
             }
 
@@ -3006,10 +3015,18 @@ pub const FileReader = struct {
     event_loop: JSC.EventLoopHandle,
     lazy: Lazy = .{ .none = {} },
     buffered: std.ArrayListUnmanaged(u8) = .{},
+    read_inside_on_pull: ReadDuringJSOnPullResult = .{ .none = {} },
 
     pub const IOReader = bun.io.BufferedReader;
     pub const Poll = IOReader;
     pub const tag = ReadableStream.Tag.File;
+
+    const ReadDuringJSOnPullResult = union(enum) {
+        none: void,
+        js: []u8,
+        amount_read: usize,
+        temporary: []const u8,
+    };
 
     pub const Lazy = union(enum) {
         none: void,
@@ -3042,6 +3059,9 @@ pub const FileReader = struct {
             this.fd = this.reader.getFd();
         }
 
+        _ = this.parent().incrementCount();
+        this.event_loop = JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop());
+
         switch (this.reader.start(this.fd, true)) {
             .result => {},
             .err => |e| {
@@ -3050,7 +3070,15 @@ pub const FileReader = struct {
         }
 
         this.started = true;
-        this.event_loop = JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop());
+
+        if (this.reader.isDone()) {
+            this.consumeReaderBuffer();
+            if (this.buffered.items.len > 0) {
+                const buffered = this.buffered;
+                this.buffered = .{};
+                return .{ .owned_and_done = bun.ByteList.init(buffered.items) };
+            }
+        }
 
         return .{ .ready = {} };
     }
@@ -3079,7 +3107,20 @@ pub const FileReader = struct {
             return;
         }
 
-        if (this.pending.state == .pending) {
+        if (this.read_inside_on_pull != .none) {
+            switch (this.read_inside_on_pull) {
+                .js => |in_progress| {
+                    if (in_progress.len >= buf.len) {
+                        @memcpy(in_progress[0..buf.len], buf);
+                        this.read_inside_on_pull = .{ .amount_read = buf.len };
+                    } else {
+                        this.read_inside_on_pull = .{ .temporary = buf };
+                    }
+                },
+                .none => unreachable,
+                else => @panic("Invalid state"),
+            }
+        } else if (this.pending.state == .pending) {
             if (buf.len == 0) {
                 this.pending.result = .{ .done = {} };
                 this.pending_value.clear();
@@ -3107,7 +3148,11 @@ pub const FileReader = struct {
                 return;
             }
         } else if (!bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
-            this.reader.buffer().appendSlice(buf) catch bun.outOfMemory();
+            if (this.reader.isDone() and this.reader.buffer().capacity == 0) {
+                this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+            } else {
+                this.reader.buffer().appendSlice(buf) catch bun.outOfMemory();
+            }
         }
     }
 
@@ -3146,6 +3191,39 @@ pub const FileReader = struct {
             return .{ .done = {} };
         }
 
+        if (!this.reader.hasPendingRead()) {
+            this.read_inside_on_pull = .{ .js = buffer };
+            this.reader.read();
+            defer this.read_inside_on_pull = .{ .none = {} };
+            switch (this.read_inside_on_pull) {
+                .amount_read => |amount_read| {
+                    if (amount_read > 0) {
+                        if (this.reader.isDone()) {
+                            return .{ .into_array_and_done = .{ .value = array, .len = @truncate(amount_read) } };
+                        }
+
+                        return .{ .into_array = .{ .value = array, .len = @truncate(amount_read) } };
+                    }
+
+                    if (this.reader.isDone()) {
+                        return .{ .done = {} };
+                    }
+                },
+                .temporary => |buf| {
+                    if (this.reader.isDone()) {
+                        return .{ .temporary_and_done = bun.ByteList.init(buf) };
+                    }
+
+                    return .{ .temporary = bun.ByteList.init(buf) };
+                },
+                else => {},
+            }
+
+            if (this.reader.isDone()) {
+                return .{ .done = {} };
+            }
+        }
+
         this.pending_value.set(this.parent().globalThis, array);
         this.pending_view = buffer;
 
@@ -3173,15 +3251,24 @@ pub const FileReader = struct {
         this.reader.updateRef(enable);
     }
 
+    fn consumeReaderBuffer(this: *FileReader) void {
+        if (this.buffered.capacity > 0) {
+            this.buffered.appendSlice(bun.default_allocator, this.reader.buffer().items) catch bun.outOfMemory();
+        } else {
+            this.buffered = this.reader.buffer().moveToUnmanaged();
+        }
+    }
+
     pub fn onReaderDone(this: *FileReader) void {
         log("onReaderDone()", .{});
-        this.buffered = this.reader.buffer().*.moveToUnmanaged();
-        this.pending.result = .{ .done = {} };
+        this.consumeReaderBuffer();
         this.pending.run();
         _ = this.parent().decrementCount();
     }
 
     pub fn onReaderError(this: *FileReader, err: bun.sys.Error) void {
+        this.consumeReaderBuffer();
+
         this.pending.result = .{ .err = .{ .Error = err } };
         this.pending.run();
     }

@@ -788,7 +788,7 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode
 
     const pathZ = std.os.toPosixPath(file_path) catch return Maybe(bun.FileDescriptor){
         .err = .{
-            .errno = @intFromEnum(bun.C.E.NOMEM),
+            .errno = @intFromEnum(bun.C.E.NAMETOOLONG),
             .syscall = .open,
         },
     };

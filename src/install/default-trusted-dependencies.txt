@@ -362,6 +362,5 @@ xxhash
 yarn
 yo
 yorkie
-zeromq
 zlib-sync
 zopflipng-bin

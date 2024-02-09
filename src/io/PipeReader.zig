@@ -544,7 +544,8 @@ const PosixBufferedReader = struct {
     pub fn registerPoll(this: *PosixBufferedReader) void {
         const poll = this.handle.getPoll() orelse brk: {
             if (this.handle == .fd and this.pollable) {
-                break :brk Async.FilePoll.init(this.eventLoop(), this.getFd(), .{}, @This(), this);
+                this.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), this.getFd(), .{}, @This(), this) };
+                break :brk this.handle.poll;
             }
 
             return;

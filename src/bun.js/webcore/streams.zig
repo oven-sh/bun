@@ -360,6 +360,7 @@ pub const ReadableStream = struct {
 
     pub fn fromPipe(
         globalThis: *JSGlobalObject,
+        parent: anytype,
         buffered_reader: anytype,
     ) JSC.JSValue {
         JSC.markBinding(@src());
@@ -370,6 +371,11 @@ pub const ReadableStream = struct {
             },
         });
         source.context.reader.from(buffered_reader, &source.context);
+
+        if (comptime Environment.isPosix) {
+            source.context.fd = parent.fd;
+            parent.fd = bun.invalid_fd;
+        }
 
         return source.toJS(globalThis);
     }

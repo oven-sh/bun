@@ -862,7 +862,7 @@ pub const Subprocess = struct {
 
             switch (this.state) {
                 .pending => {
-                    const stream = JSC.WebCore.ReadableStream.fromPipe(globalObject, &this.reader);
+                    const stream = JSC.WebCore.ReadableStream.fromPipe(globalObject, this, &this.reader);
                     this.state = .{ .done = &.{} };
                     return stream;
                 },

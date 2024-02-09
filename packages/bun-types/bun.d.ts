@@ -57,6 +57,12 @@ declare module "bun" {
     | SpawnOptions.Writable
     | ReadableStream;
 
+  class ShellError extends Error {
+    readonly stdout: Buffer;
+    readonly stderr: Buffer;
+    readonly exitCode: number;
+  }
+
   class ShellPromise extends Promise<ShellOutput> {
     get stdin(): WritableStream;
     /**
@@ -156,6 +162,16 @@ declare module "bun" {
      * ```
      */
     blob(): Promise<Blob>;
+
+    /**
+     * Configure the shell to not throw an exception on non-zero exit codes.
+     */
+    nothrow(): this;
+
+    /**
+     * Configure whether or not the shell should throw an exception on non-zero exit codes.
+     */
+    throws(shouldThrow: boolean): this;
   }
 
   interface ShellConstructor {
@@ -206,6 +222,16 @@ declare module "bun" {
      * @param newCwd Default working directory to use for shells created by this instance.
      */
     cwd(newCwd?: string): this;
+
+    /**
+     * Configure the shell to not throw an exception on non-zero exit codes.
+     */
+    nothrow(): this;
+
+    /**
+     * Configure whether or not the shell should throw an exception on non-zero exit codes.
+     */
+    throws(shouldThrow: boolean): this;
 
     readonly ShellPromise: typeof ShellPromise;
     readonly Shell: ShellConstructor;

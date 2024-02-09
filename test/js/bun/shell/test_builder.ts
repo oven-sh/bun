@@ -1,5 +1,5 @@
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
-import { ShellOutput } from "bun";
+import { ShellError, ShellOutput } from "bun";
 import { ShellPromise } from "bun";
 // import { tempDirWithFiles } from "harness";
 import { join } from "node:path";
@@ -13,7 +13,7 @@ export class TestBuilder {
   private expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
   private expected_stderr: string = "";
   private expected_exit_code: number = 0;
-  private expected_error: string | boolean | undefined = undefined;
+  private expected_error: ShellError | string | boolean | undefined = undefined;
   private file_equals: { [filename: string]: string } = {};
 
   private tempdir: string | undefined = undefined;
@@ -79,7 +79,7 @@ export class TestBuilder {
     return this;
   }
 
-  error(expected?: string | boolean): this {
+  error(expected?: ShellError | string | boolean): this {
     if (expected === undefined || expected === true) {
       this.expected_error = true;
     } else if (expected === false) {
@@ -133,6 +133,12 @@ export class TestBuilder {
       if (this.expected_error === false) expect(err).toBeUndefined();
       if (typeof this.expected_error === "string") {
         expect(err.message).toEqual(this.expected_error);
+      } else if (this.expected_error instanceof ShellError) {
+        expect(err).toBeInstanceOf(ShellError);
+        const e = err as ShellError;
+        expect(e.exitCode).toEqual(this.expected_error.exitCode);
+        expect(e.stdout.toString()).toEqual(this.expected_error.stdout.toString());
+        expect(e.stderr.toString()).toEqual(this.expected_error.stderr.toString());
       }
       return undefined;
     }

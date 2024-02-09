@@ -5,6 +5,8 @@ import { TestBuilder, redirect } from "./util";
 
 const BUN = process.argv0;
 
+$.nothrow()
+
 describe("lex shell", () => {
   test("basic", () => {
     const expected = [{ "Text": "next" }, { "Delimit": {} }, { "Text": "dev" }, { "Delimit": {} }, { "Eof": {} }];

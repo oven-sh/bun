@@ -2,6 +2,18 @@ type ShellInterpreter = any;
 type Resolve = (value: ShellOutput) => void;
 
 export function createBunShellTemplateFunction(ShellInterpreter) {
+  class ShellError extends Error {
+    stdout: Buffer;
+    stderr: Buffer;
+    exitCode: number;
+    constructor(stdout: Buffer, stderr: Buffer, exitCode: number) {
+      super(`Failed with exit code: ${exitCode}`)
+      this.stdout = stdout;
+      this.stderr = stderr;
+      this.exitCode = exitCode;
+    }
+  }
+
   class ShellOutput {
     stdout: Buffer;
     stderr: Buffer;
@@ -20,15 +32,23 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
   class ShellPromise extends Promise<ShellOutput> {
     #core: ShellInterpreter;
     #hasRun: boolean = false;
+    #throws: boolean = true;
     // #immediate;
-    constructor(core: ShellInterpreter) {
+    constructor(core: ShellInterpreter, throws: boolean) {
       var resolve, reject;
 
       super((res, rej) => {
-        resolve = code => res(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code));
-        reject = code => rej(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code));
+        resolve = code => {
+          if (this.#throws && code !== 0) {
+            rej(new ShellError(core.getBufferedStdout(), core.getBufferedStderr(), code));
+          } else {
+            res(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code));
+          }
+        }
+        reject = code => rej(new ShellError(core.getBufferedStdout(), core.getBufferedStderr(), code));
       });
 
+      this.#throws = throws;
       this.#core = core;
       this.#hasRun = false;
 
@@ -93,6 +113,16 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       return this.#quiet();
     }
 
+    nothrow(): this {
+      this.#throws = false;
+      return this;
+    }
+
+    throws(doThrow: boolean | undefined): this {
+      this.#throws = typeof doThrow === 'boolean' ? doThrow : false;
+      return this;
+    }
+
     async text(encoding) {
       const { stdout } = (await this.#quiet()) as ShellOutput;
       return stdout.toString(encoding);
@@ -149,10 +179,12 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
   const cwdSymbol = Symbol("cwd");
   const envSymbol = Symbol("env");
+  const throwsSymbol = Symbol("throws");
 
   class ShellPrototype {
     [cwdSymbol]: string | undefined;
     [envSymbol]: Record<string, string | undefined> | undefined;
+    [throwsSymbol]: boolean = true;
 
     env(newEnv: Record<string, string | undefined>) {
       if (typeof newEnv === "undefined" || newEnv === originalDefaultEnv) {
@@ -178,6 +210,14 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
       return this;
     }
+    nothrow() {
+      this[throwsSymbol] = false;
+      return this;
+    }
+    throws(doThrow: boolean | undefined) {
+      this[throwsSymbol] =  typeof doThrow === 'boolean' ? doThrow : false;
+      return this;
+    }
   }
 
   var BunShell = function BunShell() {
@@ -185,12 +225,13 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
     const cwd = BunShell[cwdSymbol];
     const env = BunShell[envSymbol];
+    const throws = BunShell[throwsSymbol];
 
     // cwd must be set before env or else it will be injected into env as "PWD=/"
     if (cwd) core.setCwd(cwd);
     if (env) core.setEnv(env);
 
-    return new ShellPromise(core);
+    return new ShellPromise(core, throws);
   };
 
   function Shell() {
@@ -203,12 +244,13 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
       const cwd = Shell[cwdSymbol];
       const env = Shell[envSymbol];
+      const throws = Shell[throwsSymbol];
 
       // cwd must be set before env or else it will be injected into env as "PWD=/"
       if (cwd) core.setCwd(cwd);
       if (env) core.setEnv(env);
 
-      return new ShellPromise(core);
+      return new ShellPromise(core, throws);
     };
 
     Object.setPrototypeOf(Shell, ShellPrototype.prototype);
@@ -223,6 +265,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
   BunShell[cwdSymbol] = defaultCwd;
   BunShell[envSymbol] = defaultEnv;
+  BunShell[throwsSymbol] = true;
 
   Object.defineProperties(BunShell, {
     Shell: {

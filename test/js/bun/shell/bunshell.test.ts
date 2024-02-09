@@ -15,10 +15,12 @@ import { TestBuilder, sortedShellOutput } from "./util";
 
 $.env(bunEnv);
 $.cwd(process.cwd());
+$.nothrow();
 
 let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];
 beforeAll(async () => {
+  $.nothrow()
   temp_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
   await mkdir(temp_dir, { recursive: true });
 

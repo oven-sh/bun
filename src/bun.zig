@@ -453,7 +453,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
         @panic("TODO on Windows");
     }
-
+    std.debug.assert(fd != invalid_fd);
     var polls = [_]std.os.pollfd{
         .{
             .fd = fd.cast(),
@@ -477,6 +477,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
         @panic("TODO on Windows");
     }
+    std.debug.assert(fd != invalid_fd);
 
     var polls = [_]std.os.pollfd{
         .{

@@ -841,11 +841,20 @@ pub const max_count = switch (builtin.os.tag) {
 
 pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     const adjusted_len = @min(max_count, bytes.len);
+    var debug_timer = bun.Output.DebugTimer.start();
+
+    defer {
+        if (comptime Environment.isDebug) {
+            if (debug_timer.timer.read() > std.time.ns_per_ms) {
+                bun.Output.debugWarn("write({}, {d}) blocked for {}", .{ fd, bytes.len, debug_timer });
+            }
+        }
+    }
 
     return switch (Environment.os) {
         .mac => {
             const rc = system.@"write$NOCANCEL"(fd.cast(), bytes.ptr, adjusted_len);
-            log("write({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
+            log("write({}, {d}) = {d} ({})", .{ fd, adjusted_len, rc, debug_timer });
 
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                 return err;
@@ -856,7 +865,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
         .linux => {
             while (true) {
                 const rc = sys.write(fd.cast(), bytes.ptr, adjusted_len);
-                log("write({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
+                log("write({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
 
                 if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                     if (err.getErrno() == .INTR) continue;
@@ -877,7 +886,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                 &bytes_written,
                 null,
             );
-            log("WriteFile({d}, {d}) = {d} (written: {d})", .{ @intFromPtr(fd.cast()), adjusted_len, rc, bytes_written });
+            log("WriteFile({d}, {d}) = {d} (written: {d}) {}", .{ @intFromPtr(fd.cast()), adjusted_len, rc, bytes_written, debug_timer });
             if (rc == 0) {
                 return .{
                     .err = Syscall.Error{

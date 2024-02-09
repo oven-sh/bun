@@ -1048,6 +1048,15 @@ pub const Subprocess = struct {
                 .buffer, .inherit => JSValue.jsUndefined(),
                 .pipe => |pipe| {
                     this.* = .{ .ignore = {} };
+                    pipe.writer.setParent(pipe);
+                    switch (pipe.writer.start(pipe.fd, true)) {
+                        .err => |err| {
+                            globalThis.throwValue(err.toJSC(globalThis));
+                            return JSValue.jsUndefined();
+                        },
+                        .result => {},
+                    }
+
                     return pipe.toJS(globalThis);
                 },
             };

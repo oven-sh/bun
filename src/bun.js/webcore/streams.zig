@@ -352,6 +352,7 @@ pub const ReadableStream = struct {
                     },
                 });
                 store.ref();
+
                 return reader.toJS(globalThis);
             },
         }
@@ -420,7 +421,7 @@ pub const StreamStart = union(Tag) {
         stream: bool,
     },
     FileSink: struct {
-        chunk_size: Blob.SizeType = 16384,
+        chunk_size: Blob.SizeType = 1024,
         input_path: PathOrFileDescriptor,
         truncate: bool = true,
         close: bool = false,
@@ -2815,15 +2816,17 @@ pub const FileSink = struct {
         event_loop: *JSC.EventLoop,
         fd: bun.FileDescriptor,
     ) *FileSink {
-        return FileSink.new(.{
+        var this = FileSink.new(.{
             .event_loop_handle = JSC.EventLoopHandle.init(event_loop),
             .fd = fd,
         });
+        this.writer.parent = this;
+        return this;
     }
 
     pub fn setup(
         this: *FileSink,
-        fd: bun.FileDescriptor,
+        file_sink: 
     ) void {
         this.fd = fd;
         this.writer.start(fd, true).assert();
@@ -2843,7 +2846,9 @@ pub const FileSink = struct {
 
     pub fn start(this: *FileSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
         switch (stream_start) {
-            .FileSink => {},
+            .FileSink => |*file| {
+                this.setup(file);
+            },
             else => {},
         }
 
@@ -3039,6 +3044,84 @@ pub const FileReader = struct {
     pub const Lazy = union(enum) {
         none: void,
         blob: *Blob.Store,
+
+        const OpenedFileBlob = struct {
+            fd: bun.FileDescriptor,
+        };
+
+        pub fn openFileBlob(
+            file: *Blob.FileStore,
+        ) JSC.Maybe(OpenedFileBlob) {
+            var this = OpenedFileBlob{ .fd = bun.invalid_fd };
+            var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+
+            var fd = if (file.pathlike != .path)
+                // We will always need to close the file descriptor.
+                switch (Syscall.dup(file.pathlike.fd)) {
+                    .result => |_fd| if (Environment.isWindows) bun.toLibUVOwnedFD(_fd) else _fd,
+                    .err => |err| {
+                        return .{ .err = err.withFd(file.pathlike.fd) };
+                    },
+                }
+            else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
+                .result => |_fd| _fd,
+                .err => |err| {
+                    return .{ .err = err.withPath(file.pathlike.path.slice()) };
+                },
+            };
+
+            if (comptime Environment.isPosix) {
+                if ((file.is_atty orelse false) or (fd.int() < 3 and std.os.isatty(fd.cast())) or (file.pathlike == .fd and bun.FDTag.get(file.pathlike.fd) != .none and std.os.isatty(file.pathlike.fd.cast()))) {
+                    var termios = std.mem.zeroes(std.os.termios);
+                    _ = std.c.tcgetattr(fd.cast(), &termios);
+                    bun.C.cfmakeraw(&termios);
+                    file.is_atty = true;
+                }
+            }
+
+            if (file.pathlike != .path and !(file.is_atty orelse false)) {
+                if (comptime !Environment.isWindows) {
+                    // ensure we have non-blocking IO set
+                    switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
+                        .err => return .{ .err = Syscall.Error.fromCode(E.BADF, .fcntl) },
+                        .result => |flags| {
+                            // if we do not, clone the descriptor and set non-blocking
+                            // it is important for us to clone it so we don't cause Weird Things to happen
+                            if ((flags & std.os.O.NONBLOCK) == 0) {
+                                fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
+                                    .result => |_fd| bun.toFD(_fd),
+                                    .err => |err| return .{ .err = err },
+                                };
+
+                                switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
+                                    .err => |err| return .{ .err = err },
+                                    .result => |_| {},
+                                }
+                            }
+                        },
+                    }
+                }
+            }
+
+            if (comptime Environment.isPosix) {
+                const stat: bun.Stat = switch (Syscall.fstat(fd)) {
+                    .result => |result| result,
+                    .err => |err| {
+                        _ = Syscall.close(fd);
+                        return .{ .err = err };
+                    },
+                };
+
+                if (bun.S.ISDIR(stat.mode)) {
+                    _ = Syscall.close(fd);
+                    return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
+                }
+            }
+
+            this.fd = fd;
+
+            return .{ .result = this };
+        }
     };
 
     pub fn eventLoop(this: *const FileReader) JSC.EventLoopHandle {
@@ -3063,6 +3146,25 @@ pub const FileReader = struct {
     }
 
     pub fn onStart(this: *FileReader) StreamStart {
+        this.reader.setParent(this);
+
+        if (this.lazy == .blob) {
+            switch (this.lazy.blob.data) {
+                .bytes => @panic("Invalid state in FileReader: expected file "),
+                .file => |*file| {
+                    this.fd = switch (Lazy.openFileBlob(file)) {
+                        .err => |err| {
+                            this.fd = bun.invalid_fd;
+                            return .{ .err = err };
+                        },
+                        .result => |opened| opened.fd,
+                    };
+                    this.lazy.blob.deref();
+                    this.lazy = .none;
+                },
+            }
+        }
+
         if (this.reader.getFd() != bun.invalid_fd and this.fd == bun.invalid_fd) {
             this.fd = this.reader.getFd();
         }

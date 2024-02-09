@@ -563,13 +563,13 @@ pub fn PosixStreamingWriter(
                 return JSC.Maybe(void){ .result = {} };
             }
 
-            const loop = @as(*Parent, @ptrCast(this.parent)).loop();
+            const loop = @as(*Parent, @ptrCast(this.parent)).eventLoop();
             var poll = this.getPoll() orelse brk: {
                 this.handle = .{ .poll = Async.FilePoll.init(loop, fd, .{}, PosixWriter, this) };
                 break :brk this.handle.poll;
             };
 
-            switch (poll.registerWithFd(loop, .writable, true, fd)) {
+            switch (poll.registerWithFd(loop.loop(), .writable, true, fd)) {
                 .err => |err| {
                     return JSC.Maybe(void){ .err = err };
                 },

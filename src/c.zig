@@ -462,3 +462,5 @@ pub fn dlopen(filename: [:0]const u8, flags: i32) ?*anyopaque {
 
     return std.c.dlopen(filename, flags);
 }
+
+pub extern "C" fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;

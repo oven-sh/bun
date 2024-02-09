@@ -1,10 +1,22 @@
 // @known-failing-on-windows: 1 failing
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { gcTick as _gcTick, bunExe, bunEnv } from "harness";
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "path";
 import { openSync, fstatSync, closeSync } from "fs";
+import { tmpdir } from "node:os";
+let tmp;
+beforeAll(() => {
+  tmp = path.join(tmpdir(), "bun-spawn-" + Date.now().toString(32)) + path.sep;
+  rmSync(tmp, { force: true, recursive: true });
+  mkdirSync(tmp, { recursive: true });
+});
+
+function createHugeString() {
+  return "hello".repeat(100).repeat(500).repeat(1).slice();
+}
+
 for (let [gcTick, label] of [
   [_gcTick, "gcTick"],
   // [() => {}, "no gc tick"],
@@ -12,7 +24,7 @@ for (let [gcTick, label] of [
   Bun.gc(true);
   describe(label, () => {
     describe("spawnSync", () => {
-      const hugeString = "hello".repeat(10000).slice();
+      const hugeString = "hello".repeat(50000).slice();
 
       it("as an array", () => {
         const { stdout } = spawnSync(["echo", "hi"]);
@@ -29,7 +41,11 @@ for (let [gcTick, label] of [
           stdin: new TextEncoder().encode(hugeString),
         });
         gcTick();
-        expect(stdout!.toString()).toBe(hugeString);
+        const text = stdout!.toString();
+        if (text !== hugeString) {
+          expect(text).toHaveLength(hugeString.length);
+          expect(text).toBe(hugeString);
+        }
         expect(stderr!.byteLength).toBe(0);
         gcTick();
       });
@@ -59,7 +75,7 @@ for (let [gcTick, label] of [
     });
 
     describe("spawn", () => {
-      const hugeString = "hello".repeat(10000).slice();
+      const hugeString = createHugeString();
 
       it("as an array", async () => {
         gcTick();
@@ -79,7 +95,7 @@ for (let [gcTick, label] of [
       it("as an array with options object", async () => {
         gcTick();
         const { stdout } = spawn(["printenv", "FOO"], {
-          cwd: "/tmp",
+          cwd: tmp,
           env: {
             ...process.env,
             FOO: "bar",
@@ -95,16 +111,16 @@ for (let [gcTick, label] of [
       });
 
       it("Uint8Array works as stdin", async () => {
-        rmSync("/tmp/out.123.txt", { force: true });
+        rmSync(tmp + "out.123.txt", { force: true });
         gcTick();
         const { exited } = spawn({
           cmd: ["cat"],
           stdin: new TextEncoder().encode(hugeString),
-          stdout: Bun.file("/tmp/out.123.txt"),
+          stdout: Bun.file(tmp + "out.123.txt"),
         });
         gcTick();
         await exited;
-        expect(require("fs").readFileSync("/tmp/out.123.txt", "utf8")).toBe(hugeString);
+        expect(require("fs").readFileSync(tmp + "out.123.txt", "utf8")).toBe(hugeString);
         gcTick();
       });
 
@@ -239,66 +255,66 @@ for (let [gcTick, label] of [
       });
 
       it("Blob works as stdin", async () => {
-        rmSync("/tmp/out.123.txt", { force: true });
+        rmSync(tmp + "out.123.txt", { force: true });
         gcTick();
         const { exited } = spawn({
           cmd: ["cat"],
           stdin: new Blob([new TextEncoder().encode(hugeString)]),
-          stdout: Bun.file("/tmp/out.123.txt"),
+          stdout: Bun.file(tmp + "out.123.txt"),
         });
 
         await exited;
-        expect(await Bun.file("/tmp/out.123.txt").text()).toBe(hugeString);
+        expect(await Bun.file(tmp + "out.123.txt").text()).toBe(hugeString);
       });
 
       it("Bun.file() works as stdout", async () => {
-        rmSync("/tmp/out.123.txt", { force: true });
+        rmSync(tmp + "out.123.txt", { force: true });
         gcTick();
         const { exited } = spawn({
           cmd: ["echo", "hello"],
-          stdout: Bun.file("/tmp/out.123.txt"),
+          stdout: Bun.file(tmp + "out.123.txt"),
         });
 
         await exited;
         gcTick();
-        expect(await Bun.file("/tmp/out.123.txt").text()).toBe("hello\n");
+        expect(await Bun.file(tmp + "out.123.txt").text()).toBe("hello\n");
       });
 
       it("Bun.file() works as stdin", async () => {
-        await write(Bun.file("/tmp/out.456.txt"), "hello there!");
+        await write(Bun.file(tmp + "out.456.txt"), "hello there!");
         gcTick();
         const { stdout } = spawn({
           cmd: ["cat"],
           stdout: "pipe",
-          stdin: Bun.file("/tmp/out.456.txt"),
+          stdin: Bun.file(tmp + "out.456.txt"),
         });
         gcTick();
         expect(await readableStreamToText(stdout!)).toBe("hello there!");
       });
 
       it("Bun.file() works as stdin and stdout", async () => {
-        writeFileSync("/tmp/out.456.txt", "hello!");
+        writeFileSync(tmp + "out.456.txt", "hello!");
         gcTick();
-        writeFileSync("/tmp/out.123.txt", "wrong!");
+        writeFileSync(tmp + "out.123.txt", "wrong!");
         gcTick();
 
         const { exited } = spawn({
           cmd: ["cat"],
-          stdout: Bun.file("/tmp/out.123.txt"),
-          stdin: Bun.file("/tmp/out.456.txt"),
+          stdout: Bun.file(tmp + "out.123.txt"),
+          stdin: Bun.file(tmp + "out.456.txt"),
         });
         gcTick();
         await exited;
-        expect(await Bun.file("/tmp/out.456.txt").text()).toBe("hello!");
+        expect(await Bun.file(tmp + "out.456.txt").text()).toBe("hello!");
         gcTick();
-        expect(await Bun.file("/tmp/out.123.txt").text()).toBe("hello!");
+        expect(await Bun.file(tmp + "out.123.txt").text()).toBe("hello!");
       });
 
       it("stdout can be read", async () => {
-        await Bun.write("/tmp/out.txt", hugeString);
+        await Bun.write(tmp + "out.txt", hugeString);
         gcTick();
         const { stdout } = spawn({
-          cmd: ["cat", "/tmp/out.txt"],
+          cmd: ["cat", tmp + "out.txt"],
           stdout: "pipe",
         });
 
@@ -306,7 +322,10 @@ for (let [gcTick, label] of [
 
         const text = await readableStreamToText(stdout!);
         gcTick();
-        expect(text).toBe(hugeString);
+        if (text !== hugeString) {
+          expect(text).toHaveLength(hugeString.length);
+          expect(text).toBe(hugeString);
+        }
       });
 
       it("kill(1) works", async () => {
@@ -407,20 +426,14 @@ for (let [gcTick, label] of [
                 const process = callback();
                 var sink = new ArrayBufferSink();
                 var any = false;
-                await (async function () {
+                var { resolve, promise } = Promise.withResolvers();
+
+                (async function () {
                   var reader = process.stdout?.getReader();
 
-                  reader?.closed.then(
-                    a => {
-                      console.log("Closed!");
-                    },
-                    err => {
-                      console.log("Closed!", err);
-                    },
-                  );
                   var done = false,
                     value;
-                  while (!done) {
+                  while (!done && resolve) {
                     ({ value, done } = await reader!.read());
 
                     if (value) {
@@ -428,7 +441,11 @@ for (let [gcTick, label] of [
                       sink.write(value);
                     }
                   }
+
+                  resolve && resolve();
+                  resolve = undefined;
                 })();
+                await promise;
                 expect(any).toBe(true);
 
                 const expected = fixture + "\n";
@@ -687,21 +704,20 @@ describe("close handling", () => {
     const stdinFn = typeof stdin_ === "function" ? stdin_ : () => stdin_;
     for (let stdout of [1, "ignore", Bun.stdout, undefined as any] as const) {
       for (let stderr of [2, "ignore", Bun.stderr, undefined as any] as const) {
-        it(`[ ${typeof stdin_ === "function" ? "fd" : stdin_}, ${stdout}, ${stderr} ]`, async () => {
+        const thisTest = testNumber++;
+        it(`#${thisTest} [ ${typeof stdin_ === "function" ? "fd" : stdin_}, ${stdout}, ${stderr} ]`, async () => {
           const stdin = stdinFn();
 
           function getExitPromise() {
-            testNumber++;
-
             const { exited: proc1Exited } = spawn({
-              cmd: ["echo", "Executing test " + testNumber],
+              cmd: ["echo", "Executing test " + thisTest],
               stdin,
               stdout,
               stderr,
             });
 
             const { exited: proc2Exited } = spawn({
-              cmd: ["echo", "Executing test " + testNumber],
+              cmd: ["echo", "Executing test " + thisTest],
               stdin,
               stdout,
               stderr,

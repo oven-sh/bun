@@ -743,6 +743,12 @@ pub const Subprocess = struct {
                 return this.event_loop.loop();
             }
 
+            pub fn watch(this: *This) void {
+                if (this.buffer.len > 0) {
+                    this.writer.watch();
+                }
+            }
+
             pub fn eventLoop(this: *This) JSC.EventLoopHandle {
                 return this.event_loop;
             }
@@ -844,6 +850,11 @@ pub const Subprocess = struct {
 
         pub fn updateRef(this: *PipeReader, add: bool) void {
             this.reader.updateRef(add);
+        }
+
+        pub fn watch(this: *PipeReader) void {
+            if (!this.reader.isDone())
+                this.reader.watch();
         }
 
         pub fn toReadableStream(this: *PipeReader, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -1785,15 +1796,15 @@ pub const Subprocess = struct {
 
         while (subprocess.hasPendingActivityNonThreadsafe()) {
             if (subprocess.stdin == .buffer) {
-                subprocess.stdin.buffer.flush();
+                subprocess.stdin.buffer.watch();
             }
 
             if (subprocess.stderr == .pipe) {
-                subprocess.stderr.pipe.readAll();
+                subprocess.stderr.pipe.watch();
             }
 
             if (subprocess.stdout == .pipe) {
-                subprocess.stdout.pipe.readAll();
+                subprocess.stdout.pipe.watch();
             }
 
             jsc_vm.tick();

@@ -448,7 +448,7 @@ pub fn ensureNonBlocking(fd: anytype) void {
     _ = std.os.fcntl(fd, std.os.F.SETFL, current | std.os.O.NONBLOCK) catch 0;
 }
 
-const global_scope_log = Output.scoped(.bun, false);
+const global_scope_log = sys.syslog;
 pub fn isReadable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
         @panic("TODO on Windows");
@@ -481,7 +481,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
     var polls = [_]std.os.pollfd{
         .{
             .fd = fd.cast(),
-            .events = std.os.POLL.OUT,
+            .events = std.os.POLL.OUT | std.os.POLL.ERR,
             .revents = 0,
         },
     };

@@ -64,21 +64,21 @@ pub fn PosixPipeWriter(
         }
 
         pub fn onPoll(parent: *This, size_hint: isize) void {
-            _ = size_hint; // autofix
-
-            switch (drainBufferedData(parent)) {
-                .pending => {
+            switch (drainBufferedData(parent, if (size_hint > 0) @intCast(size_hint) else std.math.maxInt(usize))) {
+                .pending => |wrote| {
                     if (comptime registerPoll) |register| {
                         register(parent);
                     }
+                    if (wrote > 0)
+                        onWrite(parent, wrote, false);
                 },
                 .wrote => |amt| {
+                    onWrite(parent, amt, false);
                     if (getBuffer(parent).len > 0) {
                         if (comptime registerPoll) |register| {
                             register(parent);
                         }
                     }
-                    onWrite(parent, amt, false);
                 },
                 .err => |err| {
                     onError(parent, err);
@@ -89,13 +89,17 @@ pub fn PosixPipeWriter(
             }
         }
 
-        pub fn drainBufferedData(parent: *This) WriteResult {
+        pub fn drainBufferedData(parent: *This, max_write_size: usize) WriteResult {
             var buf = getBuffer(parent);
+            buf = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
             const original_buf = buf;
+
             while (buf.len > 0) {
                 const attempt = _tryWrite(parent, buf);
                 switch (attempt) {
-                    .pending => {},
+                    .pending => |pending| {
+                        return .{ .pending = pending + (original_buf.len - buf.len) };
+                    },
                     .wrote => |amt| {
                         buf = buf[amt..];
                     },
@@ -141,6 +145,7 @@ pub fn PosixBufferedWriter(
         handle: PollOrFd = .{ .closed = {} },
         parent: *Parent = undefined,
         is_done: bool = false,
+        pollable: bool = false,
 
         const PosixWriter = @This();
 
@@ -250,7 +255,18 @@ pub fn PosixBufferedWriter(
             this.onPoll(0);
         }
 
+        pub fn watch(this: *PosixWriter) void {
+            if (this.pollable) {
+                if (this.handle == .fd) {
+                    this.handle = .{ .poll = Async.FilePoll.init(@as(*Parent, @ptrCast(this.parent)).eventLoop(), this.getFd(), .{}, PosixWriter, this) };
+                }
+
+                this.registerPoll();
+            }
+        }
+
         pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, pollable: bool) JSC.Maybe(void) {
+            this.pollable = pollable;
             if (!pollable) {
                 std.debug.assert(this.handle != .poll);
                 this.handle = .{ .fd = fd };
@@ -494,7 +510,7 @@ pub fn PosixStreamingWriter(
         pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable);
 
         pub fn flush(this: *PosixWriter) WriteResult {
-            return this.drainBufferedData();
+            return this.drainBufferedData(std.math.maxInt(usize));
         }
 
         pub fn deinit(this: *PosixWriter) void {

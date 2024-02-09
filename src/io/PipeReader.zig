@@ -580,6 +580,12 @@ const PosixBufferedReader = struct {
         return this.handle == .poll and this.handle.poll.isRegistered();
     }
 
+    pub fn watch(this: *PosixBufferedReader) void {
+        if (this.pollable) {
+            this.registerPoll();
+        }
+    }
+
     pub fn hasPendingActivity(this: *const PosixBufferedReader) bool {
         return switch (this.handle) {
             .poll => |poll| poll.isActive(),

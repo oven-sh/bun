@@ -1491,8 +1491,6 @@ redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
-received_keep_alive: bool = false,
-
 disable_timeout: bool = false,
 disable_keepalive: bool = false,
 disable_decompression: bool = false,
@@ -1556,7 +1554,9 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
         if (this.http_proxy != null and this.url.isHTTPS()) {
             return false;
         }
-        return !this.disable_keepalive;
+
+        //check state
+        if (this.state.allow_keepalive and !this.disable_keepalive) return true;
     }
     return false;
 }
@@ -1852,18 +1852,6 @@ pub const AsyncHTTP = struct {
             }
         }
         return this;
-    }
-
-    pub fn isKeepAlivePossible(this: *AsyncHTTP) bool {
-        if (comptime FeatureFlags.enable_keepalive) {
-            // is not possible to reuse Proxy with TSL, so disable keepalive if url is tunneling HTTPS
-            if (this.http_proxy != null and this.url.isHTTPS()) {
-                return false;
-            }
-            // check state
-            if (this.state.allow_keepalive and !this.disable_keepalive) return true;
-        }
-        return false;
     }
 
     pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {

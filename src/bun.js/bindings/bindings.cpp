@@ -100,6 +100,29 @@
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "wtf/text/StringToIntegerConversion.h"
 
+//
+
+static unsigned StringView_count(WTF::StringView sv, UChar character, unsigned start)
+{
+    auto result = 0;
+    auto start_ = start;
+    while (true) {
+        if (sv.length() == 0)
+            break;
+        auto newfind = sv.find(character, start_);
+        if (newfind == WTF::notFound)
+            break;
+        result += 1;
+        start_ = newfind + 1;
+    }
+    return result;
+}
+
+static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
+{
+    return sv.substring(start, end - start);
+}
+
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 {
@@ -4037,6 +4060,7 @@ public:
         StringView line = stack.substring(start, end - start);
         offset = end;
 
+        // the proper singular spelling is parenthesis
         auto openingParenthese = line.reverseFind('(');
         auto closingParenthese = line.reverseFind(')');
 
@@ -4048,37 +4072,79 @@ public:
             return false;
         }
 
-        auto firstColon = line.find(':', openingParenthese + 1);
+        auto lineInner = StringView_slice(line, openingParenthese + 1, closingParenthese);
+        auto colonCount = StringView_count(lineInner, ':', 0);
 
-        // if there is no colon, that means we only have a filename and no line number
-
-        //   at foo (native)
-        if (firstColon == WTF::notFound) {
-            frame.sourceURL = line.substring(openingParenthese + 1, closingParenthese - openingParenthese - 1);
-        } else {
-            // at foo (/path/to/file.js:
-            frame.sourceURL = line.substring(openingParenthese + 1, firstColon - openingParenthese - 1);
+        switch (colonCount) {
+        case 0: {
+            // /path/to/file.js
+            frame.sourceURL = lineInner;
+            break;
         }
 
-        if (firstColon != WTF::notFound) {
+        case 1: {
+            // /path/to/file.js:
+            // /path/to/file.js:1
+            // node:child_process
+            // C:\Users\dave\bun\file.js
 
-            auto secondColon = line.find(':', firstColon + 1);
-            // at foo (/path/to/file.js:1)
-            if (secondColon == WTF::notFound) {
-                if (auto lineNumber = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(line.substring(firstColon + 1, closingParenthese - firstColon - 1))) {
-                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(lineNumber.value());
+            auto marker1 = 0;
+            auto marker2 = lineInner.find(':', marker1);
+            auto marker3 = lineInner.length();
+
+            auto segment1 = StringView_slice(lineInner, marker1, marker2);
+            auto segment2 = StringView_slice(lineInner, marker2 + 1, marker3);
+
+            if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
+                frame.sourceURL = segment1;
+                frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
+            } else {
+                frame.sourceURL = StringView_slice(lineInner, marker1, marker3);
+            }
+            break;
+        }
+
+        default: {
+            // /path/to/file.js:1:
+            // /path/to/file.js:1:2
+            // node:child_process:1:2
+            // C:\Users\dave\bun\file.js:
+            // C:\Users\dave\bun\file.js:1
+            // C:\Users\dave\bun\file.js:1:2
+
+            auto linenoColon = lineInner.find(':', 0);
+            for (size_t i = 0; i < colonCount - 2; i++) {
+                linenoColon = lineInner.find(':', linenoColon + 1);
+            }
+
+            auto marker1 = 0;
+            auto marker2 = linenoColon;
+            auto marker3 = lineInner.find(':', linenoColon + 1);
+            auto marker4 = lineInner.length();
+
+            auto segment1 = StringView_slice(lineInner, marker1, marker2);
+            auto segment2 = StringView_slice(lineInner, marker2 + 1, marker3);
+            auto segment3 = StringView_slice(lineInner, marker3 + 1, marker4);
+
+            if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
+                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment3)) {
+                    frame.sourceURL = segment1;
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
+                    frame.columnNumber = WTF::OrdinalNumber::fromOneBasedInt(int2.value());
+                } else {
+                    frame.sourceURL = segment1;
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
                 }
             } else {
-                // at foo (/path/to/file.js:1:)
-                if (auto lineNumber = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(line.substring(firstColon + 1, secondColon - firstColon - 1))) {
-                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(lineNumber.value());
-                }
-
-                // at foo (/path/to/file.js:1:2)
-                if (auto columnNumber = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(line.substring(secondColon + 1, closingParenthese - secondColon - 1))) {
-                    frame.columnNumber = WTF::OrdinalNumber::fromOneBasedInt(columnNumber.value());
+                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment3)) {
+                    frame.sourceURL = StringView_slice(lineInner, marker1, marker3);
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int2.value());
+                } else {
+                    frame.sourceURL = StringView_slice(lineInner, marker1, marker4);
                 }
             }
+            break;
+        }
         }
 
         StringView functionName = line.substring(0, openingParenthese - 1);

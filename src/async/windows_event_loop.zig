@@ -33,7 +33,7 @@ pub const KeepAlive = struct {
             return;
 
         this.status = .inactive;
-        loop.inc();
+        loop.dec();
     }
 
     /// Only intended to be used from EventLoop.Pollable

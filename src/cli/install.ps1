@@ -97,6 +97,7 @@ function Install-Bun {
     Write-Error $_
     exit 1
   }
+  Remove-Item "${BunBin}\bun.exe" -ErrorAction SilentlyContinue
   Move-Item "${BunBin}\$Target\bun.exe" "${BunBin}\bun.exe" -Force
 
   Remove-Item "${BunBin}\$Target" -Recurse -Force
@@ -116,8 +117,13 @@ function Install-Bun {
     Install-Bun -Version $Version -ForceBaseline $True
     exit 1
   }
-  if ($LASTEXITCODE -eq 3221225781) { # STATUS_DLL_NOT_FOUND
+  if (($LASTEXITCODE -eq 3221225781) # STATUS_DLL_NOT_FOUND
+  # https://discord.com/channels/876711213126520882/1149339379446325248/1205194965383250081
+  # http://community.sqlbackupandftp.com/t/error-1073741515-solved/1305
+  || ($LASTEXITCODE -eq 1073741515))
+  { 
     Write-Output "Install Failed - You are missing a DLL required to run bun.exe"
+    Write-Output "This can be solved by installing the Visual C++ Redistributable from Microsoft:`nSee https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`nDirect Download -> https://aka.ms/vs/17/release/vc_redist.x64.exe`n`n"
     Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
     exit 1
   }
@@ -134,6 +140,11 @@ function Install-Bun {
 
   $C_RESET = [char]27 + "[0m"
   $C_GREEN = [char]27 + "[1;32m"
+
+  # delete bunx if it exists already. this happens if you re-install
+  # we don't want to hit an "already exists" error.
+  Remove-Item "${BunBin}\bunx.exe" -ErrorAction SilentlyContinue
+  Remove-Item "${BunBin}\bunx.cmd" -ErrorAction SilentlyContinue
 
   try {
     $null = New-Item -ItemType HardLink -Path "${BunBin}\bunx.exe" -Target "${BunBin}\bun.exe" -Force
@@ -167,10 +178,6 @@ function Install-Bun {
   }
 
   if(!$hasExistingOther) {
-    if((Get-Command -ErrorAction SilentlyContinue bun) -eq $null) {
-      Write-Output "To get started, restart your terminal session, then type `"bun`"`n"
-    } else {
-      Write-Output "Type `"bun`" in your terminal to get started`n"
-    }
+    Write-Output "To get started, restart your terminal/editor, then type `"bun`"`n"
   }
 }

@@ -1,8 +1,6 @@
-// @known-failing-on-windows: 1 failing
-import fs, { FSWatcher } from "node:fs";
+import fs from "node:fs";
 import path from "path";
-import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
-import { pathToFileURL } from "bun";
+import { tempDirWithFiles } from "harness";
 
 import { describe, expect, test } from "bun:test";
 // Because macOS (and possibly other operating systems) can return a watcher

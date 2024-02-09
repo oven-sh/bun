@@ -319,6 +319,12 @@ pub const ReadableStream = struct {
         return ZigGlobalObject__createNativeReadableStream(globalThis, JSValue.fromPtr(ptr), JSValue.jsNumber(@intFromEnum(id)));
     }
 
+    pub fn fromOwnedSlice(globalThis: *JSGlobalObject, bytes: []u8) JSC.JSValue {
+        JSC.markBinding(@src());
+        var stream = ByteStream.new(globalThis, bytes);
+        return stream.toJS(globalThis);
+    }
+
     pub fn fromBlob(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
         JSC.markBinding(@src());
         var store = blob.store orelse {
@@ -3016,6 +3022,7 @@ pub const FileReader = struct {
     lazy: Lazy = .{ .none = {} },
     buffered: std.ArrayListUnmanaged(u8) = .{},
     read_inside_on_pull: ReadDuringJSOnPullResult = .{ .none = {} },
+    highwater_mark: usize = 16384,
 
     pub const IOReader = bun.io.BufferedReader;
     pub const Poll = IOReader;
@@ -3026,6 +3033,7 @@ pub const FileReader = struct {
         js: []u8,
         amount_read: usize,
         temporary: []const u8,
+        use_buffered: usize,
     };
 
     pub const Lazy = union(enum) {
@@ -3099,23 +3107,30 @@ pub const FileReader = struct {
         this.pending_value.deinit();
     }
 
-    pub fn onReadChunk(this: *@This(), buf: []const u8) void {
+    pub fn onReadChunk(this: *@This(), buf: []const u8, hasMore: bool) bool {
         log("onReadChunk() = {d}", .{buf.len});
 
         if (this.done) {
             this.reader.close();
-            return;
+            return false;
         }
 
         if (this.read_inside_on_pull != .none) {
             switch (this.read_inside_on_pull) {
                 .js => |in_progress| {
-                    if (in_progress.len >= buf.len) {
+                    if (in_progress.len >= buf.len and !hasMore) {
                         @memcpy(in_progress[0..buf.len], buf);
-                        this.read_inside_on_pull = .{ .amount_read = buf.len };
-                    } else {
+                        this.read_inside_on_pull = .{ .js = in_progress[buf.len..] };
+                    } else if (in_progress.len > 0 and !hasMore) {
                         this.read_inside_on_pull = .{ .temporary = buf };
+                    } else if (hasMore and !bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
+                        this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+                        this.read_inside_on_pull = .{ .use_buffered = buf.len };
                     }
+                },
+                .use_buffered => |original| {
+                    this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+                    this.read_inside_on_pull = .{ .use_buffered = buf.len + original };
                 },
                 .none => unreachable,
                 else => @panic("Invalid state"),
@@ -3129,7 +3144,7 @@ pub const FileReader = struct {
                 this.reader.close();
                 this.done = true;
                 this.pending.run();
-                return;
+                return false;
             }
 
             if (this.pending_view.len >= buf.len) {
@@ -3145,15 +3160,13 @@ pub const FileReader = struct {
                 this.pending_value.clear();
                 this.pending_view = &.{};
                 this.pending.run();
-                return;
+                return false;
             }
-        } else if (!bun.isSliceInBuffer(buf, this.reader.buffer().allocatedSlice())) {
-            if (this.reader.isDone() and this.reader.buffer().capacity == 0) {
-                this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
-            } else {
-                this.reader.buffer().appendSlice(buf) catch bun.outOfMemory();
-            }
+        } else if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
+            this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
         }
+
+        return this.read_inside_on_pull != .temporary and this.buffered.items.len + this.reader.buffer().items.len < this.highwater_mark;
     }
 
     pub fn onPull(this: *FileReader, buffer: []u8, array: JSC.JSValue) StreamResult {
@@ -3161,17 +3174,15 @@ pub const FileReader = struct {
         defer array.ensureStillAlive();
         const drained = this.drain();
 
-        log("onPull({d}) = {d}", .{ buffer.len, drained.len });
-
         if (drained.len > 0) {
+            log("onPull({d}) = {d}", .{ buffer.len, drained.len });
+
             this.pending_value.clear();
             this.pending_view = &.{};
 
             if (buffer.len >= @as(usize, drained.len)) {
                 @memcpy(buffer[0..drained.len], drained.slice());
-
-                // give it back!
-                this.reader.buffer().* = drained.listManaged(bun.default_allocator);
+                this.buffered.clearAndFree(bun.default_allocator);
 
                 if (this.reader.isDone()) {
                     return .{ .into_array_and_done = .{ .value = array, .len = drained.len } };
@@ -3194,9 +3205,14 @@ pub const FileReader = struct {
         if (!this.reader.hasPendingRead()) {
             this.read_inside_on_pull = .{ .js = buffer };
             this.reader.read();
+
             defer this.read_inside_on_pull = .{ .none = {} };
             switch (this.read_inside_on_pull) {
-                .amount_read => |amount_read| {
+                .js => |remaining_buf| {
+                    const amount_read = buffer.len - remaining_buf.len;
+
+                    log("onPull({d}) = {d}", .{ buffer.len, amount_read });
+
                     if (amount_read > 0) {
                         if (this.reader.isDone()) {
                             return .{ .into_array_and_done = .{ .value = array, .len = @truncate(amount_read) } };
@@ -3210,22 +3226,37 @@ pub const FileReader = struct {
                     }
                 },
                 .temporary => |buf| {
+                    log("onPull({d}) = {d}", .{ buffer.len, buf.len });
                     if (this.reader.isDone()) {
                         return .{ .temporary_and_done = bun.ByteList.init(buf) };
                     }
 
                     return .{ .temporary = bun.ByteList.init(buf) };
                 },
+                .use_buffered => {
+                    const buffered = this.buffered;
+                    this.buffered = .{};
+                    log("onPull({d}) = {d}", .{ buffer.len, buffered.items.len });
+                    if (this.reader.isDone()) {
+                        return .{ .owned_and_done = bun.ByteList.init(buffered.items) };
+                    }
+
+                    return .{ .owned = bun.ByteList.init(buffered.items) };
+                },
                 else => {},
             }
 
             if (this.reader.isDone()) {
+                log("onPull({d}) = done", .{buffer.len});
+
                 return .{ .done = {} };
             }
         }
 
         this.pending_value.set(this.parent().globalThis, array);
         this.pending_view = buffer;
+
+        log("onPull({d}) = pending", .{buffer.len});
 
         return .{ .pending = &this.pending };
     }

@@ -430,6 +430,16 @@ pub const Subprocess = struct {
                     this.* = .{ .closed = {} };
                     return pipe.toJS(globalThis);
                 },
+                .buffer => |buffer| {
+                    defer this.* = .{ .closed = {} };
+
+                    if (buffer.len == 0) {
+                        return JSC.WebCore.ReadableStream.empty(globalThis);
+                    }
+
+                    const blob = JSC.WebCore.Blob.init(buffer, bun.default_allocator, globalThis);
+                    return JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, 0);
+                },
                 else => {
                     return JSValue.jsUndefined();
                 },

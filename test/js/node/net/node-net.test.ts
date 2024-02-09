@@ -34,7 +34,6 @@ it("should support net.isIPv6()", () => {
 });
 
 describe("net.Socket read", () => {
-  var port = 12345;
   var unix_servers = 0;
   for (let [message, label] of [
     // ["Hello World!".repeat(1024), "long message"],
@@ -261,7 +260,6 @@ describe("net.Socket read", () => {
 
 describe("net.Socket write", () => {
   const message = "Hello World!".repeat(1024);
-  let port = 53213;
 
   function runWithServer(cb: (..._: any[]) => void) {
     return (done: (_?: any) => void) => {
@@ -269,6 +267,7 @@ describe("net.Socket write", () => {
 
       function close(socket: _BunSocket<Buffer[]>) {
         expect(Buffer.concat(socket.data).toString("utf8")).toBe(message);
+        server.stop();
         done();
       }
 

@@ -1201,6 +1201,10 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
 }
 
 pub fn readlink(in: [:0]const u8, buf: []u8) Maybe(usize) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.readlink(in, buf);
+    }
+
     while (true) {
         const rc = sys.readlink(in, buf.ptr, buf.len);
 
@@ -1711,18 +1715,24 @@ pub fn getMaxPipeSizeOnLinux() usize {
     );
 }
 
-pub fn existsOSPath(path: bun.OSPathSliceZ) bool {
+pub fn existsOSPath(path: bun.OSPathSliceZ, file_only: bool) bool {
     if (comptime Environment.isPosix) {
         return system.access(path, 0) == 0;
     }
 
     if (comptime Environment.isWindows) {
         assertIsValidWindowsPath(bun.OSPathChar, path);
-        const result = kernel32.GetFileAttributesW(path.ptr);
+        const attributes = kernel32.GetFileAttributesW(path.ptr);
         if (Environment.isDebug) {
-            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.fmtUTF16(path), result });
+            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.fmtUTF16(path), attributes });
         }
-        return result != windows.INVALID_FILE_ATTRIBUTES;
+        if (attributes == windows.INVALID_FILE_ATTRIBUTES) {
+            return false;
+        }
+        if (file_only and attributes & windows.FILE_ATTRIBUTE_DIRECTORY != 0) {
+            return false;
+        }
+        return true;
     }
 
     @compileError("TODO: existsOSPath");

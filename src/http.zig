@@ -693,9 +693,18 @@ pub const HTTPThread = struct {
     https_context: NewHTTPContext(true),
 
     queued_tasks: Queue = Queue{},
-    queued_shutdowns: ShutdownQueue = ShutdownQueue{},
+
+    queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
+    queued_shutdowns_lock: bun.Lock = bun.Lock.init(),
+
     has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     timer: std.time.Timer,
+
+    const ShutdownMessage = struct {
+        async_http_id: u32,
+        is_tls: bool,
+    };
+
     const threadlog = Output.scoped(.HTTPThread, true);
 
     const FakeStruct = struct {
@@ -761,16 +770,21 @@ pub const HTTPThread = struct {
     }
 
     fn drainEvents(this: *@This()) void {
-        while (this.queued_shutdowns.pop()) |http| {
-            if (socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
-                if (http.client.isHTTPS()) {
-                    const socket = uws.SocketTLS.from(socket_ptr.value);
-                    socket.shutdown();
-                } else {
-                    const socket = uws.SocketTCP.from(socket_ptr.value);
-                    socket.shutdown();
+        {
+            this.queued_shutdowns_lock.lock();
+            defer this.queued_shutdowns_lock.unlock();
+            for (this.queued_shutdowns.items) |http| {
+                if (socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
+                    if (http.is_tls) {
+                        const socket = uws.SocketTLS.from(socket_ptr.value);
+                        socket.shutdown();
+                    } else {
+                        const socket = uws.SocketTCP.from(socket_ptr.value);
+                        socket.shutdown();
+                    }
                 }
             }
+            this.queued_shutdowns.clearRetainingCapacity();
         }
 
         var count: usize = 0;
@@ -825,7 +839,14 @@ pub const HTTPThread = struct {
     }
 
     pub fn scheduleShutdown(this: *@This(), http: *AsyncHTTP) void {
-        this.queued_shutdowns.push(http);
+        {
+            this.queued_shutdowns_lock.lock();
+            defer this.queued_shutdowns_lock.unlock();
+            this.queued_shutdowns.append(bun.default_allocator, .{
+                .async_http_id = http.async_http_id,
+                .is_tls = http.client.isHTTPS(),
+            }) catch bun.outOfMemory();
+        }
         if (this.has_awoken.load(.Monotonic))
             this.loop.wakeup();
     }
@@ -1470,8 +1491,6 @@ redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
-received_keep_alive: bool = false,
-
 disable_timeout: bool = false,
 disable_keepalive: bool = false,
 disable_decompression: bool = false,
@@ -1535,7 +1554,9 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
         if (this.http_proxy != null and this.url.isHTTPS()) {
             return false;
         }
-        return !this.disable_keepalive;
+
+        //check state
+        if (this.state.allow_keepalive and !this.disable_keepalive) return true;
     }
     return false;
 }
@@ -1831,18 +1852,6 @@ pub const AsyncHTTP = struct {
             }
         }
         return this;
-    }
-
-    pub fn isKeepAlivePossible(this: *AsyncHTTP) bool {
-        if (comptime FeatureFlags.enable_keepalive) {
-            // is not possible to reuse Proxy with TSL, so disable keepalive if url is tunneling HTTPS
-            if (this.http_proxy != null and this.url.isHTTPS()) {
-                return false;
-            }
-            // check state
-            if (this.state.allow_keepalive and !this.disable_keepalive) return true;
-        }
-        return false;
     }
 
     pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {

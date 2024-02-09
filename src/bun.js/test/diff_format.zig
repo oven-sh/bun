@@ -100,6 +100,7 @@ pub const DiffFormatter = struct {
                 .flush = false,
                 .ordered_properties = true,
                 .quote_strings = true,
+                .max_depth = 100,
             };
             ConsoleObject.format(
                 .Debug,

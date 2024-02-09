@@ -46,6 +46,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
 #define LIBUS_SOCKET_DESCRIPTOR SOCKET
 #else

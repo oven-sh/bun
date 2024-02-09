@@ -331,7 +331,8 @@ describe("process.cpuUsage", () => {
     });
   });
 
-  it("works with diff", () => {
+  // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
+  it.skipIf(process.platform === "win32")("works with diff", () => {
     const init = process.cpuUsage();
     init.system = 1;
     init.user = 1;
@@ -340,7 +341,7 @@ describe("process.cpuUsage", () => {
     expect(delta.system).toBeGreaterThan(0);
   });
 
-  it("works with diff of different structure", () => {
+  it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
     const init = {
       user: 0,
       system: 0,
@@ -366,8 +367,8 @@ describe("process.cpuUsage", () => {
     }
   });
 
-  // Skipped on Linux because it seems to not change as often as on macOS
-  it.skipIf(process.platform === "linux")("increases monotonically", () => {
+  // Skipped on Linux/Windows because it seems to not change as often as on macOS
+  it.skipIf(process.platform !== "darwin")("increases monotonically", () => {
     const init = process.cpuUsage();
     for (let i = 0; i < 10000; i++) {}
     const another = process.cpuUsage();
@@ -376,28 +377,38 @@ describe("process.cpuUsage", () => {
   });
 });
 
-it("process.getegid", () => {
-  expect(typeof process.getegid()).toBe("number");
-});
-it("process.geteuid", () => {
-  expect(typeof process.geteuid()).toBe("number");
-});
-it("process.getgid", () => {
-  expect(typeof process.getgid()).toBe("number");
-});
-it("process.getgroups", () => {
-  expect(process.getgroups()).toBeInstanceOf(Array);
-  expect(process.getgroups().length).toBeGreaterThan(0);
-});
-it("process.getuid", () => {
-  expect(typeof process.getuid()).toBe("number");
-});
+if (process.platform !== "win32") {
+  it("process.getegid", () => {
+    expect(typeof process.getegid()).toBe("number");
+  });
+  it("process.geteuid", () => {
+    expect(typeof process.geteuid()).toBe("number");
+  });
+  it("process.getgid", () => {
+    expect(typeof process.getgid()).toBe("number");
+  });
+  it("process.getgroups", () => {
+    expect(process.getgroups()).toBeInstanceOf(Array);
+    expect(process.getgroups().length).toBeGreaterThan(0);
+  });
+  it("process.getuid", () => {
+    expect(typeof process.getuid()).toBe("number");
+  });
+  it("process.getuid", () => {
+    expect(typeof process.getuid()).toBe("number");
+  });
+} else {
+  it("process.getegid, process.geteuid, process.getgid, process.getgroups, process.getuid, process.getuid are not implemented on Windows", () => {
+    expect(process.getegid).toBeUndefined();
+    expect(process.geteuid).toBeUndefined();
+    expect(process.getgid).toBeUndefined();
+    expect(process.getgroups).toBeUndefined();
+    expect(process.getuid).toBeUndefined();
+    expect(process.getuid).toBeUndefined();
+  });
+}
 
-it("process.getuid", () => {
-  expect(typeof process.getuid()).toBe("number");
-});
-
-describe("signal", () => {
+describe.skipIf(process.platform === "win32")("signal", () => {
   const fixture = join(import.meta.dir, "./process-signal-handler.fixture.js");
   it("simple case works", async () => {
     const child = Bun.spawn({

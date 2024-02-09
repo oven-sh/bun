@@ -3162,11 +3162,35 @@ pub const FileReader = struct {
                 this.pending.run();
                 return false;
             }
+
+            if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
+                this.pending.result = .{
+                    .temporary = bun.ByteList.init(buf),
+                };
+
+                this.pending_value.clear();
+                this.pending_view = &.{};
+                this.pending.run();
+                return false;
+            }
+
+            this.pending.result = .{
+                .owned = bun.ByteList.init(this.buffered.items),
+            };
+            this.buffered = .{};
+            this.pending_value.clear();
+            this.pending_view = &.{};
+            this.pending.run();
+            return false;
         } else if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
             this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
         }
 
         return this.read_inside_on_pull != .temporary and this.buffered.items.len + this.reader.buffer().items.len < this.highwater_mark;
+    }
+
+    fn isPulling(this: *const FileReader) bool {
+        return this.read_inside_on_pull != .none;
     }
 
     pub fn onPull(this: *FileReader, buffer: []u8, array: JSC.JSValue) StreamResult {
@@ -3292,8 +3316,11 @@ pub const FileReader = struct {
 
     pub fn onReaderDone(this: *FileReader) void {
         log("onReaderDone()", .{});
-        this.consumeReaderBuffer();
-        this.pending.run();
+        if (!this.isPulling()) {
+            this.consumeReaderBuffer();
+            this.pending.run();
+        }
+
         _ = this.parent().decrementCount();
     }
 

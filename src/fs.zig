@@ -1664,6 +1664,16 @@ pub const Path = struct {
         return this.name.dirWithTrailingSlash();
     }
 
+    /// The bundler will hash path.pretty, so it needs to be consistent across platforms.
+    /// This assertion might be a bit too forceful though.
+    pub fn assertPrettyIsValid(path: *const Path) void {
+        if (Environment.isWindows and Environment.allow_assert) {
+            if (std.mem.indexOfScalar(u8, path.pretty, '\\') != null) {
+                std.debug.panic("Expected pretty file path to have only forward slashes, got '{s}'", .{path.pretty});
+            }
+        }
+    }
+
     // This duplicates but only when strictly necessary
     // This will skip allocating if it's already in FilenameStore or DirnameStore
     pub fn dupeAlloc(this: *const Path, allocator: std.mem.Allocator) !Fs.Path {

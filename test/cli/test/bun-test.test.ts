@@ -504,7 +504,7 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
     });
-    test.each(["test", "describe"])("should annotate errors in a %s scope", (type) => {
+    test.each(["test", "describe"])("should annotate errors in a %s scope", type => {
       const stderr = runTest({
         input: `
           import { ${type} } from "bun:test";
@@ -518,7 +518,7 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
     });
-    test.each(["beforeAll", "beforeEach", "afterEach", "afterAll"])("should annotate errors in a %s callback", (type) => {
+    test.each(["beforeAll", "beforeEach", "afterEach", "afterAll"])("should annotate errors in a %s callback", type => {
       const stderr = runTest({
         input: `
           import { test, ${type} } from "bun:test";

@@ -549,9 +549,7 @@ pub fn isHeapMemory(memory: anytype) bool {
 
 pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
-pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
-    return slice.len > 0 and @intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and ((@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len));
-}
+pub const isSliceInBuffer = allocators.isSliceInBuffer;
 
 pub inline fn sliceInBuffer(stable: string, value: string) string {
     if (allocators.sliceRange(stable, value)) |_| {
@@ -564,7 +562,7 @@ pub inline fn sliceInBuffer(stable: string, value: string) string {
 }
 
 pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
-    if (!isSliceInBuffer(slice, buffer)) return null;
+    if (!isSliceInBuffer(u8, slice, buffer)) return null;
     const r = [_]u32{
         @as(u32, @truncate(@intFromPtr(slice.ptr) -| @intFromPtr(buffer.ptr))),
         @as(u32, @truncate(slice.len)),

@@ -276,7 +276,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
     // Support embedded .node files
-    if (filename.startsWith("/$bunfs/"_s)) {
+    // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
+#if OS(WINDOWS)
+#define StandaloneModuleGraph__base_path "B:/~BUN/"_s
+#else
+#define StandaloneModuleGraph__base_path "/$bunfs/"_s
+#endif
+    if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
         if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
             filename = bunStr.toWTFString(BunString::ZeroCopy);

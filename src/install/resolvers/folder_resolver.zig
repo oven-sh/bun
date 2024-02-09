@@ -103,7 +103,7 @@ pub const FolderResolution = union(Tag) {
         abs: stringZ,
         rel: string,
     };
-    fn normalizePackageJSONPath(global_or_relative: GlobalOrRelative, joined: *[bun.MAX_PATH_BYTES]u8, non_normalized_path: string) Paths {
+    fn normalizePackageJSONPath(global_or_relative: GlobalOrRelative, joined: *bun.PathBuffer, non_normalized_path: string) Paths {
         var abs: string = "";
         var rel: string = "";
         // We consider it valid if there is a package.json in the folder
@@ -205,7 +205,14 @@ pub const FolderResolution = union(Tag) {
         const abs = paths.abs;
         const rel = paths.rel;
 
-        const entry = manager.folders.getOrPut(manager.allocator, hash(abs)) catch unreachable;
+        // replace before getting hash. rel may or may not be contained in abs
+        if (comptime bun.Environment.isWindows) {
+            bun.path.pathToPosixInPlace(u8, @constCast(abs));
+            bun.path.pathToPosixInPlace(u8, @constCast(rel));
+        }
+        const abs_hash = hash(abs);
+
+        const entry = manager.folders.getOrPut(manager.allocator, abs_hash) catch unreachable;
         if (entry.found_existing) return entry.value_ptr.*;
 
         const package: Lockfile.Package = switch (global_or_relative) {

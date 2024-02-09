@@ -1199,7 +1199,7 @@ pub const ModuleLoader = struct {
 
             const msg_args = .{
                 result.name,
-                result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items),
+                result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items, .any),
             };
 
             const msg: []u8 = try switch (result.err) {
@@ -1249,7 +1249,7 @@ pub const ModuleLoader = struct {
                     .{
                         bun.asByteSlice(@errorName(err)),
                         result.name,
-                        result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items),
+                        result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items, .any),
                     },
                 ),
             };

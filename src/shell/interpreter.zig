@@ -1361,12 +1361,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             word_idx: u32,
             current_out: std.ArrayList(u8),
-            state: enum {
+            state: union(enum) {
                 normal,
                 braces,
                 glob,
                 done,
-                err,
+                err: bun.shell.ShellErr,
             },
             child_state: union(enum) {
                 idle,
@@ -1580,6 +1580,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     this.parent.childDone(this, 0);
                     return;
                 }
+
+                // Parent will inspect the `this.state.err`
+                if (this.state == .err) {
+                    this.parent.childDone(this, 1);
+                    return;
+                }
             }
 
             fn transitionToGlobState(this: *Expansion) void {
@@ -1587,10 +1593,23 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 this.child_state = .{ .glob = .{ .walker = .{} } };
                 const pattern = this.current_out.items[0..];
 
-                switch (GlobWalker.init(&this.child_state.glob.walker, &arena, pattern, false, false, false, false, false) catch bun.outOfMemory()) {
+                const cwd = this.base.shell.cwd();
+
+                switch (GlobWalker.initWithCwd(
+                    &this.child_state.glob.walker,
+                    &arena,
+                    pattern,
+                    cwd,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                ) catch bun.outOfMemory()) {
                     .result => {},
                     .err => |e| {
-                        global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(e));
+                        this.state = .{ .err = bun.shell.ShellErr.newSys(e) };
+                        this.next();
                         return;
                     },
                 }
@@ -1799,6 +1818,19 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             });
                         },
                     }
+                }
+
+                if (task.result.items.len == 0) {
+                    const msg = std.fmt.allocPrint(bun.default_allocator, "no matches found: {s}", .{this.child_state.glob.walker.pattern}) catch bun.outOfMemory();
+                    this.state = .{
+                        .err = bun.shell.ShellErr{
+                            .custom = msg,
+                        },
+                    };
+                    this.child_state.glob.walker.deinit(true);
+                    this.child_state = .idle;
+                    this.next();
+                    return;
                 }
 
                 for (task.result.items) |sentinel_str| {
@@ -2191,6 +2223,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     current_expansion_result: std.ArrayList([:0]const u8),
                     expansion: Expansion,
                 },
+                err: bun.shell.ShellErr,
                 done,
             },
             ctx: AssignCtx,
@@ -2263,6 +2296,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             return;
                         },
                         .done => unreachable,
+                        .err => return this.parent.childDone(this, 1),
                     }
                 }
 
@@ -2270,9 +2304,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) void {
-                _ = exit_code;
-
                 if (child.ptr.is(Expansion)) {
+                    const expansion = child.ptr.as(Expansion);
+                    if (exit_code != 0) {
+                        this.state = .{
+                            .err = expansion.state.err,
+                        };
+                        return;
+                    }
                     var expanding = &this.state.expanding;
 
                     const label = this.node[expanding.idx].label;
@@ -3180,9 +3219,16 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) void {
-                _ = exit_code; // autofix
-
                 if (child.ptr.is(Assigns)) {
+                    if (exit_code != 0) {
+                        const err = this.state.expanding_assigns.state.err;
+                        defer err.deinit(bun.default_allocator);
+                        this.state.expanding_assigns.deinit();
+                        const buf = err.fmt();
+                        this.writeFailingError(buf, exit_code);
+                        return;
+                    }
+
                     this.state.expanding_assigns.deinit();
                     this.state = .{
                         .expanding_redirect = .{
@@ -3194,6 +3240,17 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 if (child.ptr.is(Expansion)) {
+                    if (exit_code != 0) {
+                        const err = switch (this.state) {
+                            .expanding_redirect => this.state.expanding_redirect.expansion.state.err,
+                            .expanding_args => this.state.expanding_args.expansion.state.err,
+                            else => @panic("Invalid state"),
+                        };
+                        defer err.deinit(bun.default_allocator);
+                        const buf = err.fmt();
+                        this.writeFailingError(buf, exit_code);
+                        return;
+                    }
                     this.next();
                     return;
                 }

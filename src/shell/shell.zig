@@ -47,6 +47,27 @@ pub const ShellErr = union(enum) {
         };
     }
 
+    pub fn fmt(this: @This()) []const u8 {
+        switch (this) {
+            .sys => {
+                const err = this.sys;
+                const str = std.fmt.allocPrint(bun.default_allocator, "bun: {s}: {}\n", .{ err.message, err.path }) catch bun.outOfMemory();
+                return str;
+            },
+            .custom => {
+                return std.fmt.allocPrint(bun.default_allocator, "bun: {s}\n", .{this.custom}) catch bun.outOfMemory();
+            },
+            .invalid_arguments => {
+                const str = std.fmt.allocPrint(bun.default_allocator, "bun: invalid arguments: {s}\n", .{this.invalid_arguments.val}) catch bun.outOfMemory();
+                return str;
+            },
+            .todo => {
+                const str = std.fmt.allocPrint(bun.default_allocator, "bun: TODO: {s}\n", .{this.invalid_arguments.val}) catch bun.outOfMemory();
+                return str;
+            },
+        }
+    }
+
     pub fn throwJS(this: @This(), globalThis: *JSC.JSGlobalObject) void {
         switch (this) {
             .sys => {

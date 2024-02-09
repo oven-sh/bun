@@ -11,7 +11,7 @@ import { mkdir, mkdtemp, realpath, rm } from "fs/promises";
 import { bunEnv, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
-import { TestBuilder } from "./util";
+import { TestBuilder, sortedShellOutput } from "./util";
 
 $.env(bunEnv);
 $.cwd(process.cwd());
@@ -266,6 +266,20 @@ describe("bunshell", () => {
     const { stdout } = await $`echo $(echo noice)`;
     expect(stdout.toString()).toEqual(`noice\n`);
   });
+
+  describe('glob expansion', () => {
+    test('No matches should fail', async () => {
+      // Issue #8403: https://github.com/oven-sh/bun/issues/8403
+      await TestBuilder.command`ls *.sdfljsfsdf`.exitCode(1).stderr('bun: no matches found: *.sdfljsfsdf\n').run();
+    })
+
+    test('Should work with a different cwd', async () => {
+      // Calling `ensureTempDir()` changes the cwd here
+      await TestBuilder.command`ls *.js`.ensureTempDir().file('foo.js', 'foo').file('bar.js', 'bar').stdout((out) => {
+          expect(sortedShellOutput(out)).toEqual(sortedShellOutput("foo.js\nbar.js\n"))
+      }).run()
+    })
+  })
 
   describe("brace expansion", () => {
     function doTest(pattern: string, expected: string) {

@@ -1157,7 +1157,7 @@ pub const DescribeScope = struct {
         if (this.shouldEvaluateScope()) {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
-            if (this.runCallback(globalThis, .afterAll)) |err| {
+            if (this.execCallback(globalThis, .afterAll)) |err| {
                 globalThis.bunVM().onUnhandledError(globalThis, err);
             }
         }

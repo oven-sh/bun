@@ -1196,7 +1196,7 @@ pub fn joinZ(_parts: anytype, comptime _platform: Platform) [:0]const u8 {
 
 pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
     const joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, _platform);
-    std.debug.assert(bun.isSliceInBuffer(u8, joined, buf));
+    std.debug.assert(bun.isSliceInBuffer(joined, buf));
     const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
     buf[joined.len + start_offset] = 0;
     return buf[start_offset..][0..joined.len :0];

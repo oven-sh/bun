@@ -250,7 +250,7 @@ pub const String = extern struct {
             in: string,
         ) Pointer {
             if (Environment.allow_assert) {
-                std.debug.assert(bun.isSliceInBuffer(u8, in, buf));
+                std.debug.assert(bun.isSliceInBuffer(in, buf));
             }
 
             return Pointer{

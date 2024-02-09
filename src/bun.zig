@@ -563,7 +563,7 @@ pub inline fn sliceInBuffer(stable: string, value: string) string {
 }
 
 pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
-    if (!isSliceInBuffer(u8, slice, buffer)) return null;
+    if (!isSliceInBuffer(slice, buffer)) return null;
     const r = [_]u32{
         @as(u32, @truncate(@intFromPtr(slice.ptr) -| @intFromPtr(buffer.ptr))),
         @as(u32, @truncate(slice.len)),

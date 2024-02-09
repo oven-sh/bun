@@ -493,13 +493,39 @@ describe("bun test", () => {
       });
       expect(stderr).not.toContain("::error");
     });
-    test("should annotate errors when enabled", () => {
+    test("should annotate errors in the global scope", () => {
       const stderr = runTest({
         input: `
-          import { test, expect } from "bun:test";
-          test("fail", () => {
+          throw new Error();
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
+    });
+    test.each(["test", "describe"])("should annotate errors in a %s scope", type => {
+      const stderr = runTest({
+        input: `
+          import { ${type} } from "bun:test";
+          ${type}("fail", () => {
             throw new Error();
           });
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
+    });
+    test.each(["beforeAll", "beforeEach", "afterEach", "afterAll"])("should annotate errors in a %s callback", type => {
+      const stderr = runTest({
+        input: `
+          import { test, ${type} } from "bun:test";
+          ${type}(() => {
+            throw new Error();
+          });
+          test("test", () => {});
         `,
         env: {
           GITHUB_ACTIONS: "true",
@@ -538,6 +564,21 @@ describe("bun test", () => {
         },
       });
       expect(stderr).toMatch(/::error title=error: Oops!::/);
+    });
+    test("should annotate a test timeout", () => {
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("time out", async () => {
+            await Bun.sleep(1000);
+          }, { timeout: 1 });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      expect(stderr).toMatch(/::error title=error: Test \"time out\" timed out after \d+ms::/);
     });
   });
   describe(".each", () => {

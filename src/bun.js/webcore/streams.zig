@@ -420,18 +420,32 @@ pub const StreamStart = union(Tag) {
         as_uint8array: bool,
         stream: bool,
     },
-    FileSink: struct {
-        chunk_size: Blob.SizeType = 1024,
-        input_path: PathOrFileDescriptor,
-        truncate: bool = true,
-        close: bool = false,
-        mode: bun.Mode = 0o664,
-    },
+    FileSink: FileSinkOptions,
     HTTPSResponseSink: void,
     HTTPResponseSink: void,
     ready: void,
     owned_and_done: bun.ByteList,
     done: bun.ByteList,
+
+    pub const FileSinkOptions = struct {
+        chunk_size: Blob.SizeType = 1024,
+        input_path: PathOrFileDescriptor,
+        truncate: bool = true,
+        close: bool = false,
+        mode: bun.Mode = 0o664,
+
+        pub fn flags(this: *const FileSinkOptions) u32 {
+            var flag: u32 = 0;
+
+            if (this.truncate) {
+                flag |= std.os.O.TRUNC;
+            }
+
+            flag |= std.os.O.CREAT | std.os.O.WRONLY;
+
+            return flag;
+        }
+    };
 
     pub const Tag = enum {
         empty,
@@ -2764,13 +2778,17 @@ pub const FileSink = struct {
     writer: IOWriter = .{},
     done: bool = false,
     event_loop_handle: JSC.EventLoopHandle,
-    fd: bun.FileDescriptor = bun.invalid_fd,
     written: usize = 0,
     ref_count: u32 = 1,
     pending: StreamResult.Writable.Pending = .{
         .result = .{ .done = {} },
     },
     signal: Signal = Signal{},
+
+    // TODO: these fields are duplicated on writer()
+    // we should not duplicate these fields...
+    pollable: bool = false,
+    fd: bun.FileDescriptor = bun.invalid_fd,
 
     const log = Output.scoped(.FileSink, false);
 
@@ -2824,12 +2842,46 @@ pub const FileSink = struct {
         return this;
     }
 
-    pub fn setup(
-        this: *FileSink,
-        file_sink: 
-    ) void {
-        this.fd = fd;
-        this.writer.start(fd, true).assert();
+    pub fn setup(this: *FileSink, options: *const StreamStart.FileSinkOptions) JSC.Maybe(void) {
+        // TODO: this should be concurrent.
+        const fd = switch (switch (options.input_path) {
+            .path => |path| bun.sys.openA(path.slice(), options.flags(), options.mode),
+            .fd => |fd_| bun.sys.dup(fd_),
+        }) {
+            .err => |err| return .{ .err = err },
+            .result => |fd| fd,
+        };
+
+        if (comptime Environment.isPosix) {
+            switch (bun.sys.fstat(fd)) {
+                .err => |err| {
+                    _ = bun.sys.close(fd);
+                    return .{ .err = err };
+                },
+                .result => |stat| {
+                    this.pollable = bun.sys.isPollable(stat.mode);
+                    this.fd = fd;
+                },
+            }
+        } else if (comptime Environment.isWindows) {
+            this.pollable = (bun.windows.GetFileType(fd.cast()) & bun.windows.FILE_TYPE_PIPE) != 0;
+            this.fd = fd;
+        } else {
+            @compileError("TODO: implement for this platform");
+        }
+
+        switch (this.writer.start(
+            fd,
+            this.pollable,
+        )) {
+            .err => |err| {
+                _ = bun.sys.close(fd);
+                return .{ .err = err };
+            },
+            .result => {},
+        }
+
+        return .{ .result = {} };
     }
 
     pub fn loop(this: *FileSink) *Async.Loop {
@@ -2847,7 +2899,12 @@ pub const FileSink = struct {
     pub fn start(this: *FileSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
         switch (stream_start) {
             .FileSink => |*file| {
-                this.setup(file);
+                switch (this.setup(file)) {
+                    .err => |err| {
+                        return .{ .err = err };
+                    },
+                    .result => {},
+                }
             },
             else => {},
         }

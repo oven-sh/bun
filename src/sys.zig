@@ -1936,7 +1936,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         return Maybe(bun.FileDescriptor){ .result = bun.toFD(target) };
     }
 
-    const out = system.fcntl(fd.cast(), bun.C.F_DUPFD | bun.C.F_DUPFD_CLOEXEC, 0);
+    const out = system.fcntl(fd.cast(), @as(i32, bun.C.F_DUPFD | bun.C.F_DUPFD_CLOEXEC), @as(i32, 0));
     log("dup({d}) = {d}", .{ fd.cast(), out });
     return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
 }
@@ -2051,4 +2051,8 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
     }
 
     return write(fd, buf);
+}
+
+pub fn isPollable(mode: mode_t) bool {
+    return (mode & (os.S.IFIFO | os.S.IFSOCK)) != 0;
 }

@@ -2167,10 +2167,10 @@ pub const Fetch = struct {
                 }
 
                 var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd = std.os.getcwd(&cwd_buf) catch |err| {
+                const cwd = if (Environment.isWindows) (std.os.getcwd(&cwd_buf) catch |err| {
                     globalThis.throwError(err, "Failed to resolve file url");
                     return .zero;
-                };
+                }) else globalThis.bunVM().bundler.fs.top_level_dir;
 
                 const fullpath = bun.path.joinAbsStringBuf(
                     cwd,

@@ -766,6 +766,7 @@ pub const sockaddr_dl = extern struct {
 
 pub usingnamespace @cImport({
     @cInclude("sys/spawn.h");
+    @cInclude("sys/fcntl.h");
 });
 
 // it turns out preallocating on APFS on an M1 is slower.

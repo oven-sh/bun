@@ -566,6 +566,7 @@ pub extern fn vmsplice(fd: c_int, iovec: [*]const std.os.iovec, iovec_count: usi
 const net_c = @cImport({
     @cInclude("ifaddrs.h"); // getifaddrs, freeifaddrs
     @cInclude("net/if.h"); // IFF_RUNNING, IFF_UP
+    @cInclude("fcntl.h"); // F_DUPFD_CLOEXEC
 });
 pub const ifaddrs = net_c.ifaddrs;
 pub const getifaddrs = net_c.getifaddrs;

@@ -11,4 +11,9 @@ describe("util file tests", () => {
     });
     expect(custom_type.type).toBe("custom/mimetype");
   });
+
+  test("content type is text/css;charset=utf-8", () => {
+    const file = Bun.file("test.css");
+    expect(file.type).toBe("text/css;charset=utf-8");
+  });
 });

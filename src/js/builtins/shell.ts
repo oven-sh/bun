@@ -3,14 +3,38 @@ type Resolve = (value: ShellOutput) => void;
 
 export function createBunShellTemplateFunction(ShellInterpreter) {
   class ShellError extends Error {
-    stdout: Buffer;
-    stderr: Buffer;
-    exitCode: number;
-    constructor(stdout: Buffer, stderr: Buffer, exitCode: number) {
-      super(`Failed with exit code: ${exitCode}`)
-      this.stdout = stdout;
-      this.stderr = stderr;
-      this.exitCode = exitCode;
+    #output: ShellOutput;
+    constructor(output: ShellOutput) {
+      super(`Failed with exit code: ${output}`)
+      this.#output = output;
+    }
+
+    get exitCode() {
+      return this.#output.exitCode;
+    }
+
+    get stdout() {
+      return this.#output.stdout;
+    }
+
+    get stderr() {
+      return this.#output.stderr;
+    }
+
+    text(encoding) {
+      return this.#output.text(encoding);
+    }
+
+    json() {
+      return this.#output.json();
+    }
+
+    arrayBuffer() {
+      return this.#output.arrayBuffer();
+    }
+
+    blob() {
+      return this.#output.blob();
     }
   }
 
@@ -22,6 +46,22 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       this.stdout = stdout;
       this.stderr = stderr;
       this.exitCode = exitCode;
+    }
+
+    text(encoding) {
+      return this.stdout.toString(encoding);
+    }
+
+    json() {
+      return JSON.parse(this.stdout.toString());
+    }
+
+    arrayBuffer() {
+      return this.stdout.buffer;
+    }
+
+    blob() {
+      return new Blob([this.stdout]);
     }
   }
 
@@ -39,13 +79,14 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
       super((res, rej) => {
         resolve = code => {
+          const out = new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code);
           if (this.#throws && code !== 0) {
-            rej(new ShellError(core.getBufferedStdout(), core.getBufferedStderr(), code));
+            rej(out);
           } else {
-            res(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code));
+            res(out);
           }
         }
-        reject = code => rej(new ShellError(core.getBufferedStdout(), core.getBufferedStderr(), code));
+        reject = code => rej(new ShellError(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code)));
       });
 
       this.#throws = throws;

@@ -173,7 +173,7 @@ it.each(["file://", "file:/", "file:"])("should accept file protocol with prefix
   expect(await exited).toBe(0);
 });
 
-it.each(["fileblah://", "file:///"])("should reject invalid path without segfault", async protocolPrefix => {
+it.each(["fileblah://", "file:///"])("should reject invalid path without segfault: %s", async protocolPrefix => {
   await writeFile(
     join(add_dir, "package.json"),
     JSON.stringify({
@@ -1673,7 +1673,7 @@ it("should add dependencies to workspaces directly", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` installed foo@${add_path}`,
+    ` installed foo@${relative(package_dir, add_dir)}`,
     "",
     " 1 package installed",
   ]);

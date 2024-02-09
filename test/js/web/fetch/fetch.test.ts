@@ -5,7 +5,7 @@ import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
 import { gzipSync } from "zlib";
 import { join } from "path";
-import { gc, withoutAggressiveGC, gcTick } from "harness";
+import { gc, withoutAggressiveGC, gcTick, isWindows } from "harness";
 import net from "net";
 
 const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
@@ -829,7 +829,8 @@ describe("Bun.file", () => {
     return file;
   });
 
-  it("size is Infinity on a fifo", () => {
+  // this test uses libc.so or dylib so we skip on windows
+  it.skipIf(isWindows)("size is Infinity on a fifo", () => {
     const path = join(tmp_dir, "test-fifo");
     mkfifo(path);
     const { size } = Bun.file(path);
@@ -843,7 +844,8 @@ describe("Bun.file", () => {
     }
   }
 
-  describe("bad permissions throws", () => {
+  // on Windows the creator of the file will be able to read from it so this test is disabled on it
+  describe.skipIf(isWindows)("bad permissions throws", () => {
     const path = join(tmp_dir, "my-new-file");
     beforeAll(async () => {
       await Bun.write(path, "hey");

@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
 import assert from "assert";
 import dedent from "dedent";
 import { ESBUILD, itBundled, testForFile } from "./expectBundled";
@@ -25,9 +24,16 @@ describe("bundler", () => {
         if (pathToFileURL(import.meta.path).href !== import.meta.url) throw "fail";
       `,
     },
-    run: { stdout: `file:///$bunfs/root/out /$bunfs/root/out`, setCwd: true },
+    run: {
+      stdout:
+        process.platform !== "win32"
+          ? `file:///$bunfs/root/out /$bunfs/root/out`
+          : `file:///B:/~BUN/root/out B:\\~BUN\\root\\out`,
+      setCwd: true,
+    },
   });
   itBundled("compile/VariousBunAPIs", {
+    todo: process.platform === "win32", // TODO(@paperdave)
     compile: true,
     files: {
       "/entry.ts": `
@@ -180,7 +186,7 @@ describe("bundler", () => {
     },
     compile: true,
   });
-  itBundled("compile/embedded-sqlite-file", {
+  itBundled("compile/EmbeddedSqlite", {
     compile: true,
     files: {
       "/entry.ts": /* js */ `

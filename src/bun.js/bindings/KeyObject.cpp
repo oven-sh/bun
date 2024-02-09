@@ -130,21 +130,64 @@ struct AsymmetricKeyValueWithDER {
 
 class KeyPassphrase {
 private:
-    WTF::CString pass_holder;
+    union {
+        WTF::CStringBuffer* strBuffer;
+        JSUint8Array* array;
+    } u;
+    uint8_t tag;
 
 public:
-    char* passphrase;
-    size_t passphrase_len;
-    bool hasPassphrase;
+    bool hasPassphrase()
+    {
+        return tag > 0;
+    }
+
+    char* data()
+    {
+        switch (tag) {
+        case 1: {
+            if (this->u.strBuffer) {
+                return const_cast<char*>(this->u.strBuffer->data());
+            }
+            return nullptr;
+        }
+        case 2: {
+            if (this->u.array) {
+                return (char*)(this->u.array->vector());
+            }
+            return nullptr;
+        }
+        default:
+            return nullptr;
+        }
+    }
+
+    size_t length()
+    {
+        switch (tag) {
+        case 1: {
+            if (this->u.strBuffer) {
+                return this->u.strBuffer->length();
+            }
+            return 0;
+        }
+        case 2: {
+            if (this->u.array) {
+                return this->u.array->length();
+            }
+            return 0;
+        }
+        default:
+            return 0;
+        }
+    }
+
     KeyPassphrase(JSValue passphraseJSValue, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
     {
-        this->passphrase = nullptr;
-        this->passphrase_len = 0;
+        this->tag = 0;
         if (passphraseJSValue.isUndefinedOrNull() || passphraseJSValue.isEmpty()) {
-            this->hasPassphrase = false;
             return;
         }
-        this->hasPassphrase = true;
         if (passphraseJSValue.isString()) {
             auto passphrase_wtfstr = passphraseJSValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, );
@@ -152,17 +195,37 @@ public:
                 if (auto pass = passphrase_wtfstr.tryGetUTF8()) {
                     if (pass.has_value()) {
                         auto value = pass.value();
-                        this->passphrase = const_cast<char*>(value.data());
-                        this->passphrase_len = value.length();
-                        pass_holder = value;
+                        // make sure the buffer is alive until we finish the operation
+                        // the op is sync but the buffer will be used outside this context and maybe freed here if not ref()
+                        if (auto buffer = value.buffer()) {
+                            buffer->ref();
+                            this->u.strBuffer = buffer;
+                            this->tag = 1;
+                        }
                     }
                 }
             }
-        } else if (auto* passphraseBuffer = jsDynamicCast<JSUint8Array*>(passphraseJSValue)) {
-            this->passphrase = (char*)passphraseBuffer->vector();
-            this->passphrase_len = passphraseBuffer->byteLength();
+        } else if (auto* array = jsDynamicCast<JSUint8Array*>(passphraseJSValue)) {
+            // we can use directly will not be freed because the operation is sync
+            this->u.array = array;
+            this->tag = 2;
         } else {
             JSC::throwTypeError(globalObject, scope, "passphrase must be a Buffer or String"_s);
+        }
+    }
+
+    ~KeyPassphrase()
+    {
+        // we need to deref if we are holding something
+        switch (tag) {
+        case 1: {
+            if (this->u.strBuffer) {
+                this->u.strBuffer->deref();
+            }
+            return;
+        }
+        default:
+            return;
         }
     }
 };
@@ -170,13 +233,16 @@ public:
 int PasswordCallback(char* buf, int size, int rwflag, void* u)
 {
     auto result = static_cast<KeyPassphrase*>(u);
-    if (result->hasPassphrase && result != nullptr && size > 0 && result->passphrase != nullptr) {
-        size_t buflen = static_cast<size_t>(size);
-        size_t len = result->passphrase_len;
-        if (buflen < len)
-            return -1;
-        memcpy(buf, result->passphrase, buflen);
-        return len;
+    if (result != nullptr && result->hasPassphrase() && size > 0) {
+        auto data = result->data();
+        if (data != nullptr) {
+            size_t buflen = static_cast<size_t>(size);
+            size_t len = result->length();
+            if (buflen < len)
+                return -1;
+            memcpy(buf, result->data(), buflen);
+            return len;
+        }
     }
 
     return -1;
@@ -1736,7 +1802,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
 
         auto string = formatJSValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        if (string == "jwk"_s && passphrase.hasPassphrase) {
+        if (string == "jwk"_s && passphrase.hasPassphrase()) {
             JSC::throwTypeError(globalObject, scope, "encryption is not supported for jwk format"_s);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
@@ -1867,7 +1933,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                             }
                         }
                     }
-                    if (passphrase.hasPassphrase) {
+                    if (passphrase.hasPassphrase()) {
                         if (!cipher) {
                             JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
                             BIO_free(bio);
@@ -1877,13 +1943,13 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
 
                     if (string == "pem"_s) {
                         if (type == "pkcs1"_s) {
-                            if (PEM_write_bio_RSAPrivateKey(bio, rsa_ptr, cipher, (unsigned char*)passphrase.passphrase, passphrase.passphrase_len, nullptr, nullptr) != 1) {
+                            if (PEM_write_bio_RSAPrivateKey(bio, rsa_ptr, cipher, (unsigned char*)passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
                             }
                         } else if (type == "pkcs8"_s) {
-                            if (PEM_write_bio_PKCS8PrivateKey(bio, rsaKey, cipher, passphrase.passphrase, passphrase.passphrase_len, nullptr, nullptr) != 1) {
+                            if (PEM_write_bio_PKCS8PrivateKey(bio, rsaKey, cipher, passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -1901,7 +1967,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                                 return JSC::JSValue::encode(JSC::JSValue {});
                             }
                         } else if (type == "pkcs8"_s) {
-                            if (i2d_PKCS8PrivateKey_bio(bio, rsaKey, cipher, passphrase.passphrase, passphrase.passphrase_len, nullptr, nullptr) != 1) {
+                            if (i2d_PKCS8PrivateKey_bio(bio, rsaKey, cipher, passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -2012,7 +2078,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                         }
                     }
 
-                    if (passphrase.hasPassphrase) {
+                    if (passphrase.hasPassphrase()) {
 
                         if (!cipher) {
                             JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
@@ -2023,13 +2089,13 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
 
                     if (string == "pem"_s) {
                         if (type == "sec1"_s) {
-                            if (PEM_write_bio_ECPrivateKey(bio, ec_ptr, cipher, (unsigned char*)passphrase.passphrase, passphrase.passphrase_len, nullptr, nullptr) != 1) {
+                            if (PEM_write_bio_ECPrivateKey(bio, ec_ptr, cipher, (unsigned char*)passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
                             }
                         } else if (type == "pkcs8"_s) {
-                            if (PEM_write_bio_PKCS8PrivateKey(bio, ecKey, cipher, passphrase.passphrase, passphrase.passphrase_len, nullptr, nullptr) != 1) {
+                            if (PEM_write_bio_PKCS8PrivateKey(bio, ecKey, cipher, passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -2047,7 +2113,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                                 return JSC::JSValue::encode(JSC::JSValue {});
                             }
                         } else if (type == "pkcs8"_s) {
-                            if (i2d_PKCS8PrivateKey_bio(bio, ecKey, cipher, passphrase.passphrase, passphrase.passphrase_len, nullptr, nullptr) != 1) {
+                            if (i2d_PKCS8PrivateKey_bio(bio, ecKey, cipher, passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 return JSC::JSValue::encode(JSC::JSValue {});
@@ -2130,7 +2196,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                         }
                     }
 
-                    if (passphrase.hasPassphrase) {
+                    if (passphrase.hasPassphrase()) {
                         if (!cipher) {
                             JSC::throwTypeError(globalObject, scope, "cipher is required when passphrase is specified"_s);
                             BIO_free(bio);
@@ -2140,7 +2206,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
 
                     if (string == "pem"_s) {
                         if (type == "pkcs8"_s) {
-                            if (PEM_write_bio_PKCS8PrivateKey(bio, evpKey, cipher, passphrase.passphrase, passphrase.passphrase_len, nullptr, nullptr) != 1) {
+                            if (PEM_write_bio_PKCS8PrivateKey(bio, evpKey, cipher, passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 EVP_PKEY_free(evpKey);
@@ -2154,7 +2220,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
                         }
                     } else if (string == "der"_s) {
                         if (type == "pkcs8"_s) {
-                            if (i2d_PKCS8PrivateKey_bio(bio, evpKey, cipher, passphrase.passphrase, passphrase.passphrase_len, nullptr, nullptr) != 1) {
+                            if (i2d_PKCS8PrivateKey_bio(bio, evpKey, cipher, passphrase.data(), passphrase.length(), nullptr, nullptr) != 1) {
                                 JSC::throwTypeError(globalObject, scope, "Failed to write private key"_s);
                                 BIO_free(bio);
                                 EVP_PKEY_free(evpKey);

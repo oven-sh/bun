@@ -4,8 +4,11 @@ const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const bun = @import("root").bun;
-pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
-    return (@intFromPtr(&buffer) <= @intFromPtr(slice.ptr) and (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer) + buffer.len));
+
+/// Checks if a slice's pointer is contained within another slice.
+pub inline fn isSliceInBuffer(comptime T: type, slice: []const T, buffer: []const T) bool {
+    return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
+        (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len));
 }
 
 pub fn sliceRange(slice: []const u8, buffer: []const u8) ?[2]u32 {
@@ -305,8 +308,8 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return instance.slice_buf_used >= @as(u16, count);
         }
 
-        pub fn exists(_: *const Self, value: ValueType) bool {
-            return isSliceInBuffer(value, &instance.backing_buf);
+        pub fn exists(self: *const Self, value: ValueType) bool {
+            return isSliceInBuffer(u8, value, &self.backing_buf);
         }
 
         pub fn editableSlice(slice: []const u8) []u8 {

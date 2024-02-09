@@ -3769,7 +3769,7 @@ pub const Blob = struct {
                     if (this.store) |store| {
                         if (store.data == .bytes) {
                             const allocated_slice = store.data.bytes.allocatedSlice();
-                            if (bun.isSliceInBuffer(buf, allocated_slice)) {
+                            if (bun.isSliceInBuffer(u8, buf, allocated_slice)) {
                                 if (bun.linux.memfd_allocator.from(store.data.bytes.allocator)) |allocator| {
                                     allocator.ref();
                                     defer allocator.deref();

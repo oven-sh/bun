@@ -249,7 +249,9 @@ pub const String = extern struct {
             buf: string,
             in: string,
         ) Pointer {
-            std.debug.assert(bun.isSliceInBuffer(in, buf));
+            if (Environment.allow_assert) {
+                std.debug.assert(bun.isSliceInBuffer(u8, in, buf));
+            }
 
             return Pointer{
                 .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),

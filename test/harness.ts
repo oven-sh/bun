@@ -434,3 +434,7 @@ export async function describeWithContainer(
     fn(port);
   });
 }
+
+export function osSlashes(path: string) {
+  return isWindows ? path.replace(/\//g, "\\") : path;
+}

@@ -2277,7 +2277,8 @@ pub const Subprocess = struct {
                 .flags = if (windows_hide == 1) uv.UV_PROCESS_WINDOWS_HIDE else 0,
             };
 
-            if (uv.uv_spawn(jsc_vm.uvLoop(), &subprocess.pid, &options).errEnum()) |errno| {
+            const loop = jsc_vm.uvLoop();
+            if (uv.uv_spawn(loop, &subprocess.pid, &options).errEnum()) |errno| {
                 alloc.destroy(subprocess);
                 globalThis.throwValue(bun.sys.Error.fromCode(errno, .uv_spawn).toJSC(globalThis));
                 return .zero;
@@ -2339,7 +2340,7 @@ pub const Subprocess = struct {
             // sync
 
             while (!subprocess.hasExited()) {
-                uv.Loop.get().tickWithTimeout(0);
+                loop.tickWithTimeout(0);
 
                 if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
                     subprocess.stderr.pipe.buffer.readAll();
@@ -2348,9 +2349,6 @@ pub const Subprocess = struct {
                 if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
                     subprocess.stdout.pipe.buffer.readAll();
                 }
-
-                jsc_vm.tick();
-                jsc_vm.eventLoop().autoTick();
             }
 
             const exitCode = subprocess.exit_code orelse 1;

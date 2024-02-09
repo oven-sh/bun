@@ -876,14 +876,13 @@ pub const Resolver = struct {
             };
         }
 
-        // When using `bun build --compile`, module resolution is never relative
-        // to our special /$bunfs/ directory.
+        // When using `bun build --compile`, module resolution is never
+        // relative to our special /$bunfs/ directory.
         //
-        // It's always relative to the current working directory of the project
-        // root.
+        // It's always relative to the current working directory of the project root.
         const source_dir = brk: {
             if (r.standalone_module_graph) |graph| {
-                if (strings.isBunStandaloneFilePath(import_path)) {
+                if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(import_path)) {
                     if (graph.files.contains(import_path)) {
                         return .{
                             .success = Result{
@@ -898,7 +897,7 @@ pub const Resolver = struct {
                     }
 
                     return .{ .not_found = {} };
-                } else if (strings.isBunStandaloneFilePath(source_dir_)) {
+                } else if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(source_dir_)) {
                     break :brk Fs.FileSystem.instance.top_level_dir;
                 }
             }

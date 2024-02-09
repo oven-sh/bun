@@ -735,7 +735,7 @@ pub fn withoutTrailingSlashWindowsPath(this: string) []const u8 {
 }
 
 pub fn withTrailingSlash(dir: string, in: string) []const u8 {
-    if (comptime Environment.allow_assert) std.debug.assert(bun.isSliceInBuffer(dir, in));
+    if (comptime Environment.allow_assert) std.debug.assert(bun.isSliceInBuffer(u8, dir, in));
     return in[0..@min(strings.withoutTrailingSlash(in[0..@min(dir.len + 1, in.len)]).len + 1, in.len)];
 }
 
@@ -867,10 +867,6 @@ pub fn eqlComptimeIgnoreLen(self: string, comptime alt: anytype) bool {
 
 pub fn hasPrefixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[0..alt.len], alt, false);
-}
-
-pub fn isBunStandaloneFilePath(self: string) bool {
-    return hasPrefixComptime(self, "/$bunfs/");
 }
 
 pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool {

@@ -16,6 +16,8 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
 const libuv = bun.windows.libuv;
 
+const log = bun.Output.scoped(.ReadFile, true);
+
 pub fn NewReadFileHandler(comptime Function: anytype) type {
     return struct {
         context: Blob,
@@ -569,6 +571,7 @@ pub const ReadFileUV = struct {
     req: libuv.fs_t = libuv.fs_t.uninitialized,
 
     pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
+        log("ReadFileUV.start", .{});
         var this = bun.new(ReadFileUV, .{
             .loop = loop,
             .file_store = store.data.file,
@@ -583,10 +586,12 @@ pub const ReadFileUV = struct {
     }
 
     pub fn finalize(this: *ReadFileUV) void {
+        log("ReadFileUV.finalize", .{});
         defer {
             this.store.deref();
             this.req.deinit();
             bun.destroy(this);
+            log("ReadFileUV.finalize destroy", .{});
         }
 
         const cb = this.on_complete_fn;
@@ -607,6 +612,7 @@ pub const ReadFileUV = struct {
     }
 
     fn onFinish(this: *ReadFileUV) void {
+        log("ReadFileUV.onFinish", .{});
         const fd = this.opened_fd;
         const needs_close = fd != bun.invalid_fd;
 
@@ -623,6 +629,7 @@ pub const ReadFileUV = struct {
     }
 
     pub fn onFileOpen(this: *ReadFileUV, opened_fd: bun.FileDescriptor) void {
+        log("ReadFileUV.onFileOpen", .{});
         if (this.errno != null) {
             this.onFinish();
             return;
@@ -639,6 +646,7 @@ pub const ReadFileUV = struct {
     }
 
     fn onFileInitialStat(req: *libuv.fs_t) callconv(.C) void {
+        log("ReadFileUV.onFileInitialStat", .{});
         var this: *ReadFileUV = @alignCast(@ptrCast(req.data));
 
         if (req.result.errEnum()) |errno| {
@@ -725,7 +733,8 @@ pub const ReadFileUV = struct {
 
     pub fn queueRead(this: *ReadFileUV) void {
         if (this.remainingBuffer().len > 0 and this.errno == null and !this.read_eof) {
-            // bun.sys.read(this.opened_fd, this.remainingBuffer())
+            log("ReadFileUV.queueRead - this.remainingBuffer().len = {d}", .{this.remainingBuffer().len});
+
             const buf = this.remainingBuffer();
             var bufs: [1]libuv.uv_buf_t = .{
                 libuv.uv_buf_t.init(buf),
@@ -745,6 +754,8 @@ pub const ReadFileUV = struct {
                 this.onFinish();
             }
         } else {
+            log("ReadFileUV.queueRead done", .{});
+
             // We are done reading.
             _ = bun.default_allocator.resize(this.buffer, this.read_off);
             this.buffer = this.buffer[0..this.read_off];

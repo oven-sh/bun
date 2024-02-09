@@ -2,4 +2,5 @@ import { writeFileSync } from "fs";
 
 writeFileSync(import.meta.dir + "/postinstall.txt", `i ran!`);
 
-import "sharp";
+// TODO: postinstall doesnt run sharp's scripts yet :(
+// import "sharp";

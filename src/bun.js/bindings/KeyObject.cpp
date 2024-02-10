@@ -22,6 +22,9 @@
 // IN THE SOFTWARE.
 
 #include "KeyObject.h"
+#include "JavaScriptCore/JSArrayBufferView.h"
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSCast.h"
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
 #include "webcrypto/CryptoKeyOKP.h"
@@ -50,6 +53,8 @@
 #include "CryptoAlgorithmEcdsaParams.h"
 #include "CryptoAlgorithmRsaPssParams.h"
 #include "CryptoAlgorithmRegistry.h"
+#include "wtf/ForbidHeapAllocation.h"
+#include "wtf/Noncopyable.h"
 using namespace JSC;
 using namespace Bun;
 using JSGlobalObject
@@ -129,62 +134,66 @@ struct AsymmetricKeyValueWithDER {
 };
 
 class KeyPassphrase {
+public:
+    enum class Tag {
+        None = 0,
+        String = 1,
+        ArrayBuffer = 2,
+    };
+
 private:
-    union {
-        WTF::CStringBuffer* strBuffer;
-        JSUint8Array* array;
-    } u;
-    uint8_t tag;
+    WTF::CString m_passphraseString;
+    JSC::JSUint8Array* m_passphraseArray = nullptr;
+    Tag tag = Tag::None;
 
 public:
     bool hasPassphrase()
     {
-        return tag > 0;
+        return tag != Tag::None;
     }
 
     char* data()
     {
         switch (tag) {
-        case 1: {
-            if (this->u.strBuffer) {
-                return const_cast<char*>(this->u.strBuffer->data());
-            }
+        case Tag::ArrayBuffer: {
+            return reinterpret_cast<char*>(this->m_passphraseArray->vector());
+        }
+
+        case Tag::String: {
+            return const_cast<char*>(this->m_passphraseString.data());
+        }
+
+        default: {
             return nullptr;
         }
-        case 2: {
-            if (this->u.array) {
-                return (char*)(this->u.array->vector());
-            }
-            return nullptr;
         }
-        default:
-            return nullptr;
-        }
+
+        return nullptr;
     }
 
     size_t length()
     {
         switch (tag) {
-        case 1: {
-            if (this->u.strBuffer) {
-                return this->u.strBuffer->length();
-            }
+        case Tag::ArrayBuffer: {
+            return this->m_passphraseArray->length();
+        }
+        case Tag::String: {
+            return this->m_passphraseString.length();
+        }
+        default: {
             return 0;
         }
-        case 2: {
-            if (this->u.array) {
-                return this->u.array->length();
-            }
-            return 0;
         }
-        default:
-            return 0;
-        }
+
+        return 0;
     }
 
     KeyPassphrase(JSValue passphraseJSValue, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
     {
-        this->tag = 0;
+        this->tag = Tag::None;
+        this->m_passphraseString = WTF::CString();
+        this->m_passphraseArray = nullptr;
+
         if (passphraseJSValue.isUndefinedOrNull() || passphraseJSValue.isEmpty()) {
             return;
         }
@@ -194,21 +203,19 @@ public:
             if (!passphrase_wtfstr.isNull()) {
                 if (auto pass = passphrase_wtfstr.tryGetUTF8()) {
                     if (pass.has_value()) {
-                        auto value = pass.value();
-                        // make sure the buffer is alive until we finish the operation
-                        // the op is sync but the buffer will be used outside this context and maybe freed here if not ref()
-                        if (auto buffer = value.buffer()) {
-                            buffer->ref();
-                            this->u.strBuffer = buffer;
-                            this->tag = 1;
-                        }
+                        this->tag = Tag::String;
+                        this->m_passphraseString = WTFMove(pass.value());
                     }
                 }
             }
         } else if (auto* array = jsDynamicCast<JSUint8Array*>(passphraseJSValue)) {
-            // we can use directly will not be freed because the operation is sync
-            this->u.array = array;
-            this->tag = 2;
+            if (UNLIKELY(array->isDetached())) {
+                JSC::throwTypeError(globalObject, scope, "passphrase must not be detached"_s);
+                return;
+            }
+
+            this->m_passphraseArray = array;
+            this->tag = Tag::ArrayBuffer;
         } else {
             JSC::throwTypeError(globalObject, scope, "passphrase must be a Buffer or String"_s);
         }
@@ -216,18 +223,10 @@ public:
 
     ~KeyPassphrase()
     {
-        // we need to deref if we are holding something
-        switch (tag) {
-        case 1: {
-            if (this->u.strBuffer) {
-                this->u.strBuffer->deref();
-            }
-            return;
-        }
-        default:
-            return;
-        }
     }
+
+    WTF_MAKE_NONCOPYABLE(KeyPassphrase);
+    WTF_FORBID_HEAP_ALLOCATION(KeyPassphrase);
 };
 
 int PasswordCallback(char* buf, int size, int rwflag, void* u)

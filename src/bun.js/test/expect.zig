@@ -1703,7 +1703,7 @@ pub const Expect = struct {
             globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
             return .zero;
         }
-	globalObject.throw(comptime Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throw(comptime Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -1775,7 +1775,7 @@ pub const Expect = struct {
             globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
             return .zero;
         }
-	globalObject.throw(comptime Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throw(comptime Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
         return .zero;
     }
 

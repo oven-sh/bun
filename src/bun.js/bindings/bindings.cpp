@@ -5351,3 +5351,8 @@ extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* global
 {
     return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
 }
+
+extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
+{
+    return DECLARE_CATCH_SCOPE(globalObject->vm()).exception() != 0;
+}

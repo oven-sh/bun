@@ -2922,6 +2922,11 @@ pub const JSGlobalObject = extern struct {
         return cppFn("getCachedObject", .{ this, key });
     }
 
+    extern fn JSGlobalObject__hasException(*JSGlobalObject) bool;
+    pub fn hasException(this: *JSGlobalObject) bool {
+        return JSGlobalObject__hasException(this);
+    }
+
     pub fn vm(this: *JSGlobalObject) *VM {
         return cppFn("vm", .{this});
     }

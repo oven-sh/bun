@@ -92,7 +92,6 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 
   uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
   uv_poll_start(p->uv_p, events, poll_cb);
-  // on windows we need to unref the poll handle because we keep the loop alive ourselves
 }
 
 void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {

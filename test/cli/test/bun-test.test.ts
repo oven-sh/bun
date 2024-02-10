@@ -632,7 +632,7 @@ describe("bun test", () => {
       ];
 
       const stderr = runTest({
-        args: ["-t", "1 \+"],
+        args: ["-t", "1 \\+"],
         input: `
           import { test, expect } from "bun:test";
 
@@ -644,9 +644,9 @@ describe("bun test", () => {
       numbers.forEach(numbers => {
         if (numbers[0] === 1) {
           expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
-	} else {
+        } else {
           expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
-	}
+        }
       });
     });
     test("should run tests with describe.each", () => {

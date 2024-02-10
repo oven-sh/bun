@@ -148,9 +148,9 @@ it("Bun.sleep propagates exceptions", async () => {
 });
 
 it("Bun.sleep works with a Date object", async () => {
+  const now = performance.now();
   var ten_ms = new Date();
   ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
-  const now = performance.now();
   await Bun.sleep(ten_ms);
   expect(performance.now() - now).toBeGreaterThan(11);
 });

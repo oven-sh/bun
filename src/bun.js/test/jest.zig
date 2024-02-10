@@ -1863,7 +1863,7 @@ fn eachBind(
                 var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
                 buffer.reset();
                 appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
-                buffer.append(label) catch unreachable;
+                buffer.append(formattedLabel) catch unreachable;
                 const str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
                 is_skip = !regex.matches(str);
             }

@@ -208,7 +208,12 @@ pub const FilePoll = struct {
         poll.flags = flags;
     }
 
+    pub fn format(poll: *const FilePoll, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("FilePoll({}) = {}", .{ poll.fd, Flags.Formatter{ .data = poll.flags } });
+    }
+
     pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.os.system.kevent64_s) void {
+        log("onKQueueEvent: {}", .{poll});
         if (KQueueGenerationNumber != u0)
             std.debug.assert(poll.generation_number == kqueue_event.ext[0]);
 
@@ -444,6 +449,20 @@ pub const FilePoll = struct {
         pub const Set = std.EnumSet(Flags);
         pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);
 
+        pub const Formatter = std.fmt.Formatter(Flags.format);
+
+        pub fn format(this: Flags.Set, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            var iter = this.iterator();
+            var is_first = true;
+            while (iter.next()) |flag| {
+                if (!is_first) {
+                    try writer.print(" | ", .{});
+                }
+                try writer.writeAll(@tagName(flag));
+                is_first = false;
+            }
+        }
+
         pub fn fromKQueueEvent(kqueue_event: std.os.system.kevent64_s) Flags.Set {
             var flags = Flags.Set{};
             if (kqueue_event.filter == std.os.system.EVFILT_READ) {
@@ -551,7 +570,7 @@ pub const FilePoll = struct {
         }
     };
 
-    const log = Output.scoped(.FilePoll, false);
+    const log = bun.sys.syslog;
 
     pub inline fn isActive(this: *const FilePoll) bool {
         return this.flags.contains(.has_incremented_poll_count);

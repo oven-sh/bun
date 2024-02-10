@@ -301,10 +301,14 @@ pub const Process = struct {
 
     pub fn watch(this: *Process, vm: anytype) JSC.Maybe(void) {
         _ = vm; // autofix
+
         if (comptime Environment.isWindows) {
             this.poller.uv.ref();
             return JSC.Maybe(void){ .result = {} };
         }
+
+        if (this.poller != .detached)
+            return .{ .result = {} };
 
         if (WaiterThread.shouldUseWaiterThread()) {
             this.poller = .{ .waiter_thread = .{} };

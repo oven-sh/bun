@@ -100,24 +100,6 @@
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "wtf/text/StringToIntegerConversion.h"
 
-//
-
-static unsigned StringView_count(WTF::StringView sv, UChar character, unsigned start)
-{
-    auto result = 0;
-    auto start_ = start;
-    while (true) {
-        if (sv.length() == 0)
-            break;
-        auto newfind = sv.find(character, start_);
-        if (newfind == WTF::notFound)
-            break;
-        result += 1;
-        start_ = newfind + 1;
-    }
-    return result;
-}
-
 static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
 {
     return sv.substring(start, end - start);
@@ -4073,38 +4055,37 @@ public:
         }
 
         auto lineInner = StringView_slice(line, openingParenthese + 1, closingParenthese);
-        auto colonCount = StringView_count(lineInner, ':', 0);
 
-        switch (colonCount) {
-        case 0: {
-            // /path/to/file.js
-            frame.sourceURL = lineInner;
-            break;
-        }
-
-        case 1: {
-            // /path/to/file.js:
-            // /path/to/file.js:1
-            // node:child_process
-            // C:\Users\dave\bun\file.js
-
+        {
             auto marker1 = 0;
             auto marker2 = lineInner.find(':', marker1);
-            auto marker3 = lineInner.length();
 
-            auto segment1 = StringView_slice(lineInner, marker1, marker2);
-            auto segment2 = StringView_slice(lineInner, marker2 + 1, marker3);
-
-            if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
-                frame.sourceURL = segment1;
-                frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
-            } else {
-                frame.sourceURL = StringView_slice(lineInner, marker1, marker3);
+            if (marker2 == WTF::notFound) {
+                frame.sourceURL = lineInner;
+                goto done_block;
             }
-            break;
-        }
 
-        default: {
+            auto marker3 = lineInner.find(':', marker2 + 1);
+            if (marker3 == WTF::notFound) {
+                // /path/to/file.js:
+                // /path/to/file.js:1
+                // node:child_process
+                // C:\Users\dave\bun\file.js
+
+                marker3 = lineInner.length();
+
+                auto segment1 = StringView_slice(lineInner, marker1, marker2);
+                auto segment2 = StringView_slice(lineInner, marker2 + 1, marker3);
+
+                if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
+                    frame.sourceURL = segment1;
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
+                } else {
+                    frame.sourceURL = StringView_slice(lineInner, marker1, marker3);
+                }
+                goto done_block;
+            }
+
             // /path/to/file.js:1:
             // /path/to/file.js:1:2
             // node:child_process:1:2
@@ -4112,14 +4093,14 @@ public:
             // C:\Users\dave\bun\file.js:1
             // C:\Users\dave\bun\file.js:1:2
 
-            auto linenoColon = lineInner.find(':', 0);
-            for (size_t i = 0; i < colonCount - 2; i++) {
-                linenoColon = lineInner.find(':', linenoColon + 1);
+            while (true) {
+                auto newcolon = lineInner.find(':', marker3 + 1);
+                if (newcolon == WTF::notFound)
+                    break;
+                marker2 = marker3;
+                marker3 = newcolon;
             }
 
-            auto marker1 = 0;
-            auto marker2 = linenoColon;
-            auto marker3 = lineInner.find(':', linenoColon + 1);
             auto marker4 = lineInner.length();
 
             auto segment1 = StringView_slice(lineInner, marker1, marker2);
@@ -4143,9 +4124,8 @@ public:
                     frame.sourceURL = StringView_slice(lineInner, marker1, marker4);
                 }
             }
-            break;
         }
-        }
+    done_block:
 
         StringView functionName = line.substring(0, openingParenthese - 1);
 

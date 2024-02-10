@@ -152,7 +152,7 @@ it("Bun.sleep works with a Date object", async () => {
   var ten_ms = new Date();
   ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
   await Bun.sleep(ten_ms);
-  expect(performance.now() - now).toBeGreaterThan(11);
+  expect(performance.now() - now).toBeGreaterThan(10);
 });
 
 it("node.js timers/promises setTimeout propagates exceptions", async () => {

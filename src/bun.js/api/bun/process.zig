@@ -307,9 +307,6 @@ pub const Process = struct {
             return JSC.Maybe(void){ .result = {} };
         }
 
-        if (this.poller != .detached)
-            return .{ .result = {} };
-
         if (WaiterThread.shouldUseWaiterThread()) {
             this.poller = .{ .waiter_thread = .{} };
             this.poller.waiter_thread.ref(this.event_loop);
@@ -319,7 +316,11 @@ pub const Process = struct {
         }
 
         const watchfd = if (comptime Environment.isLinux) this.pidfd else this.pid;
-        const poll = bun.Async.FilePoll.init(this.event_loop, bun.toFD(watchfd), .{}, Process, this);
+        const poll = if (this.poller == .fd)
+            this.poller.fd
+        else
+            bun.Async.FilePoll.init(this.event_loop, bun.toFD(watchfd), .{}, Process, this);
+
         this.poller = .{ .fd = poll };
         this.poller.fd.enableKeepingProcessAlive(this.event_loop);
 

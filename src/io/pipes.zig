@@ -33,7 +33,7 @@ pub const PollOrFd = union(enum) {
     pub fn close(this: *PollOrFd, ctx: ?*anyopaque, comptime onCloseFn: anytype) void {
         const fd = this.getFd();
         if (this.* == .poll) {
-            this.poll.deinit();
+            this.poll.deinitForceUnregister();
             this.* = .{ .closed = {} };
         }
 

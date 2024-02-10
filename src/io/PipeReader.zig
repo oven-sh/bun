@@ -181,9 +181,10 @@ pub fn PosixPipeReader(
                                 if (err.isRetry()) {
                                     if (comptime vtable.registerPoll) |register| {
                                         register(parent);
-                                        _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
-                                        return;
                                     }
+
+                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
+                                    return;
                                 }
 
                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
@@ -513,7 +514,11 @@ const PosixBufferedReader = struct {
     }
 
     fn finish(this: *PosixBufferedReader) void {
-        this.closeHandle();
+        if (this.handle != .closed) {
+            this.closeHandle();
+            return;
+        }
+
         std.debug.assert(!this.is_done);
         this.is_done = true;
     }
@@ -544,13 +549,17 @@ const PosixBufferedReader = struct {
     pub fn registerPoll(this: *PosixBufferedReader) void {
         const poll = this.handle.getPoll() orelse brk: {
             if (this.handle == .fd and this.pollable) {
-                this.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), this.getFd(), .{}, @This(), this) };
+                this.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), this.handle.fd, .{}, @This(), this) };
                 break :brk this.handle.poll;
             }
 
             return;
         };
         poll.owner.set(this);
+        if (poll.isRegistered()) {
+            return;
+        }
+
         switch (poll.register(this.loop(), .readable, true)) {
             .err => |err| {
                 this.onError(err);
@@ -568,7 +577,9 @@ const PosixBufferedReader = struct {
             return .{ .result = {} };
         }
         this.pollable = true;
-        this.handle = .{ .fd = fd };
+        if (this.getFd() != fd) {
+            this.handle = .{ .fd = fd };
+        }
         this.registerPoll();
 
         return .{

@@ -159,11 +159,13 @@ pub const LifecycleScriptSubprocess = struct {
 
         if (comptime Environment.isPosix) {
             if (spawned.stdout) |stdout| {
+                this.stdout.setParent(this);
                 try this.stdout.start(stdout, true).unwrap();
             }
 
             if (spawned.stderr) |stderr| {
-                try this.stdout.start(stderr, true).unwrap();
+                this.stderr.setParent(this);
+                try this.stderr.start(stderr, true).unwrap();
             }
         } else if (comptime Environment.isWindows) {
             if (spawned.stdout == .buffer) {

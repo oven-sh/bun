@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
+include(FetchContent)
+include(ExternalProject)
+
 set(Bun_VERSION "1.0.26")
 set(WEBKIT_TAG c3712c13dcdc091cfe4c7cb8f2c1fd16472e6f92)
 
@@ -44,6 +47,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         set(bun "bun-profile")
     endif()
 endif()
+
 
 # --- LLVM ---
 # This detection is a little overkill, but it ensures that the set LLVM_VERSION matches under
@@ -530,6 +534,38 @@ if(NOT BUN_DEPS_OUT_DIR)
     set(BUN_DEPS_OUT_DIR "${BUN_DEPS_DIR}")
 endif()
 
+# set(BUILD_SHARED_LIBS OFF)
+# set(ENABLE_TEST OFF)
+# set(ENABLE_INSTALL OFF)
+# set(ENABLE_WERROR 0)
+# add_subdirectory(${BUN_DEPS_DIR}/libarchive)
+
+# add_subdirectory(${BUN_DEPS_DIR}/boringssl EXCLUDE_FROM_ALL)
+
+set(CARES_STATIC ON)
+set(CARES_SHARED OFF)
+add_subdirectory(${BUN_DEPS_DIR}/c-ares)
+
+set(BASE64_WERROR OFF)
+add_subdirectory(${BUN_DEPS_DIR}/base64)
+
+ExternalProject_Add(
+    lol-html
+    DOWNLOAD_COMMAND ""
+    CONFIGURE_COMMAND ""
+    SOURCE_DIR "${BUN_DEPS_DIR}/lol-html/c-api"
+    BUILD_COMMAND cargo build COMMAND cargo build --release
+    BINARY_DIR "${BUN_DEPS_DIR}/lol-html/c-api/target/release"
+    INSTALL_COMMAND ""
+    LOG_BUILD ON
+)
+
+FetchContent_Declare(
+    libuv
+    GIT_REPOSITORY https://github.com/libuv/libuv.git
+    GIT_TAG da527d8d2a908b824def74382761566371439003
+)
+
 set(BUN_RAW_SOURCES, "")
 
 file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
@@ -850,7 +886,7 @@ set_target_properties(${bun} PROPERTIES
     VISIBILITY_INLINES_HIDDEN YES
 )
 
-add_compile_definitions(
+target_compile_definitions(${bun} PRIVATE
 
     # TODO: are all of these variables strictly necessary?
     "_HAS_EXCEPTIONS=0"
@@ -872,9 +908,9 @@ add_compile_definitions(
 )
 
 if(NOT ASSERT_ENABLED)
-    add_compile_definitions("NDEBUG=1")
+    target_compile_definitions(${bun} PRIVATE "NDEBUG=1")
 else()
-    add_compile_definitions("ASSERT_ENABLED=1")
+    target_compile_definitions(${bun} PRIVATE "ASSERT_ENABLED=1")
 endif()
 
 include_directories(
@@ -938,10 +974,10 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Werror=implicit-function-declaration
         )
     else()
-        target_compile_options(${bun} PUBLIC /Od /Z7)
+        target_compile_options(${bun} PUBLIC /Od /Zi)
     endif()
 
-    add_compile_definitions("BUN_DEBUG=1")
+    target_compile_definitions(${bun} PRIVATE "BUN_DEBUG=1")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     if(NOT WIN32)
         target_compile_options(${bun} PUBLIC -O3 -flto=full -emit-llvm -g1
@@ -950,7 +986,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             -Werror=implicit-function-declaration
         )
     else()
-        target_compile_options(${bun} PUBLIC /O2 -flto=full /DEBUG /Z7)
+        target_compile_options(${bun} PUBLIC /O2 -flto=full /DEBUG /Zi)
         target_link_options(${bun} PUBLIC /LTCG /DEBUG)
     endif()
 endif()
@@ -974,7 +1010,7 @@ endif()
 target_compile_options(${bun} PUBLIC -ferror-limit=${ERROR_LIMIT})
 
 if(WIN32)
-    add_compile_definitions(
+    target_compile_definitions(${bun} PRIVATE
         "WIN32"
         "_WINDOWS"
         "WIN32_LEAN_AND_MEAN=1"
@@ -1195,39 +1231,24 @@ else()
 endif()
 
 if(USE_CUSTOM_ZSTD)
-    include_directories(${BUN_DEPS_DIR}/zstd/include)
-
-    if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/zstd.lib")
-    else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libzstd.a")
-    endif()
+    set(ZSTD_BUILD_STATIC ON)
+    set(ZSTD_BUILD_SHARED OFF)
+    add_subdirectory(${BUN_DEPS_DIR}/zstd/build/cmake)
+    target_link_libraries(${bun} PRIVATE libzstd_static)
 else()
     find_package(zstd CONFIG REQUIRED)
     target_link_libraries(${bun} PRIVATE zstd::libzstd)
 endif()
 
 if(USE_CUSTOM_CARES)
-    include_directories(${BUN_DEPS_DIR}/c-ares/include)
-
-    if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/cares.lib")
-    else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libcares.a")
-    endif()
+    target_link_libraries(${bun} PRIVATE c-ares::cares_static)
 else()
     find_package(c-ares CONFIG REQUIRED)
     target_link_libraries(${bun} PRIVATE c-ares::cares)
 endif()
 
 if(USE_CUSTOM_BASE64)
-    include_directories(${BUN_DEPS_DIR}/base64/include)
-
-    if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/base64.lib")
-    else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libbase64.a")
-    endif()
+    target_link_libraries(${bun} PRIVATE base64)
 else()
     find_package(base64 REQUIRED)
     target_link_libraries(${bun} PRIVATE base64::base64)
@@ -1245,10 +1266,19 @@ else()
 endif()
 
 if(USE_CUSTOM_LOLHTML)
+    add_dependencies(${bun} lol-html)
     if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/lolhtml.lib")
+        # target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/lolhtml.lib")
+        target_link_libraries(${bun} PRIVATE 
+            debug "${BUN_DEPS_DIR}/lol-html/c-api/target/debug/lolhtml.lib"
+            optimized "${BUN_DEPS_DIR}/lol-html/c-api/target/release/lolhtml.lib"
+        )
     else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/liblolhtml.a")
+        target_link_libraries(${bun} PRIVATE 
+            debug "${BUN_DEPS_DIR}/lol-html/c-api/target/debug/liblolhtml.a"
+            optimized "${BUN_DEPS_DIR}/lol-html/c-api/target/release/liblolhtml.a"
+        )
+        # target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/liblolhtml.a")
     endif()
 else()
     find_package(lolhtml REQUIRED)
@@ -1257,8 +1287,9 @@ endif()
 
 if(WIN32)
     if(USE_CUSTOM_LIBUV)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libuv.lib")
-        include_directories(${bun} PRIVATE "${BUN_DEPS_DIR}/libuv/include")
+        # Fetch libuv
+        FetchContent_MakeAvailable(libuv)
+        target_link_libraries(${bun} PRIVATE uv_a)
     else()
         find_package(libuv CONFIG REQUIRED)
         target_link_libraries(${bun} PRIVATE $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
@@ -1303,7 +1334,7 @@ if(NOT WIN32)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libbmalloc.a")
 else()
-    target_link_options(${bun} PRIVATE "-static")
+    # target_link_options(${bun} PRIVATE "-static")
     target_link_libraries(${bun} PRIVATE
         "${WEBKIT_LIB_DIR}/WTF.lib"
         "${WEBKIT_LIB_DIR}/JavaScriptCore.lib"
@@ -1313,7 +1344,9 @@ else()
         winmm
         bcrypt
         ntdll
-        ucrt
+        debug ucrtd
+        optimized ucrt
+        # $<IF:$<BOOL:${DEBUG}>,ucrtd,ucrt> # link the debug ucrt if debug mode
         userenv
         dbghelp
         wsock32 # ws2_32 required by TransmitFile aka sendfile on windows

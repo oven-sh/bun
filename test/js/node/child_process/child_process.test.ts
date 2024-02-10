@@ -3,6 +3,7 @@ import { describe, it, expect } from "bun:test";
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
+import { readdirSync, readlinkSync } from "node:fs";
 import { bunExe, bunEnv } from "harness";
 import path from "path";
 
@@ -213,6 +214,73 @@ describe("spawn()", () => {
   it("should spawn a process synchronously", () => {
     const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
     expect(stdout.trim()).toBe("hello");
+  });
+
+  function getProcessFds(pid, missingOkay) {
+    const fds = Array.from(Int32Array.from(readdirSync(`/proc/${pid}/fd/`)).sort());
+    const fdLinks = fds.map((fd) => {
+        let link;
+        try {
+            link = readlinkSync(`/proc/${pid}/fd/${fd}`);
+        }
+        catch (e) {
+            if (missingOkay && e.code === "ENOENT") {
+                link = "<<<deleted>>>";
+            }
+            else {
+                throw e;
+            }
+        }
+        // Rewrite to exclude non-deterministic numbers:
+        const linkCleaned = link.replace(/:\[\d+\]/, ":[...]");
+        const pretty = `${fd}->${linkCleaned}`;
+        return {fd, link, linkCleaned, pretty};
+    });
+    const pretty = fdLinks.map(x => x.pretty).join(",");
+    const fdMap = new Map(fdLinks.map(x => [x.fd, x]));
+    return {fdLinks, fdMap, pretty};
+  }
+
+  async function getSpawnFds(options) {
+    // Run a program that does nothing except pause indefinitely, thus an
+    // opportunity to inspect its /proc/PID/fd/*:
+    const proc = spawn("sleep", ["inf"], options);
+
+    // XXX sleeping is a hack to wait for the loader to finish; The loader
+    // opens files and thus messes with the file descriptor list; That's bad
+    // because this test needs a stable file descriptor list. The test may be
+    // flaky (and have this delay) until a more suitable child program is
+    // found. (But so far in my anecdotal tests, this delay has been sufficient
+    // to completely avoid flakiness.)
+    await Bun.sleep(10);
+
+    // Capture the file descriptor list used by the child.  Using Int32Array
+    // because it has .sort() that sorts numbers correctly:
+    const result = getProcessFds(proc.pid);
+
+    proc.kill();
+
+    return result;
+  }
+
+  it("should handle null for first 4 positions of stdio", async () => {
+    if (process.platform === "linux") {
+      // The following expected texts in .toBe() may not be production quality
+      // yet because depending on how or what runs this code (TBD), may also be
+      // "/memfd:..." (or something else?) instead of "pipe:[...]", and so
+      // something may need to figure that out in order build the correct
+      // expected text:
+      expect((await getSpawnFds({stdio: []})).pretty).toBe(
+        `0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
+      expect((await getSpawnFds({stdio: [null]})).pretty).toBe(
+        `0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
+      expect((await getSpawnFds({stdio: [null, null]})).pretty).toBe(
+        `0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
+      expect((await getSpawnFds({stdio: [null, null, null]})).pretty).toBe(
+        `0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
+      expect((await getSpawnFds({stdio: [null, null, null, null]})).pretty).toBe(
+        `0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
+    }
   });
 });
 

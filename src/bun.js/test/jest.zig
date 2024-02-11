@@ -1857,7 +1857,21 @@ fn eachBind(
                 (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
             const formattedLabel = formatLabel(globalThis, label, function_args, test_idx) catch return .zero;
 
-            if (each_data.is_test) {
+            var is_skip = false;
+
+            if (Jest.runner.?.filter_regex) |regex| {
+                var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
+                buffer.reset();
+                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                buffer.append(formattedLabel) catch unreachable;
+                const str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
+                is_skip = !regex.matches(str);
+            }
+
+            if (is_skip) {
+                parent.skip_count += 1;
+                function.unprotect();
+            } else if (each_data.is_test) {
                 function.protect();
                 parent.tests.append(allocator, TestScope{
                     .label = formattedLabel,

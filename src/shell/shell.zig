@@ -1799,6 +1799,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         switch (char) {
                             '0'...'9' => {
                                 _ = self.eat();
+                                if (count >= 32) {
+                                    return null;
+                                }
                                 buf[count] = @intCast(char);
                                 count += 1;
                                 continue;
@@ -1884,6 +1887,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 const char = result.char;
                 switch (char) {
                     '0'...'9' => {
+                        if (count >= 32) return null;
                         // Safe to cast here because 0-8 is in ASCII range
                         buf[count] = @intCast(char);
                         count += 1;

@@ -1261,7 +1261,12 @@ pub const EventLoop = struct {
 
         if (loop.isActive()) {
             this.processGCTimer();
+            var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable else {};
             loop.tick();
+
+            if (comptime Environment.isDebug) {
+                log("tick {}", .{bun.fmt.fmtDuration(event_loop_sleep_timer.read())});
+            }
         } else {
             loop.tickWithoutIdle();
         }

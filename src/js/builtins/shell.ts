@@ -5,7 +5,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
   class ShellError extends Error {
     #output: ShellOutput;
     constructor(output: ShellOutput) {
-      super(`Failed with exit code: ${output}`)
+      super(`Failed with exit code: ${output}`);
       this.#output = output;
     }
 
@@ -85,7 +85,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
           } else {
             res(out);
           }
-        }
+        };
         reject = code => rej(new ShellError(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code)));
       });
 
@@ -160,7 +160,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     }
 
     throws(doThrow: boolean | undefined): this {
-      this.#throws = typeof doThrow === 'boolean' ? doThrow : false;
+      this.#throws = typeof doThrow === "boolean" ? doThrow : false;
       return this;
     }
 
@@ -256,14 +256,14 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       return this;
     }
     throws(doThrow: boolean | undefined) {
-      this[throwsSymbol] =  typeof doThrow === 'boolean' ? doThrow : false;
+      this[throwsSymbol] = typeof doThrow === "boolean" ? doThrow : false;
       return this;
     }
   }
 
   var BunShell = function BunShell() {
     const [first, ...rest] = arguments;
-    if (first.raw === undefined) throw new Error('Please use `$` as a tagged template function: $`cmd arg1 arg2`')
+    if (first.raw === undefined) throw new Error("Please use `$` as a tagged template function: $`cmd arg1 arg2`");
     const core = new ShellInterpreter(first.raw, ...rest);
 
     const cwd = BunShell[cwdSymbol];
@@ -284,7 +284,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
     var Shell = function Shell() {
       const [first, ...rest] = arguments;
-      if (first.raw === undefined) throw new Error('Please use `$` as a tagged template function: $`cmd arg1 arg2`')
+      if (first.raw === undefined) throw new Error("Please use `$` as a tagged template function: $`cmd arg1 arg2`");
       const core = new ShellInterpreter(first.raw, ...rest);
 
       const cwd = Shell[cwdSymbol];

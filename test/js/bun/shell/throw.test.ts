@@ -2,49 +2,49 @@ import { $ } from "bun";
 import { beforeAll, describe, test, expect } from "bun:test";
 
 beforeAll(() => {
-  $.nothrow()
-})
+  $.nothrow();
+});
 
-describe('throw', () => {
+describe("throw", () => {
   test("enabled globally", async () => {
     $.throws(true);
     let e;
     try {
-      await $`ls ksjflkjfksjdflksdjflksdf`
-      expect("Woops").toBe("Should have thrown")
+      await $`ls ksjflkjfksjdflksdjflksdf`;
+      expect("Woops").toBe("Should have thrown");
     } catch (err) {
       e = err;
     }
-    expect(e).toBeDefined()
+    expect(e).toBeDefined();
   });
 
   test("enabled locally", async () => {
     let e;
     try {
-      await $`ls ksjflkjfksjdflksdjflksdf`.throws(true)
-      expect("Woops").toBe("Should have thrown")
+      await $`ls ksjflkjfksjdflksdjflksdf`.throws(true);
+      expect("Woops").toBe("Should have thrown");
     } catch (err) {
       e = err;
     }
-    expect(e).toBeDefined()
+    expect(e).toBeDefined();
   });
 
   test("disable globally", async () => {
-    $.throws(true)
-    $.nothrow()
+    $.throws(true);
+    $.nothrow();
     try {
-      await $`ls ksjflkjfksjdflksdjflksdf`
+      await $`ls ksjflkjfksjdflksdjflksdf`;
     } catch (err) {
-      expect("Woops").toBe("Should not have thrown")
+      expect("Woops").toBe("Should not have thrown");
     }
   });
 
   test("disable locally", async () => {
-    $.throws(true)
+    $.throws(true);
     try {
-      await $`ls ksjflkjfksjdflksdjflksdf`.nothrow()
+      await $`ls ksjflkjfksjdflksdjflksdf`.nothrow();
     } catch (err) {
-      expect("Woops").toBe("Should not have thrown")
+      expect("Woops").toBe("Should not have thrown");
     }
   });
-})
+});

@@ -20,7 +20,7 @@ $.nothrow();
 let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];
 beforeAll(async () => {
-  $.nothrow()
+  $.nothrow();
   temp_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
   await mkdir(temp_dir, { recursive: true });
 
@@ -273,19 +273,24 @@ describe("bunshell", () => {
     expect(stdout.toString()).toEqual(`noice\n`);
   });
 
-  describe('glob expansion', () => {
-    test('No matches should fail', async () => {
+  describe("glob expansion", () => {
+    test("No matches should fail", async () => {
       // Issue #8403: https://github.com/oven-sh/bun/issues/8403
-      await TestBuilder.command`ls *.sdfljsfsdf`.exitCode(1).stderr('bun: no matches found: *.sdfljsfsdf\n').run();
-    })
+      await TestBuilder.command`ls *.sdfljsfsdf`.exitCode(1).stderr("bun: no matches found: *.sdfljsfsdf\n").run();
+    });
 
-    test('Should work with a different cwd', async () => {
+    test("Should work with a different cwd", async () => {
       // Calling `ensureTempDir()` changes the cwd here
-      await TestBuilder.command`ls *.js`.ensureTempDir().file('foo.js', 'foo').file('bar.js', 'bar').stdout((out) => {
-          expect(sortedShellOutput(out)).toEqual(sortedShellOutput("foo.js\nbar.js\n"))
-      }).run()
-    })
-  })
+      await TestBuilder.command`ls *.js`
+        .ensureTempDir()
+        .file("foo.js", "foo")
+        .file("bar.js", "bar")
+        .stdout(out => {
+          expect(sortedShellOutput(out)).toEqual(sortedShellOutput("foo.js\nbar.js\n"));
+        })
+        .run();
+    });
+  });
 
   describe("brace expansion", () => {
     function doTest(pattern: string, expected: string) {
@@ -464,13 +469,13 @@ describe("deno_task", () => {
     await TestBuilder.command`VAR=1 VAR2=2 BUN_TEST_VAR=1 ${BUN} -e 'console.log(process.env.VAR + process.env.VAR2)'`
       .stdout("12\n")
       .run();
-    await TestBuilder.command`EMPTY= BUN_TEST_VAR=1 ${BUN} -e ${'console.log(`EMPTY: ${process.env.EMPTY}`)'}`
+    await TestBuilder.command`EMPTY= BUN_TEST_VAR=1 ${BUN} -e ${"console.log(`EMPTY: ${process.env.EMPTY}`)"}`
       .stdout("EMPTY: \n")
       .run();
     await TestBuilder.command`"echo" "1"`.stdout("1\n").run();
     await TestBuilder.command`echo test-dashes`.stdout("test-dashes\n").run();
     await TestBuilder.command`echo 'a/b'/c`.stdout("a/b/c\n").run();
-    await TestBuilder.command`echo 'a/b'ctest\"te  st\"'asdf'`.stdout("a/bctest\"te st\"asdf\n").run();
+    await TestBuilder.command`echo 'a/b'ctest\"te  st\"'asdf'`.stdout('a/bctest"te st"asdf\n').run();
     await TestBuilder.command`echo --test=\"2\" --test='2' test\"TEST\" TEST'test'TEST 'test''test' test'test'\"test\" \"test\"\"test\"'test'`
       .stdout(`--test="2" --test=2 test"TEST" TESTtestTEST testtest testtest"test" "test""test"test\n`)
       .run();

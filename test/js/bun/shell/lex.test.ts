@@ -5,7 +5,7 @@ import { TestBuilder, redirect } from "./util";
 
 const BUN = process.argv0;
 
-$.nothrow()
+$.nothrow();
 
 describe("lex shell", () => {
   test("basic", () => {
@@ -682,8 +682,8 @@ describe("lex shell", () => {
         .exitCode(1)
         .run();
 
-      await TestBuilder.command`echo hi && ${{raw: "`echo uh oh"}}`.error("Unclosed command substitution").run();
-      await TestBuilder.command`echo hi && ${{raw: "`echo uh oh`"}}`
+      await TestBuilder.command`echo hi && ${{ raw: "`echo uh oh" }}`.error("Unclosed command substitution").run();
+      await TestBuilder.command`echo hi && ${{ raw: "`echo uh oh`" }}`
         .stdout("hi\n")
         .stderr("bun: command not found: uh\n")
         .exitCode(1)

@@ -57,11 +57,10 @@ declare module "bun" {
     | SpawnOptions.Writable
     | ReadableStream;
 
-  class ShellError extends Error implements ShellOutput{
+  class ShellError extends Error implements ShellOutput {
     readonly stdout: Buffer;
     readonly stderr: Buffer;
     readonly exitCode: number;
-
 
     /**
      * Read from stdout as a string
@@ -114,7 +113,7 @@ declare module "bun" {
      */
     arrayBuffer(): ArrayBuffer;
 
-      /**
+    /**
      * Read from stdout as a Blob
      *
      * @returns Stdout as a blob
@@ -357,7 +356,7 @@ declare module "bun" {
      */
     arrayBuffer(): ArrayBuffer;
 
-      /**
+    /**
      * Read from stdout as a Blob
      *
      * @returns Stdout as a blob

@@ -10,7 +10,7 @@ import { TestBuilder } from "./util";
 
 $.env(bunEnv);
 $.cwd(process.cwd());
-$.nothrow()
+$.nothrow();
 
 const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
   ["redirect_file", () => TestBuilder.command`echo hello > test.txt`.fileEquals("test.txt", "hello\n")],

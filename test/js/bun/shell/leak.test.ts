@@ -62,6 +62,9 @@ describe("fd leak", () => {
       for (let i = 0; i < runs; i++) {
         await builder().quiet().run();
       }
+      // Run the GC, because the interpreter closes file descriptors when it
+      // deinitializes when its finalizer is called
+      Bun.gc(true);
       const fd = openSync(devNull, "r");
       closeSync(fd);
       expect(fd).toBe(baseline);

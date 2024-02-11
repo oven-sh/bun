@@ -100,6 +100,9 @@
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "wtf/text/StringToIntegerConversion.h"
 
+#include "JavaScriptCore/GetterSetter.h"
+#include "JavaScriptCore/CustomGetterSetter.h"
+
 static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
 {
     return sv.substring(start, end - start);
@@ -5405,4 +5408,24 @@ extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* global
 extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
 {
     return DECLARE_CATCH_SCOPE(globalObject->vm()).exception() != 0;
+}
+
+CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter *gettersetter)
+{
+    return gettersetter->isGetterNull();
+}
+
+CPP_DECL bool JSC__GetterSetter__isSetterNull(JSC__GetterSetter *gettersetter)
+{
+    return gettersetter->isSetterNull();
+}
+
+CPP_DECL bool JSC__CustomGetterSetter__isGetterNull(JSC__CustomGetterSetter *gettersetter)
+{
+    return gettersetter->getter() == nullptr;
+}
+
+CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter *gettersetter)
+{
+    return gettersetter->setter() == nullptr;
 }

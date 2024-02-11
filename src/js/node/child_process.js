@@ -1104,9 +1104,12 @@ class ChildProcess extends EventEmitter {
   #stdioOptions;
 
   #createStdioObject() {
-    let result = new Array(this.#stdioOptions.length);
-    for (let i = 0; i < this.#stdioOptions.length; i++) {
-      const element = this.#stdioOptions[i];
+    const opts = this.#stdioOptions;
+    const length = opts.length;
+    let result = new Array(length);
+    for (let i = 0; i < length; i++) {
+      const element = opts[i];
+
       if (element !== "pipe") {
         result[i] = null;
         continue;
@@ -1185,6 +1188,7 @@ class ChildProcess extends EventEmitter {
 
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio);
+    const argv0 = file || options.argv0;
 
     // TODO: better ipc support
     const ipc = $isArray(stdio) && stdio[3] === "ipc";
@@ -1218,6 +1222,7 @@ class ChildProcess extends EventEmitter {
       },
       lazy: true,
       ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      argv0,
     });
     this.pid = this.#handle.pid;
 

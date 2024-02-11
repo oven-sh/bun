@@ -17,6 +17,7 @@ export class TestBuilder {
   private file_equals: { [filename: string]: string } = {};
 
   private tempdir: string | undefined = undefined;
+  private _env: { [key: string]: string } | undefined = undefined;
 
   static UNEXPECTED_SUBSHELL_ERROR_OPEN =
     "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.";
@@ -49,6 +50,11 @@ export class TestBuilder {
   file(path: string, contents: string): this {
     const tempdir = this.getTempDir();
     fs.writeFileSync(join(tempdir, path), contents);
+    return this;
+  }
+
+  env(env: { [key: string]: string }): this {
+    this._env = env;
     return this;
   }
 
@@ -143,7 +149,7 @@ export class TestBuilder {
       return undefined;
     }
 
-    const output = await this.promise.val;
+    const output = await (this._env !== undefined ? this.promise.val.env(this._env)  : this.promise.val);
 
     const { stdout, stderr, exitCode } = output!;
     const tempdir = this.tempdir || "NO_TEMP_DIR";

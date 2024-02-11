@@ -87,7 +87,7 @@ describe("fd leak", () => {
 
 
             test("${name}", async () => {
-              const hundredMb = ${threshold}
+              const threshold = ${threshold}
               let prev: number | undefined = undefined;
               for (let i = 0; i < ${runs}; i++) {
                 Bun.gc(true);
@@ -99,7 +99,8 @@ describe("fd leak", () => {
                 if (prev === undefined) {
                   prev = val;
                 } else {
-                  expect(Math.abs(prev - val)).toBeLessThan(hundredMb)
+                  expect(Math.abs(prev - val)).toBeLessThan(threshold)
+                  if (!(Math.abs(prev - val) < threshold)) process.exit(1);
                 }
               }
             }, 1_000_000)
@@ -130,5 +131,5 @@ describe("fd leak", () => {
     100,
   );
   memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc((1 << 20) * 100)}`, 100);
-  memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100, 4096);
+  memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100, -10);
 });

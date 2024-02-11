@@ -207,7 +207,7 @@ pub const EnvStr = packed struct {
     tag: Tag,
     len: usize = 0,
 
-    const print = bun.Output.scoped(.EnvStr, false);
+    const print = bun.Output.scoped(.EnvStr, true);
 
     const Tag = enum(u16) {
         /// Dealloced by reference counting
@@ -269,7 +269,7 @@ pub const RefCountedStr = struct {
     len: u32 = 0,
     ptr: [*]const u8 = undefined,
 
-    const print = bun.Output.scoped(.RefCountedEnvStr, true);
+    const print = bun.Output.scoped(.RefCountedEnvStr, false);
 
     // /// Use bun.default_allocator
     // const DEFAULT_ALLOC_TAG: usize = 1 << 63;
@@ -1157,6 +1157,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
         fn finish(this: *ThisInterpreter, exit_code: ExitCode) void {
             log("finish", .{});
+            defer decrPendingActivityFlag(&this.has_pending_activity);
             if (comptime EventLoopKind == .js) {
                 // defer this.deinit();
                 // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
@@ -1170,6 +1171,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
         fn errored(this: *ThisInterpreter, the_error: ShellError) void {
             _ = the_error; // autofix
+            defer decrPendingActivityFlag(&this.has_pending_activity);
 
             if (comptime EventLoopKind == .js) {
                 // defer this.deinit();
@@ -1320,6 +1322,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         pub fn finalize(
             this: *ThisInterpreter,
         ) callconv(.C) void {
+            log("Interpreter finalize", .{});
             this.deinit();
         }
 
@@ -2202,10 +2205,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 this.base.shell.deinit();
+                bun.default_allocator.destroy(this);
             }
 
             pub fn deinitFromInterpreter(this: *Script) void {
-                this.base.shell.deinitImpl(false, false);
+                // Let the interpreter deinitialize the shell state
+                // this.base.shell.deinitImpl(false, false);
+                bun.default_allocator.destroy(this);
             }
         };
 
@@ -3115,6 +3121,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         },
                         .expanding_redirect => {
                             if (this.state.expanding_redirect.idx >= 1) {
+                                this.state.expanding_redirect.expansion.deinit();
                                 this.state = .{
                                     .expanding_args = undefined,
                                 };
@@ -3240,6 +3247,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 if (child.ptr.is(Expansion)) {
+                    child.deinit();
                     if (exit_code != 0) {
                         const err = switch (this.state) {
                             .expanding_redirect => this.state.expanding_redirect.expansion.state.err,
@@ -3589,7 +3597,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     this.exec = .none;
                 }
 
-                if (!this.spawn_arena_freed) this.spawn_arena.deinit();
+                if (!this.spawn_arena_freed) {
+                    log("Spawn arena free", .{});
+                    this.spawn_arena.deinit();
+                }
                 this.freed = true;
                 this.base.interpreter.allocator.destroy(this);
             }

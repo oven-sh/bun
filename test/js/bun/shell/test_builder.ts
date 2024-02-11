@@ -149,7 +149,7 @@ export class TestBuilder {
       return undefined;
     }
 
-    const output = await (this._env !== undefined ? this.promise.val.env(this._env)  : this.promise.val);
+    const output = await (this._env !== undefined ? this.promise.val.env(this._env) : this.promise.val);
 
     const { stdout, stderr, exitCode } = output!;
     const tempdir = this.tempdir || "NO_TEMP_DIR";

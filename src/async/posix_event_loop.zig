@@ -351,16 +351,16 @@ pub const FilePoll = struct {
             // },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(StaticPipeWriter))) => {
                 var handler: *StaticPipeWriter = ptr.as(StaticPipeWriter);
-                handler.onPoll(size_or_offset);
+                handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(FileSink))) => {
                 var handler: *FileSink = ptr.as(FileSink);
-                handler.onPoll(size_or_offset);
+                handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(BufferedReader))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Reader", .{poll.fd});
                 var handler: *BufferedReader = ptr.as(BufferedReader);
-                handler.onPoll(size_or_offset);
+                handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(Process))) => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Process", .{poll.fd});

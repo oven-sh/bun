@@ -463,13 +463,19 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
     };
 
     const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    global_scope_log("poll({d}) readable: {any} ({d})", .{ fd, result, polls[0].revents });
-    return if (result and polls[0].revents & std.os.POLL.HUP != 0)
+    const rc = if (result and polls[0].revents & std.os.POLL.HUP != 0)
         PollFlag.hup
     else if (result)
         PollFlag.ready
     else
         PollFlag.not_ready;
+    global_scope_log("poll({d}, .readable): {any} ({s}{s})", .{
+        fd,
+        result,
+        @tagName(rc),
+        if (polls[0].revents & std.os.POLL.ERR != 0) " ERR " else "",
+    });
+    return rc;
 }
 
 pub const PollFlag = enum { ready, not_ready, hup };
@@ -488,14 +494,19 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
     };
 
     const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    global_scope_log("poll({d}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
-    if (result and polls[0].revents & std.os.POLL.HUP != 0) {
-        return PollFlag.hup;
-    } else if (result) {
-        return PollFlag.ready;
-    } else {
-        return PollFlag.not_ready;
-    }
+    const rc = if (result and polls[0].revents & std.os.POLL.HUP != 0)
+        PollFlag.hup
+    else if (result)
+        PollFlag.ready
+    else
+        PollFlag.not_ready;
+    global_scope_log("poll({d}, .writable): {any} ({s}{s})", .{
+        fd,
+        result,
+        @tagName(rc),
+        if (polls[0].revents & std.os.POLL.ERR != 0) " ERR " else "",
+    });
+    return rc;
 }
 
 /// Do not use this function, call std.debug.panic directly.

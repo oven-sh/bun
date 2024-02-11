@@ -369,6 +369,7 @@ pub const ReadableStream = struct {
             .context = .{
                 .event_loop = JSC.EventLoopHandle.init(globalThis.bunVM().eventLoop()),
             },
+            .ref_count = 2,
         });
         source.context.reader.from(buffered_reader, &source.context);
 
@@ -876,7 +877,7 @@ pub const StreamResult = union(Tag) {
             this.state = .used;
             switch (this.future) {
                 .promise => |p| {
-                    StreamResult.fulfillPromise(this.result, p.promise, p.globalThis);
+                    StreamResult.fulfillPromise(&this.result, p.promise, p.globalThis);
                 },
                 .handler => |h| {
                     h.handler(h.ctx, this.result);
@@ -892,24 +893,31 @@ pub const StreamResult = union(Tag) {
         };
     }
 
-    pub fn fulfillPromise(result: StreamResult, promise: *JSC.JSPromise, globalThis: *JSC.JSGlobalObject) void {
-        promise.asValue(globalThis).unprotect();
-        switch (result) {
+    pub fn fulfillPromise(result: *StreamResult, promise: *JSC.JSPromise, globalThis: *JSC.JSGlobalObject) void {
+        const promise_value = promise.asValue(globalThis);
+        defer promise_value.unprotect();
+
+        switch (result.*) {
             .err => |err| {
-                if (err == .Error) {
-                    promise.reject(globalThis, err.Error.toJSC(globalThis));
-                } else {
+                const value = brk: {
+                    if (err == .Error) break :brk err.Error.toJSC(globalThis);
+
                     const js_err = err.JSValue;
                     js_err.ensureStillAlive();
                     js_err.unprotect();
-                    promise.reject(globalThis, js_err);
-                }
+
+                    break :brk js_err;
+                };
+                result.* = .{ .temporary = .{} };
+                promise.reject(globalThis, value);
             },
             .done => {
                 promise.resolve(globalThis, JSValue.jsBoolean(false));
             },
             else => {
-                promise.resolve(globalThis, result.toJS(globalThis));
+                const value = result.toJS(globalThis);
+                result.* = .{ .temporary = .{} };
+                promise.resolve(globalThis, value);
             },
         }
     }
@@ -3110,6 +3118,7 @@ pub const FileReader = struct {
 
         const OpenedFileBlob = struct {
             fd: bun.FileDescriptor,
+            pollable: bool = false,
         };
 
         pub fn openFileBlob(
@@ -3179,6 +3188,8 @@ pub const FileReader = struct {
                     _ = Syscall.close(fd);
                     return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
                 }
+
+                this.pollable = bun.sys.isPollable(stat.mode) or (file.is_atty orelse false);
             }
 
             this.fd = fd;
@@ -3210,20 +3221,26 @@ pub const FileReader = struct {
 
     pub fn onStart(this: *FileReader) StreamStart {
         this.reader.setParent(this);
-
+        const was_lazy = this.lazy != .none;
+        var pollable = false;
         if (this.lazy == .blob) {
             switch (this.lazy.blob.data) {
                 .bytes => @panic("Invalid state in FileReader: expected file "),
                 .file => |*file| {
-                    this.fd = switch (Lazy.openFileBlob(file)) {
+                    defer {
+                        this.lazy.blob.deref();
+                        this.lazy = .none;
+                    }
+                    switch (Lazy.openFileBlob(file)) {
                         .err => |err| {
                             this.fd = bun.invalid_fd;
                             return .{ .err = err };
                         },
-                        .result => |opened| opened.fd,
-                    };
-                    this.lazy.blob.deref();
-                    this.lazy = .none;
+                        .result => |opened| {
+                            this.fd = opened.fd;
+                            pollable = opened.pollable;
+                        },
+                    }
                 },
             }
         }
@@ -3232,14 +3249,16 @@ pub const FileReader = struct {
             this.fd = this.reader.getFd();
         }
 
-        _ = this.parent().incrementCount();
         this.event_loop = JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop());
 
-        switch (this.reader.start(this.fd, true)) {
-            .result => {},
-            .err => |e| {
-                return .{ .err = e };
-            },
+        if (was_lazy) {
+            _ = this.parent().incrementCount();
+            switch (this.reader.start(this.fd, pollable)) {
+                .result => {},
+                .err => |e| {
+                    return .{ .err = e };
+                },
+            }
         }
 
         this.started = true;
@@ -3263,16 +3282,23 @@ pub const FileReader = struct {
     pub fn onCancel(this: *FileReader) void {
         if (this.done) return;
         this.done = true;
-        this.reader.close();
+        if (!this.reader.isDone())
+            this.reader.close();
     }
 
     pub fn deinit(this: *FileReader) void {
         this.buffered.deinit(bun.default_allocator);
         this.reader.deinit();
         this.pending_value.deinit();
+
+        if (this.lazy != .none) {
+            this.lazy.blob.deref();
+            this.lazy = .none;
+        }
     }
 
-    pub fn onReadChunk(this: *@This(), buf: []const u8, hasMore: bool) bool {
+    pub fn onReadChunk(this: *@This(), init_buf: []const u8, hasMore: bool) bool {
+        const buf = init_buf;
         log("onReadChunk() = {d}", .{buf.len});
 
         if (this.done) {
@@ -3314,6 +3340,8 @@ pub const FileReader = struct {
 
             if (this.pending_view.len >= buf.len) {
                 @memcpy(this.pending_view[0..buf.len], buf);
+                this.reader.buffer().clearRetainingCapacity();
+                this.buffered.clearRetainingCapacity();
 
                 this.pending.result = .{
                     .into_array = .{
@@ -3474,6 +3502,7 @@ pub const FileReader = struct {
     fn consumeReaderBuffer(this: *FileReader) void {
         if (this.buffered.capacity > 0) {
             this.buffered.appendSlice(bun.default_allocator, this.reader.buffer().items) catch bun.outOfMemory();
+            this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
         } else {
             this.buffered = this.reader.buffer().moveToUnmanaged();
         }

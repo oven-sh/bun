@@ -1060,13 +1060,22 @@ pub fn spawnProcessPosix(
     var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
     const allocator = stack_fallback.get();
     var to_close_at_end = std.ArrayList(bun.FileDescriptor).init(allocator);
+    var to_set_cloexec = std.ArrayList(bun.FileDescriptor).init(allocator);
     defer {
+        for (to_set_cloexec.items) |fd| {
+            const fcntl_flags = bun.sys.fcntl(fd, std.os.F.GETFD, 0).unwrap() catch continue;
+            _ = bun.sys.fcntl(fd, std.os.F.SETFD, std.os.FD_CLOEXEC | fcntl_flags);
+        }
+        to_set_cloexec.clearAndFree();
+
         for (to_close_at_end.items) |fd| {
             _ = bun.sys.close(fd);
         }
         to_close_at_end.clearAndFree();
     }
+
     var to_close_on_error = std.ArrayList(bun.FileDescriptor).init(allocator);
+
     errdefer {
         for (to_close_on_error.items) |fd| {
             _ = bun.sys.close(fd);
@@ -1106,6 +1115,7 @@ pub fn spawnProcessPosix(
 
                 try to_close_at_end.append(theirs);
                 try to_close_on_error.append(ours);
+                try to_set_cloexec.append(ours);
 
                 stdio.* = ours;
             },

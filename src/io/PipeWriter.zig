@@ -63,8 +63,8 @@ pub fn PosixPipeWriter(
             }
         }
 
-        pub fn onPoll(parent: *This, size_hint: isize) void {
-            switch (drainBufferedData(parent, if (size_hint > 0) @intCast(size_hint) else std.math.maxInt(usize))) {
+        pub fn onPoll(parent: *This, size_hint: isize, received_hup: bool) void {
+            switch (drainBufferedData(parent, if (size_hint > 0) @intCast(size_hint) else std.math.maxInt(usize), received_hup)) {
                 .pending => |wrote| {
                     if (comptime registerPoll) |register| {
                         register(parent);
@@ -89,7 +89,8 @@ pub fn PosixPipeWriter(
             }
         }
 
-        pub fn drainBufferedData(parent: *This, max_write_size: usize) WriteResult {
+        pub fn drainBufferedData(parent: *This, max_write_size: usize, received_hup: bool) WriteResult {
+            _ = received_hup; // autofix
             var buf = getBuffer(parent);
             buf = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
             const original_buf = buf;
@@ -510,7 +511,7 @@ pub fn PosixStreamingWriter(
         pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable);
 
         pub fn flush(this: *PosixWriter) WriteResult {
-            return this.drainBufferedData(std.math.maxInt(usize));
+            return this.drainBufferedData(std.math.maxInt(usize), false);
         }
 
         pub fn deinit(this: *PosixWriter) void {

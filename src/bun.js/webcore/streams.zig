@@ -1489,6 +1489,40 @@ const AutoFlusher = struct {
     }
 };
 
+pub const SinkDestructor = struct {
+    const Detached = opaque {};
+    const Subprocess = JSC.API.Bun.Subprocess;
+    pub const Ptr = bun.TaggedPointerUnion(.{
+        Detached,
+        Subprocess,
+    });
+
+    pub export fn Bun__onSinkDestroyed(
+        ptr_value: ?*anyopaque,
+        sink_ptr: ?*anyopaque,
+    ) callconv(.C) void {
+        _ = sink_ptr; // autofix
+        const ptr = Ptr.from(ptr_value);
+
+        if (ptr.isNull()) {
+            return;
+        }
+
+        switch (ptr.tag()) {
+            .Detached => {
+                return;
+            },
+            .Subprocess => {
+                const subprocess = ptr.as(Subprocess);
+                subprocess.onStdinDestroyed();
+            },
+            else => {
+                Output.debugWarn("Unknown sink type", .{});
+            },
+        }
+    }
+};
+
 pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
     return struct {
         sink: SinkType,

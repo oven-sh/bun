@@ -388,7 +388,6 @@ export function readableByteStreamControllerRespondInternal(controller, bytesWri
   let stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
 
   if ($getByIdDirectPrivate(stream, "state") === $streamClosed) {
-    if (bytesWritten !== 0) throw new TypeError("bytesWritten is different from 0 even though stream is closed");
     $readableByteStreamControllerRespondInClosedState(controller, firstDescriptor);
   } else {
     $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);

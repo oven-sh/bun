@@ -153,9 +153,12 @@ pub const Subprocess = struct {
     ipc: IPC.IPCData,
     flags: Flags = .{},
 
+    weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
+
     pub const Flags = packed struct {
         is_sync: bool = false,
         killed: bool = false,
+        has_stdin_destructor_called: bool = false,
     };
 
     pub const SignalCode = bun.SignalCode;
@@ -488,7 +491,7 @@ pub const Subprocess = struct {
         globalThis: *JSGlobalObject,
     ) callconv(.C) JSValue {
         this.observable_getters.insert(.stdin);
-        return this.stdin.toJS(globalThis);
+        return this.stdin.toJS(globalThis, this);
     }
 
     pub fn getStdout(
@@ -562,6 +565,11 @@ pub const Subprocess = struct {
     pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         this.unref(false);
         return JSC.JSValue.jsUndefined();
+    }
+
+    pub fn onStdinDestroyed(this: *Subprocess) void {
+        this.flags.has_stdin_destructor_called = true;
+        this.weak_file_sink_stdin_ptr = null;
     }
 
     pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
@@ -1006,8 +1014,23 @@ pub const Subprocess = struct {
 
             switch (stdio) {
                 .pipe => {
+                    const pipe = JSC.WebCore.FileSink.create(event_loop, fd.?);
+                    pipe.writer.setParent(pipe);
+
+                    switch (pipe.writer.start(pipe.fd, true)) {
+                        .result => {},
+                        .err => |err| {
+                            _ = err; // autofix
+                            pipe.deref();
+                            return error.UnexpectedCreatingStdin;
+                        },
+                    }
+
+                    subprocess.weak_file_sink_stdin_ptr = pipe;
+                    subprocess.flags.has_stdin_destructor_called = false;
+
                     return Writable{
-                        .pipe = JSC.WebCore.FileSink.create(event_loop, fd.?),
+                        .pipe = pipe,
                     };
                 },
 
@@ -1041,28 +1064,36 @@ pub const Subprocess = struct {
             }
         }
 
-        pub fn toJS(this: *Writable, globalThis: *JSC.JSGlobalObject) JSValue {
+        pub fn toJS(this: *Writable, globalThis: *JSC.JSGlobalObject, subprocess: *Subprocess) JSValue {
             return switch (this.*) {
                 .fd => |fd| JSValue.jsNumber(fd),
                 .memfd, .ignore => JSValue.jsUndefined(),
                 .buffer, .inherit => JSValue.jsUndefined(),
                 .pipe => |pipe| {
                     this.* = .{ .ignore = {} };
-                    pipe.writer.setParent(pipe);
-                    switch (pipe.writer.start(pipe.fd, true)) {
-                        .err => |err| {
-                            globalThis.throwValue(err.toJSC(globalThis));
-                            return JSValue.jsUndefined();
-                        },
-                        .result => {},
+                    if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
+                        pipe.onAttachedProcessExit();
+                        return pipe.toJS(globalThis);
+                    } else {
+                        subprocess.flags.has_stdin_destructor_called = false;
+                        subprocess.weak_file_sink_stdin_ptr = pipe;
+                        return pipe.toJSWithDestructor(
+                            globalThis,
+                            JSC.WebCore.SinkDestructor.Ptr.init(subprocess),
+                        );
                     }
-
-                    return pipe.toJS(globalThis);
                 },
             };
         }
 
         pub fn finalize(this: *Writable) void {
+            const subprocess = @fieldParentPtr(Subprocess, "stdin", this);
+            if (subprocess.this_jsvalue != .zero) {
+                if (JSC.Codegen.JSSubprocess.stdinGetCached(subprocess.this_jsvalue)) |existing_value| {
+                    JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
+                }
+            }
+
             return switch (this.*) {
                 .pipe => |pipe| {
                     pipe.deref();
@@ -1108,6 +1139,18 @@ pub const Subprocess = struct {
         this.pid_rusage = rusage.*;
         const is_sync = this.flags.is_sync;
         _ = is_sync; // autofix
+        if (this.weak_file_sink_stdin_ptr) |pipe| {
+            this.weak_file_sink_stdin_ptr = null;
+            this.flags.has_stdin_destructor_called = true;
+            if (this_jsvalue != .zero) {
+                if (JSC.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
+                    JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
+                }
+            }
+
+            pipe.onAttachedProcessExit();
+        }
+
         var must_drain_tasks = false;
         defer {
             this.updateHasPendingActivity();
@@ -1204,6 +1247,11 @@ pub const Subprocess = struct {
 
     pub fn finalize(this: *Subprocess) callconv(.C) void {
         log("finalize", .{});
+        // Ensure any code which references the "this" value doesn't attempt to
+        // access it after it's been freed We cannot call any methods which
+        // access GC'd values during the finalizer
+        this.this_jsvalue = .zero;
+
         std.debug.assert(!this.hasPendingActivity() or JSC.VirtualMachine.get().isShuttingDown());
         this.finalizeStreams();
 
@@ -1309,6 +1357,7 @@ pub const Subprocess = struct {
         var ipc_mode = IPCMode.none;
         var ipc_callback: JSValue = .zero;
         var extra_fds = std.ArrayList(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
+        var argv0: ?[*:0]const u8 = null;
 
         var windows_hide: bool = false;
 
@@ -1325,11 +1374,23 @@ pub const Subprocess = struct {
             } else if (!args.isObject()) {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
                 return .zero;
-            } else if (args.get(globalThis, "cmd")) |cmd_value_| {
+            } else if (args.getTruthy(globalThis, "cmd")) |cmd_value_| {
                 cmd_value = cmd_value_;
             } else {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
                 return .zero;
+            }
+
+            if (args.isObject()) {
+                if (args.getTruthy(globalThis, "argv0")) |argv0_| {
+                    const argv0_str = argv0_.getZigString(globalThis);
+                    if (argv0_str.len > 0) {
+                        argv0 = argv0_str.toOwnedSliceZ(allocator) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        };
+                    }
+                }
             }
 
             {
@@ -1353,12 +1414,29 @@ pub const Subprocess = struct {
                     var first_cmd = cmds_array.next().?;
                     var arg0 = first_cmd.toSlice(globalThis, allocator);
                     defer arg0.deinit();
-                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
-                        globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
-                        return .zero;
-                    };
-                    argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved)) catch {
+
+                    if (argv0 == null) {
+                        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
+                            globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
+                            return .zero;
+                        };
+                        argv0 = allocator.dupeZ(u8, resolved) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        };
+                    } else {
+                        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
+                            globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
+                            return .zero;
+                        };
+                        argv0 = allocator.dupeZ(u8, resolved) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        };
+                    }
+                    argv.appendAssumeCapacity(allocator.dupeZ(u8, arg0.slice()) catch {
                         globalThis.throwOutOfMemory();
                         return .zero;
                     });
@@ -1405,73 +1483,65 @@ pub const Subprocess = struct {
                     }
                 }
 
-                if (args.get(globalThis, "cwd")) |cwd_| {
-                    // ignore definitely invalid cwd
-                    if (!cwd_.isEmptyOrUndefinedOrNull()) {
-                        const cwd_str = cwd_.getZigString(globalThis);
-                        if (cwd_str.len > 0) {
-                            // TODO: leak?
-                            cwd = cwd_str.toOwnedSliceZ(allocator) catch {
-                                globalThis.throwOutOfMemory();
-                                return .zero;
-                            };
-                        }
+                if (args.getTruthy(globalThis, "cwd")) |cwd_| {
+                    const cwd_str = cwd_.getZigString(globalThis);
+                    if (cwd_str.len > 0) {
+                        cwd = cwd_str.toOwnedSliceZ(allocator) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        };
                     }
                 }
 
-                if (args.get(globalThis, "onExit")) |onExit_| {
-                    if (!onExit_.isEmptyOrUndefinedOrNull()) {
-                        if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
-                            globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
-                            return .zero;
-                        }
-
-                        on_exit_callback = if (comptime is_sync)
-                            onExit_
-                        else
-                            onExit_.withAsyncContextIfNeeded(globalThis);
+                if (args.getTruthy(globalThis, "onExit")) |onExit_| {
+                    if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
+                        globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
+                        return .zero;
                     }
+
+                    on_exit_callback = if (comptime is_sync)
+                        onExit_
+                    else
+                        onExit_.withAsyncContextIfNeeded(globalThis);
                 }
 
-                if (args.get(globalThis, "env")) |object| {
-                    if (!object.isEmptyOrUndefinedOrNull()) {
-                        if (!object.isObject()) {
-                            globalThis.throwInvalidArguments("env must be an object", .{});
-                            return .zero;
-                        }
+                if (args.getTruthy(globalThis, "env")) |object| {
+                    if (!object.isObject()) {
+                        globalThis.throwInvalidArguments("env must be an object", .{});
+                        return .zero;
+                    }
 
-                        override_env = true;
-                        var object_iter = JSC.JSPropertyIterator(.{
-                            .skip_empty_name = false,
-                            .include_value = true,
-                        }).init(globalThis, object.asObjectRef());
-                        defer object_iter.deinit();
-                        env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
+                    override_env = true;
+                    var object_iter = JSC.JSPropertyIterator(.{
+                        .skip_empty_name = false,
+                        .include_value = true,
+                    }).init(globalThis, object.asObjectRef());
+                    defer object_iter.deinit();
+                    env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
+                        globalThis.throwOutOfMemory();
+                        return .zero;
+                    };
+
+                    // If the env object does not include a $PATH, it must disable path lookup for argv[0]
+                    PATH = "";
+
+                    while (object_iter.next()) |key| {
+                        var value = object_iter.value;
+                        if (value == .undefined) continue;
+
+                        var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ key, value.getZigString(globalThis) }) catch {
                             globalThis.throwOutOfMemory();
                             return .zero;
                         };
 
-                        // If the env object does not include a $PATH, it must disable path lookup for argv[0]
-                        PATH = "";
-
-                        while (object_iter.next()) |key| {
-                            var value = object_iter.value;
-                            if (value == .undefined) continue;
-
-                            var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ key, value.getZigString(globalThis) }) catch {
-                                globalThis.throwOutOfMemory();
-                                return .zero;
-                            };
-
-                            if (key.eqlComptime("PATH")) {
-                                PATH = bun.asByteSlice(line["PATH=".len..]);
-                            }
-
-                            env_array.append(allocator, line) catch {
-                                globalThis.throwOutOfMemory();
-                                return .zero;
-                            };
+                        if (key.eqlComptime("PATH")) {
+                            PATH = bun.asByteSlice(line["PATH=".len..]);
                         }
+
+                        env_array.append(allocator, line) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        };
                     }
                 }
 
@@ -1641,6 +1711,7 @@ pub const Subprocess = struct {
             .stdout = stdio[1].asSpawnOption(),
             .stderr = stdio[2].asSpawnOption(),
             .extra_fds = extra_fds.items,
+            .argv0 = argv0,
 
             .windows = if (Environment.isWindows) bun.spawn.WindowsSpawnOptions.WindowsOptions{
                 .hide_window = windows_hide,

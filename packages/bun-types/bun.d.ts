@@ -3921,7 +3921,16 @@ declare module "bun" {
       /**
        * If true, the subprocess will have a hidden window.
        */
-      // windowsHide?: boolean;
+      windowsHide?: boolean;
+
+      /**
+       * Path to the executable to run in the subprocess. This defaults to `cmds[0]`.
+       *
+       * One use-case for this is for applications which wrap other applications or to simulate a symlink.
+       *
+       * @default cmds[0]
+       */
+      argv0?: string;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> = Opts extends OptionsObject<infer In, infer Out, infer Err>

@@ -3,6 +3,7 @@
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "helpers.h"
 #include "BunClientData.h"
+#include "JavaScriptCore/JSCJSValue.h"
 
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
@@ -1801,30 +1802,10 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
     default: {
         JSC::JSValue moduleName = callFrame->argument(0);
         if (moduleName.isNumber()) {
-            switch (moduleName.toInt32(globalObject)) {
-            case 0: {
-                JSC::throwTypeError(globalObject, scope, "$lazy expects a string"_s);
-                scope.release();
-                return JSC::JSValue::encode(JSC::JSValue {});
-            }
-
-            case ReadableStreamTag::Blob: {
-                return ByteBlob__JSReadableStreamSource__load(globalObject);
-            }
-            case ReadableStreamTag::File: {
-                return FileReader__JSReadableStreamSource__load(globalObject);
-            }
-            case ReadableStreamTag::Bytes: {
-                return ByteStream__JSReadableStreamSource__load(globalObject);
-            }
-
-            default: {
-                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-                JSC::throwTypeError(globalObject, scope, "$lazy expects a string"_s);
-                scope.release();
-                return JSC::JSValue::encode(JSC::JSValue {});
-            }
-            }
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            JSC::throwTypeError(globalObject, scope, "$lazy expects a string"_s);
+            scope.release();
+            return JSC::JSValue::encode(JSC::JSValue {});
         }
 
         auto string = moduleName.toWTFString(globalObject);
@@ -2311,13 +2292,12 @@ extern "C" bool ReadableStream__isLocked(JSC__JSValue possibleReadableStream, Zi
     return stream != nullptr && ReadableStream::isLocked(globalObject, stream);
 }
 
-extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue possibleReadableStream, JSValue* ptr);
-extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue possibleReadableStream, JSValue* ptr)
+extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue possibleReadableStream, void** ptr)
 {
     ASSERT(globalObject);
     JSC::JSObject* object = JSValue::decode(possibleReadableStream).getObject();
     if (!object || !object->inherits<JSReadableStream>()) {
-        *ptr = JSC::JSValue();
+        *ptr = nullptr;
         return -1;
     }
 
@@ -2325,19 +2305,30 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
     auto& vm = globalObject->vm();
     auto& builtinNames = WebCore::clientData(vm)->builtinNames();
 
-    int32_t num = 0;
-    if (JSValue numberValue = readableStream->getDirect(vm, builtinNames.bunNativeTypePrivateName())) {
-        num = numberValue.toInt32(globalObject);
-    }
-
-    // If this type is outside the expected range, it means something is wrong.
-    if (UNLIKELY(!(num > 0 && num < 5))) {
-        *ptr = JSC::JSValue();
+    JSValue nativePtrHandle = readableStream->getDirect(vm, builtinNames.bunNativePtrPrivateName());
+    if (nativePtrHandle.isEmpty() || !nativePtrHandle.isCell()) {
+        *ptr = nullptr;
         return 0;
     }
 
-    *ptr = readableStream->getDirect(vm, builtinNames.bunNativePtrPrivateName());
-    return num;
+    JSCell* cell = nativePtrHandle.asCell();
+
+    if (auto* casted = jsDynamicCast<JSBlobInternalReadableStreamSource*>(cell)) {
+        *ptr = casted->wrapped();
+        return 1;
+    }
+
+    if (auto* casted = jsDynamicCast<JSFileInternalReadableStreamSource*>(cell)) {
+        *ptr = casted->wrapped();
+        return 2;
+    }
+
+    if (auto* casted = jsDynamicCast<JSBytesInternalReadableStreamSource*>(cell)) {
+        *ptr = casted->wrapped();
+        return 4;
+    }
+
+    return 0;
 }
 
 extern "C" JSC__JSValue ReadableStream__consume(Zig::GlobalObject* globalObject, JSC__JSValue stream, JSC__JSValue nativeType, JSC__JSValue nativePtr);
@@ -2361,8 +2352,7 @@ extern "C" JSC__JSValue ReadableStream__consume(Zig::GlobalObject* globalObject,
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativeType, JSC__JSValue nativePtr);
-extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativeType, JSC__JSValue nativePtr)
+extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativePtr)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2372,7 +2362,6 @@ extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalO
 
     auto function = globalObject->getDirect(vm, builtinNames.createNativeReadableStreamPrivateName()).getObject();
     JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(nativeType));
     arguments.append(JSValue::decode(nativePtr));
 
     auto callData = JSC::getCallData(function);
@@ -3642,22 +3631,39 @@ JSC_DEFINE_HOST_FUNCTION(functionGetDirectStreamDetails, (JSC::JSGlobalObject * 
 
     auto clientData = WebCore::clientData(vm);
 
-    JSValue ptrValue = readableStream->get(globalObject, clientData->builtinNames().bunNativePtrPrivateName());
-    JSValue typeValue = readableStream->get(globalObject, clientData->builtinNames().bunNativeTypePrivateName());
-    auto result = ptrValue.asAnyInt();
+    JSValue handle = readableStream->getIfPropertyExists(globalObject, clientData->builtinNames().bunNativePtrPrivateName());
 
-    if (result == 0 || !typeValue.isNumber()) {
+    if (handle.isEmpty() || !handle.isCell())
         return JSC::JSValue::encode(JSC::jsNull());
-    }
 
-    readableStream->putDirect(vm, clientData->builtinNames().bunNativePtrPrivateName(), jsNumber(0), 0);
-    // -1 === detached
-    readableStream->putDirect(vm, clientData->builtinNames().bunNativeTypePrivateName(), jsNumber(-1), 0);
+    const auto getTypeValue = [&]() -> JSValue {
+        JSCell* cell = handle.asCell();
+
+        if (cell->inherits<JSBlobInternalReadableStreamSource>()) {
+            return jsNumber(1);
+        }
+
+        if (cell->inherits<JSFileInternalReadableStreamSource>()) {
+            return jsNumber(2);
+        }
+
+        if (cell->inherits<JSBytesInternalReadableStreamSource>()) {
+            return jsNumber(4);
+        }
+
+        return jsUndefined();
+    };
+
+    const JSValue type = getTypeValue();
+    if (type.isUndefined())
+        return JSC::JSValue::encode(JSC::jsNull());
+
+    readableStream->putDirect(vm, clientData->builtinNames().bunNativePtrPrivateName(), jsUndefined(), 0);
     readableStream->putDirect(vm, clientData->builtinNames().disturbedPrivateName(), jsBoolean(true), 0);
 
     auto* resultObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-    resultObject->putDirect(vm, clientData->builtinNames().streamPublicName(), ptrValue, 0);
-    resultObject->putDirect(vm, clientData->builtinNames().dataPublicName(), typeValue, 0);
+    resultObject->putDirectIndex(globalObject, 0, handle);
+    resultObject->putDirectIndex(globalObject, 1, type);
 
     return JSC::JSValue::encode(resultObject);
 }

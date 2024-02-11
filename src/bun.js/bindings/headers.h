@@ -617,7 +617,7 @@ ZIG_DECL JSC__JSValue ByteStream__JSReadableStreamSource__load(JSC__JSGlobalObje
 
 #endif
 CPP_DECL JSC__JSValue ArrayBufferSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
-CPP_DECL JSC__JSValue ArrayBufferSink__createObject(JSC__JSGlobalObject* arg0, void* arg1);
+CPP_DECL JSC__JSValue ArrayBufferSink__createObject(JSC__JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
 CPP_DECL void ArrayBufferSink__detachPtr(JSC__JSValue JSValue0);
 CPP_DECL void* ArrayBufferSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL void ArrayBufferSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
@@ -637,7 +637,7 @@ ZIG_DECL JSC__JSValue ArrayBufferSink__write(JSC__JSGlobalObject* arg0, JSC__Cal
 
 #endif
 CPP_DECL JSC__JSValue HTTPSResponseSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
-CPP_DECL JSC__JSValue HTTPSResponseSink__createObject(JSC__JSGlobalObject* arg0, void* arg1);
+CPP_DECL JSC__JSValue HTTPSResponseSink__createObject(JSC__JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
 CPP_DECL void HTTPSResponseSink__detachPtr(JSC__JSValue JSValue0);
 CPP_DECL void* HTTPSResponseSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL void HTTPSResponseSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
@@ -657,7 +657,7 @@ ZIG_DECL JSC__JSValue HTTPSResponseSink__write(JSC__JSGlobalObject* arg0, JSC__C
 
 #endif
 CPP_DECL JSC__JSValue HTTPResponseSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
-CPP_DECL JSC__JSValue HTTPResponseSink__createObject(JSC__JSGlobalObject* arg0, void* arg1);
+CPP_DECL JSC__JSValue HTTPResponseSink__createObject(JSC__JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
 CPP_DECL void HTTPResponseSink__detachPtr(JSC__JSValue JSValue0);
 CPP_DECL void* HTTPResponseSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL void HTTPResponseSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
@@ -677,7 +677,7 @@ ZIG_DECL JSC__JSValue HTTPResponseSink__write(JSC__JSGlobalObject* arg0, JSC__Ca
 
 #endif
 CPP_DECL JSC__JSValue FileSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
-CPP_DECL JSC__JSValue FileSink__createObject(JSC__JSGlobalObject* arg0, void* arg1);
+CPP_DECL JSC__JSValue FileSink__createObject(JSC__JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
 CPP_DECL void FileSink__detachPtr(JSC__JSValue JSValue0);
 CPP_DECL void* FileSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL void FileSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
@@ -698,7 +698,7 @@ ZIG_DECL JSC__JSValue FileSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame*
 #endif
 
 CPP_DECL JSC__JSValue FileSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
-CPP_DECL JSC__JSValue FileSink__createObject(JSC__JSGlobalObject* arg0, void* arg1);
+CPP_DECL JSC__JSValue FileSink__createObject(JSC__JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
 CPP_DECL void FileSink__detachPtr(JSC__JSValue JSValue0);
 CPP_DECL void* FileSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL void FileSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);

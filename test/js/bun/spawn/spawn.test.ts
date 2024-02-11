@@ -14,7 +14,7 @@ beforeAll(() => {
 });
 
 function createHugeString() {
-  return "hello".repeat(100).repeat(500).repeat(1).slice();
+  return ("hello".repeat(100).repeat(500).repeat(1) + "hey").slice();
 }
 
 for (let [gcTick, label] of [
@@ -82,8 +82,8 @@ for (let [gcTick, label] of [
         await (async () => {
           const { stdout } = spawn(["echo", "hello"], {
             stdout: "pipe",
-            stderr: null,
-            stdin: null,
+            stderr: "ignore",
+            stdin: "ignore",
           });
           gcTick();
           const text = await new Response(stdout).text();
@@ -313,18 +313,20 @@ for (let [gcTick, label] of [
       it("stdout can be read", async () => {
         await Bun.write(tmp + "out.txt", hugeString);
         gcTick();
-        const { stdout } = spawn({
-          cmd: ["cat", tmp + "out.txt"],
-          stdout: "pipe",
-        });
+        for (let i = 0; i < 10; i++) {
+          const { stdout } = spawn({
+            cmd: ["cat", tmp + "out.txt"],
+            stdout: "pipe",
+          });
 
-        gcTick();
+          gcTick();
 
-        const text = await readableStreamToText(stdout!);
-        gcTick();
-        if (text !== hugeString) {
-          expect(text).toHaveLength(hugeString.length);
-          expect(text).toBe(hugeString);
+          const text = await readableStreamToText(stdout!);
+          gcTick();
+          if (text !== hugeString) {
+            expect(text).toHaveLength(hugeString.length);
+            expect(text).toBe(hugeString);
+          }
         }
       });
 
@@ -388,9 +390,9 @@ for (let [gcTick, label] of [
       describe("pipe", () => {
         function huge() {
           return spawn({
-            cmd: ["echo", hugeString],
+            cmd: ["cat"],
             stdout: "pipe",
-            stdin: "pipe",
+            stdin: new Blob([hugeString + "\n"]),
             stderr: "inherit",
             lazy: true,
           });

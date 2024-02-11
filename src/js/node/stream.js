@@ -5192,8 +5192,6 @@ var require_stream = __commonJS({
  *
  */
 function createNativeStreamReadable(nativeType, Readable) {
-  var [pull, start, cancel, setClose, deinit, updateRef, drainFn] = $lazy(nativeType);
-
   var closer = [false];
   var handleNumberResult = function (nativeReadable, result, view, isClosed) {
     if (result > 0) {
@@ -5231,7 +5229,6 @@ function createNativeStreamReadable(nativeType, Readable) {
 
   var DYNAMICALLY_ADJUST_CHUNK_SIZE = process.env.BUN_DISABLE_DYNAMIC_CHUNK_SIZE !== "1";
 
-  const finalizer = new FinalizationRegistry(ptr => ptr && deinit(ptr));
   const MIN_BUFFER_SIZE = 512;
   var NativeReadable = class NativeReadable extends Readable {
     #bunNativePtr;
@@ -5241,9 +5238,9 @@ function createNativeStreamReadable(nativeType, Readable) {
     #highWaterMark;
     #pendingRead = false;
     #hasResized = !DYNAMICALLY_ADJUST_CHUNK_SIZE;
-    #unregisterToken;
     constructor(ptr, options = {}) {
       super(options);
+
       if (typeof options.highWaterMark === "number") {
         this.#highWaterMark = options.highWaterMark;
       } else {
@@ -5253,8 +5250,12 @@ function createNativeStreamReadable(nativeType, Readable) {
       this.#constructed = false;
       this.#remainingChunk = undefined;
       this.#pendingRead = false;
-      this.#unregisterToken = {};
-      finalizer.register(this, this.#bunNativePtr, this.#unregisterToken);
+
+      ptr.onClose = this.#onClose.bind(this);
+    }
+
+    #onClose() {
+      this.destroy();
     }
 
     // maxToRead is by default the highWaterMark passed from the Readable.read call to this fn
@@ -5269,7 +5270,7 @@ function createNativeStreamReadable(nativeType, Readable) {
 
       var ptr = this.#bunNativePtr;
       $debug("ptr @ NativeReadable._read", ptr, this.__id);
-      if (ptr === 0 || ptr === -1) {
+      if (!ptr) {
         this.push(null);
         return;
       }
@@ -5301,7 +5302,8 @@ function createNativeStreamReadable(nativeType, Readable) {
 
     #internalConstruct(ptr) {
       this.#constructed = true;
-      const result = start(ptr, this.#highWaterMark);
+
+      const result = ptr.start(this.#highWaterMark);
       $debug("NativeReadable internal `start` result", result, this.__id);
 
       if (typeof result === "number" && result > 1) {
@@ -5311,12 +5313,10 @@ function createNativeStreamReadable(nativeType, Readable) {
         this.#highWaterMark = Math.min(this.#highWaterMark, result);
       }
 
-      if (drainFn) {
-        const drainResult = drainFn(ptr);
-        $debug("NativeReadable drain result", drainResult, this.__id);
-        if ((drainResult?.byteLength ?? 0) > 0) {
-          this.push(drainResult);
-        }
+      const drainResult = ptr.drain();
+      $debug("NativeReadable drain result", drainResult, this.__id);
+      if ((drainResult?.byteLength ?? 0) > 0) {
+        this.push(drainResult);
       }
     }
 
@@ -5370,7 +5370,7 @@ function createNativeStreamReadable(nativeType, Readable) {
     #internalRead(view, ptr) {
       $debug("#internalRead()", this.__id);
       closer[0] = false;
-      var result = pull(ptr, view, closer);
+      var result = ptr.pull(view, closer);
       if ($isPromise(result)) {
         this.#pendingRead = true;
         return result.then(
@@ -5391,18 +5391,16 @@ function createNativeStreamReadable(nativeType, Readable) {
 
     _destroy(error, callback) {
       var ptr = this.#bunNativePtr;
-      if (ptr === 0) {
+      if (!ptr) {
         callback(error);
         return;
       }
 
-      finalizer.unregister(this.#unregisterToken);
-      this.#bunNativePtr = 0;
-      if (updateRef) {
-        updateRef(ptr, false);
-      }
+      this.#bunNativePtr = undefined;
+      ptr.updateRef(false);
+
       $debug("NativeReadable destroyed", this.__id);
-      cancel(ptr, error);
+      ptr.cancel(error);
       callback(error);
     }
 
@@ -5410,23 +5408,18 @@ function createNativeStreamReadable(nativeType, Readable) {
       var ptr = this.#bunNativePtr;
       if (ptr === 0) return;
       if (this.#refCount++ === 0) {
-        updateRef(ptr, true);
+        ptr.updateRef(true);
       }
     }
 
     unref() {
       var ptr = this.#bunNativePtr;
-      if (ptr === 0) return;
+      if (ptr === undefined) return;
       if (this.#refCount-- === 1) {
-        updateRef(ptr, false);
+        ptr.updateRef(false);
       }
     }
   };
-
-  if (!updateRef) {
-    NativeReadable.prototype.ref = undefined;
-    NativeReadable.prototype.unref = undefined;
-  }
 
   return NativeReadable;
 }
@@ -5444,19 +5437,16 @@ function getNativeReadableStreamPrototype(nativeType, Readable) {
 }
 
 function getNativeReadableStream(Readable, stream, options) {
-  if (!(stream && typeof stream === "object" && stream instanceof ReadableStream)) {
-    return undefined;
-  }
-
   const native = $direct(stream);
   if (!native) {
     $debug("no native readable stream");
     return undefined;
   }
-  const { stream: ptr, data: type } = native;
+  const { 0: ptr, 1: type } = native;
+  $assert(typeof type === "number", "Invalid native type");
+  $assert(typeof ptr === "object", "Invalid native ptr");
 
   const NativeReadable = getNativeReadableStreamPrototype(type, Readable);
-
   return new NativeReadable(ptr, options);
 }
 /** --- Bun native stream wrapper ---  */

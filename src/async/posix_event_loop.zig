@@ -213,11 +213,11 @@ pub const FilePoll = struct {
     }
 
     pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.os.system.kevent64_s) void {
-        log("onKQueueEvent: {}", .{poll});
         if (KQueueGenerationNumber != u0)
             std.debug.assert(poll.generation_number == kqueue_event.ext[0]);
 
         poll.updateFlags(Flags.fromKQueueEvent(kqueue_event.*));
+        log("onKQueueEvent: {}", .{poll});
         poll.onUpdate(kqueue_event.data);
     }
 
@@ -467,17 +467,14 @@ pub const FilePoll = struct {
             var flags = Flags.Set{};
             if (kqueue_event.filter == std.os.system.EVFILT_READ) {
                 flags.insert(Flags.readable);
-                log("readable", .{});
                 if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
-                    log("hup", .{});
                 }
             } else if (kqueue_event.filter == std.os.system.EVFILT_WRITE) {
                 flags.insert(Flags.writable);
                 log("writable", .{});
                 if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
-                    log("hup", .{});
                 }
             } else if (kqueue_event.filter == std.os.system.EVFILT_PROC) {
                 log("proc", .{});

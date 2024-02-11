@@ -195,6 +195,7 @@ pub fn PosixBufferedWriter(
 
         fn registerPoll(this: *PosixWriter) void {
             var poll = this.getPoll() orelse return;
+            if (poll.isRegistered()) return;
             switch (poll.registerWithFd(bun.uws.Loop.get(), .writable, true, poll.fd)) {
                 .err => |err| {
                     onError(this.parent, err);
@@ -569,6 +570,8 @@ pub fn PosixStreamingWriter(
                 this.handle = .{ .poll = Async.FilePoll.init(loop, fd, .{}, PosixWriter, this) };
                 break :brk this.handle.poll;
             };
+
+            poll.enableKeepingProcessAlive(loop);
 
             switch (poll.registerWithFd(loop.loop(), .writable, true, fd)) {
                 .err => |err| {

@@ -1492,7 +1492,7 @@ export function readableStreamReaderGenericRelease(reader) {
   $markPromiseAsHandled(promise);
 
   var stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
-  if ($getByIdDirectPrivate(stream, "bunNativeType") != 0) {
+  if ($getByIdDirectPrivate(stream, "bunNativePtr")) {
     $getByIdDirectPrivate($getByIdDirectPrivate(stream, "readableStreamController"), "underlyingByteSource").$resume(
       false,
     );
@@ -1517,11 +1517,9 @@ export function readableStreamDefaultControllerCanCloseOrEnqueue(controller) {
 
 export function lazyLoadStream(stream, autoAllocateChunkSize) {
   $debug("lazyLoadStream", stream, autoAllocateChunkSize);
-  var nativeType = $getByIdDirectPrivate(stream, "bunNativeType");
-  var nativePtr = $getByIdDirectPrivate(stream, "bunNativePtr");
-  var Prototype = $lazyStreamPrototypeMap.$get(nativeType);
+  var handle = $getByIdDirectPrivate(stream, "bunNativePtr");
+  var Prototype = $lazyStreamPrototypeMap.$get($getPrototypeOf(handle));
   if (Prototype === undefined) {
-    var [pull, start, cancel, setClose, deinit, setRefOrUnref, drain] = $lazy(nativeType);
     var closer = [false];
     var handleResult;
     function handleNativeReadableStreamPromiseResult(val) {
@@ -1533,10 +1531,9 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
 
     function callClose(controller) {
       try {
-        if (
-          $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") ===
-          $streamReadable
-        ) {
+        const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+        $assert(stream, "stream is missing");
+        if ($getByIdDirectPrivate(stream, "state") === $streamReadable) {
           controller.close();
         }
       } catch (e) {
@@ -1545,6 +1542,8 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
     }
 
     handleResult = function handleResult(result, controller, view) {
+      $assert(controller, "controller is missing");
+
       if (result && $isPromise(result)) {
         return result.then(
           handleNativeReadableStreamPromiseResult.bind({
@@ -1554,12 +1553,12 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
           err => controller.error(err),
         );
       } else if (typeof result === "number") {
-        if (view && view.byteLength === result && view.buffer === controller.byobRequest?.view?.buffer) {
+        if (view && view.byteLength === result && view.buffer === controller?.byobRequest?.view?.buffer) {
           controller.byobRequest.respondWithNewView(view);
         } else {
           controller.byobRequest.respond(result);
         }
-      } else if (result.constructor === $Uint8Array) {
+      } else if ($isTypedArrayView(result)) {
         controller.enqueue(result);
       }
 
@@ -1569,12 +1568,12 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
       }
     };
 
-    function createResult(tag, controller, view, closer) {
+    function createResult(handle, controller, view, closer) {
       closer[0] = false;
 
       var result;
       try {
-        result = pull(tag, view, closer);
+        result = handle.pull(view, closer);
       } catch (err) {
         return controller.error(err);
       }
@@ -1582,27 +1581,26 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
       return handleResult(result, controller, view);
     }
 
-    const registry = deinit ? new FinalizationRegistry(deinit) : null;
     Prototype = class NativeReadableStreamSource {
-      constructor(tag, autoAllocateChunkSize, drainValue) {
-        $putByIdDirectPrivate(this, "stream", tag);
-        this.#cancellationToken = {};
+      constructor(handle, autoAllocateChunkSize, drainValue) {
+        $putByIdDirectPrivate(this, "stream", handle);
+        this.#controller = undefined;
         this.pull = this.#pull.bind(this);
         this.cancel = this.#cancel.bind(this);
         this.autoAllocateChunkSize = autoAllocateChunkSize;
+        handle.updateRef(true);
 
         if (drainValue !== undefined) {
           this.start = controller => {
+            this.#controller = controller;
             controller.enqueue(drainValue);
           };
         }
 
-        if (registry) {
-          registry.register(this, tag, this.#cancellationToken);
-        }
+        handle.onClose = this.#onClose.bind(this);
       }
 
-      #cancellationToken;
+      #controller;
 
       pull;
       cancel;
@@ -1610,58 +1608,61 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
 
       type = "bytes";
       autoAllocateChunkSize = 0;
+      #closed = false;
 
-      static startSync = start;
+      #onClose() {
+        this.#closed = true;
+        var controller = this.#controller;
+        if (controller) {
+          this.#controller = undefined;
+          $enqueueJob(callClose, controller);
+        }
+      }
 
       #pull(controller) {
-        var tag = $getByIdDirectPrivate(this, "stream");
+        var handle = $getByIdDirectPrivate(this, "stream");
 
-        if (!tag) {
-          controller.close();
+        if (!handle || this.#closed) {
+          this.#controller = undefined;
+          $enqueueJob(callClose, controller);
           return;
         }
 
-        createResult(tag, controller, controller.byobRequest.view, closer);
+        if (this.#controller !== controller) {
+          this.#controller = controller;
+        }
+
+        createResult(handle, controller, controller.byobRequest.view, closer);
       }
 
       #cancel(reason) {
-        var tag = $getByIdDirectPrivate(this, "stream");
-
-        registry && registry.unregister(this.#cancellationToken);
-        setRefOrUnref && setRefOrUnref(tag, false);
-        cancel(tag, reason);
+        var handle = $getByIdDirectPrivate(this, "stream");
+        handle.updateRef(false);
+        handle.cancel(reason);
       }
-
-      static deinit = deinit;
-      static drain = drain;
     };
     // this is reuse of an existing private symbol
     Prototype.prototype.$resume = function (has_ref) {
-      var tag = $getByIdDirectPrivate(this, "stream");
-      setRefOrUnref && setRefOrUnref(tag, has_ref);
+      var handle = $getByIdDirectPrivate(this, "stream");
+      handle.updateRef(has_ref);
     };
-    $lazyStreamPrototypeMap.$set(nativeType, Prototype);
+    $lazyStreamPrototypeMap.$set($getPrototypeOf(handle), Prototype);
   }
 
   $putByIdDirectPrivate(stream, "disturbed", true);
 
-  const chunkSizeOrCompleteBuffer = Prototype.startSync(nativePtr, autoAllocateChunkSize);
+  const chunkSizeOrCompleteBuffer = handle.start(autoAllocateChunkSize);
   let chunkSize, drainValue;
   if ($isTypedArrayView(chunkSizeOrCompleteBuffer)) {
     chunkSize = 0;
     drainValue = chunkSizeOrCompleteBuffer;
   } else {
     chunkSize = chunkSizeOrCompleteBuffer;
-    const { drain: drainFn } = Prototype;
-    if (drainFn) {
-      drainValue = drainFn(nativePtr);
-    }
+    drainValue = handle.drain();
   }
 
   // empty file, no need for native back-and-forth on this
   if (chunkSize === 0) {
-    deinit && nativePtr && $enqueueJob(deinit, nativePtr);
-
     if ((drainValue?.byteLength ?? 0) > 0) {
       return {
         start(controller) {
@@ -1686,7 +1687,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
     };
   }
 
-  return new Prototype(nativePtr, chunkSize, drainValue);
+  return new Prototype(handle, chunkSize, drainValue);
 }
 
 export function readableStreamIntoArray(stream) {

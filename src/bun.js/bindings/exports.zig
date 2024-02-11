@@ -132,11 +132,6 @@ pub const ZigErrorType = extern struct {
 
 pub const NodePath = JSC.Node.Path;
 
-// Web Streams
-pub const JSReadableStreamBlob = JSC.WebCore.ByteBlobLoader.Source.JSReadableStreamSource;
-pub const JSReadableStreamFile = JSC.WebCore.FileReader.Source.JSReadableStreamSource;
-pub const JSReadableStreamBytes = JSC.WebCore.ByteStream.Source.JSReadableStreamSource;
-
 // Sinks
 pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSSink;
 pub const JSHTTPSResponseSink = JSC.WebCore.HTTPSResponseSink.JSSink;
@@ -910,14 +905,11 @@ comptime {
         _ = Process.setTitle;
         Bun.Timer.shim.ref();
         NodePath.shim.ref();
-        JSReadableStreamBlob.shim.ref();
         JSArrayBufferSink.shim.ref();
         JSHTTPResponseSink.shim.ref();
         JSHTTPSResponseSink.shim.ref();
         JSFileSink.shim.ref();
         JSFileSink.shim.ref();
-        JSReadableStreamBytes.shim.ref();
-        JSReadableStreamFile.shim.ref();
         _ = ZigString__free;
         _ = ZigString__free_global;
 

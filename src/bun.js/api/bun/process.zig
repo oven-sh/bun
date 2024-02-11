@@ -851,6 +851,7 @@ pub const PosixSpawnOptions = struct {
     cwd: []const u8 = "",
     detached: bool = false,
     windows: void = {},
+    argv0: ?[*:0]const u8 = null,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -905,6 +906,7 @@ pub const WindowsSpawnOptions = struct {
     cwd: []const u8 = "",
     detached: bool = false,
     windows: WindowsOptions = .{},
+    argv0: ?[*:0]const u8 = null,
 
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
@@ -1172,8 +1174,9 @@ pub fn spawnProcessPosix(
         }
     }
 
+    const argv0 = options.argv0 orelse argv[0].?;
     const spawn_result = PosixSpawn.spawnZ(
-        argv[0].?,
+        argv0,
         actions,
         attr,
         argv,
@@ -1216,7 +1219,7 @@ pub fn spawnProcessWindows(
 
     uv_process_options.args = @ptrCast(argv);
     uv_process_options.env = envp;
-    uv_process_options.file = argv[0].?;
+    uv_process_options.file = options.argv0 orelse argv[0].?;
     uv_process_options.exit_cb = &Process.onExitUV;
     var stack_allocator = std.heap.stackFallback(2048, bun.default_allocator);
     const allocator = stack_allocator.get();

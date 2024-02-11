@@ -595,7 +595,7 @@ ReadStream = (function (InternalReadStream) {
         $debug("no native readable stream");
         throw new Error("no native readable stream");
       }
-      var { stream: ptr } = native;
+      var { 0: ptr } = native;
 
       super(ptr, {
         ...options,

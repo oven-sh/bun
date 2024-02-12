@@ -4,9 +4,15 @@ import { createTest } from "node-harness";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { bunEnv, bunExe } from "harness";
-const { beforeAll, describe, expect, it, throws, assert, createCallCheckCtx, createDoneDotAll } = createTest(
-  import.meta.path,
-);
+const { beforeAll, beforeEach, afterAll, describe, expect, it, throws, assert, createCallCheckCtx, createDoneDotAll } =
+  createTest(import.meta.path);
+const origProcessEnv = process.env;
+beforeEach(() => {
+  process.env = { ...bunEnv };
+});
+afterAll(() => {
+  process.env = origProcessEnv;
+});
 const strictEqual = (a, b) => expect(a).toStrictEqual(b);
 const debug = process.env.DEBUG ? console.log : () => {};
 

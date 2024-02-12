@@ -596,6 +596,7 @@ ZIG_DECL JSC__JSValue Bun__Path__normalize(JSC__JSGlobalObject* arg0, bool arg1,
 ZIG_DECL JSC__JSValue Bun__Path__parse(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
 ZIG_DECL JSC__JSValue Bun__Path__relative(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
 ZIG_DECL JSC__JSValue Bun__Path__resolve(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+ZIG_DECL JSC__JSValue Bun__Path__toNamespacedPath(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
 
 #endif
 

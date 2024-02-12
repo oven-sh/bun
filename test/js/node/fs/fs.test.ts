@@ -2052,14 +2052,14 @@ describe("fs/promises", () => {
 
       const pending = new Array(iterCount);
       for (let i = 0; i < iterCount; i++) {
-        pending[i] = promises.readdir(join(notfound, i), { recursive: true, withFileTypes });
+        pending[i] = promises.readdir(join(notfound, `${i}`), { recursive: true, withFileTypes });
       }
 
       const results = await Promise.allSettled(pending);
       for (let i = 0; i < iterCount; i++) {
         expect(results[i].status).toBe("rejected");
         expect(results[i].reason!.code).toBe("ENOENT");
-        expect(results[i].reason!.path).toBe(join(notfound, i));
+        expect(results[i].reason!.path).toBe(join(notfound, `${i}`));
       }
 
       const newMaxFD = getMaxFD();

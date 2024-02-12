@@ -1576,9 +1576,7 @@ declare global {
      * @param arrayLike - The iterable or async iterable to convert to an array.
      * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
      */
-    fromAsync<T>(
-      arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
-    ): Promise<Awaited<T>[]>;
+    fromAsync<T>(arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>): Promise<Awaited<T>[]>;
 
     /**
      * Create an array from an iterable or async iterable object.

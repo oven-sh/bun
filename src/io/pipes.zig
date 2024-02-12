@@ -47,3 +47,17 @@ pub const PollOrFd = union(enum) {
         }
     }
 };
+
+pub const FileType = enum {
+    file,
+    pipe,
+    nonblocking_pipe,
+
+    pub fn isPollable(this: FileType) bool {
+        return this == .pipe or this == .nonblocking_pipe;
+    }
+
+    pub fn isBlocking(this: FileType) bool {
+        return this == .pipe;
+    }
+};

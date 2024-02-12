@@ -757,17 +757,20 @@ pub const FilePoll = struct {
     const kevent = std.c.kevent;
     const linux = std.os.linux;
 
+    pub const OneShotFlag = enum { dispatch, one_shot, none };
+
     pub fn register(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool) JSC.Maybe(void) {
-        return registerWithFd(this, loop, flag, one_shot, this.fd);
+        return registerWithFd(this, loop, flag, if (one_shot) .one_shot else .none, this.fd);
     }
-    pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool, fd: bun.FileDescriptor) JSC.Maybe(void) {
+
+    pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: OneShotFlag, fd: bun.FileDescriptor) JSC.Maybe(void) {
         const watcher_fd = loop.fd;
 
         log("register: {s} ({d})", .{ @tagName(flag), fd });
 
         std.debug.assert(fd != invalid_fd);
 
-        if (one_shot) {
+        if (one_shot != .none) {
             this.flags.insert(.one_shot);
         }
 
@@ -799,7 +802,13 @@ pub const FilePoll = struct {
             }
         } else if (comptime Environment.isMac) {
             var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
-            const one_shot_flag: u16 = if (!this.flags.contains(.one_shot)) 0 else std.c.EV_ONESHOT;
+            const one_shot_flag: u16 = if (!this.flags.contains(.one_shot))
+                0
+            else if (one_shot == .dispatch)
+                std.c.EV_DISPATCH | std.c.EV_ENABLE
+            else
+                std.c.EV_ONESHOT;
+
             changelist[0] = switch (flag) {
                 .readable => .{
                     .ident = @intCast(fd.cast()),

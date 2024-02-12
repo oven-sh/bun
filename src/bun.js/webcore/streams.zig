@@ -2858,6 +2858,7 @@ pub const FileSink = struct {
     // TODO: these fields are duplicated on writer()
     // we should not duplicate these fields...
     pollable: bool = false,
+    nonblocking: bool = false,
     fd: bun.FileDescriptor = bun.invalid_fd,
 
     const log = Output.scoped(.FileSink, false);
@@ -3105,6 +3106,7 @@ pub const FileSink = struct {
 
         switch (this.writer.flush()) {
             .done => {
+                this.updateRef(false);
                 this.writer.end();
                 return .{ .result = JSValue.jsNumber(this.written) };
             },
@@ -3199,6 +3201,7 @@ pub const FileReader = struct {
         const OpenedFileBlob = struct {
             fd: bun.FileDescriptor,
             pollable: bool = false,
+            nonblocking: bool = true,
         };
 
         pub fn openFileBlob(
@@ -3228,6 +3231,7 @@ pub const FileReader = struct {
                     _ = std.c.tcgetattr(fd.cast(), &termios);
                     bun.C.cfmakeraw(&termios);
                     file.is_atty = true;
+                    this.nonblocking = false;
                 }
             }
 
@@ -3247,7 +3251,9 @@ pub const FileReader = struct {
 
                                 switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
                                     .err => |err| return .{ .err = err },
-                                    .result => |_| {},
+                                    .result => |_| {
+                                        this.nonblocking = true;
+                                    },
                                 }
                             }
                         },
@@ -3319,6 +3325,7 @@ pub const FileReader = struct {
                         .result => |opened| {
                             this.fd = opened.fd;
                             pollable = opened.pollable;
+                            this.reader.nonblocking = opened.nonblocking;
                         },
                     }
                 },
@@ -3362,12 +3369,14 @@ pub const FileReader = struct {
     pub fn onCancel(this: *FileReader) void {
         if (this.done) return;
         this.done = true;
+        this.reader.updateRef(false);
         if (!this.reader.isDone())
             this.reader.close();
     }
 
     pub fn deinit(this: *FileReader) void {
         this.buffered.deinit(bun.default_allocator);
+        this.reader.updateRef(false);
         this.reader.deinit();
         this.pending_value.deinit();
 

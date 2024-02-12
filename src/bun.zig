@@ -457,13 +457,13 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
     var polls = [_]std.os.pollfd{
         .{
             .fd = fd.cast(),
-            .events = std.os.POLL.IN | std.os.POLL.ERR,
+            .events = std.os.POLL.IN | std.os.POLL.ERR | std.os.POLL.HUP,
             .revents = 0,
         },
     };
 
     const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    const rc = if (result and polls[0].revents & std.os.POLL.HUP != 0)
+    const rc = if (result and polls[0].revents & (std.os.POLL.HUP | std.os.POLL.ERR) != 0)
         PollFlag.hup
     else if (result)
         PollFlag.ready
@@ -488,13 +488,13 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
     var polls = [_]std.os.pollfd{
         .{
             .fd = fd.cast(),
-            .events = std.os.POLL.OUT | std.os.POLL.ERR,
+            .events = std.os.POLL.OUT | std.os.POLL.ERR | std.os.POLL.HUP,
             .revents = 0,
         },
     };
 
     const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    const rc = if (result and polls[0].revents & std.os.POLL.HUP != 0)
+    const rc = if (result and polls[0].revents & (std.os.POLL.HUP | std.os.POLL.ERR) != 0)
         PollFlag.hup
     else if (result)
         PollFlag.ready

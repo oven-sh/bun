@@ -685,7 +685,7 @@ pub const Subprocess = struct {
                 onError,
                 onClose,
                 getBuffer,
-                null,
+                flush,
             );
             pub const Poll = IOWriter;
 
@@ -1138,7 +1138,6 @@ pub const Subprocess = struct {
         this_jsvalue.ensureStillAlive();
         this.pid_rusage = rusage.*;
         const is_sync = this.flags.is_sync;
-        _ = is_sync; // autofix
         if (this.weak_file_sink_stdin_ptr) |pipe| {
             this.weak_file_sink_stdin_ptr = null;
             this.flags.has_stdin_destructor_called = true;
@@ -1149,56 +1148,55 @@ pub const Subprocess = struct {
             }
 
             pipe.onAttachedProcessExit();
+        } else if (this.stdin == .buffer) {
+            this.stdin.buffer.close();
         }
 
-        var must_drain_tasks = false;
         defer {
             this.updateHasPendingActivity();
-
-            if (must_drain_tasks)
-                globalThis.bunVM().drainMicrotasks();
         }
+        const loop = globalThis.bunVM().eventLoop();
 
-        if (this.exit_promise.trySwap()) |promise| {
-            must_drain_tasks = true;
-            switch (status) {
-                .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
-                .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis)),
-                .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
-                else => {
-                    // crash in debug mode
-                    if (comptime Environment.allow_assert)
-                        unreachable;
-                },
+        if (!is_sync) {
+            if (this.exit_promise.trySwap()) |promise| {
+                loop.enter();
+                defer loop.exit();
+
+                switch (status) {
+                    .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
+                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis)),
+                    .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
+                    else => {
+                        // crash in debug mode
+                        if (comptime Environment.allow_assert)
+                            unreachable;
+                    },
+                }
             }
-        }
 
-        if (this.on_exit_callback.trySwap()) |callback| {
-            must_drain_tasks = true;
-            const waitpid_value: JSValue =
-                if (status == .err)
-                status.err.toJSC(globalThis)
-            else
-                JSC.JSValue.jsUndefined();
+            if (this.on_exit_callback.trySwap()) |callback| {
+                const waitpid_value: JSValue =
+                    if (status == .err)
+                    status.err.toJSC(globalThis)
+                else
+                    JSC.JSValue.jsUndefined();
 
-            const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) JSC.JSValue.jsUndefined() else this_jsvalue;
-            this_value.ensureStillAlive();
+                const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) JSC.JSValue.jsUndefined() else this_jsvalue;
+                this_value.ensureStillAlive();
 
-            const args = [_]JSValue{
-                this_value,
-                this.getExitCode(globalThis),
-                this.getSignalCode(globalThis),
-                waitpid_value,
-            };
+                const args = [_]JSValue{
+                    this_value,
+                    this.getExitCode(globalThis),
+                    this.getSignalCode(globalThis),
+                    waitpid_value,
+                };
 
-            const result = callback.callWithThis(
-                globalThis,
-                this_value,
-                &args,
-            );
-
-            if (result.isAnyError()) {
-                globalThis.bunVM().onUnhandledError(globalThis, result);
+                loop.runCallback(
+                    callback,
+                    globalThis,
+                    this_value,
+                    &args,
+                );
             }
         }
     }

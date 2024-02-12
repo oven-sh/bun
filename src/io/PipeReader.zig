@@ -7,6 +7,7 @@ pub fn PosixPipeReader(
     comptime vtable: struct {
         getFd: *const fn (*This) bun.FileDescriptor,
         getBuffer: *const fn (*This) *std.ArrayList(u8),
+        getIsNonBlocking: *const fn (*This) bool,
         onReadChunk: ?*const fn (*This, chunk: []u8, hasMore: bool) void = null,
         registerPoll: ?*const fn (*This) void = null,
         done: *const fn (*This) void,
@@ -16,8 +17,12 @@ pub fn PosixPipeReader(
     return struct {
         pub fn read(this: *This) void {
             const buffer = vtable.getBuffer(this);
-
             const fd = vtable.getFd(this);
+
+            if (vtable.getIsNonBlocking(this)) {
+                return readNonblocking(this, buffer, fd, 0, false);
+            }
+
             if (comptime bun.Environment.isLinux) {
                 if (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
                     readFromBlockingPipeWithoutBlockingLinux(this, buffer, fd, 0, false);
@@ -44,6 +49,12 @@ pub fn PosixPipeReader(
             const resizable_buffer = vtable.getBuffer(parent);
             const fd = vtable.getFd(parent);
             bun.sys.syslog("onPoll({d}) = {d}", .{ fd, size_hint });
+
+            if (vtable.getIsNonBlocking(parent)) {
+                readNonblocking(parent, resizable_buffer, fd, size_hint, received_hup);
+                return;
+            }
+
             readFromBlockingPipeWithoutBlocking(parent, resizable_buffer, fd, size_hint, received_hup);
         }
 
@@ -57,6 +68,93 @@ pub fn PosixPipeReader(
             }
 
             return false;
+        }
+
+        fn readNonblocking(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+            _ = size_hint; // autofix
+            const streaming = parent.vtable.isStreamingEnabled();
+            const start_length = resizable_buffer.items.len;
+
+            if (streaming) {
+                const stack_buffer = parent.vtable.eventLoop().pipeReadBuffer();
+                while (resizable_buffer.capacity == 0) {
+                    var stack_buffer_head = stack_buffer;
+                    while (stack_buffer_head.len > 16 * 1024) {
+                        var buffer = stack_buffer_head;
+
+                        switch (bun.sys.readNonblocking(
+                            fd,
+                            buffer,
+                        )) {
+                            .result => |bytes_read| {
+                                buffer = stack_buffer_head[0..bytes_read];
+                                stack_buffer_head = stack_buffer_head[bytes_read..];
+
+                                if (bytes_read == 0) {
+                                    if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
+                                        _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
+                                    close(parent);
+                                    return;
+                                }
+                            },
+                            .err => |err| {
+                                if (err.isRetry()) {
+                                    if (comptime vtable.registerPoll) |register| {
+                                        register(parent);
+                                    }
+
+                                    if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
+                                        _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
+                                    return;
+                                }
+
+                                if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
+                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
+                                vtable.onError(parent, err);
+                                return;
+                            },
+                        }
+                    }
+
+                    if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
+                        if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false) and !received_hup) {
+                            return;
+                        }
+                    }
+
+                    if (!parent.vtable.isStreamingEnabled()) break;
+                }
+            }
+
+            while (true) {
+                resizable_buffer.ensureUnusedCapacity(16 * 1024) catch bun.outOfMemory();
+                var buffer: []u8 = resizable_buffer.unusedCapacitySlice();
+
+                switch (bun.sys.readNonblocking(fd, buffer)) {
+                    .result => |bytes_read| {
+                        buffer = buffer[0..bytes_read];
+                        resizable_buffer.items.len += bytes_read;
+
+                        if (bytes_read == 0) {
+                            _ = drainChunk(parent, resizable_buffer.items[start_length..], false);
+                            close(parent);
+                            return;
+                        }
+                    },
+                    .err => |err| {
+                        _ = drainChunk(parent, resizable_buffer.items[start_length..], false);
+
+                        if (err.isRetry()) {
+                            if (comptime vtable.registerPoll) |register| {
+                                register(parent);
+                                return;
+                            }
+                        }
+                        vtable.onError(parent, err);
+                        return;
+                    },
+                }
+            }
         }
 
         // On Linux, we use preadv2 to read without blocking.
@@ -202,9 +300,7 @@ pub fn PosixPipeReader(
                             },
                             .not_ready => {
                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
-                                    if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false) and !received_hup) {
-                                        return;
-                                    }
+                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
                                 }
 
                                 if (received_hup) {
@@ -454,6 +550,7 @@ const PosixBufferedReader = struct {
     is_done: bool = false,
     vtable: BufferedReaderVTable,
     pollable: bool = false,
+    nonblocking: bool = false,
 
     pub fn init(comptime Type: type) PosixBufferedReader {
         return .{
@@ -476,6 +573,7 @@ const PosixBufferedReader = struct {
             ._buffer = other.buffer().*,
             .is_done = other.is_done,
             .pollable = other.pollable,
+            .nonblocking = other.nonblocking,
             .vtable = .{
                 .fns = to.vtable.fns,
                 .parent = parent_,
@@ -499,7 +597,12 @@ const PosixBufferedReader = struct {
         .registerPoll = @ptrCast(&registerPoll),
         .done = @ptrCast(&done),
         .onError = @ptrCast(&onError),
+        .getIsNonBlocking = @ptrCast(&getIsNonBlocking),
     });
+
+    fn getIsNonBlocking(this: *const PosixBufferedReader) bool {
+        return this.nonblocking;
+    }
 
     fn _onReadChunk(this: *PosixBufferedReader, chunk: []u8, hasMore: bool) bool {
         return this.vtable.onReadChunk(chunk, hasMore);
@@ -572,13 +675,10 @@ const PosixBufferedReader = struct {
             return;
         };
         poll.owner.set(this);
-        if (poll.isRegistered()) {
-            return;
-        }
 
         poll.enableKeepingProcessAlive(this.eventLoop());
 
-        switch (poll.register(this.loop(), .readable, false)) {
+        switch (poll.registerWithFd(this.loop(), .readable, .dispatch, poll.fd)) {
             .err => |err| {
                 this.onError(err);
             },

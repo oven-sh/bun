@@ -195,8 +195,7 @@ pub fn PosixBufferedWriter(
 
         fn registerPoll(this: *PosixWriter) void {
             var poll = this.getPoll() orelse return;
-            if (poll.isRegistered()) return;
-            switch (poll.registerWithFd(bun.uws.Loop.get(), .writable, true, poll.fd)) {
+            switch (poll.registerWithFd(bun.uws.Loop.get(), .writable, .dispatch, poll.fd)) {
                 .err => |err| {
                     onError(this.parent, err);
                 },
@@ -254,7 +253,7 @@ pub fn PosixBufferedWriter(
         }
 
         pub fn write(this: *PosixWriter) void {
-            this.onPoll(0);
+            this.onPoll(0, false);
         }
 
         pub fn watch(this: *PosixWriter) void {
@@ -280,7 +279,7 @@ pub fn PosixBufferedWriter(
             };
             const loop = @as(*Parent, @ptrCast(this.parent)).eventLoop().loop();
 
-            switch (poll.registerWithFd(loop, .writable, true, fd)) {
+            switch (poll.registerWithFd(loop, .writable, .dispatch, fd)) {
                 .err => |err| {
                     return JSC.Maybe(void){ .err = err };
                 },
@@ -372,7 +371,7 @@ pub fn PosixStreamingWriter(
 
         fn registerPoll(this: *PosixWriter) void {
             const poll = this.getPoll() orelse return;
-            switch (poll.registerWithFd(@as(*Parent, @ptrCast(this.parent)).loop(), .writable, true, poll.fd)) {
+            switch (poll.registerWithFd(@as(*Parent, @ptrCast(this.parent)).loop(), .writable, .dispatch, poll.fd)) {
                 .err => |err| {
                     onError(this.parent, err);
                     this.close();
@@ -573,7 +572,7 @@ pub fn PosixStreamingWriter(
 
             poll.enableKeepingProcessAlive(loop);
 
-            switch (poll.registerWithFd(loop.loop(), .writable, true, fd)) {
+            switch (poll.registerWithFd(loop.loop(), .writable, .dispatch, fd)) {
                 .err => |err| {
                     return JSC.Maybe(void){ .err = err };
                 },

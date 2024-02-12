@@ -1,19 +1,28 @@
 // @known-failing-on-windows: 1 failing
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test";
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { bunExe, bunEnv } from "harness";
 import path from "path";
-
+import { semver } from "bun";
+import fs from "fs";
 const debug = process.env.DEBUG ? console.log : () => {};
+
+const originalProcessEnv = process.env;
+beforeEach(() => {
+  process.env = { ...bunEnv };
+});
+
+afterAll(() => {
+  process.env = originalProcessEnv;
+});
 
 const platformTmpDir = require("fs").realpathSync(tmpdir());
 
-// Semver regex: https://gist.github.com/jhorsman/62eeea161a13b80e39f5249281e17c39?permalink_comment_id=2896416#gistcomment-2896416
-// Not 100% accurate, but good enough for this test
-const SEMVER_REGEX =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z\d][-a-zA-Z.\d]*)?(\+[a-zA-Z\d][-a-zA-Z.\d]*)?$/;
+function isValidSemver(str) {
+  return semver.satisfies(str.replaceAll("-debug", ""), "*");
+}
 
 describe("ChildProcess.spawn()", () => {
   it("should emit `spawn` on spawn", async () => {
@@ -75,7 +84,7 @@ describe("spawn()", () => {
         debug(`stderr: ${data}`);
       });
     });
-    expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+    expect(isValidSemver(result.trim().replace("-debug", ""))).toBe(true);
   });
 
   it("should allow stdout to be read via .read() API", async () => {
@@ -94,7 +103,7 @@ describe("spawn()", () => {
         resolve(finalData);
       });
     });
-    expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+    expect(isValidSemver(result.trim())).toBe(true);
   });
 
   it("should accept stdio option with 'ignore' for no stdio fds", async () => {
@@ -178,7 +187,10 @@ describe("spawn()", () => {
       resolve = resolve1;
     });
     process.env.NO_COLOR = "1";
-    const child = spawn("node", ["--help"], { argv0: bunExe() });
+    const child = spawn("node", ["-e", "console.log(JSON.stringify([process.argv0, process.argv[0]]))"], {
+      argv0: bunExe(),
+      stdio: ["inherit", "pipe", "inherit"],
+    });
     delete process.env.NO_COLOR;
     let msg = "";
 
@@ -191,7 +203,7 @@ describe("spawn()", () => {
     });
 
     const result = await promise;
-    expect(/bun.sh\/docs/.test(result)).toBe(true);
+    expect(JSON.parse(result)).toStrictEqual([bunExe(), fs.realpathSync(Bun.which("node"))]);
   });
 
   it("should allow us to spawn in a shell", async () => {
@@ -207,8 +219,8 @@ describe("spawn()", () => {
         resolve(data.toString());
       });
     });
-    expect(result1.trim()).toBe(Bun.which("sh"));
-    expect(result2.trim()).toBe(Bun.which("bash"));
+    expect(result1.trim()).toBe("/bin/sh");
+    expect(result2.trim()).toBe("bash");
   });
   it("should spawn a process synchronously", () => {
     const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
@@ -226,7 +238,7 @@ describe("execFile()", () => {
         resolve(stdout);
       });
     });
-    expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
+    expect(isValidSemver(result.toString().trim())).toBe(true);
   });
 });
 
@@ -240,7 +252,7 @@ describe("exec()", () => {
         resolve(stdout);
       });
     });
-    expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
+    expect(isValidSemver(result.toString().trim())).toBe(true);
   });
 
   it("should return an object w/ stdout and stderr when promisified", async () => {
@@ -250,7 +262,7 @@ describe("exec()", () => {
     expect(typeof result.stderr).toBe("string");
 
     const { stdout, stderr } = result;
-    expect(SEMVER_REGEX.test(stdout.trim())).toBe(true);
+    expect(isValidSemver(stdout.trim())).toBe(true);
     expect(stderr.trim()).toBe("");
   });
 });
@@ -265,7 +277,7 @@ describe("spawnSync()", () => {
 describe("execFileSync()", () => {
   it("should execute a file synchronously", () => {
     const result = execFileSync(bunExe(), ["-v"], { encoding: "utf8" });
-    expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+    expect(isValidSemver(result.trim())).toBe(true);
   });
 
   it("should allow us to pass input to the command", () => {
@@ -280,7 +292,7 @@ describe("execFileSync()", () => {
 describe("execSync()", () => {
   it("should execute a command in the shell synchronously", () => {
     const result = execSync("bun -v", { encoding: "utf8" });
-    expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+    expect(isValidSemver(result.trim())).toBe(true);
   });
 });
 

@@ -2876,7 +2876,13 @@ pub const FileSink = struct {
 
     pub fn onWrite(this: *FileSink, amount: usize, done: bool) void {
         log("onWrite({d}, {any})", .{ amount, done });
+
+        // Only keep the event loop ref'd while there's a pending write in progress.
+        // If there's no pending write, no need to keep the event loop ref'd.
+        this.writer.updateRef(this.eventLoop(), false);
+
         this.written += amount;
+
         if (this.pending.state == .pending)
             this.pending.consumed += @truncate(amount);
 
@@ -2954,7 +2960,11 @@ pub const FileSink = struct {
                 _ = bun.sys.close(fd);
                 return .{ .err = err };
             },
-            .result => {},
+            .result => {
+                // Only keep the event loop ref'd while there's a pending write in progress.
+                // If there's no pending write, no need to keep the event loop ref'd.
+                this.writer.updateRef(this.eventLoop(), false);
+            },
         }
 
         return .{ .result = {} };
@@ -3159,6 +3169,9 @@ pub const FileSink = struct {
                 return .{ .err = err };
             },
             .pending => |pending_written| {
+                // Pending writes keep the event loop ref'd
+                this.writer.updateRef(this.eventLoop(), true);
+
                 this.pending.consumed += @truncate(pending_written);
                 this.pending.result = .{ .owned = @truncate(pending_written) };
                 return .{ .pending = &this.pending };

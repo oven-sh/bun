@@ -2,25 +2,24 @@
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
 const std = @import("std");
 const os = std.os;
-
-const Environment = @import("root").bun.Environment;
-const default_allocator = @import("root").bun.default_allocator;
-const JSC = @import("root").bun.JSC;
-const SystemError = JSC.SystemError;
 const bun = @import("root").bun;
-const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const fd_t = bun.FileDescriptor;
-const C = @import("root").bun.C;
-const E = C.E;
-const linux = os.linux;
-const Maybe = JSC.Maybe;
-const kernel32 = bun.windows;
-const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 
+const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
+const fd_t = bun.FileDescriptor;
+const default_allocator = bun.default_allocator;
+const kernel32 = bun.windows;
+const linux = os.linux;
 const uv = bun.windows.libuv;
 
-const FileDescriptor = bun.FileDescriptor;
+const C = bun.C;
+const E = C.E;
+const Environment = bun.Environment;
 const FDImpl = bun.FDImpl;
+const FileDescriptor = bun.FileDescriptor;
+const JSC = bun.JSC;
+const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
+const Maybe = JSC.Maybe;
+const SystemError = JSC.SystemError;
 
 comptime {
     std.debug.assert(Environment.isWindows);

@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 
 import { which } from "bun";
-import { mkdtempSync, rmSync, chmodSync, mkdirSync, unlinkSync, realpathSync } from "node:fs";
+import { rmSync, chmodSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { rmdirSync } from "js/node/fs/export-star-from";

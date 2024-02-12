@@ -16,10 +16,10 @@
 //!     `defer` some code, then try to yield execution to some state machine struct,
 //!     and it immediately finishes, it will deinit itself and the defer code might
 //!     use undefined memory.
-const bun = @import("root").bun;
 const std = @import("std");
-const os = std.os;
 const builtin = @import("builtin");
+const bun = @import("root").bun;
+const os = std.os;
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -40,7 +40,7 @@ const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const TaggedPointer = @import("../tagged_pointer.zig").TaggedPointer;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
-const Maybe = @import("../bun.js/node/types.zig").Maybe;
+const Maybe = JSC.Maybe;
 
 const Pipe = [2]bun.FileDescriptor;
 const shell = @import("./shell.zig");

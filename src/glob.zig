@@ -21,33 +21,35 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 const std = @import("std");
+const bun = @import("root").bun;
+
+const eqlComptime = @import("./string_immutable.zig").eqlComptime;
+const expect = std.testing.expect;
+const isAllAscii = @import("./string_immutable.zig").isAllASCII;
 const math = std.math;
 const mem = std.mem;
-const BunString = bun.String;
-const expect = std.testing.expect;
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-const ArrayListManaged = std.ArrayList;
-const DirIterator = @import("./bun.js/node/dir_iterator.zig");
-const bun = @import("root").bun;
-const Syscall = bun.sys;
-const PathLike = @import("./bun.js/node/types.zig").PathLike;
-const Maybe = @import("./bun.js/node/types.zig").Maybe;
-const Dirent = @import("./bun.js/node/types.zig").Dirent;
-const PathString = @import("./string_types.zig").PathString;
-const ZigString = @import("./bun.js/bindings/bindings.zig").ZigString;
-const isAllAscii = @import("./string_immutable.zig").isAllASCII;
-const EntryKind = @import("./bun.js/node/types.zig").Dirent.Kind;
-const Arena = std.heap.ArenaAllocator;
-const GlobAscii = @import("./glob_ascii.zig");
-const C = @import("./c.zig");
-const ResolvePath = @import("./resolver/resolve_path.zig");
-const eqlComptime = @import("./string_immutable.zig").eqlComptime;
-
 const isWindows = @import("builtin").os.tag == .windows;
 
+const Allocator = std.mem.Allocator;
+const Arena = std.heap.ArenaAllocator;
+const ArrayList = std.ArrayListUnmanaged;
+const ArrayListManaged = std.ArrayList;
+const BunString = bun.String;
+const C = @import("./c.zig");
 const CodepointIterator = @import("./string_immutable.zig").PackedCodepointIterator;
 const Codepoint = CodepointIterator.Cursor.CodePointType;
+const Dirent = @import("./bun.js/node/types.zig").Dirent;
+const DirIterator = @import("./bun.js/node/dir_iterator.zig");
+const EntryKind = @import("./bun.js/node/types.zig").Dirent.Kind;
+const GlobAscii = @import("./glob_ascii.zig");
+const JSC = bun.JSC;
+const Maybe = JSC.Maybe;
+const PathLike = @import("./bun.js/node/types.zig").PathLike;
+const PathString = @import("./string_types.zig").PathString;
+const ResolvePath = @import("./resolver/resolve_path.zig");
+const Syscall = bun.sys;
+const ZigString = @import("./bun.js/bindings/bindings.zig").ZigString;
+
 // const Codepoint = u32;
 const Cursor = CodepointIterator.Cursor;
 

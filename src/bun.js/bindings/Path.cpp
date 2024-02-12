@@ -122,9 +122,7 @@ JSC_DEFINE_HOST_FUNCTION(Path_functionResolve,
 JSC_DEFINE_HOST_FUNCTION(Path_functionToNamespacedPath,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
-    // TODO:
-    return JSC::JSValue::encode(callFrame->argument(0));
+    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Path__toNamespacedPath);
 }
 
 static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)

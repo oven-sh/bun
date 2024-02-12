@@ -986,7 +986,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             return this.exit_code != null or this.signal_code != null;
         }
 
-        pub fn tryKill(this: *@This(), sig: i32) JSC.Node.Maybe(void) {
+        pub fn tryKill(this: *@This(), sig: i32) JSC.Maybe(void) {
             if (this.hasExited()) {
                 return .{ .result = {} };
             }

@@ -1,21 +1,28 @@
 // This file is entirely based on Zig's std.os
 // The differences are in error handling
 const std = @import("std");
-const os = std.os;
 const builtin = @import("builtin");
 
-const Syscall = @This();
-const Environment = @import("root").bun.Environment;
-const default_allocator = @import("root").bun.default_allocator;
-const JSC = @import("root").bun.JSC;
-const SystemError = JSC.SystemError;
 const bun = @import("root").bun;
-const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const C = @import("root").bun.C;
-const linux = os.linux;
-const Maybe = JSC.Maybe;
-const kernel32 = bun.windows;
+const os = std.os;
+
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
+const default_allocator = bun.default_allocator;
+const kernel32 = bun.windows;
+const linux = os.linux;
+const mem = std.mem;
+const mode_t = os.mode_t;
+const open_sym = system.open;
+const sys = std.os.system;
+const windows = bun.windows;
+
+const C = bun.C;
+const Environment = bun.Environment;
+const JSC = bun.JSC;
+const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
+const PathString = bun.PathString;
+const Syscall = @This();
+const SystemError = JSC.SystemError;
 
 pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else Syscall;
 
@@ -29,10 +36,10 @@ pub const system = switch (Environment.os) {
     .mac => bun.AsyncIO.system,
     else => @compileError("not implemented"),
 };
+
 pub const S = struct {
     pub usingnamespace if (Environment.isLinux) linux.S else if (Environment.isPosix) std.os.S else struct {};
 };
-const sys = std.os.system;
 
 const statSym = if (use_libc)
     C.stat
@@ -54,8 +61,6 @@ else if (Environment.isLinux)
     linux.lstat
 else
     @compileError("STAT");
-
-const windows = bun.windows;
 
 pub const Tag = enum(u8) {
     TODO,
@@ -100,6 +105,7 @@ pub const Tag = enum(u8) {
     utimes,
     write,
     getcwd,
+    getenv,
     chdir,
     fcopyfile,
     recv,
@@ -142,13 +148,159 @@ pub const Tag = enum(u8) {
 
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
-const PathString = @import("root").bun.PathString;
 
-const mode_t = os.mode_t;
+pub const Error = struct {
+    const E = bun.C.E;
 
-const open_sym = system.open;
+    const retry_errno = if (Environment.isLinux)
+        @as(Int, @intCast(@intFromEnum(E.AGAIN)))
+    else if (Environment.isMac)
+        @as(Int, @intCast(@intFromEnum(E.WOULDBLOCK)))
+    else
+        @as(Int, @intCast(@intFromEnum(E.INTR)));
 
-const mem = std.mem;
+    const todo_errno = std.math.maxInt(Int) - 1;
+
+    pub const Int = if (Environment.isWindows) u16 else u8; // @TypeOf(@intFromEnum(E.BADF));
+
+    /// TODO: convert to function
+    pub const oom = fromCode(E.NOMEM, .read);
+
+    errno: Int = todo_errno,
+    fd: bun.FileDescriptor = bun.invalid_fd,
+    from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
+    path: []const u8 = "",
+    syscall: Syscall.Tag = Syscall.Tag.TODO,
+
+    pub fn clone(this: *const Error, allocator: std.mem.Allocator) !Error {
+        var copy = this.*;
+        copy.path = try allocator.dupe(u8, copy.path);
+        return copy;
+    }
+
+    pub fn fromCode(errno: E, syscall: Syscall.Tag) Error {
+        return .{
+            .errno = @as(Int, @intCast(@intFromEnum(errno))),
+            .syscall = syscall,
+        };
+    }
+
+    pub fn fromCodeInt(errno: anytype, syscall: Syscall.Tag) Error {
+        return .{
+            .errno = @as(Int, @intCast(if (Environment.isWindows) @abs(errno) else errno)),
+            .syscall = syscall,
+        };
+    }
+
+    pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        try self.toSystemError().format(fmt, opts, writer);
+    }
+
+    pub inline fn getErrno(this: Error) E {
+        return @as(E, @enumFromInt(this.errno));
+    }
+
+    pub inline fn isRetry(this: *const Error) bool {
+        return this.getErrno() == .AGAIN;
+    }
+
+    pub const retry = Error{
+        .errno = retry_errno,
+        .syscall = .retry,
+    };
+
+    pub inline fn withFd(this: Error, fd: anytype) Error {
+        if (Environment.allow_assert) std.debug.assert(fd != bun.invalid_fd);
+        return Error{
+            .errno = this.errno,
+            .syscall = this.syscall,
+            .fd = fd,
+        };
+    }
+
+    pub inline fn withPath(this: Error, path: anytype) Error {
+        if (std.meta.Child(@TypeOf(path)) == u16) {
+            @compileError("Do not pass WString path to withPath, it needs the path encoded as utf8");
+        }
+        return Error{
+            .errno = this.errno,
+            .syscall = this.syscall,
+            .path = bun.span(path),
+        };
+    }
+
+    pub inline fn withPathLike(this: Error, pathlike: anytype) Error {
+        return switch (pathlike) {
+            .fd => |fd| this.withFd(fd),
+            .path => |path| this.withPath(path.slice()),
+        };
+    }
+
+    pub fn toSystemError(this: Error) SystemError {
+        var err = SystemError{
+            .errno = @as(c_int, this.errno) * -1,
+            .syscall = bun.String.static(@tagName(this.syscall)),
+        };
+
+        // errno label
+        if (!Environment.isWindows) {
+            if (this.errno > 0 and this.errno < C.SystemErrno.max) {
+                const system_errno = @as(C.SystemErrno, @enumFromInt(this.errno));
+                err.code = bun.String.static(@tagName(system_errno));
+                if (C.SystemErrno.labels.get(system_errno)) |label| {
+                    err.message = bun.String.static(label);
+                }
+            }
+        } else {
+            const system_errno = brk: {
+                // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
+                @setRuntimeSafety(false);
+                if (this.from_libuv) {
+                    break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
+                }
+
+                break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
+            };
+            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+                err.code = bun.String.static(errname);
+                if (C.SystemErrno.labels.get(system_errno)) |label| {
+                    err.message = bun.String.static(label);
+                }
+            }
+        }
+
+        if (this.path.len > 0) {
+            err.path = bun.String.createUTF8(this.path);
+        }
+
+        if (this.fd != bun.invalid_fd) {
+            if (this.fd.int() <= std.math.maxInt(i32)) {
+                err.fd = this.fd;
+            }
+        }
+
+        return err;
+    }
+
+    pub inline fn todo() Error {
+        if (Environment.isDebug) {
+            @panic("bun.sys.Error.todo() was called");
+        }
+        return Error{ .errno = todo_errno, .syscall = .TODO };
+    }
+
+    pub fn toJS(this: Error, ctx: JSC.C.JSContextRef) JSC.C.JSObjectRef {
+        return this.toSystemError().toErrorInstance(ctx.ptr()).asObjectRef();
+    }
+
+    pub fn toJSC(this: Error, ptr: *JSC.JSGlobalObject) JSC.JSValue {
+        return this.toSystemError().toErrorInstance(ptr);
+    }
+};
+
+pub fn Maybe(comptime ReturnTypeT: type) type {
+    return JSC.Node.Maybe(ReturnTypeT, Error);
+}
 
 pub fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
     const Result = Maybe([]const u8);
@@ -609,7 +761,7 @@ pub fn openFileAtWindowsNtPath(
                 if (access_mask & w.FILE_APPEND_DATA != 0) {
                     // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointerex
                     const FILE_END = 2;
-                    if (windows.kernel32.SetFilePointerEx(result, 0, null, FILE_END) == 0) {
+                    if (kernel32.SetFilePointerEx(result, 0, null, FILE_END) == 0) {
                         return .{
                             .err = .{
                                 .errno = @intFromEnum(bun.C.E.UNKNOWN),
@@ -870,7 +1022,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
             // "WriteFile sets this value to zero before doing any work or error checking."
             var bytes_written: u32 = undefined;
             std.debug.assert(bytes.len > 0);
-            const rc = std.os.windows.kernel32.WriteFile(
+            const rc = kernel32.WriteFile(
                 fd.cast(),
                 bytes.ptr,
                 adjusted_len,
@@ -1503,153 +1655,6 @@ pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
         return err;
     } else return Maybe(void).success;
 }
-
-pub const Error = struct {
-    const E = bun.C.E;
-
-    pub const Int = if (Environment.isWindows) u16 else u8; // @TypeOf(@intFromEnum(E.BADF));
-
-    errno: Int,
-    syscall: Syscall.Tag,
-    path: []const u8 = "",
-    fd: bun.FileDescriptor = bun.invalid_fd,
-    from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
-
-    pub inline fn isRetry(this: *const Error) bool {
-        return this.getErrno() == .AGAIN;
-    }
-
-    pub fn clone(this: *const Error, allocator: std.mem.Allocator) !Error {
-        var copy = this.*;
-        copy.path = try allocator.dupe(u8, copy.path);
-        return copy;
-    }
-
-    pub fn fromCode(errno: E, syscall: Syscall.Tag) Error {
-        return .{
-            .errno = @as(Int, @intCast(@intFromEnum(errno))),
-            .syscall = syscall,
-        };
-    }
-
-    pub fn fromCodeInt(errno: anytype, syscall: Syscall.Tag) Error {
-        return .{
-            .errno = @as(Int, @intCast(if (Environment.isWindows) @abs(errno) else errno)),
-            .syscall = syscall,
-        };
-    }
-
-    pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        try self.toSystemError().format(fmt, opts, writer);
-    }
-
-    /// TODO: convert to function
-    pub const oom = fromCode(E.NOMEM, .read);
-
-    pub const retry = Error{
-        .errno = if (Environment.isLinux)
-            @as(Int, @intCast(@intFromEnum(E.AGAIN)))
-        else if (Environment.isMac)
-            @as(Int, @intCast(@intFromEnum(E.WOULDBLOCK)))
-        else
-            @as(Int, @intCast(@intFromEnum(E.INTR))),
-        .syscall = .retry,
-    };
-
-    pub inline fn getErrno(this: Error) E {
-        return @as(E, @enumFromInt(this.errno));
-    }
-
-    pub inline fn withPath(this: Error, path: anytype) Error {
-        if (std.meta.Child(@TypeOf(path)) == u16) {
-            @compileError("Do not pass WString path to withPath, it needs the path encoded as utf8");
-        }
-        return Error{
-            .errno = this.errno,
-            .syscall = this.syscall,
-            .path = bun.span(path),
-        };
-    }
-
-    pub inline fn withFd(this: Error, fd: anytype) Error {
-        if (Environment.allow_assert) std.debug.assert(fd != bun.invalid_fd);
-        return Error{
-            .errno = this.errno,
-            .syscall = this.syscall,
-            .fd = fd,
-        };
-    }
-
-    pub inline fn withPathLike(this: Error, pathlike: anytype) Error {
-        return switch (pathlike) {
-            .fd => |fd| this.withFd(fd),
-            .path => |path| this.withPath(path.slice()),
-        };
-    }
-
-    const todo_errno = std.math.maxInt(Int) - 1;
-
-    pub inline fn todo() Error {
-        if (Environment.isDebug) {
-            @panic("bun.sys.Error.todo() was called");
-        }
-        return Error{ .errno = todo_errno, .syscall = .TODO };
-    }
-
-    pub fn toSystemError(this: Error) SystemError {
-        var err = SystemError{
-            .errno = @as(c_int, this.errno) * -1,
-            .syscall = bun.String.static(@tagName(this.syscall)),
-        };
-
-        // errno label
-        if (!Environment.isWindows) {
-            if (this.errno > 0 and this.errno < C.SystemErrno.max) {
-                const system_errno = @as(C.SystemErrno, @enumFromInt(this.errno));
-                err.code = bun.String.static(@tagName(system_errno));
-                if (C.SystemErrno.labels.get(system_errno)) |label| {
-                    err.message = bun.String.static(label);
-                }
-            }
-        } else {
-            const system_errno = brk: {
-                // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
-                @setRuntimeSafety(false);
-                if (this.from_libuv) {
-                    break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(err.errno))));
-                }
-
-                break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
-            };
-            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
-                err.code = bun.String.static(errname);
-                if (C.SystemErrno.labels.get(system_errno)) |label| {
-                    err.message = bun.String.static(label);
-                }
-            }
-        }
-
-        if (this.path.len > 0) {
-            err.path = bun.String.createUTF8(this.path);
-        }
-
-        if (this.fd != bun.invalid_fd) {
-            if (this.fd.int() <= std.math.maxInt(i32)) {
-                err.fd = this.fd;
-            }
-        }
-
-        return err;
-    }
-
-    pub fn toJS(this: Error, ctx: JSC.C.JSContextRef) JSC.C.JSObjectRef {
-        return this.toSystemError().toErrorInstance(ctx.ptr()).asObjectRef();
-    }
-
-    pub fn toJSC(this: Error, ptr: *JSC.JSGlobalObject) JSC.JSValue {
-        return this.toSystemError().toErrorInstance(ptr);
-    }
-};
 
 pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {
     if (comptime !Environment.isLinux) @compileError("Linux-only");

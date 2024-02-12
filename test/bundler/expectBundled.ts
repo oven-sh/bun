@@ -491,7 +491,7 @@ function expectBundled(
     outputPaths = (
       outputPaths
         ? outputPaths.map(file => path.join(root, file))
-        : entryPaths.map(file => path.join(outdir!, path.basename(file)))
+        : entryPaths.map(file => path.join(outdir || "", path.basename(file)))
     ).map(x => x.replace(/\.ts$/, ".js"));
 
     if (cjs2esm && !outfile && !minifySyntax && !minifyWhitespace) {

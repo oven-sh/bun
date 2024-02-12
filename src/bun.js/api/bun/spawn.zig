@@ -22,7 +22,7 @@ fn _getSystem() type {
 const Environment = bun.Environment;
 const system = _getSystem();
 
-const Maybe = JSC.Node.Maybe;
+const Maybe = JSC.Maybe;
 
 const fd_t = std.os.fd_t;
 const pid_t = std.os.pid_t;

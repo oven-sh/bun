@@ -17,6 +17,7 @@ function bound(obj) {
     delimiter: obj.delimiter,
     win32: undefined,
     posix: undefined,
+    // Legacy internal API, docs-only deprecated: DEP0080
     _makeLong: toNamespacedPath,
   };
   return result;

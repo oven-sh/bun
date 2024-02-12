@@ -114,13 +114,6 @@ const log = bun.Output.scoped(.glob, false);
 
 pub const BunGlobWalker = GlobWalker_(null, false);
 
-const PlatformGetcwd = switch (builtin.os.tag) {
-    .windows => struct {
-        pub extern "c" fn _wgetcwd(buf: [*]u16, size: i32) ?[*:0]u16;
-    },
-    else => struct {},
-};
-
 fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
     if (bun.Environment.isWindows) {
         var wbuf: bun.WPathBuffer = undefined;

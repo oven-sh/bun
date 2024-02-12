@@ -123,9 +123,16 @@ const PlatformGetcwd = switch (builtin.os.tag) {
 
 fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
     if (bun.Environment.isWindows) {
-        const ptr = PlatformGetcwd._wgetcwd(@ptrCast(@alignCast(buf)), @intCast(bun.MAX_PATH_BYTES)) orelse return Maybe([]const u8).errnoSys(0, .getcwd).?;
-        const slice = ptr[0..std.mem.len(ptr)];
-        return .{ .result = @as([*]const u8, @ptrCast(slice.ptr))[0 .. slice.len * 2] };
+        var wbuf: bun.WPathBuffer = undefined;
+        const ptr = bun.windows._wgetcwd(&wbuf, wbuf.len) orelse {
+            // only possible error is ERANGE
+            return .{ .err = bun.sys.Error.fromCode(bun.C.E.RANGE, .getcwd) };
+        };
+        const cwd = bun.strings.convertUTF16toUTF8InBuffer(buf, std.mem.sliceTo(ptr, 0)) catch {
+            // something went wrong with the conversion, but we don't know what
+            return .{ .err = bun.sys.Error.fromCode(bun.C.E.INVAL, .getcwd) };
+        };
+        return .{ .result = cwd };
     }
     return Syscall.getcwd(buf);
 }
@@ -170,13 +177,14 @@ pub fn GlobWalker_(
 
         dot: bool = false,
         absolute: bool = false,
-        /// This is utf-16 on Windows else its utf-8
+
         cwd: []const u8 = "",
         follow_symlinks: bool = false,
         error_on_broken_symlinks: bool = false,
         only_files: bool = true,
 
-        pathBuf: [bun.MAX_PATH_BYTES]u8 = undefined,
+        pathBuf: bun.PathBuffer = undefined,
+        cwdBuf: bun.PathBuffer = undefined,
         // iteration state
         workbuf: ArrayList(WorkItem) = ArrayList(WorkItem){},
 
@@ -638,21 +646,10 @@ pub fn GlobWalker_(
             only_files: bool,
         ) !Maybe(void) {
             errdefer arena.deinit();
-            var cwd: []const u8 = undefined;
-            switch (getcwd(&this.pathBuf)) {
-                .err => |err| {
-                    return .{ .err = err };
-                },
-                .result => |result| {
-                    log("{s}: is valid utf8 {any}", .{ result, bun.strings.isValidUTF8(result) });
-                    var list = std.ArrayList(u8).init(arena.allocator());
-                    list = try bun.strings.toUTF8ListWithType(list, []const u16, @as([*]const u16, @ptrCast(@alignCast(result.ptr)))[0 .. result.len / 2]);
-                    if (list.capacity > list.items.len) {
-                        list.items.ptr[list.items.len] = 0;
-                    }
-                    cwd = list.items[0..list.items.len];
-                },
-            }
+            const cwd = switch (getcwd(&this.cwdBuf)) {
+                .err => |err| return .{ .err = err },
+                .result => |res| res,
+            };
 
             return try this.initWithCwd(
                 arena,
@@ -1621,29 +1618,6 @@ pub fn matchImpl(glob: []const u32, path: []const u8) bool {
     }
 
     return !negated;
-}
-
-fn copyStringZ(pathbuf: *[bun.MAX_PATH_BYTES]u8, str: []const u8) ![:0]u8 {
-    if (comptime bun.Environment.isWindows) {
-        @memcpy(pathbuf[0..str.len], str);
-        pathbuf[str.len] = 0;
-        pathbuf[str.len + 1] = 0;
-        return pathbuf[0 .. str.len + 1 :0];
-    }
-
-    @memcpy(pathbuf[0..str.len], str[0..str.len]);
-    pathbuf[str.len] = 0;
-    return pathbuf[0..str.len :0];
-}
-
-fn copyUtf8ToUtf16Z(pathbuf: *[bun.MAX_PATH_BYTES]u8, utf8: []const u8) ![:0]u8 {
-    var pathbuf_utf16: []u16 = @as([*]u16, @ptrCast(@alignCast(pathbuf)))[0 .. bun.MAX_PATH_BYTES / 2];
-    const u16len = try std.unicode.utf8ToUtf16Le(pathbuf_utf16, utf8);
-    const byte_len = u16len * 2;
-    // need space for two bytes for nul terminator (utf-16 nul terminator is two bytes wide)
-    if (byte_len + 2 > bun.MAX_PATH_BYTES) return error.OutOfMemory;
-    pathbuf_utf16[u16len] = 0;
-    return @ptrCast(pathbuf[0 .. byte_len + 2]);
 }
 
 pub inline fn isSeparator(c: Codepoint) bool {

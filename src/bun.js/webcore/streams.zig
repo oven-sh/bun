@@ -888,8 +888,12 @@ pub const StreamResult = union(Tag) {
     }
 
     pub fn fulfillPromise(result: *StreamResult, promise: *JSC.JSPromise, globalThis: *JSC.JSGlobalObject) void {
+        const loop = globalThis.bunVM().eventLoop();
         const promise_value = promise.asValue(globalThis);
         defer promise_value.unprotect();
+
+        loop.enter();
+        defer loop.exit();
 
         switch (result.*) {
             .err => |err| {
@@ -2822,7 +2826,8 @@ pub fn ReadableStreamSource(
             fn onClose(ptr: ?*anyopaque) void {
                 JSC.markBinding(@src());
                 var this = bun.cast(*ReadableStreamSourceType, ptr.?);
-                _ = this.close_jsvalue.call(this.globalThis, &.{});
+                const loop = this.globalThis.bunVM().eventLoop();
+                loop.runCallback(this.close_jsvalue, this.globalThis, if (this.this_jsvalue != .zero) this.this_jsvalue else .undefined, &.{});
                 //    this.closer
             }
 

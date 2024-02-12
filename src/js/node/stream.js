@@ -5304,6 +5304,7 @@ function createNativeStreamReadable(nativeType, Readable) {
       this.#constructed = true;
 
       const result = ptr.start(this.#highWaterMark);
+
       $debug("NativeReadable internal `start` result", result, this.__id);
 
       if (typeof result === "number" && result > 1) {
@@ -5353,7 +5354,7 @@ function createNativeStreamReadable(nativeType, Readable) {
           this.push(null);
         });
         return view?.byteLength ?? 0 > 0 ? view : undefined;
-      } else if (ArrayBuffer.isView(result)) {
+      } else if ($isTypedArrayView(result)) {
         if (result.byteLength >= this.#highWaterMark && !this.#hasResized && !isClosed) {
           this.#highWaterMark *= 2;
           this.#hasResized = true;

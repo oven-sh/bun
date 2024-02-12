@@ -221,7 +221,7 @@ pub fn GlobWalker_(
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
                 const root_path_z = path_buf[0..root_path.len :0];
-                const cwd_fd = switch (Syscall.openat(bun.invalid_fd, root_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                const cwd_fd = switch (Syscall.open(root_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
                     .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, root_path_z) },
                     .result => |fd| fd,
                 };

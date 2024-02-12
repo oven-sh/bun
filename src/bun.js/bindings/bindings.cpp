@@ -3316,6 +3316,10 @@ JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
 }
+JSC__JSValue JSC__JSValue__jsEmptyString(JSC__JSGlobalObject* arg0)
+{
+    return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));
+};
 JSC__JSValue JSC__JSValue__jsNull() { return JSC::JSValue::encode(JSC::jsNull()); };
 JSC__JSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0)
 {

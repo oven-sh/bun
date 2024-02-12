@@ -114,8 +114,6 @@ const log = bun.Output.scoped(.glob, false);
 
 pub const BunGlobWalker = GlobWalker_(null, false);
 
-const O = std.os.O;
-
 const PlatformGetcwd = switch (builtin.os.tag) {
     .windows => struct {
         pub extern "c" fn _wgetcwd(buf: [*]u16, size: i32) ?[*:0]u16;
@@ -130,33 +128,6 @@ fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
         return .{ .result = @as([*]const u8, @ptrCast(slice.ptr))[0 .. slice.len * 2] };
     }
     return Syscall.getcwd(buf);
-}
-
-fn opendir(file_path: [:0]const u8, flags: bun.Mode) Maybe(bun.FileDescriptor) {
-    return opendirat(bun.toFD((std.fs.cwd().fd)), file_path, flags);
-}
-
-fn opendirat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode) Maybe(bun.FileDescriptor) {
-    if (bun.Environment.isWindows) {
-        // Internally uses NtCreateFile which doesn't support relative paths
-        if (ResolvePath.Platform.isAbsolute(.windows, file_path[0..file_path.len])) return Syscall.openDirAtWindowsA(dirfd, file_path, true, flags & O.NOFOLLOW != 0);
-
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const dirpath = switch (Syscall.getFdPath(dirfd, &buf)) {
-            .result => |path| path,
-            .err => |e| return .{ .err = e },
-        };
-
-        const parts: []const []const u8 = &.{
-            dirpath[0..],
-            file_path[0..],
-        };
-        const joined = ResolvePath.joinZ(parts, .auto);
-
-        return Syscall.open(joined, flags, 0);
-    }
-
-    return Syscall.openat(dirfd, file_path, flags, 0);
 }
 
 fn dummyFilterTrue(val: []const u8) bool {
@@ -249,7 +220,7 @@ pub fn GlobWalker_(
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
                 const root_path_z = path_buf[0..root_path.len :0];
-                const cwd_fd = switch (opendir(root_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY)) {
+                const cwd_fd = switch (Syscall.openat(bun.invalid_fd, root_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
                     .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, root_path_z) },
                     .result => |fd| fd,
                 };
@@ -357,7 +328,7 @@ pub fn GlobWalker_(
                 const fd: bun.FileDescriptor = fd: {
                     if (work_item.fd) |fd| break :fd fd;
                     if (comptime root) {
-                        if (had_dot_dot) break :fd switch (opendirat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY)) {
+                        if (had_dot_dot) break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
                             .err => |err| return .{
                                 .err = this.walker.handleSysErrWithPath(err, dir_path),
                             },
@@ -371,7 +342,7 @@ pub fn GlobWalker_(
                         break :fd this.cwd_fd;
                     }
 
-                    break :fd switch (opendirat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY)) {
+                    break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
                         .err => |err| return .{
                             .err = this.walker.handleSysErrWithPath(err, dir_path),
                         },
@@ -421,7 +392,7 @@ pub fn GlobWalker_(
                                     const is_last = component_idx == this.walker.patternComponents.items.len - 1;
 
                                     this.iter_state = .get_next;
-                                    const maybe_dir_fd: ?bun.FileDescriptor = switch (opendirat(this.cwd_fd, symlink_full_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY)) {
+                                    const maybe_dir_fd: ?bun.FileDescriptor = switch (Syscall.openat(this.cwd_fd, symlink_full_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
                                         .err => |err| brk: {
                                             if (@as(usize, @intCast(err.errno)) == @as(usize, @intFromEnum(bun.C.E.NOTDIR))) {
                                                 break :brk null;
@@ -1067,34 +1038,7 @@ pub fn GlobWalker_(
         }
 
         inline fn startsWithDot(filepath: []const u8) bool {
-            if (comptime isWindows) {
-                return filepath.len > 1 and filepath[1] == '.';
-            } else {
-                return filepath.len > 0 and filepath[0] == '.';
-            }
-        }
-
-        fn hasLeadingDot(filepath: []const u8, comptime allow_non_utf8: bool) bool {
-            if (comptime bun.Environment.isWindows and allow_non_utf8) {
-                // utf-16
-                if (filepath.len >= 4 and filepath[1] == '.' and filepath[3] == '/')
-                    return true;
-            } else {
-                if (filepath.len >= 2 and filepath[0] == '.' and filepath[1] == '/')
-                    return true;
-            }
-
-            return false;
-        }
-
-        /// NOTE This doesn't check that there is leading dot, use `hasLeadingDot()` to do that
-        fn removeLeadingDot(filepath: []const u8, comptime allow_non_utf8: bool) []const u8 {
-            if (comptime bun.Environment.allow_assert) std.debug.assert(hasLeadingDot(filepath, allow_non_utf8));
-            if (comptime bun.Environment.isWindows and allow_non_utf8) {
-                return filepath[4..];
-            } else {
-                return filepath[2..];
-            }
+            return filepath.len > 0 and filepath[0] == '.';
         }
 
         fn checkSpecialSyntax(pattern: []const u8) bool {

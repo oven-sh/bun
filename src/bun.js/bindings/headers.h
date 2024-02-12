@@ -804,7 +804,7 @@ ZIG_DECL JSC__JSValue Bun__Timer__clearInterval(JSC__JSGlobalObject* arg0, JSC__
 ZIG_DECL JSC__JSValue Bun__Timer__clearTimeout(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 ZIG_DECL int32_t Bun__Timer__getNextID();
 ZIG_DECL JSC__JSValue Bun__Timer__setInterval(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3);
-ZIG_DECL JSC__JSValue Bun__Timer__setTimeout(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3);
+ZIG_DECL JSC__JSValue Bun__Timer__setTimeout(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, int32_t value2, JSC__JSValue JSValue3);
 
 #endif
 

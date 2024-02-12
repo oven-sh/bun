@@ -4405,7 +4405,7 @@ pub const Timer = struct {
     pub fn setTimeout(
         globalThis: *JSGlobalObject,
         callback: JSValue,
-        countdown: JSValue,
+        countdown: i32,
         arguments: JSValue,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
@@ -4413,7 +4413,7 @@ pub const Timer = struct {
         globalThis.bunVM().timer.last_id +%= 1;
 
         const interval: i32 = @max(
-            countdown.coerce(i32, globalThis),
+            countdown,
             // It must be 1 at minimum or setTimeout(cb, 0) will seemingly hang
             1,
         );

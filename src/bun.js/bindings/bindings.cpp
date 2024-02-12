@@ -5113,12 +5113,33 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     JSC::VM& vm = globalObject->vm();
-    globalObject->queueMicrotask(
-        JSValue(globalObject->performMicrotaskFunction()),
-        JSC::JSValue::decode(JSValue1),
+    JSValue microtaskArgs[] = {
+        JSValue::decode(JSValue1),
         globalObject->m_asyncContextData.get()->getInternalField(0),
-        JSC::JSValue::decode(JSValue3),
-        JSC::JSValue::decode(JSValue4));
+        JSValue::decode(JSValue3),
+        JSValue::decode(JSValue4)
+    };
+
+    ASSERT(microtaskArgs[0].isCallable());
+
+    if (microtaskArgs[1].isEmpty()) {
+        microtaskArgs[1] = jsUndefined();
+    }
+
+    if (microtaskArgs[2].isEmpty()) {
+        microtaskArgs[2] = jsUndefined();
+    }
+
+    if (microtaskArgs[3].isEmpty()) {
+        microtaskArgs[3] = jsUndefined();
+    }
+
+    globalObject->queueMicrotask(
+        globalObject->performMicrotaskFunction(),
+        WTFMove(microtaskArgs[0]),
+        WTFMove(microtaskArgs[1]),
+        WTFMove(microtaskArgs[2]),
+        WTFMove(microtaskArgs[3]));
 }
 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC__JSGlobalObject* globalObject)

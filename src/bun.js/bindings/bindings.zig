@@ -2830,7 +2830,7 @@ pub const JSGlobalObject = extern struct {
     pub fn queueMicrotask(
         this: *JSGlobalObject,
         function: JSValue,
-        args: []JSC.JSValue,
+        args: []const JSC.JSValue,
     ) void {
         this.queueMicrotaskJob(
             function,

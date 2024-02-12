@@ -1532,10 +1532,9 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
     function callClose(controller) {
       try {
         const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
-        $assert(stream, "stream is missing");
-        if ($getByIdDirectPrivate(stream, "state") === $streamReadable) {
-          controller.close();
-        }
+        if (!stream) return;
+        if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
+        controller.close();
       } catch (e) {
         globalThis.reportError(e);
       }
@@ -1588,7 +1587,6 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
         this.pull = this.#pull.bind(this);
         this.cancel = this.#cancel.bind(this);
         this.autoAllocateChunkSize = autoAllocateChunkSize;
-        handle.updateRef(true);
 
         if (drainValue !== undefined) {
           this.start = controller => {

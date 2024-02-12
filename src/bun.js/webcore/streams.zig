@@ -2582,7 +2582,7 @@ pub fn ReadableStreamSource(
         pending_err: ?Syscall.Error = null,
         close_handler: ?*const fn (?*anyopaque) void = null,
         close_ctx: ?*anyopaque = null,
-        close_jsvalue: JSC.JSValue = .zero,
+        close_jsvalue: JSC.Strong = .{},
         globalThis: *JSGlobalObject = undefined,
         this_jsvalue: JSC.JSValue = .zero,
         is_closed: bool = false,
@@ -2665,6 +2665,7 @@ pub fn ReadableStreamSource(
 
             this.ref_count -= 1;
             if (this.ref_count == 0) {
+                this.close_jsvalue.deinit();
                 deinit_fn(&this.context);
                 return 0;
             }
@@ -2729,6 +2730,7 @@ pub fn ReadableStreamSource(
                 const arguments = callFrame.arguments(2);
                 const view = arguments.ptr[0];
                 view.ensureStillAlive();
+                this.this_jsvalue = this_jsvalue;
                 var buffer = view.asArrayBuffer(globalThis) orelse return JSC.JSValue.jsUndefined();
                 return processResult(
                     this_jsvalue,
@@ -2738,9 +2740,9 @@ pub fn ReadableStreamSource(
                 );
             }
             pub fn start(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-                _ = callFrame; // autofix
                 JSC.markBinding(@src());
                 this.globalThis = globalThis;
+                this.this_jsvalue = callFrame.this();
                 switch (this.onStartFromJS()) {
                     .empty => return JSValue.jsNumber(0),
                     .ready => return JSValue.jsNumber(16384),
@@ -2787,8 +2789,8 @@ pub fn ReadableStreamSource(
             }
             pub fn cancel(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 _ = globalObject; // autofix
-                _ = callFrame; // autofix
                 JSC.markBinding(@src());
+                this.this_jsvalue = callFrame.this();
                 this.cancel();
                 return JSC.JSValue.jsUndefined();
             }
@@ -2796,48 +2798,56 @@ pub fn ReadableStreamSource(
                 JSC.markBinding(@src());
                 this.close_handler = JSReadableStreamSource.onClose;
                 this.globalThis = globalObject;
+
+                if (value.isUndefined()) {
+                    this.close_jsvalue.deinit();
+                    return true;
+                }
+
                 if (!value.isCallable(globalObject.vm())) {
                     globalObject.throwInvalidArgumentType("ReadableStreamSource", "onclose", "function");
                     return false;
                 }
                 const cb = value.withAsyncContextIfNeeded(globalObject);
-                this.close_jsvalue = cb;
-                ReadableStreamSourceType.onCloseCallbackSetCached(this.this_jsvalue, globalObject, cb);
+                this.close_jsvalue.set(globalObject, cb);
                 return true;
             }
 
             pub fn getOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                 _ = globalObject; // autofix
-                JSC.markBinding(@src());
-                if (this.close_jsvalue == .zero) {
-                    return JSC.JSValue.jsUndefined();
-                }
 
-                return this.close_jsvalue;
+                JSC.markBinding(@src());
+
+                return this.close_jsvalue.get() orelse .undefined;
             }
 
             pub fn updateRef(this: *ReadableStreamSourceType, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 JSC.markBinding(@src());
+                this.this_jsvalue = callFrame.this();
                 const ref_or_unref = callFrame.argument(0).toBooleanSlow(globalObject);
                 this.setRef(ref_or_unref);
+
                 return JSC.JSValue.jsUndefined();
             }
 
             fn onClose(ptr: ?*anyopaque) void {
                 JSC.markBinding(@src());
                 var this = bun.cast(*ReadableStreamSourceType, ptr.?);
-                const loop = this.globalThis.bunVM().eventLoop();
-                loop.runCallback(this.close_jsvalue, this.globalThis, if (this.this_jsvalue != .zero) this.this_jsvalue else .undefined, &.{});
-                //    this.closer
+                if (this.close_jsvalue.trySwap()) |cb| {
+                    this.globalThis.queueMicrotask(cb, &.{});
+                }
+
+                this.close_jsvalue.deinit();
             }
 
             pub fn finalize(this: *ReadableStreamSourceType) callconv(.C) void {
+                this.this_jsvalue = .zero;
                 _ = this.decrementCount();
             }
 
             pub fn drain(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-                _ = callFrame; // autofix
                 JSC.markBinding(@src());
+                this.this_jsvalue = callFrame.this();
                 var list = this.drain();
                 if (list.len > 0) {
                     return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);

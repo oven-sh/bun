@@ -115,22 +115,6 @@ const log = bun.Output.scoped(.glob, false);
 
 pub const BunGlobWalker = GlobWalker_(null, false);
 
-fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
-    if (bun.Environment.isWindows) {
-        var wbuf: bun.WPathBuffer = undefined;
-        const ptr = bun.windows._wgetcwd(&wbuf, wbuf.len) orelse {
-            // only possible error is ERANGE
-            return .{ .err = bun.sys.Error.fromCode(bun.C.E.RANGE, .getcwd) };
-        };
-        const cwd = bun.strings.convertUTF16toUTF8InBuffer(buf, std.mem.sliceTo(ptr, 0)) catch {
-            // something went wrong with the conversion, but we don't know what
-            return .{ .err = bun.sys.Error.fromCode(bun.C.E.INVAL, .getcwd) };
-        };
-        return .{ .result = cwd };
-    }
-    return Syscall.getcwd(buf);
-}
-
 fn dummyFilterTrue(val: []const u8) bool {
     _ = val;
     return true;
@@ -178,7 +162,6 @@ pub fn GlobWalker_(
         only_files: bool = true,
 
         pathBuf: bun.PathBuffer = undefined,
-        cwdBuf: bun.PathBuffer = undefined,
         // iteration state
         workbuf: ArrayList(WorkItem) = ArrayList(WorkItem){},
 
@@ -640,15 +623,10 @@ pub fn GlobWalker_(
             only_files: bool,
         ) !Maybe(void) {
             errdefer arena.deinit();
-            const cwd = switch (getcwd(&this.cwdBuf)) {
-                .err => |err| return .{ .err = err },
-                .result => |res| res,
-            };
-
             return try this.initWithCwd(
                 arena,
                 pattern,
-                cwd,
+                bun.fs.FileSystem.instance.top_level_dir,
                 dot,
                 absolute,
                 follow_symlinks,

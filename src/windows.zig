@@ -3081,5 +3081,3 @@ pub extern "kernel32" fn OpenProcess(
 
 // https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
 pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
-
-pub extern "c" fn _wgetcwd(buf: [*]u16, size: i32) ?[*:0]u16;

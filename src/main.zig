@@ -21,13 +21,21 @@ extern fn bun_warn_avx_missing(url: [*:0]const u8) void;
 pub extern "C" var _environ: ?*anyopaque;
 pub extern "C" var environ: ?*anyopaque;
 
+// TODO: when https://github.com/ziglang/zig/pull/18692 merges, use std.os.windows for this
+extern fn SetConsoleMode(console_handle: *anyopaque, mode: u32) u32;
+
 pub fn main() void {
     const bun = @import("root").bun;
     const Output = bun.Output;
     const Environment = bun.Environment;
 
+    bun.initArgv(bun.default_allocator) catch |err| {
+        Output.panic("Failed to initialize argv: {s}\n", .{@errorName(err)});
+    };
+
     if (Environment.isRelease and Environment.isPosix)
         CrashReporter.start() catch unreachable;
+
     if (Environment.isWindows) {
         environ = @ptrCast(std.os.environ.ptr);
         _environ = @ptrCast(std.os.environ.ptr);
@@ -35,8 +43,19 @@ pub fn main() void {
         bun.win32.STDERR_FD = bun.toFD(std.io.getStdErr().handle);
         bun.win32.STDIN_FD = bun.toFD(std.io.getStdIn().handle);
 
-        // This fixes printing unicode characters
-        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
+        bun.buffered_stdin.unbuffered_reader.context.handle = std.io.getStdIn().handle;
+
+        const w = std.os.windows;
+
+        // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
+        const CP_UTF8 = 65001;
+        _ = w.kernel32.SetConsoleOutputCP(CP_UTF8);
+
+        var mode: w.DWORD = undefined;
+        const stdoutHandle = w.peb().ProcessParameters.hStdOutput;
+        if (w.kernel32.GetConsoleMode(stdoutHandle, &mode) != 0) {
+            _ = SetConsoleMode(stdoutHandle, mode | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
     }
 
     bun.start_time = std.time.nanoTimestamp();
@@ -49,6 +68,15 @@ pub fn main() void {
     defer Output.flush();
     if (Environment.isX64 and Environment.enableSIMD) {
         bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
+    }
+
+    if (Environment.isWindows) {
+        _ = bun.windows.libuv.uv_replace_allocator(
+            @ptrCast(&bun.Mimalloc.mi_malloc),
+            @ptrCast(&bun.Mimalloc.mi_realloc),
+            @ptrCast(&bun.Mimalloc.mi_calloc),
+            @ptrCast(&bun.Mimalloc.mi_free),
+        );
     }
 
     bun.CLI.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);

@@ -1,8 +1,6 @@
-// @known-failing-on-windows: 1 failing
-import fs, { FSWatcher } from "node:fs";
+import fs from "node:fs";
 import path from "path";
-import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
-import { pathToFileURL } from "bun";
+import { tempDirWithFiles } from "harness";
 
 import { describe, expect, test } from "bun:test";
 // Because macOS (and possibly other operating systems) can return a watcher
@@ -40,9 +38,13 @@ describe("fs.watchFile", () => {
     fs.watchFile(path.join(testDir, "watch.txt"), { interval: 50 }, (curr, prev) => {
       entries.push([curr, prev]);
     });
-    await Bun.sleep(100);
-    fs.writeFileSync(path.join(testDir, "watch.txt"), "hello2");
-    await Bun.sleep(100);
+    let increment = 0;
+    const interval = repeat(() => {
+      increment++;
+      fs.writeFileSync(path.join(testDir, "watch.txt"), "hello" + increment);
+    });
+    await Bun.sleep(200);
+    clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, "watch.txt"));
 
@@ -57,9 +59,14 @@ describe("fs.watchFile", () => {
     fs.watchFile(path.join(testDir, encodingFileName), { interval: 50 }, (curr, prev) => {
       entries.push([curr, prev]);
     });
-    await Bun.sleep(100);
-    fs.writeFileSync(path.join(testDir, encodingFileName), "hello2");
-    await Bun.sleep(100);
+
+    let increment = 0;
+    const interval = repeat(() => {
+      increment++;
+      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
+    });
+    await Bun.sleep(200);
+    clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, encodingFileName));
 
@@ -69,14 +76,20 @@ describe("fs.watchFile", () => {
     expect(entries[0][1].size).toBe(5);
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });
+
   test("bigint stats", async () => {
     let entries: any = [];
     fs.watchFile(path.join(testDir, encodingFileName), { interval: 50, bigint: true }, (curr, prev) => {
       entries.push([curr, prev]);
     });
-    await Bun.sleep(100);
-    fs.writeFileSync(path.join(testDir, encodingFileName), "hello2");
-    await Bun.sleep(100);
+
+    let increment = 0;
+    const interval = repeat(() => {
+      increment++;
+      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
+    });
+    await Bun.sleep(200);
+    clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, encodingFileName));
 

@@ -57,6 +57,7 @@ jobs:
     timeout-minutes: 60
     if: github.repository_owner == 'oven-sh'
     steps:
+      - run: git config --global core.autocrlf false && git config --global core.eol lf
       - uses: actions/checkout@v4
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -116,6 +117,7 @@ jobs:
         cpu: [haswell, nehalem]
         arch: [x86_64]
     steps:
+      - run: git config --global core.autocrlf false && git config --global core.eol lf
       - name: Checkout
         uses: actions/checkout@v4
       - name: Clone Submodules
@@ -214,6 +216,7 @@ jobs:
         cpu: [haswell, nehalem]
         arch: [x86_64]
     steps:
+      - run: git config --global core.autocrlf false && git config --global core.eol lf
       - uses: actions/checkout@v4
       - uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
         with:
@@ -268,11 +271,12 @@ jobs:
         arch: [x86_64]
     name: Link
     needs: [windows-dependencies, windows-codegen, windows-cpp, windows-zig]
-    runs-on: windows-latest
+    runs-on: windows-small
     if: github.repository_owner == 'oven-sh'
     timeout-minutes: 30
     permissions: write-all
     steps:
+      - run: git config --global core.autocrlf false && git config --global core.eol lf
       - uses: actions/checkout@v4
       - uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
         with:
@@ -370,7 +374,7 @@ jobs:
             **[Build Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})** | [Commit](https://github.com/oven-sh/bun/commits/${{github.sha}})
   windows-test:
     name: Test
-    runs-on: windows-latest
+    runs-on: windows-small
     needs: [windows-link]
     if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
     permissions:
@@ -386,6 +390,7 @@ jobs:
         cpu: [haswell]
         arch: [x86_64]
     steps:
+      - run: git config --global core.autocrlf false && git config --global core.eol lf
       - id: checkout
         name: Checkout
         uses: actions/checkout@v3
@@ -426,9 +431,25 @@ jobs:
         run: |
           try {
             $ErrorActionPreference = "SilentlyContinue"
-            $null = node packages/bun-internal-test/src/runner.node.mjs ${{runner.temp}}/release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}/bun.exe || $true
+            $null = node packages/bun-internal-test/src/runner.node.mjs ${{runner.temp}}/release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile/bun.exe || $true
           } catch {}
           $ErrorActionPreference = "Stop"
+      - uses: sarisia/actions-status-discord@v1
+        if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
+        with:
+          title: ""
+          webhook: ${{ secrets.DISCORD_WEBHOOK_WINTEST }}
+          status: "failure"
+          noprefix: true
+          nocontext: true
+          description: |
+            ### ❌🪟 [${{github.event.pull_request.title}}](https://github.com/oven-sh/bun/pull/${{github.event.number}})
+
+            @${{ github.actor }}, there are **${{ steps.test.outputs.failing_test_count }} failing tests** on Windows ${{ matrix.arch }}${{ matrix.cpu == 'nehalem' && ' Baseline' || '' }}
+
+            ${{ steps.test.outputs.failing_tests }}
+
+            [Full Test Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})
       - uses: sarisia/actions-status-discord@v1
         if: always() && steps.test.outputs.regressing_tests != '' && github.event_name == 'pull_request'
         with:

@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { test, describe, expect } from "bun:test";
 import { sleep } from "bun";
 import { createRequire } from "module";

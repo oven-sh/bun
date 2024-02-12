@@ -249,6 +249,7 @@ pub const FileSystemRouter = struct {
         };
 
         this.arena.deinit();
+        this.router.deinit();
         globalThis.allocator().destroy(this.arena);
 
         this.arena = arena;
@@ -380,6 +381,7 @@ pub const FileSystemRouter = struct {
             dir.deref();
         }
 
+        this.router.deinit();
         this.arena.deinit();
     }
 };
@@ -586,6 +588,7 @@ pub const MatchedRoute = struct {
             if (this.asset_prefix) |prefix| prefix.slice() else "",
             @TypeOf(&writer),
             &writer,
+            .posix,
         );
         return ZigString.init(buf[0..writer.context.pos])
             .withEncoding()

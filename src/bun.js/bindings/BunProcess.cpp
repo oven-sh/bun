@@ -32,6 +32,10 @@
 #include <uv.h>
 #include <io.h>
 #include <fcntl.h>
+// Using the same typedef and define for `mode_t` and `umask` as node on windows.
+// https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
+#define umask _umask
+typedef int mode_t;
 #endif
 #include "JSNextTickQueue.h"
 #include "ProcessBindingUV.h"
@@ -272,7 +276,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
     // Support embedded .node files
-    if (filename.startsWith("/$bunfs/"_s)) {
+    // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
+#if OS(WINDOWS)
+#define StandaloneModuleGraph__base_path "B:/~BUN/"_s
+#else
+#define StandaloneModuleGraph__base_path "/$bunfs/"_s
+#endif
+    if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
         if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
             filename = bunStr.toWTFString(BunString::ZeroCopy);
@@ -342,8 +352,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-#if !OS(WINDOWS)
-
     if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
         mode_t currentMask = umask(0);
         umask(currentMask);
@@ -376,9 +384,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     }
 
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
-#else
-    return JSC::JSValue::encode(JSC::jsNumber(0));
-#endif
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
@@ -1687,27 +1692,7 @@ static JSValue constructEnv(VM& vm, JSObject* processObject)
     return globalObject->processEnvObject();
 }
 
-#if OS(WINDOWS)
-static int getuid()
-{
-    return 0;
-}
-
-static int geteuid()
-{
-    return 0;
-}
-
-static int getegid()
-{
-    return 0;
-}
-
-static int getgid()
-{
-    return 0;
-}
-#endif
+#if !OS(WINDOWS)
 
 JSC_DEFINE_HOST_FUNCTION(Process_functiongetuid, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -1731,7 +1716,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgid, (JSGlobalObject * globalObject,
 
 JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-#if !OS(WINDOWS)
     auto& vm = globalObject->vm();
     int ngroups = getgroups(0, nullptr);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -1758,10 +1742,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
         groups->push(globalObject, jsNumber(egid));
 
     return JSValue::encode(groups);
-#else
-    return JSValue::encode(jsUndefined());
-#endif
 }
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -2588,11 +2570,6 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   exitCode                         processExitCode                                     CustomAccessor
   features                         constructFeatures                                   PropertyCallback
   getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
-  getegid                          Process_functiongetegid                             Function 0
-  geteuid                          Process_functiongeteuid                             Function 0
-  getgid                           Process_functiongetgid                              Function 0
-  getgroups                        Process_functiongetgroups                           Function 0
-  getuid                           Process_functiongetuid                              Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
@@ -2630,6 +2607,13 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0
   _kill                            Process_functionReallyKill                          Function 2
+#if !OS(WINDOWS)
+  getegid                          Process_functiongetegid                             Function 0
+  geteuid                          Process_functiongeteuid                             Function 0
+  getgid                           Process_functiongetgid                              Function 0
+  getgroups                        Process_functiongetgroups                           Function 0
+  getuid                           Process_functiongetuid                              Function 0
+#endif
 @end
 */
 #include "BunProcess.lut.h"

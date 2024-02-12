@@ -1,6 +1,13 @@
 import { gc as bunGC, unsafe, which } from "bun";
-import { expect } from "bun:test";
-import { platform } from "os";
+import { describe, test, expect, afterAll, beforeAll } from "bun:test";
+import { readlink, readFile } from "fs/promises";
+import { isAbsolute } from "path";
+import { openSync, closeSync } from "node:fs";
+
+export const isMacOS = process.platform === "darwin";
+export const isLinux = process.platform === "linux";
+export const isPosix = isMacOS || isLinux;
+export const isWindows = process.platform === "win32";
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -252,8 +259,182 @@ expect.extend({
 });
 
 export function ospath(path: string) {
-  if (process.platform === "win32") {
+  if (isWindows) {
     return path.replace(/\//g, "\\");
   }
   return path;
+}
+
+export async function toHaveBins(actual: string[], expectedBins: string[]) {
+  const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
+
+  if (isWindows) {
+    for (var i = 0; i < actual.length; i += 2) {
+      if (!actual[i].includes(expectedBins[i / 2]) || !actual[i + 1].includes(expectedBins[i / 2])) {
+        return { pass: false, message };
+      }
+    }
+    return { pass: true, message };
+  }
+
+  return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
+}
+
+export async function toBeValidBin(actual: string, expectedLinkPath: string) {
+  const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
+
+  if (isWindows) {
+    const contents = await readFile(actual + ".bunx", "utf16le");
+    const expected = expectedLinkPath.slice(3);
+    return { pass: contents.includes(expected), message };
+  }
+
+  return { pass: (await readlink(actual)) === expectedLinkPath, message };
+}
+
+export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
+  const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
+
+  if (isWindows) {
+    // junctions on windows will have an absolute path
+    const pass = isAbsolute(actual) && actual.includes(expectedLinkPath.split("..").at(-1)!);
+    return { pass, message };
+  }
+
+  const pass = actual === expectedLinkPath;
+  return { pass, message };
+}
+
+export function getMaxFD(): number {
+  if (isWindows) {
+    return 0;
+  }
+  const maxFD = openSync("/dev/null", "r");
+  closeSync(maxFD);
+  return maxFD;
+}
+
+// This is extremely frowned upon but I think it's easier to deal with than
+// remembering to do this manually everywhere
+declare global {
+  interface Buffer {
+    /**
+     * **INTERNAL USE ONLY, NOT An API IN BUN**
+     */
+    toUnixString(): string;
+  }
+}
+
+Buffer.prototype.toUnixString = function () {
+  return this.toString("utf-8").replaceAll("\r\n", "\n");
+};
+
+export function dockerExe(): string | null {
+  return which("docker") || which("podman") || null;
+}
+
+export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
+  let deadline = Date.now() + Math.max(1, timeout);
+  let error: unknown;
+  while (Date.now() < deadline) {
+    error = await new Promise(resolve => {
+      Bun.connect({
+        hostname: "localhost",
+        port,
+        socket: {
+          data: socket => {
+            resolve(undefined);
+            socket.end();
+          },
+          end: () => resolve(new Error("Socket closed")),
+          error: (_, cause) => resolve(new Error("Socket error", { cause })),
+          connectError: (_, cause) => resolve(new Error("Socket connect error", { cause })),
+        },
+      });
+    });
+    if (error) {
+      await Bun.sleep(1000);
+    } else {
+      return;
+    }
+  }
+  throw error;
+}
+
+export async function describeWithContainer(
+  label: string,
+  {
+    image,
+    env = {},
+    args = [],
+    archs,
+  }: {
+    image: string;
+    env?: Record<string, string>;
+    args?: string[];
+    archs?: NodeJS.Architecture[];
+  },
+  fn: (port: number) => void,
+) {
+  describe(label, () => {
+    const docker = dockerExe();
+    if (!docker) {
+      test.skip(`docker is not installed, skipped: ${image}`, () => {});
+      return;
+    }
+    const { arch, platform } = process;
+    if ((archs && !archs?.includes(arch)) || platform === "win32") {
+      test.skip(`docker image is not supported on ${platform}/${arch}, skipped: ${image}`, () => {});
+      return false;
+    }
+    let containerId: string;
+    {
+      const envs = Object.entries(env).map(([k, v]) => `-e${k}=${v}`);
+      const { exitCode, stdout, stderr } = Bun.spawnSync({
+        cmd: [docker, "run", "--rm", "-dPit", ...envs, image, ...args],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (exitCode !== 0) {
+        process.stderr.write(stderr);
+        test.skip(`docker container for ${image} failed to start`, () => {});
+        return false;
+      }
+      containerId = stdout.toString("utf-8").trim();
+    }
+    let port: number;
+    {
+      const { exitCode, stdout, stderr } = Bun.spawnSync({
+        cmd: [docker, "port", containerId],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (exitCode !== 0) {
+        process.stderr.write(stderr);
+        test.skip(`docker container for ${image} failed to find a port`, () => {});
+        return false;
+      }
+      const [firstPort] = stdout
+        .toString("utf-8")
+        .trim()
+        .split("\n")
+        .map(line => parseInt(line.split(":").pop()!));
+      port = firstPort;
+    }
+    beforeAll(async () => {
+      await waitForPort(port);
+    });
+    afterAll(() => {
+      Bun.spawnSync({
+        cmd: [docker, "rm", "-f", containerId],
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+    });
+    fn(port);
+  });
+}
+
+export function osSlashes(path: string) {
+  return isWindows ? path.replace(/\//g, "\\") : path;
 }

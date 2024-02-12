@@ -103,6 +103,12 @@ pub const PluginRunner = struct {
 
     pub fn extractNamespace(specifier: string) string {
         const colon = strings.indexOfChar(specifier, ':') orelse return "";
+        if (Environment.isWindows and
+            colon == 1 and
+            specifier.len > 3 and
+            bun.path.isSepAny(specifier[2]) and
+            ((specifier[0] > 'a' and specifier[0] < 'z') or (specifier[0] > 'A' and specifier[0] < 'Z')))
+            return "";
         return specifier[0..colon];
     }
 
@@ -502,7 +508,7 @@ pub const Bundler = struct {
             else => {},
         }
 
-        if (this.env.map.get("DO_NOT_TRACK")) |dnt| {
+        if (this.env.get("DO_NOT_TRACK")) |dnt| {
             // https://do-not-track.dev/
             if (strings.eqlComptime(dnt, "1")) {
                 Analytics.disabled = true;
@@ -511,11 +517,11 @@ pub const Bundler = struct {
 
         Analytics.is_ci = Analytics.is_ci or this.env.isCI();
 
-        if (strings.eqlComptime(this.env.map.get("BUN_DISABLE_TRANSPILER") orelse "0", "1")) {
+        if (strings.eqlComptime(this.env.get("BUN_DISABLE_TRANSPILER") orelse "0", "1")) {
             this.options.disable_transpilation = true;
         }
 
-        Analytics.disabled = Analytics.disabled or this.env.map.get("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null;
+        Analytics.disabled = Analytics.disabled or this.env.get("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null;
     }
 
     // This must be run after a framework is configured, if a framework is enabled

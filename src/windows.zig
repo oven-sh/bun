@@ -17,6 +17,7 @@ pub const FALSE = windows.FALSE;
 pub const TRUE = windows.TRUE;
 pub const INVALID_HANDLE_VALUE = windows.INVALID_HANDLE_VALUE;
 pub const FILE_BEGIN = windows.FILE_BEGIN;
+pub const FILE_END = windows.FILE_END;
 pub const FILE_CURRENT = windows.FILE_CURRENT;
 pub const ULONG = windows.ULONG;
 pub const LARGE_INTEGER = windows.LARGE_INTEGER;
@@ -62,8 +63,21 @@ pub const advapi32 = windows.advapi32;
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
 
+pub const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
+pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
+
 const std = @import("std");
+const Environment = bun.Environment;
+pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
+pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
+
 pub const HANDLE = win32.HANDLE;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
+pub extern "kernel32" fn GetFileInformationByHandle(
+    hFile: HANDLE,
+    lpFileInformation: *windows.BY_HANDLE_FILE_INFORMATION,
+) callconv(windows.WINAPI) BOOL;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilevaliddata
 pub extern "kernel32" fn SetFileValidData(
@@ -75,6 +89,17 @@ pub extern fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
 ) [*]win32.LPWSTR;
+
+pub extern fn GetFileType(
+    hFile: win32.HANDLE,
+) callconv(windows.WINAPI) win32.DWORD;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfiletype#return-value
+pub const FILE_TYPE_UNKNOWN = 0x0000;
+pub const FILE_TYPE_DISK = 0x0001;
+pub const FILE_TYPE_CHAR = 0x0002;
+pub const FILE_TYPE_PIPE = 0x0003;
+pub const FILE_TYPE_REMOTE = 0x8000;
 
 pub const LPDWORD = *win32.DWORD;
 
@@ -2971,24 +2996,23 @@ pub extern "kernel32" fn SetFileInformationByHandle(
 ) BOOL;
 
 pub fn getLastErrno() bun.C.E {
-    return translateWinErrorToErrno(bun.windows.kernel32.GetLastError());
+    return (bun.C.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
 }
 
-pub fn translateWinErrorToErrno(err: win32.Win32Error) bun.C.E {
+pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
     return switch (err) {
         .SUCCESS => .SUCCESS,
-        .FILE_NOT_FOUND => .NOENT,
-        .PATH_NOT_FOUND => .NOENT,
-        .TOO_MANY_OPEN_FILES => .NOMEM,
         .ACCESS_DENIED => .PERM,
         .INVALID_HANDLE => .BADF,
-        .NOT_ENOUGH_MEMORY => .NOMEM,
-        .OUTOFMEMORY => .NOMEM,
         .INVALID_PARAMETER => .INVAL,
+        .OBJECT_NAME_COLLISION => .EXIST,
+        .FILE_IS_A_DIRECTORY => .ISDIR,
+        .OBJECT_PATH_NOT_FOUND => .NOENT,
+        .OBJECT_NAME_NOT_FOUND => .NOENT,
 
         else => |t| {
             // if (bun.Environment.isDebug) {
-            bun.Output.warn("Called getLastErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
+            bun.Output.warn("Called translateNTStatusToErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
             // }
             return .UNKNOWN;
         },
@@ -2998,10 +3022,62 @@ pub fn translateWinErrorToErrno(err: win32.Win32Error) bun.C.E {
 pub extern "kernel32" fn GetHostNameW(
     lpBuffer: PWSTR,
     nSize: c_int,
-) BOOL;
+) callconv(windows.WINAPI) BOOL;
 
-/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppatha
-pub extern "kernel32" fn GetTempPath2W(
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
+pub extern "kernel32" fn GetTempPathW(
     nBufferLength: DWORD, // [in]
     lpBuffer: LPCWSTR, // [out]
 ) DWORD;
+
+pub extern "kernel32" fn CreateJobObjectA(
+    lpJobAttributes: ?*anyopaque, // [in, optional]
+    lpName: ?LPCSTR, // [in, optional]
+) callconv(windows.WINAPI) HANDLE;
+
+pub extern "kernel32" fn AssignProcessToJobObject(
+    hJob: HANDLE, // [in]
+    hProcess: HANDLE, // [in]
+) callconv(windows.WINAPI) BOOL;
+
+pub extern "kernel32" fn ResumeThread(
+    hJob: HANDLE, // [in]
+) callconv(windows.WINAPI) DWORD;
+
+pub const JOBOBJECT_ASSOCIATE_COMPLETION_PORT = extern struct {
+    CompletionKey: windows.PVOID,
+    CompletionPort: HANDLE,
+};
+
+pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
+
+pub extern "kernel32" fn SetInformationJobObject(
+    hJob: HANDLE,
+    JobObjectInformationClass: DWORD,
+    lpJobObjectInformation: LPVOID,
+    cbJobObjectInformationLength: DWORD,
+) callconv(windows.WINAPI) BOOL;
+
+// Found experimentally:
+// #include <stdio.h>
+// #include <windows.h>
+//
+// int main() {
+//         printf("%ld\n", JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO);
+//         printf("%ld\n", JOB_OBJECT_MSG_EXIT_PROCESS);
+// }
+//
+// Output:
+// 4
+// 7
+pub const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;
+pub const JOB_OBJECT_MSG_EXIT_PROCESS = 7;
+
+pub extern "kernel32" fn OpenProcess(
+    dwDesiredAccess: DWORD,
+    bInheritHandle: BOOL,
+    dwProcessId: DWORD,
+) callconv(windows.WINAPI) ?HANDLE;
+
+// https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
+pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;

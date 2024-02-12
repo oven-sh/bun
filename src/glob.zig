@@ -1066,14 +1066,35 @@ pub fn GlobWalker_(
             return out;
         }
 
-        fn startsWithDot(filepath: []const u8) bool {
-            // DirIterator actually converts to UTF-8 internally so no need for this
-            // if (comptime !isWindows) {
-            //     return filepath.len > 0 and filepath[0] == '.';
-            // } else {
-            //     return filepath.len > 1 and filepath[1] == '.';
-            // }
-            return filepath.len > 0 and filepath[0] == '.';
+        inline fn startsWithDot(filepath: []const u8) bool {
+            if (comptime isWindows) {
+                return filepath.len > 1 and filepath[1] == '.';
+            } else {
+                return filepath.len > 0 and filepath[0] == '.';
+            }
+        }
+
+        fn hasLeadingDot(filepath: []const u8, comptime allow_non_utf8: bool) bool {
+            if (comptime bun.Environment.isWindows and allow_non_utf8) {
+                // utf-16
+                if (filepath.len >= 4 and filepath[1] == '.' and filepath[3] == '/')
+                    return true;
+            } else {
+                if (filepath.len >= 2 and filepath[0] == '.' and filepath[1] == '/')
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// NOTE This doesn't check that there is leading dot, use `hasLeadingDot()` to do that
+        fn removeLeadingDot(filepath: []const u8, comptime allow_non_utf8: bool) []const u8 {
+            if (comptime bun.Environment.allow_assert) std.debug.assert(hasLeadingDot(filepath, allow_non_utf8));
+            if (comptime bun.Environment.isWindows and allow_non_utf8) {
+                return filepath[4..];
+            } else {
+                return filepath[2..];
+            }
         }
 
         fn checkSpecialSyntax(pattern: []const u8) bool {

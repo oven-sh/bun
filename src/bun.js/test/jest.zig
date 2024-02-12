@@ -78,9 +78,6 @@ pub const TestRunner = struct {
     has_pending_tests: bool = false,
     pending_test: ?*TestRunnerTask = null,
 
-    /// This silences TestNotRunningError when expect() is used to halt a running test.
-    did_pending_test_fail: bool = false,
-
     snapshots: Snapshots,
 
     default_timeout_ms: u32 = 0,
@@ -154,7 +151,6 @@ pub const TestRunner = struct {
         if (this.queue.readItem()) |task| {
             this.pending_test = task;
             this.has_pending_tests = true;
-            this.did_pending_test_fail = false;
             if (!task.run()) {
                 this.has_pending_tests = false;
                 this.pending_test = null;
@@ -588,7 +584,7 @@ pub const TestScope = struct {
         debug("onReject", .{});
         const arguments = callframe.arguments(2);
         const err = arguments.ptr[0];
-        globalThis.bunVM().runErrorHandler(err, null);
+        globalThis.bunVM().onUnhandledError(globalThis, err);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
         task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .promise);
         globalThis.bunVM().autoGarbageCollect();
@@ -623,7 +619,7 @@ pub const TestScope = struct {
                     task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .callback);
                 } else {
                     debug("done(err)", .{});
-                    globalThis.bunVM().runErrorHandlerWithDedupe(err, null);
+                    globalThis.bunVM().onUnhandledError(globalThis, err);
                     task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .callback);
                 }
             } else {
@@ -643,7 +639,6 @@ pub const TestScope = struct {
 
         var vm = VirtualMachine.get();
         const func = this.func;
-        Jest.runner.?.did_pending_test_fail = false;
         defer {
             for (this.func_arg) |arg| {
                 arg.unprotect();
@@ -683,11 +678,7 @@ pub const TestScope = struct {
         initial_value = callJSFunctionForTestRunner(vm, vm.global, this.func, this.func_arg);
 
         if (initial_value.isAnyError()) {
-            if (!Jest.runner.?.did_pending_test_fail) {
-                // test failed unless it's a todo
-                Jest.runner.?.did_pending_test_fail = this.tag != .todo;
-                vm.runErrorHandler(initial_value, null);
-            }
+            vm.onUnhandledError(vm.global, initial_value);
 
             if (this.tag == .todo) {
                 return .{ .todo = {} };
@@ -710,11 +701,7 @@ pub const TestScope = struct {
             }
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    if (!Jest.runner.?.did_pending_test_fail) {
-                        // test failed unless it's a todo
-                        Jest.runner.?.did_pending_test_fail = this.tag != .todo;
-                        vm.runErrorHandler(promise.result(vm.global.vm()), null);
-                    }
+                    vm.onUnhandledError(vm.global, promise.result(vm.global.vm()));
 
                     if (this.tag == .todo) {
                         return .{ .todo = {} };
@@ -888,7 +875,7 @@ pub const DescribeScope = struct {
             if (args.len > 0) {
                 const err = args.ptr[0];
                 if (!err.isEmptyOrUndefinedOrNull()) {
-                    ctx.bunVM().runErrorHandlerWithDedupe(err, null);
+                    ctx.bunVM().onUnhandledError(ctx.bunVM().global, err);
                 }
             }
             scope.done = true;
@@ -921,13 +908,6 @@ pub const DescribeScope = struct {
                 }
             }
 
-            const pending_test = Jest.runner.?.pending_test;
-            // forbid `expect()` within hooks
-            Jest.runner.?.pending_test = null;
-            const orig_did_pending_test_fail = Jest.runner.?.did_pending_test_fail;
-
-            Jest.runner.?.did_pending_test_fail = false;
-
             const vm = VirtualMachine.get();
             var result: JSC.JSValue = switch (cb.getLength(globalObject)) {
                 0 => callJSFunctionForTestRunner(vm, globalObject, cb, &.{}),
@@ -942,6 +922,9 @@ pub const DescribeScope = struct {
                         this,
                     );
                     const result = callJSFunctionForTestRunner(vm, globalObject, cb, &.{done_func});
+                    if (result.toError()) |err| {
+                        return err;
+                    }
                     vm.waitFor(&this.done);
                     break :brk result;
                 },
@@ -956,8 +939,6 @@ pub const DescribeScope = struct {
                 result = promise.result(globalObject.vm());
             }
 
-            Jest.runner.?.pending_test = pending_test;
-            Jest.runner.?.did_pending_test_fail = orig_did_pending_test_fail;
             if (result.isAnyError()) return result;
         }
 
@@ -984,13 +965,6 @@ pub const DescribeScope = struct {
                 }
             }
 
-            const pending_test = Jest.runner.?.pending_test;
-            // forbid `expect()` within hooks
-            Jest.runner.?.pending_test = null;
-            const orig_did_pending_test_fail = Jest.runner.?.did_pending_test_fail;
-
-            Jest.runner.?.did_pending_test_fail = false;
-
             const vm = VirtualMachine.get();
             // note: we do not support "done" callback in global hooks in the first release.
             var result: JSC.JSValue = callJSFunctionForTestRunner(vm, globalThis, cb, &.{});
@@ -1005,8 +979,6 @@ pub const DescribeScope = struct {
                 result = promise.result(globalThis.vm());
             }
 
-            Jest.runner.?.pending_test = pending_test;
-            Jest.runner.?.did_pending_test_fail = orig_did_pending_test_fail;
             if (result.isAnyError()) return result;
         }
 
@@ -1096,12 +1068,12 @@ pub const DescribeScope = struct {
                 switch (prom.status(globalObject.ptr().vm())) {
                     JSPromise.Status.Fulfilled => {},
                     else => {
-                        globalObject.bunVM().runErrorHandlerWithDedupe(prom.result(globalObject.ptr().vm()), null);
+                        globalObject.bunVM().onUnhandledError(globalObject, prom.result(globalObject.ptr().vm()));
                         return .undefined;
                     },
                 }
             } else if (result.toError()) |err| {
-                globalObject.bunVM().runErrorHandlerWithDedupe(err, null);
+                globalObject.bunVM().onUnhandledError(globalObject, err);
                 return .undefined;
             }
         }
@@ -1128,7 +1100,8 @@ pub const DescribeScope = struct {
         var i: TestRunner.Test.ID = 0;
 
         if (this.shouldEvaluateScope()) {
-            if (this.runCallback(globalObject, .beforeAll)) |_| {
+            if (this.runCallback(globalObject, .beforeAll)) |err| {
+                globalObject.bunVM().onUnhandledError(globalObject, err);
                 while (i < end) {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
@@ -1173,7 +1146,7 @@ pub const DescribeScope = struct {
 
         if (!skipped) {
             if (this.runCallback(globalThis, .afterEach)) |err| {
-                globalThis.bunVM().runErrorHandler(err, null);
+                globalThis.bunVM().onUnhandledError(globalThis, err);
             }
         }
 
@@ -1185,7 +1158,7 @@ pub const DescribeScope = struct {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
             if (this.execCallback(globalThis, .afterAll)) |err| {
-                globalThis.bunVM().runErrorHandler(err, null);
+                globalThis.bunVM().onUnhandledError(globalThis, err);
             }
         }
 
@@ -1270,19 +1243,7 @@ pub const TestRunnerTask = struct {
         fulfilled,
     };
 
-    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, global: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
-        if (Jest.runner) |runner| {
-            if (runner.did_pending_test_fail and rejection.isException(global.vm())) {
-                if (rejection.toError()) |err| {
-                    if (err.get(global, "name")) |name| {
-                        if (name.isString() and name.getZigString(global).eqlComptime("TestNotRunningError")) {
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-
+    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, _: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
         if (jsc_vm.last_reported_error_for_dedupe == rejection and rejection != .zero) {
             jsc_vm.last_reported_error_for_dedupe = .zero;
         } else {
@@ -1334,17 +1295,14 @@ pub const TestRunnerTask = struct {
         }
 
         jsc_vm.onUnhandledRejectionCtx = this;
-        if (Output.is_github_action) {
-            jsc_vm.setOnException(printGithubAnnotation);
-        }
 
         if (this.needs_before_each) {
             this.needs_before_each = false;
             const label = test_.label;
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
+                jsc_vm.onUnhandledError(globalThis, err);
                 Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
-                jsc_vm.runErrorHandler(err, null);
                 return false;
             }
         }
@@ -1380,9 +1338,6 @@ pub const TestRunnerTask = struct {
     }
 
     pub fn handleResult(this: *TestRunnerTask, result: Result, comptime from: @Type(.EnumLiteral)) void {
-        if (result == .fail)
-            Jest.runner.?.did_pending_test_fail = true;
-
         switch (comptime from) {
             .promise => {
                 if (comptime Environment.allow_assert) std.debug.assert(this.promise_state == .pending);
@@ -1422,10 +1377,12 @@ pub const TestRunnerTask = struct {
         const test_ = this.describe.tests.items[test_id];
         var describe = this.describe;
         describe.tests.items[test_id] = test_;
+
         if (comptime from == .timeout) {
-            Output.prettyErrorln("<r><red>Timeout<r><d>:<r> test <b>{}<r> timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
-            Output.flush();
+            const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
+            this.globalThis.bunVM().onUnhandledError(this.globalThis, err);
         }
+
         processTestResult(this, this.globalThis, result, test_, test_id, describe);
     }
 
@@ -1476,13 +1433,12 @@ pub const TestRunnerTask = struct {
     }
 
     fn deinit(this: *TestRunnerTask) void {
-        var vm = JSC.VirtualMachine.get();
+        const vm = JSC.VirtualMachine.get();
         if (vm.onUnhandledRejectionCtx) |ctx| {
             if (ctx == @as(*anyopaque, @ptrCast(this))) {
                 vm.onUnhandledRejectionCtx = null;
             }
         }
-        vm.clearOnException();
 
         this.ref.unref(vm);
 
@@ -1697,127 +1653,6 @@ inline fn createIfScope(
     return JSC.NewFunction(globalThis, name, 2, call, false);
 }
 
-// In Github Actions, emit an annotation that renders the error and location.
-// https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
-pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
-    const name = exception.name;
-    const message = exception.message;
-    const frames = exception.stack.frames();
-    const top_frame = if (frames.len > 0) frames[0] else null;
-    const dir = bun.getenvZ("GITHUB_WORKSPACE") orelse bun.fs.FileSystem.instance.top_level_dir;
-    const allocator = bun.default_allocator;
-
-    var has_location = false;
-
-    if (top_frame) |frame| {
-        if (!frame.position.isInvalid()) {
-            const source_url = frame.source_url.toUTF8(allocator);
-            defer source_url.deinit();
-            const file = bun.path.relative(dir, source_url.slice());
-            Output.printError("\n::error file={s},line={d},col={d},title=", .{
-                file,
-                frame.position.line_start + 1,
-                frame.position.column_start,
-            });
-            has_location = true;
-        }
-    }
-
-    if (!has_location) {
-        Output.printError("\n::error title=", .{});
-    }
-
-    if (name.isEmpty() or name.eqlComptime("Error")) {
-        Output.printError("error", .{});
-    } else {
-        Output.printError("{s}", .{name.githubAction()});
-    }
-
-    if (!message.isEmpty()) {
-        const message_slice = message.toUTF8(allocator);
-        defer message_slice.deinit();
-        const msg = message_slice.slice();
-
-        var cursor: u32 = 0;
-        while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
-            cursor = i + 1;
-            if (msg[i] == '\n') {
-                const first_line = bun.String.fromUTF8(msg[0..i]);
-                Output.printError(": {s}::", .{first_line.githubAction()});
-                break;
-            }
-        } else {
-            Output.printError(": {s}::", .{message.githubAction()});
-        }
-
-        while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
-            cursor = i + 1;
-            if (msg[i] == '\n') {
-                break;
-            }
-        }
-
-        if (cursor > 0) {
-            const body = ZigString.init(msg[cursor..]);
-            Output.printError("{s}", .{body.githubAction()});
-        }
-    } else {
-        Output.printError("::", .{});
-    }
-
-    // TODO: cleanup and refactor to use printStackTrace()
-    if (top_frame) |_| {
-        const vm = VirtualMachine.get();
-        const origin = if (vm.is_from_devserver) &vm.origin else null;
-
-        var i: i16 = 0;
-        while (i < frames.len) : (i += 1) {
-            const frame = frames[@as(usize, @intCast(i))];
-            const source_url = frame.source_url.toUTF8(allocator);
-            defer source_url.deinit();
-            const file = bun.path.relative(dir, source_url.slice());
-            const func = frame.function_name.toUTF8(allocator);
-
-            if (file.len == 0 and func.len == 0) continue;
-
-            const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
-                false,
-            )}) > 0;
-
-            // %0A = escaped newline
-            if (has_name) {
-                Output.printError(
-                    "%0A      at {any} ({any})",
-                    .{
-                        frame.nameFormatter(false),
-                        frame.sourceURLFormatter(
-                            file,
-                            origin,
-                            false,
-                            false,
-                        ),
-                    },
-                );
-            } else {
-                Output.printError(
-                    "%0A      at {any}",
-                    .{
-                        frame.sourceURLFormatter(
-                            file,
-                            origin,
-                            false,
-                            false,
-                        ),
-                    },
-                );
-            }
-        }
-    }
-
-    Output.printError("\n", .{});
-    Output.flush();
-}
-
 fn consumeArg(
     globalThis: *JSC.JSGlobalObject,
     should_write: bool,
@@ -2022,7 +1857,21 @@ fn eachBind(
                 (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
             const formattedLabel = formatLabel(globalThis, label, function_args, test_idx) catch return .zero;
 
-            if (each_data.is_test) {
+            var is_skip = false;
+
+            if (Jest.runner.?.filter_regex) |regex| {
+                var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
+                buffer.reset();
+                appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
+                buffer.append(formattedLabel) catch unreachable;
+                const str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
+                is_skip = !regex.matches(str);
+            }
+
+            if (is_skip) {
+                parent.skip_count += 1;
+                function.unprotect();
+            } else if (each_data.is_test) {
                 function.protect();
                 parent.tests.append(allocator, TestScope{
                     .label = formattedLabel,
@@ -2093,10 +1942,14 @@ inline fn createEach(
 }
 
 fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, function: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
+    vm.eventLoop().enter();
+    defer {
+        vm.eventLoop().exit();
+    }
+
     globalObject.clearTerminationException();
     const result = function.call(globalObject, args);
     result.ensureStillAlive();
-    globalObject.vm().releaseWeakRefs();
-    vm.drainMicrotasks();
+
     return result;
 }

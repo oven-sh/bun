@@ -83,6 +83,7 @@ const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const IPC = @import("ipc.zig");
+pub const GenericWatcher = @import("../watcher.zig");
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -430,22 +431,22 @@ pub const ImportWatcher = union(enum) {
 
     pub fn start(this: ImportWatcher) !void {
         switch (this) {
-            inline .hot => |watcher| try watcher.start(),
-            inline .watch => |watcher| try watcher.start(),
+            inline .hot => |w| try w.start(),
+            inline .watch => |w| try w.start(),
             else => {},
         }
     }
 
-    pub inline fn watchlist(this: ImportWatcher) Watcher.WatchListArray {
+    pub inline fn watchlist(this: ImportWatcher) GenericWatcher.WatchList {
         return switch (this) {
-            inline .hot, .watch => |wacher| wacher.watchlist,
+            inline .hot, .watch => |w| w.watchlist,
             else => .{},
         };
     }
 
-    pub inline fn indexOf(this: ImportWatcher, hash: Watcher.HashType) ?u32 {
+    pub inline fn indexOf(this: ImportWatcher, hash: GenericWatcher.HashType) ?u32 {
         return switch (this) {
-            inline .hot, .watch => |wacher| wacher.indexOf(hash),
+            inline .hot, .watch => |w| w.indexOf(hash),
             else => null,
         };
     }
@@ -454,7 +455,7 @@ pub const ImportWatcher = union(enum) {
         this: ImportWatcher,
         fd: StoredFileDescriptorType,
         file_path: string,
-        hash: Watcher.HashType,
+        hash: GenericWatcher.HashType,
         loader: options.Loader,
         dir_fd: StoredFileDescriptorType,
         package_json: ?*PackageJSON,
@@ -578,8 +579,6 @@ pub const VirtualMachine = struct {
     onUnhandledRejectionCtx: ?*anyopaque = null,
     unhandled_error_counter: usize = 0,
 
-    on_exception: ?*const OnException = null,
-
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
@@ -623,14 +622,6 @@ pub const VirtualMachine = struct {
 
     pub fn isInspectorEnabled(this: *const VirtualMachine) bool {
         return this.debugger != null;
-    }
-
-    pub fn setOnException(this: *VirtualMachine, callback: *const OnException) void {
-        this.on_exception = callback;
-    }
-
-    pub fn clearOnException(this: *VirtualMachine) void {
-        this.on_exception = null;
     }
 
     const VMHolder = struct {
@@ -819,10 +810,10 @@ pub const VirtualMachine = struct {
         Output.debug("Reloading...", .{});
         if (this.hot_reload == .watch) {
             Output.flush();
-            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
+            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
         }
 
-        if (!strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
+        if (!strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
             Output.flush();
             Output.disableBuffering();
             Output.resetTerminalAll();
@@ -1506,6 +1497,17 @@ pub const VirtualMachine = struct {
     }
 
     pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: bun.String, source_url: []const u8, hash_: ?u32, comptime add_double_ref: bool) ResolvedSource {
+        // refCountedString will panic if the code is empty
+        if (code.len == 0) {
+            return ResolvedSource{
+                .source_code = bun.String.init(""),
+                .specifier = specifier,
+                .source_url = bun.String.init(source_url),
+                .hash = 0,
+                .allocator = null,
+                .needs_deref = false,
+            };
+        }
         var source = this.refCountedString(code, hash_, !add_double_ref);
         if (add_double_ref) {
             source.ref();
@@ -2142,7 +2144,7 @@ pub const VirtualMachine = struct {
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
-        this.main_hash = bun.JSC.Watcher.getHash(entry_path);
+        this.main_hash = GenericWatcher.getHash(entry_path);
 
         try this.entry_point.generate(
             this.allocator,
@@ -2180,7 +2182,7 @@ pub const VirtualMachine = struct {
     pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
         this.main = entry_path;
-        this.main_hash = bun.JSC.Watcher.getHash(entry_path);
+        this.main_hash = GenericWatcher.getHash(entry_path);
 
         this.eventLoop().ensureWaker();
 
@@ -2759,10 +2761,8 @@ pub const VirtualMachine = struct {
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;
 
-        if (allow_side_effects) {
-            defer if (this.on_exception) |cb| {
-                cb(exception);
-            };
+        if (allow_side_effects and Output.is_github_action) {
+            defer printGithubAnnotation(exception);
         }
 
         const line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
@@ -2995,6 +2995,127 @@ pub const VirtualMachine = struct {
         }
     }
 
+    // In Github Actions, emit an annotation that renders the error and location.
+    // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
+    pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
+        const name = exception.name;
+        const message = exception.message;
+        const frames = exception.stack.frames();
+        const top_frame = if (frames.len > 0) frames[0] else null;
+        const dir = bun.getenvZ("GITHUB_WORKSPACE") orelse bun.fs.FileSystem.instance.top_level_dir;
+        const allocator = bun.default_allocator;
+
+        var has_location = false;
+
+        if (top_frame) |frame| {
+            if (!frame.position.isInvalid()) {
+                const source_url = frame.source_url.toUTF8(allocator);
+                defer source_url.deinit();
+                const file = bun.path.relative(dir, source_url.slice());
+                Output.printError("\n::error file={s},line={d},col={d},title=", .{
+                    file,
+                    frame.position.line_start + 1,
+                    frame.position.column_start,
+                });
+                has_location = true;
+            }
+        }
+
+        if (!has_location) {
+            Output.printError("\n::error title=", .{});
+        }
+
+        if (name.isEmpty() or name.eqlComptime("Error")) {
+            Output.printError("error", .{});
+        } else {
+            Output.printError("{s}", .{name.githubAction()});
+        }
+
+        if (!message.isEmpty()) {
+            const message_slice = message.toUTF8(allocator);
+            defer message_slice.deinit();
+            const msg = message_slice.slice();
+
+            var cursor: u32 = 0;
+            while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
+                cursor = i + 1;
+                if (msg[i] == '\n') {
+                    const first_line = bun.String.fromUTF8(msg[0..i]);
+                    Output.printError(": {s}::", .{first_line.githubAction()});
+                    break;
+                }
+            } else {
+                Output.printError(": {s}::", .{message.githubAction()});
+            }
+
+            while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
+                cursor = i + 1;
+                if (msg[i] == '\n') {
+                    break;
+                }
+            }
+
+            if (cursor > 0) {
+                const body = ZigString.init(msg[cursor..]);
+                Output.printError("{s}", .{body.githubAction()});
+            }
+        } else {
+            Output.printError("::", .{});
+        }
+
+        // TODO: cleanup and refactor to use printStackTrace()
+        if (top_frame) |_| {
+            const vm = VirtualMachine.get();
+            const origin = if (vm.is_from_devserver) &vm.origin else null;
+
+            var i: i16 = 0;
+            while (i < frames.len) : (i += 1) {
+                const frame = frames[@as(usize, @intCast(i))];
+                const source_url = frame.source_url.toUTF8(allocator);
+                defer source_url.deinit();
+                const file = bun.path.relative(dir, source_url.slice());
+                const func = frame.function_name.toUTF8(allocator);
+
+                if (file.len == 0 and func.len == 0) continue;
+
+                const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
+                    false,
+                )}) > 0;
+
+                // %0A = escaped newline
+                if (has_name) {
+                    Output.printError(
+                        "%0A      at {any} ({any})",
+                        .{
+                            frame.nameFormatter(false),
+                            frame.sourceURLFormatter(
+                                file,
+                                origin,
+                                false,
+                                false,
+                            ),
+                        },
+                    );
+                } else {
+                    Output.printError(
+                        "%0A      at {any}",
+                        .{
+                            frame.sourceURLFormatter(
+                                file,
+                                origin,
+                                false,
+                                false,
+                            ),
+                        },
+                    );
+                }
+            }
+        }
+
+        Output.printError("\n", .{});
+        Output.flush();
+    }
+
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
 
@@ -3074,11 +3195,10 @@ extern fn BunDebugger__willHotReload() void;
 
 pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime reload_immediately: bool) type {
     return struct {
-        const watcher = @import("../watcher.zig");
-        pub const Watcher = watcher.NewWatcher(*@This());
+        pub const Watcher = GenericWatcher.NewWatcher(*@This());
         const Reloader = @This();
 
-        onAccept: std.ArrayHashMapUnmanaged(@This().Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
+        onAccept: std.ArrayHashMapUnmanaged(GenericWatcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
         ctx: *Ctx,
         verbose: bool = false,
 
@@ -3207,7 +3327,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
-            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
+            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
 
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }
@@ -3217,7 +3337,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             // - Directories outside the root directory
             // - Directories inside node_modules
             if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
-                watch.addDirectory(dir_fd, file_path, @This().Watcher.getHash(file_path), false) catch {};
+                watch.addDirectory(dir_fd, file_path, GenericWatcher.getHash(file_path), false) catch {};
             }
         }
 
@@ -3250,9 +3370,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         pub fn onFileUpdate(
             this: *@This(),
-            events: []watcher.WatchEvent,
+            events: []GenericWatcher.WatchEvent,
             changed_files: []?[:0]u8,
-            watchlist: watcher.Watchlist,
+            watchlist: GenericWatcher.WatchList,
         ) void {
             var slice = watchlist.slice();
             const file_paths = slice.items(.file_path);
@@ -3314,6 +3434,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         }
                     },
                     .directory => {
+                        if (comptime Environment.isWindows) {
+                            // on windows we receive file events for all items affected by a directory change
+                            // so we only need to clear the directory cache. all other effects will be handled
+                            // by the file events
+                            resolver.bustDirCache(file_path);
+                            continue;
+                        }
                         var affected_buf: [128][]const u8 = undefined;
                         var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
 
@@ -3364,7 +3491,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         resolver.bustDirCache(file_path);
 
                         if (entries_option) |dir_ent| {
-                            var last_file_hash: @This().Watcher.HashType = std.math.maxInt(@This().Watcher.HashType);
+                            var last_file_hash: GenericWatcher.HashType = std.math.maxInt(GenericWatcher.HashType);
 
                             for (affected) |changed_name_| {
                                 const changed_name: []const u8 = if (comptime Environment.isMac)
@@ -3377,14 +3504,14 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                 var prev_entry_id: usize = std.math.maxInt(usize);
                                 if (loader != .file) {
                                     var path_string: bun.PathString = undefined;
-                                    var file_hash: @This().Watcher.HashType = last_file_hash;
+                                    var file_hash: GenericWatcher.HashType = last_file_hash;
                                     const abs_path: string = brk: {
                                         if (dir_ent.entries.get(@as([]const u8, @ptrCast(changed_name)))) |file_ent| {
                                             // reset the file descriptor
                                             file_ent.entry.cache.fd = .zero;
                                             file_ent.entry.need_stat = true;
                                             path_string = file_ent.entry.abs_path;
-                                            file_hash = @This().Watcher.getHash(path_string.slice());
+                                            file_hash = GenericWatcher.getHash(path_string.slice());
                                             for (hashes, 0..) |hash, entry_id| {
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id] != .zero) {
@@ -3412,7 +3539,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
                                             @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len..][0..changed_name.len], changed_name);
                                             const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
-                                            file_hash = @This().Watcher.getHash(path_slice);
+                                            file_hash = GenericWatcher.getHash(path_slice);
                                             break :brk path_slice;
                                         }
                                     };

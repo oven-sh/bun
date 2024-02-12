@@ -1,6 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
-const uv = bun.windows.libuv;
+const windows = bun.windows;
+const uv = windows.libuv;
 const Path = @import("../../resolver/resolve_path.zig");
 const Fs = @import("../../fs.zig");
 const Mutex = @import("../../lock.zig").Lock;
@@ -9,17 +10,15 @@ const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Output = bun.Output;
+const Watcher = @import("../../watcher.zig");
 
 var default_manager: ?*PathWatcherManager = null;
 
 // TODO: make this a generic so we can reuse code with path_watcher
 // TODO: we probably should use native instead of libuv abstraction here for better performance
 pub const PathWatcherManager = struct {
-    const GenericWatcher = @import("../../watcher.zig");
     const options = @import("../../options.zig");
-    pub const Watcher = GenericWatcher.NewWatcher(*PathWatcherManager);
     const log = Output.scoped(.PathWatcherManager, false);
-    main_watcher: *Watcher,
 
     watchers: bun.BabyList(?*PathWatcher) = .{},
     watcher_count: u32 = 0,
@@ -50,7 +49,8 @@ pub const PathWatcherManager = struct {
         errdefer bun.default_allocator.free(cloned_path);
 
         const dir = bun.openDirAbsolute(cloned_path[0..cloned_path.len]) catch |err| {
-            if (err == error.ENOENT) {
+            log("openDirAbsolute({s}) err {}", .{ cloned_path, err });
+            if (err == error.ENOTDIR) {
                 const file = try bun.openFileZ(cloned_path, .{ .mode = .read_only });
                 const result = PathInfo{
                     .fd = bun.toFD(file.handle),
@@ -85,54 +85,29 @@ pub const PathWatcherManager = struct {
         var this = PathWatcherManager.new(.{
             .file_paths = bun.StringHashMap(PathInfo).init(bun.default_allocator),
             .watchers = watchers,
-            .main_watcher = undefined,
             .vm = vm,
             .watcher_count = 0,
         });
         errdefer this.destroy();
-
-        this.main_watcher = try Watcher.init(
-            this,
-            vm.bundler.fs,
-            bun.default_allocator,
-        );
-
-        errdefer this.main_watcher.deinit(false);
-
-        try this.main_watcher.start();
         return this;
     }
 
-    fn _addDirectory(this: *PathWatcherManager, _: *PathWatcher, path: PathInfo) !void {
-        const fd = path.fd;
-        try this.main_watcher.addDirectory(fd, path.path, path.hash, false);
-    }
-
     fn registerWatcher(this: *PathWatcherManager, watcher: *PathWatcher) !void {
-        {
-            if (this.watcher_count == this.watchers.len) {
-                this.watcher_count += 1;
-                this.watchers.push(bun.default_allocator, watcher) catch |err| {
-                    this.watcher_count -= 1;
-                    return err;
-                };
-            } else {
-                var watchers = this.watchers.slice();
-                for (watchers, 0..) |w, i| {
-                    if (w == null) {
-                        watchers[i] = watcher;
-                        this.watcher_count += 1;
-                        break;
-                    }
+        if (this.watcher_count == this.watchers.len) {
+            this.watcher_count += 1;
+            this.watchers.push(bun.default_allocator, watcher) catch |err| {
+                this.watcher_count -= 1;
+                return err;
+            };
+        } else {
+            var watchers = this.watchers.slice();
+            for (watchers, 0..) |w, i| {
+                if (w == null) {
+                    watchers[i] = watcher;
+                    this.watcher_count += 1;
+                    break;
                 }
             }
-        }
-
-        const path = watcher.path;
-        if (path.is_file) {
-            try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, .zero, null, false);
-        } else {
-            try this._addDirectory(watcher, path);
         }
     }
 
@@ -152,7 +127,6 @@ pub const PathWatcherManager = struct {
                 path.refs -= 1;
                 if (path.refs == 0) {
                     const path_ = path.path;
-                    this.main_watcher.remove(path.hash);
                     _ = this.file_paths.remove(path_);
                     bun.default_allocator.free(path_);
                 }
@@ -198,8 +172,6 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        this.main_watcher.deinit(false);
-
         if (this.watcher_count > 0) {
             while (this.watchers.popOrNull()) |watcher| {
                 if (watcher) |w| {
@@ -242,7 +214,7 @@ pub const PathWatcher = struct {
     const log = Output.scoped(.PathWatcher, false);
 
     pub const ChangeEvent = struct {
-        hash: PathWatcherManager.Watcher.HashType = 0,
+        hash: Watcher.HashType = 0,
         event_type: EventType = .change,
         time_stamp: i64 = 0,
     };
@@ -271,36 +243,36 @@ pub const PathWatcher = struct {
             return;
         }
 
-        const path = if (filename) |file| file[0..bun.len(file) :0] else this.path.path;
+        const path = if (filename) |file| file[0..bun.len(file) :0] else return;
+        // if we are watching a file we already have the file info
+        const path_info = if (this.path.is_file) this.path else brk: {
+            // we need the absolute path to get the file info
+            var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            var parts = [_]string{ this.path.path, path };
+            @memcpy(buf[0..this.path.path.len], this.path.path);
+            buf[this.path.path.len] = std.fs.path.sep;
+            const cwd_z = buf[0 .. this.path.path.len + 1];
+            var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            const file_path = Path.joinAbsStringBuf(
+                cwd_z,
+                &joined_buf,
+                &parts,
+                .windows,
+            );
 
-        // we need the absolute path to get the file info
-        var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-        var parts = [_]string{path};
-        const cwd = Path.dirname(this.path.path, .windows);
-        @memcpy(buf[0..cwd.len], cwd);
-        buf[cwd.len] = std.fs.path.sep;
+            joined_buf[file_path.len] = 0;
+            const file_path_z = joined_buf[0..file_path.len :0];
+            break :brk manager._fdFromAbsolutePathZ(file_path_z) catch return;
+        };
 
-        var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-        const file_path = Path.joinAbsStringBuf(
-            buf[0 .. cwd.len + 1],
-            &joined_buf,
-            &parts,
-            .windows,
-        );
-
-        joined_buf[file_path.len] = 0;
-        const file_path_z = joined_buf[0..file_path.len :0];
-        const path_info = manager._fdFromAbsolutePathZ(file_path_z) catch return;
-        defer manager._decrementPathRef(path);
+        defer {
+            if (!this.path.is_file) {
+                manager._decrementPathRef(path_info.path);
+            }
+        }
         defer this.flush();
         // events always use the relative path
-        if (events & uv.UV_RENAME != 0) {
-            this.emit(path, path_info.hash, timestamp, path_info.is_file, .rename);
-        }
-
-        if (events & uv.UV_CHANGE != 0) {
-            this.emit(path, path_info.hash, timestamp, path_info.is_file, .change);
-        }
+        this.emit(path, path_info.hash, timestamp, path_info.is_file, if (events & uv.UV_RENAME != 0) .rename else .change);
     }
 
     pub fn init(manager: *PathWatcherManager, path: PathWatcherManager.PathInfo, recursive: bool, callback: Callback, updateEndCallback: UpdateEndCallback, ctx: ?*anyopaque) !*PathWatcher {
@@ -319,8 +291,17 @@ pub const PathWatcher = struct {
             return error.FailedToInitializeFSEvent;
         }
         this.handle.data = this;
+
+        const event_path = brk: {
+            var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const size = bun.sys.readlink(path.path, &outbuf).unwrap() catch break :brk path.path;
+            if (size >= bun.MAX_PATH_BYTES) break :brk path.path;
+            outbuf[size] = 0;
+            break :brk outbuf[0..size];
+        };
+
         // UV_FS_EVENT_RECURSIVE only works for Windows and OSX
-        if (uv.uv_fs_event_start(&this.handle, PathWatcher.uvEventCallback, path.path.ptr, if (recursive) uv.UV_FS_EVENT_RECURSIVE else 0) != 0) {
+        if (uv.uv_fs_event_start(&this.handle, PathWatcher.uvEventCallback, event_path.ptr, if (recursive) uv.UV_FS_EVENT_RECURSIVE else 0) != 0) {
             return error.FailedToStartFSEvent;
         }
         // we handle this in node_fs_watcher
@@ -330,7 +311,7 @@ pub const PathWatcher = struct {
         return this;
     }
 
-    pub fn emit(this: *PathWatcher, path: string, hash: PathWatcherManager.Watcher.HashType, time_stamp: i64, is_file: bool, event_type: EventType) void {
+    pub fn emit(this: *PathWatcher, path: string, hash: Watcher.HashType, time_stamp: i64, is_file: bool, event_type: EventType) void {
         const time_diff = time_stamp - this.last_change_event.time_stamp;
         // skip consecutive duplicates
         if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != hash) {

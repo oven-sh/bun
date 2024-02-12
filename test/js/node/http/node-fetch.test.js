@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import fetch2, { fetch, Response, Request, Headers } from "node-fetch";
 import * as iso from "isomorphic-fetch";
 import * as vercelFetch from "@vercel/fetch";

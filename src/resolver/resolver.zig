@@ -876,14 +876,13 @@ pub const Resolver = struct {
             };
         }
 
-        // When using `bun build --compile`, module resolution is never relative
-        // to our special /$bunfs/ directory.
+        // When using `bun build --compile`, module resolution is never
+        // relative to our special /$bunfs/ directory.
         //
-        // It's always relative to the current working directory of the project
-        // root.
+        // It's always relative to the current working directory of the project root.
         const source_dir = brk: {
             if (r.standalone_module_graph) |graph| {
-                if (strings.isBunStandaloneFilePath(import_path)) {
+                if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(import_path)) {
                     if (graph.files.contains(import_path)) {
                         return .{
                             .success = Result{
@@ -898,7 +897,7 @@ pub const Resolver = struct {
                     }
 
                     return .{ .not_found = {} };
-                } else if (strings.isBunStandaloneFilePath(source_dir_)) {
+                } else if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(source_dir_)) {
                     break :brk Fs.FileSystem.instance.top_level_dir;
                 }
             }
@@ -3277,9 +3276,19 @@ pub const Resolver = struct {
         defer sliced.deinit();
 
         const str = brk: {
-            if (std.fs.path.isAbsolute(sliced.slice())) break :brk sliced.slice();
+            if (std.fs.path.isAbsolute(sliced.slice())) {
+                if (comptime Environment.isWindows) {
+                    const dir_path_buf = bufs(.node_modules_paths_buf);
+                    var normalizer = bun.path.PosixToWinNormalizer{};
+                    const normalized = normalizer.resolveCWD(sliced.slice()) catch {
+                        @panic("Failed to get cwd for _nodeModulesPaths");
+                    };
+                    break :brk bun.path.normalizeBuf(normalized, dir_path_buf, .windows);
+                }
+                break :brk sliced.slice();
+            }
             const dir_path_buf = bufs(.node_modules_paths_buf);
-            break :brk r.fs.joinBuf(&[_]string{ r.fs.top_level_dir, sliced.slice() }, dir_path_buf);
+            break :brk bun.path.joinStringBuf(dir_path_buf, &[_]string{ r.fs.top_level_dir, sliced.slice() }, .auto);
         };
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
@@ -3292,22 +3301,20 @@ pub const Resolver = struct {
                 const path_without_trailing_slash = strings.withoutTrailingSlash(dir_info.abs_path);
                 const path_parts = brk: {
                     if (path_without_trailing_slash.len == 1 and path_without_trailing_slash[0] == '/') {
-                        break :brk [2]string{ "", "/node_modules" };
+                        break :brk [2]string{ "", std.fs.path.sep_str ++ "node_modules" };
                     }
 
-                    break :brk [2]string{ path_without_trailing_slash, "/node_modules" };
+                    break :brk [2]string{ path_without_trailing_slash, std.fs.path.sep_str ++ "node_modules" };
                 };
-                list.append(
-                    bun.String.createUTF8(
-                        bun.strings.concat(stack_fallback_allocator.get(), &path_parts) catch unreachable,
-                    ),
-                ) catch unreachable;
+                const nodemodules_path = bun.strings.concat(stack_fallback_allocator.get(), &path_parts) catch unreachable;
+                bun.path.posixToPlatformInPlace(u8, nodemodules_path);
+                list.append(bun.String.createUTF8(nodemodules_path)) catch unreachable;
                 dir_info = (r.readDirInfo(std.fs.path.dirname(path_without_trailing_slash) orelse break) catch null) orelse break;
             }
         } else {
             // does not exist
             const full_path = std.fs.path.resolve(r.allocator, &[1][]const u8{str}) catch unreachable;
-            var path = full_path;
+            var path = strings.withoutTrailingSlash(full_path);
             while (true) {
                 const path_without_trailing_slash = strings.withoutTrailingSlash(path);
 
@@ -3317,13 +3324,13 @@ pub const Resolver = struct {
                             stack_fallback_allocator.get(),
                             &[_]string{
                                 path_without_trailing_slash,
-                                "/node_modules",
+                                std.fs.path.sep_str ++ "node_modules",
                             },
                         ) catch unreachable,
                     ),
                 ) catch unreachable;
 
-                path = path[0 .. strings.lastIndexOfChar(path, '/') orelse break];
+                path = path[0 .. strings.lastIndexOfChar(path, std.fs.path.sep) orelse break];
             }
         }
 

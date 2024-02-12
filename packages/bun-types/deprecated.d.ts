@@ -55,12 +55,7 @@ declare namespace Bun {
 
 interface CustomEvent<T = any> {
   /** @deprecated */
-  initCustomEvent(
-    type: string,
-    bubbles?: boolean,
-    cancelable?: boolean,
-    detail?: T,
-  ): void;
+  initCustomEvent(type: string, bubbles?: boolean, cancelable?: boolean, detail?: T): void;
 }
 
 interface DOMException {

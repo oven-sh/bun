@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { spawnSync } from "bun";
 import { it, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
@@ -132,7 +131,7 @@ it("Bun.sleep", async () => {
   await Bun.sleep(2);
   sleeps++;
   const end = performance.now();
-  expect((end - start) * 1000).toBeGreaterThanOrEqual(3);
+  expect((end - start) * 1000).toBeGreaterThan(2);
 
   expect(sleeps).toBe(3);
 });
@@ -153,7 +152,7 @@ it("Bun.sleep works with a Date object", async () => {
   ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
   const now = performance.now();
   await Bun.sleep(ten_ms);
-  expect(performance.now() - now).toBeGreaterThanOrEqual(10);
+  expect(performance.now() - now).toBeGreaterThan(11);
 });
 
 it("node.js timers/promises setTimeout propagates exceptions", async () => {
@@ -252,7 +251,7 @@ it("setTimeout if refreshed before run, should reschedule to run later", done =>
   let start = Date.now();
   let timer = setTimeout(() => {
     let end = Date.now();
-    expect(end - start).toBeGreaterThanOrEqual(150);
+    expect(end - start).toBeGreaterThan(149);
     done();
   }, 100);
 

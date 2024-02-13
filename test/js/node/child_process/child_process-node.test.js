@@ -507,7 +507,7 @@ describe("fork", () => {
       const { mustCall } = createCallCheckCtx(done);
       const ac = new AbortController();
       const { signal } = ac;
-      const cp = fork(fixtures.path("child-process-stay-alive-forever.js", { env: bunEnv }), {
+      const cp = fork(fixtures.path("child-process-stay-alive-forever.js"), {
         signal,
         env: bunEnv,
       });
@@ -723,7 +723,7 @@ describe("fork", () => {
     // https://github.com/nodejs/node/blob/v20.5.0/test/parallel/test-child-process-fork-stdio.js
   });
   describe("fork", () => {
-    it.todo("message", () => {
+    it.todo("message", done => {
       // TODO - bun has no `send` method in the process
       const { mustCall } = createCallCheckCtx(done);
       const args = ["foo", "bar"];

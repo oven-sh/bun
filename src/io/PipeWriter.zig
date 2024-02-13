@@ -147,6 +147,7 @@ pub fn PosixBufferedWriter(
         parent: *Parent = undefined,
         is_done: bool = false,
         pollable: bool = false,
+        closed_without_reporting: bool = false,
 
         const PosixWriter = @This();
 
@@ -176,6 +177,10 @@ pub fn PosixBufferedWriter(
         ) void {
             const was_done = this.is_done == true;
             const parent = this.parent;
+
+            if (done and !was_done) {
+                this.closeWithoutReporting();
+            }
 
             onWrite(parent, written, done);
             if (done and !was_done) {
@@ -237,9 +242,23 @@ pub fn PosixBufferedWriter(
             this.close();
         }
 
+        fn closeWithoutReporting(this: *PosixWriter) void {
+            if (this.getFd() != bun.invalid_fd) {
+                std.debug.assert(!this.closed_without_reporting);
+                this.closed_without_reporting = true;
+                this.handle.close(null, {});
+            }
+        }
+
         pub fn close(this: *PosixWriter) void {
-            if (onClose) |closer|
-                this.handle.close(this.parent, closer);
+            if (onClose) |closer| {
+                if (this.closed_without_reporting) {
+                    this.closed_without_reporting = false;
+                    closer(this.parent);
+                } else {
+                    this.handle.close(this.parent, closer);
+                }
+            }
         }
 
         pub fn updateRef(this: *const PosixWriter, event_loop: anytype, value: bool) void {
@@ -306,6 +325,7 @@ pub fn PosixStreamingWriter(
         parent: *Parent = undefined,
         head: usize = 0,
         is_done: bool = false,
+        closed_without_reporting: bool = false,
 
         // TODO:
         chunk_size: usize = 0,
@@ -329,6 +349,8 @@ pub fn PosixStreamingWriter(
             err: bun.sys.Error,
         ) void {
             std.debug.assert(!err.isRetry());
+
+            this.closeWithoutReporting();
             this.is_done = true;
 
             onError(@alignCast(@ptrCast(this.parent)), err);
@@ -341,6 +363,10 @@ pub fn PosixStreamingWriter(
             done: bool,
         ) void {
             this.head += written;
+
+            if (done) {
+                this.closeWithoutReporting();
+            }
 
             if (this.buffer.items.len == this.head) {
                 if (this.buffer.capacity > 32 * 1024 and !done) {
@@ -359,13 +385,21 @@ pub fn PosixStreamingWriter(
         }
 
         fn _onWritable(this: *PosixWriter) void {
-            if (this.is_done) {
+            if (this.is_done or this.closed_without_reporting) {
                 return;
             }
 
             this.head = 0;
             if (onReady) |cb| {
                 cb(@ptrCast(this.parent));
+            }
+        }
+
+        fn closeWithoutReporting(this: *PosixWriter) void {
+            if (this.getFd() != bun.invalid_fd) {
+                std.debug.assert(!this.closed_without_reporting);
+                this.closed_without_reporting = true;
+                this.handle.close(null, {});
             }
         }
 
@@ -381,7 +415,7 @@ pub fn PosixStreamingWriter(
         }
 
         pub fn tryWrite(this: *PosixWriter, buf: []const u8) WriteResult {
-            if (this.is_done) {
+            if (this.is_done or this.closed_without_reporting) {
                 return .{ .done = 0 };
             }
 
@@ -397,7 +431,7 @@ pub fn PosixStreamingWriter(
         }
 
         pub fn writeUTF16(this: *PosixWriter, buf: []const u16) WriteResult {
-            if (this.is_done) {
+            if (this.is_done or this.closed_without_reporting) {
                 return .{ .done = 0 };
             }
 
@@ -419,7 +453,7 @@ pub fn PosixStreamingWriter(
         }
 
         pub fn writeLatin1(this: *PosixWriter, buf: []const u8) WriteResult {
-            if (this.is_done) {
+            if (this.is_done or this.closed_without_reporting) {
                 return .{ .done = 0 };
             }
 
@@ -466,7 +500,7 @@ pub fn PosixStreamingWriter(
         }
 
         pub fn write(this: *PosixWriter, buf: []const u8) WriteResult {
-            if (this.is_done) {
+            if (this.is_done or this.closed_without_reporting) {
                 return .{ .done = 0 };
             }
 
@@ -511,6 +545,9 @@ pub fn PosixStreamingWriter(
         pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable);
 
         pub fn flush(this: *PosixWriter) WriteResult {
+            if (this.closed_without_reporting or this.is_done) {
+                return .{ .done = 0 };
+            }
             return this.drainBufferedData(std.math.maxInt(usize), false);
         }
 
@@ -554,6 +591,13 @@ pub fn PosixStreamingWriter(
         }
 
         pub fn close(this: *PosixWriter) void {
+            if (this.closed_without_reporting) {
+                this.closed_without_reporting = false;
+                std.debug.assert(this.getFd() == bun.invalid_fd);
+                onClose(@ptrCast(this.parent));
+                return;
+            }
+
             this.handle.close(@ptrCast(this.parent), onClose);
         }
 

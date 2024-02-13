@@ -1551,7 +1551,7 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
     switch (comptime builtin.os.tag) {
         .windows => {
             var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
-            const wide_slice = std.os.windows.GetFinalPathNameByHandle(bun.fdcast(fd), .{}, wide_buf[0..]) catch {
+            const wide_slice = std.os.windows.GetFinalPathNameByHandle(fd.cast(), .{}, wide_buf[0..]) catch {
                 return Maybe([]u8){ .err = .{ .errno = @intFromEnum(bun.C.SystemErrno.EBADF), .syscall = .GetFinalPathNameByHandle } };
             };
 

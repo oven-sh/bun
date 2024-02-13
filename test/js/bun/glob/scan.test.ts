@@ -25,7 +25,7 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fg from "fast-glob";
 import * as path from "path";
-import { tempFixturesDir, createTempDirectoryWithBrokenSymlinks } from "./util";
+import { tempFixturesDir, createTempDirectoryWithBrokenSymlinks, prepareEntries } from "./util";
 
 let origAggressiveGC = Bun.unsafe.gcAggressionLevel();
 let tempBrokenSymlinksDir: string;
@@ -63,7 +63,7 @@ describe("glob.match", async () => {
       async () => {
         const pattern = "**/node_modules/**/*.js";
         const glob = new Glob(pattern);
-        const filepaths = await Array.fromAsync(glob.scan(bunGlobOpts));
+        const filepaths = prepareEntries(await Array.fromAsync(glob.scan(bunGlobOpts)));
         const fgFilepths = await fg.glob(pattern, fgOpts);
 
         // console.error(filepaths);
@@ -83,7 +83,7 @@ describe("glob.match", async () => {
       async () => {
         const pattern = "**/*.js";
         const glob = new Glob(pattern);
-        const filepaths = await Array.fromAsync(glob.scan(bunGlobOpts));
+        const filepaths = prepareEntries(await Array.fromAsync(glob.scan(bunGlobOpts)));
         const fgFilepths = await fg.glob(pattern, fgOpts);
 
         expect(filepaths.length).toEqual(fgFilepths.length);
@@ -102,7 +102,7 @@ describe("glob.match", async () => {
       async () => {
         const pattern = "**/*.ts";
         const glob = new Glob(pattern);
-        const filepaths = await Array.fromAsync(glob.scan(bunGlobOpts));
+        const filepaths = prepareEntries(await Array.fromAsync(glob.scan(bunGlobOpts)));
         const fgFilepths = await fg.glob(pattern, fgOpts);
 
         expect(filepaths.length).toEqual(fgFilepths.length);
@@ -142,7 +142,7 @@ describe("glob.match", async () => {
     const cwd = import.meta.dir;
 
     const glob = new Glob(pattern);
-    const entries = await Array.fromAsync(glob.scan({ cwd }));
+    const entries = prepareEntries(await Array.fromAsync(glob.scan({ cwd })));
 
     expect(entries.sort()).toEqual(
       [
@@ -226,7 +226,6 @@ const regular = {
     { pattern: "*", cwd: "fixtures" },
     { pattern: "**", cwd: "fixtures" },
     { pattern: "**/*", cwd: "fixtures" },
-
     { pattern: "*/nested", cwd: "fixtures" },
     { pattern: "*/nested/*", cwd: "fixtures" },
     { pattern: "*/nested/**", cwd: "fixtures" },
@@ -234,22 +233,18 @@ const regular = {
     { pattern: "**/nested/*", cwd: "fixtures" },
     { pattern: "**/nested/**", cwd: "fixtures" },
     { pattern: "**/nested/**/*", cwd: "fixtures" },
-
     { pattern: "{first,second}", cwd: "fixtures" },
     { pattern: "{first,second}/*", cwd: "fixtures" },
     { pattern: "{first,second}/**", cwd: "fixtures" },
     { pattern: "{first,second}/**/*", cwd: "fixtures" },
-
     { pattern: "*/{first,second}/*", cwd: "fixtures" },
     { pattern: "*/{first,second}/*/{nested,file.md}", cwd: "fixtures" },
     { pattern: "**/{first,second}/**", cwd: "fixtures" },
     { pattern: "**/{first,second}/{nested,file.md}", cwd: "fixtures" },
     { pattern: "**/{first,second}/**/{nested,file.md}", cwd: "fixtures" },
-
     { pattern: "{first,second}/{nested,file.md}", cwd: "fixtures" },
     { pattern: "{first,second}/*/nested/*", cwd: "fixtures" },
     { pattern: "{first,second}/**/nested/**", cwd: "fixtures" },
-
     { pattern: "*/{nested,file.md}/*", cwd: "fixtures" },
     { pattern: "**/{nested,file.md}/*", cwd: "fixtures" },
   ],
@@ -258,11 +253,9 @@ const regular = {
     { pattern: "./*", cwd: "fixtures" },
     { pattern: "./**", cwd: "fixtures" },
     { pattern: "./**/*", cwd: "fixtures" },
-
     { pattern: "../*", cwd: "fixtures/first" },
     { pattern: "../**", cwd: "fixtures/first", issue: 47 },
     { pattern: "../../*", cwd: "fixtures/first/nested" },
-
     { pattern: "../{first,second}", cwd: "fixtures/first" },
     { pattern: "./../*", cwd: "fixtures/first" },
   ],
@@ -321,12 +314,12 @@ beforeAll(() => {
 describe("fast-glob e2e tests", async () => {
   const absoluteCwd = process.cwd();
   const cwd = import.meta.dir;
+  console.log("CWD IS", cwd);
 
   regular.regular.forEach(pattern =>
     test(`patterns regular ${pattern}`, () => {
       // let entries = fg.globSync(pattern, { cwd });
-      let entries = Array.from(new Glob(pattern).scanSync({ cwd, followSymlinks: true }));
-      entries = entries.sort();
+      const entries = prepareEntries(Array.from(new Glob(pattern).scanSync({ cwd, followSymlinks: true })));
       expect(entries).toMatchSnapshot(pattern);
     }),
   );
@@ -335,8 +328,7 @@ describe("fast-glob e2e tests", async () => {
     test(`patterns regular cwd ${pattern}`, () => {
       const testCwd = path.join(cwd, secondHalf);
       // let entries = fg.globSync(pattern, { cwd: testCwd });
-      let entries = Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true }));
-      entries = entries.sort();
+      let entries = prepareEntries(Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true })));
       expect(entries).toMatchSnapshot(pattern);
     }),
   );
@@ -345,8 +337,7 @@ describe("fast-glob e2e tests", async () => {
     test(`patterns regular relative cwd ${pattern}`, () => {
       const testCwd = secondHalf ? path.join(cwd, secondHalf) : cwd;
       // let entries = fg.globSync(pattern, { cwd: testCwd });
-      let entries = Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true }));
-      entries = entries.sort();
+      let entries = prepareEntries(Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true })));
       expect(entries).toMatchSnapshot(pattern);
     }),
   );
@@ -357,6 +348,7 @@ describe("fast-glob e2e tests", async () => {
       // let entries = fg.globSync(pattern, { cwd: testCwd, absolute: true });
       let entries = Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true, absolute: true }));
       entries = entries.sort().map(entry => entry.slice(absoluteCwd.length + 1));
+      entries = prepareEntries(entries);
       expect(entries).toMatchSnapshot(pattern);
     }),
   );
@@ -364,8 +356,9 @@ describe("fast-glob e2e tests", async () => {
   onlyFilesPatterns.regular.forEach(pattern =>
     test(`only files ${pattern}`, () => {
       // let entries = fg.globSync(pattern, { cwd, absolute: false, onlyFiles: true });
-      let entries = Array.from(new Glob(pattern).scanSync({ cwd, followSymlinks: true, onlyFiles: true }));
-      entries = entries.sort();
+      let entries = prepareEntries(
+        Array.from(new Glob(pattern).scanSync({ cwd, followSymlinks: true, onlyFiles: true })),
+      );
       expect(entries).toMatchSnapshot(pattern);
     }),
   );
@@ -374,8 +367,9 @@ describe("fast-glob e2e tests", async () => {
     test(`only files (cwd) ${pattern}`, () => {
       const testCwd = secondHalf ? path.join(cwd, secondHalf) : cwd;
       // let entries = fg.globSync(pattern, { cwd: testCwd, absolute: false, onlyFiles: true });
-      let entries = Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true, onlyFiles: true }));
-      entries = entries.sort();
+      let entries = prepareEntries(
+        Array.from(new Glob(pattern).scanSync({ cwd: testCwd, followSymlinks: true, onlyFiles: true })),
+      );
       expect(entries).toMatchSnapshot(pattern);
     }),
   );

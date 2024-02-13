@@ -95,3 +95,18 @@ it("two valid argument, should succeed", async () => {
   expect(err.split(/\r?\n/)).not.toContain("error: This command updates Bun itself, and does not take package names.");
   expect(err.split(/\r?\n/)).not.toContain("note: Use `bun update --stable --profile` instead.");
 });
+
+it("zero arguments, should succeed", async () => {
+  const { stderr } = spawn({
+    cmd: [join(run_dir, exe_name), "upgrade"],
+    cwd: run_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  // Should not contain error message
+  expect(err.split(/\r?\n/)).not.toContain("error: This command updates Bun itself, and does not take package names.");
+});

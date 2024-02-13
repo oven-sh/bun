@@ -408,20 +408,20 @@ pub const UpgradeCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         @setCold(true);
 
-        var args = bun.argv();
-        for (args[2..]) |arg| {
-            const span = std.mem.span(arg);
-            if (!strings.contains(span, "--")) {
-                Output.prettyError(
-                    \\<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.
-                    \\<blue>note<r><d>:<r> Use `bun update
-                , .{});
-                for (args[2..]) |arg_err| {
-                    const span_err = std.mem.span(arg_err);
-                    Output.prettyError(" {s}", .{span_err});
+        const args = bun.argv();
+        if (args.len > 2) {
+            for (args[2..]) |arg| {
+                if (!strings.contains(arg, "--")) {
+                    Output.prettyError(
+                        \\<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.
+                        \\<blue>note<r><d>:<r> Use `bun update
+                    , .{});
+                    for (args[2..]) |arg_err| {
+                        Output.prettyError(" {s}", .{arg_err});
+                    }
+                    Output.prettyErrorln("` instead.", .{});
+                    Global.exit(1);
                 }
-                Output.prettyErrorln("` instead.", .{});
-                Global.exit(1);
             }
         }
 

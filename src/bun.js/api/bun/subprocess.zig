@@ -1566,16 +1566,6 @@ pub const Subprocess = struct {
                                 var new_item: Stdio = undefined;
                                 if (!new_item.extract(globalThis, i, value)) {
                                     return JSC.JSValue.jsUndefined();
-                                switch (new_item) {
-                                    .pipe => {
-                                        extra_fds.append(.{ .buffer = {} }) catch {
-                                            globalThis.throwOutOfMemory();
-                                            return .zero;
-                                        };
-                                    },
-                                    else => {
-                                        // TODO: fix leak
-                                    },
                                 }
 
                                 extra_fds.append(new_item.asSpawnOption()) catch {

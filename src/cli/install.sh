@@ -3,7 +3,7 @@ set -euo pipefail
 
 if [[ ${OS:-} = Windows_NT ]]; then
     powershell -c "irm bun.sh/install.ps1|iex"
-    exit 1
+    exit $?
 fi
 
 # Reset

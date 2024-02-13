@@ -2411,7 +2411,7 @@ pub const Formatter = struct {
                                 comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                 .{},
                             );
-                            const data = value.get(this.globalThis, "data").?;
+                            const data = value.fastGet(this.globalThis, .data).?;
                             const tag = Tag.getAdvanced(data, this.globalThis, .{ .hide_global = true });
                             if (tag.cell.isStringLike()) {
                                 this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);

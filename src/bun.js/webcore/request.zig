@@ -71,7 +71,7 @@ pub const Request = struct {
     upgrader: ?*anyopaque = null,
 
     // We must report a consistent value for this
-    reported_estimated_size: ?u63 = null,
+    reported_estimated_size: usize = 0,
 
     const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
@@ -128,10 +128,16 @@ pub const Request = struct {
     }
 
     pub fn estimatedSize(this: *Request) callconv(.C) usize {
-        return this.reported_estimated_size orelse brk: {
-            this.reported_estimated_size = @as(u63, @truncate(this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request)));
-            break :brk this.reported_estimated_size.?;
-        };
+        return this.reported_estimated_size;
+    }
+
+    pub fn calculateEstimatedSize(this: *Request) usize {
+        return this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
+    }
+
+    pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
+        this.reported_estimated_size = this.calculateEstimatedSize();
+        return Request.toJSUnchecked(globalObject, this);
     }
 
     pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {

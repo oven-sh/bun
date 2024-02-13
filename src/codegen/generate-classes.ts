@@ -1435,6 +1435,7 @@ function generateZig(
     construct,
     finalize,
     noConstructor = false,
+    overridesToJS = false,
     estimatedSize,
     call = false,
     values = [],
@@ -1703,6 +1704,10 @@ pub const ${className(typeName)} = struct {
   `
         : ""
     }
+
+    ${
+      !overridesToJS
+        ? `
     /// Create a new instance of ${typeName}
     pub fn toJS(this: *${typeName}, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -1713,6 +1718,8 @@ pub const ${className(typeName)} = struct {
         } else {
             return ${symbolName(typeName, "create")}(globalObject, this);
         }
+    }`
+        : ""
     }
 
     /// Modify the internal ptr to point to a new instance of ${typeName}.
@@ -1731,6 +1738,9 @@ pub const ${className(typeName)} = struct {
     extern fn ${symbolName(typeName, "getConstructor")}(*JSC.JSGlobalObject) JSC.JSValue;
 
     extern fn ${symbolName(typeName, "create")}(globalObject: *JSC.JSGlobalObject, ptr: ?*${typeName}) JSC.JSValue;
+
+    /// Create a new instance of ${typeName} without validating it works.
+    pub const toJSUnchecked = ${symbolName(typeName, "create")};
 
     extern fn ${typeName}__dangerouslySetPtr(JSC.JSValue, ?*${typeName}) bool;
 

@@ -86,6 +86,8 @@ pub const Blob = struct {
         closing,
     };
 
+    reported_estimated_size: usize = 0,
+
     size: SizeType = 0,
     offset: SizeType = 0,
     /// When set, the blob will be freed on finalization callbacks
@@ -1424,22 +1426,20 @@ pub const Blob = struct {
         return blob_;
     }
 
-    fn estimatedByteSize(this: *Blob) usize {
+    fn calculateEstimatedByteSize(this: *Blob) usize {
         // in-memory size. not the size on disk.
-        if (this.size != Blob.max_size) {
-            return this.size;
-        }
+        var size: usize = @sizeOf(Blob);
 
-        const store = this.store orelse return 0;
-        if (store.data == .bytes) {
-            return store.data.bytes.len;
-        }
-
-        return 0;
-    }
-
-    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
-        var size = this.estimatedByteSize() + @sizeOf(Blob);
+        size += if (this.size != Blob.max_size)
+            @intCast(this.size)
+        else brk: {
+            if (this.store) |store| {
+                if (store.data == .bytes) {
+                    break :brk @intCast(store.data.bytes.len);
+                }
+            }
+            break :brk 0;
+        };
 
         if (this.store) |store| {
             size += @sizeOf(Blob.Store);
@@ -1449,7 +1449,11 @@ pub const Blob = struct {
             };
         }
 
-        return size + (this.content_type.len * @as(usize, @intFromBool(this.content_type_allocated)));
+        return size + (this.content_type.len * @intFromBool(this.content_type_allocated));
+    }
+
+    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
+        return this.reported_estimated_size;
     }
 
     comptime {
@@ -3578,6 +3582,15 @@ pub const Blob = struct {
 
         duped.allocator = null;
         return duped;
+    }
+
+    pub fn toJS(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(this.allocator != null);
+        }
+
+        this.reported_estimated_size = this.calculateEstimatedByteSize();
+        return Blob.toJSUnchecked(globalObject, this);
     }
 
     pub fn deinit(this: *Blob) void {

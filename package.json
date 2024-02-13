@@ -28,7 +28,7 @@
     "build:safe": "cmake . -DZIG_OPTIMIZE=ReleaseSafe -DUSE_DEBUG_JSC=ON -DCMAKE_BUILD_TYPE=Release -GNinja -Bbuild-safe && ninja -Cbuild-safe",
     "typecheck": "tsc --noEmit && cd test && bun run typecheck",
     "fmt": "biome format --write {.vscode,src,test,bench,packages/{bun-types,bun-inspector-*,bun-vscode,bun-debug-adapter-protocol}}",
-    "fmt:zig": "zig fmt src/*.zig src/**/*.zig",
+    "fmt:zig": "zig fmt src/*.zig src/*/*.zig src/*/*/*.zig src/*/*/*/*.zig",
     "lint": "eslint './**/*.d.ts' --cache",
     "lint:fix": "eslint './**/*.d.ts' --cache --fix",
     "test": "node packages/bun-internal-test/src/runner.node.mjs ./build/bun-debug",

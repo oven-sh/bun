@@ -68,3 +68,8 @@ export function tempFixturesDir() {
 
   return dir;
 }
+
+export const prepareEntries: (entries: string[]) => string[] =
+  process.platform == "win32"
+    ? entries => entries.sort().map(entry => entry.replaceAll("\\", "/"))
+    : entries => entries.sort();

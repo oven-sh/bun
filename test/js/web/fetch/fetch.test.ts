@@ -1761,7 +1761,7 @@ it("should allow very long redirect URLS", async () => {
     },
   });
   // run it more times to check Malformed_HTTP_Response errors
-  for(let i = 0; i < 100; i++){
+  for (let i = 0; i < 100; i++) {
     const { url, status } = await fetch(`${server.url.origin}/redirect`);
     expect(url).toBe(`${server.url.origin}${Location}`);
     expect(status).toBe(404);

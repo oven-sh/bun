@@ -943,7 +943,8 @@ pub const Parser = struct {
                         self.continue_from_subparser(&subparser);
                         if (self.delimits(self.peek())) {
                             _ = self.match(.Delimit);
-                            if (should_break) break;
+                            // if (should_break) break;
+                            break;
                         }
                     },
                     .Text => |txtrng| {

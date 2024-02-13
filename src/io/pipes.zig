@@ -39,7 +39,7 @@ pub const PollOrFd = union(enum) {
 
         if (fd != bun.invalid_fd) {
             this.* = .{ .closed = {} };
-            _ = bun.sys.close(fd);
+            bun.Async.Closer.close(fd, {});
             if (comptime @TypeOf(onCloseFn) != void)
                 onCloseFn(@alignCast(@ptrCast(ctx.?)));
         } else {

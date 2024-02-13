@@ -1062,3 +1062,21 @@ pub const FilePoll = struct {
 };
 
 pub const Waker = bun.AsyncIO.Waker;
+
+pub const Closer = struct {
+    fd: bun.FileDescriptor,
+    task: JSC.WorkPoolTask = .{ .callback = &onClose },
+
+    pub usingnamespace bun.New(@This());
+
+    pub fn close(fd: bun.FileDescriptor, _: anytype) void {
+        std.debug.assert(fd != bun.invalid_fd);
+        JSC.WorkPool.schedule(&Closer.new(.{ .fd = fd }).task);
+    }
+
+    fn onClose(task: *JSC.WorkPoolTask) void {
+        const closer = @fieldParentPtr(Closer, "task", task);
+        defer closer.destroy();
+        _ = bun.sys.close(closer.fd);
+    }
+};

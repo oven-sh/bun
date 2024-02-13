@@ -381,7 +381,6 @@ pub const Subprocess = struct {
                 .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, fd.?) },
                 .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
                 .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
-                .socket => unreachable,
             };
         }
 

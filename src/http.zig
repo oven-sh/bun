@@ -2628,7 +2628,7 @@ inline fn handleShortRead(
 
         if (to_copy.len > 0) {
             // this one will probably be another chunk, so we leave a little extra room
-            this.state.response_message_buffer.append(to_copy) catch @panic("Out of memory");
+            this.state.response_message_buffer.append(to_copy) catch bun.outOfMemory();
         }
     }
 

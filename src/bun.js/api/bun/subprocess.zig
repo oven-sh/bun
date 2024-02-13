@@ -929,7 +929,7 @@ pub const Subprocess = struct {
 
         fn deinit(this: *PipeReader) void {
             if (comptime Environment.isPosix) {
-                std.debug.assert(this.reader.is_done);
+                std.debug.assert(this.reader.isDone());
             }
 
             if (comptime Environment.isWindows) {

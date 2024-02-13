@@ -3353,7 +3353,7 @@ pub const FileReader = struct {
                         .result => |opened| {
                             this.fd = opened.fd;
                             pollable = opened.pollable;
-                            this.reader.nonblocking = opened.nonblocking;
+                            this.reader.flags.nonblocking = opened.nonblocking;
                         },
                     }
                 },
@@ -3414,14 +3414,16 @@ pub const FileReader = struct {
         }
     }
 
-    pub fn onReadChunk(this: *@This(), init_buf: []const u8, hasMore: bool) bool {
+    pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState) bool {
         const buf = init_buf;
-        log("onReadChunk() = {d}", .{buf.len});
+        log("onReadChunk() = {d} ({s})", .{ buf.len, @tagName(state) });
 
         if (this.done) {
             this.reader.close();
             return false;
         }
+
+        const hasMore = state != .eof;
 
         if (this.read_inside_on_pull != .none) {
             switch (this.read_inside_on_pull) {
@@ -3467,6 +3469,15 @@ pub const FileReader = struct {
                     },
                 };
 
+                if (this.reader.isDone()) {
+                    this.pending.result = .{
+                        .into_array_and_done = .{
+                            .value = this.pending_value.get() orelse .zero,
+                            .len = @truncate(buf.len),
+                        },
+                    };
+                }
+
                 this.pending_value.clear();
                 this.pending_view = &.{};
                 this.pending.run();
@@ -3474,9 +3485,15 @@ pub const FileReader = struct {
             }
 
             if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
-                this.pending.result = .{
-                    .temporary = bun.ByteList.init(buf),
-                };
+                if (this.reader.isDone()) {
+                    this.pending.result = .{
+                        .temporary_and_done = bun.ByteList.init(buf),
+                    };
+                } else {
+                    this.pending.result = .{
+                        .temporary = bun.ByteList.init(buf),
+                    };
+                }
 
                 this.pending_value.clear();
                 this.pending_view = &.{};
@@ -3484,9 +3501,15 @@ pub const FileReader = struct {
                 return false;
             }
 
-            this.pending.result = .{
-                .owned = bun.ByteList.init(this.buffered.items),
-            };
+            if (this.reader.isDone()) {
+                this.pending.result = .{
+                    .owned_and_done = bun.ByteList.init(buf),
+                };
+            } else {
+                this.pending.result = .{
+                    .owned = bun.ByteList.init(buf),
+                };
+            }
             this.buffered = .{};
             this.pending_value.clear();
             this.pending_view = &.{};

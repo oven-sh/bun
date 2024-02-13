@@ -1,6 +1,8 @@
 const bun = @import("root").bun;
 const std = @import("std");
 
+const ReadState = @import("./pipes.zig").ReadState;
+
 /// Read a blocking pipe without blocking the current thread.
 pub fn PosixPipeReader(
     comptime This: type,
@@ -8,9 +10,10 @@ pub fn PosixPipeReader(
         getFd: *const fn (*This) bun.FileDescriptor,
         getBuffer: *const fn (*This) *std.ArrayList(u8),
         getIsNonBlocking: *const fn (*This) bool,
-        onReadChunk: ?*const fn (*This, chunk: []u8, hasMore: bool) void = null,
+        onReadChunk: ?*const fn (*This, chunk: []u8, state: ReadState) void = null,
         registerPoll: ?*const fn (*This) void = null,
         done: *const fn (*This) void,
+        close: *const fn (*This) void,
         onError: *const fn (*This, bun.sys.Error) void,
     },
 ) type {
@@ -60,7 +63,7 @@ pub fn PosixPipeReader(
 
         const stack_buffer_len = 64 * 1024;
 
-        inline fn drainChunk(parent: *This, chunk: []const u8, hasMore: bool) bool {
+        inline fn drainChunk(parent: *This, chunk: []const u8, hasMore: ReadState) bool {
             if (parent.vtable.isStreamingEnabled()) {
                 if (chunk.len > 0) {
                     return parent.vtable.onReadChunk(chunk, hasMore);
@@ -91,9 +94,10 @@ pub fn PosixPipeReader(
                                 stack_buffer_head = stack_buffer_head[bytes_read..];
 
                                 if (bytes_read == 0) {
+                                    vtable.close(parent);
                                     if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
-                                        _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
-                                    close(parent);
+                                        _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .eof);
+                                    vtable.done(parent);
                                     return;
                                 }
                             },
@@ -104,12 +108,12 @@ pub fn PosixPipeReader(
                                     }
 
                                     if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
-                                        _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
+                                        _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .drained);
                                     return;
                                 }
 
                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
-                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
+                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .progress);
                                 vtable.onError(parent, err);
                                 return;
                             },
@@ -117,7 +121,7 @@ pub fn PosixPipeReader(
                     }
 
                     if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
-                        if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false) and !received_hup) {
+                        if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress) and !received_hup) {
                             return;
                         }
                     }
@@ -136,13 +140,14 @@ pub fn PosixPipeReader(
                         resizable_buffer.items.len += bytes_read;
 
                         if (bytes_read == 0) {
-                            _ = drainChunk(parent, resizable_buffer.items[start_length..], false);
-                            close(parent);
+                            vtable.close(parent);
+                            _ = drainChunk(parent, resizable_buffer.items[start_length..], .eof);
+                            vtable.done(parent);
                             return;
                         }
                     },
                     .err => |err| {
-                        _ = drainChunk(parent, resizable_buffer.items[start_length..], false);
+                        _ = drainChunk(parent, resizable_buffer.items[start_length..], if (err.isRetry()) .drained else .progress);
 
                         if (err.isRetry()) {
                             if (comptime vtable.registerPoll) |register| {
@@ -183,8 +188,9 @@ pub fn PosixPipeReader(
                             stack_buffer_head = stack_buffer_head[bytes_read..];
 
                             if (bytes_read == 0) {
+                                vtable.close(parent);
                                 drainChunk(parent, stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], true);
-                                close(parent);
+                                vtable.done(parent);
                                 return;
                             }
                         },
@@ -215,8 +221,9 @@ pub fn PosixPipeReader(
                         resizable_buffer.items.len += bytes_read;
 
                         if (bytes_read == 0) {
+                            vtable.close(parent);
                             _ = drainChunk(parent, resizable_buffer.items[start_length..], true);
-                            close(parent);
+                            vtable.done(parent);
                             return;
                         }
                     },
@@ -270,9 +277,10 @@ pub fn PosixPipeReader(
                                 stack_buffer_head = stack_buffer_head[bytes_read..];
 
                                 if (bytes_read == 0) {
+                                    vtable.close(parent);
                                     if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
-                                        _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
-                                    close(parent);
+                                        _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .eof);
+                                    vtable.done(parent);
                                     return;
                                 }
                             },
@@ -282,12 +290,12 @@ pub fn PosixPipeReader(
                                         register(parent);
                                     }
 
-                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
+                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .drained);
                                     return;
                                 }
 
                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0)
-                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
+                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .progress);
                                 vtable.onError(parent, err);
                                 return;
                             },
@@ -299,12 +307,15 @@ pub fn PosixPipeReader(
                                 received_hup = true;
                             },
                             .not_ready => {
+                                if (received_hup) {
+                                    vtable.close(parent);
+                                }
                                 if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
-                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false);
+                                    _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .drained);
                                 }
 
                                 if (received_hup) {
-                                    close(parent);
+                                    vtable.done(parent);
                                 } else {
                                     if (comptime vtable.registerPoll) |register| {
                                         register(parent);
@@ -317,7 +328,7 @@ pub fn PosixPipeReader(
                     }
 
                     if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
-                        if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], false) and !received_hup) {
+                        if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress) and !received_hup) {
                             return;
                         }
                     }
@@ -336,8 +347,9 @@ pub fn PosixPipeReader(
                         resizable_buffer.items.len += bytes_read;
 
                         if (bytes_read == 0) {
-                            _ = drainChunk(parent, resizable_buffer.items[start_length..], false);
-                            close(parent);
+                            vtable.close(parent);
+                            _ = drainChunk(parent, resizable_buffer.items[start_length..], .eof);
+                            vtable.done(parent);
                             return;
                         }
 
@@ -348,7 +360,7 @@ pub fn PosixPipeReader(
                                 continue;
                             },
                             .not_ready => {
-                                _ = drainChunk(parent, resizable_buffer.items[start_length..], false);
+                                _ = drainChunk(parent, resizable_buffer.items[start_length..], .drained);
 
                                 if (comptime vtable.registerPoll) |register| {
                                     register(parent);
@@ -358,7 +370,7 @@ pub fn PosixPipeReader(
                         }
                     },
                     .err => |err| {
-                        _ = drainChunk(parent, resizable_buffer.items[start_length..], false);
+                        _ = drainChunk(parent, resizable_buffer.items[start_length..], if (err.isRetry()) .drained else .progress);
 
                         if (err.isRetry()) {
                             if (comptime vtable.registerPoll) |register| {
@@ -371,10 +383,6 @@ pub fn PosixPipeReader(
                     },
                 }
             }
-        }
-
-        pub fn close(this: *This) void {
-            vtable.done(this);
         }
     };
 }
@@ -487,7 +495,7 @@ const BufferedReaderVTable = struct {
     }
 
     pub const Fn = struct {
-        onReadChunk: ?*const fn (*anyopaque, chunk: []const u8, hasMore: bool) bool = null,
+        onReadChunk: ?*const fn (*anyopaque, chunk: []const u8, hasMore: ReadState) bool = null,
         onReaderDone: *const fn (*anyopaque) void,
         onReaderError: *const fn (*anyopaque, bun.sys.Error) void,
         loop: *const fn (*anyopaque) *Async.Loop,
@@ -531,7 +539,7 @@ const BufferedReaderVTable = struct {
     /// and hasMore is true, it means that there might be more data to read.
     ///
     /// Returning false prevents the reader from reading more data.
-    pub fn onReadChunk(this: @This(), chunk: []const u8, hasMore: bool) bool {
+    pub fn onReadChunk(this: @This(), chunk: []const u8, hasMore: ReadState) bool {
         return this.fns.onReadChunk.?(this.parent, chunk, hasMore);
     }
 
@@ -547,10 +555,16 @@ const BufferedReaderVTable = struct {
 const PosixBufferedReader = struct {
     handle: PollOrFd = .{ .closed = {} },
     _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
-    is_done: bool = false,
     vtable: BufferedReaderVTable,
-    pollable: bool = false,
-    nonblocking: bool = false,
+    flags: Flags = .{},
+
+    const Flags = packed struct {
+        is_done: bool = false,
+        pollable: bool = false,
+        nonblocking: bool = false,
+        received_eof: bool = false,
+        closed_without_reporting: bool = false,
+    };
 
     pub fn init(comptime Type: type) PosixBufferedReader {
         return .{
@@ -564,23 +578,21 @@ const PosixBufferedReader = struct {
     }
 
     pub inline fn isDone(this: *const PosixBufferedReader) bool {
-        return this.is_done;
+        return this.flags.is_done or this.flags.received_eof or this.flags.closed_without_reporting;
     }
 
     pub fn from(to: *@This(), other: *PosixBufferedReader, parent_: *anyopaque) void {
         to.* = .{
             .handle = other.handle,
             ._buffer = other.buffer().*,
-            .is_done = other.is_done,
-            .pollable = other.pollable,
-            .nonblocking = other.nonblocking,
+            .flags = other.flags,
             .vtable = .{
                 .fns = to.vtable.fns,
                 .parent = parent_,
             },
         };
         other.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
-        other.is_done = true;
+        other.flags.is_done = true;
         other.handle = .{ .closed = {} };
         to.handle.setOwner(to);
     }
@@ -596,15 +608,32 @@ const PosixBufferedReader = struct {
         .onReadChunk = @ptrCast(&_onReadChunk),
         .registerPoll = @ptrCast(&registerPoll),
         .done = @ptrCast(&done),
+        .close = @ptrCast(&closeWithoutReporting),
         .onError = @ptrCast(&onError),
         .getIsNonBlocking = @ptrCast(&getIsNonBlocking),
     });
 
     fn getIsNonBlocking(this: *const PosixBufferedReader) bool {
-        return this.nonblocking;
+        return this.flags.nonblocking;
     }
 
-    fn _onReadChunk(this: *PosixBufferedReader, chunk: []u8, hasMore: bool) bool {
+    pub fn close(this: *PosixBufferedReader) void {
+        this.closeHandle();
+    }
+
+    fn closeWithoutReporting(this: *PosixBufferedReader) void {
+        if (this.getFd() != bun.invalid_fd) {
+            std.debug.assert(!this.flags.closed_without_reporting);
+            this.flags.closed_without_reporting = true;
+            this.handle.close(this, {});
+        }
+    }
+
+    fn _onReadChunk(this: *PosixBufferedReader, chunk: []u8, hasMore: ReadState) bool {
+        if (hasMore == .eof) {
+            this.flags.received_eof = true;
+        }
+
         return this.vtable.onReadChunk(chunk, hasMore);
     }
 
@@ -633,16 +662,22 @@ const PosixBufferedReader = struct {
     }
 
     fn finish(this: *PosixBufferedReader) void {
-        if (this.handle != .closed) {
+        if (this.handle != .closed or this.flags.closed_without_reporting) {
             this.closeHandle();
             return;
         }
 
-        std.debug.assert(!this.is_done);
-        this.is_done = true;
+        std.debug.assert(!this.flags.is_done);
+        this.flags.is_done = true;
     }
 
     fn closeHandle(this: *PosixBufferedReader) void {
+        if (this.flags.closed_without_reporting) {
+            this.flags.closed_without_reporting = false;
+            this.done();
+            return;
+        }
+
         this.handle.close(this, done);
     }
 
@@ -650,6 +685,8 @@ const PosixBufferedReader = struct {
         if (this.handle != .closed) {
             this.closeHandle();
             return;
+        } else if (this.flags.closed_without_reporting) {
+            this.flags.closed_without_reporting = false;
         }
         this.finish();
         this.vtable.onReaderDone();
@@ -667,7 +704,7 @@ const PosixBufferedReader = struct {
 
     pub fn registerPoll(this: *PosixBufferedReader) void {
         const poll = this.handle.getPoll() orelse brk: {
-            if (this.handle == .fd and this.pollable) {
+            if (this.handle == .fd and this.flags.pollable) {
                 this.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), this.handle.fd, .{}, @This(), this) };
                 break :brk this.handle.poll;
             }
@@ -689,12 +726,12 @@ const PosixBufferedReader = struct {
     pub fn start(this: *PosixBufferedReader, fd: bun.FileDescriptor, is_pollable: bool) bun.JSC.Maybe(void) {
         if (!is_pollable) {
             this.buffer().clearRetainingCapacity();
-            this.is_done = false;
+            this.flags.is_done = false;
             this.handle.close(null, {});
             this.handle = .{ .fd = fd };
             return .{ .result = {} };
         }
-        this.pollable = true;
+        this.flags.pollable = true;
         if (this.getFd() != fd) {
             this.handle = .{ .fd = fd };
         }
@@ -711,7 +748,7 @@ const PosixBufferedReader = struct {
     }
 
     pub fn watch(this: *PosixBufferedReader) void {
-        if (this.pollable) {
+        if (this.flags.pollable) {
             this.registerPoll();
         }
     }
@@ -766,7 +803,7 @@ pub const GenericWindowsBufferedReader = struct {
 
     pub fn setParent(this: *@This(), parent_: anytype) void {
         this._parent = parent_;
-        if (!this.is_done) {
+        if (!this.flags.is_done) {
             this.pipe.data = this;
         }
     }
@@ -797,7 +834,7 @@ pub const GenericWindowsBufferedReader = struct {
         return this.has_inflight_read;
     }
 
-    fn _onReadChunk(this: *WindowsOutputReader, buf: []u8, hasMore: bool) bool {
+    fn _onReadChunk(this: *WindowsOutputReader, buf: []u8, hasMore: ReadState) bool {
         this.has_inflight_read = false;
 
         const onReadChunkFn = this.vtable.onReadChunk orelse return;

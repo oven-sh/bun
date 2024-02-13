@@ -926,6 +926,7 @@ pub const Poll = struct {
 
 pub const retry = bun.C.E.AGAIN;
 
+pub const ReadState = @import("./pipes.zig").ReadState;
 pub const PipeReader = @import("./PipeReader.zig").PipeReader;
 pub const BufferedReader = @import("./PipeReader.zig").BufferedReader;
 pub const BufferedWriter = @import("./PipeWriter.zig").BufferedWriter;

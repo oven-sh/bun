@@ -61,3 +61,15 @@ pub const FileType = enum {
         return this == .pipe;
     }
 };
+
+pub const ReadState = enum {
+    /// The most common scenario
+    /// Neither EOF nor EAGAIN
+    progress,
+
+    /// Received a 0-byte read
+    eof,
+
+    /// Received an EAGAIN
+    drained,
+};

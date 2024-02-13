@@ -842,6 +842,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             };
 
             const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+            var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+            var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
+                globalThis.throwOutOfMemory();
+                return null;
+            };
             var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
             var script = std.ArrayList(u8).init(arena.allocator());
             if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {

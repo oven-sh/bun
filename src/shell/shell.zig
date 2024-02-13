@@ -1280,6 +1280,7 @@ pub const LexError = struct {
     msg: []const u8,
 };
 pub const LEX_JS_OBJREF_PREFIX = "$__bun_";
+pub const LEX_JS_STRING_PREFIX = "$__bunstr_";
 
 pub fn NewLexer(comptime encoding: StringEncoding) type {
     const Chars = ShellCharIter(encoding);
@@ -1299,6 +1300,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         delimit_quote: bool = false,
         in_subshell: ?SubShellKind = null,
         errors: std.ArrayList(LexError),
+
+        string_refs: []bun.String,
 
         const SubShellKind = enum {
             /// (echo hi; echo hello)
@@ -1506,7 +1509,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             // const snapshot = self.make_snapshot();
                             // Handle variable
                             try self.break_word(false);
-                            if (self.eat_js_obj_ref()) |ref| {
+                            if (self.eatJSStringRef()) |bunstr| {
+                                self.handleJSStringRef(bunstr);
+                            } else if (self.eat_js_obj_ref()) |ref| {
                                 if (self.chars.state == .Double) {
                                     try self.errors.append(.{ .msg = bun.default_allocator.dupe(u8, "JS object reference not allowed in double quotes") catch bun.outOfMemory() });
                                     return;
@@ -1907,6 +1912,88 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             self.continue_from_sublexer(&sublexer);
         }
 
+        fn handleJSStringRef(self: *@This(), bunstr: bun.String) !void {
+            // Need to wrap in double quotes
+            if (self.chars.state == .Normal) {
+                try self.break_word(false);
+                self.chars.state = .Double;
+                appendBunStr(bunstr, &self.strpool, true);
+                try self.break_word(false);
+                self.chars.state = .Normal;
+                return;
+            }
+            appendBunStr(bunstr, &self.strpool, false);
+        }
+
+        /// __NOTE__: Do not store references to the returned bun.String, it does not have its ref count incremented
+        fn eatJSStringRef(self: *@This()) ?bun.String {
+            const bytes = self.chars.srcBytesAtCursor();
+            if (std.mem.eql(u8, bytes, LEX_JS_STRING_PREFIX)) {
+                var i = self.chars.cursorPos();
+                var digit_buf: [32]u8 = undefined;
+                var digit_buf_count = 0;
+
+                i += LEX_JS_STRING_PREFIX.len;
+
+                while (i < bytes.len) : (i += 1) {
+                    switch (bytes[i]) {
+                        '0'...'9' => {
+                            if (digit_buf_count >= 32) {
+                                const ERROR_STR = "Invalid JS string ref (number too high): ";
+                                var error_buf: [ERROR_STR.len + 33]u8 = undefined;
+                                const error_msg = std.fmt.bufPrint(error_buf[0..], "{s} {s}{c}", .{ ERROR_STR, digit_buf[0..digit_buf_count], bytes[i] }) catch @panic("Should not happen");
+                                self.add_error(error_msg);
+                                return null;
+                            }
+                            digit_buf[digit_buf_count] = bytes[i];
+                            digit_buf_count += 1;
+                        },
+                        else => break,
+                    }
+                }
+
+                if (digit_buf_count == 0) {
+                    self.add_error("Invalid JS string ref (no idx)");
+                    return null;
+                }
+
+                const idx = std.fmt.parseInt(usize, digit_buf[0..digit_buf_count], 10) catch {
+                    self.add_error("Invalid JS string ref ");
+                    return null;
+                };
+
+                if (idx >= self.string_refs.len) {
+                    self.add_error("Invalid JS string ref (out of bounds");
+                    return null;
+                }
+
+                // Bump the cursor
+                brk: {
+                    const new_idx = i;
+                    const prev_ascii_char: ?u7 = if (digit_buf_count == 1) null else @truncate(digit_buf[digit_buf_count - 2]);
+                    const cur_ascii_char: u7 = @truncate(digit_buf[digit_buf_count - 1]);
+                    if (comptime encoding == .ascii) {
+                        self.chars.src.i = new_idx;
+                        if (prev_ascii_char) |pc| self.chars.prev = .{ .char = pc };
+                        self.chars.current = .{ .char = cur_ascii_char };
+                        break :brk;
+                    }
+                    self.chars.src.cursor = CodepointIterator.Cursor{
+                        .i = @intCast(new_idx),
+                        .c = cur_ascii_char,
+                        .width = 1,
+                    };
+                    self.chars.src.next_cursor = self.chars.src.cursor;
+                    SrcUnicode.nextCursor(self.chars.src.iter, &self.chars.src.next_cursor);
+                    if (prev_ascii_char) |pc| self.chars.prev = .{ .char = pc };
+                    self.chars.current = .{ .char = cur_ascii_char };
+                }
+
+                return self.string_refs[idx];
+            }
+            return null;
+        }
+
         fn eat_js_obj_ref(self: *@This()) ?Token {
             const snap = self.make_snapshot();
             if (self.eat_literal(u8, LEX_JS_OBJREF_PREFIX)) {
@@ -2145,6 +2232,27 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
             return .{
                 .src = src,
             };
+        }
+
+        pub fn srcBytes(self: *@This()) []const u8 {
+            if (comptime encoding == .ascii) return self.src.bytes;
+            return self.src.iter.byte;
+        }
+
+        pub fn srcBytesAtCursor(self: *@This()) []const u8 {
+            const bytes = self.srcBytes();
+            if (comptime encoding == .ascii) {
+                if (self.src.i >= bytes.len) return "";
+                return bytes[self.src.i..];
+            }
+
+            if (self.src.iter.i >= bytes.len) return "";
+            return bytes[self.src.iter.i..];
+        }
+
+        pub fn cursorPos(self: *@This()) usize {
+            if (comptime encoding == .ascii) return self.src.i;
+            return self.src.iter.i;
         }
 
         pub fn eat(self: *@This()) ?InputChar {
@@ -2451,6 +2559,7 @@ pub fn shellCmdFromJS(
     string_args: JSValue,
     template_args: []const JSValue,
     out_jsobjs: *std.ArrayList(JSValue),
+    jsstrings: *std.ArrayList(bun.String),
     out_script: *std.ArrayList(u8),
 ) !bool {
     var jsobjref_buf: [128]u8 = [_]u8{0} ** 128;
@@ -2468,7 +2577,7 @@ pub fn shellCmdFromJS(
         // try script.appendSlice(str.full());
         if (i < last) {
             const template_value = template_args[i];
-            if (!(try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsobjref_buf[0..]))) return false;
+            if (!(try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsstrings, jsobjref_buf[0..]))) return false;
         }
     }
     return true;
@@ -2479,6 +2588,7 @@ pub fn handleTemplateValue(
     template_value: JSValue,
     out_jsobjs: *std.ArrayList(JSValue),
     out_script: *std.ArrayList(u8),
+    jsstrings: *std.ArrayList(bun.String),
     jsobjref_buf: []u8,
 ) !bool {
     if (!template_value.isEmpty()) {
@@ -2593,21 +2703,34 @@ pub fn handleTemplateValue(
     return true;
 }
 
+// pub fn appendBunStrOrAddToList(bunstr: bun.String,
+
 /// This will disallow invalid surrogate pairs
-pub fn appendJSValueStr(globalThis: *JSC.JSGlobalObject, jsval: JSValue, outbuf: *std.ArrayList(u8), comptime allow_escape: bool) !bool {
+pub fn appendJSValueStr(
+    globalThis: *JSC.JSGlobalObject,
+    jsval: JSValue,
+    outbuf: *std.ArrayList(u8),
+    comptime allow_escape: bool,
+    comptime add_quotes: bool,
+) !bool {
     const bunstr = jsval.toBunString(globalThis);
     defer bunstr.deref();
 
-    return try appendBunStr(bunstr, outbuf, allow_escape);
+    return try appendBunStr(bunstr, outbuf, allow_escape, add_quotes);
 }
 
-pub fn appendUTF8Text(slice: []const u8, outbuf: *std.ArrayList(u8), comptime allow_escape: bool) !bool {
+pub fn appendUTF8Text(
+    slice: []const u8,
+    outbuf: *std.ArrayList(u8),
+    comptime allow_escape: bool,
+    comptime add_quotes: bool,
+) !bool {
     if (!bun.simdutf.validate.utf8(slice)) {
         return false;
     }
 
     if (allow_escape and needsEscape(slice)) {
-        try escape(slice, outbuf);
+        try escape(slice, outbuf, add_quotes);
     } else {
         try outbuf.appendSlice(slice);
     }
@@ -2615,7 +2738,12 @@ pub fn appendUTF8Text(slice: []const u8, outbuf: *std.ArrayList(u8), comptime al
     return true;
 }
 
-pub fn appendBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime allow_escape: bool) !bool {
+pub fn appendBunStr(
+    bunstr: bun.String,
+    outbuf: *std.ArrayList(u8),
+    comptime allow_escape: bool,
+    comptime add_quotes: bool,
+) !bool {
     const str = bunstr.toUTF8WithoutRef(bun.default_allocator);
     defer str.deinit();
 
@@ -2626,7 +2754,7 @@ pub fn appendBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime all
     }
 
     if (allow_escape and needsEscape(str.slice())) {
-        try escape(str.slice(), outbuf);
+        try escape(str.slice(), outbuf, add_quotes);
     } else {
         try outbuf.appendSlice(str.slice());
     }
@@ -2640,10 +2768,10 @@ const SPECIAL_CHARS = [_]u8{ '$', '>', '&', '|', '=', ';', '\n', '{', '}', ',', 
 const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };
 
 /// assumes WTF-8
-pub fn escape(str: []const u8, outbuf: *std.ArrayList(u8)) !void {
+pub fn escape(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !void {
     try outbuf.ensureUnusedCapacity(str.len);
 
-    try outbuf.append('\"');
+    if (add_quotes) try outbuf.append('\"');
 
     loop: for (str) |c| {
         inline for (BACKSLASHABLE_CHARS) |spc| {
@@ -2658,15 +2786,15 @@ pub fn escape(str: []const u8, outbuf: *std.ArrayList(u8)) !void {
         try outbuf.append(c);
     }
 
-    try outbuf.append('\"');
+    if (add_quotes) try outbuf.append('\"');
 }
 
-pub fn escapeUnicode(str: []const u8, outbuf: *std.ArrayList(u8)) !void {
+pub fn escapeUnicode(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !void {
     try outbuf.ensureUnusedCapacity(str.len);
 
     var bytes: [8]u8 = undefined;
-    var n = bun.strings.encodeWTF8Rune(bytes[0..4], '"');
-    try outbuf.appendSlice(bytes[0..n]);
+    var n = if (add_quotes) bun.strings.encodeWTF8Rune(bytes[0..4], '"') else 0;
+    if (add_quotes) try outbuf.appendSlice(bytes[0..n]);
 
     loop: for (str) |c| {
         inline for (BACKSLASHABLE_CHARS) |spc| {
@@ -2686,17 +2814,79 @@ pub fn escapeUnicode(str: []const u8, outbuf: *std.ArrayList(u8)) !void {
         try outbuf.appendSlice(bytes[0..n]);
     }
 
-    n = bun.strings.encodeWTF8Rune(bytes[0..4], '"');
-    try outbuf.appendSlice(bytes[0..n]);
+    if (add_quotes) {
+        n = bun.strings.encodeWTF8Rune(bytes[0..4], '"');
+        try outbuf.appendSlice(bytes[0..n]);
+    }
+}
+
+pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !bool {
+    if (add_quotes) try outbuf.append("\"");
+
+    const non_ascii = bun.strings.firstNonASCII16([]const u16, str) orelse 0;
+    var cp_buf: [4]u8 = undefined;
+
+    var i: usize = 0;
+    loop: while (i < str.len) {
+        const char: u32 = brk: {
+            if (i < non_ascii) {
+                i += 1;
+                break :brk @intCast(str[i]);
+            }
+            const ret = bun.strings.utf16Codepoint([]const u16, str[i..]);
+            if (ret.fail) return false;
+            i += ret.len;
+            break :brk ret.code_point;
+        };
+
+        inline for (BACKSLASHABLE_CHARS) |bchar| {
+            if (@as(u32, @intCast(bchar)) == char) {
+                try outbuf.appendSlice(&[_]u8{ '\\', @intCast(char) });
+                continue :loop;
+            }
+        }
+
+        if (char <= 0x7F) {} else {
+            const len = bun.strings.encodeWTF8RuneT(&cp_buf, u32, char);
+            try outbuf.appendSlice(cp_buf[0..len]);
+        }
+    }
+    if (add_quotes) try outbuf.append("\"");
 }
 
 pub fn needsEscapeUTF16(str: []const u16) bool {
-    for (str) |char| {
-        switch (char) {
-            '$', '>', '&', '|', '=', ';', '\n', '{', '}', ',', '(', ')', '\\', '\"', ' ' => return true,
+    for (str) |codeunit| {
+        switch (codeunit) {
+            '$', '>', '&', '|', '=', ';', '\n', '{', '}', ',', '(', ')', '\\', '\"', ' ', '\'' => return true,
             else => {},
         }
     }
+
+    return false;
+}
+
+pub fn needsEscapeUTF16Simd(str: []const u16) bool {
+    if (str.len < 64) return needsEscapeUTF16(str);
+
+    const needles = comptime brk: {
+        var needles: [SPECIAL_CHARS.len]@Vector(8, u16) = undefined;
+        for (SPECIAL_CHARS, 0..) |c, i| {
+            needles[i] = @splat(@as(u16, @intCast(c)));
+        }
+        break :brk needles;
+    };
+
+    var i: usize = 0;
+    while (i + 8 <= str.len) : (i += 8) {
+        const haystack: @Vector(8, u16) = str[i..][0..8].*;
+
+        inline for (needles) |needle| {
+            const result = haystack == needle;
+            if (std.simd.firstTrue(result) != null) return true;
+        }
+    }
+
+    if (i < str.len) return needsEscapeUTF16(str[i..]);
 
     return false;
 }

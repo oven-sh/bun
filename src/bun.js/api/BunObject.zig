@@ -545,7 +545,7 @@ pub fn shellEscape(
 
     if (bunstr.isUTF16()) {
         if (bun.shell.needsEscapeUTF16(bunstr.utf16())) {
-            bun.shell.escapeUnicode(bunstr.byteSlice(), &outbuf) catch {
+            bun.shell.escapeUnicode(bunstr.byteSlice(), &outbuf, true) catch {
                 globalThis.throwOutOfMemory();
                 return .undefined;
             };

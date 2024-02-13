@@ -3299,7 +3299,7 @@ pub const FileReader = struct {
                 };
 
                 if (bun.S.ISDIR(stat.mode)) {
-                    _ = Syscall.close(fd);
+                    bun.Async.Closer.close(fd, {});
                     return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
                 }
 

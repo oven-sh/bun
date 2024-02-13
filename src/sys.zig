@@ -2054,5 +2054,5 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
 }
 
 pub fn isPollable(mode: mode_t) bool {
-    return (mode & (os.S.IFIFO | os.S.IFSOCK)) != 0;
+    return os.S.ISFIFO(mode) or os.S.ISSOCK(mode);
 }

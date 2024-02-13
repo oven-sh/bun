@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 # There are also lots of sanity checks out of fear of anti-virus software or other weird Windows things happening.
 function Install-Bun {
   param(
-    [string]$Version
+    [string]$Version,
     [bool]$ForceBaseline = $False
   );
 
@@ -44,12 +44,12 @@ function Install-Bun {
 
   $Arch = "x64"
   $IsBaseline = $ForceBaseline
-
-  $EnabledXStateFeatures = ( `
-    Add-Type -MemberDefinition '[DllImport("kernel32.dll")]public static extern long GetEnabledXStateFeatures();' `
-      -Name 'Kernel32' -Namespace 'Win32' -PassThru `
-  )::GetEnabledXStateFeatures();
-  $IsBaseline = ($EnabledXStateFeatures -band 4) -neq 4;
+  if (!$IsBaseline) {
+    $IsBaseline = !( `
+      Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);' `
+        -Name 'Kernel32' -Namespace 'Win32' -PassThru `
+    )::IsProcessorFeaturePresent(40);
+  }
 
   $BunRoot = if ($env:BUN_INSTALL) { $env:BUN_INSTALL } else { "${Home}\.bun" }
   $BunBin = mkdir -Force "${BunRoot}\bin"
@@ -117,11 +117,7 @@ function Install-Bun {
     Install-Bun -Version $Version -ForceBaseline $True
     exit 1
   }
-  if (($LASTEXITCODE -eq 3221225781) # STATUS_DLL_NOT_FOUND
-  # https://discord.com/channels/876711213126520882/1149339379446325248/1205194965383250081
-  # http://community.sqlbackupandftp.com/t/error-1073741515-solved/1305
-  || ($LASTEXITCODE -eq 1073741515))
-  { 
+  if ($LASTEXITCODE -eq 3221225781) { # STATUS_DLL_NOT_FOUND
     Write-Output "Install Failed - You are missing a DLL required to run bun.exe"
     Write-Output "This can be solved by installing the Visual C++ Redistributable from Microsoft:`nSee https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`nDirect Download -> https://aka.ms/vs/17/release/vc_redist.x64.exe`n`n"
     Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
@@ -180,4 +176,32 @@ function Install-Bun {
   if(!$hasExistingOther) {
     Write-Output "To get started, restart your terminal/editor, then type `"bun`"`n"
   }
+
+  $RegistryKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Bun"  
+  New-Item -Path $RegistryKey -Force | Out-Null
+  New-ItemProperty -Path $RegistryKey -Name "DisplayName" -Value "Bun" -PropertyType String -Force | Out-Null
+  # New-ItemProperty -Path $RegistryKey -Name "DisplayVersion" -Value $DisplayVersion -PropertyType String -Force | Out-Null
+  New-ItemProperty -Path $RegistryKey -Name "InstallLocation" -Value $BunRoot -PropertyType String -Force | Out-Null
+  New-ItemProperty -Path $RegistryKey -Name "DisplayIcon" -Value $BunBin\bun.exe -PropertyType String -Force | Out-Null
+  New-ItemProperty -Path $RegistryKey -Name "UninstallString" -Value "powershell -c `"& `'$BunRoot\uninstall.ps1`'`"" -PropertyType String -Force | Out-Null
+
+  $UninstallScript = @"
+if (-not (Test-Path "`$PSScriptRoot\bin\bun.exe")) {
+  Write-Host "bun.exe not found in `$PSScriptRoot\bin"
+  exit 1
 }
+
+`$User = [System.EnvironmentVariableTarget]::User
+`$Path = [System.Environment]::GetEnvironmentVariable('Path', `$User) -split ';'
+`$Path = `$Path | Where-Object { `$_ -ne "`$PSScriptRoot\bin" }
+[System.Environment]::SetEnvironmentVariable('Path', `$Path -join ';', `$User)
+
+Remove-Item "`$PSScriptRoot\bin" -Force -Recurse -ErrorAction SilentlyContinue
+Remove-Item "`$PSScriptRoot\install" -Force -Recurse -ErrorAction SilentlyContinue
+Remove-Item `$PSCommandPath -Force
+Remove-Item $RegistryKey -Force -ErrorAction SilentlyContinue
+"@
+
+  Set-Content -Path "${BunRoot}\uninstall.ps1" -Value $UninstallScript
+}
+Install-Bun -Version $Version

@@ -419,11 +419,10 @@ pub const Body = struct {
                         return JSC.WebCore.ReadableStream.empty(globalThis);
                     }
 
-                    var reader = bun.default_allocator.create(JSC.WebCore.ByteStream.Source) catch unreachable;
-                    reader.* = .{
+                    var reader = JSC.WebCore.ByteStream.Source.new(.{
                         .context = undefined,
                         .globalThis = globalThis,
-                    };
+                    });
 
                     reader.context.setup();
 

@@ -1342,6 +1342,7 @@ pub const InternalState = struct {
     allow_keepalive: bool = true,
     received_last_chunk: bool = false,
     did_set_content_encoding: bool = false,
+    is_redirect_pending: bool = false,
     transfer_encoding: Encoding = Encoding.identity,
     encoding: Encoding = Encoding.identity,
     content_encoding_i: u8 = std.math.maxInt(u8),
@@ -1404,6 +1405,7 @@ pub const InternalState = struct {
             .original_request_body = .{ .bytes = "" },
             .request_body = "",
             .certificate_info = null,
+            .is_redirect_pending = false,
         };
     }
 
@@ -1454,7 +1456,9 @@ pub const InternalState = struct {
         try this.decompressBytes(buffer.list.items, body_out_str);
     }
 
-    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString) !usize {
+    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString) !bool {
+        if (this.is_redirect_pending) return false;
+
         var body_out_str = this.body_out_str.?;
 
         switch (this.encoding) {
@@ -1472,7 +1476,7 @@ pub const InternalState = struct {
             },
         }
 
-        return this.body_out_str.?.list.items.len;
+        return this.body_out_str.?.list.items.len > 0;
     }
 };
 
@@ -2147,8 +2151,25 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     };
 }
 
-pub fn doRedirect(this: *HTTPClient) void {
-    std.debug.assert(this.state.cloned_metadata == null);
+pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    this.state.response_message_buffer.deinit();
+    // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
+    socket.ext(**anyopaque).?.* = bun.cast(
+        **anyopaque,
+        NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
+    );
+    if (this.isKeepAlivePossible()) {
+        std.debug.assert(this.connected_url.hostname.len > 0);
+        ctx.releaseSocket(
+            socket,
+            this.connected_url.hostname,
+            this.connected_url.getPortAuto(),
+        );
+    } else {
+        socket.close(0, null);
+    }
+
+    this.connected_url = URL{};
     const body_out_str = this.state.body_out_str.?;
     this.remaining_redirect_count -|= 1;
     std.debug.assert(this.redirect_type == FetchRedirect.follow);
@@ -2595,8 +2616,27 @@ fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTP
     this.startProxySendHeaders(is_ssl, socket);
 }
 
+inline fn handleShortRead(
+    this: *HTTPClient,
+    comptime is_ssl: bool,
+    incoming_data: []const u8,
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+    needs_move: bool,
+) void {
+    if (needs_move) {
+        const to_copy = incoming_data;
+
+        if (to_copy.len > 0) {
+            // this one will probably be another chunk, so we leave a little extra room
+            this.state.response_message_buffer.append(to_copy) catch bun.outOfMemory();
+        }
+    }
+
+    this.setTimeout(socket, 5);
+}
 pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u8, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("onData {}", .{incoming_data.len});
+
     if (this.signals.get(.aborted)) {
         this.closeAndAbort(is_ssl, socket);
         return;
@@ -2616,6 +2656,13 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             // we reset the pending_response each time wich means that on parse error this will be always be empty
             this.state.pending_response = picohttp.Response{};
 
+            // minimal http/1.1 request size is 16 bytes without headers and 26 with Host header
+            // if is less than 16 will always be a ShortRead
+            if (to_read.len < 16) {
+                this.handleShortRead(is_ssl, incoming_data, socket, needs_move);
+                return;
+            }
+
             var response = picohttp.Response.parseParts(
                 to_read,
                 &shared_response_headers_buf,
@@ -2623,16 +2670,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             ) catch |err| {
                 switch (err) {
                     error.ShortRead => {
-                        if (needs_move) {
-                            const to_copy = incoming_data;
-
-                            if (to_copy.len > 0) {
-                                // this one will probably be another chunk, so we leave a little extra room
-                                this.state.response_message_buffer.append(to_copy) catch @panic("Out of memory");
-                            }
-                        }
-
-                        this.setTimeout(socket, 5);
+                        this.handleShortRead(is_ssl, incoming_data, socket, needs_move);
                     },
                     else => {
                         this.closeAndFail(err, is_ssl, socket);
@@ -2657,29 +2695,6 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             const should_continue = this.handleResponseMetadata(
                 &response,
             ) catch |err| {
-                if (err == error.Redirect) {
-                    this.state.response_message_buffer.deinit();
-                    // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
-                    socket.ext(**anyopaque).?.* = bun.cast(
-                        **anyopaque,
-                        NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
-                    );
-                    if (this.state.allow_keepalive and FeatureFlags.enable_keepalive) {
-                        std.debug.assert(this.connected_url.hostname.len > 0);
-                        ctx.releaseSocket(
-                            socket,
-                            this.connected_url.hostname,
-                            this.connected_url.getPortAuto(),
-                        );
-                    } else {
-                        socket.close(0, null);
-                    }
-
-                    this.connected_url = URL{};
-                    this.doRedirect();
-                    return;
-                }
-
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
@@ -2695,6 +2710,10 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             }
 
             if (should_continue == .finished) {
+                if (this.state.is_redirect_pending) {
+                    this.doRedirect(is_ssl, ctx, socket);
+                    return;
+                }
                 // this means that the request ended
                 // clone metadata and return the progress at this point
                 this.cloneMetadata();
@@ -2937,7 +2956,12 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         const body = out_str.*;
         const result = this.toResult();
         const is_done = !result.has_more;
-
+        if (this.state.is_redirect_pending and this.state.fail == error.NoError) {
+            if (this.state.isDone()) {
+                this.doRedirect(is_ssl, ctx, socket);
+            }
+            return;
+        }
         if (this.signals.aborted != null and is_done) {
             _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
         }
@@ -3102,6 +3126,15 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
     if (!this.state.isChunkedEncoding()) {
         this.state.total_body_received += incoming_data.len;
     }
+    defer {
+        if (this.progress_node) |progress| {
+            progress.activate();
+            progress.setCompletedItems(incoming_data.len);
+            progress.context.maybeRefresh();
+        }
+    }
+    // we can ignore the body data in redirects
+    if (this.state.is_redirect_pending) return;
 
     if (this.state.encoding.isCompressed()) {
         var body_buffer = this.state.body_out_str.?;
@@ -3125,21 +3158,11 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
 
         this.state.response_message_buffer.deinit();
     }
-
-    if (this.progress_node) |progress| {
-        progress.activate();
-        progress.setCompletedItems(incoming_data.len);
-        progress.context.maybeRefresh();
-    }
 }
 
 fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []const u8) !bool {
     var buffer = this.state.getBodyBuffer();
     const content_length = this.state.content_length;
-
-    if (buffer.list.items.len == 0 and incoming_data.len < preallocate_max) {
-        buffer.list.ensureTotalCapacityPrecise(buffer.allocator, incoming_data.len) catch {};
-    }
 
     var remainder: []const u8 = undefined;
     if (content_length != null) {
@@ -3149,7 +3172,14 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
         remainder = incoming_data;
     }
 
-    _ = try buffer.write(remainder);
+    // we can ignore the body data in redirects
+    if (!this.state.is_redirect_pending) {
+        if (buffer.list.items.len == 0 and incoming_data.len < preallocate_max) {
+            buffer.list.ensureTotalCapacityPrecise(buffer.allocator, incoming_data.len) catch {};
+        }
+
+        _ = try buffer.write(remainder);
+    }
 
     this.state.total_body_received += remainder.len;
 
@@ -3169,7 +3199,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
             progress.setCompletedItems(this.state.total_body_received);
             progress.context.maybeRefresh();
         }
-        return is_done or processed > 0;
+        return is_done or processed;
     }
     return false;
 }
@@ -3227,8 +3257,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
             }
             // streaming chunks
             if (this.signals.get(.body_streaming)) {
-                const processed = try this.state.processBodyBuffer(buffer);
-                return processed > 0;
+                return try this.state.processBodyBuffer(buffer);
             }
 
             return false;
@@ -3306,8 +3335,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
 
             // streaming chunks
             if (this.signals.get(.body_streaming)) {
-                const processed = try this.state.processBodyBuffer(body_buffer.*);
-                return processed > 0;
+                return try this.state.processBodyBuffer(body_buffer.*);
             }
 
             return false;
@@ -3655,7 +3683,7 @@ pub fn handleResponseMetadata(
                         }
                     }
 
-                    return error.Redirect;
+                    this.state.is_redirect_pending = true;
                 },
                 else => {},
             }

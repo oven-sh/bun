@@ -11,6 +11,7 @@ const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
 const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned");
 const kWatermarkData = SymbolFor("nodejs.watermarkData");
 const kRejection = SymbolFor("nodejs.rejection");
+const kFirstEventParam = SymbolFor("nodejs.kFirstEventParam");
 const captureRejectionSymbol = SymbolFor("nodejs.rejection");
 const ArrayPrototypeSlice = Array.prototype.slice;
 
@@ -367,11 +368,12 @@ async function* on(emitter, event, options = {}) {
   let done = false;
 
   emitter.on(event, ev => {
+    const eventValue = options[kFirstEventParam] ? ev : [ev]
     if (!unconsumedPromises.isEmpty()) {
       const { resolve } = unconsumedPromises.shift();
-      return resolve([ev]);
+      return resolve(eventValue);
     }
-    unconsumedEvents.push([ev]);
+    unconsumedEvents.push(eventValue);
   });
   emitter.on("error", ex => {
     if (!unconsumedPromises.isEmpty()) {
@@ -386,21 +388,20 @@ async function* on(emitter, event, options = {}) {
 
   for (const evName of options?.close || []) {
     emitter.on(evName, () => {
-      emitter.emit(event, undefined);
       done = true;
     });
   }
 
-  while (!done) {
+  while (!done || !unconsumedEvents.isEmpty()) {
     if (!unconsumedEvents.isEmpty()) {
       yield Promise.$resolve(unconsumedEvents.shift());
-    }
-    if (!unconsumedErrors.isEmpty()) {
+    } else if (!unconsumedErrors.isEmpty()) {
       yield Promise.$reject(unconsumedErrors.shift());
+    } else {
+      const { promise, reject, resolve } = $newPromiseCapability(Promise);
+      unconsumedPromises.push({ reject, resolve });
+      yield promise;
     }
-    const { promise, reject, resolve } = $newPromiseCapability(Promise);
-    unconsumedPromises.push({ reject, resolve });
-    yield promise;
   }
 }
 

@@ -14,6 +14,7 @@ test("events.on", async () => {
   process.nextTick(() => {
     ee.emit("foo", "bar");
     ee.emit("foo", 42);
+    ee.emit("foo", "baz");
   });
 
   setTimeout(() => {
@@ -31,6 +32,7 @@ test("events.on", async () => {
   expect(output).toEqual([
     [1, ["bar"]],
     [1, [42]],
+    [1, ["baz"]],
     [2, "DONE"],
   ]);
 });
@@ -45,6 +47,7 @@ test("events.on with AbortController", () => {
   process.nextTick(() => {
     ee.emit("foo", "bar");
     ee.emit("foo", 42);
+    ee.emit("foo", "baz");
   });
   (async () => {
     try {
@@ -59,6 +62,7 @@ test("events.on with AbortController", () => {
       expect(output).toEqual([
         [1, ["bar"]],
         [1, [42]],
+        [1, ["baz"]],
         [
           2,
           {

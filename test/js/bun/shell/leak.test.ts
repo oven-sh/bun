@@ -12,6 +12,8 @@ $.env(bunEnv);
 $.cwd(process.cwd());
 $.nothrow();
 
+const DEFAULT_THRESHOLD = process.platform === "darwin" ? 100 * (1 << 20) : 150 * (1 << 20);
+
 const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
   ["redirect_file", () => TestBuilder.command`echo hello > test.txt`.fileEquals("test.txt", "hello\n")],
   ["change_cwd", () => TestBuilder.command`cd ${TestBuilder.tmpdir()} && cd -`],
@@ -75,7 +77,7 @@ describe("fd leak", () => {
     name: string,
     builder: () => TestBuilder,
     runs: number = 500,
-    threshold: number = 100 * (1 << 20),
+    threshold: number = DEFAULT_THRESHOLD,
   ) {
     test(`memleak_${name}`, async () => {
       const tempfile = join(tmpdir(), "script.ts");

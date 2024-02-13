@@ -935,7 +935,7 @@ function normalizeSpawnArguments(file, args, options) {
     } else {
       if (typeof options.shell === "string") file = options.shell;
       else if (process.platform === "android") file = "sh";
-      else file = "sh";
+      else file = "/bin/sh";
       args = ["-c", command];
     }
   }

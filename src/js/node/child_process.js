@@ -175,8 +175,8 @@ function spawn(file, args, options) {
     });
   }
 
-  if (options.signal) {
-    const signal = options.signal;
+  const signal = options.signal;
+  if (signal) {
     if (signal.aborted) {
       process.nextTick(onAbortListener);
     } else {
@@ -185,7 +185,7 @@ function spawn(file, args, options) {
     }
 
     function onAbortListener() {
-      abortChildProcess(child, killSignal, options.signal.reason);
+      abortChildProcess(child, killSignal, signal.reason);
     }
   }
   process.nextTick(() => {

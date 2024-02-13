@@ -227,16 +227,15 @@ namespace uWS
             return unsignedIntegerValue;
         }
 
-        /* RFC 9110 16.3.1 Field Name Registry (TLDR; alnum + hyphen is allowed)
-         * [...] It MUST conform to the field-name syntax defined in Section 5.1,
-         * and it SHOULD be restricted to just letters, digits,
-         * and hyphen ('-') characters, with the first character being a letter. */
-        static inline bool isFieldNameByte(unsigned char x)
+        /* RFC 9110 5.6.2. Tokens */
+        static inline bool isFieldNameByte(unsigned char c)
         {
-            return (x == '-') |
-                   ((x > '/') & (x < ':')) |
-                   ((x > '@') & (x < '[')) |
-                   ((x > 96) & (x < '{'));
+            return (c > 32) & (c < 127) & (c != '(') &
+                (c != ')') & (c != ',') & (c != '/') &
+                (c != ':') & (c != ';') & (c != '<') &
+                (c != '=') & (c != '>') & (c != '?') &
+                (c != '@') & (c != '[') & (c != '\\') &
+                (c != ']') & (c != '{') & (c != '}');
         }
 
         static inline uint64_t hasLess(uint64_t x, uint64_t n)
@@ -263,23 +262,19 @@ namespace uWS
                    hasMore(x, 'z');
         }
 
-        static inline void *consumeFieldName(char *p)
-        {
-            for (; true; p += 8)
-            {
-                uint64_t word;
-                memcpy(&word, p, sizeof(uint64_t));
-                if (notFieldNameWord(word))
-                {
-                    while (isFieldNameByte(*(unsigned char *)p))
-                    {
-                        *(p++) |= 0x20;
-                    }
-                    return (void *)p;
+        static inline void *consumeFieldName(char *p) {
+        //for (; true; p += 8) {
+            //uint64_t word;
+            //memcpy(&word, p, sizeof(uint64_t));
+            //if (notFieldNameWord(word)) {
+                while (isFieldNameByte(*(unsigned char *)p)) {
+                    *(p++) |= 0x20;
                 }
-                word |= 0x2020202020202020ull;
-                memcpy(p, &word, sizeof(uint64_t));
-            }
+                return (void *)p;
+            //}
+            //word |= 0x2020202020202020ull;
+            //memcpy(p, &word, sizeof(uint64_t));
+        //}
         }
 
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */

@@ -1069,7 +1069,11 @@ pub const Closer = struct {
 
     pub usingnamespace bun.New(@This());
 
-    pub fn close(fd: bun.FileDescriptor, _: anytype) void {
+    pub fn close(
+        fd: bun.FileDescriptor,
+        /// for compatibiltiy with windows version
+        _: anytype,
+    ) void {
         std.debug.assert(fd != bun.invalid_fd);
         JSC.WorkPool.schedule(&Closer.new(.{ .fd = fd }).task);
     }

@@ -218,27 +218,25 @@ describe("spawn()", () => {
 
   function getProcessFds(pid, missingOkay) {
     const fds = Array.from(Int32Array.from(readdirSync(`/proc/${pid}/fd/`)).sort());
-    const fdLinks = fds.map((fd) => {
-        let link;
-        try {
-            link = readlinkSync(`/proc/${pid}/fd/${fd}`);
+    const fdLinks = fds.map(fd => {
+      let link;
+      try {
+        link = readlinkSync(`/proc/${pid}/fd/${fd}`);
+      } catch (e) {
+        if (missingOkay && e.code === "ENOENT") {
+          link = "<<<deleted>>>";
+        } else {
+          throw e;
         }
-        catch (e) {
-            if (missingOkay && e.code === "ENOENT") {
-                link = "<<<deleted>>>";
-            }
-            else {
-                throw e;
-            }
-        }
-        // Rewrite to exclude non-deterministic numbers:
-        const linkCleaned = link.replace(/:\[\d+\]/, ":[...]");
-        const pretty = `${fd}->${linkCleaned}`;
-        return {fd, link, linkCleaned, pretty};
+      }
+      // Rewrite to exclude non-deterministic numbers:
+      const linkCleaned = link.replace(/:\[\d+\]/, ":[...]");
+      const pretty = `${fd}->${linkCleaned}`;
+      return { fd, link, linkCleaned, pretty };
     });
     const pretty = fdLinks.map(x => x.pretty).join(",");
     const fdMap = new Map(fdLinks.map(x => [x.fd, x]));
-    return {fdLinks, fdMap, pretty};
+    return { fdLinks, fdMap, pretty };
   }
 
   async function getSpawnFds(options) {
@@ -270,16 +268,15 @@ describe("spawn()", () => {
       // "/memfd:..." (or something else?) instead of "pipe:[...]", and so
       // something may need to figure that out in order build the correct
       // expected text:
-      expect((await getSpawnFds({stdio: []})).pretty).toBe(
-        `0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
-      expect((await getSpawnFds({stdio: [null]})).pretty).toBe(
-        `0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
-      expect((await getSpawnFds({stdio: [null, null]})).pretty).toBe(
-        `0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
-      expect((await getSpawnFds({stdio: [null, null, null]})).pretty).toBe(
-        `0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
-      expect((await getSpawnFds({stdio: [null, null, null, null]})).pretty).toBe(
-        `0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
+      expect((await getSpawnFds({ stdio: [] })).pretty).toBe(`0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
+      expect((await getSpawnFds({ stdio: [null] })).pretty).toBe(`0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
+      expect((await getSpawnFds({ stdio: [null, null] })).pretty).toBe(`0->pipe:[...],1->pipe:[...],2->pipe:[...]`);
+      expect((await getSpawnFds({ stdio: [null, null, null] })).pretty).toBe(
+        `0->pipe:[...],1->pipe:[...],2->pipe:[...]`,
+      );
+      expect((await getSpawnFds({ stdio: [null, null, null, null] })).pretty).toBe(
+        `0->pipe:[...],1->pipe:[...],2->pipe:[...]`,
+      );
     }
   });
 });

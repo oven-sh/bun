@@ -30,12 +30,8 @@ it("two invalid arguments, should display error message and suggest command", as
   });
 
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain(
-    "error: This command updates Bun itself, and does not take package names.",
-  );
-  expect(err.split(/\r?\n/)).toContain(
-    "note: Use `bun update bun-types --dev` instead.",
-  );
+  expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
+  expect(err.split(/\r?\n/)).toContain("note: Use `bun update bun-types --dev` instead.");
 });
 
 it("two invalid arguments flipped, should display error message and suggest command", async () => {
@@ -49,12 +45,8 @@ it("two invalid arguments flipped, should display error message and suggest comm
   });
 
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain(
-    "error: This command updates Bun itself, and does not take package names.",
-  );
-  expect(err.split(/\r?\n/)).toContain(
-    "note: Use `bun update --dev bun-types` instead.",
-  );
+  expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
+  expect(err.split(/\r?\n/)).toContain("note: Use `bun update --dev bun-types` instead.");
 });
 
 it("one invalid argument, should display error message and suggest command", async () => {
@@ -68,12 +60,8 @@ it("one invalid argument, should display error message and suggest command", asy
   });
 
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain(
-    "error: This command updates Bun itself, and does not take package names.",
-  );
-  expect(err.split(/\r?\n/)).toContain(
-    "note: Use `bun update bun-types` instead.",
-  );
+  expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
+  expect(err.split(/\r?\n/)).toContain("note: Use `bun update bun-types` instead.");
 });
 
 it("one valid argument, should succeed", async () => {
@@ -88,12 +76,8 @@ it("one valid argument, should succeed", async () => {
 
   const err = await new Response(stderr).text();
   // Should not contain error message
-  expect(err.split(/\r?\n/)).not.toContain(
-    "error: This command updates bun itself, and does not take package names.",
-  );
-  expect(err.split(/\r?\n/)).not.toContain(
-    "note: Use `bun update --help` instead.",
-  );
+  expect(err.split(/\r?\n/)).not.toContain("error: This command updates bun itself, and does not take package names.");
+  expect(err.split(/\r?\n/)).not.toContain("note: Use `bun update --help` instead.");
 });
 
 it("two valid argument, should succeed", async () => {
@@ -108,10 +92,6 @@ it("two valid argument, should succeed", async () => {
 
   const err = await new Response(stderr).text();
   // Should not contain error message
-  expect(err.split(/\r?\n/)).not.toContain(
-    "error: This command updates Bun itself, and does not take package names.",
-  );
-  expect(err.split(/\r?\n/)).not.toContain(
-    "note: Use `bun update --stable --profile` instead.",
-  );
+  expect(err.split(/\r?\n/)).not.toContain("error: This command updates Bun itself, and does not take package names.");
+  expect(err.split(/\r?\n/)).not.toContain("note: Use `bun update --stable --profile` instead.");
 });

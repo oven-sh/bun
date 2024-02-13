@@ -155,7 +155,7 @@ pub const Error = struct {
     const retry_errno = if (Environment.isLinux)
         @as(Int, @intCast(@intFromEnum(E.AGAIN)))
     else if (Environment.isMac)
-        @as(Int, @intCast(@intFromEnum(E.WOULDBLOCK)))
+        @as(Int, @intCast(@intFromEnum(E.AGAIN)))
     else
         @as(Int, @intCast(@intFromEnum(E.INTR)));
 
@@ -206,7 +206,7 @@ pub const Error = struct {
 
     pub const retry = Error{
         .errno = retry_errno,
-        .syscall = .retry,
+        .syscall = .read,
     };
 
     pub inline fn withFd(this: Error, fd: anytype) Error {

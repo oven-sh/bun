@@ -2997,7 +2997,7 @@ pub const FileSink = struct {
         this.signal = signal;
     }
 
-    pub fn start(this: *FileSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
+    pub fn start(this: *FileSink, stream_start: StreamStart) JSC.Maybe(void) {
         switch (stream_start) {
             .FileSink => |*file| {
                 switch (this.setup(file)) {
@@ -3016,11 +3016,11 @@ pub const FileSink = struct {
         return .{ .result = {} };
     }
 
-    pub fn flush(_: *FileSink) JSC.Node.Maybe(void) {
+    pub fn flush(_: *FileSink) JSC.Maybe(void) {
         return .{ .result = {} };
     }
 
-    pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC.Node.Maybe(JSValue) {
+    pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
         _ = wait; // autofix
         if (this.done or this.pending.state == .pending) {
             return .{ .result = JSC.JSValue.jsUndefined() };
@@ -3079,7 +3079,7 @@ pub const FileSink = struct {
         return this.toResult(this.writer.writeUTF16(data.slice16()));
     }
 
-    pub fn end(this: *FileSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+    pub fn end(this: *FileSink, err: ?Syscall.Error) JSC.Maybe(void) {
         if (this.done) {
             return .{ .result = {} };
         }
@@ -3120,7 +3120,7 @@ pub const FileSink = struct {
         return JSSink.createObject(globalThis, this, if (destructor) |dest| @intFromPtr(dest.ptr()) else 0);
     }
 
-    pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) JSC.Node.Maybe(JSValue) {
+    pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) JSC.Maybe(JSValue) {
         if (this.done) {
             if (this.pending.state == .pending) {
                 return .{ .result = this.pending.future.promise.promise.asValue(globalThis) };

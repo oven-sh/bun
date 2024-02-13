@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ ${OS:-} = Windows_NT ]]; then
-    echo 'error: Please install bun using Windows Subsystem for Linux'
+    powershell -c "irm bun.sh/install.ps1|iex"
     exit 1
 fi
 

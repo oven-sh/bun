@@ -131,12 +131,12 @@ pub const Request = struct {
         return this.reported_estimated_size;
     }
 
-    pub fn calculateEstimatedSize(this: *Request) usize {
+    pub fn calculateEstimatedByteSize(this: *Request) usize {
         return this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
     }
 
     pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
-        this.reported_estimated_size = this.calculateEstimatedSize();
+        this.reported_estimated_size = this.calculateEstimatedByteSize();
         return Request.toJSUnchecked(globalObject, this);
     }
 

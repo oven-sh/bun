@@ -1430,23 +1430,18 @@ pub const Blob = struct {
         // in-memory size. not the size on disk.
         var size: usize = @sizeOf(Blob);
 
-        size += if (this.size != Blob.max_size)
-            @intCast(this.size)
-        else brk: {
-            if (this.store) |store| {
-                if (store.data == .bytes) {
-                    break :brk @intCast(store.data.bytes.len);
-                }
-            }
-            break :brk 0;
-        };
-
         if (this.store) |store| {
             size += @sizeOf(Blob.Store);
-            size += switch (store.data) {
-                .bytes => store.data.bytes.stored_name.estimatedSize(),
-                .file => store.data.file.pathlike.estimatedSize(),
-            };
+            switch (store.data) {
+                .bytes => {
+                    size += store.data.bytes.stored_name.estimatedSize();
+                    size += if (this.size != Blob.max_size)
+                        this.size
+                    else
+                        store.data.bytes.len;
+                },
+                .file => size += store.data.file.pathlike.estimatedSize(),
+            }
         }
 
         return size + (this.content_type.len * @intFromBool(this.content_type_allocated));

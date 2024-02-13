@@ -50,6 +50,8 @@ declare module "bun" {
   export type ShellFunction = (input: Uint8Array) => Uint8Array;
 
   export type ShellExpression =
+    | { toString(): string }
+    | Array<ShellExpression>
     | string
     | { raw: string }
     | Subprocess

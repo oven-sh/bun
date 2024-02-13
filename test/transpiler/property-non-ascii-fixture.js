@@ -1,4 +1,4 @@
-// prettier-ignore
+// biome-ignore: format ignore
 let object2 = {
     código: 1,
     ["código2"]: 2,
@@ -7,7 +7,7 @@ let object2 = {
     [`código5`]: 5,
     "😋 Get ": 6,
   };
-// prettier-ignore
+// biome-ignore: format ignoreormat ignore
 let {
       código,
       ["código3"]: bound3,
@@ -21,7 +21,7 @@ let {
       ["😋 Get "]: bound9,
       ['😋 Get ']: bound10,
   } = object2;
-// prettier-ignore
+// biome-ignore: format ignoreormat ignore
 console.log(object2, código, object2.código, object2['código2'],
        object2["código3"],
        object2[`código4`], bound3, bound2, bound4, bound5, bound22,bound6,

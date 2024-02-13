@@ -27,7 +27,6 @@ pub const darwin = @import("./darwin_c.zig");
 pub const linux = @import("./linux_c.zig");
 pub extern "c" fn chmod([*c]const u8, mode_t) c_int;
 pub extern "c" fn fchmod(std.c.fd_t, mode_t) c_int;
-pub extern "c" fn umask(mode_t) mode_t;
 pub extern "c" fn fchmodat(c_int, [*c]const u8, mode_t, c_int) c_int;
 pub extern "c" fn fchown(std.c.fd_t, std.c.uid_t, std.c.gid_t) c_int;
 pub extern "c" fn lchown(path: [*:0]const u8, std.c.uid_t, std.c.gid_t) c_int;
@@ -354,7 +353,14 @@ pub fn getVersion(buf: []u8) []const u8 {
     } else if (comptime Environment.isMac) {
         return darwin.get_version(buf);
     } else {
-        return bun.todo(@src(), "unknown");
+        var info: bun.windows.libuv.uv_utsname_s = undefined;
+        const err = bun.windows.libuv.uv_os_uname(&info);
+        if (err != 0) {
+            return "unknown";
+        }
+        const slice = bun.sliceTo(&info.version, 0);
+        @memcpy(buf[0..slice.len], slice);
+        return buf[0..slice.len];
     }
 }
 
@@ -364,7 +370,14 @@ pub fn getRelease(buf: []u8) []const u8 {
     } else if (comptime Environment.isMac) {
         return darwin.get_release(buf);
     } else {
-        return bun.todo(@src(), "unknown");
+        var info: bun.windows.libuv.uv_utsname_s = undefined;
+        const err = bun.windows.libuv.uv_os_uname(&info);
+        if (err != 0) {
+            return "unknown";
+        }
+        const release = bun.sliceTo(&info.release, 0);
+        @memcpy(buf[0..release.len], release);
+        return buf[0..release.len];
     }
 }
 

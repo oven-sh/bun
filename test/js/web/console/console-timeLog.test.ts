@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
 import { bunExe, bunEnv } from "harness";
@@ -13,6 +12,6 @@ it("should log to console correctly", async () => {
   });
   expect(await exited).toBe(0);
   const outText = await new Response(stderr).text();
-  const expectedText = await new Response(file(import.meta.dir + "/console-timeLog.expected.txt")).text();
+  const expectedText = (await file(import.meta.dir + "/console-timeLog.expected.txt").text()).replaceAll("\r\n", "\n");
   expect(outText.replace(/^\[.+?s\] /gm, "")).toBe(expectedText.replace(/^\[.+?s\] /gm, ""));
 });

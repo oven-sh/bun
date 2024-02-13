@@ -271,8 +271,9 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         silent: bool,
+        use_native_shell: bool,
     ) !bool {
-        const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+        const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         const script = original_script;
         var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
@@ -303,6 +304,28 @@ pub const RunCommand = struct {
             combined_script = combined_script_buf;
         }
 
+        if (Environment.isWindows and !use_native_shell) {
+            if (!silent) {
+                if (Environment.isDebug) {
+                    Output.prettyError("[bun shell] ", .{});
+                }
+                Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
+                Output.flush();
+            }
+
+            const mini = bun.JSC.MiniEventLoop.initGlobal(env);
+            bun.shell.InterpreterMini.initAndRunFromSource(mini, name, combined_script) catch |err| {
+                if (!silent) {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+                }
+
+                Output.flush();
+                Global.exit(1);
+            };
+
+            return true;
+        }
+
         var argv = [_]string{
             shell_bin,
             if (Environment.isWindows) "/c" else "-c",
@@ -324,7 +347,13 @@ pub const RunCommand = struct {
         child_process.stdin_behavior = .Inherit;
         child_process.stdout_behavior = .Inherit;
 
-        const result = child_process.spawnAndWait() catch |err| {
+        if (Environment.isWindows) {
+            try bun.WindowsSpawnWorkaround.spawnWindows(&child_process);
+        } else {
+            try child_process.spawn();
+        }
+
+        const result = child_process.wait() catch |err| {
             if (!silent) {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
             }
@@ -405,7 +434,13 @@ pub const RunCommand = struct {
         child_process.stdout_behavior = .Inherit;
         const silent = ctx.debug.silent;
 
-        const result = child_process.spawnAndWait() catch |err| {
+        if (Environment.isWindows) {
+            try bun.WindowsSpawnWorkaround.spawnWindows(&child_process);
+        } else {
+            try child_process.spawn();
+        }
+
+        const result = child_process.wait() catch |err| {
             if (err == error.AccessDenied) {
                 if (comptime Environment.isPosix) {
                     var stat = std.mem.zeroes(std.c.Stat);
@@ -422,7 +457,10 @@ pub const RunCommand = struct {
                     }
                 }
             }
-            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
+
+            if (!silent) {
+                Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ basenameOrBun(executable), @errorName(err) });
+            }
             Global.exit(1);
         };
         switch (result) {
@@ -501,56 +539,111 @@ pub const RunCommand = struct {
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
 
     pub fn createFakeTemporaryNodeExecutable(PATH: *std.ArrayList(u8), optional_bun_path: *string) !void {
-        if (Environment.isWindows) return bun.todo(@src(), {});
         // If we are already running as "node", the path should exist
         if (CLI.pretend_to_be_node) return;
 
-        var argv0 = @as([*:0]const u8, @ptrCast(optional_bun_path.ptr));
+        if (Environment.isPosix) {
+            var argv0 = @as([*:0]const u8, @ptrCast(optional_bun_path.ptr));
 
-        // if we are already an absolute path, use that
-        // if the user started the application via a shebang, it's likely that the path is absolute already
-        if (bun.argv()[0][0] == '/') {
-            optional_bun_path.* = bun.span(bun.argv()[0]);
-            argv0 = bun.argv()[0];
-        } else if (optional_bun_path.len == 0) {
-            // otherwise, ask the OS for the absolute path
-            var self = try std.fs.selfExePath(&self_exe_bin_path_buf);
-            if (self.len > 0) {
-                self.ptr[self.len] = 0;
-                argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
-                optional_bun_path.* = self;
+            // if we are already an absolute path, use that
+            // if the user started the application via a shebang, it's likely that the path is absolute already
+            if (bun.argv()[0][0] == '/') {
+                optional_bun_path.* = bun.argv()[0];
+                argv0 = bun.argv()[0];
+            } else if (optional_bun_path.len == 0) {
+                // otherwise, ask the OS for the absolute path
+                var self = try std.fs.selfExePath(&self_exe_bin_path_buf);
+                if (self.len > 0) {
+                    self.ptr[self.len] = 0;
+                    argv0 = @as([*:0]const u8, @ptrCast(self.ptr));
+                    optional_bun_path.* = self;
+                }
             }
-        }
 
-        if (optional_bun_path.len == 0) {
-            argv0 = bun.argv()[0];
-        }
-
-        var retried = false;
-        while (true) {
-            inner: {
-                std.os.symlinkZ(argv0, bun_node_dir ++ "/node") catch |err| {
-                    if (err == error.PathAlreadyExists) break :inner;
-                    if (retried)
-                        return;
-
-                    std.fs.makeDirAbsoluteZ(bun_node_dir) catch {};
-
-                    retried = true;
-                    continue;
-                };
+            if (optional_bun_path.len == 0) {
+                argv0 = bun.argv()[0];
             }
-            break;
-        }
 
-        if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+            var retried = false;
+            while (true) {
+                inner: {
+                    std.os.symlinkZ(argv0, bun_node_dir ++ "/node") catch |err| {
+                        if (err == error.PathAlreadyExists) break :inner;
+                        if (retried)
+                            return;
+
+                        std.fs.makeDirAbsoluteZ(bun_node_dir) catch {};
+
+                        retried = true;
+                        continue;
+                    };
+                }
+                break;
+            }
+
+            if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
+                try PATH.append(std.fs.path.delimiter);
+            }
+
+            // The reason for the extra delim is because we are going to append the system PATH
+            // later on. this is done by the caller, and explains why we are adding bun_node_dir
+            // to the end of the path slice rather than the start.
+            try PATH.appendSlice(bun_node_dir ++ .{std.fs.path.delimiter});
+        } else if (Environment.isWindows) {
+            var target_path_buffer: bun.WPathBuffer = undefined;
+
+            const prefix = comptime bun.strings.w("\\??\\");
+
+            const len = bun.windows.GetTempPathW(
+                target_path_buffer.len - prefix.len,
+                @ptrCast(&target_path_buffer[prefix.len]),
+            );
+            if (len == 0) {
+                Output.debug("Failed to create temporary node dir: {s}", .{@tagName(std.os.windows.kernel32.GetLastError())});
+                return;
+            }
+
+            @memcpy(target_path_buffer[0..prefix.len], prefix);
+
+            const dir_name = "bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else "";
+            const file_name = dir_name ++ "\\node.exe\x00";
+            @memcpy(target_path_buffer[len + prefix.len ..][0..file_name.len], comptime bun.strings.w(file_name));
+
+            const file_slice = target_path_buffer[0 .. prefix.len + len + file_name.len - "\x00".len];
+            const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
+
+            const ImagePathName = std.os.windows.peb().ProcessParameters.ImagePathName;
+            std.debug.assert(ImagePathName.Buffer[ImagePathName.Length / 2] == 0); // trust windows
+
+            if (Environment.isDebug) {
+                // the link becomes out of date on rebuild
+                std.os.unlinkW(file_slice) catch {};
+            }
+
+            if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), @ptrCast(ImagePathName.Buffer), null) == 0) {
+                switch (std.os.windows.kernel32.GetLastError()) {
+                    .ALREADY_EXISTS => {},
+                    else => {
+                        {
+                            std.debug.assert(target_path_buffer[dir_slice.len] == '\\');
+                            target_path_buffer[dir_slice.len] = 0;
+                            std.os.mkdirW(target_path_buffer[0..dir_slice.len :0], 0) catch {};
+                            target_path_buffer[dir_slice.len] = '\\';
+                        }
+
+                        if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), @ptrCast(ImagePathName.Buffer), null) == 0) {
+                            return;
+                        }
+                    },
+                }
+            }
+
+            // The reason for the extra delim is because we are going to append the system PATH
+            // later on. this is done by the caller, and explains why we are adding bun_node_dir
+            // to the end of the path slice rather than the start.
+            try bun.strings.toUTF8AppendToList(PATH, dir_slice[prefix.len..]);
             try PATH.append(std.fs.path.delimiter);
         }
-
-        // The reason for the extra delim is because we are going to append the system PATH
-        // later on. this is done by the caller, and explains why we are adding bun_node_dir
-        // to the end of the path slice rather than the start.
-        try PATH.appendSlice(bun_node_dir ++ .{std.fs.path.delimiter});
     }
 
     pub const Filter = enum { script, bin, all, bun_js, all_plus_bun_js, script_and_descriptions, script_exclude };
@@ -599,7 +692,7 @@ pub const RunCommand = struct {
         if (env == null) {
             this_bundler.env.loadProcess();
 
-            if (this_bundler.env.map.get("NODE_ENV")) |node_env| {
+            if (this_bundler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
                     this_bundler.options.production = true;
                 }
@@ -677,7 +770,7 @@ pub const RunCommand = struct {
             }
         }
 
-        const PATH = this_bundler.env.map.get("PATH") orelse "";
+        const PATH = this_bundler.env.get("PATH") orelse "";
         if (ORIGINAL_PATH) |original_path| {
             original_path.* = PATH;
         }
@@ -776,7 +869,7 @@ pub const RunCommand = struct {
         {
             this_bundler.env.loadProcess();
 
-            if (this_bundler.env.map.get("NODE_ENV")) |node_env| {
+            if (this_bundler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
                     this_bundler.options.production = true;
                 }
@@ -785,7 +878,7 @@ pub const RunCommand = struct {
 
         const ResultList = bun.StringArrayHashMap(void);
 
-        if (this_bundler.env.map.get("SHELL")) |shell| {
+        if (this_bundler.env.get("SHELL")) |shell| {
             shell_out.shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell), shell);
         }
 
@@ -868,7 +961,7 @@ pub const RunCommand = struct {
                     }
 
                     var max_description_len: usize = 20;
-                    if (this_bundler.env.map.get("MAX_DESCRIPTION_LEN")) |max| {
+                    if (this_bundler.env.get("MAX_DESCRIPTION_LEN")) |max| {
                         if (std.fmt.parseInt(usize, max, 10) catch null) |max_len| {
                             max_description_len = max_len;
                         }
@@ -1011,7 +1104,12 @@ pub const RunCommand = struct {
         }
     }
 
-    pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
+    pub fn exec(
+        ctx_: Command.Context,
+        comptime bin_dirs_only: bool,
+        comptime log_errors: bool,
+        comptime did_try_open_with_bun_js: bool,
+    ) !bool {
         var ctx = ctx_;
         // Step 1. Figure out what we're trying to run
         var positionals = ctx.positionals;
@@ -1051,7 +1149,7 @@ pub const RunCommand = struct {
             return true;
         }
 
-        if (log_errors or force_using_bun) {
+        if (!did_try_open_with_bun_js and (log_errors or force_using_bun)) {
             if (script_name_to_search.len > 0) {
                 possibly_open_with_bun_js: {
                     const ext = std.fs.path.extension(script_name_to_search);
@@ -1121,7 +1219,7 @@ pub const RunCommand = struct {
 
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
                         if (strings.hasPrefixComptime(shebang, "#!")) {
-                            const first_arg: string = if (bun.argv().len > 0) bun.span(bun.argv()[0]) else "";
+                            const first_arg: string = if (bun.argv().len > 0) bun.argv()[0] else "";
                             const filename = std.fs.path.basename(first_arg);
                             // are we attempting to run the script with bun?
                             if (!strings.contains(shebang, filename)) {
@@ -1191,6 +1289,7 @@ pub const RunCommand = struct {
                             this_bundler.env,
                             &.{},
                             ctx.debug.silent,
+                            ctx.debug.use_native_shell,
                         )) {
                             return false;
                         }
@@ -1204,6 +1303,7 @@ pub const RunCommand = struct {
                         this_bundler.env,
                         passthrough,
                         ctx.debug.silent,
+                        ctx.debug.use_native_shell,
                     )) return false;
 
                     temp_script_buffer[0.."post".len].* = "post".*;
@@ -1217,6 +1317,7 @@ pub const RunCommand = struct {
                             this_bundler.env,
                             &.{},
                             ctx.debug.silent,
+                            ctx.debug.use_native_shell,
                         )) {
                             return false;
                         }
@@ -1246,7 +1347,82 @@ pub const RunCommand = struct {
             }
         }
 
-        const PATH = this_bundler.env.map.get("PATH") orelse "";
+        if (Environment.isWindows) try_bunx_file: {
+            const WinBunShimImpl = @import("../install/windows-shim/bun_shim_impl.zig");
+            const w = std.os.windows;
+            const debug = Output.scoped(.BunRunXFastPath, false);
+
+            // Attempt to find a ".bunx" file on disk, and run it, skipping the wrapper exe.
+            // we build the full exe path even though we could do a relative lookup, because in the case we do find it, we have to generate this full path anyways
+            var ptr: []u16 = &DirectBinLaunch.direct_launch_buffer;
+            const root = comptime bun.strings.w("\\??\\");
+            @memcpy(ptr[0..root.len], root);
+            ptr = ptr[4..];
+            const cwd_len = w.kernel32.GetCurrentDirectoryW(
+                DirectBinLaunch.direct_launch_buffer.len - 4,
+                ptr.ptr,
+            );
+            if (cwd_len == 0) break :try_bunx_file;
+            ptr = ptr[cwd_len..];
+            const prefix = comptime bun.strings.w("\\node_modules\\.bin\\");
+            @memcpy(ptr[0..prefix.len], prefix);
+            ptr = ptr[prefix.len..];
+            const encoded = bun.strings.convertUTF8toUTF16InBuffer(ptr[0..], script_name_to_search);
+            ptr = ptr[encoded.len..];
+            const ext = comptime bun.strings.w(".bunx");
+            @memcpy(ptr[0..ext.len], ext);
+            ptr[ext.len] = 0;
+
+            const l = root.len + cwd_len + prefix.len + script_name_to_search.len + ext.len;
+            const path_to_use = DirectBinLaunch.direct_launch_buffer[0..l];
+            var command_line = DirectBinLaunch.direct_launch_buffer[l..];
+
+            debug("Attempting to find and load bunx file: '{}'", .{
+                std.unicode.fmtUtf16le(path_to_use),
+            });
+            if (Environment.allow_assert) {
+                std.debug.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
+            }
+            const handle = (bun.sys.openFileAtWindows(
+                bun.invalid_fd, // absolute path is given
+                path_to_use,
+                w.STANDARD_RIGHTS_READ | w.FILE_READ_DATA | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE,
+                w.FILE_OPEN,
+                w.FILE_NON_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT,
+            ).unwrap() catch |err| {
+                debug("Failed to open bunx file: '{}'", .{err});
+                break :try_bunx_file;
+            }).cast();
+
+            var i: usize = 0;
+            for (ctx.passthrough) |str| {
+                command_line[i] = ' ';
+                const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[1 + i ..], str);
+                i += result.len + 1;
+            }
+
+            const run_ctx = WinBunShimImpl.FromBunRunContext{
+                .handle = handle,
+                .base_path = path_to_use[4..],
+                .arguments = command_line[0..i],
+                .force_use_bun = ctx.debug.run_in_bun,
+                .direct_launch_with_bun_js = &DirectBinLaunch.directLaunchWithBunJSFromShim,
+                .cli_context = &ctx,
+            };
+
+            if (Environment.isDebug) {
+                debug("run_ctx.handle: '{}'", .{bun.FDImpl.fromSystem(handle)});
+                debug("run_ctx.base_path: '{}'", .{std.unicode.fmtUtf16le(run_ctx.base_path)});
+                debug("run_ctx.arguments: '{}'", .{std.unicode.fmtUtf16le(run_ctx.arguments)});
+                debug("run_ctx.force_use_bun: '{}'", .{run_ctx.force_use_bun});
+            }
+
+            // this function does not return. spooky
+            WinBunShimImpl.startupFromBunJS(run_ctx);
+            comptime unreachable;
+        }
+
+        const PATH = this_bundler.env.get("PATH") orelse "";
         var path_for_which = PATH;
         if (comptime bin_dirs_only) {
             if (ORIGINAL_PATH.len < PATH.len) {
@@ -1340,6 +1516,22 @@ pub const RunCommand = struct {
             ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
             Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});
+            Global.exit(1);
+        };
+    }
+};
+
+pub const DirectBinLaunch = struct {
+    var direct_launch_buffer: bun.WPathBuffer = undefined;
+
+    fn directLaunchWithBunJSFromShim(wpath: []u16, ctx: *Command.Context) void {
+        const utf8 = bun.strings.convertUTF16toUTF8InBuffer(
+            bun.reinterpretSlice(u8, &direct_launch_buffer),
+            wpath,
+        ) catch return;
+        Run.boot(ctx.*, utf8) catch |err| {
+            ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+            Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
             Global.exit(1);
         };
     }

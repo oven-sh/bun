@@ -1703,6 +1703,7 @@ pub const Expect = struct {
             globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
             return .zero;
         }
+        globalObject.throw(comptime Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -1774,6 +1775,7 @@ pub const Expect = struct {
             globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
             return .zero;
         }
+        globalObject.throw(comptime Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -1845,6 +1847,7 @@ pub const Expect = struct {
             globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
             return .zero;
         }
+        globalObject.throw(comptime Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -5124,7 +5127,7 @@ pub const ExpectMatcherUtils = struct {
 
         try buffered_writer.flush();
 
-        return bun.String.create(mutable_string.toOwnedSlice()).toJS(globalObject);
+        return bun.String.createUTF8(mutable_string.toOwnedSlice()).toJS(globalObject);
     }
 
     inline fn printValueCatched(globalObject: *JSC.JSGlobalObject, value: JSValue, comptime color_or_null: ?[]const u8) JSValue {

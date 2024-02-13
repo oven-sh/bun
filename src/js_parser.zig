@@ -2865,6 +2865,12 @@ pub const Parser = struct {
             this.features.hashForRuntimeTranspiler(hasher);
         }
 
+        // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
+        // to avoid changing line numbers too much to make source mapping more readable
+        pub fn runtimeMergeAdjacentExpressionStatements(this: Options) bool {
+            return this.bundle;
+        }
+
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
             var opts = Options{
                 .ts = loader.isTypeScript(),
@@ -19980,14 +19986,29 @@ fn NewParser_(
 
                         if (prop.ts_decorators.len > 0) {
                             const loc = prop.key.?.loc;
-                            const descriptor_key = switch (prop.key.?.data) {
+                            const _descriptor_key = switch (prop.key.?.data) {
                                 .e_identifier => |k| p.newExpr(E.Identifier{ .ref = k.ref }, loc),
                                 .e_number => |k| p.newExpr(E.Number{ .value = k.value }, loc),
                                 .e_string => |k| p.newExpr(E.String{ .data = k.data }, loc),
                                 .e_index => |k| p.newExpr(E.Index{ .target = k.target, .index = k.index }, loc),
                                 .e_private_identifier => |k| p.newExpr(E.PrivateIdentifier{ .ref = k.ref }, loc),
-                                else => bun.unreachablePanic("Unexpected AST node type {any}", .{prop.key.?}),
+
+                                // This should be unreachable. Due to zig bug using `unreachable` keyword or `noreturn` type will
+                                // result in a segfault at runtime with a release build. Minimum repro:
+                                //
+                                // class Foo {
+                                //   foo;
+                                // }
+                                //
+                                // Workaround: assign to null and say the orelse branch is unreachable. The cause
+                                // of this bug seems to be a combination of release build optimizations with switch expression
+                                // and unreachable or noreturn else.
+                                //
+                                // TODO: when zig is upgraded check if this workaround is still needed. The bug happens
+                                // on macos aarch64
+                                else => null,
                             };
+                            const descriptor_key = _descriptor_key orelse unreachable;
 
                             // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
                             // the if statement.
@@ -21403,6 +21424,9 @@ fn NewParser_(
                     continue;
                 }
 
+                // The following calls to `joinWithComma` are only enabled during bundling. We do this
+                // to avoid changing line numbers too much for source maps
+
                 switch (stmt.data) {
                     .s_empty => continue,
 
@@ -21426,7 +21450,7 @@ fn NewParser_(
                         // Merge adjacent expression statements
                         if (output.items.len > 0) {
                             var prev_stmt = &output.items[output.items.len - 1];
-                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
+                            if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall() and p.options.runtimeMergeAdjacentExpressionStatements()) {
                                 prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
                                     s_expr.does_not_affect_tree_shaking;
                                 prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
@@ -21473,7 +21497,7 @@ fn NewParser_(
                     },
                     .s_switch => |s_switch| {
                         // Absorb a previous expression statement
-                        if (output.items.len > 0) {
+                        if (output.items.len > 0 and p.options.runtimeMergeAdjacentExpressionStatements()) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
@@ -21483,7 +21507,7 @@ fn NewParser_(
                     },
                     .s_if => |s_if| {
                         // Absorb a previous expression statement
-                        if (output.items.len > 0) {
+                        if (output.items.len > 0 and p.options.runtimeMergeAdjacentExpressionStatements()) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
@@ -21496,7 +21520,7 @@ fn NewParser_(
 
                     .s_return => |ret| {
                         // Merge return statements with the previous expression statement
-                        if (output.items.len > 0 and ret.value != null) {
+                        if (output.items.len > 0 and ret.value != null and p.options.runtimeMergeAdjacentExpressionStatements()) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
@@ -21514,7 +21538,7 @@ fn NewParser_(
 
                     .s_throw => {
                         // Merge throw statements with the previous expression statement
-                        if (output.items.len > 0) {
+                        if (output.items.len > 0 and p.options.runtimeMergeAdjacentExpressionStatements()) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 prev_stmt.* = p.s(S.Throw{

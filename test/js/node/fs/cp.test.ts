@@ -1,5 +1,5 @@
-// @known-failing-on-windows: 1 failing
 import fs from "fs";
+import { join } from "path";
 import { describe, test, expect, jest } from "bun:test";
 import { tempDirWithFiles } from "harness";
 
@@ -246,7 +246,7 @@ for (const [name, copy] of impls) {
       let prev = process.cwd();
       process.chdir(basename);
 
-      await copy(basename + "/from", basename + "/result", {
+      await copy(join(basename, "from"), join(basename, "result"), {
         filter,
         recursive: true,
       });
@@ -254,9 +254,9 @@ for (const [name, copy] of impls) {
       process.chdir(prev);
 
       expect(filter.mock.calls.sort((a, b) => a[0].localeCompare(b[0]))).toEqual([
-        [basename + "/from", basename + "/result"],
-        [basename + "/from/a.txt", basename + "/result/a.txt"],
-        [basename + "/from/b.txt", basename + "/result/b.txt"],
+        [join(basename, "from"), join(basename, "result")],
+        [join(basename, "from", "a.txt"), join(basename, "result", "a.txt")],
+        [join(basename, "from", "b.txt"), join(basename, "result", "b.txt")],
       ]);
     });
 

@@ -113,17 +113,13 @@ See [Test > Lifecycle](/docs/test/lifecycle) for complete documentation.
 
 ## Mocks
 
-{% callout %}
-Module mocking (`jest.mock()`) is not yet supported. Track support for it [here](https://github.com/oven-sh/bun/issues/5394).
-{% /callout %}
-
 Create mock functions with the `mock` function. Mocks are automatically reset between tests.
 
 ```ts
 import { test, expect, mock } from "bun:test";
 const random = mock(() => Math.random());
 
-test("random", async () => {
+test("random", () => {
   const val = random();
   expect(val).toBeGreaterThan(0);
   expect(random).toHaveBeenCalled();
@@ -151,7 +147,7 @@ Snapshots are supported by `bun test`.
 // example usage of toMatchSnapshot
 import { test, expect } from "bun:test";
 
-test("snapshot", async () => {
+test("snapshot", () => {
   expect({ a: 1 }).toMatchSnapshot();
 });
 ```

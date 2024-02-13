@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import fs from "fs";
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { bunEnv, bunExe } from "harness";
@@ -9,6 +8,8 @@ import { tmpdir } from "os";
 const ROOT_TEMP_DIR = join(tmpdir(), "migrate", sep);
 
 beforeAll(() => {
+  // if the test was stopped early
+  fs.rmSync(ROOT_TEMP_DIR, { recursive: true, force: true });
   fs.mkdirSync(ROOT_TEMP_DIR);
 });
 

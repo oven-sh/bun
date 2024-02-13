@@ -60,7 +60,7 @@ test("unlike in jest", () => {
 To reset the system time, pass no arguments to `setSystemTime`:
 
 ```ts
-import { setSystemTime, beforeAll } from "bun:test";
+import { setSystemTime, expect, test } from "bun:test";
 
 test("it was 2020, for a moment.", () => {
   // Set it to something!

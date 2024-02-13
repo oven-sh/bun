@@ -1,6 +1,5 @@
-// @known-failing-on-windows: 1 failing
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, ospath } from "harness";
 import { _nodeModulePaths, builtinModules, isBuiltin, wrap } from "module";
 import Module from "module";
 import path from "path";
@@ -37,21 +36,26 @@ test("module.Module works", () => {
 });
 
 test("_nodeModulePaths() works", () => {
+  const root = isWindows ? "C:\\" : "/";
   expect(() => {
     _nodeModulePaths();
   }).toThrow();
   expect(_nodeModulePaths(".").length).toBeGreaterThan(0);
-  expect(_nodeModulePaths(".").pop()).toBe("/node_modules");
+  expect(_nodeModulePaths(".").pop()).toBe(root + "node_modules");
   expect(_nodeModulePaths("")).toEqual(_nodeModulePaths("."));
-  expect(_nodeModulePaths("/")).toEqual(["/node_modules"]);
+  expect(_nodeModulePaths("/")).toEqual([root + "node_modules"]);
   expect(_nodeModulePaths("/a/b/c/d")).toEqual([
-    "/a/b/c/d/node_modules",
-    "/a/b/c/node_modules",
-    "/a/b/node_modules",
-    "/a/node_modules",
-    "/node_modules",
+    ospath(root + "a/b/c/d/node_modules"),
+    ospath(root + "a/b/c/node_modules"),
+    ospath(root + "a/b/node_modules"),
+    ospath(root + "a/node_modules"),
+    ospath(root + "node_modules"),
   ]);
-  expect(_nodeModulePaths("/a/b/../d")).toEqual(["/a/d/node_modules", "/a/node_modules", "/node_modules"]);
+  expect(_nodeModulePaths("/a/b/../d")).toEqual([
+    ospath(root + "a/d/node_modules"),
+    ospath(root + "a/node_modules"),
+    ospath(root + "node_modules"),
+  ]);
 });
 
 test("Module.wrap", () => {

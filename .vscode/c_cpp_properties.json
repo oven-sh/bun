@@ -3,6 +3,7 @@
     {
       "name": "Debug",
       "forcedInclude": ["${workspaceFolder}/src/bun.js/bindings/root.h"],
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
       "includePath": [
         "${workspaceFolder}/build/bun-webkit/include",
         "${workspaceFolder}/build/codegen",

@@ -11,8 +11,12 @@
 
 /// <reference path="./globals.d.ts" />
 /// <reference path="./bun.d.ts" />
+/// <reference path="./overrides.d.ts" />
+/// <reference path="./fetch.d.ts" />
 /// <reference path="./ffi.d.ts" />
 /// <reference path="./test.d.ts" />
 /// <reference path="./html-rewriter.d.ts" />
 /// <reference path="./jsc.d.ts" />
 /// <reference path="./sqlite.d.ts" />
+/// <reference path="./wasm.d.ts" />
+/// <reference path="./deprecated.d.ts" />

@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import {
   concatArrayBuffers,
   readableStreamToArray,
@@ -59,8 +58,7 @@ const fixtures = [
   [
     "😋<span>Hello World!</span>",
     <>
-      😋
-      <span>Hello World!</span>
+      😋<span>Hello World!</span>
     </>,
   ],
   [

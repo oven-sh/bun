@@ -7,7 +7,7 @@ Bun includes a fast native implementation of file globbing.
 ```ts
 import { Glob } from "bun";
 
-const glob = new Glob("*.ts");
+const glob = new Glob("**/*.ts");
 
 // Scans the current working directory and each of its sub-directories recursively
 for await (const file of glob.scan(".")) {

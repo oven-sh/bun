@@ -16,10 +16,10 @@
 //!     `defer` some code, then try to yield execution to some state machine struct,
 //!     and it immediately finishes, it will deinit itself and the defer code might
 //!     use undefined memory.
-const bun = @import("root").bun;
 const std = @import("std");
-const os = std.os;
 const builtin = @import("builtin");
+const bun = @import("root").bun;
+const os = std.os;
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -40,7 +40,7 @@ const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const TaggedPointer = @import("../tagged_pointer.zig").TaggedPointer;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
-const Maybe = @import("../bun.js/node/types.zig").Maybe;
+const Maybe = JSC.Maybe;
 
 const Pipe = [2]bun.FileDescriptor;
 const shell = @import("./shell.zig");
@@ -1024,6 +1024,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 defer file.close();
                 break :src try file.reader().readAllAlloc(arena.allocator(), std.math.maxInt(u32));
             };
+            defer arena.deinit();
 
             const jsobjs: []JSValue = &[_]JSValue{};
             var out_parser: ?bun.shell.Parser = null;
@@ -1039,6 +1040,52 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 if (out_parser) |*p| {
                     const errstr = p.combineErrors();
                     bun.Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ std.fs.path.basename(path), errstr });
+                    bun.Global.exit(1);
+                }
+
+                return err;
+            };
+            const script_heap = try arena.allocator().create(ast.Script);
+            script_heap.* = script;
+            var interp = switch (ThisInterpreter.init(mini, bun.default_allocator, &arena, script_heap, jsobjs)) {
+                .err => |e| {
+                    GlobalHandle.init(mini).actuallyThrow(e);
+                    return;
+                },
+                .result => |i| i,
+            };
+            const IsDone = struct {
+                done: bool = false,
+
+                fn isDone(this: *anyopaque) bool {
+                    const asdlfk = bun.cast(*const @This(), this);
+                    return asdlfk.done;
+                }
+            };
+            var is_done: IsDone = .{};
+            interp.done = &is_done.done;
+            try interp.run();
+            mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
+        }
+
+        pub fn initAndRunFromSource(mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !void {
+            var arena = bun.ArenaAllocator.init(bun.default_allocator);
+            defer arena.deinit();
+
+            const jsobjs: []JSValue = &[_]JSValue{};
+            var out_parser: ?bun.shell.Parser = null;
+            var out_lex_result: ?bun.shell.LexResult = null;
+            const script = ThisInterpreter.parse(&arena, src, jsobjs, &out_parser, &out_lex_result) catch |err| {
+                if (err == bun.shell.ParseError.Lex) {
+                    std.debug.assert(out_lex_result != null);
+                    const str = out_lex_result.?.combineErrors(arena.allocator());
+                    bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ path_for_errors, str });
+                    bun.Global.exit(1);
+                }
+
+                if (out_parser) |*p| {
+                    const errstr = p.combineErrors();
+                    bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ path_for_errors, errstr });
                     bun.Global.exit(1);
                 }
 

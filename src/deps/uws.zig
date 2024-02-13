@@ -2413,6 +2413,7 @@ pub const PING: i32 = 9;
 pub const PONG: i32 = 10;
 
 pub const Opcode = enum(i32) {
+    continuation = 0,
     text = 1,
     binary = 2,
     close = 8,
@@ -2497,6 +2498,14 @@ pub const UVLoop = extern struct {
         return this.internal_loop_data.iteration_nr;
     }
 
+    pub fn addActive(this: *const UVLoop, val: u32) void {
+        this.uv_loop.addActive(val);
+    }
+
+    pub fn subActive(this: *const UVLoop, val: u32) void {
+        this.uv_loop.subActive(val);
+    }
+
     pub fn isActive(this: *const UVLoop) bool {
         return this.uv_loop.isActive();
     }
@@ -2531,11 +2540,10 @@ pub const UVLoop = extern struct {
     pub fn run(this: *UVLoop) void {
         us_loop_run(this);
     }
-    pub const tick = run;
 
-    pub fn wait(this: *UVLoop) void {
-        us_loop_run(this);
-    }
+    // TODO: remove these two aliases
+    pub const tick = run;
+    pub const wait = run;
 
     pub fn inc(this: *UVLoop) void {
         this.uv_loop.inc();

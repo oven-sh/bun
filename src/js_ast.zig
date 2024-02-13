@@ -2266,11 +2266,11 @@ pub const E = struct {
 
             if (s.isUTF8()) {
                 if (comptime !Environment.isNative) {
-                    const allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false) catch return 0) orelse return s.data.len;
+                    const allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false, false) catch return 0) orelse return s.data.len;
                     defer bun.default_allocator.free(allocated);
                     return @as(u32, @truncate(allocated.len));
                 }
-                return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8.le(s.data)));
+                return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8(s.data)));
             }
 
             return @as(u32, @truncate(s.slice16().len));

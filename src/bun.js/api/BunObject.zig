@@ -549,7 +549,7 @@ pub fn shellEscape(
                 globalThis.throwOutOfMemory();
                 return .undefined;
             };
-            return bun.String.create(outbuf.items[0..]).toJS(globalThis);
+            return bun.String.createUTF8(outbuf.items[0..]).toJS(globalThis);
         }
         return jsval;
     }
@@ -559,7 +559,7 @@ pub fn shellEscape(
             globalThis.throwOutOfMemory();
             return .undefined;
         };
-        return bun.String.create(outbuf.items[0..]).toJS(globalThis);
+        return bun.String.createUTF8(outbuf.items[0..]).toJS(globalThis);
     }
 
     return jsval;
@@ -707,7 +707,7 @@ pub fn which(
     }
 
     path_str = ZigString.Slice.fromUTF8NeverFree(
-        globalThis.bunVM().bundler.env.map.get("PATH") orelse "",
+        globalThis.bunVM().bundler.env.get("PATH") orelse "",
     );
     cwd_str = ZigString.Slice.fromUTF8NeverFree(
         globalThis.bunVM().bundler.fs.top_level_dir,
@@ -1042,14 +1042,30 @@ pub fn openInEditor(
 }
 
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
-    return getPublicPathWithAssetPrefix(to, VirtualMachine.get().bundler.fs.top_level_dir, origin, VirtualMachine.get().bundler.options.routes.asset_prefix_path, comptime Writer, writer);
+    return getPublicPathWithAssetPrefix(
+        to,
+        VirtualMachine.get().bundler.fs.top_level_dir,
+        origin,
+        VirtualMachine.get().bundler.options.routes.asset_prefix_path,
+        comptime Writer,
+        writer,
+        .loose,
+    );
 }
 
-pub fn getPublicPathWithAssetPrefix(to: string, dir: string, origin: URL, asset_prefix: string, comptime Writer: type, writer: Writer) void {
+pub fn getPublicPathWithAssetPrefix(
+    to: string,
+    dir: string,
+    origin: URL,
+    asset_prefix: string,
+    comptime Writer: type,
+    writer: Writer,
+    comptime platform: bun.path.Platform,
+) void {
     const relative_path = if (strings.hasPrefix(to, dir))
         strings.withoutTrailingSlash(to[dir.len..])
     else
-        VirtualMachine.get().bundler.fs.relative(dir, to);
+        VirtualMachine.get().bundler.fs.relativePlatform(dir, to, platform);
     if (origin.isAbsolute()) {
         if (strings.hasPrefix(relative_path, "..") or strings.hasPrefix(relative_path, "./")) {
             writer.writeAll(origin.origin) catch return;
@@ -1408,11 +1424,7 @@ pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) c
                 continue;
             }
 
-            if (byte == '\r') {
-                if (i + 1 < bytes.len and bytes[i + 1] == '\n') {
-                    return JSC.JSValue.jsNumber(i + 1);
-                }
-            } else if (byte == '\n') {
+            if (byte == '\n') {
                 return JSC.JSValue.jsNumber(i);
             }
 
@@ -1856,10 +1868,10 @@ pub const Crypto = struct {
                     // bcrypt silently truncates passwords longer than 72 bytes
                     // we use SHA512 to hash the password if it's longer than 72 bytes
                     if (password.len > 72) {
-                        var sha_256 = bun.sha.SHA512.init();
-                        defer sha_256.deinit();
-                        sha_256.update(password);
-                        sha_256.final(outbuf[0..bun.sha.SHA512.digest]);
+                        var sha_512 = bun.sha.SHA512.init();
+                        defer sha_512.deinit();
+                        sha_512.update(password);
+                        sha_512.final(outbuf[0..bun.sha.SHA512.digest]);
                         password_to_use = outbuf[0..bun.sha.SHA512.digest];
                         outbuf_slice = outbuf[bun.sha.SHA512.digest..];
                     }
@@ -3080,7 +3092,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
                 std.debug.assert(
                     std.mem.eql(
                         u16,
-                        (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false) catch unreachable).?,
+                        (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false, false) catch unreachable).?,
                         escaped_html,
                     ),
                 );
@@ -5175,7 +5187,7 @@ pub const EnvironmentVariables = struct {
         var vm = globalObject.bunVM();
         var sliced = name.toSlice(vm.allocator);
         defer sliced.deinit();
-        const value = vm.bundler.env.map.get(sliced.slice()) orelse return null;
+        const value = vm.bundler.env.get(sliced.slice()) orelse return null;
         return ZigString.initUTF8(value);
     }
 };
@@ -5364,7 +5376,7 @@ const InternalTestingAPIs = struct {
             return .zero;
         };
 
-        var str = bun.String.create(buffer.list.items);
+        var str = bun.String.createUTF8(buffer.list.items);
         defer str.deref();
         return str.toJS(globalThis);
     }

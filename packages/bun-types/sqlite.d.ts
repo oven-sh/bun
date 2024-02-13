@@ -165,17 +165,11 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    run<ParamsType extends SQLQueryBindings[]>(
-      sqlQuery: string,
-      ...bindings: ParamsType[]
-    ): void;
+    run<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): void;
     /**
         This is an alias of {@link Database.prototype.run}
      */
-    exec<ParamsType extends SQLQueryBindings[]>(
-      sqlQuery: string,
-      ...bindings: ParamsType[]
-    ): void;
+    exec<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): void;
 
     /**
      * Compile a SQL query and return a {@link Statement} object. This is the
@@ -226,10 +220,7 @@ declare module "bun:sqlite" {
      *
      * Under the hood, this calls `sqlite3_prepare_v3`.
      */
-    prepare<
-      ReturnType,
-      ParamsType extends SQLQueryBindings | SQLQueryBindings[],
-    >(
+    prepare<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
       sqlQuery: string,
       params?: ParamsType,
     ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
@@ -435,10 +426,7 @@ declare module "bun:sqlite" {
      * });
      * ```
      */
-    static deserialize(
-      serialized: TypedArray | ArrayBufferLike,
-      isReadOnly?: boolean,
-    ): Database;
+    static deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, isReadOnly?: boolean): Database;
   }
 
   /**
@@ -467,10 +455,7 @@ declare module "bun:sqlite" {
    * // => undefined
    * ```
    */
-  export class Statement<
-    ReturnType = unknown,
-    ParamsType extends SQLQueryBindings[] = any[],
-  > {
+  export class Statement<ReturnType = unknown, ParamsType extends SQLQueryBindings[] = any[]> {
     /**
      * Creates a new prepared statement from native code.
      *
@@ -604,9 +589,7 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    values(
-      ...params: ParamsType
-    ): Array<Array<string | bigint | number | boolean | Uint8Array>>;
+    values(...params: ParamsType): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 
     /**
      * The names of the columns returned by the prepared statement.
@@ -802,11 +785,11 @@ declare module "bun:sqlite" {
   export type SQLQueryBindings =
     | string
     | bigint
-    | TypedArray
+    | NodeJS.TypedArray
     | number
     | boolean
     | null
-    | Record<string, string | bigint | TypedArray | number | boolean | null>;
+    | Record<string, string | bigint | NodeJS.TypedArray | number | boolean | null>;
 
   export default Database;
 

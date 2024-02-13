@@ -259,7 +259,7 @@ declare module "bun:ffi" {
     f32 = 10,
 
     /**
-     * Booelan value
+     * Boolean value
      *
      * Must be `true` or `false`. `0` and `1` type coercion is not supported.
      *
@@ -339,8 +339,7 @@ declare module "bun:ffi" {
     function = 17,
   }
 
-  type UNTYPED = never;
-  type Pointer = number & {};
+  type Pointer = number & { __pointer__: null };
 
   interface FFITypeToArgsType {
     [FFIType.char]: number;
@@ -509,7 +508,7 @@ declare module "bun:ffi" {
      * This is useful if the library has already been loaded
      * or if the module is also using Node-API.
      */
-    readonly ptr?: number | bigint;
+    readonly ptr?: Pointer | bigint;
 
     /**
      * Can C/FFI code call this function from a separate thread?
@@ -539,7 +538,7 @@ declare module "bun:ffi" {
   //  */
   // export function callback(ffi: FFIFunction, cb: Function): number;
 
-  interface Library<Fns extends Readonly<Record<string, Narrow<FFIFunction>>>> {
+  interface Library<Fns extends Symbols> {
     symbols: ConvertFns<Fns>;
 
     /**
@@ -552,26 +551,9 @@ declare module "bun:ffi" {
     close(): void;
   }
 
-  type ToFFIType<T extends FFITypeOrString> = T extends FFIType
-    ? T
-    : T extends string
-      ? FFITypeStringToType[T]
-      : never;
+  type ToFFIType<T extends FFITypeOrString> = T extends FFIType ? T : T extends string ? FFITypeStringToType[T] : never;
 
-  // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-  type _Narrow<T, U> = [U] extends [T] ? U : Extract<T, U>;
-  type Narrow<T = unknown> =
-    | _Narrow<T, 0 | (number & {})>
-    | _Narrow<T, 0n | (bigint & {})>
-    | _Narrow<T, "" | (string & {})>
-    | _Narrow<T, boolean>
-    | _Narrow<T, symbol>
-    | _Narrow<T, []>
-    | _Narrow<T, { [_: PropertyKey]: Narrow }>
-    | (T extends object ? { [K in keyof T]: Narrow<T[K]> } : never)
-    | Extract<{} | null | undefined, T>;
-
-  type ConvertFns<Fns extends Readonly<Record<string, FFIFunction>>> = {
+  type ConvertFns<Fns extends Symbols> = {
     [K in keyof Fns]: (
       ...args: Fns[K]["args"] extends infer A extends readonly FFITypeOrString[]
         ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
@@ -579,8 +561,7 @@ declare module "bun:ffi" {
           [unknown] extends [Fns[K]["args"]]
           ? []
           : never
-    ) => // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-    [unknown] extends [Fns[K]["returns"]]
+    ) => [unknown] extends [Fns[K]["returns"]] // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
       ? undefined
       : FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
   };
@@ -611,10 +592,7 @@ declare module "bun:ffi" {
    * bun uses [tinycc](https://github.com/TinyCC/tinycc), so a big thanks
    * goes to Fabrice Bellard and TinyCC maintainers for making this possible.
    */
-  function dlopen<Fns extends Record<string, Narrow<FFIFunction>>>(
-    name: string,
-    symbols: Fns,
-  ): Library<Fns>;
+  function dlopen<Fns extends Record<string, FFIFunction>>(name: string, symbols: Fns): Library<Fns>;
 
   /**
    * Turn a native library's function pointer into a JavaScript function
@@ -700,9 +678,7 @@ declare module "bun:ffi" {
    * bun uses [tinycc](https://github.com/TinyCC/tinycc), so a big thanks
    * goes to Fabrice Bellard and TinyCC maintainers for making this possible.
    */
-  function linkSymbols<Fns extends Record<string, Narrow<FFIFunction>>>(
-    symbols: Fns,
-  ): Library<Fns>;
+  function linkSymbols<Fns extends Record<string, FFIFunction>>(symbols: Fns): Library<Fns>;
 
   /**
    * Read a pointer as a {@link Buffer}
@@ -718,11 +694,7 @@ declare module "bun:ffi" {
    * reading beyond the bounds of the pointer will crash the program or cause
    * undefined behavior. Use with care!
    */
-  function toBuffer(
-    ptr: Pointer,
-    byteOffset?: number,
-    byteLength?: number,
-  ): Buffer;
+  function toBuffer(ptr: Pointer, byteOffset?: number, byteLength?: number): Buffer;
 
   /**
    * Read a pointer as an {@link ArrayBuffer}
@@ -738,11 +710,7 @@ declare module "bun:ffi" {
    * reading beyond the bounds of the pointer will crash the program or cause
    * undefined behavior. Use with care!
    */
-  function toArrayBuffer(
-    ptr: Pointer,
-    byteOffset?: number,
-    byteLength?: number,
-  ): ArrayBuffer;
+  function toArrayBuffer(ptr: Pointer, byteOffset?: number, byteLength?: number): ArrayBuffer;
 
   namespace read {
     /**
@@ -929,10 +897,7 @@ declare module "bun:ffi" {
    * }
    * ```
    */
-  function ptr(
-    view: NodeJS.TypedArray | ArrayBufferLike | DataView,
-    byteOffset?: number,
-  ): Pointer;
+  function ptr(view: NodeJS.TypedArray | ArrayBufferLike | DataView, byteOffset?: number): Pointer;
 
   /**
    * Get a string from a UTF-8 encoded C string

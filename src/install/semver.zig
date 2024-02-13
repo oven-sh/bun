@@ -249,7 +249,9 @@ pub const String = extern struct {
             buf: string,
             in: string,
         ) Pointer {
-            std.debug.assert(bun.isSliceInBuffer(in, buf));
+            if (Environment.allow_assert) {
+                std.debug.assert(bun.isSliceInBuffer(u8, in, buf));
+            }
 
             return Pointer{
                 .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
@@ -1043,17 +1045,27 @@ pub const Version = extern struct {
 
         var i: usize = 0;
 
-        i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
-        if (i == input.len) {
-            result.valid = false;
-            return result;
+        for (0..input.len) |c| {
+            switch (input[c]) {
+                // newlines & whitespace
+                ' ',
+                '\t',
+                '\n',
+                '\r',
+                std.ascii.control_code.vt,
+                std.ascii.control_code.ff,
+
+                // version separators
+                'v',
+                '=',
+                => {},
+                else => {
+                    i = c;
+                    break;
+                },
+            }
         }
 
-        if (input[i] == 'v' or input[i] == '=') {
-            i += 1;
-        }
-
-        i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
         if (i == input.len) {
             result.valid = false;
             return result;

@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "switch on corrupt value"
 /**
  * This file is meant to be runnable in Jest, Vitest, and Bun:
  *  `bun test test/js/bun/test/mock-fn.test.js`

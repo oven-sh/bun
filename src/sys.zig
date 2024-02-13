@@ -117,6 +117,8 @@ pub const Tag = enum(u8) {
     realpath,
     futime,
 
+    pidfd_open,
+
     kevent,
     kqueue,
     epoll_ctl,
@@ -1941,7 +1943,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         return Maybe(bun.FileDescriptor){ .result = bun.toFD(target) };
     }
 
-    const out = system.fcntl(fd.cast(), @as(i32, bun.C.F_DUPFD | bun.C.F_DUPFD_CLOEXEC), @as(i32, 0));
+    const out = system.fcntl(fd.cast(), @as(i32, std.os.F.DUPFD | bun.C.F.DUPFD_CLOEXEC), @as(i32, 0));
     log("dup({d}) = {d}", .{ fd.cast(), out });
     return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
 }
@@ -1995,32 +1997,32 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
 ///
 /// On other platforms, this is just a wrapper around `read(2)`.
 pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
-    if (Environment.isLinux) {
-        while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
-            const iovec = std.os.iovec{
-                .iov_base = buf.ptr,
-                .iov_len = buf.len,
-            };
+    // if (Environment.isLinux) {
+    //     while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
+    //         const iovec = [1]std.os.iovec{.{
+    //             .iov_base = buf.ptr,
+    //             .iov_len = buf.len,
+    //         }};
 
-            // Note that there is a bug on Linux Kernel 5
-            const rc = linux.preadv2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NONBLOCK);
-            if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
-                switch (err.getErrno()) {
-                    .OPNOTSUPP, .NOSYS => {
-                        bun.C.Linux.RWFFlagSupport.disable();
-                        switch (bun.isReadable(fd)) {
-                            .hup, .ready => return read(fd, buf),
-                            else => return .{ .err = Error.retry },
-                        }
-                    },
-                    .INTR => continue,
-                    else => return .{ .err = err },
-                }
-            }
+    //         // Note that there is a bug on Linux Kernel 5
+    //         const rc = linux.preadv2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NOWAIT);
+    //         if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
+    //             switch (err.getErrno()) {
+    //                 .OPNOTSUPP, .NOSYS => {
+    //                     bun.C.linux.RWFFlagSupport.disable();
+    //                     switch (bun.isReadable(fd)) {
+    //                         .hup, .ready => return read(fd, buf),
+    //                         else => return .{ .err = Error.retry },
+    //                     }
+    //                 },
+    //                 .INTR => continue,
+    //                 else => return err,
+    //             }
+    //         }
 
-            return .{ .result = @as(usize, @intCast(rc)) };
-        }
-    }
+    //         return .{ .result = @as(usize, @intCast(rc)) };
+    //     }
+    // }
 
     return read(fd, buf);
 }
@@ -2031,23 +2033,23 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
 pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
     if (Environment.isLinux) {
         while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
-            const iovec = std.os.iovec_const{
+            const iovec = [1]std.os.iovec_const{.{
                 .iov_base = buf.ptr,
                 .iov_len = buf.len,
-            };
+            }};
 
-            const rc = linux.pwritev2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NONBLOCK);
+            const rc = linux.pwritev2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NOWAIT);
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                 switch (err.getErrno()) {
                     .OPNOTSUPP, .NOSYS => {
-                        bun.C.Linux.RWFFlagSupport.disable();
+                        bun.C.linux.RWFFlagSupport.disable();
                         switch (bun.isWritable(fd)) {
                             .hup, .ready => return write(fd, buf),
                             else => return .{ .err = Error.retry },
                         }
                     },
                     .INTR => continue,
-                    else => return .{ .err = err },
+                    else => return err,
                 }
             }
 

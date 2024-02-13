@@ -313,12 +313,14 @@ pub const PosixSpawn = struct {
 
         extern fn posix_spawn_bun(
             pid: *c_int,
+            path: [*:0]const u8,
             request: *const BunSpawnRequest,
             argv: [*:null]?[*:0]const u8,
             envp: [*:null]?[*:0]const u8,
         ) isize;
 
         pub fn spawn(
+            path: [*:0]const u8,
             req_: BunSpawnRequest,
             argv: [*:null]?[*:0]const u8,
             envp: [*:null]?[*:0]const u8,
@@ -326,7 +328,7 @@ pub const PosixSpawn = struct {
             var req = req_;
             var pid: c_int = 0;
 
-            const rc = posix_spawn_bun(&pid, &req, argv, envp);
+            const rc = posix_spawn_bun(&pid, path, &req, argv, envp);
             if (comptime bun.Environment.allow_assert)
                 bun.sys.syslog("posix_spawn_bun({s}) = {d} ({d})", .{
                     bun.span(argv[0] orelse ""),
@@ -357,6 +359,7 @@ pub const PosixSpawn = struct {
     ) Maybe(pid_t) {
         if (comptime Environment.isLinux) {
             return BunSpawnRequest.spawn(
+                path,
                 .{
                     .actions = if (actions) |act| .{
                         .ptr = act.actions.items.ptr,

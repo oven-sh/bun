@@ -961,7 +961,7 @@ pub const PosixSpawnResult = struct {
             0;
     }
 
-    pub fn pifdFromPid(pid: pid_t) JSC.Maybe(PidFDType) {
+    pub fn pifdFromPid(this: *PosixSpawnResult) JSC.Maybe(PidFDType) {
         if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
             return .{ .err = bun.sys.Error.fromCode(.NOSYS, .pidfd_open) };
         }
@@ -969,7 +969,7 @@ pub const PosixSpawnResult = struct {
         var pidfd_flags = pidfdFlagsForLinux();
 
         var rc = std.os.linux.pidfd_open(
-            @intCast(pid),
+            @intCast(this.pid),
             pidfd_flags,
         );
         while (true) {
@@ -977,7 +977,7 @@ pub const PosixSpawnResult = struct {
                 .SUCCESS => return JSC.Maybe(PidFDType){ .result = @intCast(rc) },
                 .INTR => {
                     rc = std.os.linux.pidfd_open(
-                        @intCast(pid),
+                        @intCast(this.pid),
                         pidfd_flags,
                     );
                     continue;
@@ -986,7 +986,7 @@ pub const PosixSpawnResult = struct {
                     if (err == .INVAL) {
                         if (pidfd_flags != 0) {
                             rc = std.os.linux.pidfd_open(
-                                @intCast(pid),
+                                @intCast(this.pid),
                                 0,
                             );
                             pidfd_flags = 0;
@@ -996,14 +996,14 @@ pub const PosixSpawnResult = struct {
 
                     if (err == .NOSYS) {
                         WaiterThread.setShouldUseWaiterThread();
-                        return .{ .err = err };
+                        return .{ .err = bun.sys.Error.fromCode(.NOSYS, .pidfd_open) };
                     }
 
                     var status: u32 = 0;
                     // ensure we don't leak the child process on error
-                    _ = std.os.linux.wait4(pid, &status, 0, null);
+                    _ = std.os.linux.wait4(this.pid, &status, 0, null);
 
-                    return .{ .err = err };
+                    return .{ .err = bun.sys.Error.fromCode(err, .pidfd_open) };
                 },
             }
         }
@@ -1193,7 +1193,7 @@ pub fn spawnProcessPosix(
             extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
 
             if (comptime Environment.isLinux) {
-                switch (spawned.pifdFromPid(pid)) {
+                switch (spawned.pifdFromPid()) {
                     .result => |pidfd| {
                         spawned.pidfd = pidfd;
                     },

@@ -189,7 +189,7 @@ pub fn PosixPipeReader(
 
                             if (bytes_read == 0) {
                                 vtable.close(parent);
-                                drainChunk(parent, stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], true);
+                                _ = drainChunk(parent, stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], .eof);
                                 vtable.done(parent);
                                 return;
                             }
@@ -197,7 +197,8 @@ pub fn PosixPipeReader(
                         .err => |err| {
                             if (err.isRetry()) {
                                 resizable_buffer.appendSlice(buffer) catch bun.outOfMemory();
-                                drainChunk(parent, resizable_buffer.items[0..resizable_buffer.items.len], false);
+                                // TODO is this right to ignore?
+                                _ = drainChunk(parent, resizable_buffer.items[0..resizable_buffer.items.len], .drained);
 
                                 if (comptime vtable.registerPoll) |register| {
                                     register(parent);
@@ -222,13 +223,13 @@ pub fn PosixPipeReader(
 
                         if (bytes_read == 0) {
                             vtable.close(parent);
-                            _ = drainChunk(parent, resizable_buffer.items[start_length..], true);
+                            _ = drainChunk(parent, resizable_buffer.items[start_length..], .eof);
                             vtable.done(parent);
                             return;
                         }
                     },
                     .err => |err| {
-                        _ = drainChunk(parent, resizable_buffer.items[start_length..], false);
+                        _ = drainChunk(parent, resizable_buffer.items[start_length..], .drained);
 
                         if (err.isRetry()) {
                             if (comptime vtable.registerPoll) |register| {

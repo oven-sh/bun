@@ -575,6 +575,10 @@ pub const IFF_RUNNING = net_c.IFF_RUNNING;
 pub const IFF_UP = net_c.IFF_UP;
 pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
 
+pub const F = struct {
+    pub const DUPFD_CLOEXEC = net_c.F_DUPFD_CLOEXEC;
+};
+
 pub const Mode = u32;
 pub const E = std.os.E;
 pub const S = std.os.S;

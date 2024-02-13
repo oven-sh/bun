@@ -1426,7 +1426,7 @@ pub const Blob = struct {
         return blob_;
     }
 
-    fn calculateEstimatedByteSize(this: *Blob) usize {
+    fn calculateEstimatedByteSize(this: *Blob) void {
         // in-memory size. not the size on disk.
         var size: usize = @sizeOf(Blob);
 
@@ -1444,7 +1444,7 @@ pub const Blob = struct {
             }
         }
 
-        return size + (this.content_type.len * @intFromBool(this.content_type_allocated));
+        this.reported_estimated_size = size + (this.content_type.len * @intFromBool(this.content_type_allocated));
     }
 
     pub fn estimatedSize(this: *Blob) callconv(.C) usize {
@@ -3409,6 +3409,8 @@ pub const Blob = struct {
             },
         }
 
+        blob.calculateEstimatedByteSize();
+
         var blob_ = bun.new(Blob, blob);
         blob_.allocator = allocator;
         return blob_;
@@ -3584,7 +3586,7 @@ pub const Blob = struct {
             std.debug.assert(this.allocator != null);
         }
 
-        this.reported_estimated_size = this.calculateEstimatedByteSize();
+        this.calculateEstimatedByteSize();
         return Blob.toJSUnchecked(globalObject, this);
     }
 

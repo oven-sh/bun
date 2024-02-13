@@ -131,12 +131,12 @@ pub const Request = struct {
         return this.reported_estimated_size;
     }
 
-    pub fn calculateEstimatedByteSize(this: *Request) usize {
-        return this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
+    pub fn calculateEstimatedByteSize(this: *Request) void {
+        this.reported_estimated_size = this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
     }
 
     pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
-        this.reported_estimated_size = this.calculateEstimatedByteSize();
+        this.calculateEstimatedByteSize();
         return Request.toJSUnchecked(globalObject, this);
     }
 
@@ -685,6 +685,8 @@ pub const Request = struct {
         {
             req.headers.?.put("content-type", req.body.value.Blob.content_type, globalThis);
         }
+
+        req.calculateEstimatedByteSize();
 
         return req;
     }

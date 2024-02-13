@@ -88,15 +88,15 @@ pub const Response = struct {
         return this.reported_estimated_size;
     }
 
-    pub fn calculateEstimatedByteSize(this: *Response) usize {
-        return this.body.value.estimatedSize() +
+    pub fn calculateEstimatedByteSize(this: *Response) void {
+        this.reported_estimated_size = this.body.value.estimatedSize() +
             this.url.byteSlice().len +
             this.init.status_text.byteSlice().len +
             @sizeOf(Response);
     }
 
     pub fn toJS(this: *Response, globalObject: *JSGlobalObject) JSValue {
-        this.reported_estimated_size = this.calculateEstimatedByteSize();
+        this.calculateEstimatedByteSize();
         return Response.toJSUnchecked(globalObject, this);
     }
 
@@ -506,6 +506,8 @@ pub const Response = struct {
         {
             response.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
         }
+
+        response.calculateEstimatedByteSize();
 
         return response;
     }

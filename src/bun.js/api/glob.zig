@@ -40,40 +40,7 @@ const ScanOpts = struct {
     error_on_broken_symlinks: bool,
 
     fn parseCWD(globalThis: *JSGlobalObject, allocator: std.mem.Allocator, cwdVal: JSC.JSValue, absolute: bool, comptime fnName: string) ?[]const u8 {
-        const cwd_str_raw = cwd_str_raw: {
-            // Windows wants utf-16
-            if (comptime bun.Environment.isWindows) {
-                const cwd_zig_str = cwdVal.getZigString(globalThis);
-                // Dupe if already utf-16
-                if (cwd_zig_str.is16Bit()) {
-                    const duped = allocator.dupe(u8, cwd_zig_str.slice()) catch {
-                        globalThis.throwOutOfMemory();
-                        return null;
-                    };
-
-                    break :cwd_str_raw ZigString.Slice.init(allocator, duped);
-                }
-
-                // Convert to utf-16
-                const utf16 = bun.strings.toUTF16AllocForReal(
-                    allocator,
-                    cwd_zig_str.slice(),
-                    // Let windows APIs handle errors with invalid surrogate pairs, etc.
-                    false,
-                    false,
-                ) catch {
-                    globalThis.throwOutOfMemory();
-                    return null;
-                };
-
-                const ptr: [*]u8 = @ptrCast(utf16.ptr);
-                break :cwd_str_raw ZigString.Slice.init(allocator, ptr[0 .. utf16.len * 2]);
-            }
-
-            // `.toSlice()` internally converts to WTF-8
-            break :cwd_str_raw cwdVal.toSlice(globalThis, allocator);
-        };
-
+        const cwd_str_raw = cwdVal.toSlice(globalThis, allocator);
         if (cwd_str_raw.len == 0) return "";
 
         const cwd_str = cwd_str: {

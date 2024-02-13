@@ -538,7 +538,7 @@ pub const Subprocess = struct {
         return this.process.hasKilled();
     }
 
-    pub fn tryKill(this: *Subprocess, sig: i32) JSC.Node.Maybe(void) {
+    pub fn tryKill(this: *Subprocess, sig: i32) JSC.Maybe(void) {
         if (this.hasExited()) {
             return .{ .result = {} };
         }

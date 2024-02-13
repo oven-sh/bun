@@ -151,6 +151,19 @@ pub const Stdio = union(enum) {
         };
     }
 
+    pub fn toSync(this: *@This(), i: u32) void {
+        // Piping an empty stdin doesn't make sense
+        if (i == 0 and this.* == .pipe) {
+            this.* = .{ .ignore = {} };
+        }
+
+        if (comptime Environment.isLinux) {
+            if (this.canUseMemfd(true)) {
+                this.useMemfd(i);
+            }
+        }
+    }
+
     pub fn asSpawnOption(
         stdio: *@This(),
     ) bun.spawn.SpawnOptions.Stdio {

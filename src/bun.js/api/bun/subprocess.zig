@@ -381,6 +381,7 @@ pub const Subprocess = struct {
                 .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, fd.?) },
                 .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
                 .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
+                .socket => unreachable,
             };
         }
 
@@ -1005,7 +1006,12 @@ pub const Subprocess = struct {
         pub fn onReady(_: *Writable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
         pub fn onStart(_: *Writable) void {}
 
-        pub fn init(stdio: Stdio, event_loop: *JSC.EventLoop, subprocess: *Subprocess, fd: ?bun.FileDescriptor) !Writable {
+        pub fn init(
+            stdio: Stdio,
+            event_loop: *JSC.EventLoop,
+            subprocess: *Subprocess,
+            fd: ?bun.FileDescriptor,
+        ) !Writable {
             if (comptime Environment.allow_assert) {
                 if (fd) |fd_| {
                     std.debug.assert(fd_ != bun.invalid_fd);
@@ -1558,7 +1564,7 @@ pub const Subprocess = struct {
 
                             while (stdio_iter.next()) |value| : (i += 1) {
                                 var new_item: Stdio = undefined;
-                                if (new_item.extract(globalThis, i, value))
+                                if (!new_item.extract(globalThis, i, value)) {
                                     return JSC.JSValue.jsUndefined();
                                 switch (new_item) {
                                     .pipe => {
@@ -1571,6 +1577,11 @@ pub const Subprocess = struct {
                                         // TODO: fix leak
                                     },
                                 }
+
+                                extra_fds.append(new_item.asSpawnOption()) catch {
+                                    globalThis.throwOutOfMemory();
+                                    return .zero;
+                                };
                             }
                         } else {
                             globalThis.throwInvalidArguments("stdio must be an array", .{});
@@ -1673,34 +1684,11 @@ pub const Subprocess = struct {
             return .zero;
         };
 
-        // if (comptime is_sync) {
-        //     if (stdio[1] == .pipe and stdio[1].pipe == null) {
-        //         stdio[1] = .{ .sync_buffered_output = BufferedOutput.new(.{}) };
-        //     }
-
-        //     if (stdio[2] == .pipe and stdio[2].pipe == null) {
-        //         stdio[2] = .{ .sync_buffered_output = BufferedOutput.new(.{}) };
-        //     }
-        // } else {
-        //     if (stdio[1] == .pipe and stdio[1].pipe == null) {
-        //         stdio[1] = .{ .buffer = {} };
-        //     }
-
-        //     if (stdio[2] == .pipe and stdio[2].pipe == null) {
-        //         stdio[2] = .{ .buffer = {} };
-        //     }
-        // }
-        // defer {
-        //     if (comptime is_sync) {
-        //         if (stdio[1] == .sync_buffered_output) {
-        //             stdio[1].sync_buffered_output.deref();
-        //         }
-
-        //         if (stdio[2] == .sync_buffered_output) {
-        //             stdio[2].sync_buffered_output.deref();
-        //         }
-        //     }
-        // }
+        if (comptime is_sync) {
+            for (&stdio, 0..) |*io, i| {
+                io.toSync(@truncate(i));
+            }
+        }
 
         const spawn_options = bun.spawn.SpawnOptions{
             .cwd = cwd,

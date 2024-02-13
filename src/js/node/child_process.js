@@ -153,17 +153,19 @@ function spawn(file, args, options) {
   $debug("spawn", options);
   child.spawn(options);
 
-  if (options.timeout > 0) {
+  const timeout = options.timeout;
+  if (timeout && timeout > 0) {
     let timeoutId = setTimeout(() => {
       if (timeoutId) {
+        timeoutId = null;
+
         try {
           child.kill(killSignal);
         } catch (err) {
           child.emit("error", err);
         }
-        timeoutId = null;
       }
-    });
+    }, timeout).unref();
 
     child.once("exit", () => {
       if (timeoutId) {

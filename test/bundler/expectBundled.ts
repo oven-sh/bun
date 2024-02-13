@@ -3,7 +3,6 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
-import dedent from "dedent";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { callerSourceOrigin } from "bun:jsc";
@@ -11,6 +10,38 @@ import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
 import type { Expect } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
+
+/** Dedent module does a bit too much with their stuff. we will be much simpler */
+function dedent(str: string | TemplateStringsArray, ...args: any[]) {
+  // https://github.com/tc39/proposal-string-cooked#motivation
+  let single_string = String.raw({ raw: str }, ...args);
+  single_string = single_string.trim();
+
+  let lines = single_string.split("\n");
+  let first_line = lines[0];
+  let smallest_indent = Infinity;
+  for (let line of lines.slice(1)) {
+    let match = line.match(/^\s+/);
+    if (match) {
+      smallest_indent = Math.min(smallest_indent, match[0].length);
+    } else {
+      return single_string;
+    }
+  }
+
+  if (smallest_indent === Infinity) {
+    return single_string;
+  }
+
+  return (
+    first_line +
+    "\n" +
+    lines
+      .slice(1)
+      .map(x => x.slice(smallest_indent))
+      .join("\n")
+  );
+}
 
 let currentFile: string | undefined;
 
@@ -460,7 +491,7 @@ function expectBundled(
     outputPaths = (
       outputPaths
         ? outputPaths.map(file => path.join(root, file))
-        : entryPaths.map(file => path.join(outdir!, path.basename(file)))
+        : entryPaths.map(file => path.join(outdir || "", path.basename(file)))
     ).map(x => x.replace(/\.ts$/, ".js"));
 
     if (cjs2esm && !outfile && !minifySyntax && !minifyWhitespace) {
@@ -621,11 +652,18 @@ function expectBundled(
         .map(x => String(x)) as [string, ...string[]];
 
       if (DEBUG) {
-        writeFileSync(
-          path.join(root, "run.sh"),
-          "#!/bin/sh\n" +
+        if (process.platform !== "win32") {
+          writeFileSync(
+            path.join(root, "run.sh"),
+            "#!/bin/sh\n" +
+              cmd.map(x => (x.match(/^[a-z0-9_:=\./\\-]+$/i) ? x : `"${x.replace(/"/g, '\\"')}"`)).join(" "),
+          );
+        } else {
+          writeFileSync(
+            path.join(root, "run.ps1"),
             cmd.map(x => (x.match(/^[a-z0-9_:=\./\\-]+$/i) ? x : `"${x.replace(/"/g, '\\"')}"`)).join(" "),
-        );
+          );
+        }
         try {
           mkdirSync(path.join(root, ".vscode"), { recursive: true });
         } catch (e) {}
@@ -639,30 +677,22 @@ function expectBundled(
                 ...(compile
                   ? [
                       {
-                        "type": "lldb",
+                        "type": process.platform !== "win32" ? "lldb" : "cppvsdbg",
                         "request": "launch",
                         "name": "run compiled exe",
                         "program": outfile,
                         "args": [],
                         "cwd": root,
-                        "env": {
-                          "FORCE_COLOR": "1",
-                        },
-                        "console": "internalConsole",
                       },
                     ]
                   : []),
                 {
-                  "type": "lldb",
+                  "type": process.platform !== "win32" ? "lldb" : "cppvsdbg",
                   "request": "launch",
                   "name": "bun test",
                   "program": cmd[0],
                   "args": cmd.slice(1),
                   "cwd": root,
-                  "env": {
-                    "FORCE_COLOR": "1",
-                  },
-                  "console": "internalConsole",
                 },
               ],
             },
@@ -1290,6 +1320,9 @@ for (const [key, blob] of build.outputs) {
               console.log(`runtime failed file: ${file}`);
               console.log(`reference stdout:`);
               console.log(result);
+              console.log(`---`);
+              console.log(`expected stdout:`);
+              console.log(expected);
               console.log(`---`);
             }
             expect(result).toBe(expected);

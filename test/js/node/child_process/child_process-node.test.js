@@ -3,6 +3,7 @@ import { ChildProcess, spawn, exec, fork } from "node:child_process";
 import { createTest } from "node-harness";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import util from "node:util";
 import { bunEnv, bunExe } from "harness";
 const { beforeAll, describe, expect, it, throws, assert, createCallCheckCtx, createDoneDotAll } = createTest(
   import.meta.path,
@@ -18,7 +19,8 @@ const fixturesDir = path.join(__dirname, "fixtures");
 
 const fixtures = {
   path(...args) {
-    return path.join(fixturesDir, ...args);
+    const strings = [fixturesDir, ...args].filter(util.isString);
+    return path.join(...strings);
   },
 };
 

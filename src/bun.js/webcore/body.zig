@@ -437,7 +437,7 @@ pub const Body = struct {
 
                     locked.readable = .{
                         .ptr = .{ .Bytes = &reader.context },
-                        .value = reader.toJS(globalThis),
+                        .value = reader.toReadableStream(globalThis),
                     };
                     locked.readable.?.value.protect();
 

@@ -603,6 +603,52 @@ describe("bun test", () => {
         expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
       });
     });
+    test("should allow tests run with test.each to be skipped", () => {
+      const numbers = [
+        [1, 2, 3],
+        [1, 1, 2],
+        [3, 4, 7],
+      ];
+
+      const stderr = runTest({
+        args: ["-t", "$a"],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(numbers)})("%i + %i = %i", (a, b, e) => {
+            expect(a + b).toBe(e);
+          });
+        `,
+      });
+      numbers.forEach(numbers => {
+        expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+      });
+    });
+    test("should allow tests run with test.each to be matched", () => {
+      const numbers = [
+        [1, 2, 3],
+        [1, 1, 2],
+        [3, 4, 7],
+      ];
+
+      const stderr = runTest({
+        args: ["-t", "1 \\+"],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each(${JSON.stringify(numbers)})("%i + %i = %i", (a, b, e) => {
+            expect(a + b).toBe(e);
+          });
+        `,
+      });
+      numbers.forEach(numbers => {
+        if (numbers[0] === 1) {
+          expect(stderr).toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+        } else {
+          expect(stderr).not.toContain(`${numbers[0]} + ${numbers[1]} = ${numbers[2]}`);
+        }
+      });
+    });
     test("should run tests with describe.each", () => {
       const numbers = [
         [1, 2, 3],

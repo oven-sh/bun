@@ -1760,11 +1760,12 @@ it("should allow very long redirect URLS", async () => {
       });
     },
   });
-
-  const { url, status } = await fetch(`http://${server.hostname}:${server.port}/redirect`);
-
-  expect(url).toBe(`http://${server.hostname}:${server.port}${Location}`);
-  expect(status).toBe(404);
+  // run it more times to check Malformed_HTTP_Response errors
+  for (let i = 0; i < 100; i++) {
+    const { url, status } = await fetch(`${server.url.origin}/redirect`);
+    expect(url).toBe(`${server.url.origin}${Location}`);
+    expect(status).toBe(404);
+  }
   server.stop(true);
 });
 

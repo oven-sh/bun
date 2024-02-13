@@ -1142,8 +1142,8 @@ pub const Sink = struct {
         pub const WriteUTF16Fn = *const (fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
         pub const WriteUTF8Fn = *const (fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
         pub const WriteLatin1Fn = *const (fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
-        pub const EndFn = *const (fn (this: *anyopaque, err: ?Syscall.Error) JSC.Node.Maybe(void));
-        pub const ConnectFn = *const (fn (this: *anyopaque, signal: Signal) JSC.Node.Maybe(void));
+        pub const EndFn = *const (fn (this: *anyopaque, err: ?Syscall.Error) JSC.Maybe(void));
+        pub const ConnectFn = *const (fn (this: *anyopaque, signal: Signal) JSC.Maybe(void));
 
         connect: ConnectFn,
         write: WriteUTF8Fn,
@@ -1158,7 +1158,7 @@ pub const Sink = struct {
                 pub fn onWrite(this: *anyopaque, data: StreamResult) StreamResult.Writable {
                     return Wrapped.write(@as(*Wrapped, @ptrCast(@alignCast(this))), data);
                 }
-                pub fn onConnect(this: *anyopaque, signal: Signal) JSC.Node.Maybe(void) {
+                pub fn onConnect(this: *anyopaque, signal: Signal) JSC.Maybe(void) {
                     return Wrapped.connect(@as(*Wrapped, @ptrCast(@alignCast(this))), signal);
                 }
                 pub fn onWriteLatin1(this: *anyopaque, data: StreamResult) StreamResult.Writable {
@@ -1167,7 +1167,7 @@ pub const Sink = struct {
                 pub fn onWriteUTF16(this: *anyopaque, data: StreamResult) StreamResult.Writable {
                     return Wrapped.writeUTF16(@as(*Wrapped, @ptrCast(@alignCast(this))), data);
                 }
-                pub fn onEnd(this: *anyopaque, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+                pub fn onEnd(this: *anyopaque, err: ?Syscall.Error) JSC.Maybe(void) {
                     return Wrapped.end(@as(*Wrapped, @ptrCast(@alignCast(this))), err);
                 }
             };
@@ -1182,7 +1182,7 @@ pub const Sink = struct {
         }
     };
 
-    pub fn end(this: *Sink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+    pub fn end(this: *Sink, err: ?Syscall.Error) JSC.Maybe(void) {
         if (this.status == .closed) {
             return .{ .result = {} };
         }
@@ -1308,7 +1308,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
         }
 
         const max_fifo_size = 64 * 1024;
-        pub fn prepare(this: *ThisFileSink, input_path: PathOrFileDescriptor, mode: bun.Mode) JSC.Node.Maybe(void) {
+        pub fn prepare(this: *ThisFileSink, input_path: PathOrFileDescriptor, mode: bun.Mode) JSC.Maybe(void) {
             var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             const auto_close = this.auto_close;
             const fd = if (!auto_close)
@@ -1346,7 +1346,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             this.signal = signal;
         }
 
-        pub fn start(this: *ThisFileSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
+        pub fn start(this: *ThisFileSink, stream_start: StreamStart) JSC.Maybe(void) {
             this.done = false;
             this.written = 0;
             this.auto_close = false;
@@ -1598,7 +1598,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             return .{ .owned = @as(Blob.SizeType, @truncate(total - initial)) };
         }
 
-        pub fn flushFromJS(this: *ThisFileSink, globalThis: *JSGlobalObject, _: bool) JSC.Node.Maybe(JSValue) {
+        pub fn flushFromJS(this: *ThisFileSink, globalThis: *JSGlobalObject, _: bool) JSC.Maybe(JSValue) {
             if (this.isPending() or this.done) {
                 return .{ .result = JSC.JSValue.jsUndefined() };
             }
@@ -1608,7 +1608,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
                 return .{ .err = result.err };
             }
 
-            return JSC.Node.Maybe(JSValue){
+            return JSC.Maybe(JSValue){
                 .result = result.toJS(globalThis),
             };
         }
@@ -1801,7 +1801,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             this.pending.run();
         }
 
-        pub fn end(this: *ThisFileSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+        pub fn end(this: *ThisFileSink, err: ?Syscall.Error) JSC.Maybe(void) {
             if (this.done) {
                 return .{ .result = {} };
             }
@@ -1829,7 +1829,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             return .{ .result = {} };
         }
 
-        pub fn endFromJS(this: *ThisFileSink, globalThis: *JSGlobalObject) JSC.Node.Maybe(JSValue) {
+        pub fn endFromJS(this: *ThisFileSink, globalThis: *JSGlobalObject) JSC.Maybe(JSValue) {
             if (this.done) {
                 return .{ .result = JSValue.jsNumber(this.written) };
             }
@@ -1879,7 +1879,7 @@ pub const ArrayBufferSink = struct {
         this.signal = signal;
     }
 
-    pub fn start(this: *ArrayBufferSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
+    pub fn start(this: *ArrayBufferSink, stream_start: StreamStart) JSC.Maybe(void) {
         this.bytes.len = 0;
         var list = this.bytes.listManaged(this.allocator);
         list.clearRetainingCapacity();
@@ -1903,11 +1903,11 @@ pub const ArrayBufferSink = struct {
         return .{ .result = {} };
     }
 
-    pub fn flush(_: *ArrayBufferSink) JSC.Node.Maybe(void) {
+    pub fn flush(_: *ArrayBufferSink) JSC.Maybe(void) {
         return .{ .result = {} };
     }
 
-    pub fn flushFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, wait: bool) JSC.Node.Maybe(JSValue) {
+    pub fn flushFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
         if (this.streaming) {
             const value: JSValue = switch (this.as_uint8array) {
                 true => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array),
@@ -1985,7 +1985,7 @@ pub const ArrayBufferSink = struct {
         return .{ .owned = len };
     }
 
-    pub fn end(this: *ArrayBufferSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+    pub fn end(this: *ArrayBufferSink, err: ?Syscall.Error) JSC.Maybe(void) {
         if (this.next) |*next| {
             return next.end(err);
         }
@@ -2017,7 +2017,7 @@ pub const ArrayBufferSink = struct {
         ).toJS(globalThis, null);
     }
 
-    pub fn endFromJS(this: *ArrayBufferSink, _: *JSGlobalObject) JSC.Node.Maybe(ArrayBuffer) {
+    pub fn endFromJS(this: *ArrayBufferSink, _: *JSGlobalObject) JSC.Maybe(ArrayBuffer) {
         if (this.done) {
             return .{ .result = ArrayBuffer.fromBytes(&[_]u8{}, .ArrayBuffer) };
         }
@@ -2147,17 +2147,17 @@ pub const UVStreamSink = struct {
         this.signal = signal;
     }
 
-    pub fn start(this: *UVStreamSink, _: StreamStart) JSC.Node.Maybe(void) {
+    pub fn start(this: *UVStreamSink, _: StreamStart) JSC.Maybe(void) {
         this.done = false;
         this.signal.start();
         return .{ .result = {} };
     }
 
-    pub fn flush(_: *UVStreamSink) JSC.Node.Maybe(void) {
+    pub fn flush(_: *UVStreamSink) JSC.Maybe(void) {
         return .{ .result = {} };
     }
 
-    pub fn flushFromJS(_: *UVStreamSink, _: *JSGlobalObject, _: bool) JSC.Node.Maybe(JSValue) {
+    pub fn flushFromJS(_: *UVStreamSink, _: *JSGlobalObject, _: bool) JSC.Maybe(JSValue) {
         return .{ .result = JSValue.jsNumber(0) };
     }
 
@@ -2262,7 +2262,7 @@ pub const UVStreamSink = struct {
         return .{ .owned = len };
     }
 
-    pub fn end(this: *UVStreamSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+    pub fn end(this: *UVStreamSink, err: ?Syscall.Error) JSC.Maybe(void) {
         if (this.next) |*next| {
             return next.end(err);
         }
@@ -2284,7 +2284,7 @@ pub const UVStreamSink = struct {
         return JSSink.createObject(globalThis, this);
     }
 
-    pub fn endFromJS(this: *UVStreamSink, _: *JSGlobalObject) JSC.Node.Maybe(JSValue) {
+    pub fn endFromJS(this: *UVStreamSink, _: *JSGlobalObject) JSC.Maybe(JSValue) {
         if (this.done) {
             return .{ .result = JSC.JSValue.jsNumber(0) };
         }
@@ -2606,7 +2606,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 const wait = callframe.argumentsCount() > 0 and
                     callframe.argument(0).isBoolean() and
                     callframe.argument(0).asBoolean();
-                const maybe_value: JSC.Node.Maybe(JSValue) = this.sink.flushFromJS(globalThis, wait);
+                const maybe_value: JSC.Maybe(JSValue) = this.sink.flushFromJS(globalThis, wait);
                 return switch (maybe_value) {
                     .result => |value| value,
                     .err => |err| blk: {
@@ -2912,7 +2912,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return false;
         }
 
-        pub fn start(this: *@This(), stream_start: StreamStart) JSC.Node.Maybe(void) {
+        pub fn start(this: *@This(), stream_start: StreamStart) JSC.Maybe(void) {
             if (this.aborted or this.res.hasResponded()) {
                 this.markDone();
                 this.signal.close(null);
@@ -2958,7 +2958,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .result = {} };
         }
 
-        fn flushFromJSNoWait(this: *@This()) JSC.Node.Maybe(JSValue) {
+        fn flushFromJSNoWait(this: *@This()) JSC.Maybe(JSValue) {
             log("flushFromJSNoWait", .{});
             if (this.hasBackpressure() or this.done) {
                 return .{ .result = JSValue.jsNumberFromInt32(0) };
@@ -2978,7 +2978,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .result = JSValue.jsNumberFromInt32(0) };
         }
 
-        pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) JSC.Node.Maybe(JSValue) {
+        pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
             log("flushFromJS({any})", .{wait});
             this.unregisterAutoFlusher();
 
@@ -3014,7 +3014,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .result = promise_value };
         }
 
-        pub fn flush(this: *@This()) JSC.Node.Maybe(void) {
+        pub fn flush(this: *@This()) JSC.Maybe(void) {
             log("flush()", .{});
             this.unregisterAutoFlusher();
 
@@ -3185,7 +3185,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         // In this case, it's always an error
-        pub fn end(this: *@This(), err: ?Syscall.Error) JSC.Node.Maybe(void) {
+        pub fn end(this: *@This(), err: ?Syscall.Error) JSC.Maybe(void) {
             log("end({any})", .{err});
 
             if (this.requested_end) {
@@ -3215,7 +3215,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .result = {} };
         }
 
-        pub fn endFromJS(this: *@This(), globalThis: *JSGlobalObject) JSC.Node.Maybe(JSValue) {
+        pub fn endFromJS(this: *@This(), globalThis: *JSGlobalObject) JSC.Maybe(JSValue) {
             log("endFromJS()", .{});
 
             if (this.requested_end) {

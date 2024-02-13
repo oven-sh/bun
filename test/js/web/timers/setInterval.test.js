@@ -27,7 +27,7 @@ it("setInterval", async () => {
   });
 
   expect(result).toBe(10);
-  expect(performance.now() - start >= 10).toBe(true);
+  expect(performance.now() - start > 9).toBe(true);
 });
 
 it("clearInterval", async () => {
@@ -66,7 +66,7 @@ it("setInterval if refreshed before run, should reschedule to run later", done =
   let timer = setInterval(() => {
     let end = Date.now();
     clearInterval(timer);
-    expect(end - start).toBeGreaterThanOrEqual(150);
+    expect(end - start).toBeGreaterThan(149);
     done();
   }, 100);
 

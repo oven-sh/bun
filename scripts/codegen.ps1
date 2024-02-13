@@ -5,7 +5,7 @@ $Script2=(Join-Path $PSScriptRoot "../src/codegen/create_hash_table")
 $CreateHashTable=(Get-Content $Script2 -Raw)
 $CreateHashTable.Replace("`r`n","`n") | Set-Content $Script2 -Force -NoNewline
 
-& 'wsl.exe' ./scripts/cross-compile-codegen.sh win32 x64 "build"
+& 'C:\Program Files\WSL\wsl.exe' ./scripts/cross-compile-codegen.sh win32 x64 "build"
 
 Set-Content $Script1 -Force -NoNewline -Value $CrossCompileCodegen
 Set-Content $Script2 -Force -NoNewline -Value $CreateHashTable

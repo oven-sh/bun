@@ -966,7 +966,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 
     if(NOT WIN32)
         if(USE_LTO)
-            string(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
+            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
         endif()
 
         target_compile_options(${bun} PUBLIC -O3 ${LTO_FLAG} -g1
@@ -978,8 +978,8 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         set(LTO_LINK_FLAG "")
 
         if(USE_LTO)
-            string(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
-            string(APPEND LTO_LINK_FLAG "/LTCG")
+            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
+            list(APPEND LTO_LINK_FLAG "/LTCG")
         endif()
 
         target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG /Z7)

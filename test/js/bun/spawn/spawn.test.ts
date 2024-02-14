@@ -264,7 +264,7 @@ for (let [gcTick, label] of [
         });
 
         await exited;
-        expect(await Bun.file(tmp + "out.123.txt").text() == hugeString).toBeTrue();
+        expect((await Bun.file(tmp + "out.123.txt").text()) == hugeString).toBeTrue();
       });
 
       it("Bun.file() works as stdout", async () => {

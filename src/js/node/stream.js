@@ -5250,12 +5250,11 @@ function createNativeStreamReadable(nativeType, Readable) {
       this.#constructed = false;
       this.#remainingChunk = undefined;
       this.#pendingRead = false;
-
       ptr.onClose = this.#onClose.bind(this);
     }
 
     #onClose() {
-      this.destroy();
+      this.push(null);
     }
 
     // maxToRead is by default the highWaterMark passed from the Readable.read call to this fn
@@ -5334,6 +5333,13 @@ function createNativeStreamReadable(nativeType, Readable) {
       return chunk;
     }
 
+    #adjustHighWaterMark() {
+      this.#highWaterMark = Math.min(this.#highWaterMark * 2, 1024 * 1024 * 2);
+      this.#hasResized = true;
+
+      $debug("Resized", this.__id);
+    }
+
     // push(result, encoding) {
     //   debug("NativeReadable push -- result, encoding", result, encoding, this.__id);
     //   return super.push(...arguments);
@@ -5344,8 +5350,7 @@ function createNativeStreamReadable(nativeType, Readable) {
 
       if (typeof result === "number") {
         if (result >= this.#highWaterMark && !this.#hasResized && !isClosed) {
-          this.#highWaterMark *= 2;
-          this.#hasResized = true;
+          this.#adjustHighWaterMark();
         }
 
         return handleNumberResult(this, result, view, isClosed);
@@ -5356,9 +5361,7 @@ function createNativeStreamReadable(nativeType, Readable) {
         return view?.byteLength ?? 0 > 0 ? view : undefined;
       } else if ($isTypedArrayView(result)) {
         if (result.byteLength >= this.#highWaterMark && !this.#hasResized && !isClosed) {
-          this.#highWaterMark *= 2;
-          this.#hasResized = true;
-          $debug("Resized", this.__id);
+          this.#adjustHighWaterMark();
         }
 
         return handleArrayBufferViewResult(this, result, view, isClosed);
@@ -5378,7 +5381,8 @@ function createNativeStreamReadable(nativeType, Readable) {
           result => {
             this.#pendingRead = false;
             $debug("pending no longerrrrrrrr (result returned from pull)", this.__id);
-            this.#remainingChunk = this.#handleResult(result, view, closer[0]);
+            const isClosed = closer[0];
+            this.#remainingChunk = this.#handleResult(result, view, isClosed);
           },
           reason => {
             $debug("error from pull", reason, this.__id);
@@ -5559,7 +5563,12 @@ function NativeWritable_internalDestroy(error, cb) {
 function NativeWritable_internalFinal(cb) {
   var sink = this[_fileSink];
   if (sink) {
-    sink.end();
+    const end = sink.end(true);
+    if ($isPromise(end) && cb) {
+      end.then(() => {
+        if (cb) cb();
+      }, cb);
+    }
   }
   if (cb) cb();
 }

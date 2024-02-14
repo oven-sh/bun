@@ -379,7 +379,7 @@ function on(emitter, event, options = {}) {
     }
   }
 
-  emitter.on(event, options[kFirstEventParam] ? eventHandler : (...args) => eventHandler(args) );
+  emitter.on(event, options[kFirstEventParam] ? eventHandler : (...args) => eventHandler(args));
 
   emitter.on("error", ex => {
     if (!unconsumedPromises.isEmpty()) {
@@ -393,7 +393,8 @@ function on(emitter, event, options = {}) {
     emitter.emit("error", new AbortError(undefined, { cause: signal?.reason }));
   });
 
-  // If any of the close events is emitted -> set flag to stop yielding Promises.
+  // If any of the close events is emitted -> set flag to stop reading-in events
+  // and yield only the remaining queued-up values.
   for (const evName of options?.close || []) {
     emitter.on(evName, () => {
       done = true;

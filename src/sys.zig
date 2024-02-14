@@ -1582,8 +1582,7 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
         .linux => {
             // TODO: alpine linux may not have /proc/self
             var procfs_buf: ["/proc/self/fd/-2147483648".len:0]u8 = undefined;
-            const proc_path = std.fmt.bufPrintZ(procfs_buf[0..], "/proc/self/fd/{d}\x00", .{fd}) catch unreachable;
-
+            const proc_path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
             return switch (readlink(proc_path, out_buffer)) {
                 .err => |err| return .{ .err = err },
                 .result => |len| return .{ .result = out_buffer[0..len] },

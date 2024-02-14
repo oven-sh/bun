@@ -1826,7 +1826,7 @@ pub const Bundler = struct {
         var entry_points = try allocator.alloc(_resolver.Result, bundler.options.entry_points.len);
         entry_points = entry_points[0..bundler.enqueueEntryPoints(entry_points, true)];
 
-        if (true) {
+        if (log.level.atLeast(.debug)) {
             bundler.resolver.debug_logs = try DebugLogs.init(allocator);
         }
         bundler.options.transform_only = true;

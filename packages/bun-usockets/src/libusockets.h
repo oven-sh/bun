@@ -400,6 +400,9 @@ int us_raw_root_certs(struct us_cert_string_t**out);
 unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6);
 int us_socket_get_error(int ssl, struct us_socket_t *s);
 
+void us_socket_ref(struct us_socket_t *s);
+void us_socket_unref(struct us_socket_t *s);
+
 #ifdef __cplusplus
 }
 #endif

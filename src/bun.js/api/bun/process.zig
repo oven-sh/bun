@@ -1292,6 +1292,7 @@ pub fn spawnProcessWindows(
         switch (stdio_options[fd_i]) {
             .inherit => {
                 stdio.flags = uv.UV_INHERIT_FD;
+                stdio.data.fd = fd_i;
             },
             .ignore => {
                 stdio.flags = uv.UV_IGNORE;
@@ -1331,6 +1332,7 @@ pub fn spawnProcessWindows(
         switch (ipc) {
             .inherit => {
                 stdio.flags = uv.StdioFlags.inherit_fd;
+                stdio.data.fd = @intCast(3 + i);
             },
             .ignore => {
                 stdio.flags = uv.UV_IGNORE;

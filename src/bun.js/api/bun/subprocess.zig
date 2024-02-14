@@ -382,8 +382,8 @@ pub const Subprocess = struct {
                     .inherit => Readable{ .inherit = {} },
                     .ignore => Readable{ .ignore = {} },
                     .path => Readable{ .ignore = {} },
-                    .fd => Output.panic("TODO: implement fd support in Stdio readable", .{}),
-                    .memfd => Output.panic("TODO: implement memfd support in Stdio readable", .{}),
+                    .fd => |fd| Readable{ .fd = fd },
+                    .memfd => Readable{ .ignore = {} },
                     .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result) },
                     .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
                     .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
@@ -881,11 +881,6 @@ pub const Subprocess = struct {
             this.reader._buffer.capacity = 0;
             return out.items;
         }
-
-        // pub fn setFd(this: *PipeReader, fd: bun.FileDescriptor) *PipeReader {
-        //     this.fd = fd;
-        //     return this;
-        // }
 
         pub fn updateRef(this: *PipeReader, add: bool) void {
             this.reader.updateRef(add);

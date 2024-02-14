@@ -207,12 +207,13 @@ pub const Stdio = union(enum) {
             return true;
         } else if (value.isNumber()) {
             const fd = value.asFileDescriptor();
-            if (fd.int() < 0) {
+            const file_fd = bun.uvfdcast(fd);
+            if (file_fd < 0) {
                 globalThis.throwInvalidArguments("file descriptor must be a positive integer", .{});
                 return false;
             }
 
-            if (fd.int() >= std.math.maxInt(i32)) {
+            if (file_fd >= std.math.maxInt(i32)) {
                 var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
                 globalThis.throwInvalidArguments("file descriptor must be a valid integer, received: {}", .{
                     value.toFmt(globalThis, &formatter),

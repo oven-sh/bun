@@ -156,12 +156,6 @@ pub const Stdio = union(enum) {
         if (i == 0 and this.* == .pipe) {
             this.* = .{ .ignore = {} };
         }
-
-        if (comptime Environment.isLinux) {
-            if (this.canUseMemfd(true)) {
-                this.useMemfd(i);
-            }
-        }
     }
 
     pub fn asSpawnOption(

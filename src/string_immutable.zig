@@ -1683,22 +1683,41 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     }
 }
 
-/// '/hello' -> true
-/// '\hello' -> true
-/// 'C:/hello' -> false
-/// '\??\C:\hello' -> false
-fn windowsPathIsPosixAbsolute(comptime T: type, chars: []const T) bool {
-    if (chars.len == 0) return false;
-    if (!(chars[0] == '/' or chars[0] == '\\')) return false;
+/// Checks if a path is missing a windows drive letter. Not a perfect check,
+/// but it is good enough for most cases. For windows APIs, this is used for
+/// an assertion, and PosixToWinNormalizer can help make an absolute path
+/// contain a drive letter.
+pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const T) bool {
+    std.debug.assert(bun.path.Platform.windows.isAbsoluteT(T, chars));
+    std.debug.assert(chars.len > 0);
+
+    // 'C:\hello' -> false
+    if (!(chars[0] == '/' or chars[0] == '\\')) {
+        std.debug.assert(chars.len > 2);
+        std.debug.assert(chars[1] == ':');
+        return false;
+    }
+
+    // '\\hello' -> false (probably a UNC path)
     if (chars.len > 1 and
         (chars[1] == '/' or chars[1] == '\\')) return false;
-    if (chars.len > 2 and
-        chars[2] == ':') return false;
-    if (chars.len > 4 and
-        chars[1] == '?' and
-        chars[2] == '?' and
-        (chars[3] == '/' or chars[3] == '\\'))
-        return windowsPathIsPosixAbsolute(T, chars[4..]);
+
+    if (chars.len > 4) {
+        // '\??\hello' -> false (has the NT object prefix)
+        if (chars[1] == '?' and
+            chars[2] == '?' and
+            (chars[3] == '/' or chars[3] == '\\'))
+            return false;
+        // '\\?\hello' -> false (has the other NT object prefix)
+        // '\\.\hello' -> false (has the NT device prefix)
+        if ((chars[1] == '/' or chars[1] == '\\') and
+            (chars[2] == '?' or chars[2] == '.') and
+            (chars[3] == '/' or chars[3] == '\\'))
+            return false;
+    }
+
+    // oh no, '/hello/world'
+    // where is the drive letter!
     return true;
 }
 
@@ -1801,7 +1820,9 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
 pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
     if (Environment.allow_assert and Environment.isWindows) {
-        if (windowsPathIsPosixAbsolute(T, path)) {
+        if (bun.path.Platform.windows.isAbsoluteT(T, path) and
+            isWindowsAbsolutePathMissingDriveLetter(T, path))
+        {
             std.debug.panic("Do not pass posix paths to windows APIs, was given '{s}' (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)", .{
                 if (T == u8) path else std.unicode.fmtUtf16le(path),
             });

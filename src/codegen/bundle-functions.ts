@@ -185,7 +185,11 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       define,
       minify: { syntax: true, whitespace: false },
     });
+    console.log(build);
     if (!build.success) {
+      if (build.logs[0].message.includes("ModuleNotFound")) {
+        throw new Error(build.logs[0].message);
+      }
       throw new AggregateError(build.logs, "Failed bundling builtin function " + fn.name + " from " + basename + ".ts");
     }
     if (build.outputs.length !== 1) {

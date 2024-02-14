@@ -7,12 +7,12 @@ let $debug_log_enabled = ((env) => (
   || (env.BUN_DEBUG_JS && env.BUN_DEBUG_JS !== '0')
   || (env.BUN_DEBUG_${filepath
     .replace(/^.*?:/, "")
-    .split(/[-_./]/g)
+    .split(/[-_./\\]/g)
     .join("_")
     .toUpperCase()})
   || (env.DEBUG_${filepath
     .replace(/^.*?:/, "")
-    .split(/[-_./]/g)
+    .split(/[-_./\\]/g)
     .join("_")
     .toUpperCase()})
 ))(Bun.env);

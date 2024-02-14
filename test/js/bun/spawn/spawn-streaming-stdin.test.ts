@@ -16,11 +16,13 @@ test("spawn can write to stdin multiple chunks", async () => {
       const tmperr = join(tmpdir(), "stdin-repro-error.log." + i);
 
       const proc = spawn({
-        cmd: [bunExe(), import.meta.dir + "/stdin-repro.js"],
+        cmd: [bunExe(), join(import.meta.dir, "stdin-repro.js")],
         stdout: "pipe",
         stdin: "pipe",
-        stderr: Bun.file(tmperr),
-        env: bunEnv,
+        stderr: "inherit",
+        env: {
+          ...bunEnv,
+        },
       });
       exited = proc.exited;
       var counter = 0;
@@ -30,22 +32,25 @@ test("spawn can write to stdin multiple chunks", async () => {
         try {
           for await (var chunk of proc.stdout) {
             chunks.push(chunk);
+            console.log("Read", Buffer.from(chunk).toString());
           }
         } catch (e: any) {
           console.log(e.stack);
           throw e;
         }
+        console.log("Finished stdout");
       })();
 
       const prom2 = (async function () {
         while (true) {
           proc.stdin!.write("Wrote to stdin!\n");
-          inCounter++;
           await new Promise(resolve => setTimeout(resolve, 8));
 
-          if (inCounter === 4) break;
+          if (inCounter++ === 3) break;
         }
+        console.log("Finished stdin");
         await proc.stdin!.end();
+        console.log("Closed stdin");
       })();
 
       await Promise.all([prom, prom2]);

@@ -1280,8 +1280,8 @@ pub const LexError = struct {
     /// Allocated with lexer arena
     msg: []const u8,
 };
-pub const LEX_JS_OBJREF_PREFIX = "$__bun_";
-pub const LEX_JS_STRING_PREFIX = "$__bunstr_";
+pub const LEX_JS_OBJREF_PREFIX = "~__bun_";
+pub const LEX_JS_STRING_PREFIX = "~__bunstr_";
 
 pub fn NewLexer(comptime encoding: StringEncoding) type {
     const Chars = ShellCharIter(encoding);
@@ -1419,11 +1419,31 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 const char = input.char;
                 const escaped = input.escaped;
 
+                // Special token to denote substituted JS variables
+                if (char == '~') {
+                    if (self.looksLikeJSStringRef()) {
+                        if (self.eatJSStringRef()) |bunstr| {
+                            try self.break_word(false);
+                            try self.handleJSStringRef(bunstr);
+                            continue;
+                        }
+                    } else if (self.looksLikeJSObjRef()) {
+                        if (self.eatJSObjRef()) |tok| {
+                            if (self.chars.state == .Double) {
+                                self.add_error("JS object reference not allowed in double quotes");
+                                return;
+                            }
+                            try self.break_word(false);
+                            try self.tokens.append(tok);
+                            continue;
+                        }
+                    }
+                }
                 // Handle non-escaped chars:
                 // 1. special syntax (operators, etc.)
                 // 2. lexing state switchers (quotes)
                 // 3. word breakers (spaces, etc.)
-                if (!escaped) escaped: {
+                else if (!escaped) escaped: {
                     switch (char) {
                         '#' => {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
@@ -1514,24 +1534,13 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             // const snapshot = self.make_snapshot();
                             // Handle variable
                             try self.break_word(false);
-                            if (self.eatJSStringRef()) |bunstr| {
-                                try self.handleJSStringRef(bunstr);
-                                continue;
-                            } else if (self.eat_js_obj_ref()) |ref| {
-                                if (self.chars.state == .Double) {
-                                    try self.errors.append(.{ .msg = bun.default_allocator.dupe(u8, "JS object reference not allowed in double quotes") catch bun.outOfMemory() });
-                                    return;
-                                }
-                                try self.tokens.append(ref);
+                            const var_tok = try self.eat_var();
+                            // empty var
+                            if (var_tok.start == var_tok.end) {
+                                try self.appendCharToStrPool('$');
+                                try self.break_word(false);
                             } else {
-                                const var_tok = try self.eat_var();
-                                // empty var
-                                if (var_tok.start == var_tok.end) {
-                                    try self.appendCharToStrPool('$');
-                                    try self.break_word(false);
-                                } else {
-                                    try self.tokens.append(.{ .Var = var_tok });
-                                }
+                                try self.tokens.append(.{ .Var = var_tok });
                             }
                             self.word_start = self.j;
                             continue;
@@ -1936,22 +1945,33 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             try self.appendStringToStrPool(bunstr);
         }
 
-        /// __NOTE__: Do not store references to the returned bun.String, it does not have its ref count incremented
-        fn eatJSStringRef(self: *@This()) ?bun.String {
+        fn looksLikeJSObjRef(self: *@This()) bool {
             const bytes = self.chars.srcBytesAtCursor();
-            if (LEX_JS_STRING_PREFIX.len - 1 >= bytes.len) return null;
-            if (std.mem.eql(u8, bytes[0 .. LEX_JS_STRING_PREFIX.len - 1], LEX_JS_STRING_PREFIX[1..])) {
+            if (LEX_JS_OBJREF_PREFIX.len - 1 >= bytes.len) return false;
+            return std.mem.eql(u8, bytes[0 .. LEX_JS_OBJREF_PREFIX.len - 1], LEX_JS_OBJREF_PREFIX[1..]);
+        }
+
+        fn looksLikeJSStringRef(self: *@This()) bool {
+            const bytes = self.chars.srcBytesAtCursor();
+            if (LEX_JS_STRING_PREFIX.len - 1 >= bytes.len) return false;
+            return std.mem.eql(u8, bytes[0 .. LEX_JS_STRING_PREFIX.len - 1], LEX_JS_STRING_PREFIX[1..]);
+        }
+
+        fn eatJSSubstitutionIdx(self: *@This(), comptime literal: []const u8, comptime name: []const u8, comptime validate: *const fn (*@This(), usize) bool) ?usize {
+            const bytes = self.chars.srcBytesAtCursor();
+            if (literal.len - 1 >= bytes.len) return null;
+            if (std.mem.eql(u8, bytes[0 .. literal.len - 1], literal[1..])) {
                 var i: usize = 0;
                 var digit_buf: [32]u8 = undefined;
                 var digit_buf_count: u8 = 0;
 
-                i += LEX_JS_STRING_PREFIX.len - 1;
+                i += literal.len - 1;
 
                 while (i < bytes.len) : (i += 1) {
                     switch (bytes[i]) {
                         '0'...'9' => {
                             if (digit_buf_count >= 32) {
-                                const ERROR_STR = "Invalid JS string ref (number too high): ";
+                                const ERROR_STR = "Invalid " ++ name ++ " (number too high): ";
                                 var error_buf: [ERROR_STR.len + 33]u8 = undefined;
                                 const error_msg = std.fmt.bufPrint(error_buf[0..], "{s} {s}{c}", .{ ERROR_STR, digit_buf[0..digit_buf_count], bytes[i] }) catch @panic("Should not happen");
                                 self.add_error(error_msg);
@@ -1965,19 +1985,20 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 }
 
                 if (digit_buf_count == 0) {
-                    self.add_error("Invalid JS string ref (no idx)");
+                    self.add_error("Invalid " ++ name ++ " (no idx)");
                     return null;
                 }
 
                 const idx = std.fmt.parseInt(usize, digit_buf[0..digit_buf_count], 10) catch {
-                    self.add_error("Invalid JS string ref ");
+                    self.add_error("Invalid " ++ name ++ " ref ");
                     return null;
                 };
 
-                if (idx >= self.string_refs.len) {
-                    self.add_error("Invalid JS string ref (out of bounds");
-                    return null;
-                }
+                if (!validate(self, idx)) return null;
+                // if (idx >= self.string_refs.len) {
+                //     self.add_error("Invalid " ++ name ++ " (out of bounds");
+                //     return null;
+                // }
 
                 // Bump the cursor
                 brk: {
@@ -2001,22 +2022,49 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     self.chars.current = .{ .char = cur_ascii_char };
                 }
 
+                // return self.string_refs[idx];
+                return idx;
+            }
+            return null;
+        }
+
+        /// __NOTE__: Do not store references to the returned bun.String, it does not have its ref count incremented
+        fn eatJSStringRef(self: *@This()) ?bun.String {
+            if (self.eatJSSubstitutionIdx(
+                LEX_JS_STRING_PREFIX,
+                "JS string ref",
+                validateJSStringRefIdx,
+            )) |idx| {
                 return self.string_refs[idx];
             }
             return null;
         }
 
-        fn eat_js_obj_ref(self: *@This()) ?Token {
-            const snap = self.make_snapshot();
-            if (self.eat_literal(u8, LEX_JS_OBJREF_PREFIX)) {
-                if (self.eat_number_word()) |num| {
-                    if (num <= std.math.maxInt(u32)) {
-                        return .{ .JSObjRef = @intCast(num) };
-                    }
-                }
+        fn validateJSStringRefIdx(self: *@This(), idx: usize) bool {
+            if (idx >= self.string_refs.len) {
+                self.add_error("Invalid JS string ref (out of bounds");
+                return false;
             }
-            self.backtrack(snap);
+            return true;
+        }
+
+        fn eatJSObjRef(self: *@This()) ?Token {
+            if (self.eatJSSubstitutionIdx(
+                LEX_JS_OBJREF_PREFIX,
+                "JS object ref",
+                validateJSObjRefIdx,
+            )) |idx| {
+                return .{ .JSObjRef = @intCast(idx) };
+            }
             return null;
+        }
+
+        fn validateJSObjRefIdx(self: *@This(), idx: usize) bool {
+            if (idx >= std.math.maxInt(u32)) {
+                self.add_error("Invalid JS object ref (out of bounds)");
+                return false;
+            }
+            return true;
         }
 
         fn eat_var(self: *@This()) !Token.TextRange {

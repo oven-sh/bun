@@ -1718,7 +1718,7 @@ pub const VirtualMachine = struct {
                                 "../",
                             };
 
-                            break :name bun.path.joinAbsStringBuf(
+                            break :name bun.path.joinAbsStringBufZTrailingSlash(
                                 jsc_vm.bundler.fs.top_level_dir,
                                 &specifier_cache_resolver_buf,
                                 &parts,

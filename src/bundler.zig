@@ -372,16 +372,54 @@ pub const Bundler = struct {
         this.resolver.allocator = allocator;
     }
 
-    pub inline fn resolveEntryPoint(bundler: *Bundler, entry_point: string) anyerror!_resolver.Result {
+    fn _resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
         return bundler.resolver.resolve(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
-            const has_dot_slash_form = !strings.hasPrefix(entry_point, "./") and brk: {
-                return bundler.resolver.resolve(bundler.fs.top_level_dir, try strings.append(bundler.allocator, "./", entry_point), .entry_point) catch break :brk false;
-            };
-            _ = has_dot_slash_form;
-
-            bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
-
+            if (!std.fs.path.isAbsolute(entry_point) and !strings.hasPrefix(entry_point, "./")) brk: {
+                return bundler.resolver.resolve(
+                    bundler.fs.top_level_dir,
+                    try strings.append(bundler.allocator, "./", entry_point),
+                    .entry_point,
+                ) catch
+                // return the original error
+                    break :brk;
+            }
             return err;
+        };
+    }
+
+    pub fn resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
+        return _resolveEntryPoint(bundler, entry_point) catch |err| {
+            var cache_bust_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+            // Bust directory cache and try again
+            const buster_name = name: {
+                if (std.fs.path.isAbsolute(entry_point)) {
+                    if (std.fs.path.dirname(entry_point)) |dir| {
+                        break :name strings.withTrailingSlash(dir, entry_point);
+                    }
+                }
+
+                var parts = [_]string{
+                    entry_point,
+                    "../",
+                };
+
+                break :name bun.path.joinAbsStringBufZTrailingSlash(
+                    bundler.fs.top_level_dir,
+                    &cache_bust_buf,
+                    &parts,
+                    .auto,
+                );
+            };
+
+            bundler.resolver.bustDirCache(buster_name);
+
+            return _resolveEntryPoint(bundler, entry_point) catch {
+                // return the original error
+                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch bun.outOfMemory();
+                // return err;
+                @panic("lose");
+            };
         };
     }
 

@@ -598,7 +598,18 @@ pub fn openDirAtWindowsNtPath(
     );
 
     if (comptime Environment.allow_assert) {
-        log("NtCreateFile({d}, {s}, iterable = {}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), iterable, @tagName(rc), @intFromPtr(fd) });
+        if (rc == .INVALID_PARAMETER) {
+            // Double check what flags you are passing to this
+            //
+            // - access_mask probably needs w.SYNCHRONIZE,
+            // - options probably needs w.FILE_SYNCHRONOUS_IO_NONALERT
+            // - disposition probably needs w.FILE_OPEN
+            bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (dir) = {d}\nYou are calling this function with the wrong flags!!!", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
+        } else if (rc == .OBJECT_PATH_SYNTAX_BAD or rc == .OBJECT_NAME_INVALID) {
+            bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (dir) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
+        } else {
+            log("NtCreateFile({}, {}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
+        }
     }
 
     switch (windows.Win32Error.fromNTStatus(rc)) {

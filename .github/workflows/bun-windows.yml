@@ -178,6 +178,11 @@ jobs:
           path: bun-deps
           key: ${{ steps.cache-deps-restore.outputs.cache-primary-key }}
 
+  # TODO(@paperdave): stop relying on this and use bun.exe to build itself.
+  # we cant do that now because there isn't a tagged release to use.
+  #
+  # and at the time of writing, the minimum canary required to work is not
+  # yet released as it is the one *this* commit.
   windows-codegen:
     name: Codegen
     runs-on: ubuntu-latest

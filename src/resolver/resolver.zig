@@ -1584,6 +1584,7 @@ pub const Resolver = struct {
 
     pub fn bustDirCache(r: *ThisResolver, path: string) void {
         dev("Bust {s}", .{path});
+        std.debug.assert(path[path.len - 1] == std.fs.path.sep);
         r.fs.fs.bustEntriesCache(path);
         r.dir_cache.remove(path);
     }
@@ -3456,7 +3457,6 @@ pub const Resolver = struct {
 
         // Is this a file?
         if (r.loadAsFile(path, extension_order)) |file| {
-
             // Determine the package folder by looking at the last node_modules/ folder in the path
             if (strings.lastIndexOf(file.path, "node_modules" ++ std.fs.path.sep_str)) |last_node_modules_folder| {
                 const node_modules_folder_offset = last_node_modules_folder + ("node_modules" ++ std.fs.path.sep_str).len;
@@ -3493,12 +3493,9 @@ pub const Resolver = struct {
             debug.addNoteFmt("Attempting to load \"{s}\" as a directory", .{path});
             debug.increaseIndent();
         }
-
-        defer {
-            if (r.debug_logs) |*debug| {
-                debug.decreaseIndent();
-            }
-        }
+        defer if (r.debug_logs) |*debug| {
+            debug.decreaseIndent();
+        };
 
         const dir_info = (r.dirInfoCached(path) catch |err| {
             if (comptime Environment.isDebug) Output.prettyErrorln("err: {s} reading {s}", .{ @errorName(err), path });

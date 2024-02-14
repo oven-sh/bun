@@ -2079,6 +2079,7 @@ pub const Crypto = struct {
                     .err => {
                         const error_instance = value.toErrorInstance(globalObject);
                         globalObject.throwValue(error_instance);
+                        return .zero;
                     },
                     .hash => |h| {
                         return JSC.ZigString.init(h).toValueGC(globalObject);

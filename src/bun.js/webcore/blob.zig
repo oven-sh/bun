@@ -1529,7 +1529,7 @@ pub const Blob = struct {
                     var slice = path_or_fd.path.slice();
 
                     if (Environment.isWindows and bun.strings.eqlComptime(slice, "/dev/null")) {
-                        path_or_fd.path.deinit();
+                        path_or_fd.deinit();
                         path_or_fd.* = .{
                             .path = .{
                                 // this memory is freed with this allocator in `Blob.Store.deinit`

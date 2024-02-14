@@ -26,7 +26,16 @@ const Rusage = bun.posix.spawn.Rusage;
 const Process = bun.posix.spawn.Process;
 const WaiterThread = bun.posix.spawn.WaiterThread;
 const Stdio = bun.spawn.Stdio;
-
+const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
+inline fn assertStdioResult(result: StdioResult) void {
+    if (comptime Environment.allow_assert) {
+        if (Environment.isPosix) {
+            if (result) |fd| {
+                std.debug.assert(fd != bun.invalid_fd);
+            }
+        }
+    }
+}
 pub const ResourceUsage = struct {
     pub usingnamespace JSC.Codegen.JSResourceUsage;
     rusage: Rusage,
@@ -362,23 +371,31 @@ pub const Subprocess = struct {
             }
         }
 
-        pub fn init(stdio: Stdio, event_loop: *JSC.EventLoop, process: *Subprocess, fd: ?bun.FileDescriptor, allocator: std.mem.Allocator, max_size: u32, is_sync: bool) Readable {
+        pub fn init(stdio: Stdio, event_loop: *JSC.EventLoop, process: *Subprocess, result: StdioResult, allocator: std.mem.Allocator, max_size: u32, is_sync: bool) Readable {
             _ = allocator; // autofix
             _ = max_size; // autofix
             _ = is_sync; // autofix
-            if (comptime Environment.allow_assert) {
-                if (fd) |fd_| {
-                    std.debug.assert(fd_ != bun.invalid_fd);
-                }
-            }
+            assertStdioResult(result);
 
+            if (Environment.isWindows) {
+                return switch (stdio) {
+                    .inherit => Readable{ .inherit = {} },
+                    .ignore => Readable{ .ignore = {} },
+                    .path => Readable{ .ignore = {} },
+                    .fd => Output.panic("TODO: implement fd support in Stdio readable", .{}),
+                    .memfd => Output.panic("TODO: implement memfd support in Stdio readable", .{}),
+                    .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result) },
+                    .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
+                    .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
+                };
+            }
             return switch (stdio) {
                 .inherit => Readable{ .inherit = {} },
                 .ignore => Readable{ .ignore = {} },
                 .path => Readable{ .ignore = {} },
-                .fd => Readable{ .fd = fd.? },
+                .fd => Readable{ .fd = result.? },
                 .memfd => Readable{ .memfd = stdio.memfd },
-                .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, fd.?) },
+                .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result) },
                 .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
                 .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
             };
@@ -669,7 +686,7 @@ pub const Subprocess = struct {
     pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         return struct {
             writer: IOWriter = .{},
-            fd: bun.FileDescriptor = bun.invalid_fd,
+            stdio_result: StdioResult,
             source: Source = .{ .detached = {} },
             process: *ProcessType = undefined,
             event_loop: JSC.EventLoopHandle,
@@ -706,22 +723,29 @@ pub const Subprocess = struct {
                     this.writer.write();
             }
 
-            pub fn create(event_loop: anytype, subprocess: *ProcessType, fd: bun.FileDescriptor, source: Source) *This {
-                const instance = This.new(.{
+            pub fn create(event_loop: anytype, subprocess: *ProcessType, result: StdioResult, source: Source) *This {
+                const this = This.new(.{
                     .event_loop = JSC.EventLoopHandle.init(event_loop),
                     .process = subprocess,
-                    .fd = fd,
+                    .stdio_result = result,
                     .source = source,
                 });
-                instance.writer.setParent(instance);
-                return instance;
+                if (Environment.isWindows) {
+                    if (this.stdio_result == .buffer) {
+                        this.writer.pipe = this.stdio_result.buffer;
+                    }
+                }
+                this.writer.setParent(this);
+                return this;
             }
 
             pub fn start(this: *This) JSC.Maybe(void) {
                 this.ref();
                 this.buffer = this.source.slice();
-
-                return this.writer.start(this.fd, true);
+                if (Environment.isWindows) {
+                    @panic("TODO");
+                }
+                return this.writer.start(this.stdio_result.?, true);
             }
 
             pub fn onWrite(this: *This, amount: usize, is_done: bool) void {
@@ -773,7 +797,7 @@ pub const Subprocess = struct {
             done: []u8,
             err: bun.sys.Error,
         } = .{ .pending = {} },
-        fd: bun.FileDescriptor = bun.invalid_fd,
+        stdio_result: StdioResult,
 
         pub const IOReader = bun.io.BufferedReader;
         pub const Poll = IOReader;
@@ -792,13 +816,18 @@ pub const Subprocess = struct {
             this.deref();
         }
 
-        pub fn create(event_loop: *JSC.EventLoop, process: *Subprocess, fd: bun.FileDescriptor) *PipeReader {
+        pub fn create(event_loop: *JSC.EventLoop, process: *Subprocess, result: StdioResult) *PipeReader {
             var this = PipeReader.new(.{
                 .process = process,
-                .event_loop = event_loop,
-                .fd = fd,
                 .reader = IOReader.init(@This()),
+                .event_loop = event_loop,
+                .stdio_result = result,
             });
+            if (Environment.isWindows) {
+                if (this.stdio_result == .buffer) {
+                    this.reader.pipe = this.stdio_result.buffer;
+                }
+            }
             this.reader.setParent(this);
             return this;
         }
@@ -812,8 +841,10 @@ pub const Subprocess = struct {
             this.ref();
             this.process = process;
             this.event_loop = event_loop;
-
-            return this.reader.start(this.fd, true);
+            if (Environment.isWindows) {
+                return this.reader.startWithCurrentPipe();
+            }
+            return this.reader.start(this.stdio_result.?, true);
         }
 
         pub const toJS = toReadableStream;
@@ -851,10 +882,10 @@ pub const Subprocess = struct {
             return out.items;
         }
 
-        pub fn setFd(this: *PipeReader, fd: bun.FileDescriptor) *PipeReader {
-            this.fd = fd;
-            return this;
-        }
+        // pub fn setFd(this: *PipeReader, fd: bun.FileDescriptor) *PipeReader {
+        //     this.fd = fd;
+        //     return this;
+        // }
 
         pub fn updateRef(this: *PipeReader, add: bool) void {
             this.reader.updateRef(add);
@@ -933,7 +964,7 @@ pub const Subprocess = struct {
             }
 
             if (comptime Environment.isWindows) {
-                std.debug.assert(this.reader.pipe.isClosed());
+                std.debug.assert(this.reader.pipe == null or this.reader.pipe.?.isClosed());
             }
 
             if (this.state == .done) {
@@ -1009,17 +1040,65 @@ pub const Subprocess = struct {
             stdio: Stdio,
             event_loop: *JSC.EventLoop,
             subprocess: *Subprocess,
-            fd: ?bun.FileDescriptor,
+            result: StdioResult,
         ) !Writable {
-            if (comptime Environment.allow_assert) {
-                if (fd) |fd_| {
-                    std.debug.assert(fd_ != bun.invalid_fd);
+            assertStdioResult(result);
+
+            if (Environment.isWindows) {
+                switch (stdio) {
+                    .pipe => {
+                        @panic("TODO");
+                        // const pipe = JSC.WebCore.FileSink.create(event_loop, result.?);
+                        // pipe.writer.setParent(pipe);
+
+                        // switch (pipe.writer.start(pipe.fd, true)) {
+                        //     .result => {},
+                        //     .err => |err| {
+                        //         _ = err; // autofix
+                        //         pipe.deref();
+                        //         return error.UnexpectedCreatingStdin;
+                        //     },
+                        // }
+
+                        // subprocess.weak_file_sink_stdin_ptr = pipe;
+                        // subprocess.flags.has_stdin_destructor_called = false;
+
+                        // return Writable{
+                        //     .pipe = pipe,
+                        // };
+                    },
+
+                    .blob => |blob| {
+                        return Writable{
+                            .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .blob = blob }),
+                        };
+                    },
+                    .array_buffer => |array_buffer| {
+                        return Writable{
+                            .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .array_buffer = array_buffer }),
+                        };
+                    },
+                    .memfd => {
+                        @panic("TODO");
+                    },
+                    .fd => {
+                        @panic("TODO");
+                        // return Writable{ .fd = result.? };
+                    },
+                    .inherit => {
+                        return Writable{ .inherit = {} };
+                    },
+                    .path, .ignore => {
+                        return Writable{ .ignore = {} };
+                    },
+                    .capture => {
+                        return Writable{ .ignore = {} };
+                    },
                 }
             }
-
             switch (stdio) {
                 .pipe => {
-                    const pipe = JSC.WebCore.FileSink.create(event_loop, fd.?);
+                    const pipe = JSC.WebCore.FileSink.create(event_loop, result.?);
                     pipe.writer.setParent(pipe);
 
                     switch (pipe.writer.start(pipe.fd, true)) {
@@ -1041,12 +1120,12 @@ pub const Subprocess = struct {
 
                 .blob => |blob| {
                     return Writable{
-                        .buffer = StaticPipeWriter.create(event_loop, subprocess, fd.?, .{ .blob = blob }),
+                        .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .blob = blob }),
                     };
                 },
                 .array_buffer => |array_buffer| {
                     return Writable{
-                        .buffer = StaticPipeWriter.create(event_loop, subprocess, fd.?, .{ .array_buffer = array_buffer }),
+                        .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .array_buffer = array_buffer }),
                     };
                 },
                 .memfd => |memfd| {
@@ -1054,8 +1133,7 @@ pub const Subprocess = struct {
                     return Writable{ .memfd = memfd };
                 },
                 .fd => {
-                    std.debug.assert(fd.? != bun.invalid_fd);
-                    return Writable{ .fd = fd.? };
+                    return Writable{ .fd = result.? };
                 },
                 .inherit => {
                     return Writable{ .inherit = {} };
@@ -1325,8 +1403,6 @@ pub const Subprocess = struct {
         secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
     ) JSValue {
-        bun.markPosixOnly();
-
         var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();
@@ -1360,6 +1436,7 @@ pub const Subprocess = struct {
         var ipc_mode = IPCMode.none;
         var ipc_callback: JSValue = .zero;
         var extra_fds = std.ArrayList(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
+        // TODO: FIX extra_fds memory leak
         var argv0: ?[*:0]const u8 = null;
 
         var windows_hide: bool = false;
@@ -1611,7 +1688,7 @@ pub const Subprocess = struct {
                 if (Environment.isWindows) {
                     if (args.get(globalThis, "windowsHide")) |val| {
                         if (val.isBoolean()) {
-                            windows_hide = @intFromBool(val.asBoolean());
+                            windows_hide = val.asBoolean();
                         }
                     }
                 }
@@ -1690,7 +1767,7 @@ pub const Subprocess = struct {
 
             .windows = if (Environment.isWindows) bun.spawn.WindowsSpawnOptions.WindowsOptions{
                 .hide_window = windows_hide,
-                .loop = jsc_vm.eventLoop().uws_loop,
+                .loop = JSC.EventLoopHandle.init(jsc_vm),
             } else {},
         };
 
@@ -1699,11 +1776,13 @@ pub const Subprocess = struct {
             @ptrCast(argv.items.ptr),
             @ptrCast(env_array.items.ptr),
         ) catch |err| {
+            spawn_options.deinit();
             globalThis.throwError(err, ": failed to spawn process");
 
             return .zero;
         }) {
             .err => |err| {
+                spawn_options.deinit();
                 globalThis.throwValue(err.toJSC(globalThis));
                 return .zero;
             },
@@ -1711,6 +1790,9 @@ pub const Subprocess = struct {
         };
 
         if (ipc_mode != .none) {
+            if (Environment.isWindows) {
+                @panic("TODO: IPC");
+            }
             socket = .{
                 // we initialize ext later in the function
                 .socket = uws.us_socket_from_fd(
@@ -1726,6 +1808,7 @@ pub const Subprocess = struct {
         }
 
         var subprocess = globalThis.allocator().create(Subprocess) catch {
+            // TODO: fix pipe memory leak in spawn_options/spawned
             globalThis.throwOutOfMemory();
             return .zero;
         };
@@ -1767,7 +1850,8 @@ pub const Subprocess = struct {
                 default_max_buffer_size,
                 is_sync,
             ),
-            .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
+            // TODO: extra pipes on windows
+            .stdio_pipes = if (Environment.isWindows) .{} else spawned.extra_pipes.moveToUnmanaged(),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .ipc_mode = ipc_mode,
             // will be assigned in the block below

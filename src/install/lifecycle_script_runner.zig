@@ -127,7 +127,10 @@ pub const LifecycleScriptSubprocess = struct {
             combined_script,
             null,
         };
-
+        if (Environment.isWindows) {
+            this.stdout.pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
+            this.stderr.pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
+        }
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = .ignore,
             .stdout = if (this.manager.options.log_level.isVerbose())
@@ -136,7 +139,7 @@ pub const LifecycleScriptSubprocess = struct {
                 .buffer
             else
                 .{
-                    .buffer = &this.stdout.pipe,
+                    .buffer = this.stdout.pipe.?,
                 },
             .stderr = if (this.manager.options.log_level.isVerbose())
                 .inherit
@@ -144,7 +147,7 @@ pub const LifecycleScriptSubprocess = struct {
                 .buffer
             else
                 .{
-                    .buffer = &this.stderr.pipe,
+                    .buffer = this.stderr.pipe.?,
                 },
             .cwd = cwd,
 
@@ -170,11 +173,11 @@ pub const LifecycleScriptSubprocess = struct {
         } else if (comptime Environment.isWindows) {
             if (spawned.stdout == .buffer) {
                 this.stdout.parent = this;
-                try this.stdout.start().unwrap();
+                try this.stdout.startWithCurrentPipe().unwrap();
             }
-            if (spawned.stdout == .buffer) {
+            if (spawned.stderr == .buffer) {
                 this.stderr.parent = this;
-                try this.stderr.start().unwrap();
+                try this.stderr.startWithCurrentPipe().unwrap();
             }
         }
 

@@ -435,8 +435,8 @@ pub const StreamStart = union(Tag) {
         close: bool = false,
         mode: bun.Mode = 0o664,
 
-        pub fn flags(this: *const FileSinkOptions) u32 {
-            var flag: u32 = 0;
+        pub fn flags(this: *const FileSinkOptions) bun.Mode {
+            var flag: bun.Mode = 0;
 
             if (this.truncate) {
                 flag |= std.os.O.TRUNC;
@@ -3360,8 +3360,11 @@ pub const FileReader = struct {
             }
         }
 
-        if (this.reader.getFd() != bun.invalid_fd and this.fd == bun.invalid_fd) {
-            this.fd = this.reader.getFd();
+        {
+            const reader_fd = this.reader.getFd();
+            if (reader_fd != bun.invalid_fd and this.fd == bun.invalid_fd) {
+                this.fd = reader_fd;
+            }
         }
 
         this.event_loop = JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop());

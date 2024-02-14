@@ -860,6 +860,10 @@ pub const PosixSpawnOptions = struct {
         buffer: void,
         pipe: bun.FileDescriptor,
     };
+
+    fn deinit(_: *const PosixSpawnOptions) void {
+        // no-op
+    }
 };
 
 pub const WindowsSpawnResult = struct {
@@ -874,7 +878,6 @@ pub const WindowsSpawnResult = struct {
         unavailable: void,
 
         buffer: *bun.windows.libuv.Pipe,
-        socket: *bun.windows.libuv.uv_stream_t,
     };
 
     pub fn toProcess(
@@ -920,7 +923,22 @@ pub const WindowsSpawnOptions = struct {
         ignore: void,
         buffer: *bun.windows.libuv.Pipe,
         pipe: bun.FileDescriptor,
+
+        pub fn deinit(this: *const Stdio) void {
+            if (this.* == .buffer) {
+                bun.default_allocator.destroy(this.buffer);
+            }
+        }
     };
+
+    pub fn deinit(this: *const WindowsSpawnOptions) void {
+        this.stdin.deinit();
+        this.stdout.deinit();
+        this.stderr.deinit();
+        for (this.extra_fds) |stdio| {
+            stdio.deinit();
+        }
+    }
 };
 
 pub const PosixSpawnResult = struct {
@@ -1266,7 +1284,6 @@ pub fn spawnProcessWindows(
     inline for (0..3) |fd_i| {
         const stdio: *uv.uv_stdio_container_t = stdios[fd_i];
 
-        const fileno = bun.stdio(fd_i);
         const flag = comptime if (fd_i == 0) @as(u32, uv.O.RDONLY) else @as(u32, uv.O.WRONLY);
         const my_pipe_flags = comptime if (fd_i == 0) uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE else uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE;
         const their_pipe_flags = comptime if (fd_i != 0) uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE else uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE;
@@ -1275,7 +1292,6 @@ pub fn spawnProcessWindows(
         switch (stdio_options[fd_i]) {
             .inherit => {
                 stdio.flags = uv.UV_INHERIT_FD;
-                stdio.data.fd = bun.uvfdcast(fileno);
             },
             .ignore => {
                 stdio.flags = uv.UV_IGNORE;
@@ -1309,14 +1325,12 @@ pub fn spawnProcessWindows(
     for (options.extra_fds, 0..) |ipc, i| {
         const stdio: *uv.uv_stdio_container_t = &stdio_containers.items[3 + i];
 
-        const fileno = bun.toFD(@as(i32, @intCast(3 + i)));
         const flag = @as(u32, uv.O.RDWR);
         const my_pipe_flags = uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE | uv.UV_WRITABLE_PIPE;
 
         switch (ipc) {
             .inherit => {
                 stdio.flags = uv.StdioFlags.inherit_fd;
-                stdio.data.fd = bun.uvfdcast(fileno);
             },
             .ignore => {
                 stdio.flags = uv.UV_IGNORE;

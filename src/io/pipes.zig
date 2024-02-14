@@ -1,5 +1,6 @@
 const Async = @import("root").bun.Async;
 const bun = @import("root").bun;
+const Environment = bun.Environment;
 
 pub const PollOrFd = union(enum) {
     /// When it's a pipe/fifo
@@ -39,7 +40,13 @@ pub const PollOrFd = union(enum) {
 
         if (fd != bun.invalid_fd) {
             this.* = .{ .closed = {} };
-            bun.Async.Closer.close(fd, {});
+
+            //TODO: We should make this call compatible using bun.FileDescriptor
+            if (Environment.isWindows) {
+                bun.Async.Closer.close(bun.uvfdcast(fd), bun.windows.libuv.Loop.get());
+            } else {
+                bun.Async.Closer.close(fd, {});
+            }
             if (comptime @TypeOf(onCloseFn) != void)
                 onCloseFn(@alignCast(@ptrCast(ctx.?)));
         } else {

@@ -10,7 +10,7 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Output = @import("root").bun.Output;
 const os = std.os;
-
+const uv = bun.windows.libuv;
 pub const Stdio = union(enum) {
     inherit: void,
     capture: *bun.ByteList,
@@ -62,6 +62,9 @@ pub const Stdio = union(enum) {
     }
 
     pub fn useMemfd(this: *@This(), index: u32) void {
+        if (comptime !Environment.isLinux) {
+            return;
+        }
         const label = switch (index) {
             0 => "spawn_stdio_stdin",
             1 => "spawn_stdio_stdout",
@@ -141,7 +144,7 @@ pub const Stdio = union(enum) {
         stdio: *@This(),
     ) bun.spawn.SpawnOptions.Stdio {
         return switch (stdio.*) {
-            .capture, .pipe, .array_buffer, .blob => .{ .buffer = {} },
+            .capture, .pipe, .array_buffer, .blob => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
             .fd => |fd| .{ .pipe = fd },
             .path => |pathlike| .{ .path = pathlike.slice() },
             .inherit => .{ .inherit = {} },
@@ -158,6 +161,7 @@ pub const Stdio = union(enum) {
         }
     }
 
+    /// On windows this function allocate memory ensure that .deinit() is called or ownership is passed for all *uv.Pipe
     pub fn asSpawnOption(
         stdio: *@This(),
     ) bun.spawn.SpawnOptions.Stdio {

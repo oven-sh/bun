@@ -448,10 +448,7 @@ fn HandleMixin(comptime Type: type) type {
             if (fd_ == windows.INVALID_HANDLE_VALUE)
                 return bun.invalid_fd;
 
-            return bun.FDImpl{
-                .kind = .system,
-                .value = .{ .as_system = @truncate(@intFromPtr(fd_)) },
-            };
+            return bun.FDImpl.fromSystem(fd_).encode();
         }
     };
 }
@@ -2686,45 +2683,46 @@ fn WriterMixin(comptime Type: type) type {
 pub fn StreamReaderMixin(comptime Type: type, comptime pipe_field_name: std.meta.FieldEnum(Type)) type {
     return struct {
         fn uv_alloc_cb(pipe: *uv_stream_t, suggested_size: usize, buf: *uv_buf_t) callconv(.C) void {
-            var this = @fieldParentPtr(
-                Type,
-                @tagName(pipe_field_name),
-                @as(*Pipe, @ptrCast(pipe)),
-            );
+            var this = bun.cast(*Type, pipe.data);
             const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
             buf.* = uv_buf_t.init(result);
         }
 
         fn uv_read_cb(pipe: *uv_stream_t, nread: ReturnCodeI64, buf: *const uv_buf_t) callconv(.C) void {
-            var this = @fieldParentPtr(
-                Type,
-                @tagName(pipe_field_name),
-                @as(*Pipe, @ptrCast(pipe)),
-            );
+            var this = bun.cast(*Type, pipe.data);
 
-            if (nread.int() == UV_EOF) {
-                return this.onRead(.{ .result = 0 }, buf);
+            const read = nread.int();
+
+            switch (read) {
+                0 => {
+                    // EAGAIN or EWOULDBLOCK
+                    return this.onRead(.{ .result = 0 }, buf, .drained);
+                },
+                UV_EOF => {
+                    // EOF
+                    return this.onRead(.{ .result = 0 }, buf, .eof);
+                },
+                else => {
+                    this.onRead(if (nread.toError(.recv)) |err| .{ .err = err } else .{ .result = @intCast(read) }, buf, .progress);
+                },
             }
-
-            this.onRead(
-                if (nread.toError(.recv)) |err| .{ .err = err } else .{ .result = @intCast(nread.int()) },
-                buf,
-            );
         }
 
-        fn __get_pipe(this: *Type) *uv_stream_t {
-            comptime {
-                switch (@TypeOf(@field(this, @tagName(pipe_field_name)))) {
-                    Pipe, uv_tcp_t, uv_tty_t => {},
-                    else => @compileError("StreamWriterMixin only works with Pipe, uv_tcp_t, uv_tty_t"),
-                }
+        fn __get_pipe(this: *Type) ?*uv_stream_t {
+            switch (@TypeOf(@field(this, @tagName(pipe_field_name)))) {
+                ?*Pipe, ?*uv_tcp_t, ?*uv_tty_t => return if (@field(this, @tagName(pipe_field_name))) |ptr| @ptrCast(ptr) else null,
+                *Pipe, *uv_tcp_t, *uv_tty_t => return @ptrCast(@field(this, @tagName(pipe_field_name))),
+                Pipe, uv_tcp_t, uv_tty_t => return @ptrCast(&@field(this, @tagName(pipe_field_name))),
+                else => @compileError("StreamWriterMixin only works with Pipe, uv_tcp_t, uv_tty_t"),
             }
-
-            return @ptrCast(&@field(this, @tagName(pipe_field_name)));
         }
 
         pub fn startReading(this: *Type) Maybe(void) {
-            if (uv_read_start(__get_pipe(this), @ptrCast(&@This().uv_alloc_cb), @ptrCast(&@This().uv_read_cb)).toError(.open)) |err| {
+            const pipe = __get_pipe(this) orelse return .{ .err = .{
+                .errno = @intFromEnum(bun.C.E.PIPE),
+                .syscall = .pipe,
+            } };
+            if (uv_read_start(pipe, @ptrCast(&@This().uv_alloc_cb), @ptrCast(&@This().uv_read_cb)).toError(.open)) |err| {
                 return .{ .err = err };
             }
 
@@ -2732,7 +2730,11 @@ pub fn StreamReaderMixin(comptime Type: type, comptime pipe_field_name: std.meta
         }
 
         pub fn stopReading(this: *Type) Maybe(void) {
-            if (uv_read_stop(__get_pipe(this)).toError(.close)) |err| {
+            const pipe = __get_pipe(this) orelse return .{ .err = .{
+                .errno = @intFromEnum(bun.C.E.PIPE),
+                .syscall = .pipe,
+            } };
+            if (uv_read_stop(pipe).toError(.close)) |err| {
                 return .{ .err = err };
             }
 

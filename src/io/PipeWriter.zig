@@ -627,6 +627,313 @@ pub fn PosixStreamingWriter(
         }
     };
 }
+const uv = bun.windows.libuv;
 
-pub const BufferedWriter = if (bun.Environment.isPosix) PosixBufferedWriter else opaque {};
-pub const StreamingWriter = if (bun.Environment.isPosix) PosixStreamingWriter else opaque {};
+pub fn WindowsBufferedWriter(
+    comptime Parent: type,
+    comptime onWrite: *const fn (*Parent, amount: usize, done: bool) void,
+    comptime onError: *const fn (*Parent, bun.sys.Error) void,
+    comptime onClose: ?*const fn (*Parent) void,
+    comptime getBuffer: *const fn (*Parent) []const u8,
+    comptime onWritable: ?*const fn (*Parent) void,
+) type {
+    _ = onWrite;
+    _ = onError;
+    _ = onClose;
+    _ = onWritable;
+    //TODO: actually implement this (see BufferedInput)
+    return struct {
+        pipe: *uv.Pipe = undefined,
+        parent: *Parent = undefined,
+        is_done: bool = false,
+        pollable: bool = false,
+
+        const WindowsWriter = @This();
+
+        pub fn getPoll(_: *const WindowsWriter) ?*Async.FilePoll {
+            @compileError("WindowsBufferedWriter does not support getPoll");
+        }
+
+        pub fn getFd(this: *const WindowsWriter) bun.FileDescriptor {
+            return this.pipe.fd();
+        }
+
+        pub fn hasRef(this: *WindowsWriter) bool {
+            if (this.is_done) {
+                return false;
+            }
+
+            return this.pipe.hasRef();
+        }
+
+        pub fn enableKeepingProcessAlive(this: *WindowsWriter, event_loop: anytype) void {
+            this.updateRef(event_loop, true);
+        }
+
+        pub fn disableKeepingProcessAlive(this: *WindowsWriter, event_loop: anytype) void {
+            this.updateRef(event_loop, false);
+        }
+
+        fn getBufferInternal(this: *WindowsWriter) []const u8 {
+            return getBuffer(this.parent);
+        }
+
+        pub fn end(this: *WindowsWriter) void {
+            if (this.is_done) {
+                return;
+            }
+
+            this.is_done = true;
+            this.close();
+        }
+
+        pub fn close(_: *WindowsWriter) void {
+            @panic("TODO");
+        }
+
+        pub fn updateRef(this: *WindowsWriter, _: anytype, value: bool) void {
+            if (value) {
+                this.pipe.ref();
+            } else {
+                this.pipe.unref();
+            }
+        }
+
+        pub fn setParent(this: *WindowsWriter, parent: *Parent) void {
+            this.parent = parent;
+        }
+
+        pub fn write(_: *WindowsWriter) void {
+            @panic("TODO");
+        }
+
+        pub fn watch(_: *WindowsWriter) void {
+            // no-ops on Windows
+        }
+
+        pub fn start(_: *WindowsWriter, _: bun.FileDescriptor, _: bool) JSC.Maybe(void) {
+            @panic("TODO");
+        }
+    };
+}
+
+pub fn WindowsStreamingWriter(
+    comptime Parent: type,
+    comptime onWrite: fn (*Parent, amount: usize, done: bool) void,
+    comptime onError: fn (*Parent, bun.sys.Error) void,
+    comptime onReady: ?fn (*Parent) void,
+    comptime onClose: fn (*Parent) void,
+) type {
+    _ = onWrite;
+    _ = onError;
+    _ = onClose;
+    _ = onReady;
+    return struct {
+        buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+        pipe: *uv.Pipe = undefined,
+        parent: *Parent = undefined,
+        head: usize = 0,
+        is_done: bool = false,
+        closed_without_reporting: bool = false,
+
+        // TODO:
+        chunk_size: usize = 0,
+
+        const WindowsWriter = @This();
+
+        pub fn getPoll(_: *@This()) ?*Async.FilePoll {
+            @compileError("WindowsBufferedWriter does not support getPoll");
+        }
+
+        pub fn getFd(this: *WindowsWriter) bun.FileDescriptor {
+            return this.pipe.fd();
+        }
+
+        pub fn getBuffer(this: *WindowsWriter) []const u8 {
+            return this.buffer.items[this.head..];
+        }
+
+        pub fn setParent(this: *WindowsWriter, parent: *Parent) void {
+            this.parent = parent;
+        }
+
+        pub fn tryWrite(this: *WindowsWriter, buf: []const u8) WriteResult {
+            _ = this;
+            _ = buf;
+            @panic("TODO");
+        }
+
+        fn _tryWriteNewlyBufferedData(this: *WindowsWriter) WriteResult {
+            std.debug.assert(!this.is_done);
+
+            switch (this.tryWrite(this.buffer.items)) {
+                .wrote => |amt| {
+                    if (amt == this.buffer.items.len) {
+                        this.buffer.clearRetainingCapacity();
+                    } else {
+                        this.head = amt;
+                    }
+                    return .{ .wrote = amt };
+                },
+                .done => |amt| {
+                    this.buffer.clearRetainingCapacity();
+
+                    return .{ .done = amt };
+                },
+                else => |r| return r,
+            }
+        }
+
+        pub fn writeUTF16(this: *WindowsWriter, buf: []const u16) WriteResult {
+            if (this.is_done or this.closed_without_reporting) {
+                return .{ .done = 0 };
+            }
+
+            const had_buffered_data = this.buffer.items.len > 0;
+            {
+                var byte_list = bun.ByteList.fromList(this.buffer);
+                defer this.buffer = byte_list.listManaged(bun.default_allocator);
+
+                _ = byte_list.writeUTF16(bun.default_allocator, buf) catch {
+                    return .{ .err = bun.sys.Error.oom };
+                };
+            }
+
+            if (had_buffered_data) {
+                return .{ .pending = 0 };
+            }
+
+            return this._tryWriteNewlyBufferedData();
+        }
+
+        pub fn writeLatin1(this: *WindowsWriter, buf: []const u8) WriteResult {
+            if (this.is_done or this.closed_without_reporting) {
+                return .{ .done = 0 };
+            }
+
+            if (bun.strings.isAllASCII(buf)) {
+                return this.write(buf);
+            }
+
+            const had_buffered_data = this.buffer.items.len > 0;
+            {
+                var byte_list = bun.ByteList.fromList(this.buffer);
+                defer this.buffer = byte_list.listManaged(bun.default_allocator);
+
+                _ = byte_list.writeLatin1(bun.default_allocator, buf) catch {
+                    return .{ .err = bun.sys.Error.oom };
+                };
+            }
+
+            if (had_buffered_data) {
+                return .{ .pending = 0 };
+            }
+
+            return this._tryWriteNewlyBufferedData();
+        }
+
+        pub fn write(this: *WindowsWriter, buf: []const u8) WriteResult {
+            if (this.is_done or this.closed_without_reporting) {
+                return .{ .done = 0 };
+            }
+
+            if (this.buffer.items.len + buf.len < this.chunk_size) {
+                this.buffer.appendSlice(buf) catch {
+                    return .{ .err = bun.sys.Error.oom };
+                };
+
+                return .{ .pending = 0 };
+            }
+
+            const rc = this.tryWrite(buf);
+            if (rc == .pending) {
+                // registerPoll(this);
+                return rc;
+            }
+            this.head = 0;
+            switch (rc) {
+                .pending => {
+                    this.buffer.appendSlice(buf) catch {
+                        return .{ .err = bun.sys.Error.oom };
+                    };
+                },
+                .wrote => |amt| {
+                    if (amt < buf.len) {
+                        this.buffer.appendSlice(buf[amt..]) catch {
+                            return .{ .err = bun.sys.Error.oom };
+                        };
+                    } else {
+                        this.buffer.clearRetainingCapacity();
+                    }
+                },
+                .done => |amt| {
+                    return .{ .done = amt };
+                },
+                else => {},
+            }
+
+            return rc;
+        }
+
+        pub fn flush(this: *WindowsWriter) WriteResult {
+            if (this.closed_without_reporting or this.is_done) {
+                return .{ .done = 0 };
+            }
+            // return this.drainBufferedData(std.math.maxInt(usize), false);
+            @panic("TODO");
+        }
+
+        pub fn deinit(this: *WindowsWriter) void {
+            this.buffer.clearAndFree();
+            this.close();
+        }
+
+        pub fn hasRef(this: *WindowsWriter) bool {
+            return this.pipe.hasRef();
+        }
+
+        pub fn enableKeepingProcessAlive(this: *WindowsWriter, event_loop: JSC.EventLoopHandle) void {
+            this.updateRef(event_loop, true);
+        }
+
+        pub fn disableKeepingProcessAlive(this: *WindowsWriter, event_loop: JSC.EventLoopHandle) void {
+            this.updateRef(event_loop, false);
+        }
+
+        pub fn updateRef(this: *WindowsWriter, _: JSC.EventLoopHandle, value: bool) void {
+            if (value) {
+                this.pipe.ref();
+            } else {
+                this.pipe.unref();
+            }
+        }
+
+        pub fn end(this: *WindowsWriter) void {
+            if (this.is_done) {
+                return;
+            }
+
+            this.is_done = true;
+            this.close();
+        }
+
+        pub fn close(_: *WindowsWriter) void {
+            @panic("TODO");
+            // if (this.closed_without_reporting) {
+            //     this.closed_without_reporting = false;
+            //     std.debug.assert(this.getFd() == bun.invalid_fd);
+            //     onClose(@ptrCast(this.parent));
+            //     return;
+            // }
+
+            // this.handle.close(@ptrCast(this.parent), onClose);
+        }
+
+        pub fn start(_: *WindowsWriter, _: bun.FileDescriptor, _: bool) JSC.Maybe(void) {
+            @panic("TODO");
+        }
+    };
+}
+
+pub const BufferedWriter = if (bun.Environment.isPosix) PosixBufferedWriter else WindowsBufferedWriter;
+pub const StreamingWriter = if (bun.Environment.isPosix) PosixStreamingWriter else WindowsStreamingWriter;

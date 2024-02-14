@@ -422,6 +422,100 @@ describe("EventEmitter", () => {
   });
 });
 
+describe("EventEmitter.on", () => {
+  test("Basic test", async () => {
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey");
+
+    expect(asyncIterator.next).toBeDefined();
+    expect(asyncIterator[Symbol.asyncIterator]).toBeDefined();
+
+    process.nextTick(() => {
+      emitter.emit("hey", 1);
+    })
+
+    const { value } = await asyncIterator.next();
+    expect(value).toEqual([1]);
+  });
+
+  test("Basic test with for await...of", async () => {
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey", { close: ["close"] } as any);
+    
+    process.nextTick(() => {
+      emitter.emit("hey", 1)
+      emitter.emit("hey", 2)
+      emitter.emit("hey", 3)
+      emitter.emit("hey", 4)
+      emitter.emit("close")
+    })
+
+    const result = []
+    for await (const ev of asyncIterator) {
+      result.push(ev)
+    }
+
+    expect(result).toEqual([[1], [2], [3], [4]]);
+  });
+
+  test("Stop reading events after 'close' event is emitted", async () => {
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey", { close: ["close"] } as any);
+    
+    process.nextTick(() => {
+      emitter.emit("hey", 1)
+      emitter.emit("hey", 2)
+      emitter.emit("close")
+      emitter.emit("hey", 3)
+    })
+
+    const result = []
+    for await (const ev of asyncIterator) {
+      result.push(ev)
+    }
+
+    expect(result).toEqual([[1], [2]]);
+  });
+
+  test("Queue events before first next() call", async () => {
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey");
+
+    emitter.emit("hey", 1);
+    emitter.emit("hey", 2);
+    emitter.emit("hey", 3);
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    expect((await asyncIterator.next()).value).toEqual([1]);
+    expect((await asyncIterator.next()).value).toEqual([2]);
+    expect((await asyncIterator.next()).value).toEqual([3]);
+  });
+
+  test("Emit multiple values", async () => {
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey");
+
+    emitter.emit("hey", 1, 2, 3);
+
+    const { value }  = await asyncIterator.next();
+    expect(value).toEqual([1, 2, 3]);
+  });
+
+  test("kFirstEventParam", async () => {
+    const kFirstEventParam = Symbol.for('nodejs.kFirstEventParam')
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey", { [kFirstEventParam]: true } as any);
+
+    emitter.emit("hey", 1, 2, 3);
+    emitter.emit("hey", [4, 5, 6]);
+
+    expect((await asyncIterator.next()).value).toBe(1);
+    expect((await asyncIterator.next()).value).toEqual([4, 5, 6]);
+  });
+
+});
+
 describe("EventEmitter error handling", () => {
   test("unhandled error event throws on emit", () => {
     const myEmitter = new EventEmitter();

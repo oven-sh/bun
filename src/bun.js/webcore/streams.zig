@@ -2937,7 +2937,7 @@ pub const FileSink = struct {
         // TODO: this should be concurrent.
         const fd = switch (switch (options.input_path) {
             .path => |path| bun.sys.openA(path.slice(), options.flags(), options.mode),
-            .fd => |fd_| bun.sys.dup(fd_),
+            .fd => |fd_| bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none) std.os.O.NONBLOCK else 0),
         }) {
             .err => |err| return .{ .err = err },
             .result => |fd| fd,
@@ -2952,6 +2952,10 @@ pub const FileSink = struct {
                 .result => |stat| {
                     this.pollable = bun.sys.isPollable(stat.mode) or std.os.isatty(fd.int());
                     this.fd = fd;
+                    this.nonblocking = this.pollable and switch (options.input_path) {
+                        .path => true,
+                        .fd => |fd_| bun.FDTag.get(fd_) == .none,
+                    };
                 },
             }
         } else if (comptime Environment.isWindows) {
@@ -2973,6 +2977,11 @@ pub const FileSink = struct {
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
                 this.writer.updateRef(this.eventLoop(), false);
+                if (comptime Environment.isPosix) {
+                    if (this.nonblocking) {
+                        this.writer.getPoll().?.flags.insert(.nonblocking);
+                    }
+                }
             },
         }
 
@@ -3232,9 +3241,17 @@ pub const FileReader = struct {
             var this = OpenedFileBlob{ .fd = bun.invalid_fd };
             var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
-            var fd = if (file.pathlike != .path)
+            const fd = if (file.pathlike != .path)
                 // We will always need to close the file descriptor.
-                switch (Syscall.dup(file.pathlike.fd)) {
+                switch (Syscall.dupWithFlags(file.pathlike.fd, brk: {
+                    if (comptime Environment.isPosix) {
+                        if (bun.FDTag.get(file.pathlike.fd) == .none and !(file.is_atty orelse false)) {
+                            break :brk std.os.O.NONBLOCK;
+                        }
+                    }
+
+                    break :brk 0;
+                })) {
                     .result => |_fd| if (Environment.isWindows) bun.toLibUVOwnedFD(_fd) else _fd,
                     .err => |err| {
                         return .{ .err = err.withFd(file.pathlike.fd) };
@@ -3253,33 +3270,6 @@ pub const FileReader = struct {
                     _ = std.c.tcgetattr(fd.cast(), &termios);
                     bun.C.cfmakeraw(&termios);
                     file.is_atty = true;
-                    this.nonblocking = false;
-                }
-            }
-
-            if (file.pathlike != .path and !(file.is_atty orelse false)) {
-                if (comptime !Environment.isWindows) {
-                    // ensure we have non-blocking IO set
-                    switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
-                        .err => return .{ .err = Syscall.Error.fromCode(E.BADF, .fcntl) },
-                        .result => |flags| {
-                            // if we do not, clone the descriptor and set non-blocking
-                            // it is important for us to clone it so we don't cause Weird Things to happen
-                            if ((flags & std.os.O.NONBLOCK) == 0) {
-                                fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
-                                    .result => |_fd| bun.toFD(_fd),
-                                    .err => |err| return .{ .err = err },
-                                };
-
-                                switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
-                                    .err => |err| return .{ .err = err },
-                                    .result => |_| {
-                                        this.nonblocking = true;
-                                    },
-                                }
-                            }
-                        },
-                    }
                 }
             }
 
@@ -3298,6 +3288,9 @@ pub const FileReader = struct {
                 }
 
                 this.pollable = bun.sys.isPollable(stat.mode) or (file.is_atty orelse false);
+                if (this.pollable and !(file.is_atty orelse false)) {
+                    this.nonblocking = true;
+                }
             }
 
             this.fd = fd;
@@ -3370,6 +3363,12 @@ pub const FileReader = struct {
                 .err => |e| {
                     return .{ .err = e };
                 },
+            }
+        }
+
+        if (comptime Environment.isPosix) {
+            if (this.reader.flags.nonblocking) {
+                if (this.reader.handle.getPoll()) |poll| poll.flags.insert(.nonblocking);
             }
         }
 

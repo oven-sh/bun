@@ -1922,7 +1922,7 @@ pub fn pipe() Maybe([2]bun.FileDescriptor) {
     return .{ .result = .{ bun.toFD(fds[0]), bun.toFD(fds[1]) } };
 }
 
-pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
+pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         var target: windows.HANDLE = undefined;
         const process = kernel32.GetCurrentProcess();
@@ -1943,9 +1943,13 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         return Maybe(bun.FileDescriptor){ .result = bun.toFD(target) };
     }
 
-    const out = system.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD | bun.C.F.DUPFD_CLOEXEC), @as(i32, 0));
+    const out = system.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD | bun.C.F.DUPFD_CLOEXEC | flags), @as(i32, 0));
     log("dup({d}) = {d}", .{ fd.cast(), out });
     return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
+}
+
+pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
+    return dupWithFlags(fd, 0);
 }
 
 pub fn linkat(dir_fd: bun.FileDescriptor, basename: []const u8, dest_dir_fd: bun.FileDescriptor, dest_name: []const u8) Maybe(void) {

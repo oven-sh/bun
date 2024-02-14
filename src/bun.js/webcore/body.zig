@@ -422,6 +422,10 @@ pub const Body = struct {
                     var reader = JSC.WebCore.ByteStream.Source.new(.{
                         .context = undefined,
                         .globalThis = globalThis,
+
+                        // 1 for the ReadableStreamSource
+                        // 1 for this Body.Value
+                        .ref_count = 2,
                     });
 
                     reader.context.setup();

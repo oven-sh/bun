@@ -1943,7 +1943,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         return Maybe(bun.FileDescriptor){ .result = bun.toFD(target) };
     }
 
-    const out = system.fcntl(fd.cast(), @as(i32, std.os.F.DUPFD | bun.C.F.DUPFD_CLOEXEC), @as(i32, 0));
+    const out = system.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD | bun.C.F.DUPFD_CLOEXEC), @as(i32, 0));
     log("dup({d}) = {d}", .{ fd.cast(), out });
     return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
 }

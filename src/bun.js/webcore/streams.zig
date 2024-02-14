@@ -77,10 +77,8 @@ pub const ReadableStream = struct {
         }
 
         pub fn get(this: *Strong) ?ReadableStream {
-            if (this.globalThis()) |global| {
-                if (this.held.get()) |value| {
-                    return ReadableStream.fromJS(value, global);
-                }
+            if (this.held.get()) |value| {
+                return ReadableStream.fromJS(value, this.held.globalThis.?);
             }
             return null;
         }
@@ -357,6 +355,7 @@ pub const ReadableStream = struct {
         parent: anytype,
         buffered_reader: anytype,
     ) JSC.JSValue {
+        _ = parent; // autofix
         JSC.markBinding(@src());
         var source = FileReader.Source.new(.{
             .globalThis = globalThis,
@@ -366,11 +365,6 @@ pub const ReadableStream = struct {
             .ref_count = 2,
         });
         source.context.reader.from(buffered_reader, &source.context);
-
-        if (comptime Environment.isPosix) {
-            source.context.fd = parent.fd;
-            parent.fd = bun.invalid_fd;
-        }
 
         return source.toReadableStream(globalThis);
     }

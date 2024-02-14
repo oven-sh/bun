@@ -4496,6 +4496,10 @@ pub const JSValue = enum(JSValueReprInt) {
         highWaterMark,
         path,
         stream,
+
+        pub fn has( property: []const u8) bool {
+            return bun.ComptimeEnumMap(BuiltinName).has(property);
+        }
     };
 
     // intended to be more lightweight than ZigString
@@ -4567,7 +4571,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         if (comptime bun.Environment.isDebug) {
-            if (bun.ComptimeEnumMap(BuiltinName).has(property)) {
+            if (BuiltinName.has(property))  {
                 Output.debugWarn("get(\"{s}\") called. Please use fastGet(.{s}) instead!", .{ property, property });
             }
         }
@@ -4669,6 +4673,16 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn getOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !?Enum {
+        if (comptime BuiltinName.has(property_name)) {
+            if (fastGet(this, globalThis, @field(BuiltinName, property_name))) |prop| {
+                if (prop.isEmptyOrUndefinedOrNull())
+                    return null;
+                return try toEnum(prop, globalThis, property_name, Enum);
+            }
+            return null;
+        }
+
+
         if (get(this, globalThis, property_name)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull())
                 return null;
@@ -4721,7 +4735,13 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) !?T {
-        if (getTruthy(this, globalThis, property_name)) |prop| {
+        const prop = (if (comptime BuiltinName.has(property_name)) 
+            fastGet(this, globalThis, @field(BuiltinName, property_name))
+            else
+        
+            get(this, globalThis, property_name)) orelse return null;
+        
+        if (!prop.isEmptyOrUndefinedOrNull()) {
             switch (comptime T) {
                 bool => {
                     if (prop.isBoolean()) {

@@ -577,6 +577,7 @@ pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
 
 pub const F = struct {
     pub const DUPFD_CLOEXEC = net_c.F_DUPFD_CLOEXEC;
+    pub const DUPFD = net_c.F_DUPFD;
 };
 
 pub const Mode = u32;

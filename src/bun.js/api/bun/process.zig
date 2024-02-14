@@ -861,7 +861,7 @@ pub const PosixSpawnOptions = struct {
         pipe: bun.FileDescriptor,
     };
 
-    fn deinit(_: *const PosixSpawnOptions) void {
+    pub fn deinit(_: *const PosixSpawnOptions) void {
         // no-op
     }
 };

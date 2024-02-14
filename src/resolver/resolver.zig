@@ -2877,8 +2877,8 @@ pub const Resolver = struct {
                 // because we want the output to always be deterministic
                 if (strings.startsWith(path, prefix) and
                     strings.endsWith(path, suffix) and
-                    (prefix.len >= longest_match_prefix_length and
-                    suffix.len > longest_match_suffix_length))
+                    (prefix.len > longest_match_prefix_length or
+                    (prefix.len == longest_match_prefix_length and suffix.len > longest_match_suffix_length)))
                 {
                     longest_match_prefix_length = @as(i32, @intCast(prefix.len));
                     longest_match_suffix_length = @as(i32, @intCast(suffix.len));

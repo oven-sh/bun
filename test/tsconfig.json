@@ -26,7 +26,8 @@
       "node-harness": ["js/node/harness.ts"],
       "deno:harness": ["js/deno/harness.ts"],
       "foo/bar": ["js/bun/resolve/baz.js"],
-      "@faasjs/*": ["js/bun/resolve/*.js", "js/bun/resolve/*/src/index.js"]
+      "@faasjs/*": ["js/bun/resolve/*.js", "js/bun/resolve/*/src/index.js"],
+      "@faasjs/larger/*": ["js/bun/resolve/*/larger-index.js"]
     }
   },
 

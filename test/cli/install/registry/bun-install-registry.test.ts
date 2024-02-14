@@ -1,6 +1,6 @@
 // @known-failing-on-windows: 1 failing
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env } from "harness";
+import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
 import { join, sep } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp, readdir } from "fs/promises";
@@ -8,6 +8,11 @@ import { readdirSorted } from "../dummy.registry";
 import { tmpdir } from "os";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
+
+expect.extend({
+  toBeValidBin,
+  toHaveBins,
+});
 
 var verdaccioServer: ChildProcess;
 var testCounter: number = 0;
@@ -1548,10 +1553,15 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
     " 1 package installed",
   ]);
   expect(await exited).toBe(0);
+  const bin = process.platform === "win32" ? "what-bin.exe" : "what-bin";
   expect(Bun.which("what-bin", { PATH: join(packageDir, "node_modules", ".bin") })).toBe(
-    join(packageDir, "node_modules", ".bin", "what-bin"),
+    join(packageDir, "node_modules", ".bin", bin),
   );
-  expect(await file(join(packageDir, "node_modules", ".bin", "what-bin")).text()).toContain("what-bin@1.5.0");
+  if (process.platform === "win32") {
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  } else {
+    expect(await file(join(packageDir, "node_modules", ".bin", bin)).text()).toContain("what-bin@1.5.0");
+  }
 
   await rm(join(packageDir, "node_modules", ".bin"), { recursive: true, force: true });
   await rm(join(packageDir, "node_modules", "what-bin", "package.json"), { recursive: true, force: true });
@@ -1578,9 +1588,13 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
   ]);
   expect(await exited).toBe(0);
   expect(Bun.which("what-bin", { PATH: join(packageDir, "node_modules", ".bin") })).toBe(
-    join(packageDir, "node_modules", ".bin", "what-bin"),
+    join(packageDir, "node_modules", ".bin", bin),
   );
-  expect(await file(join(packageDir, "node_modules", ".bin", "what-bin")).text()).toContain("what-bin@1.5.0");
+  if (process.platform === "win32") {
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  } else {
+    expect(await file(join(packageDir, "node_modules", ".bin", "what-bin")).text()).toContain("what-bin@1.5.0");
+  }
 });
 
 test("missing package on reinstall, some with binaries", async () => {
@@ -1689,12 +1703,13 @@ test("missing package on reinstall, some with binaries", async () => {
   expect(await exists(join(packageDir, "node_modules", "one-fixed-dep", "package.json"))).toBe(true);
   expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin"))).toBe(true);
   expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "node_modules", "what-bin"))).toBe(true);
+  const bin = process.platform === "win32" ? "what-bin.exe" : "what-bin";
   expect(Bun.which("what-bin", { PATH: join(packageDir, "node_modules", ".bin") })).toBe(
-    join(packageDir, "node_modules", ".bin", "what-bin"),
+    join(packageDir, "node_modules", ".bin", bin),
   );
   expect(
     Bun.which("what-bin", { PATH: join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin") }),
-  ).toBe(join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin", "what-bin"));
+  ).toBe(join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin", bin));
 });
 
 for (const forceWaiterThread of [false, true]) {

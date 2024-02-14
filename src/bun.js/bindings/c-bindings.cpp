@@ -128,6 +128,12 @@ extern "C" void dump_zone_malloc_stats()
     }
 }
 
+#elif OS(DARWIN)
+
+extern "C" void dump_zone_malloc_stats()
+{
+}
+
 #endif
 
 #if OS(WINDOWS)

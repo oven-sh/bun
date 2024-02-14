@@ -233,6 +233,7 @@ jobs:
 
           cmake -S $SOURCE_DIR -B $OBJ_DIR \
             -G Ninja \
+            -DUSE_LTO=ON \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUN_CPP_ONLY=1 \
             -DNO_CONFIGURE_DEPENDS=1
@@ -312,6 +313,7 @@ jobs:
           cd ${{runner.temp}}/link-build
           cmake $SRC_DIR \
             -G Ninja \
+            -DUSE_LTO=ON \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUN_LINK_ONLY=1 \
             -DBUN_ZIG_OBJ="${{ runner.temp }}/release/bun-zig.o" \

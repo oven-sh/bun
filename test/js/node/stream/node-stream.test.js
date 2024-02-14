@@ -120,8 +120,10 @@ describe("Readable", () => {
     stream.pipe(writable);
   });
   it("should be able to be piped via .pipe with a large file", done => {
-    const length = 128 * 1024;
-    const data = "B".repeat(length);
+    const data = Buffer.allocUnsafe(768 * 1024)
+      .fill("B")
+      .toString();
+    const length = data.length;
     const path = `${tmpdir()}/${Date.now()}.testReadStreamLargeFile.txt`;
     writeFileSync(path, data);
     const stream = createReadStream(path, { start: 0, end: length - 1 });

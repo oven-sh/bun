@@ -2,6 +2,7 @@ import assert from "assert";
 import dedent from "dedent";
 
 import { ESBUILD_PATH, RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
+import { osSlashes } from "harness";
 var { describe, test, expect } = testForFile(import.meta.path);
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go
@@ -196,7 +197,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.appendFile(
         "/out.js",
-        dedent/* js */ `
+        dedent /* js */`
           import { strictEqual } from "node:assert";
           strictEqual(globalName.default, 123, ".default");
           strictEqual(globalName.v, 234, ".v");
@@ -297,7 +298,7 @@ describe("bundler", () => {
         export default 3;
         export const a2 = 4;
       `,
-      "/test.js": String.raw/* js */ `
+      "/test.js": String.raw /* js */`
         import { deepEqual } from 'node:assert';
         globalThis.deepEqual = deepEqual;
         await import ('./out.js');
@@ -891,6 +892,7 @@ describe("bundler", () => {
       "/node_modules/c/index.js": `exports.foo = 123`,
       "/node_modules/c/package.json": `{"main": "index.js", "name": "c"}`,
     },
+    target: "node",
     run: [
       {
         args: ["true", "true", "./c.js"],
@@ -5125,7 +5127,6 @@ describe("bundler", () => {
     },
   });
   const RequireShimSubstitutionBrowser = itBundled("default/RequireShimSubstitutionBrowser", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         Promise.all([
@@ -5168,13 +5169,14 @@ describe("bundler", () => {
       "/node_modules/some-path/index.js": `module.exports = 123`,
       "/node_modules/second-path/index.js": `module.exports = 567`,
     },
-    bundling: false,
     target: "browser",
     format: "esm",
     outfile: "/out.mjs",
+    external: ["*"],
     run: {
       runtime: "node",
       file: "/test.mjs",
+      // using os slashes here is correct because we run the bundle in bun.
       stdout: `
           function undefined
           string "function"
@@ -5184,8 +5186,8 @@ describe("bundler", () => {
           object {"works":true}
           object {"works":true}
           number 567
-          string "/node_modules/some-path/index.js"
-          string "/node_modules/second-path/index.js"
+          string ${JSON.stringify(osSlashes("/node_modules/some-path/index.js"))}
+          string ${JSON.stringify(osSlashes("/node_modules/second-path/index.js"))}
           object {"default":123}
           object {"default":567}
         `,
@@ -5194,10 +5196,10 @@ describe("bundler", () => {
   itBundled("default/RequireShimSubstitutionNode", {
     files: RequireShimSubstitutionBrowser.options.files,
     runtimeFiles: RequireShimSubstitutionBrowser.options.runtimeFiles,
-    bundling: false,
     target: "node",
     format: "esm",
     outfile: "/out.mjs",
+    external: ["*"],
     run: {
       runtime: "node",
       file: "/test.mjs",
@@ -5210,8 +5212,8 @@ describe("bundler", () => {
         object {"works":true}
         object {"works":true}
         number 567
-        string "/node_modules/some-path/index.js"
-        string "/node_modules/second-path/index.js"
+        string ${JSON.stringify(osSlashes("/node_modules/some-path/index.js"))}
+        string ${JSON.stringify(osSlashes("/node_modules/second-path/index.js"))}
         object {"default":123}
         object {"default":567}
       `,

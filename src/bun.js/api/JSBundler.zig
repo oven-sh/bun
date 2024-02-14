@@ -549,6 +549,10 @@ pub const JSBundler = struct {
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
             original_target: Target,
+
+            pub inline fn loader(_: *const MiniImportRecord) ?options.Loader {
+                return null;
+            }
         };
 
         pub fn create(
@@ -895,8 +899,8 @@ pub const JSBundler = struct {
             const namespace_string = if (path.isFile())
                 bun.String.empty
             else
-                bun.String.create(path.namespace);
-            const path_string = bun.String.create(path.text);
+                bun.String.createUTF8(path.namespace);
+            const path_string = bun.String.createUTF8(path.text);
             return JSBundlerPlugin__anyMatches(this, &namespace_string, &path_string, is_onLoad);
         }
 
@@ -914,8 +918,8 @@ pub const JSBundler = struct {
             const namespace_string = if (namespace.len == 0)
                 bun.String.static("file")
             else
-                bun.String.create(namespace);
-            const path_string = bun.String.create(path);
+                bun.String.createUTF8(namespace);
+            const path_string = bun.String.createUTF8(path);
             defer namespace_string.deref();
             defer path_string.deref();
             JSBundlerPlugin__matchOnLoad(globalThis, this, &namespace_string, &path_string, context, @intFromEnum(default_loader));
@@ -936,9 +940,9 @@ pub const JSBundler = struct {
             const namespace_string = if (strings.eqlComptime(namespace, "file"))
                 bun.String.empty
             else
-                bun.String.create(namespace);
-            const path_string = bun.String.create(path);
-            const importer_string = bun.String.create(importer);
+                bun.String.createUTF8(namespace);
+            const path_string = bun.String.createUTF8(path);
+            const importer_string = bun.String.createUTF8(importer);
             defer namespace_string.deref();
             defer path_string.deref();
             defer importer_string.deref();

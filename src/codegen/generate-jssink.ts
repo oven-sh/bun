@@ -1,6 +1,6 @@
 import { resolve, join } from "path";
 
-const classes = ["ArrayBufferSink", "FileSink", "HTTPResponseSink", "HTTPSResponseSink"];
+const classes = ["ArrayBufferSink", "FileSink", "HTTPResponseSink", "HTTPSResponseSink", "UVStreamSink"];
 
 function names(name) {
   return {
@@ -314,9 +314,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
 
     templ += `
 
-    ${
-      isFirst ? "" : "else"
-    } if (WebCore::${controller}* ${name}Controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue())) {
+    ${isFirst ? "" : "else"} if (WebCore::${controller}* ${name}Controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue())) {
         if (${name}Controller->wrapped() == nullptr) {
             scope.throwException(globalObject, JSC::createTypeError(globalObject, "Cannot start stream with closed controller"_s));
             return JSC::JSValue::encode(JSC::jsUndefined());
@@ -954,6 +952,7 @@ await Bun.write(resolve(outDir + "/JSSink.lut.txt"), lutInput());
 Bun.spawnSync(
   [
     process.execPath,
+    "run",
     join(import.meta.dir, "create-hash-table.ts"),
     resolve(outDir + "/JSSink.lut.txt"),
     join(outDir, "JSSink.lut.h"),

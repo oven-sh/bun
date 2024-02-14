@@ -197,7 +197,10 @@ pub const Arguments = struct {
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
-    };
+    } ++ if (Environment.isWindows) [_]ParamType{
+        // clap.parseParam("--native-shell                    Use cmd.exe to interpret package.json scripts") catch unreachable,
+        clap.parseParam("--no-native-shell                    Use Bun shell (TODO: flip this switch)") catch unreachable,
+    } else .{};
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const bunx_commands = [_]ParamType{
@@ -268,7 +271,7 @@ pub const Arguments = struct {
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)) {
-            .result => |fd| std.fs.File{ .handle = bun.fdcast(fd) },
+            .result => |fd| fd.asFile(),
             .err => |err| {
                 if (auto_loaded) return;
                 Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
@@ -480,7 +483,7 @@ pub const Arguments = struct {
                     Output.prettyErrorln(
                         "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
                         .{
-                            strings.QuotedFormatter{
+                            bun.fmt.QuotedFormatter{
                                 .text = namePattern,
                             },
                         },
@@ -857,6 +860,13 @@ pub const Arguments = struct {
         if (output_file != null)
             ctx.debug.output_file = output_file.?;
 
+        if (cmd == .RunCommand) {
+            ctx.debug.use_native_shell = if (Environment.isWindows)
+                !args.flag("--no-native-shell")
+            else
+                true;
+        }
+
         return opts;
     }
 };
@@ -1050,6 +1060,8 @@ pub const Command = struct {
         offline_mode_setting: ?Bunfig.OfflineMode = null,
         run_in_bun: bool = false,
         loaded_bunfig: bool = false,
+        /// Disables using bun.shell.Interpreter for `bun run`, instead spawning cmd.exe
+        use_native_shell: bool = false,
 
         // technical debt
         macros: MacroOptions = MacroOptions.unspecified,
@@ -1158,13 +1170,21 @@ pub const Command = struct {
             if (comptime Command.Tag.uses_global_options.get(command)) {
                 ctx.args = try Arguments.parse(allocator, &ctx, command);
             }
+
+            if (comptime Environment.isWindows) {
+                if (ctx.debug.hot_reload == .watch and !bun.isWatcherChild()) {
+                    // this is noreturn
+                    bun.becomeWatcherManager(allocator);
+                }
+            }
+
             return ctx;
         }
     };
 
     // std.process.args allocates!
     const ArgsIterator = struct {
-        buf: [][*:0]u8 = undefined,
+        buf: [][:0]u8 = undefined,
         i: u32 = 0,
 
         pub fn next(this: *ArgsIterator) ?[]const u8 {
@@ -1173,7 +1193,7 @@ pub const Command = struct {
             }
             const i = this.i;
             this.i += 1;
-            return std.mem.span(this.buf[i]);
+            return this.buf[i];
         }
 
         pub fn skip(this: *ArgsIterator) bool {
@@ -1182,9 +1202,11 @@ pub const Command = struct {
     };
 
     pub fn isBunX(argv0: []const u8) bool {
-        const suffix = if (Environment.isWindows) ".exe" else "";
+        return strings.endsWithComptime(argv0, "bunx") or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug"));
+    }
 
-        return strings.endsWithComptime(argv0, "bunx" ++ suffix) or (Environment.isDebug and strings.endsWithComptime(argv0, "bunx-debug" ++ suffix));
+    pub fn isNode(argv0: []const u8) bool {
+        return strings.endsWithComptime(argv0, "node");
     }
 
     pub fn which() Tag {
@@ -1192,10 +1214,15 @@ pub const Command = struct {
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
-        // symlink is argv[0]
-        if (isBunX(argv0)) return .BunxCommand;
+        const without_exe = if (Environment.isWindows)
+            strings.withoutSuffixComptime(argv0, ".exe")
+        else
+            argv0;
 
-        if (strings.endsWithComptime(argv0, "node")) {
+        // symlink is argv[0]
+        if (isBunX(without_exe)) return .BunxCommand;
+
+        if (isNode(without_exe)) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
             pretend_to_be_node = true;
             return .RunAsNodeCommand;
@@ -1225,8 +1252,7 @@ pub const Command = struct {
             RootCommandMatcher.case("install"),
             => brk: {
                 for (args_iter.buf) |arg| {
-                    const span = std.mem.span(arg);
-                    if (span.len > 0 and (strings.eqlComptime(span, "-g") or strings.eqlComptime(span, "--global"))) {
+                    if (arg.len > 0 and (strings.eqlComptime(arg, "-g") or strings.eqlComptime(arg, "--global"))) {
                         break :brk .AddCommand;
                     }
                 }
@@ -1308,33 +1334,28 @@ pub const Command = struct {
             }
         }
 
-        // there's a bug with openSelfExe() on Windows
-        if (comptime !bun.Environment.isWindows) {
-            // bun build --compile entry point
-            if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-                var ctx = Command.Context{
-                    .args = std.mem.zeroes(Api.TransformOptions),
-                    .log = log,
-                    .start_time = start_time,
-                    .allocator = bun.default_allocator,
-                };
+        // bun build --compile entry point
+        if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
+            var ctx = Command.Context{
+                .args = std.mem.zeroes(Api.TransformOptions),
+                .log = log,
+                .start_time = start_time,
+                .allocator = bun.default_allocator,
+            };
 
-                ctx.args.target = Api.Target.bun;
-                const argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
-                if (bun.argv().len > 1) {
-                    for (argv, bun.argv()[1..]) |*dest, src| {
-                        dest.* = bun.span(src);
-                    }
-                }
-                ctx.passthrough = argv;
-
-                try @import("./bun_js.zig").Run.bootStandalone(
-                    ctx,
-                    graph.entryPoint().name,
-                    graph,
-                );
-                return;
+            ctx.args.target = Api.Target.bun;
+            if (bun.argv().len > 1) {
+                ctx.passthrough = bun.argv()[1..];
+            } else {
+                ctx.passthrough = &[_]string{};
             }
+
+            try @import("./bun_js.zig").Run.bootStandalone(
+                ctx,
+                graph.entryPoint().name,
+                graph,
+            );
+            return;
         }
 
         const tag = which();
@@ -1536,10 +1557,9 @@ pub const Command = struct {
                 }
 
                 // iterate over args
-                // if --help, print help and exit
+                // if --help or -h, print help and exit
                 const print_help = brk: {
-                    for (bun.argv()) |arg_| {
-                        const arg = bun.span(arg_);
+                    for (bun.argv()) |arg| {
                         if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
                             break :brk true;
                         }
@@ -1623,7 +1643,7 @@ pub const Command = struct {
                     example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {
-                    const bunx_args = try allocator.alloc([*:0]const u8, args.len - template_name_start);
+                    const bunx_args = try allocator.alloc([:0]const u8, args.len - template_name_start);
                     bunx_args[0] = try BunxCommand.addCreatePrefix(allocator, template_name);
                     for (bunx_args[1..], args[template_name_start + 1 ..]) |*dest, src| {
                         dest.* = src;
@@ -1641,7 +1661,7 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
 
                 if (ctx.positionals.len > 0) {
-                    if (try RunCommand.exec(ctx, false, true)) {
+                    if (try RunCommand.exec(ctx, false, true, false)) {
                         return;
                     }
 
@@ -1691,7 +1711,7 @@ pub const Command = struct {
                 if (ctx.args.entry_points.len == 1) {
                     if (strings.eqlComptime(extension, ".lockb")) {
                         for (bun.argv()) |arg| {
-                            if (strings.eqlComptime(std.mem.span(arg), "--hash")) {
+                            if (strings.eqlComptime(arg, "--hash")) {
                                 try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
                                 return;
                             }
@@ -1724,6 +1744,10 @@ pub const Command = struct {
                     }
 
                     if (extension.len > 0) {
+                        if (strings.endsWithComptime(ctx.args.entry_points[0], ".bun.sh")) {
+                            break :brk options.Loader.bunsh;
+                        }
+
                         if (!ctx.debug.loaded_bunfig) {
                             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
                         }
@@ -1754,7 +1778,7 @@ pub const Command = struct {
                 }
 
                 if (ctx.positionals.len > 0 and extension.len == 0) {
-                    if (try RunCommand.exec(ctx, true, false)) {
+                    if (try RunCommand.exec(ctx, true, false, true)) {
                         return;
                     }
 
@@ -1798,46 +1822,71 @@ pub const Command = struct {
 
         const script_name_to_search = ctx.args.entry_points[0];
 
+        var absolute_script_path: ?string = null;
+
+        // TODO: optimize this pass for Windows. we can make better use of system apis available
         var file_path = script_name_to_search;
-        const file_: anyerror!std.fs.File = brk: {
-            if (std.fs.path.isAbsoluteWindows(script_name_to_search)) {
-                var winResolver = resolve_path.PosixToWinNormalizer{};
-                break :brk bun.openFile(
-                    winResolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path"),
-                    .{ .mode = .read_only },
-                );
-            } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
-                const file_pathZ = brk2: {
-                    @memcpy(script_name_buf[0..file_path.len], file_path);
+        {
+            const file = bun.toLibUVOwnedFD(((brk: {
+                if (std.fs.path.isAbsolute(script_name_to_search)) {
+                    var win_resolver = resolve_path.PosixToWinNormalizer{};
+                    var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
+                    if (comptime Environment.isWindows) {
+                        resolved = resolve_path.normalizeString(resolved, true, .windows);
+                    }
+                    break :brk bun.openFile(
+                        resolved,
+                        .{ .mode = .read_only },
+                    );
+                } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
+                    const file_pathZ = brk2: {
+                        @memcpy(script_name_buf[0..file_path.len], file_path);
+                        script_name_buf[file_path.len] = 0;
+                        break :brk2 script_name_buf[0..file_path.len :0];
+                    };
+
+                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+                } else {
+                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    const cwd = bun.getcwd(&path_buf) catch return false;
+                    path_buf[cwd.len] = std.fs.path.sep;
+                    var parts = [_]string{script_name_to_search};
+                    file_path = resolve_path.joinAbsStringBuf(
+                        path_buf[0 .. cwd.len + 1],
+                        &script_name_buf,
+                        &parts,
+                        .auto,
+                    );
+                    if (file_path.len == 0) return false;
                     script_name_buf[file_path.len] = 0;
-                    break :brk2 script_name_buf[0..file_path.len :0];
-                };
+                    const file_pathZ = script_name_buf[0..file_path.len :0];
+                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+                }
+            }) catch return false).handle);
+            defer _ = bun.sys.close(file);
 
-                break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
-            } else {
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd = bun.getcwd(&path_buf) catch return false;
-                path_buf[cwd.len] = std.fs.path.sep;
-                var parts = [_]string{script_name_to_search};
-                file_path = resolve_path.joinAbsStringBuf(
-                    path_buf[0 .. cwd.len + 1],
-                    &script_name_buf,
-                    &parts,
-                    .auto,
-                );
-                if (file_path.len == 0) return false;
-                script_name_buf[file_path.len] = 0;
-                const file_pathZ = script_name_buf[0..file_path.len :0];
-                break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+            switch (bun.sys.fstat(file)) {
+                .result => |stat| {
+                    // directories cannot be run. if only there was a faster way to check this
+                    if (bun.S.ISDIR(@intCast(stat.mode))) return false;
+                },
+                .err => return false,
             }
-        };
 
-        const file = file_ catch return false;
+            Global.configureAllocator(.{ .long_running = true });
 
-        Global.configureAllocator(.{ .long_running = true });
+            absolute_script_path = brk: {
+                if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
 
-        // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
-        const absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
+                var fd_path_buf: bun.PathBuffer = undefined;
+                const path = bun.getFdPath(file, &fd_path_buf) catch return false;
+                break :brk resolve_path.normalizeString(
+                    resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(&script_name_buf, path) catch @panic("Could not resolve path"),
+                    true,
+                    .windows,
+                );
+            };
+        }
 
         if (!ctx.debug.loaded_bunfig) {
             bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
@@ -1845,7 +1894,7 @@ pub const Command = struct {
 
         BunJS.Run.boot(
             ctx.*,
-            absolute_script_path,
+            absolute_script_path.?,
         ) catch |err| {
             if (Output.enable_ansi_colors) {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};

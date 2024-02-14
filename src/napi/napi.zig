@@ -319,7 +319,7 @@ pub export fn napi_create_string_utf8(env: napi_env, str: ?[*]const u8, length: 
 
     log("napi_create_string_utf8: {s}", .{slice});
 
-    var string = bun.String.create(slice);
+    var string = bun.String.createUTF8(slice);
     if (string.tag == .Dead) {
         return .generic_failure;
     }
@@ -347,7 +347,7 @@ pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, l
     };
 
     if (comptime bun.Environment.allow_assert)
-        log("napi_create_string_utf16: {d} {any}", .{ slice.len, strings.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
+        log("napi_create_string_utf16: {d} {any}", .{ slice.len, bun.fmt.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
 
     if (slice.len == 0) {
         setNapiValue(result, bun.String.empty.toJS(env));
@@ -408,6 +408,8 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
     const buf_ptr = @as(?[*:0]u8, @ptrCast(buf_ptr_));
 
     const str = value.toBunString(env);
+    defer str.deref();
+
     var buf = buf_ptr orelse {
         if (result_ptr) |result| {
             result.* = str.latin1ByteLength();
@@ -461,6 +463,8 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
     log("napi_get_value_string_utf16", .{});
     defer value.ensureStillAlive();
     const str = value.toBunString(env);
+    defer str.deref();
+
     var buf = buf_ptr orelse {
         if (result_ptr) |result| {
             result.* = str.utf16ByteLength();
@@ -556,6 +560,7 @@ pub export fn napi_has_element(env: napi_env, object: napi_value, index: c_uint,
     return .ok;
 }
 pub extern fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
+pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
 pub extern fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: [*c]const napi_property_descriptor) napi_status;
 pub export fn napi_is_array(_: napi_env, value: napi_value, result: *bool) napi_status {
     log("napi_is_array", .{});
@@ -1199,8 +1204,12 @@ pub export fn napi_get_node_version(_: napi_env, version: **const napi_node_vers
 }
 pub export fn napi_get_uv_event_loop(env: napi_env, loop: **JSC.EventLoop) napi_status {
     log("napi_get_uv_event_loop", .{});
-    // lol
-    loop.* = env.bunVM().eventLoop();
+    if (bun.Environment.isWindows) {
+        loop.* = @ptrCast(@alignCast(env.bunVM().uvLoop()));
+    } else {
+        // there is no uv event loop on posix, we use our event loop handle.
+        loop.* = env.bunVM().eventLoop();
+    }
     return .ok;
 }
 pub extern fn napi_fatal_exception(env: napi_env, err: napi_value) napi_status;

@@ -54,6 +54,7 @@ const Async = bun.Async;
 
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("../api/bun/x509.zig");
+const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 pub const Response = struct {
     const ResponseMixin = BodyMixin(@This());
@@ -567,7 +568,7 @@ pub const Response = struct {
             }
 
             if (response_init.fastGet(ctx, .statusText)) |status_text| {
-                result.status_text = bun.String.fromJS(status_text, ctx).dupeRef();
+                result.status_text = bun.String.fromJS(status_text, ctx);
             }
 
             if (response_init.fastGet(ctx, .method)) |method_value| {
@@ -1136,7 +1137,7 @@ pub const Fetch = struct {
                         defer BoringSSL.X509_free(x509);
                         const globalObject = this.global_this;
                         const js_cert = X509.toJS(x509, globalObject);
-                        var hostname: bun.String = bun.String.create(certificate_info.hostname);
+                        var hostname: bun.String = bun.String.createUTF8(certificate_info.hostname);
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();
@@ -1205,9 +1206,9 @@ pub const Fetch = struct {
 
             // some times we don't have metadata so we also check http.url
             if (this.metadata) |metadata| {
-                path = bun.String.create(metadata.url);
+                path = bun.String.createUTF8(metadata.url);
             } else if (this.http) |http_| {
-                path = bun.String.create(http_.url.href);
+                path = bun.String.createUTF8(http_.url.href);
             } else {
                 path = bun.String.empty;
             }
@@ -1911,7 +1912,23 @@ pub const Fetch = struct {
                     }
                 } else {
                     method = request.method;
+
+                    if (request.body.value == .Locked) {
+                        if (request.body.value.Locked.readable) |stream| {
+                            if (stream.isDisturbed(globalThis)) {
+                                globalThis.throw("ReadableStream has already been consumed", .{});
+                                if (hostname) |host| {
+                                    allocator.free(host);
+                                    hostname = null;
+                                }
+                                return .zero;
+                            }
+                        }
+                    }
+
+                    // TODO: remove second isDisturbed check in useAsAnyBlob
                     body = request.body.value.useAsAnyBlob();
+
                     if (request.headers) |head| {
                         if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                             if (hostname) |host| {
@@ -1928,6 +1945,7 @@ pub const Fetch = struct {
                 }
             }
         } else if (bun.String.tryFromJS(first_arg, globalThis)) |str| {
+            defer str.deref();
             if (str.isEmpty()) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
                 // clean hostname if any
@@ -2124,24 +2142,55 @@ pub const Fetch = struct {
             const PercentEncoding = @import("../../url.zig").PercentEncoding;
             var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
             var stream = std.io.fixedBufferStream(&path_buf2);
-            const url_path_decoded = path_buf2[0 .. PercentEncoding.decode(
+            var url_path_decoded = path_buf2[0 .. PercentEncoding.decode(
                 @TypeOf(&stream.writer()),
                 &stream.writer(),
                 url.path,
-            ) catch {
-                globalThis.throwOutOfMemory();
+            ) catch |err| {
+                globalThis.throwError(err, "Failed to decode file url");
                 return .zero;
             }];
-            const temp_file_path = bun.path.joinAbsStringBuf(
-                globalThis.bunVM().bundler.fs.top_level_dir,
-                &path_buf,
-                &[_]string{
-                    globalThis.bunVM().main,
-                    "../",
-                    url_path_decoded,
-                },
-                .auto,
-            );
+
+            const temp_file_path = brk: {
+                if (std.fs.path.isAbsolute(url_path_decoded)) {
+                    if (Environment.isWindows) {
+                        // pathname will start with / if is a absolute path on windows, so we remove before normalizing it
+                        if (url_path_decoded[0] == '/') {
+                            url_path_decoded = url_path_decoded[1..];
+                        }
+                        break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf, url_path_decoded) catch |err| {
+                            globalThis.throwError(err, "Failed to resolve file url");
+                            return .zero;
+                        };
+                    }
+                    break :brk url_path_decoded;
+                }
+
+                var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const cwd = if (Environment.isWindows) (std.os.getcwd(&cwd_buf) catch |err| {
+                    globalThis.throwError(err, "Failed to resolve file url");
+                    return .zero;
+                }) else globalThis.bunVM().bundler.fs.top_level_dir;
+
+                const fullpath = bun.path.joinAbsStringBuf(
+                    cwd,
+                    &path_buf,
+                    &[_]string{
+                        globalThis.bunVM().main,
+                        "../",
+                        url_path_decoded,
+                    },
+                    .auto,
+                );
+                if (Environment.isWindows) {
+                    break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf2, fullpath) catch |err| {
+                        globalThis.throwError(err, "Failed to resolve file url");
+                        return .zero;
+                    };
+                }
+                break :brk fullpath;
+            };
+
             var file_url_string = JSC.URL.fileURLFromString(bun.String.fromUTF8(temp_file_path));
             defer file_url_string.deref();
 
@@ -2202,9 +2251,9 @@ pub const Fetch = struct {
 
         if (body.needsToReadFile()) {
             prepare_body: {
-                const opened_fd_res: JSC.Node.Maybe(bun.FileDescriptor) = switch (body.Blob.store.?.data.file.pathlike) {
+                const opened_fd_res: JSC.Maybe(bun.FileDescriptor) = switch (body.Blob.store.?.data.file.pathlike) {
                     .fd => |fd| bun.sys.dup(fd),
-                    .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), std.os.O.RDONLY | std.os.O.NOCTTY, 0),
+                    .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) std.os.O.RDONLY else std.os.O.RDONLY | std.os.O.NOCTTY, 0),
                 };
 
                 const opened_fd = switch (opened_fd_res) {

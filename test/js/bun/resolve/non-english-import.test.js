@@ -75,7 +75,7 @@ test("latin1 & utf16 imports", async () => {
     mkdirSync(prefix, { recursive: true });
   } catch (e) {}
 
-  const entryCode = imports.map(i => `import "${i}";`).join("\n");
+  let entryCode = imports.map(i => `import ${JSON.stringify(i)};`).join("\n");
   await Bun.write(inputPath, entryCode);
 
   for (let importPath of imports) {

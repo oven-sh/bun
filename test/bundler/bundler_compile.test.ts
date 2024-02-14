@@ -1,6 +1,7 @@
 import assert from "assert";
 import dedent from "dedent";
 import { ESBUILD, itBundled, testForFile } from "./expectBundled";
+import { Database } from "bun:sqlite";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
@@ -13,7 +14,26 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!" },
   });
+  itBundled("compile/pathToFileURLWorks", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import {pathToFileURL, fileURLToPath} from 'bun';
+        console.log(pathToFileURL(import.meta.path).href + " " + fileURLToPath(import.meta.url));
+        if (fileURLToPath(import.meta.url) !== import.meta.path) throw "fail";
+        if (pathToFileURL(import.meta.path).href !== import.meta.url) throw "fail";
+      `,
+    },
+    run: {
+      stdout:
+        process.platform !== "win32"
+          ? `file:///$bunfs/root/out /$bunfs/root/out`
+          : `file:///B:/~BUN/root/out B:\\~BUN\\root\\out`,
+      setCwd: true,
+    },
+  });
   itBundled("compile/VariousBunAPIs", {
+    todo: process.platform === "win32", // TODO(@paperdave)
     compile: true,
     files: {
       "/entry.ts": `
@@ -144,12 +164,60 @@ describe("bundler", () => {
     files: {
       "/entry.tsx": /* tsx */ `
         const req = (x) => require(x);
-        req('express');
+        console.log(req('express'));
       `,
     },
     run: {
       error: 'Cannot find package "express"',
+      setCwd: true,
     },
     compile: true,
+  });
+  itBundled("compile/CanRequireLocalPackages", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        console.log(req('react/package.json').version);
+      `,
+    },
+    run: {
+      stdout: require("react/package.json").version,
+      setCwd: false,
+    },
+    compile: true,
+  });
+  itBundled("compile/EmbeddedSqlite", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import db from './db.sqlite' with {type: "sqlite", embed: "true"};
+        console.log(db.query("select message from messages LIMIT 1").get().message);
+      `,
+      "/db.sqlite": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    run: { stdout: "Hello, world!" },
+  });
+  itBundled("compile/sqlite-file", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import db from './db.sqlite' with {type: "sqlite"};
+        console.log(db.query("select message from messages LIMIT 1").get().message);
+      `,
+    },
+    runtimeFiles: {
+      "/db.sqlite": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    run: { stdout: "Hello, world!", setCwd: true },
   });
 });

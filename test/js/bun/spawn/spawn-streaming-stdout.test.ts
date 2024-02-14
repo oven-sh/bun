@@ -1,7 +1,9 @@
+// @known-failing-on-windows: 1 failing
 import { it, test, expect } from "bun:test";
 import { spawn } from "bun";
 import { bunExe, bunEnv, gcTick } from "harness";
 import { closeSync, openSync } from "fs";
+import { devNull } from "os";
 
 test("spawn can read from stdout multiple chunks", async () => {
   gcTick(true);
@@ -34,11 +36,11 @@ test("spawn can read from stdout multiple chunks", async () => {
       await proc.exited;
     })();
     if (maxFD === -1) {
-      maxFD = openSync("/dev/null", "w");
+      maxFD = openSync(devNull, "w");
       closeSync(maxFD);
     }
   }
-  const newMaxFD = openSync("/dev/null", "w");
+  const newMaxFD = openSync(devNull, "w");
   closeSync(newMaxFD);
   expect(newMaxFD).toBe(maxFD);
 }, 60_000);

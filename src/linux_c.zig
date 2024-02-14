@@ -576,6 +576,9 @@ pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
 
 pub const Mode = u32;
 pub const E = std.os.E;
+pub const S = std.os.S;
+
+pub extern "c" fn umask(Mode) Mode;
 
 pub fn getErrno(rc: anytype) E {
     return std.c.getErrno(rc);
@@ -591,5 +594,5 @@ pub const linux_fs = if (bun.Environment.isLinux) @cImport({
 ///
 /// Support for FICLONE is dependent on the filesystem driver.
 pub fn ioctl_ficlone(dest_fd: bun.FileDescriptor, srcfd: bun.FileDescriptor) usize {
-    return std.os.linux.ioctl(@intCast(dest_fd), linux_fs.FICLONE, @intCast(srcfd));
+    return std.os.linux.ioctl(dest_fd.cast(), linux_fs.FICLONE, @intCast(srcfd.int()));
 }

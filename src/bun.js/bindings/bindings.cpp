@@ -843,9 +843,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
 
             return (
-                left->sanitizedNameString(globalObject) == right->sanitizedNameString(globalObject) &&
-                left->sanitizedMessageString(globalObject) == right->sanitizedMessageString(globalObject)
-            );
+                left->sanitizedNameString(globalObject) == right->sanitizedNameString(globalObject) && left->sanitizedMessageString(globalObject) == right->sanitizedMessageString(globalObject));
         }
     }
     case Int8ArrayType:
@@ -1059,23 +1057,13 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSC::Structure* o2Structure = o2->structure();
         if (!o2Structure->hasNonReifiedStaticProperties() && o2Structure->canPerformFastPropertyEnumeration()) {
 
-            size_t count1 = 0;
-
             bool result = true;
-            if constexpr (isStrict) {
-                if (o2Structure->inlineSize() + o2Structure->outOfLineSize() != o1Structure->inlineSize() + o1Structure->outOfLineSize()) {
-                    return false;
-                }
-            }
-
             bool sameStructure = o2Structure->id() == o1Structure->id();
-
             if (sameStructure) {
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
                     }
-                    count1++;
 
                     JSValue left = o1->getDirect(entry.offset());
                     JSValue right = o2->getDirect(entry.offset());
@@ -1103,11 +1091,12 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     return true;
                 });
             } else {
+                size_t count = 0;
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
                     }
-                    count1++;
+                    count++;
 
                     JSValue left = o1->getDirect(entry.offset());
                     JSValue right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
@@ -1136,7 +1125,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 });
 
                 if (result) {
-                    size_t remain = count1;
+                    size_t remain = count;
                     o2Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                         if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                             return true;
@@ -1170,13 +1159,17 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     o2->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(*scope, false);
 
-    const size_t propertyArrayLength = a1.size();
-    if (propertyArrayLength != a2.size()) {
-        return false;
+    const size_t propertyArrayLength1 = a1.size();
+    const size_t propertyArrayLength2 = a2.size();
+    if constexpr (isStrict) {
+        if (propertyArrayLength1 != propertyArrayLength2) {
+            return false;
+        }
     }
 
     // take a property name from one, try to get it from both
-    for (size_t i = 0; i < propertyArrayLength; i++) {
+    size_t i;
+    for (i = 0; i < propertyArrayLength1; i++) {
         Identifier i1 = a1[i];
         PropertyName propertyName1 = PropertyName(i1);
 
@@ -1205,6 +1198,19 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         RETURN_IF_EXCEPTION(*scope, false);
+    }
+
+    // for the remaining properties in the other object, make sure they are undefined
+    for (; i < propertyArrayLength2; i++) {
+        Identifier i2 = a2[i];
+        PropertyName propertyName2 = PropertyName(i2);
+
+        JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName2);
+        RETURN_IF_EXCEPTION(*scope, false);
+
+        if (!prop2.isUndefined()) {
+            return false;
+        }
     }
 
     return true;
@@ -1507,7 +1513,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, void* arg1)
 {
     uWS::HttpRequest req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
-    size_t i = 0;
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
@@ -1517,8 +1522,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
     for (const auto& header : req) {
         StringView nameView = StringView(reinterpret_cast<const LChar*>(header.first.data()), header.first.length());
         size_t name_len = nameView.length();
-
         LChar* data = nullptr;
+
         auto value = String::createUninitialized(header.second.length(), data);
         memcpy(data, header.second.data(), header.second.length());
 
@@ -1529,11 +1534,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
         } else {
             map.setUncommonHeader(nameView.toString().isolatedCopy(), WTFMove(value));
         }
-
-        // seenHeaderSizes[name_len] = true;
-
-        if (i > 56)
-            __builtin_unreachable();
     }
     headers->setInternalHeaders(WTFMove(map));
     return headers;
@@ -1726,7 +1726,7 @@ JSC__JSValue
 JSC__JSObject__create(JSC__JSGlobalObject* globalObject, size_t initialCapacity, void* arg2,
     void (*ArgFn3)(void* arg0, JSC__JSObject* arg1, JSC__JSGlobalObject* arg2))
 {
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity);
+    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned>(initialCapacity), JSFinalObject::maxInlineCapacity));
 
     ArgFn3(arg2, object, globalObject);
 
@@ -2454,7 +2454,7 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
     JSC::JSObject* object = nullptr;
     {
         JSC::ObjectInitializationScope initializationScope(vm);
-        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity);
+        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity));
 
         if (!clone) {
             for (size_t i = 0; i < initialCapacity; ++i) {
@@ -2473,8 +2473,8 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
     return JSC::JSValue::encode(object);
 }
 
-
-JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue objectValue) {
+JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue objectValue)
+{
     JSC::VM& vm = globalObject->vm();
 
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2482,16 +2482,15 @@ JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue 
     JSC::JSObject* object = JSC::JSValue::decode(objectValue).toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    RELEASE_AND_RETURN(scope,  JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
 }
 
-bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key) {
+bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key)
+{
     JSC::VM& vm = globalObject->vm();
 
-    
     JSC::JSValue value = JSC::JSValue::decode(jsValue);
     return value.toObject(globalObject)->hasOwnProperty(globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(key))));
-
 }
 
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
@@ -3317,6 +3316,10 @@ JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
 }
+JSC__JSValue JSC__JSValue__jsEmptyString(JSC__JSGlobalObject* arg0)
+{
+    return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));
+};
 JSC__JSValue JSC__JSValue__jsNull() { return JSC::JSValue::encode(JSC::jsNull()); };
 JSC__JSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0)
 {
@@ -3413,7 +3416,7 @@ JSC__JSValue JSC__JSValue__fromTimevalNoTruncate(JSC__JSGlobalObject* globalObje
     auto big_nsec = JSC::JSBigInt::createFrom(globalObject, nsec);
     auto big_sec = JSC::JSBigInt::createFrom(globalObject, sec);
     auto big_1e6 = JSC::JSBigInt::createFrom(globalObject, 1e6);
-    auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject,  big_1e6, big_sec);
+    auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject, big_1e6, big_sec);
     ASSERT(sec_as_nsec.isHeapBigInt());
     auto* big_sec_as_nsec = sec_as_nsec.asHeapBigInt();
     ASSERT(big_sec_as_nsec);
@@ -4823,10 +4826,6 @@ restart:
             visitedProperties.append(Identifier::fromUid(vm, prop));
 
             ZigString key = toZigString(prop);
-
-            if (key.len == 0)
-                return true;
-
             JSC::JSValue propertyValue = JSValue();
 
             if (objectToUse == object) {
@@ -5355,4 +5354,9 @@ extern "C" EncodedJSValue Expect__getPrototype(JSC::JSGlobalObject* globalObject
 extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* globalObject)
 {
     return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
+}
+
+extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
+{
+    return DECLARE_CATCH_SCOPE(globalObject->vm()).exception() != 0;
 }

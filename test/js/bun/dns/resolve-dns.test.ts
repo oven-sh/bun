@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { dns } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
@@ -5,7 +6,7 @@ import { isIP, isIPv4, isIPv6 } from "node:net";
 
 const backends = ["system", "libc", "c-ares"];
 const validHostnames = ["localhost", "example.com"];
-const invalidHostnames = [`this-should-not-exist-${Math.floor(Math.random() * 99999)}.com`];
+const invalidHostnames = ["adsfa.asdfasdf.asdf.com"]; // known invalid
 const malformedHostnames = ["", " ", ".", " .", "localhost:80", "this is not a hostname"];
 
 describe("dns", () => {

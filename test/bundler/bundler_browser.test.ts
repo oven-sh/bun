@@ -57,6 +57,20 @@ describe("bundler", () => {
       stdout: "function\nfunction\nundefined",
     },
   });
+  itBundled("browser/NodeTTY", {
+    files: {
+      "/entry.js": /* js */ `
+        import { isatty, ReadStream, WriteStream } from "node:tty";
+        console.log(typeof ReadStream);
+        console.log(typeof WriteStream);
+        console.log(isatty(0));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "function\nfunction\nfalse",
+    },
+  });
   // TODO: use nodePolyfillList to generate the code in here.
   const NodePolyfills = itBundled("browser/NodePolyfills", {
     files: {
@@ -307,7 +321,6 @@ describe("bundler", () => {
     },
   });
   itBundled("browser/TargetNodeNonExistentBuiltinShouldBeExternal", {
-    skipOnEsbuild: true,
     files: {
       "/entry.js": `
         import net1 from "node:net1";
@@ -316,7 +329,7 @@ describe("bundler", () => {
     target: "node",
     onAfterBundle(api) {
       const contents = api.readFile("out.js");
-      expect(contents).toContain('from "node:net1"');
+      expect(contents).toBe("");
     },
   });
 });

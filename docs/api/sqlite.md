@@ -57,6 +57,23 @@ import { Database } from "bun:sqlite";
 const db = new Database("mydb.sqlite", { create: true });
 ```
 
+### Load via ES module import
+
+You can also use an import attribute to load a database.
+
+```ts
+import db from "./mydb.sqlite" with {"type": "sqlite"};
+
+console.log(db.query("select * from users LIMIT 1").get());
+```
+
+This is equivalent to the following:
+
+```ts
+import { Database } from "bun:sqlite";
+const db = new Database("./mydb.sqlite");
+```
+
 ### `.close()`
 
 To close a database:

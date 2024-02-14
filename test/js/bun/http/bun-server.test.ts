@@ -411,4 +411,24 @@ describe("Server", () => {
       server.stop(true);
     }
   });
+
+  test("rejected promise handled by error method should not be logged", async () => {
+    const { stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), path.join("rejected-promise-fixture.js")],
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    expect(stderr).toBeEmpty();
+    expect(exitCode).toBe(0);
+  });
+});
+
+// By not timing out, this test passes.
+test("Bun.serve().unref() works", async () => {
+  expect([path.join(import.meta.dir, "unref-fixture.ts")]).toRun();
+});
+
+test("unref keeps process alive for ongoing connections", async () => {
+  expect([path.join(import.meta.dir, "unref-fixture-2.ts")]).toRun();
 });

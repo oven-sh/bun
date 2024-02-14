@@ -27,7 +27,18 @@ pub const IteratorResult = struct {
 const Result = Maybe(?IteratorResult);
 
 const IteratorResultW = struct {
-    name: []const u16,
+    // fake PathString to have less `if (Environment.isWindows) ...`
+    name: struct {
+        data: [:0]const u16,
+
+        pub fn slice(this: @This()) []const u16 {
+            return this.data;
+        }
+
+        pub fn sliceAssumeZ(this: @This()) [:0]const u16 {
+            return this.data;
+        }
+    },
     kind: Entry.Kind,
 };
 const ResultW = Maybe(?IteratorResultW);
@@ -50,9 +61,13 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
             pub const Error = IteratorError;
 
+            fn fd(self: *Self) os.fd_t {
+                return self.dir.fd;
+            }
+
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-            const next = switch (builtin.os.tag) {
+            pub const next = switch (builtin.os.tag) {
                 .macos, .ios => nextDarwin,
                 // .freebsd, .netbsd, .dragonfly, .openbsd => nextBsd,
                 // .solaris => nextSolaris,
@@ -123,6 +138,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
             pub const Error = IteratorError;
 
+            fn fd(self: *Self) os.fd_t {
+                return self.dir.fd;
+            }
+
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
             pub fn next(self: *Self) Result {
@@ -166,17 +185,21 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
         },
         .windows => struct {
             dir: Dir,
-            buf: [8192]u8 align(@alignOf(os.windows.FILE_BOTH_DIR_INFORMATION)),
+            buf: [8192]u8 align(@alignOf(os.windows.FILE_DIRECTORY_INFORMATION)),
             index: usize,
             end_index: usize,
             first: bool,
-            name_data: [256]u8,
+            name_data: if (use_windows_ospath) [257]u16 else [513]u8,
 
             const Self = @This();
 
             pub const Error = IteratorError;
 
             const ResultT = if (use_windows_ospath) ResultW else Result;
+
+            fn fd(self: *Self) os.fd_t {
+                return self.dir.fd;
+            }
 
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
@@ -194,17 +217,22 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             &io,
                             &self.buf,
                             self.buf.len,
-                            .FileBothDirectoryInformation,
+                            .FileDirectoryInformation,
                             w.FALSE,
                             null,
                             if (self.first) @as(w.BOOLEAN, w.TRUE) else @as(w.BOOLEAN, w.FALSE),
                         );
+
                         self.first = false;
-                        if (io.Information == 0) return .{ .result = null };
+                        if (io.Information == 0) {
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = 0", .{bun.toFD(self.dir.fd)});
+                            return .{ .result = null };
+                        }
                         self.index = 0;
                         self.end_index = io.Information;
                         // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
                         if (rc == .INVALID_PARAMETER) {
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.toFD(self.dir.fd), @tagName(rc) });
                             return .{
                                 .err = .{
                                     .errno = @intFromEnum(bun.C.SystemErrno.ENOTDIR),
@@ -214,11 +242,14 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         }
 
                         if (rc == .NO_MORE_FILES) {
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.toFD(self.dir.fd), @tagName(rc) });
                             self.end_index = self.index;
                             return .{ .result = null };
                         }
 
                         if (rc != .SUCCESS) {
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.toFD(self.dir.fd), @tagName(rc) });
+
                             if ((bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno())) |errno| {
                                 return .{
                                     .err = .{
@@ -235,37 +266,49 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                                 },
                             };
                         }
+
+                        bun.sys.syslog("NtQueryDirectoryFile({}) = {d}", .{ bun.toFD(self.dir.fd), self.end_index });
                     }
 
-                    const dir_info: *w.FILE_BOTH_DIR_INFORMATION = @ptrCast(@alignCast(&self.buf[self.index]));
+                    const dir_info: *w.FILE_DIRECTORY_INFORMATION = @ptrCast(@alignCast(&self.buf[self.index]));
                     if (dir_info.NextEntryOffset != 0) {
                         self.index += dir_info.NextEntryOffset;
                     } else {
                         self.index = self.buf.len;
                     }
 
-                    const name_utf16le = @as([*]u16, @ptrCast(&dir_info.FileName))[0 .. dir_info.FileNameLength / 2];
+                    const dir_info_name = @as([*]const u16, @ptrCast(&dir_info.FileName))[0 .. dir_info.FileNameLength / 2];
+
+                    if (mem.eql(u16, dir_info_name, &[_]u16{'.'}) or mem.eql(u16, dir_info_name, &[_]u16{ '.', '.' }))
+                        continue;
 
                     const kind = blk: {
                         const attrs = dir_info.FileAttributes;
-                        if (attrs & w.FILE_ATTRIBUTE_DIRECTORY != 0) break :blk Entry.Kind.directory;
-                        if (attrs & w.FILE_ATTRIBUTE_REPARSE_POINT != 0) break :blk Entry.Kind.sym_link;
+                        const isdir = attrs & w.FILE_ATTRIBUTE_DIRECTORY != 0;
+                        const islink = attrs & w.FILE_ATTRIBUTE_REPARSE_POINT != 0;
+                        // on windows symlinks can be directories, too. We prioritize the
+                        // "sym_link" kind over the "directory" kind
+                        if (islink) break :blk Entry.Kind.sym_link;
+                        if (isdir) break :blk Entry.Kind.directory;
                         break :blk Entry.Kind.file;
                     };
 
                     if (use_windows_ospath) {
+                        const length = dir_info.FileNameLength / 2;
+                        @memcpy(self.name_data[0..length], @as([*]u16, @ptrCast(&dir_info.FileName))[0..length]);
+                        self.name_data[length] = 0;
+                        const name_utf16le = self.name_data[0..length :0];
+
                         return .{
                             .result = IteratorResultW{
                                 .kind = kind,
-                                .name = name_utf16le,
+                                .name = .{ .data = name_utf16le },
                             },
                         };
                     }
 
-                    if (mem.eql(u16, name_utf16le, &[_]u16{'.'}) or mem.eql(u16, name_utf16le, &[_]u16{ '.', '.' }))
-                        continue;
                     // Trust that Windows gives us valid UTF-16LE
-                    const name_utf8 = strings.fromWPath(self.name_data[0..], name_utf16le);
+                    const name_utf8 = strings.fromWPath(self.name_data[0..], dir_info_name);
 
                     return .{
                         .result = IteratorResult{
@@ -286,6 +329,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             const Self = @This();
 
             pub const Error = IteratorError;
+
+            fn fd(self: *Self) os.fd_t {
+                return self.dir.fd;
+            }
 
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
@@ -344,60 +391,73 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
     };
 }
 
-pub const WrappedIterator = struct {
-    iter: Iterator,
-    const Self = @This();
+const PathType = enum { u8, u16 };
 
-    pub const Error = IteratorError;
+pub fn NewWrappedIterator(comptime path_type: PathType) type {
+    const IteratorType = if (path_type == .u16) IteratorW else Iterator;
+    const ResultType = if (path_type == .u16) ResultW else Result;
+    return struct {
+        iter: IteratorType,
+        const Self = @This();
 
-    pub inline fn next(self: *Self) Result {
-        return self.iter.next();
-    }
-};
+        pub inline fn next(self: *Self) ResultType {
+            return self.iter.next();
+        }
 
-pub fn iterate(self: Dir) WrappedIterator {
-    return WrappedIterator{
-        .iter = _iterate(self),
+        pub inline fn fd(self: *Self) os.fd_t {
+            return self.iter.fd();
+        }
+
+        pub const Error = IteratorError;
+
+        pub fn init(dir: Dir) Self {
+            return Self{
+                .iter = switch (builtin.os.tag) {
+                    .macos,
+                    .ios,
+                    .freebsd,
+                    .netbsd,
+                    .dragonfly,
+                    .openbsd,
+                    .solaris,
+                    => IteratorType{
+                        .dir = dir,
+                        .seek = 0,
+                        .index = 0,
+                        .end_index = 0,
+                        .buf = undefined,
+                    },
+                    .linux, .haiku => IteratorType{
+                        .dir = dir,
+                        .index = 0,
+                        .end_index = 0,
+                        .buf = undefined,
+                    },
+                    .windows => IteratorType{
+                        .dir = dir,
+                        .index = 0,
+                        .end_index = 0,
+                        .first = true,
+                        .buf = undefined,
+                        .name_data = undefined,
+                    },
+                    .wasi => IteratorType{
+                        .dir = dir,
+                        .cookie = os.wasi.DIRCOOKIE_START,
+                        .index = 0,
+                        .end_index = 0,
+                        .buf = undefined,
+                    },
+                    else => @compileError("unimplemented"),
+                },
+            };
+        }
     };
 }
 
-fn _iterate(self: Dir) Iterator {
-    switch (builtin.os.tag) {
-        .macos,
-        .ios,
-        .freebsd,
-        .netbsd,
-        .dragonfly,
-        .openbsd,
-        .solaris,
-        => return Iterator{
-            .dir = self,
-            .seek = 0,
-            .index = 0,
-            .end_index = 0,
-            .buf = undefined,
-        },
-        .linux, .haiku => return Iterator{
-            .dir = self,
-            .index = 0,
-            .end_index = 0,
-            .buf = undefined,
-        },
-        .windows => return Iterator{
-            .dir = self,
-            .index = 0,
-            .end_index = 0,
-            .first = true,
-            .buf = undefined,
-            .name_data = undefined,
-        },
-        .wasi => return Iterator{
-            .dir = self,
-            .cookie = os.wasi.DIRCOOKIE_START,
-            .index = 0,
-            .end_index = 0,
-            .buf = undefined,
-        },
-        else => @compileError("unimplemented"),
-    }
+pub const WrappedIterator = NewWrappedIterator(.u8);
+pub const WrappedIteratorW = NewWrappedIterator(.u16);
+
+pub fn iterate(self: Dir, comptime path_type: PathType) NewWrappedIterator(path_type) {
+    return NewWrappedIterator(path_type).init(self);
 }

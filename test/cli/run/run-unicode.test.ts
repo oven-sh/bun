@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 test("running a weird filename works", async () => {
-  const troll = "💥'\"​\n";
+  const troll = process.platform == "win32" ? "💥'​\\" : "💥'\"​\n";
   const dir = join(realpathSync(tmpdir()), "bun-run-test" + troll);
   mkdirSync(dir, { recursive: true });
   console.log("dir", dir);

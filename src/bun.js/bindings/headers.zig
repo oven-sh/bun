@@ -276,6 +276,7 @@ pub extern fn JSC__JSValue__jestDeepMatch(JSValue0: JSC__JSValue, JSValue1: JSC_
 pub extern fn JSC__JSValue__jestStrictDeepEquals(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__jsBoolean(arg0: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__jsDoubleNumber(arg0: f64) JSC__JSValue;
+pub extern fn JSC__JSValue__jsEmptyString(arg0: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNull(...) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromChar(arg0: u8) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromDouble(arg0: f64) JSC__JSValue;
@@ -385,4 +386,10 @@ pub extern fn FileSink__detachPtr(JSValue0: JSC__JSValue) void;
 pub extern fn FileSink__fromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*anyopaque;
 pub extern fn FileSink__onClose(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) void;
 pub extern fn FileSink__onReady(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue) void;
+pub extern fn UVStreamSink__assignToStream(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue, arg2: ?*anyopaque, arg3: [*c]*anyopaque) JSC__JSValue;
+pub extern fn UVStreamSink__createObject(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque) JSC__JSValue;
+pub extern fn UVStreamSink__detachPtr(JSValue0: JSC__JSValue) void;
+pub extern fn UVStreamSink__fromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*anyopaque;
+pub extern fn UVStreamSink__onClose(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) void;
+pub extern fn UVStreamSink__onReady(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue) void;
 pub extern fn ZigException__fromException(arg0: [*c]bindings.Exception) ZigException;

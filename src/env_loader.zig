@@ -46,14 +46,14 @@ pub const Loader = struct {
     reject_unauthorized: ?bool = null,
 
     pub fn has(this: *const Loader, input: []const u8) bool {
-        const value = this.map.get(input) orelse return false;
+        const value = this.get(input) orelse return false;
         if (value.len == 0) return false;
 
         return !strings.eqlComptime(value, "\"\"") and !strings.eqlComptime(value, "''") and !strings.eqlComptime(value, "0") and !strings.eqlComptime(value, "false");
     }
 
     pub fn isProduction(this: *const Loader) bool {
-        const env = this.map.get("BUN_ENV") orelse this.map.get("NODE_ENV") orelse return false;
+        const env = this.get("BUN_ENV") orelse this.get("NODE_ENV") orelse return false;
         return strings.eqlComptime(env, "production");
     }
 
@@ -64,7 +64,7 @@ pub const Loader = struct {
             return buf[0..node.len :0];
         }
 
-        if (which(buf, this.map.get("PATH") orelse return null, fs.top_level_dir, "node")) |node| {
+        if (which(buf, this.get("PATH") orelse return null, fs.top_level_dir, "node")) |node| {
             return node;
         }
 
@@ -72,10 +72,10 @@ pub const Loader = struct {
     }
 
     pub fn isCI(this: *const Loader) bool {
-        return (this.map.get("CI") orelse
-            this.map.get("TDDIUM") orelse
-            this.map.get("JENKINS_URL") orelse
-            this.map.get("bamboo.buildKey")) != null;
+        return (this.get("CI") orelse
+            this.get("TDDIUM") orelse
+            this.get("JENKINS_URL") orelse
+            this.get("bamboo.buildKey")) != null;
     }
 
     pub fn loadTracy(this: *const Loader) void {
@@ -106,7 +106,7 @@ pub const Loader = struct {
         if (this.reject_unauthorized) |reject_unauthorized| {
             return reject_unauthorized;
         }
-        if (this.map.get("NODE_TLS_REJECT_UNAUTHORIZED")) |reject| {
+        if (this.get("NODE_TLS_REJECT_UNAUTHORIZED")) |reject| {
             if (strings.eql(reject, "0")) {
                 this.reject_unauthorized = false;
                 return false;
@@ -126,13 +126,13 @@ pub const Loader = struct {
         var http_proxy: ?URL = null;
 
         if (url.isHTTP()) {
-            if (this.map.get("http_proxy") orelse this.map.get("HTTP_PROXY")) |proxy| {
+            if (this.get("http_proxy") orelse this.get("HTTP_PROXY")) |proxy| {
                 if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
                     http_proxy = URL.parse(proxy);
                 }
             }
         } else {
-            if (this.map.get("https_proxy") orelse this.map.get("HTTPS_PROXY")) |proxy| {
+            if (this.get("https_proxy") orelse this.get("HTTPS_PROXY")) |proxy| {
                 if (proxy.len > 0 and !strings.eqlComptime(proxy, "\"\"") and !strings.eqlComptime(proxy, "''")) {
                     http_proxy = URL.parse(proxy);
                 }
@@ -142,7 +142,7 @@ pub const Loader = struct {
         // NO_PROXY filter
         // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
         if (http_proxy != null) {
-            if (this.map.get("no_proxy") orelse this.map.get("NO_PROXY")) |no_proxy_text| {
+            if (this.get("no_proxy") orelse this.get("NO_PROXY")) |no_proxy_text| {
                 if (no_proxy_text.len == 0 or strings.eqlComptime(no_proxy_text, "\"\"") or strings.eqlComptime(no_proxy_text, "''")) {
                     return http_proxy;
                 }
@@ -186,7 +186,7 @@ pub const Loader = struct {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const ccache_path = bun.which(
             &buf,
-            this.map.get("PATH") orelse return,
+            this.get("PATH") orelse return,
             fs.top_level_dir,
             "ccache",
         ) orelse "";
@@ -440,9 +440,9 @@ pub const Loader = struct {
         }
         this.did_load_process = true;
 
-        if (this.map.get(bun.DotEnv.home_env)) |home_folder| {
+        if (this.get(bun.DotEnv.home_env)) |home_folder| {
             Analytics.username_only_for_determining_project_id_and_never_sent = home_folder;
-        } else if (this.map.get("USER")) |home_folder| {
+        } else if (this.get("USER")) |home_folder| {
             Analytics.username_only_for_determining_project_id_and_never_sent = home_folder;
         }
     }
@@ -1179,13 +1179,6 @@ pub const Map = struct {
     }
 
     pub inline fn get(
-        this: *const Map,
-        key: string,
-    ) ?string {
-        return if (this.map.get(key)) |entry| entry.value else null;
-    }
-
-    pub fn get_(
         this: *const Map,
         key: string,
     ) ?string {

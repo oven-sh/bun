@@ -3,6 +3,7 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { bunEnv, bunExe, nodeExe } from "harness";
 import { Server, WebSocket, WebSocketServer } from "ws";
+import path from "node:path";
 
 const strings = [
   {
@@ -20,7 +21,7 @@ const strings = [
     message: "utf8-😶",
     bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x98, 0xb6],
   },
-];
+] as const;
 
 const buffers = [
   {
@@ -38,9 +39,9 @@ const buffers = [
     message: Buffer.from("utf8-🤩"),
     bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0xa4, 0xa9],
   },
-];
+] as const;
 
-const messages = [...strings, ...buffers];
+const messages = [...strings, ...buffers] as const;
 
 const binaryTypes = [
   {
@@ -361,7 +362,7 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
 }
 
 async function listen(): Promise<URL> {
-  const { pathname } = new URL("../../web/websocket/websocket-server-echo.mjs", import.meta.url);
+  const pathname = path.resolve(import.meta.dir, "../../web/websocket/websocket-server-echo.mjs");
   const server = spawn({
     cmd: [nodeExe() ?? bunExe(), pathname],
     cwd: import.meta.dir,

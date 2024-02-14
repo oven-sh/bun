@@ -169,10 +169,11 @@ void PendingVirtualModuleResult::visitChildrenImpl(JSCell* cell, Visitor& visito
 
 DEFINE_VISIT_CHILDREN(PendingVirtualModuleResult);
 
-PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer)
+PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer, bool wasModuleLock)
 {
     auto* virtualModule = create(globalObject->vm(), reinterpret_cast<Zig::GlobalObject*>(globalObject)->pendingVirtualModuleResultStructure());
     virtualModule->finishCreation(globalObject->vm(), specifier, referrer);
+    virtualModule->wasModuleMock = wasModuleLock;
     return virtualModule;
 }
 
@@ -363,7 +364,7 @@ static JSValue handleVirtualModuleResult(
         ASSERT(callData.type != CallData::Type::None);
         auto specifierString = specifier->toWTFString(BunString::ZeroCopy);
         auto referrerString = referrer->toWTFString(BunString::ZeroCopy);
-        PendingVirtualModuleResult* pendingModule = PendingVirtualModuleResult::create(globalObject, specifierString, referrerString);
+        PendingVirtualModuleResult* pendingModule = PendingVirtualModuleResult::create(globalObject, specifierString, referrerString, wasModuleMock);
         JSC::JSInternalPromise* internalPromise = pendingModule->internalPromise();
         MarkedArgumentBuffer arguments;
         arguments.append(promise);
@@ -423,7 +424,8 @@ JSValue fetchCommonJSModule(
     JSCommonJSModule* target,
     JSValue specifierValue,
     BunString* specifier,
-    BunString* referrer)
+    BunString* referrer,
+    BunString* typeAttribute)
 {
     void* bunVM = globalObject->bunVM();
     auto& vm = globalObject->vm();
@@ -539,8 +541,7 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    auto* loader = globalObject->moduleLoader();
-    JSMap* registry = jsCast<JSMap*>(loader->getDirect(vm, Identifier::fromString(vm, "registry"_s)));
+    JSMap* registry = globalObject->esmRegistryMap();
 
     auto hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
         JSValue entry = registry->get(globalObject, specifierValue);
@@ -557,7 +558,7 @@ JSValue fetchCommonJSModule(
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
 
-    Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
+    Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false);
 
     if (res->success && res->result.value.commonJSExportsLen) {
         target->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), res->result.value);
@@ -606,7 +607,8 @@ static JSValue fetchESMSourceCode(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
     BunString* specifier,
-    BunString* referrer)
+    BunString* referrer,
+    BunString* typeAttribute)
 {
     void* bunVM = globalObject->bunVM();
     auto& vm = globalObject->vm();
@@ -708,12 +710,12 @@ static JSValue fetchESMSourceCode(
     }
 
     if constexpr (allowPromise) {
-        void* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, true);
+        void* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true);
         if (pendingCtx) {
             return reinterpret_cast<JSC::JSInternalPromise*>(pendingCtx);
         }
     } else {
-        Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
+        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false);
     }
 
     if (res->success && res->result.value.commonJSExportsLen) {
@@ -833,17 +835,19 @@ JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
     BunString* specifier,
-    BunString* referrer)
+    BunString* referrer,
+    BunString* typeAttribute)
 {
-    return fetchESMSourceCode<false>(globalObject, res, specifier, referrer);
+    return fetchESMSourceCode<false>(globalObject, res, specifier, referrer, typeAttribute);
 }
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
     ErrorableResolvedSource* res,
     BunString* specifier,
-    BunString* referrer)
+    BunString* referrer,
+    BunString* typeAttribute)
 {
-    return fetchESMSourceCode<true>(globalObject, res, specifier, referrer);
+    return fetchESMSourceCode<true>(globalObject, res, specifier, referrer, typeAttribute);
 }
 }

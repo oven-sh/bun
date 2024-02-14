@@ -4,12 +4,12 @@ If you are using Windows, you must use a WSL environment as Bun does not yet com
 
 ## Install Dependencies
 
-Using your system's package manager, install the Bun's dependencies:
+Using your system's package manager, install Bun's dependencies:
 
 {% codetabs %}
 
 ```bash#macOS (Homebrew)
-$ brew install automake ccache cmake coreutils gnu-sed go libiconv libtool ninja pkg-config rust
+$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby
 ```
 
 ```bash#Ubuntu/Debian
@@ -21,7 +21,7 @@ $ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-
 ```
 
 ```bash#Fedora
-$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc libatomic-static libstdc++-static sed unzip which libicu-devel
+$ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 {% /codetabs %}
@@ -104,6 +104,8 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 ```
 
 {% /codetabs %}
+
+> ⚠️ Ubuntu distributions may require installation of the C++ standard library independently. See the [troubleshooting section](#span-file-not-found-on-ubuntu) for more information.
 
 ## Building Bun
 
@@ -250,6 +252,16 @@ Bun relies on C++20 features like `std::span`, which are not available in GCC ve
 fatal error: 'span' file not found
 #include <span>
          ^~~~~~
+```
+
+The issue may manifest when initially running `bun setup` as Clang being unable to compile a simple program:
+
+```
+The C++ compiler
+
+  "/usr/bin/clang++-16"
+
+is not able to compile a simple test program.
 ```
 
 To fix the error, we need to update the GCC version to 11. To do this, we'll need to check if the latest version is available in the distribution's official repositories or use a third-party repository that provides GCC 11 packages. Here are general steps:

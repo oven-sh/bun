@@ -29,6 +29,7 @@
  * different value. In that case, it will have a stale value.
  */
 
+#include "headers.h"
 #include "root.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
@@ -65,8 +66,9 @@
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
+#include "PathInlines.h"
 
-extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const char* input_ptr, uint64_t input_len);
+extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
 
 namespace Bun {
 using namespace JSC;
@@ -304,7 +306,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterPath, (JSC::JSGlobalObject * globalObject, JSC::E
     if (UNLIKELY(!thisObject)) {
         return JSValue::encode(jsUndefined());
     }
-    return JSValue::encode(thisObject->m_id.get());
+    return JSValue::encode(thisObject->m_dirname.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
@@ -321,8 +323,9 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     // dont need `module.parent` and creating commonjs module records is done a ton.
     auto idValue = thisObject->m_id.get();
     if (idValue) {
-        auto id = idValue->value(globalObject).utf8();
-        if (Bun__isBunMain(globalObject, id.data(), id.length())) {
+        auto id = idValue->value(globalObject);
+        auto idStr = Bun::toString(id);
+        if (Bun__isBunMain(globalObject, &idStr)) {
             thisObject->m_parent.set(globalObject->vm(), thisObject, jsNull());
             return JSValue::encode(jsNull());
         }
@@ -340,7 +343,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterPath,
     if (!thisObject)
         return false;
 
-    thisObject->m_id.set(globalObject->vm(), thisObject, JSValue::decode(value).toString(globalObject));
+    thisObject->m_dirname.set(globalObject->vm(), thisObject, JSValue::decode(value).toString(globalObject));
     return true;
 }
 
@@ -467,7 +470,10 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     JSSourceCode* jsSourceCode = JSSourceCode::create(vm, WTFMove(sourceCode));
     moduleObject->sourceCode.set(vm, moduleObject, jsSourceCode);
 
-    auto index = filenameString.reverseFind('/', filenameString.length());
+    auto index = filenameString.reverseFind(PLATFORM_SEP, filenameString.length());
+    // filenameString is coming from js, any separator could be used
+    if (index == WTF::notFound)
+        index = filenameString.reverseFind(NOT_PLATFORM_SEP, filenameString.length());
     String dirnameString;
     if (index != WTF::notFound) {
         dirnameString = filenameString.substring(0, index);
@@ -619,10 +625,14 @@ JSCommonJSModule* JSCommonJSModule::create(
 {
     auto& vm = globalObject->vm();
     JSString* requireMapKey = JSC::jsStringWithCache(vm, key);
-    auto index = key.reverseFind('/', key.length());
-    JSString* dirname = jsEmptyString(vm);
+
+    auto index = key.reverseFind(PLATFORM_SEP, key.length());
+
+    JSString* dirname;
     if (index != WTF::notFound) {
         dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+    } else {
+        dirname = jsEmptyString(vm);
     }
 
     auto* out = JSCommonJSModule::create(
@@ -661,7 +671,7 @@ bool JSCommonJSModule::evaluate(
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     generator(globalObject, JSC::Identifier::fromString(vm, key), propertyNames, arguments);
     RETURN_IF_EXCEPTION(throwScope, false);
-    // This goes off of the assumption that you only call this `evaluate` using a generator that explicity
+    // This goes off of the assumption that you only call this `evaluate` using a generator that explicitly
     // assigns the `default` export first.
     JSValue defaultValue = arguments.at(0);
     this->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), defaultValue, 0);
@@ -913,13 +923,38 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
     BunString specifierStr = Bun::toString(specifier);
     BunString referrerStr = Bun::toString(referrer);
+    BunString typeAttributeStr = { BunStringTag::Dead };
+    String typeAttribute = String();
+
+    // We need to be able to wire in the "type" import attribute from bundled code..
+    // so we do it via CommonJS require().
+    int32_t previousArgumentCount = callframe->argument(2).asInt32();
+    // If they called require(id), skip the check for the type attribute
+    if (UNLIKELY(previousArgumentCount == 2)) {
+        JSValue val = callframe->argument(3);
+        if (val.isObject()) {
+            JSObject* obj = val.getObject();
+            // This getter is expensive and rare.
+            if (auto typeValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->type)) {
+                if (typeValue.isString()) {
+                    typeAttribute = typeValue.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    typeAttributeStr = Bun::toString(typeAttribute);
+                }
+            }
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+    }
 
     JSValue fetchResult = Bun::fetchCommonJSModule(
         globalObject,
         jsCast<JSCommonJSModule*>(callframe->argument(1)),
         specifierValue,
         &specifierStr,
-        &referrerStr);
+        &referrerStr,
+        LIKELY(typeAttribute.isEmpty())
+            ? nullptr
+            : &typeAttributeStr);
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(fetchResult));
 }
@@ -991,11 +1026,13 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     if (!moduleObject) {
         auto& vm = globalObject->vm();
         auto* requireMapKey = jsStringWithCache(vm, sourceURL);
-        auto index = sourceURL.reverseFind('/', sourceURL.length());
-        JSString* dirname = jsEmptyString(vm);
+        auto index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
+        JSString* dirname;
         JSString* filename = requireMapKey;
         if (index != WTF::notFound) {
             dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+        } else {
+            dirname = jsEmptyString(vm);
         }
 
         moduleObject = JSCommonJSModule::create(
@@ -1061,10 +1098,12 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     JSString* filename = JSC::jsStringWithCache(vm, pathString);
-    auto index = pathString.reverseFind('/', pathString.length());
-    JSString* dirname = jsEmptyString(vm);
+    auto index = pathString.reverseFind(PLATFORM_SEP, pathString.length());
+    JSString* dirname;
     if (index != WTF::notFound) {
         dirname = JSC::jsSubstring(globalObject, filename, 0, index);
+    } else {
+        dirname = jsEmptyString(vm);
     }
 
     auto moduleObject = Bun::JSCommonJSModule::create(

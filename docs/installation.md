@@ -39,14 +39,28 @@ $ proto install bun
 
 ### Windows
 
+{% callout %}
+Bun requires a minimum of Windows 10 version 1809
+{% /callout %}
+
 Bun provides a _limited, experimental_ native build for Windows. It is recommended to use Bun within [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install) and follow the above instructions. To help catch bugs, the experimental build enables many debugging assertions, which will make the binary slower than what the stable version will be.
 
-To install, paste this into your terminal (Powershell or `cmd.exe`):
+To install, paste this into a terminal:
 
-```powershell
+{% codetabs %}
+
+```powershell#PowerShell/cmd.exe
 # WARNING: No stability is guaranteed on the experimental Windows builds
-powershell -c "iwr bun.sh/install.ps1|iex"
+powershell -c "irm bun.sh/install.ps1|iex"
 ```
+
+```powershell#Scoop
+# WARNING: No stability is guaranteed on the experimental Windows builds
+scoop bucket add versions
+scoop install bun-canary
+```
+
+{% /codetabs %}
 
 For support and discussion, please join the [#windows channel on our Discord](http://bun.sh/discord).
 
@@ -217,6 +231,10 @@ If you need to remove Bun from your system, use the following commands.
 
 ```bash#macOS/Linux_(curl)
 $ rm -rf ~/.bun # for macOS, Linux, and WSL
+```
+
+```bash#Windows
+$ Remove-Item ~\.bun -Recurse
 ```
 
 ```bash#NPM

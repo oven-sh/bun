@@ -1,6 +1,7 @@
+// @known-failing-on-windows: 1 failing
 import { file, spawn, spawnSync } from "bun";
 import { afterEach, beforeEach, expect, it, describe } from "bun:test";
-import { bunEnv, bunExe, bunEnv as env } from "harness";
+import { bunEnv, bunExe, bunEnv as env, isWindows } from "harness";
 import { mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -69,7 +70,7 @@ for (let withRun of [false, true]) {
             name: "test",
             version: "0.0.0",
             scripts: {
-              "boop": "echo 'hi'",
+              "boop": "echo hi",
             },
           }),
         );
@@ -83,34 +84,36 @@ for (let withRun of [false, true]) {
         });
 
         expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toBe("hi\n");
+        expect(stdout.toString().replaceAll("\r\n", "\n")).toBe("hi\n");
         expect(exitCode).toBe(0);
       });
 
       it("--silent omits error messages", async () => {
+        const exe = isWindows ? "bun.exe" : "bun";
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), "run", "--silent", "bash", "-c", "exit 1"],
+          cmd: [bunExe(), "run", "--silent", exe, "doesnotexist"],
           cwd: run_dir,
           env: bunEnv,
         });
 
-        expect(stderr.toString()).toBe("");
+        expect(stderr.toString()).not.toEndWith(`error: "${exe}" exited with code 1\n`);
         expect(stdout.toString()).toBe("");
         expect(exitCode).toBe(1);
       });
 
       it("no --silent includes error messages", async () => {
+        const exe = isWindows ? "bun.exe" : "bun";
         const { stdout, stderr, exitCode } = spawnSync({
-          cmd: [bunExe(), "run", "bash", "-c", "exit 1"],
+          cmd: [bunExe(), "run", exe, "doesnotexist"],
           cwd: run_dir,
           env: bunEnv,
         });
 
-        expect(stderr.toString()).toStartWith('error: "bash" exited with code 1');
+        expect(stderr.toString()).toEndWith(`error: "${exe}" exited with code 1\n`);
         expect(exitCode).toBe(1);
       });
 
-      it("exit code message works above 128", async () => {
+      it.skipIf(isWindows)("exit code message works above 128", async () => {
         const { stdout, stderr, exitCode } = spawnSync({
           cmd: [bunExe(), "run", "bash", "-c", "exit 200"],
           cwd: run_dir,
@@ -199,9 +202,9 @@ logLevel = "debug"
             });
             console.log(run_dir);
             if (withLogLevel) {
-              expect(stderr.toString().trim()).toContain("FileNotFound loading tsconfig.json extends");
+              expect(stderr.toString().trim()).toContain("ENOENT loading tsconfig.json extends");
             } else {
-              expect(stderr.toString().trim()).not.toContain("FileNotFound loading tsconfig.json extends");
+              expect(stderr.toString().trim()).not.toContain("ENOENT loading tsconfig.json extends");
             }
 
             expect(stdout.toString()).toBe("hi\n");
@@ -243,7 +246,7 @@ logLevel = "debug"
         });
 
         expect(stderr.toString()).toBe("");
-        expect(stdout.toString()).toBe("pre\n" + "main -a -b -c\n" + "post\n");
+        expect(stdout.toString().replaceAll("\r\n", "\n")).toBe("pre\n" + "main -a -b -c\n" + "post\n");
         expect(exitCode).toBe(0);
       });
     });

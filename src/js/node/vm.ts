@@ -1,5 +1,5 @@
 // Hardcoded module "node:vm"
-const { throwNotImplemented } = require("$shared");
+const { throwNotImplemented } = require("internal/shared");
 
 const vm = $lazy("vm");
 
@@ -7,6 +7,10 @@ const { createContext, isContext, Script, runInNewContext, runInThisContext } = 
 
 function runInContext(code, context, options) {
   return new Script(code, options).runInContext(context);
+}
+
+function createScript(code, options) {
+  return new Script(code, options);
 }
 
 function compileFunction() {
@@ -46,4 +50,5 @@ export default {
   Module,
   SourceTextModule,
   SyntheticModule,
+  createScript,
 };

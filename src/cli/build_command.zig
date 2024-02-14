@@ -107,10 +107,8 @@ pub const BuildCommand = struct {
                 return;
             }
 
-            // We never want to hit the filesystem for these files
-            // This "compiled" protocol is specially handled by the module resolver.
-            this_bundler.options.public_path = "compiled://root/";
-            this_bundler.resolver.opts.public_path = "compiled://root/";
+            this_bundler.options.public_path = bun.StandaloneModuleGraph.base_public_path ++ "root/";
+            this_bundler.resolver.opts.public_path = bun.StandaloneModuleGraph.base_public_path ++ "root/";
 
             if (outfile.len == 0) {
                 outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
@@ -142,10 +140,17 @@ pub const BuildCommand = struct {
             }
         }
 
-        if (this_bundler.options.entry_points.len > 1 and ctx.bundler_options.outdir.len == 0) {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> to use multiple entry points, specify <b>--outdir<r>", .{});
-            Global.exit(1);
-            return;
+        if (ctx.bundler_options.outdir.len == 0) {
+            if (this_bundler.options.entry_points.len > 1) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});
+                Global.exit(1);
+                return;
+            }
+            if (this_bundler.options.code_splitting) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when code splitting is enabled", .{});
+                Global.exit(1);
+                return;
+            }
         }
 
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
@@ -338,6 +343,7 @@ pub const BuildCommand = struct {
                         );
 
                         Output.flush();
+
                         try bun.StandaloneModuleGraph.toExecutable(
                             allocator,
                             output_files,
@@ -359,8 +365,9 @@ pub const BuildCommand = struct {
 
                         Output.printElapsedStdoutTrim(@as(f64, @floatFromInt(compiled_elapsed)));
 
-                        Output.prettyln(" <green>compile<r>  <b><blue>{s}<r>", .{
+                        Output.prettyln(" <green>compile<r>  <b><blue>{s}{s}<r>", .{
                             outfile,
+                            if (Environment.isWindows and !strings.hasSuffixComptime(outfile, ".exe")) ".exe" else "",
                         });
 
                         break :dump;

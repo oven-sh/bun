@@ -1013,10 +1013,10 @@ class _Writable extends EventEmitter {
       typeof arg1 === "function"
         ? arg1
         : typeof arg2 === "function"
-        ? arg2
-        : typeof arg3 === "function"
-        ? arg3
-        : void 0;
+          ? arg2
+          : typeof arg3 === "function"
+            ? arg3
+            : void 0;
     if (this.writableEnded) {
       if (callback) {
         callback();
@@ -5038,10 +5038,10 @@ const _globalThis =
   typeof globalThis !== "undefined"
     ? globalThis
     : typeof self !== "undefined"
-    ? self
-    : typeof global !== "undefined"
-    ? global
-    : {};
+      ? self
+      : typeof global !== "undefined"
+        ? global
+        : {};
 const globalKey = "__unctx__";
 const defaultNamespace = _globalThis[globalKey] || (_globalThis[globalKey] = createNamespace());
 const getContext = (key, opts = {}) => defaultNamespace.get(key, opts);
@@ -5576,6 +5576,7 @@ const useNitroApp = () => nitroApp;
 
 try {
   const server = Bun.serve({
+    hostname: "localhost",
     port: process.env.NITRO_PORT || process.env.PORT || 3e3,
     async fetch(request) {
       const url = new URL(request.url);
@@ -5595,7 +5596,7 @@ try {
   });
   console.log(`Listening on http://localhost:${server.port}...`);
 
-  const result = await fetch(`http://${server.hostname}:${server.port}/stream`).then(res => res.text());
+  const result = await fetch(`${server.url}/stream`).then(res => res.text());
   process.exit(result == "nitroisawesome" ? 0 : 2);
 } catch {
   process.exit(1);

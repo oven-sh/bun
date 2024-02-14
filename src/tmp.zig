@@ -28,7 +28,7 @@ pub const Tmpfile = struct {
             if (comptime allow_tmpfile) {
                 switch (bun.sys.openat(destination_dir, ".", O.WRONLY | O.TMPFILE | O.CLOEXEC, perm)) {
                     .result => |fd| {
-                        tmpfile.fd = fd;
+                        tmpfile.fd = bun.toLibUVOwnedFD(fd);
                         break :open;
                     },
                     .err => |err| {
@@ -43,7 +43,7 @@ pub const Tmpfile = struct {
             }
 
             tmpfile.fd = switch (bun.sys.openat(destination_dir, tmpfilename, O.CREAT | O.CLOEXEC | O.WRONLY, perm)) {
-                .result => |fd| fd,
+                .result => |fd| bun.toLibUVOwnedFD(fd),
                 .err => |err| return .{ .err = err },
             };
             break :open;
@@ -78,6 +78,6 @@ pub const Tmpfile = struct {
             }
         }
 
-        try bun.C.moveFileZWithHandle(bun.fdcast(this.fd), this.destination_dir, this.tmpfilename, bun.fdcast(this.destination_dir), destname);
+        try bun.C.moveFileZWithHandle(this.fd, this.destination_dir, this.tmpfilename, this.destination_dir, destname);
     }
 };

@@ -1,4 +1,3 @@
-import assert from "assert";
 import { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { realpathSync, chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
@@ -63,7 +62,7 @@ describe("transpiler cache", () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "a"));
     const a = bunRun(join(temp_dir, "a.js"), env);
     expect(a.stdout == "a");
-    assert(existsSync(cache_dir));
+    expect(existsSync(cache_dir)).toBeTrue();
     expect(newCacheCount()).toBe(1);
     const b = bunRun(join(temp_dir, "a.js"), env);
     expect(b.stdout == "a");
@@ -73,7 +72,7 @@ describe("transpiler cache", () => {
     writeFileSync(join(temp_dir, "a.js"), "//" + "a".repeat(50 * 1024 * 1.5));
     const a = bunRun(join(temp_dir, "a.js"), env);
     expect(a.stdout == "");
-    assert(existsSync(cache_dir));
+    expect(existsSync(cache_dir)).toBeTrue();
     expect(newCacheCount()).toBe(1);
     const b = bunRun(join(temp_dir, "a.js"), env);
     expect(b.stdout == "");
@@ -83,7 +82,7 @@ describe("transpiler cache", () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024 - 1, "1", "a"));
     const a = bunRun(join(temp_dir, "a.js"), env);
     expect(a.stdout == "a");
-    assert(!existsSync(cache_dir));
+    expect(!existsSync(cache_dir)).toBeTrue();
   });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
@@ -132,7 +131,7 @@ describe("transpiler cache", () => {
 
     await Promise.all(processes.map(x => x.exited));
 
-    assert(!killing);
+    expect(!killing).toBeTrue();
 
     remover.kill(9);
 
@@ -177,7 +176,7 @@ describe("transpiler cache", () => {
     );
     const a = bunRun(join(temp_dir, "a.js"), { ...env, NODE_ENV: undefined, HELLO: "1" });
     expect(a.stdout == "development 1");
-    assert(existsSync(cache_dir));
+    expect(existsSync(cache_dir)).toBeTrue();
     expect(newCacheCount()).toBe(1);
     const b = bunRun(join(temp_dir, "a.js"), { ...env, NODE_ENV: "production", HELLO: "5" });
     expect(b.stdout == "production 5");

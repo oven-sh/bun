@@ -38,7 +38,7 @@ pub const Param = struct {
     pub const List = std.MultiArrayList(Param);
 };
 
-dir: StoredFileDescriptorType = 0,
+dir: StoredFileDescriptorType = .zero,
 routes: Routes,
 loaded_routes: bool = false,
 allocator: std.mem.Allocator,
@@ -60,6 +60,14 @@ pub fn init(
         .allocator = allocator,
         .config = config,
     };
+}
+
+pub fn deinit(this: *Router) void {
+    if (comptime Environment.isWindows) {
+        for (this.routes.list.items(.filepath)) |abs_path| {
+            this.allocator.free(abs_path);
+        }
+    }
 }
 
 pub fn getEntryPoints(this: *const Router) ![]const string {
@@ -164,7 +172,7 @@ pub const Routes = struct {
                     .name = index.name,
                     .path = index.abs_path.slice(),
                     .pathname = url_path.pathname,
-                    .basename = index.entry.base(),
+                    .basename = index.basename,
                     .hash = index_route_hash,
                     .file_path = index.abs_path.slice(),
                     .query_string = url_path.query_string,
@@ -187,7 +195,7 @@ pub const Routes = struct {
                 .name = route.name,
                 .path = route.abs_path.slice(),
                 .pathname = url_path.pathname,
-                .basename = route.entry.base(),
+                .basename = route.basename,
                 .hash = route.full_hash,
                 .file_path = route.abs_path.slice(),
                 .query_string = url_path.query_string,
@@ -204,12 +212,9 @@ pub const Routes = struct {
 
     fn matchDynamic(this: *Routes, allocator: std.mem.Allocator, path: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
         // its cleaned, so now we search the big list of strings
-        var i: usize = 0;
-        while (i < this.dynamic_names.len) : (i += 1) {
-            const name = this.dynamic_match_names[i];
-            const case_sensitive_name_without_leading_slash = this.dynamic_names[i][1..];
-            if (Pattern.match(path, case_sensitive_name_without_leading_slash, name, allocator, *@TypeOf(ctx.params), &ctx.params, true)) {
-                return this.dynamic[i];
+        for (this.dynamic_names, this.dynamic_match_names, this.dynamic) |case_sensitive_name, name, route| {
+            if (Pattern.match(path, case_sensitive_name[1..], name, allocator, *@TypeOf(ctx.params), &ctx.params, true)) {
+                return route;
             }
         }
 
@@ -462,7 +467,7 @@ const RouteLoader = struct {
                                 // length is extended by one
                                 // entry.dir is a string with a trailing slash
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(entry.dir.ptr[base_dir.len - 1] == '/');
+                                    std.debug.assert(bun.path.isSepAny(entry.dir[base_dir.len - 1]));
                                 }
 
                                 const public_dir = entry.dir.ptr[base_dir.len - 1 .. entry.dir.len];
@@ -546,10 +551,23 @@ pub const Route = struct {
     /// This is [inconsistent with Next.js](https://github.com/vercel/next.js/issues/21498)
     match_name: PathString,
 
-    entry: *Fs.FileSystem.Entry,
+    basename: string,
     full_hash: u32,
     param_count: u16,
-    abs_path: PathString,
+
+    // On windows we need to normalize this path to have forward slashes.
+    // To avoid modifying memory we do not own, allocate another buffer
+    abs_path: if (Environment.isWindows) struct {
+        path: string,
+
+        pub fn slice(this: @This()) string {
+            return this.path;
+        }
+
+        pub fn isEmpty(this: @This()) bool {
+            return this.path.len == 0;
+        }
+    } else PathString,
 
     /// URL-safe path for the route's transpiled script relative to project's top level directory
     /// - It might not share a prefix with the absolute path due to symlinks.
@@ -563,17 +581,15 @@ pub const Route = struct {
     pub const Ptr = TinyPtr;
 
     pub const index_route_name: string = "/";
-    var route_file_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var second_route_file_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var route_file_buf: bun.PathBuffer = undefined;
+    threadlocal var second_route_file_buf: bun.PathBuffer = undefined;
+    threadlocal var normalized_abs_path_buf: bun.windows.PathBuffer = undefined;
 
     pub const Sorter = struct {
         const sort_table: [std.math.maxInt(u8)]u8 = brk: {
             var table: [std.math.maxInt(u8)]u8 = undefined;
-            var i: u16 = 0;
-            while (i < @as(u16, table.len)) {
-                table[i] = @as(u8, @intCast(i));
-                i += 1;
-            }
+            for (&table, 0..) |*t, i| t.* = @as(u8, @intCast(i));
+
             // move dynamic routes to the bottom
             table['['] = 252;
             table[']'] = 253;
@@ -586,9 +602,8 @@ pub const Route = struct {
             const math = std.math;
 
             const n = @min(lhs.len, rhs.len);
-            var i: usize = 0;
-            while (i < n) : (i += 1) {
-                switch (math.order(sort_table[lhs[i]], sort_table[rhs[i]])) {
+            for (lhs[0..n], rhs[0..n]) |lhs_i, rhs_i| {
+                switch (math.order(sort_table[lhs_i], sort_table[rhs_i])) {
                     .eq => continue,
                     .lt => return true,
                     .gt => return false,
@@ -654,7 +669,7 @@ pub const Route = struct {
 
         const base = base_[0 .. base_.len - extname.len];
 
-        const public_dir = std.mem.trim(u8, public_dir_, "/");
+        const public_dir = std.mem.trim(u8, public_dir_, std.fs.path.sep_str);
 
         // this is a path like
         // "/pages/index.js"
@@ -676,6 +691,11 @@ pub const Route = struct {
             buf = buf[base.len..];
             bun.copy(u8, buf, extname);
             buf = buf[extname.len..];
+
+            if (comptime Environment.isWindows) {
+                bun.path.platformToPosixInPlace(u8, route_file_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(&route_file_buf)]);
+            }
+
             break :brk route_file_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(&route_file_buf)];
         };
 
@@ -736,8 +756,8 @@ pub const Route = struct {
             var file: std.fs.File = undefined;
             var needs_close = false;
             defer if (needs_close) file.close();
-            if (entry.cache.fd != 0) {
-                file = std.fs.File{ .handle = bun.fdcast(entry.cache.fd) };
+            if (entry.cache.fd != .zero) {
+                file = entry.cache.fd.asFile();
             } else {
                 var parts = [_]string{ entry.dir, entry.base() };
                 abs_path_str = FileSystem.instance.absBuf(&parts, &route_file_buf);
@@ -762,9 +782,22 @@ pub const Route = struct {
             entry.abs_path = PathString.init(abs_path_str);
         }
 
+        const abs_path = if (comptime Environment.isWindows)
+            allocator.dupe(u8, bun.path.platformToPosixBuf(u8, abs_path_str, &normalized_abs_path_buf)) catch bun.outOfMemory()
+        else
+            PathString.init(abs_path_str);
+
+        if (comptime Environment.allow_assert and Environment.isWindows) {
+            std.debug.assert(!strings.containsChar(name, '\\'));
+            std.debug.assert(!strings.containsChar(public_path, '\\'));
+            std.debug.assert(!strings.containsChar(match_name, '\\'));
+            std.debug.assert(!strings.containsChar(abs_path, '\\'));
+            std.debug.assert(!strings.containsChar(entry.base(), '\\'));
+        }
+
         return Route{
             .name = name,
-            .entry = entry,
+            .basename = entry.base(),
             .public_path = PathString.init(public_path),
             .match_name = PathString.init(match_name),
             .full_hash = if (is_index)
@@ -773,7 +806,9 @@ pub const Route = struct {
                 @as(u32, @truncate(bun.hash(name))),
             .param_count = validation_result.param_count,
             .kind = validation_result.kind,
-            .abs_path = entry.abs_path,
+            .abs_path = if (comptime Environment.isWindows) .{
+                .path = abs_path,
+            } else abs_path,
             .has_uppercase = has_uppercase,
         };
     }

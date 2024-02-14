@@ -455,12 +455,16 @@ class WriteBlockedError extends Error {
 }
 function failTestsOnBlockingWriteCall() {
   const prop = Object.getOwnPropertyDescriptor(child_process.ChildProcess.prototype, "stdin");
+  const didAttachSymbol = Symbol("kDidAttach");
   if (prop) {
     Object.defineProperty(child_process.ChildProcess.prototype, "stdin", {
       ...prop,
       get() {
         const actual = prop.get.call(this);
-        if (actual?.write) attachWriteMeasurement(actual);
+        if (actual?.write && !actual.__proto__[didAttachSymbol]) {
+          actual.__proto__[didAttachSymbol] = true;
+          attachWriteMeasurement(actual);
+        }
         return actual;
       },
     });

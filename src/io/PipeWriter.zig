@@ -557,9 +557,13 @@ pub fn PosixStreamingWriter(
         pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable);
 
         pub fn flush(this: *PosixWriter) WriteResult {
-            const buffer = this.buffer.items;
-            if (this.closed_without_reporting or this.is_done or buffer.len == 0) {
+            if (this.closed_without_reporting or this.is_done) {
                 return .{ .done = 0 };
+            }
+
+            const buffer = this.buffer.items;
+            if (buffer.len == 0) {
+                return .{ .wrote = 0 };
             }
 
             return this.drainBufferedData(buffer, std.math.maxInt(usize), false);

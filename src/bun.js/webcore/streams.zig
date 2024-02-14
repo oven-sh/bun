@@ -430,7 +430,7 @@ pub const StreamStart = union(Tag) {
         mode: bun.Mode = 0o664,
 
         pub fn flags(this: *const FileSinkOptions) bun.Mode {
-            var flag: bun.Mode = 0;
+            var flag: bun.Mode = std.os.O.NONBLOCK | std.os.O.CLOEXEC;
 
             if (this.truncate) {
                 flag |= std.os.O.TRUNC;
@@ -2950,7 +2950,7 @@ pub const FileSink = struct {
                     return .{ .err = err };
                 },
                 .result => |stat| {
-                    this.pollable = bun.sys.isPollable(stat.mode);
+                    this.pollable = bun.sys.isPollable(stat.mode) or std.os.isatty(fd.int());
                     this.fd = fd;
                 },
             }

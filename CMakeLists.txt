@@ -41,7 +41,11 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         # it is enabled for the time being to make sure to catch more bugs in the experimental windows builds
         set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
     else()
-        set(bun "bun-profile")
+        if(ZIG_OPTIMIZE STREQUAL "Debug")
+            set(bun "bun-debug")
+        else()
+            set(bun "bun-profile")
+        endif()
     endif()
 endif()
 

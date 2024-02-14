@@ -332,13 +332,10 @@ pub fn PosixPipeReader(
                         }
                     }
 
+                    // drain any data  in the stack buffer before restarting the loop
                     if (stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len].len > 0) {
-                        if (!parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress) and !received_hup) {
-                            return;
-                        }
+                        _ = parent.vtable.onReadChunk(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len], if (received_hup) .eof else .progress);
                     }
-
-                    if (!parent.vtable.isStreamingEnabled()) break;
                 }
             }
 

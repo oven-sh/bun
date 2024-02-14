@@ -444,3 +444,50 @@ export async function describeWithContainer(
 export function osSlashes(path: string) {
   return isWindows ? path.replace(/\//g, "\\") : path;
 }
+
+import * as child_process from "node:child_process";
+
+class WriteBlockedError extends Error {
+  constructor(time) {
+    super("Write blocked for " + (time | 0) + "ms");
+    this.name = "WriteBlockedError";
+  }
+}
+function failTestsOnBlockingWriteCall() {
+  const prop = Object.getOwnPropertyDescriptor(child_process.ChildProcess.prototype, "stdin");
+  if (prop) {
+    Object.defineProperty(child_process.ChildProcess.prototype, "stdin", {
+      ...prop,
+      get() {
+        const actual = prop.get.call(this);
+        if (actual?.write) attachWriteMeasurement(actual);
+        return actual;
+      },
+    });
+  }
+
+  function attachWriteMeasurement(stream) {
+    const prop = Object.getOwnPropertyDescriptor(stream.__proto__, "write");
+    if (prop) {
+      Object.defineProperty(stream.__proto__, "write", {
+        ...prop,
+        value(chunk, encoding, cb) {
+          const start = performance.now();
+          const rc = prop.value.apply(this, arguments);
+          const end = performance.now();
+          if (end - start > 8) {
+            const err = new WriteBlockedError(end - start);
+            if (cb) {
+              cb(err);
+            } else {
+              throw err;
+            }
+          }
+          return rc;
+        },
+      });
+    }
+  }
+}
+
+failTestsOnBlockingWriteCall();

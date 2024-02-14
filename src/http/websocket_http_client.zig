@@ -344,6 +344,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             if (this.outgoing_websocket) |ws| {
                 this.outgoing_websocket = null;
+                const loop = JSC.VirtualMachine.get().eventLoop();
+                loop.enter();
+                defer loop.exit();
                 ws.didAbruptClose(ErrorCode.ended);
             }
 
@@ -362,6 +365,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const authorized = if (success == 1) true else false;
             var reject_unauthorized = false;
             if (this.outgoing_websocket) |ws| {
+                const loop = JSC.VirtualMachine.get().eventLoop();
+                loop.enter();
+                defer loop.exit();
                 reject_unauthorized = ws.rejectUnauthorized();
             }
             if (ssl_error.error_no != 0 and (reject_unauthorized or !authorized)) {
@@ -980,6 +986,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.outgoing_websocket) |ws| {
                 this.outgoing_websocket = null;
                 log("fail ({s})", .{@tagName(code)});
+                const loop = JSC.VirtualMachine.get().eventLoop();
+                loop.enter();
+                defer loop.exit();
                 ws.didAbruptClose(code);
             }
 
@@ -993,6 +1002,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             log("onHandshake({d})", .{success});
 
             if (this.outgoing_websocket) |ws| {
+                const loop = JSC.VirtualMachine.get().eventLoop();
+                loop.enter();
+                defer loop.exit();
                 const reject_unauthorized = ws.rejectUnauthorized();
                 if (ssl_error.error_no != 0 and (reject_unauthorized or !authorized)) {
                     this.outgoing_websocket = null;
@@ -1020,6 +1032,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.clearData();
             if (this.outgoing_websocket) |ws| {
                 this.outgoing_websocket = null;
+                const loop = JSC.VirtualMachine.get().eventLoop();
+                loop.enter();
+                defer loop.exit();
                 ws.didAbruptClose(ErrorCode.ended);
             }
         }
@@ -1055,19 +1070,13 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.clearData();
                 return;
             };
-            if (comptime Environment.isDebug) {
-                this.event_loop.debug.enter();
-            }
+            this.event_loop.enter();
             defer {
-                if (comptime Environment.isDebug) {
-                    this.event_loop.debug.enter();
-                }
+                this.event_loop.enter();
             }
 
             switch (kind) {
                 .Text => {
-                    defer this.event_loop.drainMicrotasks();
-
                     // this function encodes to UTF-16 if > 127
                     // so we don't need to worry about latin1 non-ascii code points
                     // we avoid trim since we wanna keep the utf8 validation intact
@@ -1088,7 +1097,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     }
                 },
                 .Binary, .Ping, .Pong => {
-                    defer this.event_loop.drainMicrotasks();
                     JSC.markBinding(@src());
                     out.didReceiveBytes(data_.ptr, data_.len, @as(u8, @intFromEnum(kind)));
                 },
@@ -1706,6 +1714,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.poll_ref.unref(this.globalThis.bunVM());
             JSC.markBinding(@src());
             this.outgoing_websocket = null;
+
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.enter();
+            defer loop.exit();
+
             out.didAbruptClose(ErrorCode.closed);
         }
 
@@ -1714,6 +1727,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.poll_ref.unref(this.globalThis.bunVM());
             JSC.markBinding(@src());
             this.outgoing_websocket = null;
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.enter();
+            defer loop.exit();
+
             out.didClose(code, reason);
         }
 

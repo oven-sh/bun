@@ -357,7 +357,7 @@ function once(emitter, type, options) {
   });
 }
 
-async function* on(emitter, event, options = {}) {
+function on(emitter, event, options = {}) {
   const signal = options.signal;
   if (signal?.aborted) throw new AbortError(undefined, { cause: signal?.reason });
 
@@ -367,14 +367,20 @@ async function* on(emitter, event, options = {}) {
   const unconsumedErrors = new FixedQueue();
   let done = false;
 
-  emitter.on(event, ev => {
-    const eventValue = options[kFirstEventParam] ? ev : [ev]
-    if (!unconsumedPromises.isEmpty()) {
-      const { resolve } = unconsumedPromises.shift();
-      return resolve(eventValue);
+  const eventHandler = (ev) => {
+    if(!done) {
+      // If there is a pending Promise -> resolve with current event value.
+      if (!unconsumedPromises.isEmpty()) {
+        const { resolve } = unconsumedPromises.shift();
+        return resolve(ev);
+      }
+      // Else: Add event value to queue so it can be consumed by a future Promise.
+      unconsumedEvents.push(ev);
     }
-    unconsumedEvents.push(eventValue);
-  });
+  }
+
+  emitter.on(event, options[kFirstEventParam] ? eventHandler : (...args) => eventHandler(args) );
+
   emitter.on("error", ex => {
     if (!unconsumedPromises.isEmpty()) {
       const { reject } = unconsumedPromises.shift();
@@ -382,27 +388,35 @@ async function* on(emitter, event, options = {}) {
     }
     unconsumedErrors.push(ex);
   });
+
   signal?.addEventListener("abort", () => {
     emitter.emit("error", new AbortError(undefined, { cause: signal?.reason }));
   });
 
+  // If any of the close events is emitted -> set flag to stop yielding Promises.
   for (const evName of options?.close || []) {
     emitter.on(evName, () => {
       done = true;
     });
   }
 
-  while (!done || !unconsumedEvents.isEmpty()) {
-    if (!unconsumedEvents.isEmpty()) {
-      yield Promise.$resolve(unconsumedEvents.shift());
-    } else if (!unconsumedErrors.isEmpty()) {
-      yield Promise.$reject(unconsumedErrors.shift());
-    } else {
-      const { promise, reject, resolve } = $newPromiseCapability(Promise);
-      unconsumedPromises.push({ reject, resolve });
-      yield promise;
+  // Create AsyncGeneratorFunction which handles the Iterator logic
+  const iterator = async function*() {
+    while (!done || !unconsumedEvents.isEmpty()) {
+      if (!unconsumedEvents.isEmpty()) {
+        yield Promise.$resolve(unconsumedEvents.shift());
+      } else if (!unconsumedErrors.isEmpty()) {
+        yield Promise.$reject(unconsumedErrors.shift());
+      } else {
+        const { promise, reject, resolve } = $newPromiseCapability(Promise);
+        unconsumedPromises.push({ reject, resolve });
+        yield promise;
+      }
     }
   }
+
+  // Return AsyncGenerator
+  return iterator()
 }
 
 function getEventListeners(emitter, type) {

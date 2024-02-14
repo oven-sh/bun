@@ -120,7 +120,7 @@ for (let [gcTick, label] of [
         });
         gcTick();
         await exited;
-        expect(require("fs").readFileSync(tmp + "out.123.txt", "utf8")).toBe(hugeString);
+        expect(require("fs").readFileSync(tmp + "out.123.txt", "utf8") == hugeString).toBeTrue();
         gcTick();
       });
 
@@ -264,7 +264,7 @@ for (let [gcTick, label] of [
         });
 
         await exited;
-        expect(await Bun.file(tmp + "out.123.txt").text()).toBe(hugeString);
+        expect(await Bun.file(tmp + "out.123.txt").text() == hugeString).toBeTrue();
       });
 
       it("Bun.file() works as stdout", async () => {

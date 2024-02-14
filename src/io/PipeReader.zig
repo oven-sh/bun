@@ -196,7 +196,7 @@ pub fn PosixPipeReader(
                         },
                         .err => |err| {
                             if (err.isRetry()) {
-                                resizable_buffer.appendSlice(buffer) catch bun.outOfMemory();
+                                resizable_buffer.appendSlice(stack_buffer[0 .. stack_buffer.len - stack_buffer_head.len]) catch bun.outOfMemory();
                                 // TODO is this right to ignore?
                                 _ = drainChunk(parent, resizable_buffer.items[0..resizable_buffer.items.len], .drained);
 
@@ -229,7 +229,7 @@ pub fn PosixPipeReader(
                         }
                     },
                     .err => |err| {
-                        _ = drainChunk(parent, resizable_buffer.items[start_length..], .drained);
+                        _ = drainChunk(parent, resizable_buffer.items[start_length..], if (err.isRetry()) .drained else .progress);
 
                         if (err.isRetry()) {
                             if (comptime vtable.registerPoll) |register| {
@@ -245,6 +245,10 @@ pub fn PosixPipeReader(
         }
 
         fn readFromBlockingPipeWithoutBlocking(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+            if (parent.vtable.isStreamingEnabled()) {
+                resizable_buffer.clearRetainingCapacity();
+            }
+
             if (comptime bun.Environment.isLinux) {
                 if (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
                     readFromBlockingPipeWithoutBlockingLinux(parent, resizable_buffer, fd, size_hint, received_hup);
@@ -596,6 +600,9 @@ const PosixBufferedReader = struct {
         other.flags.is_done = true;
         other.handle = .{ .closed = {} };
         to.handle.setOwner(to);
+        if (to._buffer.items.len > 0) {
+            _ = to.drainChunk(to._buffer.items[0..], .progress);
+        }
     }
 
     pub fn setParent(this: *PosixBufferedReader, parent_: *anyopaque) void {

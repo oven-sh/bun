@@ -1997,32 +1997,32 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
 ///
 /// On other platforms, this is just a wrapper around `read(2)`.
 pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
-    // if (Environment.isLinux) {
-    //     while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
-    //         const iovec = [1]std.os.iovec{.{
-    //             .iov_base = buf.ptr,
-    //             .iov_len = buf.len,
-    //         }};
+    if (Environment.isLinux) {
+        while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
+            const iovec = [1]std.os.iovec{.{
+                .iov_base = buf.ptr,
+                .iov_len = buf.len,
+            }};
 
-    //         // Note that there is a bug on Linux Kernel 5
-    //         const rc = linux.preadv2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NOWAIT);
-    //         if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
-    //             switch (err.getErrno()) {
-    //                 .OPNOTSUPP, .NOSYS => {
-    //                     bun.C.linux.RWFFlagSupport.disable();
-    //                     switch (bun.isReadable(fd)) {
-    //                         .hup, .ready => return read(fd, buf),
-    //                         else => return .{ .err = Error.retry },
-    //                     }
-    //                 },
-    //                 .INTR => continue,
-    //                 else => return err,
-    //             }
-    //         }
+            // Note that there is a bug on Linux Kernel 5
+            const rc = linux.preadv2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NOWAIT);
+            if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
+                switch (err.getErrno()) {
+                    .OPNOTSUPP, .NOSYS => {
+                        bun.C.linux.RWFFlagSupport.disable();
+                        switch (bun.isReadable(fd)) {
+                            .hup, .ready => return read(fd, buf),
+                            else => return .{ .err = Error.retry },
+                        }
+                    },
+                    .INTR => continue,
+                    else => return err,
+                }
+            }
 
-    //         return .{ .result = @as(usize, @intCast(rc)) };
-    //     }
-    // }
+            return .{ .result = @as(usize, @intCast(rc)) };
+        }
+    }
 
     return read(fd, buf);
 }

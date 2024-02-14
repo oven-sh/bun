@@ -134,6 +134,8 @@ private:
 
         /* Handle HTTP data streams */
         us_socket_context_on_data(SSL, getSocketContext(), [](us_socket_t *s, char *data, int length) {
+            // ref the socket to make sure we process it entirely before it is closed
+            us_socket_ref(s);
 
             // total overhead is about 210k down to 180k
             // ~210k req/sec is the original perf with write in data
@@ -293,6 +295,10 @@ private:
 
             /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
             if (returnedSocket != nullptr) {
+                us_socket_t* returnedSocketPtr = (us_socket_t*) returnedSocket; 
+                /* We don't want open sockets to keep the event loop alive between HTTP requests */
+                us_socket_unref(returnedSocketPtr);
+
                 /* Timeout on uncork failure */
                 auto [written, failed] = ((AsyncSocket<SSL> *) returnedSocket)->uncork();
                 if (failed) {
@@ -312,8 +318,7 @@ private:
                         }
                     }
                 }
-
-                return (us_socket_t *) returnedSocket;
+                return returnedSocketPtr;
             }
 
             /* If we upgraded, check here (differ between nullptr close and nullptr upgrade) */

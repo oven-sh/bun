@@ -374,10 +374,11 @@ elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
 endif()
 
 # Bun
-if(NOT WIN32)
-    find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to an already built release of Bun")
-    message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
-else()
+find_program(BUN_EXECUTABLE bun ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to an already built release of Bun")
+message(STATUS "Found Bun: ${BUN_EXECUTABLE}")
+
+if(WIN32 AND NO_CODEGEN)
+    # TODO(@paperdave): remove this, see bun-windows.yml's comment.
     set(BUN_EXECUTABLE "echo")
 endif()
 
@@ -582,7 +583,7 @@ add_custom_command(
     "${BUN_WORKDIR}/codegen/ZigGeneratedClasses+DOMIsoSubspaces.h"
     "${BUN_WORKDIR}/codegen/ZigGeneratedClasses+lazyStructureImpl.h"
     "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
-    COMMAND ${BUN_EXECUTABLE} "${BUN_CODEGEN_SRC}/generate-classes.ts" ${BUN_CLASSES_TS} "${BUN_WORKDIR}/codegen"
+    COMMAND ${BUN_EXECUTABLE} run "${BUN_CODEGEN_SRC}/generate-classes.ts" ${BUN_CLASSES_TS} "${BUN_WORKDIR}/codegen"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     MAIN_DEPENDENCY "${BUN_CODEGEN_SRC}/generate-classes.ts"
     DEPENDS ${BUN_CLASSES_TS}
@@ -595,11 +596,12 @@ list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp")
 add_custom_command(
     OUTPUT "${BUN_WORKDIR}/codegen/JSSink.cpp"
     "${BUN_WORKDIR}/codegen/JSSink.h"
-    COMMAND ${BUN_EXECUTABLE} "src/codegen/generate-jssink.ts" "${BUN_WORKDIR}/codegen"
+    COMMAND ${BUN_EXECUTABLE} run "src/codegen/generate-jssink.ts" "${BUN_WORKDIR}/codegen"
     VERBATIM
     MAIN_DEPENDENCY "src/codegen/generate-jssink.ts"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Generating JSSink"
+    USES_TERMINAL
 )
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/JSSink.cpp")
 
@@ -622,7 +624,7 @@ if(NOT BUN_LINK_ONLY)
                 OUTPUT ${_output}
                 MAIN_DEPENDENCY ${BUN_HASH_LUT_GENERATOR}
                 DEPENDS ${_input}
-                COMMAND ${BUN_EXECUTABLE} ${BUN_HASH_LUT_GENERATOR} ${_input} ${_output}
+                COMMAND ${BUN_EXECUTABLE} run ${BUN_HASH_LUT_GENERATOR} ${_input} ${_output}
                 VERBATIM
                 COMMENT "Generating ${_display_name}"
             )
@@ -696,7 +698,7 @@ if(NOT NO_CODEGEN)
         "${BUN_WORKDIR}/codegen/NativeModuleImpl.h"
         "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
         "${BUN_WORKDIR}/codegen/SyntheticModuleType.h"
-        COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-modules.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
+        COMMAND ${BUN_EXECUTABLE} run "${BUN_SRC}/codegen/bundle-modules.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
         DEPENDS ${BUN_TS_MODULES} ${CODEGEN_FILES}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Bundling JS modules"
@@ -711,7 +713,7 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 add_custom_command(
     OUTPUT "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
     "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
-    COMMAND ${BUN_EXECUTABLE} "${BUN_SRC}/codegen/bundle-functions.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
+    COMMAND ${BUN_EXECUTABLE} run "${BUN_SRC}/codegen/bundle-functions.ts" "--debug=${DEBUG}" "${BUN_WORKDIR}"
     DEPENDS ${BUN_TS_FUNCTIONS} ${CODEGEN_FILES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Bundling JS builtin functions"
@@ -1109,9 +1111,10 @@ endif()
 
 if(WIN32)
     # Kill all instances of bun before linking.
+    # This is necessary because the file is locked by the process.
     add_custom_command(
         TARGET ${bun}
-        PRE_BUILD
+        PRE_LINK
         COMMAND
         "powershell"
         "/C"
@@ -1287,6 +1290,7 @@ endif()
 
 if(USE_CUSTOM_LSHPACK)
     include_directories(${BUN_DEPS_DIR}/ls-hpack)
+
     if(WIN32)
         include_directories(${BUN_DEPS_DIR}/ls-hpack/compat/queue)
         target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/lshpack.lib")

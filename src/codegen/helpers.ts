@@ -80,3 +80,11 @@ export function writeIfNotChanged(file: string, contents: string) {
     fs.writeFileSync(file, contents);
   }
 }
+
+export function pathToUpperSnakeCase(filepath: string) {
+  return filepath
+    .replace(/^.*?:/, "")
+    .split(/[-_./\\]/g)
+    .join("_")
+    .toUpperCase();
+}

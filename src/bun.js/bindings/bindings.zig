@@ -4497,7 +4497,7 @@ pub const JSValue = enum(JSValueReprInt) {
         path,
         stream,
 
-        pub fn has( property: []const u8) bool {
+        pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);
         }
     };
@@ -4571,7 +4571,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         if (comptime bun.Environment.isDebug) {
-            if (BuiltinName.has(property))  {
+            if (BuiltinName.has(property)) {
                 Output.debugWarn("get(\"{s}\") called. Please use fastGet(.{s}) instead!", .{ property, property });
             }
         }
@@ -4682,7 +4682,6 @@ pub const JSValue = enum(JSValueReprInt) {
             return null;
         }
 
-
         if (get(this, globalThis, property_name)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull())
                 return null;
@@ -4735,12 +4734,11 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) !?T {
-        const prop = (if (comptime BuiltinName.has(property_name)) 
+        const prop = (if (comptime BuiltinName.has(property_name))
             fastGet(this, globalThis, @field(BuiltinName, property_name))
-            else
-        
+        else
             get(this, globalThis, property_name)) orelse return null;
-        
+
         if (!prop.isEmptyOrUndefinedOrNull()) {
             switch (comptime T) {
                 bool => {

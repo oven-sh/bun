@@ -111,15 +111,13 @@ scripts: Scripts = .{},
 workspace_paths: NameHashMap = .{},
 workspace_versions: VersionHashMap = .{},
 
-trusted_dependencies: NameHashSet = .{},
+/// Optional because `trustedDependencies` in package.json might be an
+/// empty list or it might not exist
+trusted_dependencies: ?NameHashSet = null,
 overrides: OverrideMap = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
-
-pub fn hasTrustedDependencies(this: *const Lockfile) bool {
-    return this.trusted_dependencies.count() > 0;
-}
 
 pub const Scripts = struct {
     const MAX_PARALLEL_PROCESSES = 10;
@@ -228,7 +226,7 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *log
 
     this.format = FormatVersion.current;
     this.scripts = .{};
-    this.trusted_dependencies = .{};
+    this.trusted_dependencies = null;
     this.workspace_paths = .{};
     this.workspace_versions = .{};
     this.overrides = .{};
@@ -1715,7 +1713,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
         .allocator = allocator,
         .scratch = Scratch.init(allocator),
         .scripts = .{},
-        .trusted_dependencies = .{},
+        .trusted_dependencies = null,
         .workspace_paths = .{},
         .workspace_versions = .{},
     };
@@ -3129,10 +3127,24 @@ pub const Package = extern struct {
             }
 
             {
-                var to_lockfile_itr = to_lockfile.trusted_dependencies.iterator();
-                while (to_lockfile_itr.next()) |entry| {
-                    if (!from_lockfile.trusted_dependencies.contains(entry.key_ptr.*)) {
-                        try summary.new_trusted_dependencies.put(allocator, entry.key_ptr.*, {});
+                if (to_lockfile.trusted_dependencies) |to_trusted_dependencies| {
+                    var to_lockfile_iter = to_trusted_dependencies.iterator();
+                    while (to_lockfile_iter.next()) |entry| {
+                        if (from_lockfile.trusted_dependencies == null or !from_lockfile.trusted_dependencies.?.contains(entry.key_ptr.*)) {
+                            try summary.new_trusted_dependencies.put(allocator, entry.key_ptr.*, {});
+                        }
+                    }
+                } else {
+                    // The previous install had `trustedDependencies` in package.json. Now this install doesn't
+                    // meaning all default trusted dependencies not included in the previous list are new.
+                    //
+                    // This will show as a diff and a new lockfile will be generated, so this won't happen each time
+                    for (default_trusted_dependencies.entries) |entry| {
+                        // TODO(dylan-conway): change `default_trusted_dependencies` map to use the same hash
+                        const name_hash: u32 = @truncate(String.Builder.stringHash(entry.key));
+                        if (from_lockfile.trusted_dependencies == null or !from_lockfile.trusted_dependencies.?.contains(name_hash)) {
+                            try summary.new_trusted_dependencies.put(allocator, name_hash, {});
+                        }
                     }
                 }
             }
@@ -4162,7 +4174,8 @@ pub const Package = extern struct {
             if (json.asProperty("trustedDependencies")) |q| {
                 switch (q.expr.data) {
                     .e_array => |arr| {
-                        try lockfile.trusted_dependencies.ensureUnusedCapacity(allocator, arr.items.len);
+                        if (lockfile.trusted_dependencies == null) lockfile.trusted_dependencies = .{};
+                        try lockfile.trusted_dependencies.?.ensureUnusedCapacity(allocator, arr.items.len);
                         for (arr.slice()) |item| {
                             const name = item.asString(allocator) orelse {
                                 log.addErrorFmt(&source, q.loc, allocator,
@@ -4173,7 +4186,7 @@ pub const Package = extern struct {
                                 , .{}) catch {};
                                 return error.InvalidPackageJSON;
                             };
-                            lockfile.trusted_dependencies.putAssumeCapacity(@as(u32, @truncate(String.Builder.stringHash(name))), {});
+                            lockfile.trusted_dependencies.?.putAssumeCapacity(@as(u32, @truncate(String.Builder.stringHash(name))), {});
                         }
                     },
                     else => {
@@ -4719,7 +4732,9 @@ pub fn deinit(this: *Lockfile) void {
     this.packages.deinit(this.allocator);
     this.string_pool.deinit();
     this.scripts.deinit(this.allocator);
-    this.trusted_dependencies.deinit(this.allocator);
+    if (this.trusted_dependencies) |*trusted_dependencies| {
+        trusted_dependencies.deinit(this.allocator);
+    }
     this.workspace_paths.deinit(this.allocator);
     this.workspace_versions.deinit(this.allocator);
     this.overrides.deinit(this.allocator);
@@ -5027,6 +5042,7 @@ pub const Serializer = struct {
 
     const has_workspace_package_ids_tag: u64 = @bitCast([_]u8{ 'w', 'O', 'r', 'K', 's', 'P', 'a', 'C' });
     const has_trusted_dependencies_tag: u64 = @bitCast([_]u8{ 't', 'R', 'u', 'S', 't', 'E', 'D', 'd' });
+    const has_empty_trusted_dependencies_tag: u64 = @bitCast([_]u8{ 'e', 'M', 'p', 'T', 'r', 'U', 's', 'T' });
     const has_overrides_tag: u64 = @bitCast([_]u8{ 'o', 'V', 'e', 'R', 'r', 'i', 'D', 's' });
 
     pub fn save(this: *Lockfile, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
@@ -5106,17 +5122,24 @@ pub const Serializer = struct {
             );
         }
 
-        if (this.trusted_dependencies.count() > 0) {
-            try writer.writeAll(std.mem.asBytes(&has_trusted_dependencies_tag));
+        if (this.trusted_dependencies) |trusted_dependencies| {
+            if (trusted_dependencies.count() > 0) {
+                try writer.writeAll(std.mem.asBytes(&has_trusted_dependencies_tag));
 
-            try Lockfile.Buffers.writeArray(
-                StreamType,
-                stream,
-                @TypeOf(writer),
-                writer,
-                []u32,
-                this.trusted_dependencies.keys(),
-            );
+                try Lockfile.Buffers.writeArray(
+                    StreamType,
+                    stream,
+                    @TypeOf(writer),
+                    writer,
+                    []u32,
+                    trusted_dependencies.keys(),
+                );
+            } else {
+                // this is needed because before 1.1 the list was not serialized if it was empty so
+                // there was not way to differentiate an empty trustedDependencies list and
+                // a non existent one.
+                try writer.writeAll(std.mem.asBytes(&has_empty_trusted_dependencies_tag));
+            }
         }
 
         if (this.overrides.map.count() > 0) {
@@ -5268,11 +5291,15 @@ pub const Serializer = struct {
                     );
                     defer trusted_dependencies_hashes.deinit(allocator);
 
-                    try lockfile.trusted_dependencies.ensureTotalCapacity(allocator, trusted_dependencies_hashes.items.len);
+                    lockfile.trusted_dependencies = .{};
+                    try lockfile.trusted_dependencies.?.ensureTotalCapacity(allocator, trusted_dependencies_hashes.items.len);
 
-                    lockfile.trusted_dependencies.entries.len = trusted_dependencies_hashes.items.len;
-                    @memcpy(lockfile.trusted_dependencies.keys(), trusted_dependencies_hashes.items);
-                    try lockfile.trusted_dependencies.reIndex(allocator);
+                    lockfile.trusted_dependencies.?.entries.len = trusted_dependencies_hashes.items.len;
+                    @memcpy(lockfile.trusted_dependencies.?.keys(), trusted_dependencies_hashes.items);
+                    try lockfile.trusted_dependencies.?.reIndex(allocator);
+                } else if (next_num == has_empty_trusted_dependencies_tag) {
+                    // trusted dependencies exists in package.json but is an empty array.
+                    lockfile.trusted_dependencies = .{};
                 } else {
                     stream.pos -= 8;
                 }
@@ -5508,12 +5535,11 @@ const default_trusted_dependencies = brk: {
 };
 
 pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
-    if (this.hasTrustedDependencies()) {
+    if (this.trusted_dependencies) |trusted_dependencies| {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
-        return this.trusted_dependencies.contains(hash) or default_trusted_dependencies.has(name);
+        return trusted_dependencies.contains(hash);
     }
 
-    // always search through default trusted dependencies
     return default_trusted_dependencies.has(name);
 }
 

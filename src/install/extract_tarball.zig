@@ -18,6 +18,7 @@ const strings = @import("../string_immutable.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const Environment = bun.Environment;
 const w = std.os.windows;
+const NameHashSet = @import("./lockfile.zig").NameHashSet;
 
 const ExtractTarball = @This();
 
@@ -398,7 +399,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     if (switch (this.resolution.tag) {
         // TODO remove extracted files not matching any globs under "files"
         .github, .local_tarball, .remote_tarball => true,
-        else => this.package_manager.lockfile.trusted_dependencies.contains(@as(u32, @truncate(Semver.String.Builder.stringHash(name)))),
+        else => (this.package_manager.lockfile.trusted_dependencies orelse NameHashSet{}).contains(@truncate(Semver.String.Builder.stringHash(name))),
     }) {
         const json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
             this.package_manager.log.addErrorFmt(

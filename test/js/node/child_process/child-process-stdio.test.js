@@ -46,7 +46,7 @@ describe("process.stdin", () => {
           done(err);
         }
       });
-    child.stdin.write(input, function ()  {
+    child.stdin.write(input, function () {
       child.stdin.end(...arguments);
     });
   });

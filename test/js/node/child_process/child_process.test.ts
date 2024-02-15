@@ -340,7 +340,7 @@ it("should call close and exit before process exits", async () => {
     env: bunEnv,
     stdout: "pipe",
     stdin: "inherit",
-    stderr: "inherit"
+    stderr: "inherit",
   });
   await proc.exited;
   expect(proc.exitCode).toBe(0);

@@ -1171,7 +1171,7 @@ pub fn spawnProcessPosix(
                     // enable non-block
                     const before = std.c.fcntl(fds_[0], std.os.F.GETFL);
                     // disable sigpipe
-                    
+
                     _ = std.c.fcntl(fds_[0], std.os.F.SETFL, before | std.os.O.NONBLOCK | std.os.FD_CLOEXEC);
 
                     break :brk .{ bun.toFD(fds_[0]), bun.toFD(fds_[1]) };

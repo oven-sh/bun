@@ -333,7 +333,11 @@ describe("bun test", () => {
       });
       expect(stderr).toContain("Invalid timeout");
     });
-    test("timeout can be set to 30ms", () => {
+    // TODO: https://github.com/oven-sh/bun/issues/8069
+    // This test crashes, which will pass because stderr contains "timed out"
+    // but the crash can also mean it hangs, which will end up failing.
+    // Possibly fixed by https://github.com/oven-sh/bun/pull/8076/files
+    test.todo("timeout can be set to 30ms", () => {
       const stderr = runTest({
         args: ["--timeout", "30"],
         input: `

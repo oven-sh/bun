@@ -352,7 +352,7 @@ describe("bun test", () => {
     test("timeout should default to 5000ms", () => {
       // TODO: Lower this timeout to 5005 once https://github.com/oven-sh/bun/issues/8913 is fixed
       // Linux does not seem to have this issue.
-      const time = process.platform === 'linux' ? 5005 : 5500;
+      const time = process.platform === "linux" ? 5005 : 5500;
       const stderr = runTest({
         input: `
           import { test, expect } from "bun:test";

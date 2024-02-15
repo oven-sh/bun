@@ -105,7 +105,8 @@ const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? bunEx
 export const RUN_UNCHECKED_TESTS = false;
 
 const tempDirectoryTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
-if (!existsSync(path.dirname(tempDirectoryTemplate))) mkdirSync(path.dirname(tempDirectoryTemplate), { recursive: true });
+if (!existsSync(path.dirname(tempDirectoryTemplate)))
+  mkdirSync(path.dirname(tempDirectoryTemplate), { recursive: true });
 const tempDirectory = mkdtempSync(tempDirectoryTemplate);
 const testsRan = new Set();
 

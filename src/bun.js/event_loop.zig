@@ -1977,6 +1977,20 @@ pub const EventLoopHandle = union(enum) {
     js: *JSC.EventLoop,
     mini: *MiniEventLoop,
 
+    pub fn enter(this: EventLoopHandle) void {
+        switch (this) {
+            .js => this.js.enter(),
+            .mini => {},
+        }
+    }
+
+    pub fn exit(this: EventLoopHandle) void {
+        switch (this) {
+            .js => this.js.exit(),
+            .mini => {},
+        }
+    }
+
     pub fn init(context: anytype) EventLoopHandle {
         const Context = @TypeOf(context);
         return switch (Context) {

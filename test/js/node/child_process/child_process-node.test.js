@@ -273,7 +273,7 @@ describe("child_process cwd", () => {
       }
     });
 
-    child.on(
+    child.stdout.on(
       "close",
       mustCall(() => {
         expectData && strictEqual(data.trim(), expectData);

@@ -482,11 +482,7 @@ function failTestsOnBlockingWriteCall() {
           const end = performance.now();
           if (end - start > 8) {
             const err = new WriteBlockedError(end - start);
-            if (cb) {
-              cb(err);
-            } else {
-              throw err;
-            }
+            throw err;
           }
           return rc;
         },

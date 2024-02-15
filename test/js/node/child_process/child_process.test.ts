@@ -21,7 +21,14 @@ afterAll(() => {
 const platformTmpDir = require("fs").realpathSync(tmpdir());
 
 function isValidSemver(str) {
-  return semver.satisfies(str.replaceAll("-debug", ""), "*");
+  const cmp = str.replaceAll("-debug", "").trim();
+  const valid = semver.satisfies(cmp, "*");
+
+  if (!valid) {
+    console.error(`Invalid semver: ${JSON.stringify(cmp)}`);
+  }
+
+  return valid;
 }
 
 describe("ChildProcess.spawn()", () => {
@@ -276,7 +283,7 @@ describe("spawnSync()", () => {
 
 describe("execFileSync()", () => {
   it("should execute a file synchronously", () => {
-    const result = execFileSync(bunExe(), ["-v"], { encoding: "utf8" });
+    const result = execFileSync(bunExe(), ["-v"], { encoding: "utf8", env: process.env });
     expect(isValidSemver(result.trim())).toBe(true);
   });
 
@@ -284,6 +291,7 @@ describe("execFileSync()", () => {
     const result = execFileSync("node", [import.meta.dir + "/spawned-child.js", "STDIN"], {
       input: "hello world!",
       encoding: "utf8",
+      env: process.env,
     });
     expect(result.trim()).toBe("data: hello world!");
   });
@@ -291,7 +299,7 @@ describe("execFileSync()", () => {
 
 describe("execSync()", () => {
   it("should execute a command in the shell synchronously", () => {
-    const result = execSync("bun -v", { encoding: "utf8" });
+    const result = execSync(bunExe() + " -v", { encoding: "utf8", env: bunEnv });
     expect(isValidSemver(result.trim())).toBe(true);
   });
 });
@@ -301,6 +309,7 @@ describe("Bun.spawn()", () => {
     const proc = Bun.spawn({
       cmd: ["echo", "hello"],
       stdout: "pipe",
+      env: bunEnv,
     });
 
     for await (const chunk of proc.stdout) {
@@ -330,6 +339,8 @@ it("should call close and exit before process exits", async () => {
     cwd: import.meta.dir,
     env: bunEnv,
     stdout: "pipe",
+    stdin: "inherit",
+    stderr: "inherit"
   });
   await proc.exited;
   expect(proc.exitCode).toBe(0);

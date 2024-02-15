@@ -844,6 +844,7 @@ pub const Subprocess = struct {
             if (Environment.isWindows) {
                 return this.reader.startWithCurrentPipe();
             }
+
             return this.reader.start(this.stdio_result.?, true);
         }
 

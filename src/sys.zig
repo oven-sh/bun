@@ -2026,9 +2026,19 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
                 .iov_base = buf.ptr,
                 .iov_len = buf.len,
             }};
+            var debug_timer = bun.Output.DebugTimer.start();
 
             // Note that there is a bug on Linux Kernel 5
-            const rc = linux.preadv2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NOWAIT);
+            const rc = C.sys_preadv2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NOWAIT);
+
+            if (comptime Environment.isDebug) {
+                log("preadv2({}, {d}) = {d} ({})", .{ fd, buf.len, rc, debug_timer });
+
+                if (debug_timer.timer.read() > std.time.ns_per_ms) {
+                    bun.Output.debugWarn("preadv2({}, {d}) blocked for {}", .{ fd, buf.len, debug_timer });
+                }
+            }
+
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                 switch (err.getErrno()) {
                     .OPNOTSUPP, .NOSYS => {
@@ -2061,7 +2071,18 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
                 .iov_len = buf.len,
             }};
 
-            const rc = linux.pwritev2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NOWAIT);
+            var debug_timer = bun.Output.DebugTimer.start();
+
+            const rc = C.sys_pwritev2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NOWAIT);
+
+            if (comptime Environment.isDebug) {
+                log("pwritev2({}, {d}) = {d} ({})", .{ fd, buf.len, rc, debug_timer });
+
+                if (debug_timer.timer.read() > std.time.ns_per_ms) {
+                    bun.Output.debugWarn("pwritev2({}, {d}) blocked for {}", .{ fd, buf.len, debug_timer });
+                }
+            }
+
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                 switch (err.getErrno()) {
                     .OPNOTSUPP, .NOSYS => {

@@ -645,3 +645,19 @@ pub const RWFFlagSupport = enum(u8) {
         unreachable;
     }
 };
+
+pub extern "C" fn sys_preadv2(
+    fd: c_int,
+    iov: [*]const std.os.iovec,
+    iovcnt: c_int,
+    offset: std.os.off_t,
+    flags: c_uint,
+) isize;
+
+pub extern "C" fn sys_pwritev2(
+    fd: c_int,
+    iov: [*]const std.os.iovec_const,
+    iovcnt: c_int,
+    offset: std.os.off_t,
+    flags: c_uint,
+) isize;

@@ -3830,7 +3830,7 @@ var require_writable = __commonJS({
       let called = false;
       function onFinish(err) {
         if (called) {
-          errorOrDestroy(stream, err !== null && err !== void 0 ? err : ERR_MULTIPLE_CALLBACK());
+          errorOrDestroy(stream, err !== null && err !== void 0 ? err : new ERR_MULTIPLE_CALLBACK());
           return;
         }
         called = true;
@@ -5411,7 +5411,7 @@ function createNativeStreamReadable(nativeType, Readable) {
 
     ref() {
       var ptr = this.#bunNativePtr;
-      if (ptr === 0) return;
+      if (ptr === undefined) return;
       if (this.#refCount++ === 0) {
         ptr.updateRef(true);
       }
@@ -5472,9 +5472,11 @@ function NativeWritable(pathOrFdOrSink, options = {}) {
   this._construct = NativeWritable_internalConstruct;
   this._destroy = NativeWritable_internalDestroy;
   this._final = NativeWritable_internalFinal;
+  this._write = NativeWritablePrototypeWrite;
 
   this[_pathOrFdOrSink] = pathOrFdOrSink;
 }
+Object.setPrototypeOf(NativeWritable, Writable);
 NativeWritable.prototype = Object.create(Writable.prototype);
 
 // These are confusingly two different fns for construct which initially were the same thing because
@@ -5483,7 +5485,7 @@ NativeWritable.prototype = Object.create(Writable.prototype);
 function NativeWritable_internalConstruct(cb) {
   this._writableState.constructed = true;
   this.constructed = true;
-  if (typeof cb === "function") cb();
+  if (typeof cb === "function") process.nextTick(cb);
   process.nextTick(() => {
     this.emit("open", this.fd);
     this.emit("ready");
@@ -5505,36 +5507,41 @@ function NativeWritable_lazyConstruct(stream) {
 }
 
 const WritablePrototypeWrite = Writable.prototype.write;
-NativeWritable.prototype.write = function NativeWritablePrototypeWrite(chunk, encoding, cb, native) {
-  if (!(native ?? this[_native])) {
-    this[_native] = false;
-    return WritablePrototypeWrite.$call(this, chunk, encoding, cb);
-  }
-
+function NativeWritablePrototypeWrite(chunk, encoding, cb) {
   var fileSink = this[_fileSink] ?? NativeWritable_lazyConstruct(this);
   var result = fileSink.write(chunk);
+
+  if (typeof encoding === "function") {
+    cb = encoding;
+  }
 
   if ($isPromise(result)) {
     // var writePromises = this.#writePromises;
     // var i = writePromises.length;
     // writePromises[i] = result;
-    result.then(() => {
-      this.emit("drain");
-      fileSink.flush(true);
-      // // We can't naively use i here because we don't know when writes will resolve necessarily
-      // writePromises.splice(writePromises.indexOf(result), 1);
-    });
+    result
+      .then(result => {
+        this.emit("drain");
+        if (cb) {
+          cb(null, result);
+        }
+      })
+      .catch(
+        cb
+          ? err => {
+              cb(err);
+            }
+          : err => {
+              this.emit("error", err);
+            },
+      );
     return false;
   }
-  fileSink.flush(true);
 
-  if (typeof encoding === "function") {
-    cb = encoding;
-  }
   // TODO: Should we just have a calculation based on encoding and length of chunk?
   if (cb) cb(null, chunk.byteLength);
   return true;
-};
+}
 const WritablePrototypeEnd = Writable.prototype.end;
 NativeWritable.prototype.end = function end(chunk, encoding, cb, native) {
   return WritablePrototypeEnd.$call(this, chunk, encoding, cb, native ?? this[_native]);
@@ -5574,15 +5581,14 @@ function NativeWritable_internalFinal(cb) {
 }
 
 NativeWritable.prototype.ref = function ref() {
-  var sink = this[_fileSink];
-  if (!sink) {
-    this.NativeWritable_lazyConstruct();
-  }
+  const sink = (this[_fileSink] ||= NativeWritable_lazyConstruct(this));
   sink.ref();
+  return this;
 };
 
 NativeWritable.prototype.unref = function unref() {
-  this[_fileSink]?.unref();
+  this[_fileSink]?.unref?.();
+  return this;
 };
 
 const exports = require_stream();

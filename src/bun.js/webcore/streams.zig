@@ -430,15 +430,9 @@ pub const StreamStart = union(Tag) {
         mode: bun.Mode = 0o664,
 
         pub fn flags(this: *const FileSinkOptions) bun.Mode {
-            var flag: bun.Mode = std.os.O.NONBLOCK | std.os.O.CLOEXEC;
+            _ = this;
 
-            if (this.truncate) {
-                flag |= std.os.O.TRUNC;
-            }
-
-            flag |= std.os.O.CREAT | std.os.O.WRONLY;
-
-            return flag;
+            return std.os.O.NONBLOCK | std.os.O.CLOEXEC | std.os.O.CREAT | std.os.O.WRONLY;
         }
     };
 
@@ -757,7 +751,7 @@ pub const StreamResult = union(Tag) {
             promise: *JSPromise,
             globalThis: *JSGlobalObject,
         ) void {
-            promise.asValue(globalThis).unprotect();
+            defer promise.asValue(globalThis).unprotect();
             switch (result) {
                 .err => |err| {
                     promise.reject(globalThis, err.toJSC(globalThis));
@@ -2831,7 +2825,7 @@ pub fn ReadableStreamSource(
                     this.globalThis.queueMicrotask(cb, &.{});
                 }
 
-                this.close_jsvalue.deinit();
+                this.close_jsvalue.clear();
             }
 
             pub fn finalize(this: *ReadableStreamSourceType) callconv(.C) void {
@@ -2883,6 +2877,16 @@ pub const FileSink = struct {
         this.writer.close();
     }
 
+    fn runPending(this: *FileSink) void {
+        this.ref();
+        defer this.deref();
+
+        const l = this.eventLoop();
+        l.enter();
+        defer l.exit();
+        this.pending.run();
+    }
+
     pub fn onWrite(this: *FileSink, amount: usize, done: bool) void {
         log("onWrite({d}, {any})", .{ amount, done });
 
@@ -2892,14 +2896,18 @@ pub const FileSink = struct {
 
         this.written += amount;
 
-        if (this.pending.state == .pending)
+        if (this.pending.state == .pending) {
             this.pending.consumed += @truncate(amount);
+            if (this.done) {
+                this.pending.result = .{ .owned_and_done = this.pending.consumed };
+            } else {
+                this.pending.result = .{ .owned = this.pending.consumed };
+            }
+
+            this.runPending();
+        }
 
         if (done) {
-            if (this.pending.state == .pending) {
-                this.pending.result = .{ .owned = this.pending.consumed };
-                this.pending.run();
-            }
             this.signal.close(null);
         }
     }
@@ -2908,7 +2916,7 @@ pub const FileSink = struct {
         if (this.pending.state == .pending) {
             this.pending.result = .{ .err = err };
 
-            this.pending.run();
+            this.runPending();
         }
     }
     pub fn onReady(this: *FileSink) void {

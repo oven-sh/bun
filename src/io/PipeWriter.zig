@@ -525,14 +525,12 @@ pub fn PosixStreamingWriter(
             }
 
             const rc = @This()._tryWrite(this, buf);
-            if (rc == .pending) {
-                registerPoll(this);
-                return rc;
-            }
             this.head = 0;
             switch (rc) {
-                .pending => {
-                    this.buffer.appendSlice(buf) catch {
+                .pending => |pending| {
+                    registerPoll(this);
+
+                    this.buffer.appendSlice(buf[pending..]) catch {
                         return .{ .err = bun.sys.Error.oom };
                     };
                 },

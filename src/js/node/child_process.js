@@ -1238,7 +1238,9 @@ class ChildProcess extends EventEmitter {
     }
 
     if (hasSocketsToEagerlyLoad) {
-      this.stdio;
+      for (let item of this.stdio) {
+        item?.ref?.();
+      }
     }
   }
 

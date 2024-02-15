@@ -193,16 +193,17 @@ const CppWebSocket = opaque {
         defer loop.exit();
         return WebSocket__rejectUnauthorized(this);
     }
+    pub fn didConnect(this: *CppWebSocket, socket: *uws.Socket, buffered_data: ?[*]u8, buffered_len: usize) void {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didConnect(this, socket, buffered_data, buffered_len);
+    }
     extern fn WebSocket__incrementPendingActivity(websocket_context: *CppWebSocket) void;
     extern fn WebSocket__decrementPendingActivity(websocket_context: *CppWebSocket) void;
     pub fn ref(this: *CppWebSocket) void {
         JSC.markBinding(@src());
         WebSocket__incrementPendingActivity(this);
-    }
-
-    pub fn rejectUnauthorized(this: *CppWebSocket) bool {
-        JSC.markBinding(@src());
-        return WebSocket__rejectUnauthorized(this);
     }
 
     pub fn unref(this: *CppWebSocket) void {

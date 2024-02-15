@@ -5232,7 +5232,7 @@ function createNativeStreamReadable(nativeType, Readable) {
   const MIN_BUFFER_SIZE = 512;
   var NativeReadable = class NativeReadable extends Readable {
     #bunNativePtr;
-    #refCount = 1;
+    #refCount = 0;
     #constructed = false;
     #remainingChunk = undefined;
     #highWaterMark;
@@ -5411,6 +5411,7 @@ function createNativeStreamReadable(nativeType, Readable) {
 
     ref() {
       var ptr = this.#bunNativePtr;
+      console.log("ref", this.#refCount);
       if (ptr === undefined) return;
       if (this.#refCount++ === 0) {
         ptr.updateRef(true);
@@ -5419,6 +5420,7 @@ function createNativeStreamReadable(nativeType, Readable) {
 
     unref() {
       var ptr = this.#bunNativePtr;
+      console.log("unref", this.#refCount);
       if (ptr === undefined) return;
       if (this.#refCount-- === 1) {
         ptr.updateRef(false);
@@ -5587,7 +5589,8 @@ NativeWritable.prototype.ref = function ref() {
 };
 
 NativeWritable.prototype.unref = function unref() {
-  this[_fileSink]?.unref?.();
+  const sink = (this[_fileSink] ||= NativeWritable_lazyConstruct(this));
+  sink.unref();
   return this;
 };
 

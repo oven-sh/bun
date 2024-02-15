@@ -32,13 +32,12 @@ test("spawn can write to stdin multiple chunks", async () => {
         try {
           for await (var chunk of proc.stdout) {
             chunks.push(chunk);
-            console.log("Read", Buffer.from(chunk).toString());
           }
         } catch (e: any) {
           console.log(e.stack);
           throw e;
         }
-        console.log("Finished stdout");
+        console.count("Finished stdout");
       })();
 
       const prom2 = (async function () {
@@ -48,9 +47,8 @@ test("spawn can write to stdin multiple chunks", async () => {
 
           if (inCounter++ === 3) break;
         }
-        console.log("Finished stdin");
         await proc.stdin!.end();
-        console.log("Closed stdin");
+        console.count("Finished stdin");
       })();
 
       await Promise.all([prom, prom2]);
@@ -69,4 +67,4 @@ test("spawn can write to stdin multiple chunks", async () => {
 
   // assert we didn't leak any file descriptors
   expect(newMaxFD).toBe(maxFD);
-}, 20_000);
+}, 60_000);

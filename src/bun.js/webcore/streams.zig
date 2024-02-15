@@ -2863,6 +2863,7 @@ pub const FileSink = struct {
     pollable: bool = false,
     nonblocking: bool = false,
     fd: bun.FileDescriptor = bun.invalid_fd,
+    has_js_called_unref: bool = false,
 
     const log = Output.scoped(.FileSink, false);
 
@@ -3168,6 +3169,7 @@ pub const FileSink = struct {
     }
 
     pub fn updateRef(this: *FileSink, value: bool) void {
+        this.has_js_called_unref = !value;
         if (value) {
             this.writer.enableKeepingProcessAlive(this.event_loop_handle);
         } else {
@@ -3195,8 +3197,9 @@ pub const FileSink = struct {
                 return .{ .err = err };
             },
             .pending => |pending_written| {
-                // Pending writes keep the event loop ref'd
-                this.writer.updateRef(this.eventLoop(), true);
+                if (!this.has_js_called_unref)
+                    // Pending writes keep the event loop ref'd
+                    this.writer.updateRef(this.eventLoop(), true);
 
                 this.pending.consumed += @truncate(pending_written);
                 this.pending.result = .{ .owned = @truncate(pending_written) };
@@ -3220,6 +3223,7 @@ pub const FileReader = struct {
     buffered: std.ArrayListUnmanaged(u8) = .{},
     read_inside_on_pull: ReadDuringJSOnPullResult = .{ .none = {} },
     highwater_mark: usize = 16384,
+    has_js_called_unref: bool = false,
 
     pub const IOReader = bun.io.BufferedReader;
     pub const Poll = IOReader;
@@ -3461,6 +3465,8 @@ pub const FileReader = struct {
                 return false;
             }
 
+            const was_done = this.reader.isDone();
+
             if (this.pending_view.len >= buf.len) {
                 @memcpy(this.pending_view[0..buf.len], buf);
                 this.reader.buffer().clearRetainingCapacity();
@@ -3473,7 +3479,7 @@ pub const FileReader = struct {
                     },
                 };
 
-                if (this.reader.isDone()) {
+                if (was_done) {
                     this.pending.result = .{
                         .into_array_and_done = .{
                             .value = this.pending_value.get() orelse .zero,
@@ -3485,7 +3491,7 @@ pub const FileReader = struct {
                 this.pending_value.clear();
                 this.pending_view = &.{};
                 this.pending.run();
-                return false;
+                return !was_done;
             }
 
             if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
@@ -3502,7 +3508,7 @@ pub const FileReader = struct {
                 this.pending_value.clear();
                 this.pending_view = &.{};
                 this.pending.run();
-                return false;
+                return !was_done;
             }
 
             if (this.reader.isDone()) {
@@ -3518,12 +3524,13 @@ pub const FileReader = struct {
             this.pending_value.clear();
             this.pending_view = &.{};
             this.pending.run();
-            return false;
+            return !was_done;
         } else if (!bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
             this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
         }
 
-        return this.read_inside_on_pull != .temporary and this.buffered.items.len + this.reader.buffer().items.len < this.highwater_mark;
+        // For pipes, we have to keep pulling or the other process will block.
+        return this.read_inside_on_pull != .temporary and !(this.buffered.items.len + this.reader.buffer().items.len >= this.highwater_mark and !this.reader.flags.pollable);
     }
 
     fn isPulling(this: *const FileReader) bool {
@@ -3640,6 +3647,7 @@ pub const FileReader = struct {
 
     pub fn setRefOrUnref(this: *FileReader, enable: bool) void {
         if (this.done) return;
+        this.has_js_called_unref = !enable;
         this.reader.updateRef(enable);
     }
 

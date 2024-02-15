@@ -381,10 +381,11 @@ pub fn PosixStreamingWriter(
             }
 
             if (this.buffer.items.len == this.head) {
-                if (this.buffer.capacity > 32 * 1024 and !done) {
-                    this.buffer.shrinkAndFree(std.mem.page_size);
+                if (this.buffer.capacity > 1024 * 1024 and !done) {
+                    this.buffer.clearAndFree();
+                } else {
+                    this.buffer.clearRetainingCapacity();
                 }
-                this.buffer.clearRetainingCapacity();
                 this.head = 0;
             }
 
@@ -635,8 +636,6 @@ pub fn PosixStreamingWriter(
                 this.handle = .{ .poll = Async.FilePoll.init(loop, fd, .{}, PosixWriter, this) };
                 break :brk this.handle.poll;
             };
-
-            poll.enableKeepingProcessAlive(loop);
 
             switch (poll.registerWithFd(loop.loop(), .writable, .dispatch, fd)) {
                 .err => |err| {

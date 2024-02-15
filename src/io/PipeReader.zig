@@ -662,7 +662,8 @@ const PosixBufferedReader = struct {
         };
         poll.owner.set(this);
 
-        poll.enableKeepingProcessAlive(this.eventLoop());
+        if (!poll.flags.contains(.was_ever_registered))
+            poll.enableKeepingProcessAlive(this.eventLoop());
 
         switch (poll.registerWithFd(this.loop(), .readable, .dispatch, poll.fd)) {
             .err => |err| {

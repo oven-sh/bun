@@ -414,7 +414,7 @@ pub const Bundler = struct {
 
             bundler.resolver.bustDirCache(buster_name);
 
-            return _resolveEntryPoint(bundler, entry_point) catch |err| {
+            return _resolveEntryPoint(bundler, entry_point) catch {
                 bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch bun.outOfMemory();
                 return err;
             };

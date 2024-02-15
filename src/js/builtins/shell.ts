@@ -160,7 +160,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     }
 
     throws(doThrow: boolean | undefined): this {
-      this.#throws = !!doThrow
+      this.#throws = !!doThrow;
       return this;
     }
 

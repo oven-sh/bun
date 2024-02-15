@@ -977,7 +977,6 @@ pub const Resolver = struct {
     }
 
     pub fn resolve(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
-        std.debug.print("resolve({s}, {s})", .{ source_dir, import_path });
         switch (r.resolveAndAutoInstall(source_dir, import_path, kind, GlobalCache.disable)) {
             .success => |result| return result,
             .pending, .not_found => return error.ModuleNotFound,

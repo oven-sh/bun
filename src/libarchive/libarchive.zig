@@ -221,7 +221,7 @@ pub const BufferReadStream = struct {
 
         _ = lib.archive_read_support_format_tar(this.archive);
         _ = lib.archive_read_support_format_gnutar(this.archive);
-        _ = lib.archive_read_support_compression_gzip(this.archive);
+        _ = lib.archive_read_support_compression_all(this.archive);
 
         // Ignore zeroed blocks in the archive, which occurs when multiple tar archives
         // have been concatenated together.

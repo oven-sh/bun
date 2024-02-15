@@ -52,14 +52,13 @@ test("which", () => {
       }),
     ).toBe(abs);
 
-
     // TODO: only fails on x64 macos
     if (!isIntelMacOS) {
       try {
         mkdirSync("myscript.sh");
         chmodSync("myscript.sh", "755");
       } catch (e) {}
-  
+
       // directories should not be returned
       expect(which("myscript.sh")).toBe(null);
     }

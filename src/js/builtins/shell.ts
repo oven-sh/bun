@@ -261,9 +261,8 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     }
   }
 
-  var BunShell = function BunShell(...args) {
-    const [first, ...rest] = args;
-    if (first.raw === undefined) throw new Error("Please use `$` as a tagged template function: $`cmd arg1 arg2`");
+  var BunShell = function BunShell(first, ...rest) {
+    if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
     const core = new ShellInterpreter(first.raw, ...rest);
 
     const cwd = BunShell[cwdSymbol];
@@ -282,9 +281,8 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       throw new TypeError("Class constructor Shell cannot be invoked without 'new'");
     }
 
-    var Shell = function Shell(...args) {
-      const [first, ...rest] = args;
-      if (first.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
+    var Shell = function Shell(first, ...rest) {
+      if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
       const core = new ShellInterpreter(first.raw, ...rest);
 
       const cwd = Shell[cwdSymbol];

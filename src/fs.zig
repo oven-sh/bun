@@ -758,8 +758,9 @@ pub const FileSystem = struct {
             return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd.int() + 1) * 2);
         }
 
-        pub fn bustEntriesCache(rfs: *RealFS, file_path: string) void {
-            rfs.entries.remove(file_path);
+        /// Returns `true` if an entry was removed
+        pub fn bustEntriesCache(rfs: *RealFS, file_path: string) bool {
+            return rfs.entries.remove(file_path);
         }
 
         pub const Limit = struct {

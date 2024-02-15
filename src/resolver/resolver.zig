@@ -977,6 +977,7 @@ pub const Resolver = struct {
     }
 
     pub fn resolve(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
+        std.debug.print("resolve({s}, {s})", .{ source_dir, import_path });
         switch (r.resolveAndAutoInstall(source_dir, import_path, kind, GlobalCache.disable)) {
             .success => |result| return result,
             .pending, .not_found => return error.ModuleNotFound,
@@ -1582,11 +1583,18 @@ pub const Resolver = struct {
 
     const dev = Output.scoped(.Resolver, false);
 
-    pub fn bustDirCache(r: *ThisResolver, path: string) void {
+    /// Bust the directory cache for the given path.
+    /// Returns `true` if something was deleted, otherwise `false`.
+    pub fn bustDirCache(r: *ThisResolver, path: string) bool {
         dev("Bust {s}", .{path});
-        std.debug.assert(path[path.len - 1] == std.fs.path.sep);
-        r.fs.fs.bustEntriesCache(path);
-        r.dir_cache.remove(path);
+        if (Environment.allow_assert) {
+            if (path[path.len - 1] != std.fs.path.sep) {
+                std.debug.panic("Expected a trailing slash on {s}", .{path});
+            }
+        }
+        const first_bust = r.fs.fs.bustEntriesCache(path);
+        const second_bust = r.dir_cache.remove(path);
+        return first_bust or second_bust;
     }
 
     pub fn loadNodeModules(

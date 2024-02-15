@@ -231,16 +231,26 @@ public:
         // TODO: Buffer to blob
     }
 
+    JSC::JSValue decodeSqliteValue(const sqlite3_value* value) {
+        return JSC::jsNumber(23); // TODO
+    }
+
     static void xDestroy(void* self) {
         delete static_cast<SqliteCustomFunction*>(self);
     }
     static void xFunc(sqlite3_context* invocation, int argc, sqlite3_value** argv) {
         auto self = static_cast<SqliteCustomFunction*>(sqlite3_user_data(invocation));
 
+        JSC::MarkedArgumentBuffer arguments;
+        for (size_t i = 0; i < argc; ++i) {
+            auto value = self->decodeSqliteValue(argv[i]);
+            arguments.appendWithCrashOnOverflow(value);
+        }
+
         auto returnValue = JSC::call(
             self->lexicalGlobalObject,
             self->callback,
-            JSC::ArgList(), // TODO: ArgList
+            arguments,
             "TODO"_s // TODO: Use proper overload that does not have this (and has a thisObject instead)
         );
         self->setSqliteResult(invocation, returnValue);

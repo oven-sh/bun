@@ -66,7 +66,7 @@ pub const Response = struct {
     redirected: bool = false,
 
     // We must report a consistent value for this
-    reported_estimated_size: ?u63 = null,
+    reported_estimated_size: usize = 0,
 
     pub const getText = ResponseMixin.getText;
     pub const getBody = ResponseMixin.getBody;
@@ -85,13 +85,19 @@ pub const Response = struct {
     }
 
     pub fn estimatedSize(this: *Response) callconv(.C) usize {
-        return this.reported_estimated_size orelse brk: {
-            this.reported_estimated_size = @as(
-                u63,
-                @intCast(this.body.value.estimatedSize() + this.url.byteSlice().len + this.init.status_text.byteSlice().len + @sizeOf(Response)),
-            );
-            break :brk this.reported_estimated_size.?;
-        };
+        return this.reported_estimated_size;
+    }
+
+    pub fn calculateEstimatedByteSize(this: *Response) void {
+        this.reported_estimated_size = this.body.value.estimatedSize() +
+            this.url.byteSlice().len +
+            this.init.status_text.byteSlice().len +
+            @sizeOf(Response);
+    }
+
+    pub fn toJS(this: *Response, globalObject: *JSGlobalObject) JSValue {
+        this.calculateEstimatedByteSize();
+        return Response.toJSUnchecked(globalObject, this);
     }
 
     pub fn getBodyValue(
@@ -500,6 +506,8 @@ pub const Response = struct {
         {
             response.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
         }
+
+        response.calculateEstimatedByteSize();
 
         return response;
     }

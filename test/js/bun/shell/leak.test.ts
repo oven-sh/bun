@@ -82,27 +82,24 @@ describe("fd leak", () => {
       writeFileSync(tempfile, testcode);
 
       const impl = /* ts */ `
-
-
-
-            test("${name}", async () => {
-              const hundredMb = ${threshold}
-              let prev: number | undefined = undefined;
-              for (let i = 0; i < ${runs}; i++) {
-                Bun.gc(true);
-                await (async function() {
-                  await ${builder.toString().slice("() =>".length)}.quiet().run()
-                })()
-                Bun.gc(true);
-                const val = process.memoryUsage.rss();
-                if (prev === undefined) {
-                  prev = val;
-                } else {
-                  expect(Math.abs(prev - val)).toBeLessThan(hundredMb)
-                }
-              }
-            }, 1_000_000)
-            `;
+        test("${name}", async () => {
+          const hundredMb = ${threshold}
+          let prev: number | undefined = undefined;
+          for (let i = 0; i < ${runs}; i++) {
+            Bun.gc(true);
+            await (async function() {
+              await ${builder.toString().slice("() =>".length)}.quiet().run()
+            })()
+            Bun.gc(true);
+            const val = process.memoryUsage.rss();
+            if (prev === undefined) {
+              prev = val;
+            } else {
+              expect(Math.abs(prev - val)).toBeLessThan(hundredMb)
+            }
+          }
+        }, 1_000_000)
+      `;
 
       appendFileSync(tempfile, impl);
 

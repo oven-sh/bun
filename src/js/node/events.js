@@ -375,7 +375,7 @@ function on(emitter, event, options = {}) {
     // Else: Add event value to queue so it can be consumed by a future Promise.
     unconsumedEvents.push(ev);
   };
-  const eventHandler = options[kFirstEventParam] ? eventHandlerBody : (...args) => eventHandlerBody(args)
+  const eventHandler = options[kFirstEventParam] ? eventHandlerBody : (...args) => eventHandlerBody(args);
   emitter.on(event, eventHandler);
 
   const errorHandler = ex => {
@@ -384,7 +384,7 @@ function on(emitter, event, options = {}) {
       return reject(ex);
     }
     unconsumedErrors.push(ex);
-  }
+  };
   emitter.on("error", errorHandler);
 
   signal?.addEventListener("abort", () => {
@@ -395,8 +395,8 @@ function on(emitter, event, options = {}) {
   // and yield only the remaining queued-up values in iterator.
   for (const evName of options?.close || []) {
     emitter.on(evName, () => {
-      emitter.removeListener(event, eventHandler)
-      emitter.removeListener("error", errorHandler)
+      emitter.removeListener(event, eventHandler);
+      emitter.removeListener("error", errorHandler);
       done = true;
     });
   }

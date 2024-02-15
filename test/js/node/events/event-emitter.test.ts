@@ -513,6 +513,111 @@ describe("EventEmitter.on", () => {
     expect((await asyncIterator.next()).value).toBe(1);
     expect((await asyncIterator.next()).value).toEqual([4, 5, 6]);
   });
+
+  test("Cancel via error event", async () => {
+    const { on, EventEmitter } = require("node:events");
+    const process = require("node:process");
+  
+    const ee = new EventEmitter();
+    const output = [];
+  
+    // Emit later on
+    process.nextTick(() => {
+      ee.emit("foo", "bar");
+      ee.emit("foo", 42);
+      ee.emit("foo", "baz");
+    });
+  
+    setTimeout(() => {
+      ee.emit("error", "DONE");
+    }, 1_000);
+  
+    try {
+      for await (const event of on(ee, "foo")) {
+        output.push([1, event]);
+      }
+    } catch (error) {
+      output.push([2, error]);
+    }
+  
+    expect(output).toEqual([
+      [1, ["bar"]],
+      [1, [42]],
+      [1, ["baz"]],
+      [2, "DONE"],
+    ]);
+  });
+  
+  test("AbortController", () => {
+    const { on, EventEmitter } = require("node:events");
+  
+    const ac = new AbortController();
+    const ee = new EventEmitter();
+    const output = [];
+  
+    process.nextTick(() => {
+      ee.emit("foo", "bar");
+      ee.emit("foo", 42);
+      ee.emit("foo", "baz");
+    });
+    (async () => {
+      try {
+        for await (const event of on(ee, "foo", { signal: ac.signal })) {
+          output.push([1, event]);
+        }
+        console.log("unreachable");
+      } catch (error: any) {
+        const { code, message } = error;
+        output.push([2, { code, message }]);
+  
+        expect(output).toEqual([
+          [1, ["bar"]],
+          [1, [42]],
+          [1, ["baz"]],
+          [
+            2,
+            {
+              code: "ABORT_ERR",
+              message: "The operation was aborted",
+            },
+          ],
+        ]);
+      }
+    })();
+  
+    process.nextTick(() => ac.abort());
+  });
+
+  // Checks for potential issues with FixedQueue size
+  test("Queue many events", async () => {
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey");
+
+    for(let i = 0; i < 2500; i += 1) {
+      emitter.emit("hey", i);
+    }
+
+    expect((await asyncIterator.next()).value).toEqual([0]);
+  });
+
+  test("readline.createInterface", async () => {
+    const { createInterface } = require("node:readline");
+    const { createReadStream } = require("node:fs");
+    const path = require("node:path");
+  
+    const fpath = path.join(__filename, "..", "..", "child_process", "fixtures", "child-process-echo-options.js");
+    console.log(fpath);
+    const interfaced = createInterface(createReadStream(fpath));
+    const output = [];
+  
+    try {
+      for await (const line of interfaced) {
+        output.push(line);
+      }
+    } catch (e) {
+      expect(output).toBe(["// TODO - bun has no `send` method in the process", "process?.send({ env: process.env });"]);
+    }
+  });
 });
 
 describe("EventEmitter error handling", () => {
@@ -722,5 +827,10 @@ describe("EventEmitter constructors", () => {
     const req = createRequire(import.meta.path);
     const events = req("events");
     new events();
+  });
+
+  test("in cjs, events is callable", () => {
+    const EventEmitter = require("events");
+    new EventEmitter();
   });
 });

@@ -3302,9 +3302,10 @@ pub const FileReader = struct {
 
             if (comptime Environment.isPosix) {
                 if ((file.is_atty orelse false) or (fd.int() < 3 and std.os.isatty(fd.cast())) or (file.pathlike == .fd and bun.FDTag.get(file.pathlike.fd) != .none and std.os.isatty(file.pathlike.fd.cast()))) {
-                    var termios = std.mem.zeroes(std.os.termios);
-                    _ = std.c.tcgetattr(fd.cast(), &termios);
-                    bun.C.cfmakeraw(&termios);
+                    // var termios = std.mem.zeroes(std.os.termios);
+                    // _ = std.c.tcgetattr(fd.cast(), &termios);
+                    // bun.C.cfmakeraw(&termios);
+                    // _ = std.c.tcsetattr(fd.cast(), std.os.TCSA.NOW, &termios);
                     file.is_atty = true;
                 }
             }
@@ -3324,9 +3325,7 @@ pub const FileReader = struct {
                 }
 
                 this.pollable = bun.sys.isPollable(stat.mode) or (file.is_atty orelse false);
-                if (this.pollable and !(file.is_atty orelse false)) {
-                    this.nonblocking = true;
-                }
+                this.nonblocking = this.pollable and !(file.is_atty orelse false);
             }
 
             this.fd = fd;

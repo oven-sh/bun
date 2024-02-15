@@ -31,7 +31,7 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <errno.h>
 #endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void*);
+void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs);
 
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
@@ -179,7 +179,7 @@ void bun_on_tick_before(void* ctx);
 void bun_on_tick_after(void* ctx);
 
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickCallbackContext) {
+void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs) {
     if (loop->num_polls == 0)
         return;
 

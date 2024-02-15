@@ -65,22 +65,6 @@ describe("node:events", () => {
     await promise;
     expect(emitter.listenerCount("hey")).toBe(0);
   });
-
-  // TODO: extensive events.on tests
-  // test("on", () => {
-  //   const emitter = new EventEmitter();
-  //   const asyncIterator = EventEmitter.on(emitter, "hey");
-
-  //   expect(asyncIterator.next).toBeDefined();
-  //   expect(asyncIterator[Symbol.asyncIterator]).toBeDefined();
-
-  //   const fn = async () => {
-  //     const { value } = await asyncIterator.next();
-  //     expect(value).toBe(1);
-  //   };
-
-  //   emitter.emit("hey", 1, 2, 3);
-  // });
 });
 
 describe("EventEmitter", () => {

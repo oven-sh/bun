@@ -507,6 +507,17 @@ it("db.defineFunction() with varargs", () => {
   expect(res).toBe("a,b,c");
 });
 
+it("db.defineFunction() with unsupported returned value", () => {
+  const db = Database.open(":memory:");
+  db.defineFunction("notSupported", () => ({ now: "supported" }));
+  try {
+    const res = db.query("SELECT notSupported()").get();
+  } catch (e) {
+    expect(e.message === "User-defined function returned an unsupported or invalid value").toBe(true);
+    expect(e.name).toBe("TypeError");
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/1553
 it("latin1 supplement chars", () => {
   const db = new Database();

@@ -235,7 +235,12 @@ public:
 
         // TODO: Buffer to blob
 
-        // TODO: Exception: "User-defined function returned an invalid value"
+        auto scope = DECLARE_THROW_SCOPE(this->lexicalGlobalObject->vm());
+        throwException(
+            this->lexicalGlobalObject,
+            scope,
+            createTypeError(this->lexicalGlobalObject, "User-defined function returned an unsupported or invalid value"_s)
+        );
     }
 
     JSC::JSValue decodeSqliteValue(sqlite3_value* value) {
@@ -281,7 +286,7 @@ public:
             case SQLITE_NULL:
                 return JSC::jsNull();
             default:
-                return JSC::jsNull(); // TODO: Throw something due to unsupported value?
+                return JSC::jsNull();
         }
     }
 

@@ -68,6 +68,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     _,
 
     pub inline fn int(fd: FileDescriptor) FileDescriptorInt {
+        // TODO(@paperdave): make this a compile error to call on windows. every usage is incorrect.
         return @intFromEnum(fd);
     }
 

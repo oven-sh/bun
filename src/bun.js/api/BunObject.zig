@@ -913,6 +913,7 @@ pub fn getStdin(
     store.ref();
     var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
     blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -925,6 +926,7 @@ pub fn getStderr(
     store.ref();
     var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
     blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -937,6 +939,7 @@ pub fn getStdout(
     store.ref();
     var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
     blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -2079,6 +2082,7 @@ pub const Crypto = struct {
                     .err => {
                         const error_instance = value.toErrorInstance(globalObject);
                         globalObject.throwValue(error_instance);
+                        return .zero;
                     },
                     .hash => |h| {
                         return JSC.ZigString.init(h).toValueGC(globalObject);
@@ -5274,10 +5278,8 @@ pub const JSZlib = struct {
 
         reader.readAll() catch {
             defer reader.deinit();
-            if (reader.errorMessage()) |msg| {
-                return ZigString.init(msg).toErrorInstance(globalThis);
-            }
-            return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
+            globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+            return .zero;
         };
         reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
         reader.list.capacity = reader.list.items.len;
@@ -5306,10 +5308,8 @@ pub const JSZlib = struct {
 
         reader.readAll() catch {
             defer reader.deinit();
-            if (reader.errorMessage()) |msg| {
-                return ZigString.init(msg).toErrorInstance(globalThis);
-            }
-            return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
+            globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+            return .zero;
         };
         reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
         reader.list.capacity = reader.list.items.len;
@@ -5336,10 +5336,8 @@ pub const JSZlib = struct {
 
         reader.readAll() catch {
             defer reader.deinit();
-            if (reader.errorMessage()) |msg| {
-                return ZigString.init(msg).toErrorInstance(globalThis);
-            }
-            return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
+            globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+            return .zero;
         };
         reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
         reader.list.capacity = reader.list.items.len;

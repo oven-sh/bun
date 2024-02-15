@@ -4,7 +4,7 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
-const { throwNotImplemented } = require("../internal/shared");
+const { throwNotImplemented, warnNotImplementedOnce } = require("../internal/shared");
 
 const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
@@ -13,14 +13,6 @@ const isMainThread = Bun.isMainThread;
 let [_workerData, _threadId, _receiveMessageOnPort] = $lazy("worker_threads");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
-
-const emittedWarnings = new Set();
-function emitWarning(type, message) {
-  if (emittedWarnings.has(type)) return;
-  emittedWarnings.add(type);
-  // process.emitWarning(message); // our printing is bad
-  console.warn("[bun] Warning:", message);
-}
 
 function injectFakeEmitter(Class) {
   function messageEventHandler(event: MessageEvent) {
@@ -216,7 +208,7 @@ class Worker extends EventEmitter {
     super();
     for (const key of unsupportedOptions) {
       if (key in options && options[key] != null) {
-        emitWarning("option." + key, `worker_threads.Worker option "${key}" is not implemented.`);
+        warnNotImplementedOnce(`worker_threads.Worker option "${key}"`);
       }
     }
     this.#worker = new WebWorker(filename, options);
@@ -257,7 +249,7 @@ class Worker extends EventEmitter {
   get performance() {
     return (this.#performance ??= {
       eventLoopUtilization() {
-        emitWarning("performance", "worker_threads.Worker.performance is not implemented.");
+        warnNotImplementedOnce("worker_threads.Worker.performance");
         return {
           idle: 0,
           active: 0,

@@ -2893,7 +2893,7 @@ pub const FileSink = struct {
 
         // Only keep the event loop ref'd while there's a pending write in progress.
         // If there's no pending write, no need to keep the event loop ref'd.
-        this.writer.updateRef(this.eventLoop(), !done);
+        this.writer.updateRef(this.eventLoop(), false);
 
         this.written += amount;
 
@@ -2906,20 +2906,18 @@ pub const FileSink = struct {
             }
 
             this.runPending();
+
+            if(this.done and done) {
+                // if we call end/endFromJS and we have some pending returned from .flush() we should call writer.end()
+                this.writer.end(); 
+            }
         }
 
         if (done) {
-            if (this.pending.state == .pending) {
-                this.pending.result = .{ .owned = this.pending.consumed };
-                this.pending.run();
-                // we already called end and we are done writting pending stuff so we close the writer
-                if (this.done) {
-                    this.writer.end();
-                }
-            }
             this.signal.close(null);
         }
     }
+
     pub fn onError(this: *FileSink, err: bun.sys.Error) void {
         log("onError({any})", .{err});
         if (this.pending.state == .pending) {
@@ -2928,6 +2926,7 @@ pub const FileSink = struct {
             this.runPending();
         }
     }
+
     pub fn onReady(this: *FileSink) void {
         log("onReady()", .{});
 

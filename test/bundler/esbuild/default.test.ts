@@ -4073,7 +4073,7 @@ describe("bundler", () => {
       "/a/b/c.js": `console.log('c')`,
       "/a/b/d.js": `console.log('d')`,
     },
-    entryPointsRaw: ["/a/b/c.js", "/a/b/d.js"],
+    entryPointsRaw: ["a/b/c.js", "a/b/d.js"],
     root: "/",
     onAfterBundle(api) {
       api.assertFileExists("/out/a/b/c.js");

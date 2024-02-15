@@ -1310,7 +1310,7 @@ pub fn spawnProcessWindows(
                 stdio.data.fd = fd;
             },
             .buffer => |my_pipe| {
-                try my_pipe.init(loop, false).unwrap();
+                try my_pipe.init(loop, true).unwrap();
                 stdio.flags = pipe_flags;
                 stdio.data.stream = @ptrCast(my_pipe);
             },

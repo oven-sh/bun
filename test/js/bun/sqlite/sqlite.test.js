@@ -509,7 +509,7 @@ it("db.defineFunction() with varargs", () => {
 
 it("db.defineFunction() with unsupported returned value", () => {
   const db = Database.open(":memory:");
-  db.defineFunction("notSupported", () => ({ now: "supported" }));
+  db.defineFunction("notSupported", () => ({ not: "supported" }));
   try {
     const res = db.query("SELECT notSupported()").get();
   } catch (e) {

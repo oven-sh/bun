@@ -2907,9 +2907,9 @@ pub const FileSink = struct {
 
             this.runPending();
 
-            if(this.done and done) {
+            if (this.done and done) {
                 // if we call end/endFromJS and we have some pending returned from .flush() we should call writer.end()
-                this.writer.end(); 
+                this.writer.end();
             }
         }
 

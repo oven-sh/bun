@@ -3746,6 +3746,15 @@ pub const ByteBlobLoader = struct {
         return .{ .into_array = .{ .value = array, .len = copied } };
     }
 
+    pub fn detachStore(this: *ByteBlobLoader) ?*Blob.Store {
+        if (this.store) |store| {
+            this.store = null;
+            this.done = true;
+            return store;
+        }
+        return null;
+    }
+
     pub fn onCancel(this: *ByteBlobLoader) void {
         this.clearStore();
     }
@@ -3871,10 +3880,9 @@ pub const ByteStream = struct {
         return @fieldParentPtr(Source, "context", this).cancelled;
     }
 
-    pub fn unpipe(this: *@This()) void {
+    pub fn unpipeWithoutDeref(this: *@This()) void {
         this.pipe.ctx = null;
         this.pipe.onPipe = null;
-        _ = this.parent().decrementCount();
     }
 
     pub fn onData(

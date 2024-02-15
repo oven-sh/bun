@@ -548,20 +548,15 @@ pub const Body = struct {
 
                 switch (readable.ptr) {
                     .Blob => |blob| {
-                        var store = blob.store orelse {
+                        const store = blob.detachStore() orelse {
                             return Body.Value{ .Blob = Blob.initEmpty(globalThis) };
                         };
-                        store.ref();
+
                         readable.forceDetach(globalThis);
 
                         const result: Value = .{
                             .Blob = Blob.initWithStore(store, globalThis),
                         };
-
-                        if (!blob.done) {
-                            blob.done = true;
-                            blob.deinit();
-                        }
 
                         return result;
                     },
@@ -1171,7 +1166,7 @@ pub const BodyValueBufferer = struct {
     pub fn deinit(this: *@This()) void {
         this.stream_buffer.deinit();
         if (this.byte_stream) |byte_stream| {
-            byte_stream.unpipe();
+            byte_stream.unpipeWithoutDeref();
         }
         this.readable_stream_ref.deinit();
 

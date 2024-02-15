@@ -1769,7 +1769,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctxLog("finalizeWithoutDeinit: stream != null", .{});
 
                 this.byte_stream = null;
-                stream.unpipe();
+                stream.unpipeWithoutDeref();
             }
 
             this.readable_stream_ref.deinit();

@@ -650,6 +650,108 @@ pub fn PosixStreamingWriter(
 }
 const uv = bun.windows.libuv;
 
+/// Will provide base behavior for pipe writers
+/// The WindowsPipeWriter type should implement the following interface:
+/// struct {
+///   pipe: ?*uv.Pipe = undefined,
+///   parent: *Parent = undefined,
+///   is_done: bool = false,
+///   pub fn startWithCurrentPipe(this: *WindowsPipeWriter) bun.JSC.Maybe(void),
+///   fn onClosePipe(pipe: *uv.Pipe) callconv(.C) void,
+/// };
+fn BaseWindowsPipeWriter(
+    comptime WindowsPipeWriter: type,
+    comptime Parent: type,
+) type {
+    return struct {
+        pub fn getFd(this: *const WindowsPipeWriter) bun.FileDescriptor {
+            const pipe = this.pipe orelse return bun.invalid_fd;
+            return pipe.fd();
+        }
+
+        pub fn hasRef(this: *const WindowsPipeWriter) bool {
+            if (this.is_done) {
+                return false;
+            }
+            if (this.pipe) |pipe| return pipe.hasRef();
+            return false;
+        }
+
+        pub fn enableKeepingProcessAlive(this: *WindowsPipeWriter, event_loop: anytype) void {
+            this.updateRef(event_loop, true);
+        }
+
+        pub fn disableKeepingProcessAlive(this: *WindowsPipeWriter, event_loop: anytype) void {
+            this.updateRef(event_loop, false);
+        }
+
+        pub fn close(this: *WindowsPipeWriter) void {
+            this.is_done = true;
+            if (this.pipe) |pipe| {
+                pipe.close(&WindowsPipeWriter.onClosePipe);
+            }
+        }
+
+        pub fn updateRef(this: *WindowsPipeWriter, _: anytype, value: bool) void {
+            if (this.pipe) |pipe| {
+                if (value) {
+                    pipe.ref();
+                } else {
+                    pipe.unref();
+                }
+            }
+        }
+
+        pub fn setParent(this: *WindowsPipeWriter, parent: *Parent) void {
+            this.parent = parent;
+            if (!this.is_done) {
+                if (this.pipe) |pipe| {
+                    pipe.data = this;
+                }
+            }
+        }
+
+        pub fn watch(_: *WindowsPipeWriter) void {
+            // no-op
+        }
+
+        pub fn startWithPipe(this: *WindowsPipeWriter, pipe: *uv.Pipe) bun.JSC.Maybe(void) {
+            std.debug.assert(this.pipe == null);
+            this.pipe = pipe;
+            return this.startWithCurrentPipe();
+        }
+
+        pub fn open(this: *WindowsPipeWriter, loop: *uv.Loop, fd: bun.FileDescriptor, ipc: bool) bun.JSC.Maybe(void) {
+            const pipe = this.pipe orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.PIPE, .pipe) };
+            switch (pipe.init(loop, ipc)) {
+                .err => |err| {
+                    return .{ .err = err };
+                },
+                else => {},
+            }
+
+            pipe.data = this;
+
+            switch (pipe.open(bun.uvfdcast(fd))) {
+                .err => |err| {
+                    return .{ .err = err };
+                },
+                else => {},
+            }
+
+            return .{ .result = {} };
+        }
+
+        pub fn start(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
+            //TODO: check detect if its a tty here and use uv_tty_t instead of pipe
+            std.debug.assert(this.pipe == null);
+            this.pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
+            if (this.open(uv.Loop.get(), fd, false).asErr()) |err| return .{ .err = err };
+            return this.startWithCurrentPipe();
+        }
+    };
+}
+
 pub fn WindowsBufferedWriter(
     comptime Parent: type,
     comptime onWrite: *const fn (*Parent, amount: usize, done: bool) void,
@@ -658,41 +760,102 @@ pub fn WindowsBufferedWriter(
     comptime getBuffer: *const fn (*Parent) []const u8,
     comptime onWritable: ?*const fn (*Parent) void,
 ) type {
-    _ = onWrite;
-    _ = onError;
-    _ = onClose;
-    _ = onWritable;
-    //TODO: actually implement this (see BufferedInput)
     return struct {
-        pipe: *uv.Pipe = undefined,
+        pipe: ?*uv.Pipe = undefined,
         parent: *Parent = undefined,
         is_done: bool = false,
-        pollable: bool = false,
+        // we use only one write_req, any queued data in outgoing will be flushed after this ends
+        write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
+
+        pending_payload_size: usize = 0,
 
         const WindowsWriter = @This();
 
-        pub fn getPoll(_: *const WindowsWriter) ?*Async.FilePoll {
-            @compileError("WindowsBufferedWriter does not support getPoll");
+        pub usingnamespace BaseWindowsPipeWriter(WindowsWriter, Parent);
+
+        fn onClosePipe(pipe: *uv.Pipe) callconv(.C) void {
+            const this = bun.cast(*WindowsWriter, pipe.data);
+            if (onClose) |onCloseFn| {
+                onCloseFn(this.parent);
+            }
         }
 
-        pub fn getFd(this: *const WindowsWriter) bun.FileDescriptor {
-            return this.pipe.fd();
+        pub fn startWithCurrentPipe(this: *WindowsWriter) bun.JSC.Maybe(void) {
+            std.debug.assert(this.pipe != null);
+            this.is_done = false;
+            this.write();
+            return .{ .result = {} };
         }
 
-        pub fn hasRef(this: *WindowsWriter) bool {
-            if (this.is_done) {
-                return false;
+        fn onWriteComplete(this: *WindowsWriter, status: uv.ReturnCode) void {
+            const written = this.pending_payload_size;
+            this.pending_payload_size = 0;
+            if (status.toError(.write)) |err| {
+                this.close();
+                onError(this.parent, err);
+                return;
+            }
+            if (status.toError(.write)) |err| {
+                this.close();
+                onError(this.parent, err);
+                return;
+            }
+            const pending = this.getBufferInternal();
+            const has_pending_data = (pending.len - written) == 0;
+            onWrite(this.parent, @intCast(written), this.is_done and has_pending_data);
+            if (this.is_done and !has_pending_data) {
+                // already done and end was called
+                this.close();
+                return;
             }
 
-            return this.pipe.hasRef();
+            if (onWritable) |onWritableFn| {
+                onWritableFn(this.parent);
+            }
         }
 
-        pub fn enableKeepingProcessAlive(this: *WindowsWriter, event_loop: anytype) void {
-            this.updateRef(event_loop, true);
-        }
+        pub fn write(this: *WindowsWriter) void {
+            const buffer = this.getBufferInternal();
+            // if we are already done or if we have some pending payload we just wait until next write
+            if (this.is_done or this.pending_payload_size > 0 or buffer.len == 0) {
+                return;
+            }
 
-        pub fn disableKeepingProcessAlive(this: *WindowsWriter, event_loop: anytype) void {
-            this.updateRef(event_loop, false);
+            const pipe = this.pipe orelse return;
+            var to_write = buffer;
+            while (to_write.len > 0) {
+                switch (pipe.tryWrite(to_write)) {
+                    .err => |err| {
+                        if (err.isRetry()) {
+                            // the buffered version should always have a stable ptr
+                            this.pending_payload_size = to_write.len;
+                            if (this.write_req.write(@ptrCast(pipe), to_write, this, onWriteComplete).asErr()) |write_err| {
+                                this.close();
+                                onError(this.parent, write_err);
+                                return;
+                            }
+                            const written = buffer.len - to_write.len;
+                            if (written > 0) {
+                                onWrite(this.parent, written, false);
+                            }
+                            return;
+                        }
+                        this.close();
+                        onError(this.parent, err);
+                        return;
+                    },
+                    .result => |bytes_written| {
+                        to_write = to_write[bytes_written..];
+                    },
+                }
+            }
+
+            const written = buffer.len - to_write.len;
+            const done = to_write.len == 0;
+            onWrite(this.parent, written, done);
+            if (done and this.is_done) {
+                this.close();
+            }
         }
 
         fn getBufferInternal(this: *WindowsWriter) []const u8 {
@@ -705,228 +868,317 @@ pub fn WindowsBufferedWriter(
             }
 
             this.is_done = true;
-            this.close();
-        }
-
-        pub fn close(_: *WindowsWriter) void {
-            @panic("TODO");
-        }
-
-        pub fn updateRef(this: *WindowsWriter, _: anytype, value: bool) void {
-            if (value) {
-                this.pipe.ref();
-            } else {
-                this.pipe.unref();
+            if (this.pending_payload_size == 0) {
+                // will auto close when pending stuff get written
+                this.close();
             }
-        }
-
-        pub fn setParent(this: *WindowsWriter, parent: *Parent) void {
-            this.parent = parent;
-        }
-
-        pub fn write(_: *WindowsWriter) void {
-            @panic("TODO");
-        }
-
-        pub fn watch(_: *WindowsWriter) void {
-            // no-ops on Windows
-        }
-
-        pub fn start(_: *WindowsWriter, _: bun.FileDescriptor, _: bool) JSC.Maybe(void) {
-            @panic("TODO");
         }
     };
 }
 
+/// Basic std.ArrayList(u8) + u32 cursor wrapper
+const StreamBuffer = struct {
+    list: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    // should cursor be usize?
+    cursor: u32 = 0,
+
+    pub fn reset(this: *StreamBuffer) void {
+        this.cursor = 0;
+        if (this.list.capacity > 32 * 1024) {
+            this.list.shrinkAndFree(std.mem.page_size);
+        }
+        this.list.clearRetainingCapacity();
+    }
+
+    pub fn size(this: *const StreamBuffer) usize {
+        return this.list.items.len - this.cursor;
+    }
+
+    pub fn isEmpty(this: *const StreamBuffer) bool {
+        return this.size() == 0;
+    }
+
+    pub fn isNotEmpty(this: *const StreamBuffer) bool {
+        return this.size() > 0;
+    }
+
+    pub fn write(this: *StreamBuffer, buffer: []const u8) !void {
+        _ = try this.list.appendSlice(buffer);
+    }
+
+    pub fn writeLatin1(this: *StreamBuffer, buffer: []const u8) !void {
+        if (bun.strings.isAllASCII(buffer)) {
+            return this.write(buffer);
+        }
+
+        var byte_list = bun.ByteList.fromList(this.list);
+        defer this.list = byte_list.listManaged(this.list.allocator);
+
+        _ = try byte_list.writeLatin1(this.list.allocator, buffer);
+    }
+
+    pub fn writeUTF16(this: *StreamBuffer, buffer: []const u16) !void {
+        var byte_list = bun.ByteList.fromList(this.list);
+        defer this.list = byte_list.listManaged(this.list.allocator);
+
+        _ = try byte_list.writeUTF16(this.list.allocator, buffer);
+    }
+
+    pub fn slice(this: *StreamBuffer) []const u8 {
+        return this.list.items[this.cursor..];
+    }
+
+    pub fn deinit(this: *StreamBuffer) void {
+        this.cursor = 0;
+        this.list.clearAndFree();
+    }
+};
+
 pub fn WindowsStreamingWriter(
     comptime Parent: type,
+    /// reports the amount written and done means that we dont have any other pending data to send (but we may send more data)
     comptime onWrite: fn (*Parent, amount: usize, done: bool) void,
     comptime onError: fn (*Parent, bun.sys.Error) void,
-    comptime onReady: ?fn (*Parent) void,
+    comptime onWritable: ?fn (*Parent) void,
     comptime onClose: fn (*Parent) void,
 ) type {
-    _ = onWrite;
-    _ = onError;
-    _ = onClose;
-    _ = onReady;
     return struct {
-        buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
-        pipe: *uv.Pipe = undefined,
+        pipe: ?*uv.Pipe = undefined,
         parent: *Parent = undefined,
-        head: usize = 0,
         is_done: bool = false,
+        // we use only one write_req, any queued data in outgoing will be flushed after this ends
+        write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
+
+        // queue any data that we want to write here
+        outgoing: StreamBuffer = .{},
+        // libuv requires a stable ptr when doing async so we swap buffers
+        current_payload: StreamBuffer = .{},
+        // we preserve the last write result for simplicity
+        last_write_result: WriteResult = .{ .wrote = 0 },
+        // some error happed? we will not report onClose only onError
         closed_without_reporting: bool = false,
 
-        // TODO:
-        chunk_size: usize = 0,
+        pub usingnamespace BaseWindowsPipeWriter(WindowsWriter, Parent);
+
+        fn onClosePipe(pipe: *uv.Pipe) callconv(.C) void {
+            const this = bun.cast(*WindowsWriter, pipe.data);
+            this.pipe = null;
+            if (!this.closed_without_reporting) {
+                onClose(this.parent);
+            }
+        }
+
+        pub fn startWithCurrentPipe(this: *WindowsWriter) bun.JSC.Maybe(void) {
+            std.debug.assert(this.pipe != null);
+            this.is_done = false;
+            return .{ .result = {} };
+        }
+
+        fn hasPendingData(this: *WindowsWriter) bool {
+            return (this.outgoing.isNotEmpty() and this.current_payload.isNotEmpty());
+        }
+
+        fn isDone(this: *WindowsWriter) bool {
+            // done is flags andd no more data queued? so we are done!
+            return this.is_done and !this.hasPendingData();
+        }
+
+        fn onWriteComplete(this: *WindowsWriter, status: uv.ReturnCode) void {
+            if (status.toError(.write)) |err| {
+                this.closeWithoutReporting();
+                this.last_write_result = .{ .err = err };
+                onError(this.parent, err);
+                return;
+            }
+            // success means that we send all the data inside current_payload
+            const written = this.current_payload.size();
+            this.current_payload.reset();
+
+            // if we dont have more outgoing data we report done in onWrite
+            const done = this.outgoing.isEmpty();
+            if (this.is_done and done) {
+                // we already call .end lets close the connection
+                this.last_write_result = .{ .done = written };
+                this.close();
+                onWrite(this.parent, written, true);
+                return;
+            }
+            // .end was not called yet
+            this.last_write_result = .{ .wrote = written };
+
+            // report data written
+            onWrite(this.parent, written, done);
+
+            // process pending outgoing data if any
+            if (done or this.processSend()) {
+                // we are still writable we should report now so more things can be written
+                if (onWritable) |onWritableFn| {
+                    onWritableFn(this.parent);
+                }
+            }
+        }
+
+        /// this tries to send more data returning if we are writable or not after this
+        fn processSend(this: *WindowsWriter) bool {
+            if (this.current_payload.isNotEmpty()) {
+                // we have some pending async request, the next outgoing data will be processed after this finish
+                this.last_write_result = .{ .pending = 0 };
+                return false;
+            }
+
+            var bytes = this.outgoing.slice();
+            // nothing todo (we assume we are writable until we try to write something)
+            if (bytes.len == 0) {
+                this.last_write_result = .{ .wrote = 0 };
+                return true;
+            }
+
+            const initial_payload_len = bytes.len;
+            var pipe = this.pipe orelse {
+                this.closeWithoutReporting();
+                const err = bun.sys.Error.fromCode(bun.C.E.PIPE, .pipe);
+                this.last_write_result = .{ .err = err };
+                onError(this.parent, err);
+                return false;
+            };
+            var writable = true;
+            while (true) {
+                switch (pipe.tryWrite(bytes)) {
+                    .err => |err| {
+                        if (!err.isRetry()) {
+                            this.closeWithoutReporting();
+                            this.last_write_result = .{ .err = err };
+                            onError(this.parent, err);
+                            return false;
+                        }
+                        writable = false;
+
+                        // ok we hit EGAIN and need to go async
+                        if (this.current_payload.isNotEmpty()) {
+                            // we already have a under going queued process
+                            // just wait the current request finish to send the next outgoing data
+                            break;
+                        }
+
+                        // current payload is empty we can just swap with outgoing
+                        const temp = this.current_payload;
+                        this.current_payload = this.outgoing;
+                        this.outgoing = temp;
+
+                        // enqueue the write
+                        if (this.write_req.write(@ptrCast(pipe), bytes, this, onWriteComplete).asErr()) |write_err| {
+                            this.closeWithoutReporting();
+                            this.last_write_result = .{ .err = err };
+                            onError(this.parent, write_err);
+                            this.close();
+                            return false;
+                        }
+                        break;
+                    },
+                    .result => |written| {
+                        bytes = bytes[0..written];
+                        if (bytes.len == 0) {
+                            this.outgoing.reset();
+                            break;
+                        }
+                        this.outgoing.cursor += @intCast(written);
+                    },
+                }
+            }
+            const written = initial_payload_len - bytes.len;
+            if (this.isDone()) {
+                // if we are done and have no more data this means we called .end() and needs to close after writting everything
+                this.close();
+                this.last_write_result = .{ .done = written };
+                writable = false;
+                onWrite(this.parent, written, true);
+            } else {
+                const done = !this.hasPendingData();
+                // if we queued some data we will report pending otherwise we should report that we wrote
+                this.last_write_result = if (done) .{ .wrote = written } else .{ .pending = written };
+                if (written > 0) {
+                    // we need to keep track of how much we wrote here
+                    onWrite(this.parent, written, done);
+                }
+            }
+            return writable;
+        }
 
         const WindowsWriter = @This();
 
-        pub fn getPoll(_: *@This()) ?*Async.FilePoll {
-            @compileError("WindowsBufferedWriter does not support getPoll");
-        }
-
-        pub fn getFd(this: *WindowsWriter) bun.FileDescriptor {
-            return this.pipe.fd();
-        }
-
-        pub fn getBuffer(this: *WindowsWriter) []const u8 {
-            return this.buffer.items[this.head..];
-        }
-
-        pub fn setParent(this: *WindowsWriter, parent: *Parent) void {
-            this.parent = parent;
-        }
-
-        pub fn tryWrite(this: *WindowsWriter, buf: []const u8) WriteResult {
-            _ = this;
-            _ = buf;
-            @panic("TODO");
-        }
-
-        fn _tryWriteNewlyBufferedData(this: *WindowsWriter) WriteResult {
-            std.debug.assert(!this.is_done);
-
-            switch (this.tryWrite(this.buffer.items)) {
-                .wrote => |amt| {
-                    if (amt == this.buffer.items.len) {
-                        this.buffer.clearRetainingCapacity();
-                    } else {
-                        this.head = amt;
-                    }
-                    return .{ .wrote = amt };
-                },
-                .done => |amt| {
-                    this.buffer.clearRetainingCapacity();
-
-                    return .{ .done = amt };
-                },
-                else => |r| return r,
+        fn closeWithoutReporting(this: *WindowsWriter) void {
+            if (this.getFd() != bun.invalid_fd) {
+                std.debug.assert(!this.closed_without_reporting);
+                this.closed_without_reporting = true;
+                this.close();
             }
-        }
-
-        pub fn writeUTF16(this: *WindowsWriter, buf: []const u16) WriteResult {
-            if (this.is_done or this.closed_without_reporting) {
-                return .{ .done = 0 };
-            }
-
-            const had_buffered_data = this.buffer.items.len > 0;
-            {
-                var byte_list = bun.ByteList.fromList(this.buffer);
-                defer this.buffer = byte_list.listManaged(bun.default_allocator);
-
-                _ = byte_list.writeUTF16(bun.default_allocator, buf) catch {
-                    return .{ .err = bun.sys.Error.oom };
-                };
-            }
-
-            if (had_buffered_data) {
-                return .{ .pending = 0 };
-            }
-
-            return this._tryWriteNewlyBufferedData();
-        }
-
-        pub fn writeLatin1(this: *WindowsWriter, buf: []const u8) WriteResult {
-            if (this.is_done or this.closed_without_reporting) {
-                return .{ .done = 0 };
-            }
-
-            if (bun.strings.isAllASCII(buf)) {
-                return this.write(buf);
-            }
-
-            const had_buffered_data = this.buffer.items.len > 0;
-            {
-                var byte_list = bun.ByteList.fromList(this.buffer);
-                defer this.buffer = byte_list.listManaged(bun.default_allocator);
-
-                _ = byte_list.writeLatin1(bun.default_allocator, buf) catch {
-                    return .{ .err = bun.sys.Error.oom };
-                };
-            }
-
-            if (had_buffered_data) {
-                return .{ .pending = 0 };
-            }
-
-            return this._tryWriteNewlyBufferedData();
-        }
-
-        pub fn write(this: *WindowsWriter, buf: []const u8) WriteResult {
-            if (this.is_done or this.closed_without_reporting) {
-                return .{ .done = 0 };
-            }
-
-            if (this.buffer.items.len + buf.len < this.chunk_size) {
-                this.buffer.appendSlice(buf) catch {
-                    return .{ .err = bun.sys.Error.oom };
-                };
-
-                return .{ .pending = 0 };
-            }
-
-            const rc = this.tryWrite(buf);
-            if (rc == .pending) {
-                // registerPoll(this);
-                return rc;
-            }
-            this.head = 0;
-            switch (rc) {
-                .pending => {
-                    this.buffer.appendSlice(buf) catch {
-                        return .{ .err = bun.sys.Error.oom };
-                    };
-                },
-                .wrote => |amt| {
-                    if (amt < buf.len) {
-                        this.buffer.appendSlice(buf[amt..]) catch {
-                            return .{ .err = bun.sys.Error.oom };
-                        };
-                    } else {
-                        this.buffer.clearRetainingCapacity();
-                    }
-                },
-                .done => |amt| {
-                    return .{ .done = amt };
-                },
-                else => {},
-            }
-
-            return rc;
-        }
-
-        pub fn flush(this: *WindowsWriter) WriteResult {
-            if (this.closed_without_reporting or this.is_done) {
-                return .{ .done = 0 };
-            }
-            // return this.drainBufferedData(std.math.maxInt(usize), false);
-            @panic("TODO");
         }
 
         pub fn deinit(this: *WindowsWriter) void {
-            this.buffer.clearAndFree();
+            // clean both buffers if needed
+            this.outgoing.deinit();
+            this.current_payload.deinit();
             this.close();
         }
 
-        pub fn hasRef(this: *WindowsWriter) bool {
-            return this.pipe.hasRef();
-        }
-
-        pub fn enableKeepingProcessAlive(this: *WindowsWriter, event_loop: JSC.EventLoopHandle) void {
-            this.updateRef(event_loop, true);
-        }
-
-        pub fn disableKeepingProcessAlive(this: *WindowsWriter, event_loop: JSC.EventLoopHandle) void {
-            this.updateRef(event_loop, false);
-        }
-
-        pub fn updateRef(this: *WindowsWriter, _: JSC.EventLoopHandle, value: bool) void {
-            if (value) {
-                this.pipe.ref();
-            } else {
-                this.pipe.unref();
+        pub fn writeUTF16(this: *WindowsWriter, buf: []const u16) WriteResult {
+            if (this.is_done) {
+                return .{ .done = 0 };
             }
+
+            const had_buffered_data = this.outgoing.isNotEmpty();
+            this.outgoing.writeUTF16(buf) catch {
+                return .{ .err = bun.sys.Error.oom };
+            };
+
+            if (had_buffered_data) {
+                return .{ .pending = 0 };
+            }
+            _ = this.processSend();
+            return this.last_write_result;
+        }
+
+        pub fn writeLatin1(this: *WindowsWriter, buffer: []const u8) WriteResult {
+            if (this.is_done) {
+                return .{ .done = 0 };
+            }
+
+            const had_buffered_data = this.outgoing.isNotEmpty();
+            this.outgoing.writeLatin1(buffer) catch {
+                return .{ .err = bun.sys.Error.oom };
+            };
+
+            if (had_buffered_data) {
+                return .{ .pending = 0 };
+            }
+
+            _ = this.processSend();
+            return this.last_write_result;
+        }
+
+        pub fn write(this: *WindowsWriter, buffer: []const u8) WriteResult {
+            if (this.is_done) {
+                return .{ .done = 0 };
+            }
+
+            if (this.outgoing.isNotEmpty()) {
+                this.outgoing.write(buffer) catch {
+                    return .{ .err = bun.sys.Error.oom };
+                };
+
+                return .{ .pending = 0 };
+            }
+
+            _ = this.processSend();
+            return this.last_write_result;
+        }
+
+        pub fn flush(this: *WindowsWriter) WriteResult {
+            if (this.is_done) {
+                return .{ .done = 0 };
+            }
+            _ = this.processSend();
+            return this.last_write_result;
         }
 
         pub fn end(this: *WindowsWriter) void {
@@ -935,23 +1187,11 @@ pub fn WindowsStreamingWriter(
             }
 
             this.is_done = true;
-            this.close();
-        }
-
-        pub fn close(_: *WindowsWriter) void {
-            @panic("TODO");
-            // if (this.closed_without_reporting) {
-            //     this.closed_without_reporting = false;
-            //     std.debug.assert(this.getFd() == bun.invalid_fd);
-            //     onClose(@ptrCast(this.parent));
-            //     return;
-            // }
-
-            // this.handle.close(@ptrCast(this.parent), onClose);
-        }
-
-        pub fn start(_: *WindowsWriter, _: bun.FileDescriptor, _: bool) JSC.Maybe(void) {
-            @panic("TODO");
+            this.closed_without_reporting = false;
+            // if we are done we can call close if not we wait all the data to be flushed
+            if (this.isDone()) {
+                this.close();
+            }
         }
     };
 }

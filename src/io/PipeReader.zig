@@ -335,10 +335,7 @@ pub fn WindowsPipeReader(
         }
 
         pub fn open(this: *This, loop: *uv.Loop, fd: bun.FileDescriptor, ipc: bool) bun.JSC.Maybe(void) {
-            const pipe = _pipe(this) orelse return .{ .err = .{
-                .errno = @intFromEnum(bun.C.E.PIPE),
-                .syscall = .pipe,
-            } };
+            const pipe = _pipe(this) orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.PIPE, .pipe) };
             switch (pipe.init(loop, ipc)) {
                 .err => |err| {
                     return .{ .err = err };
@@ -784,7 +781,7 @@ pub const WindowsBufferedReader = struct {
         to.setParent(parent);
     }
 
-    pub fn getFd(this: *WindowsOutputReader) bun.FileDescriptor {
+    pub fn getFd(this: *const WindowsOutputReader) bun.FileDescriptor {
         const pipe = this.pipe orelse return bun.invalid_fd;
         return pipe.fd();
     }

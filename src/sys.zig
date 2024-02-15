@@ -135,7 +135,7 @@ pub const Tag = enum(u8) {
     uv_spawn,
     uv_pipe,
     pipe,
-
+    try_write,
     WriteFile,
     NtQueryDirectoryFile,
     NtSetInformationFile,

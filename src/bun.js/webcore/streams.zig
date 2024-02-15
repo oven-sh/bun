@@ -2893,7 +2893,7 @@ pub const FileSink = struct {
 
         // Only keep the event loop ref'd while there's a pending write in progress.
         // If there's no pending write, no need to keep the event loop ref'd.
-        this.writer.updateRef(this.eventLoop(), false);
+        this.writer.updateRef(this.eventLoop(), !done);
 
         this.written += amount;
 
@@ -2909,6 +2909,14 @@ pub const FileSink = struct {
         }
 
         if (done) {
+            if (this.pending.state == .pending) {
+                this.pending.result = .{ .owned = this.pending.consumed };
+                this.pending.run();
+                // we already called end and we are done writting pending stuff so we close the writer
+                if (this.done) {
+                    this.writer.end();
+                }
+            }
             this.signal.close(null);
         }
     }
@@ -2928,6 +2936,23 @@ pub const FileSink = struct {
     pub fn onClose(this: *FileSink) void {
         log("onClose()", .{});
         this.signal.close(null);
+    }
+
+    pub fn createWithPipe(
+        event_loop: *JSC.EventLoop,
+        pipe: *uv.Pipe,
+    ) *FileSink {
+        if (Environment.isPosix) {
+            @compileError("FileSink.createWithPipe is only available on Windows");
+        }
+
+        var this = FileSink.new(.{
+            .event_loop_handle = JSC.EventLoopHandle.init(event_loop),
+            .fd = pipe.fd(),
+        });
+        this.writer.pipe = pipe;
+        this.writer.parent = this;
+        return this;
     }
 
     pub fn create(

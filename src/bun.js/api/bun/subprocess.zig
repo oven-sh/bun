@@ -731,9 +731,7 @@ pub const Subprocess = struct {
                     .source = source,
                 });
                 if (Environment.isWindows) {
-                    if (this.stdio_result == .buffer) {
-                        this.writer.pipe = this.stdio_result.buffer;
-                    }
+                    this.writer.pipe = this.stdio_result.buffer;
                 }
                 this.writer.setParent(this);
                 return this;
@@ -743,7 +741,7 @@ pub const Subprocess = struct {
                 this.ref();
                 this.buffer = this.source.slice();
                 if (Environment.isWindows) {
-                    @panic("TODO");
+                    return this.writer.startWithCurrentPipe();
                 }
                 return this.writer.start(this.stdio_result.?, true);
             }
@@ -824,9 +822,7 @@ pub const Subprocess = struct {
                 .stdio_result = result,
             });
             if (Environment.isWindows) {
-                if (this.stdio_result == .buffer) {
-                    this.reader.pipe = this.stdio_result.buffer;
-                }
+                this.reader.pipe = this.stdio_result.buffer;
             }
             this.reader.setParent(this);
             return this;
@@ -1043,25 +1039,27 @@ pub const Subprocess = struct {
             if (Environment.isWindows) {
                 switch (stdio) {
                     .pipe => {
-                        @panic("TODO");
-                        // const pipe = JSC.WebCore.FileSink.create(event_loop, result.?);
-                        // pipe.writer.setParent(pipe);
+                        if (result == .buffer) {
+                            const pipe = JSC.WebCore.FileSink.createWithPipe(event_loop, result.buffer);
+                            pipe.writer.setParent(pipe);
 
-                        // switch (pipe.writer.start(pipe.fd, true)) {
-                        //     .result => {},
-                        //     .err => |err| {
-                        //         _ = err; // autofix
-                        //         pipe.deref();
-                        //         return error.UnexpectedCreatingStdin;
-                        //     },
-                        // }
+                            switch (pipe.writer.startWithCurrentPipe()) {
+                                .result => {},
+                                .err => |err| {
+                                    _ = err; // autofix
+                                    pipe.deref();
+                                    return error.UnexpectedCreatingStdin;
+                                },
+                            }
 
-                        // subprocess.weak_file_sink_stdin_ptr = pipe;
-                        // subprocess.flags.has_stdin_destructor_called = false;
+                            subprocess.weak_file_sink_stdin_ptr = pipe;
+                            subprocess.flags.has_stdin_destructor_called = false;
 
-                        // return Writable{
-                        //     .pipe = pipe,
-                        // };
+                            return Writable{
+                                .pipe = pipe,
+                            };
+                        }
+                        return Writable{ .inherit = {} };
                     },
 
                     .blob => |blob| {
@@ -1074,17 +1072,13 @@ pub const Subprocess = struct {
                             .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .array_buffer = array_buffer }),
                         };
                     },
-                    .memfd => {
-                        @panic("TODO");
-                    },
-                    .fd => {
-                        @panic("TODO");
-                        // return Writable{ .fd = result.? };
+                    .fd => |fd| {
+                        return Writable{ .fd = fd };
                     },
                     .inherit => {
                         return Writable{ .inherit = {} };
                     },
-                    .path, .ignore => {
+                    .memfd, .path, .ignore => {
                         return Writable{ .ignore = {} };
                     },
                     .capture => {

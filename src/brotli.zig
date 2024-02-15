@@ -143,6 +143,9 @@ pub const BrotliReaderArrayList = struct {
                 },
 
                 .needs_more_input => {
+                    if (in_remaining > 0) {
+                        @panic("Brotli wants more data");
+                    }
                     this.state = .Inflating;
                     if (is_done) {
                         this.state = .Error;

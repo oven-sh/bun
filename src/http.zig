@@ -1307,7 +1307,7 @@ const Decompressor = union(enum) {
             },
             .brotli => |reader| {
                 reader.input = buffer;
-                reader.total_in = @as(u32, @truncate(buffer.len));
+                reader.total_in = 0;
 
                 const initial = body_out_str.list.items.len;
                 reader.list = body_out_str.list;

@@ -1952,14 +1952,19 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
         }
         return Maybe(bun.FileDescriptor){ .result = bun.toFD(target) };
     }
-
-    const out = system.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(i32, 0));
+    const ArgType = if (comptime Environment.isLinux) usize else c_int;
+    const out = system.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(ArgType, 0));
     log("dup({d}) = {d}", .{ fd.cast(), out });
-    if (flags != 0) {
-        const fd_flags = system.fcntl(out, @as(i32, std.os.F.GETFD), @as(i32, 0));
-        _ = system.fcntl(out, @as(i32, std.os.F.SETFD), fd_flags | flags);
+    if (Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd)) |err| {
+        return err;
     }
-    return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
+
+    if (flags != 0) {
+        const fd_flags = system.fcntl(out, @as(i32, std.os.F.GETFD), @as(ArgType, 0));
+        _ = system.fcntl(out, @as(i32, std.os.F.SETFD), @as(ArgType, @intCast(fd_flags | flags)));
+    }
+
+    return Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
 }
 
 pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {

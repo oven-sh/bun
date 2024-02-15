@@ -214,6 +214,21 @@ public:
             sqlite3_result_double(invocation, value.asDouble());
             return;
         }
+        if (value.isUndefinedOrNull()) {
+            sqlite3_result_null(invocation);
+            return;
+        }
+        if (value.isString()) {
+            auto str = value.toWTFString(this->lexicalGlobalObject).utf8();
+            sqlite3_result_text(invocation, str.data(), str.length(), SQLITE_TRANSIENT);
+            return;
+        }
+        if (value.isBigInt()) {
+            sqlite3_result_int64(invocation, value.toBigInt64(this->lexicalGlobalObject));
+            return;
+        }
+
+        // TODO: Buffer to blob
     }
 
     static void xDestroy(void* self) {

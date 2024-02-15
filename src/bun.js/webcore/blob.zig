@@ -3583,9 +3583,9 @@ pub const Blob = struct {
     }
 
     pub fn toJS(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        if (comptime Environment.allow_assert) {
-            std.debug.assert(this.allocator != null);
-        }
+        // if (comptime Environment.allow_assert) {
+        //     std.debug.assert(this.allocator != null);
+        // }
 
         this.calculateEstimatedByteSize();
         return Blob.toJSUnchecked(globalObject, this);

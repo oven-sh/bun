@@ -1257,7 +1257,7 @@ describe("Response", () => {
       });
       var input = await response.arrayBuffer();
       var output = await Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
-      expect(input).toEqual((await output.getReader().read()).value?.buffer);
+      expect(new Uint8Array(input)).toEqual((await output.getReader().read()).value);
     });
   });
 

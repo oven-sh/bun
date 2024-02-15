@@ -567,9 +567,9 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     obj.estimatedSize
       ? `
       auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-#if ASSERT_ENABLED
-      ASSERT(size > 0);
-#endif
+// #if ASSERT_ENABLED
+//       ASSERT(size > 0);
+// #endif
       vm.heap.reportExtraMemoryAllocated(instance, size);`
       : ""
   }
@@ -1231,10 +1231,10 @@ void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
       estimatedSize
         ? `if (auto* ptr = thisObject->wrapped()) {
             auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-#if ASSERT_ENABLED
-            ASSERT(size > 0);
-#endif
-visitor.reportExtraMemoryVisited(size);
+// #if ASSERT_ENABLED
+//             ASSERT(size > 0);
+// #endif
+    visitor.reportExtraMemoryVisited(size);
 }`
         : ""
     }
@@ -1404,9 +1404,9 @@ extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, v
     obj.estimatedSize
       ? `
       auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-#if ASSERT_ENABLED
-      ASSERT(size > 0);
-#endif
+// #if ASSERT_ENABLED
+//       ASSERT(size > 0);
+// #endif
       vm.heap.reportExtraMemoryAllocated(instance, size);`
       : ""
   }

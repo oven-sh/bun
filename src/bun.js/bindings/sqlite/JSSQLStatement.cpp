@@ -136,6 +136,11 @@ static inline JSC::JSValue jsNumberFromSQLite(sqlite3_stmt* stmt, unsigned int i
     int64_t num = sqlite3_column_int64(stmt, i);
     return num > INT_MAX || num < INT_MIN ? JSC::jsDoubleNumber(static_cast<double>(num)) : JSC::jsNumber(static_cast<int>(num));
 }
+static inline JSC::JSValue jsNumberFromSQLite(sqlite3_value* value)
+{
+    int64_t num = sqlite3_value_int64(value);
+    return num > INT_MAX || num < INT_MIN ? JSC::jsDoubleNumber(static_cast<double>(num)) : JSC::jsNumber(static_cast<int>(num));
+}
 
 #define CHECK_THIS                                                                                               \
     if (UNLIKELY(!castedThis)) {                                                                                 \

@@ -913,6 +913,7 @@ pub fn getStdin(
     store.ref();
     var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
     blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -925,6 +926,7 @@ pub fn getStderr(
     store.ref();
     var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
     blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -937,6 +939,7 @@ pub fn getStdout(
     store.ref();
     var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
     blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 

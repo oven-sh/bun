@@ -565,7 +565,12 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
   ${
     obj.estimatedSize
-      ? `vm.heap.reportExtraMemoryAllocated(instance, ${symbolName(obj.name, "estimatedSize")}(instance->wrapped()));`
+      ? `
+      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
+#if ASSERT_ENABLED
+      ASSERT(size > 0);
+#endif
+      vm.heap.reportExtraMemoryAllocated(instance, size);`
       : ""
   }
 
@@ -1225,7 +1230,11 @@ void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ${
       estimatedSize
         ? `if (auto* ptr = thisObject->wrapped()) {
-visitor.reportExtraMemoryVisited(${symbolName(obj.name, "estimatedSize")}(ptr));
+            auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
+#if ASSERT_ENABLED
+            ASSERT(size > 0);
+#endif
+visitor.reportExtraMemoryVisited(size);
 }`
         : ""
     }
@@ -1393,7 +1402,12 @@ extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, v
   ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
   ${
     obj.estimatedSize
-      ? `vm.heap.reportExtraMemoryAllocated(instance, ${symbolName(obj.name, "estimatedSize")}(ptr));`
+      ? `
+      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
+#if ASSERT_ENABLED
+      ASSERT(size > 0);
+#endif
+      vm.heap.reportExtraMemoryAllocated(instance, size);`
       : ""
   }
   return JSValue::encode(instance);
@@ -1435,6 +1449,7 @@ function generateZig(
     construct,
     finalize,
     noConstructor = false,
+    overridesToJS = false,
     estimatedSize,
     call = false,
     values = [],
@@ -1703,6 +1718,10 @@ pub const ${className(typeName)} = struct {
   `
         : ""
     }
+
+    ${
+      !overridesToJS
+        ? `
     /// Create a new instance of ${typeName}
     pub fn toJS(this: *${typeName}, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -1713,6 +1732,8 @@ pub const ${className(typeName)} = struct {
         } else {
             return ${symbolName(typeName, "create")}(globalObject, this);
         }
+    }`
+        : ""
     }
 
     /// Modify the internal ptr to point to a new instance of ${typeName}.
@@ -1731,6 +1752,9 @@ pub const ${className(typeName)} = struct {
     extern fn ${symbolName(typeName, "getConstructor")}(*JSC.JSGlobalObject) JSC.JSValue;
 
     extern fn ${symbolName(typeName, "create")}(globalObject: *JSC.JSGlobalObject, ptr: ?*${typeName}) JSC.JSValue;
+
+    /// Create a new instance of ${typeName} without validating it works.
+    pub const toJSUnchecked = ${symbolName(typeName, "create")};
 
     extern fn ${typeName}__dangerouslySetPtr(JSC.JSValue, ?*${typeName}) bool;
 

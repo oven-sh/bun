@@ -9,6 +9,7 @@ export default [
     JSType: "0b11101110",
     estimatedSize: true,
     configurable: false,
+    overridesToJS: true,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },
@@ -68,6 +69,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     estimatedSize: true,
+    overridesToJS: true,
     klass: {
       json: {
         fn: "constructJSON",
@@ -128,6 +130,7 @@ export default [
     structuredClone: { transferable: false, tag: 254 },
     estimatedSize: true,
     values: ["stream"],
+    overridesToJS: true,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },

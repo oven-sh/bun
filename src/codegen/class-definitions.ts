@@ -43,6 +43,7 @@ export interface ClassDefinition {
   construct?: boolean;
   call?: boolean;
   finalize?: boolean;
+  overridesToJS?: boolean;
   klass: Record<string, Field>;
   proto: Record<string, Field>;
   values?: string[];
@@ -76,6 +77,7 @@ export function define(
     klass = {},
     proto = {},
     values = [],
+    overridesToJS = false,
     estimatedSize = false,
     call = false,
     construct = false,
@@ -86,6 +88,7 @@ export function define(
   return {
     ...rest,
     call,
+    overridesToJS,
     construct,
     estimatedSize,
     structuredClone,

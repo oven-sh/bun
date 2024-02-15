@@ -1960,7 +1960,7 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
     }
 
     if (flags != 0) {
-        const fd_flags = system.fcntl(@intCast(out), @as(i32, std.os.F.GETFD), @as(ArgType, 0));
+        const fd_flags: ArgType = @intCast(system.fcntl(@intCast(out), @as(i32, std.os.F.GETFD), @as(ArgType, 0)));
         _ = system.fcntl(@intCast(out), @as(i32, std.os.F.SETFD), @as(ArgType, @intCast(fd_flags | flags)));
     }
 

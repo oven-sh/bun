@@ -374,14 +374,21 @@ pub const Bundler = struct {
 
     fn _resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
         return bundler.resolver.resolve(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
-            if (!std.fs.path.isAbsolute(entry_point) and !strings.hasPrefix(entry_point, "./")) brk: {
-                return bundler.resolver.resolve(
-                    bundler.fs.top_level_dir,
-                    try strings.append(bundler.allocator, "./", entry_point),
-                    .entry_point,
-                ) catch
-                // return the original error
-                    break :brk;
+            // Relative entry points that were not resolved to a node_modules package are
+            // interpreted as relative to the current working directory.
+            if (!std.fs.path.isAbsolute(entry_point) and
+                !(strings.hasPrefix(entry_point, "./") or strings.hasPrefix(entry_point, ".\\")))
+            {
+                brk: {
+                    return bundler.resolver.resolve(
+                        bundler.fs.top_level_dir,
+                        try strings.append(bundler.allocator, "./", entry_point),
+                        .entry_point,
+                    ) catch {
+                        // return the original error
+                        break :brk;
+                    };
+                }
             }
             return err;
         };
@@ -395,7 +402,8 @@ pub const Bundler = struct {
             const buster_name = name: {
                 if (std.fs.path.isAbsolute(entry_point)) {
                     if (std.fs.path.dirname(entry_point)) |dir| {
-                        break :name strings.withTrailingSlash(dir, entry_point);
+                        // With trailing slash
+                        break :name if (dir.len == 1) dir else entry_point[0 .. dir.len + 1];
                     }
                 }
 
@@ -412,12 +420,17 @@ pub const Bundler = struct {
                 );
             };
 
-            bundler.resolver.bustDirCache(buster_name);
+            // Only re-query if we previously had something cached.
+            if (bundler.resolver.bustDirCache(buster_name)) {
+                if (_resolveEntryPoint(bundler, entry_point)) |result|
+                    return result
+                else |_| {
+                    // ignore this error, we will print the original error
+                }
+            }
 
-            return _resolveEntryPoint(bundler, entry_point) catch {
-                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch bun.outOfMemory();
-                return err;
-            };
+            bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch bun.outOfMemory();
+            return err;
         };
     }
 

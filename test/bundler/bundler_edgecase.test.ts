@@ -1,6 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
-import { sep } from "path";
+import { sep, join } from "path";
 import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
@@ -660,7 +660,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/AbsolutePathShouldNotResolveAsRelative", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log(1);

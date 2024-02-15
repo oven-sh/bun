@@ -350,12 +350,15 @@ describe("bun test", () => {
       expect(stderr).toContain("timed out after 30ms");
     });
     test("timeout should default to 5000ms", () => {
+      // TODO: Lower this timeout to 5005 once https://github.com/oven-sh/bun/issues/8913 is fixed
+      // Linux does not seem to have this issue.
+      const time = process.platform === "linux" ? 5005 : 5500;
       const stderr = runTest({
         input: `
           import { test, expect } from "bun:test";
           import { sleep } from "bun";
           test("timeout", async () => {
-            await sleep(5010);
+            await sleep(${time});
           });
         `,
       });

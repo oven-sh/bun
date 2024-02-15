@@ -7,7 +7,7 @@ import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { callerSourceOrigin } from "bun:jsc";
 import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
-import type { Expect } from "bun:test";
+import type { Matchers } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
 
@@ -104,9 +104,10 @@ const HIDE_SKIP = process.env.BUN_BUNDLER_TEST_HIDE_SKIP;
 const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? bunExe();
 export const RUN_UNCHECKED_TESTS = false;
 
-const outBaseTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
-if (!existsSync(path.dirname(outBaseTemplate))) mkdirSync(path.dirname(outBaseTemplate), { recursive: true });
-const outBase = mkdtempSync(outBaseTemplate);
+const tempDirectoryTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
+if (!existsSync(path.dirname(tempDirectoryTemplate)))
+  mkdirSync(path.dirname(tempDirectoryTemplate), { recursive: true });
+const tempDirectory = mkdtempSync(tempDirectoryTemplate);
 const testsRan = new Set();
 
 if (ESBUILD) {
@@ -268,7 +269,7 @@ export interface BundlerTestBundleAPI {
   writeFile(file: string, contents: string): void;
   prependFile(file: string, contents: string): void;
   appendFile(file: string, contents: string): void;
-  expectFile(file: string): Expect;
+  expectFile(file: string): Matchers<string>;
   assertFileExists(file: string): void;
   /**
    * Finds all `capture(...)` calls and returns the strings within each function call.
@@ -476,7 +477,7 @@ function expectBundled(
       backend = plugins !== undefined ? "api" : "cli";
     }
 
-    const root = path.join(outBase, id);
+    const root = path.join(tempDirectory, id);
     if (DEBUG) console.log("root:", root);
 
     const entryPaths = entryPoints.map(file => path.join(root, file));
@@ -739,7 +740,7 @@ function expectBundled(
                   const [_str2, fullFilename, line, col] =
                     source?.match?.(/bun-build-tests[\/\\](.*):(\d+):(\d+)/) ?? [];
                   const file = fullFilename
-                    ?.slice?.(id.length + path.basename(outBase).length + 1)
+                    ?.slice?.(id.length + path.basename(tempDirectory).length + 1)
                     .replaceAll("\\", "/");
 
                   return { error, file, line, col };
@@ -819,7 +820,7 @@ function expectBundled(
         const warningText = stderr!.toUnixString();
         const allWarnings = warnParser(warningText).map(([error, source]) => {
           const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
-          const file = fullFilename.slice(id.length + path.basename(outBase).length + 1).replaceAll("\\", "/");
+          const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
           return { error, file, line, col };
         });
         const expectedWarnings = bundleWarnings
@@ -1206,7 +1207,7 @@ for (const [key, blob] of build.outputs) {
     // check reference
     if (matchesReference) {
       const { ref } = matchesReference;
-      const theirRoot = path.join(outBase, ref.id);
+      const theirRoot = path.join(tempDirectory, ref.id);
       if (!existsSync(theirRoot)) {
         expectBundled(ref.id, ref.options, false, true);
         if (!existsSync(theirRoot)) {
@@ -1363,7 +1364,7 @@ export function itBundled(
 ): BundlerTestRef {
   if (typeof opts === "function") {
     const fn = opts;
-    opts = opts({ root: path.join(outBase, id), getConfigRef });
+    opts = opts({ root: path.join(tempDirectory, id), getConfigRef });
     // @ts-expect-error
     opts._referenceFn = fn;
   }

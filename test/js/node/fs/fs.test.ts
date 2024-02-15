@@ -2052,14 +2052,14 @@ describe("fs/promises", () => {
 
       const pending = new Array(iterCount);
       for (let i = 0; i < iterCount; i++) {
-        pending[i] = promises.readdir(join(notfound, i), { recursive: true, withFileTypes });
+        pending[i] = promises.readdir(join(notfound, `${i}`), { recursive: true, withFileTypes });
       }
 
       const results = await Promise.allSettled(pending);
       for (let i = 0; i < iterCount; i++) {
         expect(results[i].status).toBe("rejected");
         expect(results[i].reason!.code).toBe("ENOENT");
-        expect(results[i].reason!.path).toBe(join(notfound, i));
+        expect(results[i].reason!.path).toBe(join(notfound, `${i}`));
       }
 
       const newMaxFD = getMaxFD();
@@ -2728,4 +2728,31 @@ it("fs.ReadStream allows functions", () => {
   expect(() => new fs.ReadStream(".", function lol() {})).not.toThrow();
   // @ts-expect-error
   expect(() => new fs.ReadStream(".", {})).not.toThrow();
+});
+
+describe.if(isWindows)("windows path handling", () => {
+  const file = import.meta.path.slice(3);
+  const drive = import.meta.path[0];
+  const filenames = [
+    `${drive}:\\${file}`,
+    `\\\\127.0.0.1\\${drive}$\\${file}`,
+    `\\\\LOCALHOST\\${drive}$\\${file}`,
+    `\\\\.\\${drive}:\\${file}`,
+    `\\\\?\\${drive}:\\${file}`,
+    `\\\\.\\UNC\\LOCALHOST\\${drive}$\\${file}`,
+    `\\\\?\\UNC\\LOCALHOST\\${drive}$\\${file}`,
+    `\\\\127.0.0.1\\${drive}$\\${file}`,
+  ];
+
+  for (const filename of filenames) {
+    test(`Can read '${filename}' with node:fs`, async () => {
+      const stats = await fs.promises.stat(filename);
+      expect(stats.size).toBeGreaterThan(0);
+    });
+
+    test(`Can read '${filename}' with Bun.file`, async () => {
+      const stats = await Bun.file(filename).text();
+      expect(stats.length).toBeGreaterThan(0);
+    });
+  }
 });

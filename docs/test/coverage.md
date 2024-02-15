@@ -52,7 +52,7 @@ It is possible to specify a coverage threshold in `bunfig.toml`. If your test su
 coverageThreshold = 0.9
 
 # to set different thresholds for lines and functions
-coverageThreshold = { line = 0.9, function = 0.9 }
+coverageThreshold = { lines = 0.9, functions = 0.9 }
 ```
 
 ### Sourcemaps

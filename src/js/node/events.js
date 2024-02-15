@@ -367,8 +367,8 @@ function on(emitter, event, options = {}) {
   const unconsumedErrors = new FixedQueue();
   let done = false;
 
-  const eventHandler = (ev) => {
-    if(!done) {
+  const eventHandler = ev => {
+    if (!done) {
       // If there is a pending Promise -> resolve with current event value.
       if (!unconsumedPromises.isEmpty()) {
         const { resolve } = unconsumedPromises.shift();
@@ -377,7 +377,7 @@ function on(emitter, event, options = {}) {
       // Else: Add event value to queue so it can be consumed by a future Promise.
       unconsumedEvents.push(ev);
     }
-  }
+  };
 
   emitter.on(event, options[kFirstEventParam] ? eventHandler : (...args) => eventHandler(args));
 
@@ -402,7 +402,7 @@ function on(emitter, event, options = {}) {
   }
 
   // Create AsyncGeneratorFunction which handles the Iterator logic
-  const iterator = async function*() {
+  const iterator = async function* () {
     while (!done || !unconsumedEvents.isEmpty()) {
       if (!unconsumedEvents.isEmpty()) {
         yield Promise.$resolve(unconsumedEvents.shift());
@@ -414,10 +414,10 @@ function on(emitter, event, options = {}) {
         yield promise;
       }
     }
-  }
+  };
 
   // Return AsyncGenerator
-  return iterator()
+  return iterator();
 }
 
 function getEventListeners(emitter, type) {

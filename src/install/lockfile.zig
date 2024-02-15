@@ -3128,21 +3128,32 @@ pub const Package = extern struct {
 
             {
                 if (to_lockfile.trusted_dependencies) |to_trusted_dependencies| {
+                    // This install has `trustedDependecies`. The previous may or may have not had any. We check if
+                    // any are new and create and new lockfile and run them if needed.
                     var to_lockfile_iter = to_trusted_dependencies.iterator();
-                    while (to_lockfile_iter.next()) |entry| {
-                        if (from_lockfile.trusted_dependencies == null or !from_lockfile.trusted_dependencies.?.contains(entry.key_ptr.*)) {
+                    next: while (to_lockfile_iter.next()) |entry| {
+                        if (from_lockfile.trusted_dependencies) |from_trusted_dependencies| {
+                            if (!from_trusted_dependencies.contains(entry.key_ptr.*)) {
+                                try summary.new_trusted_dependencies.put(allocator, entry.key_ptr.*, {});
+                            }
+                        } else {
+                            // default trusted dependencies were used previously, only add dependencies not contained in
+                            // the default list.
+                            for (default_trusted_dependencies.entries) |default_entry| {
+                                if (default_entry.hash == @as(u64, @intCast(entry.key_ptr.*))) continue :next;
+                            }
+
                             try summary.new_trusted_dependencies.put(allocator, entry.key_ptr.*, {});
                         }
                     }
-                } else {
+                } else if (from_lockfile.trusted_dependencies) |from_trusted_dependencies| {
                     // The previous install had `trustedDependencies` in package.json. Now this install doesn't
                     // meaning all default trusted dependencies not included in the previous list are new.
                     //
                     // This will show as a diff and a new lockfile will be generated, so this won't happen each time
                     for (default_trusted_dependencies.entries) |entry| {
-                        // TODO(dylan-conway): change `default_trusted_dependencies` map to use the same hash
-                        const name_hash: u32 = @truncate(String.Builder.stringHash(entry.key));
-                        if (from_lockfile.trusted_dependencies == null or !from_lockfile.trusted_dependencies.?.contains(name_hash)) {
+                        const name_hash: u32 = @truncate(entry.hash);
+                        if (!from_trusted_dependencies.contains(name_hash)) {
                             try summary.new_trusted_dependencies.put(allocator, name_hash, {});
                         }
                     }
@@ -5517,7 +5528,19 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
 const default_trusted_dependencies = brk: {
     const max_values = 512;
 
-    var map: StaticHashMap([]const u8, u0, std.hash_map.StringContext, max_values) = .{};
+    const StringHashContext = struct {
+        pub fn hash(_: @This(), s: []const u8) u64 {
+            @setEvalBranchQuota(999999);
+            // truncate to u32 because Lockfile.trustedDependencies uses the same u32 string hash
+            return @intCast(@as(u32, @truncate(String.Builder.stringHash(s))));
+        }
+        pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+            @setEvalBranchQuota(999999);
+            return std.mem.eql(u8, a, b);
+        }
+    };
+
+    var map: StaticHashMap([]const u8, u0, StringHashContext, max_values) = .{};
 
     // This file contains a list of dependencies that Bun runs `postinstall` on by default.
     const data = @embedFile("./default-trusted-dependencies.txt");
@@ -5528,6 +5551,10 @@ const default_trusted_dependencies = brk: {
         if (map.len == max_values) {
             @compileError("default-trusted-dependencies.txt is too large, please increase 'max_values' in lockfile.zig");
         }
+
+        // just in case there's duplicates from truncating
+        if (map.has(dep)) @compileError("Duplicate hash due to u64 -> u32 truncation");
+
         map.putAssumeCapacity(dep, 0);
     }
 

@@ -359,7 +359,6 @@ function once(emitter, type, options) {
 
 function on(emitter, event, options = {}) {
   const signal = options.signal;
-  if (signal?.aborted) throw new AbortError(undefined, { cause: signal?.reason });
 
   const { FixedQueue } = require("internal/fixed_queue");
   const unconsumedPromises = new FixedQueue();
@@ -367,43 +366,44 @@ function on(emitter, event, options = {}) {
   const unconsumedErrors = new FixedQueue();
   let done = false;
 
-  const eventHandler = ev => {
-    if (!done) {
-      // If there is a pending Promise -> resolve with current event value.
-      if (!unconsumedPromises.isEmpty()) {
-        const { resolve } = unconsumedPromises.shift();
-        return resolve(ev);
-      }
-      // Else: Add event value to queue so it can be consumed by a future Promise.
-      unconsumedEvents.push(ev);
+  const eventHandlerBody = ev => {
+    // If there is a pending Promise -> resolve with current event value.
+    if (!unconsumedPromises.isEmpty()) {
+      const { resolve } = unconsumedPromises.shift();
+      return resolve(ev);
     }
+    // Else: Add event value to queue so it can be consumed by a future Promise.
+    unconsumedEvents.push(ev);
   };
+  const eventHandler = options[kFirstEventParam] ? eventHandlerBody : (...args) => eventHandlerBody(args)
+  emitter.on(event, eventHandler);
 
-  emitter.on(event, options[kFirstEventParam] ? eventHandler : (...args) => eventHandler(args));
-
-  emitter.on("error", ex => {
+  const errorHandler = ex => {
     if (!unconsumedPromises.isEmpty()) {
       const { reject } = unconsumedPromises.shift();
       return reject(ex);
     }
     unconsumedErrors.push(ex);
-  });
+  }
+  emitter.on("error", errorHandler);
 
   signal?.addEventListener("abort", () => {
     emitter.emit("error", new AbortError(undefined, { cause: signal?.reason }));
   });
 
-  // If any of the close events is emitted -> set flag to stop reading-in events
-  // and yield only the remaining queued-up values.
+  // If any of the close events is emitted -> remove listeners
+  // and yield only the remaining queued-up values in iterator.
   for (const evName of options?.close || []) {
     emitter.on(evName, () => {
+      emitter.removeListener(event, eventHandler)
+      emitter.removeListener("error", errorHandler)
       done = true;
     });
   }
 
   // Create AsyncGeneratorFunction which handles the Iterator logic
   const iterator = async function* () {
-    while (!done || !unconsumedEvents.isEmpty()) {
+    while (!done || !unconsumedEvents.isEmpty() || !unconsumedErrors.isEmpty()) {
       if (!unconsumedEvents.isEmpty()) {
         yield Promise.$resolve(unconsumedEvents.shift());
       } else if (!unconsumedErrors.isEmpty()) {

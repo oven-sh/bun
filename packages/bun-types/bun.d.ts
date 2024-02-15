@@ -3356,7 +3356,6 @@ declare module "bun" {
       | 29
       | 30
       | 31;
-    /**
   }
 
   /** Compression options for `Bun.deflateSync` and `Bun.gzipSync` */

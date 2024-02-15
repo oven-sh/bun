@@ -113,8 +113,6 @@ const CursorState = struct {
     }
 };
 
-const log = bun.Output.scoped(.glob, false);
-
 pub const BunGlobWalker = GlobWalker_(null, false);
 
 fn dummyFilterTrue(val: []const u8) bool {

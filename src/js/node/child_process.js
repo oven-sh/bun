@@ -1334,7 +1334,7 @@ function nodeToBun(item, index) {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {
-    return index > 3 ? "ignore" : "pipe";
+    return index > 2 ? "ignore" : "pipe";
   }
   // If inherit and we are referencing stdin/stdout/stderr index,
   // we can get the fd from the ReadStream for the corresponding stdio

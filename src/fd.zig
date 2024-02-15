@@ -316,7 +316,7 @@ pub const FDImpl = packed struct {
             try writer.print("{d}", .{this.system()});
             return;
         }
-        
+
         switch (env.os) {
             else => {
                 const fd = this.system();

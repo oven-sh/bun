@@ -3315,7 +3315,7 @@ declare module "bun" {
      */
     static readonly byteLength: 32;
   }
-  
+
   /** Compression options for `Bun.deflateSync` and `Bun.gzipSync` */
   interface ZstdCompressionOptions {
     /**

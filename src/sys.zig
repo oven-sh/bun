@@ -1942,8 +1942,12 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
         return Maybe(bun.FileDescriptor){ .result = bun.toFD(target) };
     }
 
-    const out = system.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD | bun.C.F.DUPFD_CLOEXEC | flags), @as(i32, 0));
+    const out = system.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(i32, 0));
     log("dup({d}) = {d}", .{ fd.cast(), out });
+    if (flags != 0) {
+        const fd_flags = system.fcntl(out, @as(i32, std.os.F.GETFD), @as(i32, 0));
+        _ = system.fcntl(out, @as(i32, std.os.F.SETFD), fd_flags | flags);
+    }
     return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
 }
 

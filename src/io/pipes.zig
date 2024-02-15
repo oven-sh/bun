@@ -33,7 +33,23 @@ pub const PollOrFd = union(enum) {
 
     pub fn close(this: *PollOrFd, ctx: ?*anyopaque, comptime onCloseFn: anytype) void {
         const fd = this.getFd();
+        var close_async = true;
         if (this.* == .poll) {
+            // workaround kqueue bug.
+            // 1) non-blocking FIFO
+            // 2) open for writing only = fd 2, nonblock
+            // 3) open for reading only = fd 3, nonblock
+            // 4) write(3, "something") = 9
+            // 5) read(2, buf, 9) = 9
+            // 6) read(2, buf, 9) = -1 (EAGAIN)
+            // 7) ON ANOTHER THREAD: close(3) = 0,
+            // 8) kevent(2, EVFILT_READ, EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, 0) = 0
+            // 9) ??? No more events for fd 2
+            if (comptime Environment.isMac) {
+                if (this.poll.flags.contains(.poll_writable) and this.poll.flags.contains(.nonblocking)) {
+                    close_async = false;
+                }
+            }
             this.poll.deinitForceUnregister();
             this.* = .{ .closed = {} };
         }
@@ -44,8 +60,10 @@ pub const PollOrFd = union(enum) {
             //TODO: We should make this call compatible using bun.FileDescriptor
             if (Environment.isWindows) {
                 bun.Async.Closer.close(bun.uvfdcast(fd), bun.windows.libuv.Loop.get());
-            } else {
+            } else if (close_async) {
                 bun.Async.Closer.close(fd, {});
+            } else {
+                _ = bun.sys.close(fd);
             }
             if (comptime @TypeOf(onCloseFn) != void)
                 onCloseFn(@alignCast(@ptrCast(ctx.?)));

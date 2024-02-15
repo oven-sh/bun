@@ -566,7 +566,13 @@ pub fn PosixStreamingWriter(
                 return .{ .wrote = 0 };
             }
 
-            return this.drainBufferedData(buffer, std.math.maxInt(usize), false);
+            return this.drainBufferedData(buffer, std.math.maxInt(usize), brk: {
+                if (this.getPoll()) |poll| {
+                    break :brk poll.flags.contains(.hup);
+                }
+
+                break :brk false;
+            });
         }
 
         pub fn deinit(this: *PosixWriter) void {

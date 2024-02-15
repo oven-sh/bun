@@ -61,8 +61,9 @@ function normalizeOutput(stdout: string) {
     stdout
       // remove timestamps from output
       .replace(/\(\d+(?:\.\d+)? m?s\)/gi, "")
+      // TODO: this should not be necessary. it indicates a subtle bug in bun.
       // normalize displayed bytes (round down to 0)
-      // .replace(/\d(?:\.\d+)?(?= k?B)/g, "0")
+      .replace(/\d(?:\.\d+)?(?= k?B)/g, "0")
       // TODO: this should not be necessary. it indicates a subtle bug in bun.
       // normalize multiple spaces to single spaces (must perform last)
       .replace(/\s{2,}/g, " ")

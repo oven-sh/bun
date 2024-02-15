@@ -218,22 +218,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         }
 
         const Archive = @import("../libarchive/libarchive.zig").Archive;
-        const Zlib = @import("../zlib.zig");
-        var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
-        zlib_pool.data.reset();
-        defer Npm.Registry.BodyPool.release(zlib_pool);
 
-        var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, default_allocator);
-        zlib_entry.readAll() catch |err| {
-            this.package_manager.log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                this.package_manager.allocator,
-                "{s} decompressing \"{s}\"",
-                .{ @errorName(err), name },
-            ) catch unreachable;
-            return error.InstallFailed;
-        };
         switch (this.resolution.tag) {
             .github => {
                 const DirnameReader = struct {
@@ -249,7 +234,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
                 switch (PackageManager.verbose_install) {
                     inline else => |log| _ = try Archive.extractToDir(
-                        zlib_pool.data.list.items,
+                        tgz_bytes,
                         extract_destination,
                         null,
                         *DirnameReader,
@@ -274,7 +259,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             },
             else => switch (PackageManager.verbose_install) {
                 inline else => |log| _ = try Archive.extractToDir(
-                    zlib_pool.data.list.items,
+                    tgz_bytes,
                     extract_destination,
                     null,
                     void,

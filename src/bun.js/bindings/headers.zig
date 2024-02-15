@@ -393,3 +393,11 @@ pub extern fn UVStreamSink__fromJS(arg0: *bindings.JSGlobalObject, JSValue1: JSC
 pub extern fn UVStreamSink__onClose(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) void;
 pub extern fn UVStreamSink__onReady(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue) void;
 pub extern fn ZigException__fromException(arg0: [*c]bindings.Exception) ZigException;
+
+pub const JSC__GetterSetter = bindings.GetterSetter;
+pub const JSC__CustomGetterSetter = bindings.CustomGetterSetter;
+
+pub extern fn JSC__GetterSetter__isGetterNull(arg: *JSC__GetterSetter) bool;
+pub extern fn JSC__GetterSetter__isSetterNull(arg: *JSC__GetterSetter) bool;
+pub extern fn JSC__CustomGetterSetter__isGetterNull(arg: *JSC__CustomGetterSetter) bool;
+pub extern fn JSC__CustomGetterSetter__isSetterNull(arg: *JSC__CustomGetterSetter) bool;

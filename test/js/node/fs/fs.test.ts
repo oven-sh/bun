@@ -2745,12 +2745,12 @@ describe.if(isWindows)("windows path handling", () => {
   ];
 
   for (const filename of filenames) {
-    test(`Can read '${filename}' with node:fs`, async () => {
+    it(`Can read '${filename}' with node:fs`, async () => {
       const stats = await fs.promises.stat(filename);
       expect(stats.size).toBeGreaterThan(0);
     });
 
-    test(`Can read '${filename}' with Bun.file`, async () => {
+    it(`Can read '${filename}' with Bun.file`, async () => {
       const stats = await Bun.file(filename).text();
       expect(stats.length).toBeGreaterThan(0);
     });

@@ -38,7 +38,7 @@ function warnNotImplementedOnce(feature: string, issue?: number) {
   if (warned.has(feature)) {
     return;
   }
-
+  warned.add(feature);
   console.warn(new NotImplementedError(feature, issue));
 }
 

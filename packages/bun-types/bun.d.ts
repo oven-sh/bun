@@ -4172,6 +4172,8 @@ declare module "bun" {
      * Get the resource usage information of the process (max RSS, CPU time, etc)
      */
     resourceUsage: ResourceUsage;
+
+    signalCode?: string;
   }
 
   /**
@@ -4267,6 +4269,8 @@ declare module "bun" {
        * ```
        */
       cmd: string[];
+
+      onExit: never;
     },
   ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
 

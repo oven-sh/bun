@@ -1947,14 +1947,18 @@ pub const Subprocess = struct {
 
         subprocess.updateHasPendingActivity();
 
+        const signalCode = subprocess.getSignalCode(globalThis);
         const exitCode = subprocess.getExitCode(globalThis);
         const stdout = subprocess.stdout.toBufferedValue(globalThis);
         const stderr = subprocess.stderr.toBufferedValue(globalThis);
         const resource_usage = subprocess.createResourceUsageObject(globalThis);
         subprocess.finalize();
 
-        const sync_value = JSC.JSValue.createEmptyObject(globalThis, 5);
+        const sync_value = JSC.JSValue.createEmptyObject(globalThis, 5 + @as(usize, @intFromBool(!signalCode.isEmptyOrUndefinedOrNull())));
         sync_value.put(globalThis, JSC.ZigString.static("exitCode"), exitCode);
+        if (!signalCode.isEmptyOrUndefinedOrNull()) {
+            sync_value.put(globalThis, JSC.ZigString.static("signalCode"), signalCode);
+        }
         sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
         sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
         sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));

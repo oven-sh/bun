@@ -75,7 +75,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     #throws: boolean = true;
     // #immediate;
     constructor(core: ShellInterpreter, throws: boolean) {
-      var resolve, reject;
+      let resolve, reject;
 
       super((res, rej) => {
         resolve = code => {
@@ -160,7 +160,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     }
 
     throws(doThrow: boolean | undefined): this {
-      this.#throws = typeof doThrow === "boolean" ? doThrow : false;
+      this.#throws = !!doThrow
       return this;
     }
 
@@ -225,7 +225,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
   class ShellPrototype {
     [cwdSymbol]: string | undefined;
     [envSymbol]: Record<string, string | undefined> | undefined;
-    [throwsSymbol]: boolean = true;
+    [throwsSymbol]: boolean = false;
 
     env(newEnv: Record<string, string | undefined>) {
       if (typeof newEnv === "undefined" || newEnv === originalDefaultEnv) {
@@ -256,13 +256,13 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       return this;
     }
     throws(doThrow: boolean | undefined) {
-      this[throwsSymbol] = typeof doThrow === "boolean" ? doThrow : false;
+      this[throwsSymbol] = !!doThrow;
       return this;
     }
   }
 
-  var BunShell = function BunShell() {
-    const [first, ...rest] = arguments;
+  var BunShell = function BunShell(...args) {
+    const [first, ...rest] = args;
     if (first.raw === undefined) throw new Error("Please use `$` as a tagged template function: $`cmd arg1 arg2`");
     const core = new ShellInterpreter(first.raw, ...rest);
 
@@ -282,9 +282,9 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       throw new TypeError("Class constructor Shell cannot be invoked without 'new'");
     }
 
-    var Shell = function Shell() {
-      const [first, ...rest] = arguments;
-      if (first.raw === undefined) throw new Error("Please use `$` as a tagged template function: $`cmd arg1 arg2`");
+    var Shell = function Shell(...args) {
+      const [first, ...rest] = args;
+      if (first.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
       const core = new ShellInterpreter(first.raw, ...rest);
 
       const cwd = Shell[cwdSymbol];
@@ -310,20 +310,20 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
   BunShell[cwdSymbol] = defaultCwd;
   BunShell[envSymbol] = defaultEnv;
-  BunShell[throwsSymbol] = true;
+  BunShell[throwsSymbol] = false;
 
   Object.defineProperties(BunShell, {
     Shell: {
       value: Shell,
-      configurable: false,
+      // configurable: false,
       enumerable: true,
-      writable: false,
+      // writable: false,
     },
     ShellPromise: {
       value: ShellPromise,
-      configurable: false,
+      // configurable: false,
       enumerable: true,
-      writable: false,
+      // writable: false,
     },
   });
 

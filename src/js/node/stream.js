@@ -5411,7 +5411,6 @@ function createNativeStreamReadable(nativeType, Readable) {
 
     ref() {
       var ptr = this.#bunNativePtr;
-      console.log("ref", this.#refCount);
       if (ptr === undefined) return;
       if (this.#refCount++ === 0) {
         ptr.updateRef(true);
@@ -5420,7 +5419,6 @@ function createNativeStreamReadable(nativeType, Readable) {
 
     unref() {
       var ptr = this.#bunNativePtr;
-      console.log("unref", this.#refCount);
       if (ptr === undefined) return;
       if (this.#refCount-- === 1) {
         ptr.updateRef(false);

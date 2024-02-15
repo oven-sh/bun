@@ -195,18 +195,40 @@ class SqliteCustomFunction {
 private:
     JSC::JSGlobalObject* lexicalGlobalObject;
     sqlite3* db;
-    String name;
-    JSC::JSValue fn;
+    JSC::JSValue callback;
 public:
-    SqliteCustomFunction(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3* db, String name, JSC::JSValue fn)
-     : lexicalGlobalObject(lexicalGlobalObject), db(db), name(name), fn(fn) {}
-    ~SqliteCustomFunction() {}
+    SqliteCustomFunction(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3* db, JSC::JSValue callback)
+     : lexicalGlobalObject(lexicalGlobalObject), db(db), callback(callback) { }
+    ~SqliteCustomFunction() { }
+
+    void setSqliteResult(sqlite3_context* invocation, JSC::JSValue value) {
+        if (value.isInt32()) {
+            sqlite3_result_int(invocation, value.asInt32());
+            return;
+        }
+        if (value.isBoolean()) {
+            sqlite3_result_int(invocation, value.asBoolean());
+            return;
+        }
+        if (value.isDouble()) {
+            sqlite3_result_double(invocation, value.asDouble());
+            return;
+        }
+    }
 
     static void xDestroy(void* self) {
         delete static_cast<SqliteCustomFunction*>(self);
     }
     static void xFunc(sqlite3_context* invocation, int argc, sqlite3_value** argv) {
-        // TODO
+        auto self = static_cast<SqliteCustomFunction*>(sqlite3_user_data(invocation));
+
+        auto returnValue = JSC::call(
+            self->lexicalGlobalObject,
+            self->callback,
+            JSC::ArgList(), // TODO: ArgList
+            "TODO"_s // TODO: Use proper overload that does not have this (and has a thisObject instead)
+        );
+        self->setSqliteResult(invocation, returnValue);
     }
 };
 
@@ -1190,7 +1212,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunctionFunction, (JSC::JSGlobalObj
     }
 
     // TODO: Some locking? Weak ref? I guess we have to do _something_ to keep callback / LGO alive?
-    auto* customFunction = new SqliteCustomFunction(lexicalGlobalObject, db, nameString, callback);
+    auto* customFunction = new SqliteCustomFunction(lexicalGlobalObject, db, callback);
     int rc = sqlite3_create_function_v2(
         db,
         nameString.utf8().data(),

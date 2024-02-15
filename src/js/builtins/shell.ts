@@ -313,15 +313,11 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
   Object.defineProperties(BunShell, {
     Shell: {
       value: Shell,
-      // configurable: false,
       enumerable: true,
-      // writable: false,
     },
     ShellPromise: {
       value: ShellPromise,
-      // configurable: false,
       enumerable: true,
-      // writable: false,
     },
   });
 

@@ -302,7 +302,16 @@ pub const FDImpl = packed struct {
         return JSValue.jsNumberFromInt32(value.makeLibUVOwned().uv());
     }
 
-    pub fn format(this: FDImpl, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: FDImpl, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (fmt.len == 1 and fmt[0] == 'd') {
+            try writer.print("{d}", .{this.system()});
+            return;
+        }
+
+        if (fmt.len != 0) {
+            @compileError("invalid format string for FDImpl.format. must be either '' or 'd'");
+        }
+
         if (!this.isValid()) {
             try writer.writeAll("[invalid_fd]");
             return;

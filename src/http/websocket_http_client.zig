@@ -1072,7 +1072,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             };
             this.event_loop.enter();
             defer {
-                this.event_loop.enter();
+                this.event_loop.exit();
             }
 
             switch (kind) {

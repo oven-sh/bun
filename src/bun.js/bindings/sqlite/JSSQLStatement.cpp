@@ -234,10 +234,55 @@ public:
         }
 
         // TODO: Buffer to blob
+
+        // TODO: Exception: "User-defined function returned an invalid value"
     }
 
-    JSC::JSValue decodeSqliteValue(const sqlite3_value* value) {
-        return JSC::jsNumber(23); // TODO
+    JSC::JSValue decodeSqliteValue(sqlite3_value* value) {
+        auto& vm = lexicalGlobalObject->vm();
+
+        switch (sqlite3_value_type(value)) {
+            case SQLITE_INTEGER:
+                // https://github.com/oven-sh/bun/issues/1536
+                return jsNumberFromSQLite(value);
+
+            case SQLITE_FLOAT:
+                return JSC::jsNumber(sqlite3_value_double(value));
+
+            // > Note that the SQLITE_TEXT constant was also used in SQLite version
+            // > 2 for a completely different meaning. Software that links against
+            // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
+            // > not SQLITE_TEXT.
+            case SQLITE3_TEXT: {
+                size_t len = sqlite3_value_bytes(value);
+                const unsigned char* text = len > 0 ? sqlite3_value_text(value) : nullptr;
+
+                if (len > 64) {
+                    return JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject));
+                }
+                return jsString(vm, WTF::String::fromUTF8(text, len));
+            }
+
+            case SQLITE_BLOB: {
+                size_t len = sqlite3_value_bytes(value);
+                const void* blob = len > 0 ? sqlite3_value_blob(value) : nullptr;
+                JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(
+                    lexicalGlobalObject,
+                    lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject),
+                    len
+                );
+
+                if (LIKELY(blob && len)) {
+                    memcpy(array->vector(), blob, len);
+                }
+                return array;
+            }
+
+            case SQLITE_NULL:
+                return JSC::jsNull();
+            default:
+                return JSC::jsNull(); // TODO: Throw something due to unsupported value?
+        }
     }
 
     static void xDestroy(void* self) {
@@ -252,11 +297,13 @@ public:
             arguments.appendWithCrashOnOverflow(value);
         }
 
+        auto callData = JSC::getCallData(self->callback);
         auto returnValue = JSC::call(
             self->lexicalGlobalObject,
             self->callback,
-            arguments,
-            "TODO"_s // TODO: Use proper overload that does not have this (and has a thisObject instead)
+            callData,
+            self->lexicalGlobalObject,
+            arguments
         );
         self->setSqliteResult(invocation, returnValue);
     }

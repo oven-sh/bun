@@ -881,7 +881,7 @@ pub const PackageInstall = struct {
         success: u32 = 0,
         skipped: u32 = 0,
         successfully_installed: ?Bitset = null,
-        packages_with_skipped_scripts: std.ArrayListUnmanaged(DependencyID) = .{},
+        packages_with_skipped_scripts: std.ArrayListUnmanaged(struct { pkg_id: PackageID, dep_id: DependencyID }) = .{},
     };
 
     pub const Method = enum {
@@ -7095,7 +7095,7 @@ pub const PackageManager = struct {
         clap.parseParam("--no-summary                          Don't print a summary") catch unreachable,
         clap.parseParam("--no-verify                           Skip verifying integrity of newly downloaded packages") catch unreachable,
         clap.parseParam("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
-        clap.parseParam("--trusted                             Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
+        clap.parseParam("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
         clap.parseParam("-g, --global                          Install globally") catch unreachable,
         clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
@@ -7389,7 +7389,7 @@ pub const PackageManager = struct {
             cli.silent = args.flag("--silent");
             cli.verbose = args.flag("--verbose") or Output.is_verbose;
             cli.ignore_scripts = args.flag("--ignore-scripts");
-            cli.trusted = args.flag("--trusted");
+            cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
 
             // link and unlink default to not saving, all others default to
@@ -8458,7 +8458,10 @@ pub const PackageManager = struct {
                         if (!is_trusted and this.lockfile.packages.get(package_id).meta.has_install_script != 0) {
                             this.summary.packages_with_skipped_scripts.append(
                                 this.manager.allocator,
-                                dependency_id,
+                                .{
+                                    .pkg_id = package_id,
+                                    .dep_id = dependency_id,
+                                },
                             ) catch bun.outOfMemory();
                         }
 
@@ -9785,12 +9788,15 @@ pub const PackageManager = struct {
                     const buf = manager.lockfile.buffers.string_bytes.items;
                     if (install_summary.packages_with_skipped_scripts.items.len > 0) {
                         Output.warn("skipped lifecycle scripts:\n", .{});
-                        for (install_summary.packages_with_skipped_scripts.items) |dependency_id| {
-                            const name = manager.lockfile.buffers.dependencies.items[dependency_id].name.slice(buf);
+                        for (install_summary.packages_with_skipped_scripts.items) |ids| {
+                            const dep = manager.lockfile.buffers.dependencies.items[ids.dep_id];
+                            const pkg = manager.lockfile.packages.get(ids.pkg_id);
+                            const name = dep.name.slice(buf);
                             const gop = try dedupe_set.getOrPut(name);
                             if (!gop.found_existing) {
-                                Output.prettyError(" <d>-<r> {s}\n", .{
+                                Output.prettyError(" <d>-<r> {s}<d>@{}<r>\n", .{
                                     name,
+                                    pkg.resolution.fmt(buf),
                                 });
                             }
                         }

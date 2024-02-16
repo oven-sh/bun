@@ -1582,11 +1582,18 @@ pub const Resolver = struct {
 
     const dev = Output.scoped(.Resolver, false);
 
-    pub fn bustDirCache(r: *ThisResolver, path: string) void {
+    /// Bust the directory cache for the given path.
+    /// Returns `true` if something was deleted, otherwise `false`.
+    pub fn bustDirCache(r: *ThisResolver, path: string) bool {
         dev("Bust {s}", .{path});
-        std.debug.assert(path[path.len - 1] == std.fs.path.sep);
-        r.fs.fs.bustEntriesCache(path);
-        r.dir_cache.remove(path);
+        if (Environment.allow_assert) {
+            if (path[path.len - 1] != std.fs.path.sep) {
+                std.debug.panic("Expected a trailing slash on {s}", .{path});
+            }
+        }
+        const first_bust = r.fs.fs.bustEntriesCache(path);
+        const second_bust = r.dir_cache.remove(path);
+        return first_bust or second_bust;
     }
 
     pub fn loadNodeModules(

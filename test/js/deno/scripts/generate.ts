@@ -1,5 +1,10 @@
 // Downloads tests from Deno and does AST transformation to convert APIs
 // like Deno.test() to use Bun's test() and expect() APIs.
+//
+// 2024-02-14:
+// As of https://github.com/denoland/deno/pull/22402 (move all the tests)
+// the data in resources.json is probably incorrect. Not aware of any time
+// we re-generated deno tests.
 
 import { mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";

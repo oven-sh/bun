@@ -890,7 +890,9 @@ pub fn cleanWithLogger(
                             // add the new trusted dependencies. they will be added to the package.json after
                             // installing
                             const update_name = update.getResolvedName();
-                            try new_trusted_dependencies.put(new.allocator, @truncate(String.Builder.stringHash(update_name)), {});
+                            const name_hash: u32 = @truncate(String.Builder.stringHash(update_name));
+                            try new_trusted_dependencies.put(new.allocator, name_hash, {});
+                            try PackageManager.instance.summary.new_trusted_dependencies.put(PackageManager.instance.allocator, name_hash, {});
                         }
                     }
                 }

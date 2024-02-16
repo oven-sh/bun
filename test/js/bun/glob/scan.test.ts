@@ -26,6 +26,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fg from "fast-glob";
 import * as path from "path";
 import { tempFixturesDir, createTempDirectoryWithBrokenSymlinks, prepareEntries } from "./util";
+import { tempDirWithFiles } from "harness";
 
 let origAggressiveGC = Bun.unsafe.gcAggressionLevel();
 let tempBrokenSymlinksDir: string;
@@ -442,4 +443,82 @@ test("glob.scan('.')", async () => {
   const entries = await Array.fromAsync(glob.scan("."));
   // bun root dir
   expect(entries).toContain("README.md");
+});
+
+describe("glob.scan wildcard fast path", async () => {
+  test("works", async () => {
+    const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", {
+      "lol.md": "",
+      "lol2.md": "",
+      "shouldnt-show.md23243": "",
+      "shouldnt-show.ts": "",
+    });
+    const glob = new Glob("*.md");
+    const entries = await Array.fromAsync(glob.scan(tempdir));
+    // bun root dir
+    expect(entries.sort()).toEqual(["lol.md", "lol2.md"].sort());
+  });
+
+  // https://github.com/oven-sh/bun/issues/8817
+  describe("fast-path detection edgecase", async () => {
+    function runTest(pattern: string, files: Record<string, string>, expected: string[]) {
+      test(`pattern: ${pattern}`, async () => {
+        const tempdir = tempDirWithFiles("glob-scan-wildcard-fast-path", files);
+        const glob = new Glob(pattern);
+        const entries = await Array.fromAsync(glob.scan(tempdir));
+        expect(entries.sort()).toEqual(expected.sort());
+      });
+    }
+
+    runTest(
+      "*.test.*",
+      {
+        "example.test.ts": "",
+        "example.test.js": "",
+        "shouldnt-show.ts": "",
+      },
+      ["example.test.ts", "example.test.js"],
+    );
+
+    runTest(
+      "*.test.ts",
+      {
+        "example.test.ts": "",
+        "example.test.ts.test.ts": "",
+        "shouldnt-show.ts": "",
+      },
+      ["example.test.ts", "example.test.ts.test.ts"],
+    );
+
+    runTest(
+      "*.test.{js,ts}",
+      {
+        "example.test.ts": "",
+        "example.test.js": "",
+        "shouldnt-show.ts": "",
+      },
+      ["example.test.ts", "example.test.js"],
+    );
+
+    runTest(
+      "*.test.ts?",
+      {
+        "example.test.tsx": "",
+        "example.test.tsz": "",
+        "shouldnt-show.ts": "",
+      },
+      ["example.test.tsx", "example.test.tsz"],
+    );
+
+    // `!` only applies negation if at the start of the pattern
+    runTest(
+      "*.test!.*",
+      {
+        "hi.test!.js": "",
+        "hello.test!.ts": "",
+        "no.test.ts": "",
+      },
+      ["hi.test!.js", "hello.test!.ts"],
+    );
+  });
 });

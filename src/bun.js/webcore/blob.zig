@@ -2957,7 +2957,7 @@ pub const Blob = struct {
                 }
                 unreachable;
             };
- 
+
             var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
 
             switch (sink.writer.start(fd, false)) {

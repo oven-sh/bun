@@ -1192,7 +1192,7 @@ pub const struct_uv_write_s = extern struct {
             req.write_buffer = uv_buf_t.init(input);
 
             const rc = uv_write(req, stream, @ptrCast(&req.write_buffer), 1, &Wrapper.uvWriteCb);
-            
+
             if (rc.errno()) |errno| {
                 return .{ .err = .{ .errno = errno, .syscall = .write } };
             }

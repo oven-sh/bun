@@ -4716,6 +4716,7 @@ enum class BuiltinNamesMap : uint8_t {
     toString,
     redirect,
     inspectCustom,
+    asyncIterator,
 };
 
 static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -4752,6 +4753,9 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::inspectCustom: {
         return Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
+    }
+    case BuiltinNamesMap::asyncIterator: {
+        return vm.propertyNames->asyncIteratorSymbol;
     }
     }
 }
@@ -5410,22 +5414,22 @@ extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
     return DECLARE_CATCH_SCOPE(globalObject->vm()).exception() != 0;
 }
 
-CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter *gettersetter)
+CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter* gettersetter)
 {
     return gettersetter->isGetterNull();
 }
 
-CPP_DECL bool JSC__GetterSetter__isSetterNull(JSC__GetterSetter *gettersetter)
+CPP_DECL bool JSC__GetterSetter__isSetterNull(JSC__GetterSetter* gettersetter)
 {
     return gettersetter->isSetterNull();
 }
 
-CPP_DECL bool JSC__CustomGetterSetter__isGetterNull(JSC__CustomGetterSetter *gettersetter)
+CPP_DECL bool JSC__CustomGetterSetter__isGetterNull(JSC__CustomGetterSetter* gettersetter)
 {
     return gettersetter->getter() == nullptr;
 }
 
-CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter *gettersetter)
+CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter* gettersetter)
 {
     return gettersetter->setter() == nullptr;
 }

@@ -54,9 +54,44 @@ pub const BunxCommand = struct {
         return new_str;
     }
 
+    const seconds_cache_valid = 60 * 60 * 24; // 1 day
+    const nanoseconds_cache_valid = seconds_cache_valid * 1000000000;
+
     fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {
         const target_package_json_fd = try std.os.openatZ(dir_fd.cast(), subpath_z, std.os.O.RDONLY, 0);
         const target_package_json = std.fs.File{ .handle = target_package_json_fd };
+
+        const is_stale = is_stale: {
+            if (Environment.isWindows) {
+                var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
+                var info: std.os.windows.FILE_BASIC_INFORMATION = undefined;
+                const rc = std.os.windows.ntdll.NtQueryInformationFile(target_package_json_fd, &io_status_block, &info, @sizeOf(std.os.windows.FILE_BASIC_INFORMATION), .FileBasicInformation);
+                switch (rc) {
+                    .SUCCESS => {
+                        const time = std.os.windows.fromSysTime(info.LastWriteTime);
+                        const now = std.time.nanoTimestamp();
+                        break :is_stale (now - time > nanoseconds_cache_valid);
+                    },
+                    // treat failures to stat as stale
+                    else => break :is_stale true,
+                }
+            } else {
+                var stat: std.os.Stat = undefined;
+                const rc = std.c.fstat(target_package_json_fd, &stat);
+                if (rc != 0) {
+                    break :is_stale true;
+                }
+                break :is_stale std.time.timestamp() - stat.mtime().tv_sec > seconds_cache_valid;
+            }
+        };
+
+        if (is_stale) {
+            target_package_json.close();
+            // If delete fails, oh well. Hope installation takes care of it.
+            dir_fd.asDir().deleteTree(subpath_z) catch {};
+            return error.NeedToInstall;
+        }
+
         defer target_package_json.close();
 
         const package_json_contents = try target_package_json.readToEndAlloc(bundler.allocator, std.math.maxInt(u32));
@@ -324,25 +359,25 @@ pub const BunxCommand = struct {
         if (PATH.len > 0) {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.pathLiteral("{s}/{s}--bunx/node_modules/.bin:{s}"),
+                bun.pathLiteral("{s}/bunx--{s}/node_modules/.bin:{s}"),
                 .{ temp_dir, package_fmt, PATH },
             );
         } else {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.pathLiteral("{s}/{s}--bunx/node_modules/.bin"),
+                bun.pathLiteral("{s}/bunx--{s}/node_modules/.bin"),
                 .{ temp_dir, package_fmt },
             );
         }
         try this_bundler.env.map.put("PATH", PATH);
-        const bunx_cache_dir = PATH[0 .. temp_dir.len + "/--bunx".len + package_fmt.len];
+        const bunx_cache_dir = PATH[0 .. temp_dir.len + "/bunx--".len + package_fmt.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}"), .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         const passthrough = passthrough_list.items;
 
-        if (update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag) {
+        if (update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag) try_run_existing: {
             var destination_: ?[:0]const u8 = null;
 
             // Only use the system-installed version if there is no version specified
@@ -365,7 +400,47 @@ pub const BunxCommand = struct {
                 absolute_in_cache_dir,
             )) |destination| {
                 const out = bun.asByteSlice(destination);
-                _ = try Run.runBinary(
+
+                if (std.mem.startsWith(u8, out, bunx_cache_dir)) {
+                    const is_stale = is_stale: {
+                        if (Environment.isWindows) {
+                            const fd = bun.sys.openat(bun.invalid_fd, destination, std.os.O.RDONLY, 0).unwrap() catch {
+                                // if we cant open this, we probably will just fail when we run it
+                                // and that error message is likely going to be better than the one from `bun add`
+                                break :is_stale false;
+                            };
+                            defer std.os.close(fd);
+
+                            var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
+                            var info: std.os.windows.FILE_BASIC_INFORMATION = undefined;
+                            const rc = std.os.windows.ntdll.NtQueryInformationFile(fd.cast(), &io_status_block, &info, @sizeOf(std.os.windows.FILE_BASIC_INFORMATION), .FileBasicInformation);
+                            switch (rc) {
+                                .SUCCESS => {
+                                    const time = std.os.windows.fromSysTime(info.LastWriteTime);
+                                    const now = std.time.nanoTimestamp();
+                                    break :is_stale (now - time > nanoseconds_cache_valid);
+                                },
+                                // treat failures to stat as stale
+                                else => break :is_stale true,
+                            }
+                        } else {
+                            var stat: std.os.Stat = undefined;
+                            const rc = std.c.stat(destination, &stat);
+                            if (rc != 0) {
+                                break :is_stale true;
+                            }
+                            break :is_stale std.time.timestamp() - stat.mtime().tv_sec > seconds_cache_valid;
+                        }
+                    };
+
+                    if (is_stale) {
+                        // If delete fails, oh well. Hope installation takes care of it.
+                        std.fs.deleteDirAbsolute(out) catch {};
+                        break :try_run_existing;
+                    }
+                }
+
+                try Run.runBinary(
                     ctx,
                     try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                     this_bundler.fs.top_level_dir,
@@ -373,11 +448,12 @@ pub const BunxCommand = struct {
                     passthrough,
                     null,
                 );
-                // we are done!
-                Global.exit(0);
+                // runBinary is noreturn
+                comptime unreachable;
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
+            // TODO: root_dir_fd was observed on Windows to be zero, which is incorrect. figure out why
             const root_dir_fd = root_dir_info.getFileDescriptor();
             if (root_dir_fd != .zero) {
                 if (getBinName(&this_bundler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
@@ -402,7 +478,7 @@ pub const BunxCommand = struct {
                             absolute_in_cache_dir,
                         )) |destination| {
                             const out = bun.asByteSlice(destination);
-                            _ = try Run.runBinary(
+                            try Run.runBinary(
                                 ctx,
                                 try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                                 this_bundler.fs.top_level_dir,
@@ -410,8 +486,8 @@ pub const BunxCommand = struct {
                                 passthrough,
                                 null,
                             );
-                            // we are done!
-                            Global.exit(0);
+                            // runBinary is noreturn
+                            comptime unreachable;
                         }
                     }
                 } else |err| {
@@ -425,13 +501,11 @@ pub const BunxCommand = struct {
 
         const bunx_install_dir_path = try std.fmt.allocPrint(
             ctx.allocator,
-            "{s}/{s}--bunx",
+            "{s}/bunx--{s}",
             .{ temp_dir, package_fmt },
         );
 
-        // TODO: fix this after zig upgrade
-        const bunx_install_iterable_dir = try std.fs.cwd().makeOpenPath(bunx_install_dir_path, .{});
-        var bunx_install_dir = bunx_install_iterable_dir;
+        const bunx_install_dir = try std.fs.cwd().makeOpenPath(bunx_install_dir_path, .{});
 
         create_package_json: {
             // create package.json, but only if it doesn't exist
@@ -441,11 +515,13 @@ pub const BunxCommand = struct {
         }
 
         var args_buf = [_]string{
-            try std.fs.selfExePathAlloc(ctx.allocator), "add",        "--no-summary",
+            try std.fs.selfExePathAlloc(ctx.allocator),
+            "add",
+            "--no-summary",
             package_fmt,
             // disable the manifest cache when a tag is specified
             // so that @latest is fetched from the registry
-                                           "--no-cache",
+            "--no-cache",
         };
 
         const argv_to_use: []const string = args_buf[0 .. args_buf.len - @as(usize, @intFromBool(update_request.version.tag != .dist_tag))];
@@ -473,14 +549,10 @@ pub const BunxCommand = struct {
                     Global.exit(exit_code);
                 }
             },
-            .Signal => |signal| {
-                Global.exit(@as(u7, @truncate(signal)));
+            .Signal, .Stopped => |signal| {
+                Global.raiseIgnoringPanicHandler(signal);
             },
-            .Stopped => |signal| {
-                Global.exit(@as(u7, @truncate(signal)));
-            },
-            // shouldn't happen
-            else => {
+            .Unknown => {
                 Global.exit(1);
             },
         }
@@ -498,7 +570,7 @@ pub const BunxCommand = struct {
             absolute_in_cache_dir,
         )) |destination| {
             const out = bun.asByteSlice(destination);
-            _ = try Run.runBinary(
+            try Run.runBinary(
                 ctx,
                 try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                 this_bundler.fs.top_level_dir,
@@ -506,8 +578,8 @@ pub const BunxCommand = struct {
                 passthrough,
                 null,
             );
-            // we are done!
-            Global.exit(0);
+            // runBinary is noreturn
+            comptime unreachable;
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -522,7 +594,7 @@ pub const BunxCommand = struct {
                     absolute_in_cache_dir,
                 )) |destination| {
                     const out = bun.asByteSlice(destination);
-                    _ = try Run.runBinary(
+                    try Run.runBinary(
                         ctx,
                         try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                         this_bundler.fs.top_level_dir,
@@ -530,8 +602,8 @@ pub const BunxCommand = struct {
                         passthrough,
                         null,
                     );
-                    // we are done!
-                    Global.exit(0);
+                    // runBinary is noreturn
+                    comptime unreachable;
                 }
             }
         } else |_| {}

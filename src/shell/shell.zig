@@ -15,7 +15,6 @@ const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
-// const CodepointIterator = @import("../string_immutable.zig").CodepointIterator;
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 
@@ -2945,7 +2944,7 @@ pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_qu
         const char: u32 = brk: {
             if (i < non_ascii) {
                 i += 1;
-                break :brk @intCast(str[i]);
+                break :brk str[i];
             }
             const ret = bun.strings.utf16Codepoint([]const u16, str[i..]);
             if (ret.fail) return false;

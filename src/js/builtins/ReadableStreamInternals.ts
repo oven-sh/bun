@@ -1518,7 +1518,8 @@ export function readableStreamDefaultControllerCanCloseOrEnqueue(controller) {
 }
 
 export function readableStreamFromAsyncIterator(target, fn) {
-  var cancelled = false, iter: AsyncIterator<any>;
+  var cancelled = false,
+    iter: AsyncIterator<any>;
   return new ReadableStream({
     type: "direct",
 

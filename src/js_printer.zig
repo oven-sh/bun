@@ -2478,7 +2478,7 @@ fn NewPrinter(
                     if (e.optional_chain == null) {
                         flags.insert(.has_non_optional_chain_parent);
                     } else {
-                        if (flags.contains(.has_non_optional_chain_parent) and e.optional_chain.? == .ccontinue) {
+                        if (flags.contains(.has_non_optional_chain_parent)) {
                             wrap = true;
                             p.print("(");
                         }

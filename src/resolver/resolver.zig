@@ -876,14 +876,13 @@ pub const Resolver = struct {
             };
         }
 
-        // When using `bun build --compile`, module resolution is never relative
-        // to our special /$bunfs/ directory.
+        // When using `bun build --compile`, module resolution is never
+        // relative to our special /$bunfs/ directory.
         //
-        // It's always relative to the current working directory of the project
-        // root.
+        // It's always relative to the current working directory of the project root.
         const source_dir = brk: {
             if (r.standalone_module_graph) |graph| {
-                if (strings.isBunStandaloneFilePath(import_path)) {
+                if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(import_path)) {
                     if (graph.files.contains(import_path)) {
                         return .{
                             .success = Result{
@@ -898,7 +897,7 @@ pub const Resolver = struct {
                     }
 
                     return .{ .not_found = {} };
-                } else if (strings.isBunStandaloneFilePath(source_dir_)) {
+                } else if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(source_dir_)) {
                     break :brk Fs.FileSystem.instance.top_level_dir;
                 }
             }
@@ -1583,10 +1582,18 @@ pub const Resolver = struct {
 
     const dev = Output.scoped(.Resolver, false);
 
-    pub fn bustDirCache(r: *ThisResolver, path: string) void {
+    /// Bust the directory cache for the given path.
+    /// Returns `true` if something was deleted, otherwise `false`.
+    pub fn bustDirCache(r: *ThisResolver, path: string) bool {
         dev("Bust {s}", .{path});
-        r.fs.fs.bustEntriesCache(path);
-        r.dir_cache.remove(path);
+        if (Environment.allow_assert) {
+            if (path[path.len - 1] != std.fs.path.sep) {
+                std.debug.panic("Expected a trailing slash on {s}", .{path});
+            }
+        }
+        const first_bust = r.fs.fs.bustEntriesCache(path);
+        const second_bust = r.dir_cache.remove(path);
+        return first_bust or second_bust;
     }
 
     pub fn loadNodeModules(
@@ -2877,8 +2884,8 @@ pub const Resolver = struct {
                 // because we want the output to always be deterministic
                 if (strings.startsWith(path, prefix) and
                     strings.endsWith(path, suffix) and
-                    (prefix.len >= longest_match_prefix_length and
-                    suffix.len > longest_match_suffix_length))
+                    (prefix.len > longest_match_prefix_length or
+                    (prefix.len == longest_match_prefix_length and suffix.len > longest_match_suffix_length)))
                 {
                     longest_match_prefix_length = @as(i32, @intCast(prefix.len));
                     longest_match_suffix_length = @as(i32, @intCast(suffix.len));
@@ -3457,7 +3464,6 @@ pub const Resolver = struct {
 
         // Is this a file?
         if (r.loadAsFile(path, extension_order)) |file| {
-
             // Determine the package folder by looking at the last node_modules/ folder in the path
             if (strings.lastIndexOf(file.path, "node_modules" ++ std.fs.path.sep_str)) |last_node_modules_folder| {
                 const node_modules_folder_offset = last_node_modules_folder + ("node_modules" ++ std.fs.path.sep_str).len;
@@ -3494,12 +3500,9 @@ pub const Resolver = struct {
             debug.addNoteFmt("Attempting to load \"{s}\" as a directory", .{path});
             debug.increaseIndent();
         }
-
-        defer {
-            if (r.debug_logs) |*debug| {
-                debug.decreaseIndent();
-            }
-        }
+        defer if (r.debug_logs) |*debug| {
+            debug.decreaseIndent();
+        };
 
         const dir_info = (r.dirInfoCached(path) catch |err| {
             if (comptime Environment.isDebug) Output.prettyErrorln("err: {s} reading {s}", .{ @errorName(err), path });

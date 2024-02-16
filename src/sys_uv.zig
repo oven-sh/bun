@@ -2,25 +2,24 @@
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
 const std = @import("std");
 const os = std.os;
-
-const Environment = @import("root").bun.Environment;
-const default_allocator = @import("root").bun.default_allocator;
-const JSC = @import("root").bun.JSC;
-const SystemError = JSC.SystemError;
 const bun = @import("root").bun;
-const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const fd_t = bun.FileDescriptor;
-const C = @import("root").bun.C;
-const E = C.E;
-const linux = os.linux;
-const Maybe = JSC.Maybe;
-const kernel32 = bun.windows;
-const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 
+const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
+const fd_t = bun.FileDescriptor;
+const default_allocator = bun.default_allocator;
+const kernel32 = bun.windows;
+const linux = os.linux;
 const uv = bun.windows.libuv;
 
-const FileDescriptor = bun.FileDescriptor;
+const C = bun.C;
+const E = C.E;
+const Environment = bun.Environment;
 const FDImpl = bun.FDImpl;
+const FileDescriptor = bun.FileDescriptor;
+const JSC = bun.JSC;
+const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
+const Maybe = JSC.Maybe;
+const SystemError = JSC.SystemError;
 
 comptime {
     std.debug.assert(Environment.isWindows);
@@ -77,6 +76,7 @@ pub fn chmod(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
     assertIsValidWindowsPath(u8, file_path);
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
+
     const rc = uv.uv_fs_chmod(uv.Loop.get(), &req, file_path.ptr, flags, null);
 
     log("uv chmod({s}, {d}) = {d}", .{ file_path, flags, rc.int() });
@@ -265,7 +265,7 @@ pub fn fdatasync(fd: FileDescriptor) Maybe(void) {
 
     log("uv fdatasync({}) = {d}", .{ uv_fd, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fstat, .fd = fd, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .fdatasync, .fd = fd, .from_libuv = true } }
     else
         .{ .result = {} };
 }
@@ -278,7 +278,7 @@ pub fn fsync(fd: FileDescriptor) Maybe(void) {
 
     log("uv fsync({d}) = {d}", .{ uv_fd, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fstat, .fd = fd, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .fsync, .fd = fd, .from_libuv = true } }
     else
         .{ .result = {} };
 }
@@ -304,7 +304,7 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
 
     log("uv lstat({s}) = {d}", .{ path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fstat, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .lstat, .from_libuv = true } }
     else
         .{ .result = req.statbuf };
 }

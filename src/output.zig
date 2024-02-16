@@ -225,7 +225,9 @@ pub fn disableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = false;
 }
 
-pub fn panic(comptime fmt: string, args: anytype) noreturn {
+pub noinline fn panic(comptime fmt: string, args: anytype) noreturn {
+    @setCold(true);
+
     if (Output.isEmojiEnabled()) {
         std.debug.panic(comptime Output.prettyFmt(fmt, true), args);
     } else {
@@ -474,8 +476,8 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                     bun.getenvZ("BUN_DEBUG_" ++ @tagName(tag)) != null)
                 {
                     really_disable = false;
-                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS") != null) {
-                    really_disable = true;
+                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
+                    really_disable = !strings.eqlComptime(val, "0");
                 }
             }
 

@@ -45,6 +45,10 @@ pub const PathString = packed struct {
         return this.len == 0;
     }
 
+    pub fn format(self: PathString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.writeAll(self.slice());
+    }
+
     pub const empty = @This(){ .ptr = 0, .len = 0 };
     comptime {
         if (!bun.Environment.isWasm) {

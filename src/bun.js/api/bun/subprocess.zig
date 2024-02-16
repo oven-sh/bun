@@ -1041,7 +1041,6 @@ pub const Subprocess = struct {
                     .pipe => {
                         if (result == .buffer) {
                             const pipe = JSC.WebCore.FileSink.createWithPipe(event_loop, result.buffer);
-                            pipe.writer.setParent(pipe);
 
                             switch (pipe.writer.startWithCurrentPipe()) {
                                 .result => {},
@@ -1089,7 +1088,6 @@ pub const Subprocess = struct {
             switch (stdio) {
                 .pipe => {
                     const pipe = JSC.WebCore.FileSink.create(event_loop, result.?);
-                    pipe.writer.setParent(pipe);
 
                     switch (pipe.writer.start(pipe.fd, true)) {
                         .result => {},

@@ -2938,67 +2938,39 @@ pub const Blob = struct {
             return JSValue.jsUndefined();
         }
 
-        if (Environment.isWindows and !(store.data.file.is_atty orelse false)) {
-            // // on Windows we use uv_pipe_t when not using TTY
-            // const pathlike = store.data.file.pathlike;
-            // const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
-            //     var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-            //     switch (bun.sys.open(
-            //         pathlike.path.sliceZ(&file_path),
-            //         std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
-            //         write_permissions,
-            //     )) {
-            //         .result => |result| {
-            //             break :brk result;
-            //         },
-            //         .err => |err| {
-            //             globalThis.throwInvalidArguments("Failed to create FileSink: {}", .{err.getErrno()});
-            //             return JSValue.jsUndefined();
-            //         },
-            //     }
-            //     unreachable;
-            // };
+        if (Environment.isWindows) {
+            const pathlike = store.data.file.pathlike;
+            const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
+                var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+                switch (bun.sys.open(
+                    pathlike.path.sliceZ(&file_path),
+                    std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                    write_permissions,
+                )) {
+                    .result => |result| {
+                        break :brk result;
+                    },
+                    .err => |err| {
+                        globalThis.throwInvalidArguments("Failed to create FileSink: {}", .{err.getErrno()});
+                        return JSValue.jsUndefined();
+                    },
+                }
+                unreachable;
+            };
+ 
+            var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
 
-            // var pipe_ptr = &(this.store.?.data.file.pipe);
-            // if (store.data.file.pipe.loop == null) {
-            //     if (libuv.uv_pipe_init(libuv.Loop.get(), pipe_ptr, 0) != 0) {
-            //         pipe_ptr.loop = null;
-            //         globalThis.throwInvalidArguments("Failed to create FileSink", .{});
-            //         return JSValue.jsUndefined();
-            //     }
-            //     const file_fd = bun.uvfdcast(fd);
-            //     if (libuv.uv_pipe_open(pipe_ptr, file_fd).errEnum()) |err| {
-            //         pipe_ptr.loop = null;
-            //         globalThis.throwInvalidArguments("Failed to create FileSink: uv_pipe_open({d}) {}", .{ file_fd, err });
-            //         return JSValue.jsUndefined();
-            //     }
-            // }
+            switch (sink.writer.start(fd, false)) {
+                .err => |err| {
+                    globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                    sink.deref();
 
-            // var sink = JSC.WebCore.FileSink.init(globalThis.allocator(), @ptrCast(pipe_ptr), null) catch |err| {
-            //     globalThis.throwInvalidArguments("Failed to create FileSink: {s}", .{@errorName(err)});
-            //     return JSValue.jsUndefined();
-            // };
+                    return JSC.JSValue.zero;
+                },
+                else => {},
+            }
 
-            // var stream_start: JSC.WebCore.StreamStart = .{
-            //     .FileSink = {},
-            // };
-
-            // if (arguments.len > 0 and arguments.ptr[0].isObject()) {
-            //     stream_start = JSC.WebCore.StreamStart.fromJSWithTag(globalThis, arguments[0], .FileSink);
-            // }
-
-            // switch (sink.start(stream_start)) {
-            //     .err => |err| {
-            //         globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
-            //         sink.finalize();
-
-            //         return JSC.JSValue.zero;
-            //     },
-            //     else => {},
-            // }
-
-            // return sink.toJS(globalThis);
-            @panic("TODO");
+            return sink.toJS(globalThis);
         }
 
         var sink = JSC.WebCore.FileSink.init(bun.invalid_fd, this.globalThis.bunVM().eventLoop());

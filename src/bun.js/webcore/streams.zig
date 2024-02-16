@@ -2950,7 +2950,7 @@ pub const FileSink = struct {
             .fd = pipe.fd(),
         });
         this.writer.pipe = pipe;
-        this.writer.parent = this;
+        this.writer.setParent(this);
         return this;
     }
 
@@ -2962,7 +2962,7 @@ pub const FileSink = struct {
             .event_loop_handle = JSC.EventLoopHandle.init(event_loop),
             .fd = fd,
         });
-        this.writer.parent = this;
+        this.writer.setParent(this);
         return this;
     }
 
@@ -3078,7 +3078,7 @@ pub const FileSink = struct {
             .fd = fd,
             .event_loop_handle = JSC.EventLoopHandle.init(event_loop_handle),
         });
-        this.writer.parent = this;
+        this.writer.setParent(this);
 
         return this;
     }

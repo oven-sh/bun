@@ -1192,15 +1192,17 @@ pub const struct_uv_write_s = extern struct {
             req.write_buffer = uv_buf_t.init(input);
 
             const rc = uv_write(req, stream, @ptrCast(&req.write_buffer), 1, &Wrapper.uvWriteCb);
+            
             if (rc.errno()) |errno| {
-                return .{ .err = .{ .errno = errno, .syscall = .write, .from_libuv = true } };
+                return .{ .err = .{ .errno = errno, .syscall = .write } };
             }
+
             return .{ .result = {} };
         }
 
         const rc = uv_write(req, stream, @ptrCast(&uv_buf_t.init(input)), 1, null);
         if (rc.errno()) |errno| {
-            return .{ .err = .{ .errno = errno, .syscall = .write, .from_libuv = true } };
+            return .{ .err = .{ .errno = errno, .syscall = .write } };
         }
         return .{ .result = {} };
     }

@@ -718,11 +718,13 @@ fn BaseWindowsPipeWriter(
         pub fn startWithPipe(this: *WindowsPipeWriter, pipe: *uv.Pipe) bun.JSC.Maybe(void) {
             std.debug.assert(this.pipe == null);
             this.pipe = pipe;
+            this.setParent(this.parent);
             return this.startWithCurrentPipe();
         }
 
         pub fn open(this: *WindowsPipeWriter, loop: *uv.Loop, fd: bun.FileDescriptor, ipc: bool) bun.JSC.Maybe(void) {
             const pipe = this.pipe orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.PIPE, .pipe) };
+
             switch (pipe.init(loop, ipc)) {
                 .err => |err| {
                     return .{ .err = err };
@@ -731,8 +733,9 @@ fn BaseWindowsPipeWriter(
             }
 
             pipe.data = this;
+            const file_fd = bun.uvfdcast(fd);
 
-            switch (pipe.open(bun.uvfdcast(fd))) {
+            switch (pipe.open(file_fd)) {
                 .err => |err| {
                     return .{ .err = err };
                 },
@@ -747,6 +750,7 @@ fn BaseWindowsPipeWriter(
             std.debug.assert(this.pipe == null);
             this.pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
             if (this.open(uv.Loop.get(), fd, false).asErr()) |err| return .{ .err = err };
+            this.setParent(this.parent);
             return this.startWithCurrentPipe();
         }
     };

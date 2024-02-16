@@ -1534,11 +1534,11 @@ export function readableStreamFromAsyncIterator(target, fn) {
 
     async pull(controller) {
       try {
-        var generator = fn.$call(target, controller);
+        iter = fn.$call(target, controller);
         fn = target = undefined;
 
-        if (!$isAsyncGenerator(generator) && typeof generator.next !== "function") {
-          generator = undefined;
+        if (!$isAsyncGenerator(iter) && typeof iter.next !== "function") {
+          iter = undefined;
           throw new TypeError("Expected an async generator");
         }
       } catch (e) {
@@ -1552,7 +1552,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
 
       try {
         while (!cancelled && !done) {
-          const promise = generator.next(controller);
+          const promise = iter.next(controller);
           if (cancelled) {
             return;
           }
@@ -1580,18 +1580,18 @@ export function readableStreamFromAsyncIterator(target, fn) {
       } finally {
         // Stream was closed before we tried writing to it.
         if (closingError?.code === "ERR_INVALID_THIS") {
-          await generator.return?.();
+          await iter.return?.();
           return;
         }
 
         if (closingError) {
           await controller.end(closingError);
-          await generator.throw?.(closingError);
+          await iter.throw?.(closingError);
         } else {
           await controller.end();
-          await generator.return?.();
+          await iter.return?.();
         }
-        generator = undefined;
+        iter = undefined;
       }
     },
   });

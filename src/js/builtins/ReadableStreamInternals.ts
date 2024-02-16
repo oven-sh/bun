@@ -1518,8 +1518,7 @@ export function readableStreamDefaultControllerCanCloseOrEnqueue(controller) {
 }
 
 export function readableStreamFromAsyncIterator(target, fn) {
-  var cancelled = false,
-    generator;
+  var cancelled = false, iter: AsyncIterator<any>;
   return new ReadableStream({
     type: "direct",
 
@@ -1527,8 +1526,8 @@ export function readableStreamFromAsyncIterator(target, fn) {
       $debug("readableStreamFromAsyncIterator.cancel", reason);
       cancelled = true;
 
-      if (generator) {
-        generator.throw((reason ||= new DOMException("ReadableStream has been cancelled", "AbortError")));
+      if (iter) {
+        iter.throw?.((reason ||= new DOMException("ReadableStream has been cancelled", "AbortError")));
       }
     },
 
@@ -1537,11 +1536,13 @@ export function readableStreamFromAsyncIterator(target, fn) {
         var generator = fn.$call(target, controller);
         fn = target = undefined;
 
-        if (!$isAsyncGenerator(generator)) {
+        if (!$isAsyncGenerator(generator) && typeof generator.next !== "function") {
           generator = undefined;
           throw new TypeError("Expected an async generator");
         }
       } catch (e) {
+        // TODO: report errors in close()
+        reportError(e);
         controller.close(e);
         return;
       }
@@ -1578,16 +1579,16 @@ export function readableStreamFromAsyncIterator(target, fn) {
       } finally {
         // Stream was closed before we tried writing to it.
         if (closingError?.code === "ERR_INVALID_THIS") {
-          await generator.return();
+          await generator.return?.();
           return;
         }
 
         if (closingError) {
           await controller.end(closingError);
-          await generator.throw(closingError);
+          await generator.throw?.(closingError);
         } else {
           await controller.end();
-          await generator.return();
+          await generator.return?.();
         }
         generator = undefined;
       }

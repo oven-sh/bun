@@ -47,6 +47,27 @@ pub const ShellErr = union(enum) {
         };
     }
 
+    pub fn fmt(this: @This()) []const u8 {
+        switch (this) {
+            .sys => {
+                const err = this.sys;
+                const str = std.fmt.allocPrint(bun.default_allocator, "bun: {s}: {}\n", .{ err.message, err.path }) catch bun.outOfMemory();
+                return str;
+            },
+            .custom => {
+                return std.fmt.allocPrint(bun.default_allocator, "bun: {s}\n", .{this.custom}) catch bun.outOfMemory();
+            },
+            .invalid_arguments => {
+                const str = std.fmt.allocPrint(bun.default_allocator, "bun: invalid arguments: {s}\n", .{this.invalid_arguments.val}) catch bun.outOfMemory();
+                return str;
+            },
+            .todo => {
+                const str = std.fmt.allocPrint(bun.default_allocator, "bun: TODO: {s}\n", .{this.invalid_arguments.val}) catch bun.outOfMemory();
+                return str;
+            },
+        }
+    }
+
     pub fn throwJS(this: @This(), globalThis: *JSC.JSGlobalObject) void {
         switch (this) {
             .sys => {
@@ -922,7 +943,7 @@ pub const Parser = struct {
                         self.continue_from_subparser(&subparser);
                         if (self.delimits(self.peek())) {
                             _ = self.match(.Delimit);
-                            if (should_break) break;
+                            break;
                         }
                     },
                     .Text => |txtrng| {
@@ -1797,6 +1818,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         switch (char) {
                             '0'...'9' => {
                                 _ = self.eat();
+                                if (count >= 32) {
+                                    return null;
+                                }
                                 buf[count] = @intCast(char);
                                 count += 1;
                                 continue;
@@ -1882,6 +1906,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 const char = result.char;
                 switch (char) {
                     '0'...'9' => {
+                        if (count >= 32) return null;
                         // Safe to cast here because 0-8 is in ASCII range
                         buf[count] = @intCast(char);
                         count += 1;

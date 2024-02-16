@@ -69,6 +69,37 @@ describe("bunshell", () => {
       `"hello" "lol" "nice"lkasjf;jdfla<>SKDJFLKSF`,
       `"\\"hello\\" \\"lol\\" \\"nice\\"lkasjf;jdfla<>SKDJFLKSF"`,
     );
+
+    test("wrapped in quotes", async () => {
+      const url = "http://www.example.com?candy_name=M&M";
+      await TestBuilder.command`echo url="${url}"`.stdout(`url=${url}\n`).run();
+      await TestBuilder.command`echo url='${url}'`.stdout(`url=${url}\n`).run();
+      await TestBuilder.command`echo url=${url}`.stdout(`url=${url}\n`).run();
+    });
+
+    test("escape var", async () => {
+      const shellvar = "$FOO";
+      await TestBuilder.command`FOO=bar && echo "${shellvar}"`.stdout(`$FOO\n`).run();
+      await TestBuilder.command`FOO=bar && echo '${shellvar}'`.stdout(`$FOO\n`).run();
+      await TestBuilder.command`FOO=bar && echo ${shellvar}`.stdout(`$FOO\n`).run();
+    });
+
+    test("can't escape a js string/obj ref", async () => {
+      const shellvar = "$FOO";
+      await TestBuilder.command`FOO=bar && echo \\${shellvar}`.stdout(`$FOO\n`).run();
+      const buf = new Uint8Array(1);
+      await TestBuilder.command`echo hi > \\${buf}`.run();
+    });
+
+    test("in command position", async () => {
+      const x = "echo hi";
+      await TestBuilder.command`${x}`.exitCode(1).stderr("bun: command not found: echo hi\n").run();
+    });
+
+    test("arrays", async () => {
+      const x = ["echo", "hi"];
+      await TestBuilder.command`${x}`.stdout("hi\n").run();
+    });
   });
 
   describe("quiet", async () => {

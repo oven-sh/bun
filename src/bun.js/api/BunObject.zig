@@ -318,6 +318,17 @@ pub fn shellLex(
     defer arena.deinit();
 
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+    var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
+        globalThis.throwOutOfMemory();
+        return .undefined;
+    };
+    defer {
+        for (jsstrings.items[0..]) |bunstr| {
+            bunstr.deref();
+        }
+        jsstrings.deinit();
+    }
     var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
     defer {
         for (jsobjs.items) |jsval| {
@@ -326,7 +337,7 @@ pub fn shellLex(
     }
 
     var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
+    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     })) {
@@ -335,14 +346,14 @@ pub fn shellLex(
 
     const lex_result = brk: {
         if (bun.strings.isAllASCII(script.items[0..])) {
-            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
             lexer.lex() catch |err| {
                 globalThis.throwError(err, "failed to lex shell");
                 return JSValue.undefined;
             };
             break :brk lexer.get_result();
         }
-        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
+        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
         lexer.lex() catch |err| {
             globalThis.throwError(err, "failed to lex shell");
             return JSValue.undefined;
@@ -393,6 +404,17 @@ pub fn shellParse(
     defer arena.deinit();
 
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+    var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
+        globalThis.throwOutOfMemory();
+        return .undefined;
+    };
+    defer {
+        for (jsstrings.items[0..]) |bunstr| {
+            bunstr.deref();
+        }
+        jsstrings.deinit();
+    }
     var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
     defer {
         for (jsobjs.items) |jsval| {
@@ -400,7 +422,7 @@ pub fn shellParse(
         }
     }
     var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
+    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     })) {
@@ -410,7 +432,7 @@ pub fn shellParse(
     var out_parser: ?bun.shell.Parser = null;
     var out_lex_result: ?bun.shell.LexResult = null;
 
-    const script_ast = bun.shell.Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], &out_parser, &out_lex_result) catch |err| {
+    const script_ast = bun.shell.Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], jsstrings.items[0..], &out_parser, &out_lex_result) catch |err| {
         if (err == bun.shell.ParseError.Lex) {
             std.debug.assert(out_lex_result != null);
             const str = out_lex_result.?.combineErrors(arena.allocator());
@@ -545,17 +567,21 @@ pub fn shellEscape(
 
     if (bunstr.isUTF16()) {
         if (bun.shell.needsEscapeUTF16(bunstr.utf16())) {
-            bun.shell.escapeUnicode(bunstr.byteSlice(), &outbuf) catch {
+            const has_invalid_utf16 = bun.shell.escapeUtf16(bunstr.utf16(), &outbuf, true) catch {
                 globalThis.throwOutOfMemory();
                 return .undefined;
             };
+            if (has_invalid_utf16) {
+                globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
+                return .undefined;
+            }
             return bun.String.createUTF8(outbuf.items[0..]).toJS(globalThis);
         }
         return jsval;
     }
 
-    if (bun.shell.needsEscape(bunstr.latin1())) {
-        bun.shell.escape(bunstr.byteSlice(), &outbuf) catch {
+    if (bun.shell.needsEscapeUtf8AsciiLatin1(bunstr.latin1())) {
+        bun.shell.escape8Bit(bunstr.byteSlice(), &outbuf, true) catch {
             globalThis.throwOutOfMemory();
             return .undefined;
         };

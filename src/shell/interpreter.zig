@@ -842,9 +842,20 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             };
 
             const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+            var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+            var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
+                globalThis.throwOutOfMemory();
+                return null;
+            };
+            defer {
+                for (jsstrings.items[0..]) |bunstr| {
+                    bunstr.deref();
+                }
+                jsstrings.deinit();
+            }
             var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
             var script = std.ArrayList(u8).init(arena.allocator());
-            if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
+            if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
                 globalThis.throwOutOfMemory();
                 return null;
             })) {
@@ -857,6 +868,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 &arena,
                 script.items[0..],
                 jsobjs.items[0..],
+                jsstrings.items[0..],
                 &parser,
                 &lex_result,
             ) catch |err| {
@@ -902,14 +914,21 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             return interpreter;
         }
 
-        pub fn parse(arena: *bun.ArenaAllocator, script: []const u8, jsobjs: []JSValue, out_parser: *?bun.shell.Parser, out_lex_result: *?shell.LexResult) !ast.Script {
+        pub fn parse(
+            arena: *bun.ArenaAllocator,
+            script: []const u8,
+            jsobjs: []JSValue,
+            jsstrings_to_escape: []bun.String,
+            out_parser: *?bun.shell.Parser,
+            out_lex_result: *?shell.LexResult,
+        ) !ast.Script {
             const lex_result = brk: {
                 if (bun.strings.isAllASCII(script)) {
-                    var lexer = bun.shell.LexerAscii.new(arena.allocator(), script);
+                    var lexer = bun.shell.LexerAscii.new(arena.allocator(), script, jsstrings_to_escape);
                     try lexer.lex();
                     break :brk lexer.get_result();
                 }
-                var lexer = bun.shell.LexerUnicode.new(arena.allocator(), script);
+                var lexer = bun.shell.LexerUnicode.new(arena.allocator(), script, jsstrings_to_escape);
                 try lexer.lex();
                 break :brk lexer.get_result();
             };
@@ -1029,7 +1048,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const jsobjs: []JSValue = &[_]JSValue{};
             var out_parser: ?bun.shell.Parser = null;
             var out_lex_result: ?bun.shell.LexResult = null;
-            const script = ThisInterpreter.parse(&arena, src, jsobjs, &out_parser, &out_lex_result) catch |err| {
+            const script = ThisInterpreter.parse(
+                &arena,
+                src,
+                jsobjs,
+                &[_]bun.String{},
+                &out_parser,
+                &out_lex_result,
+            ) catch |err| {
                 if (err == bun.shell.ParseError.Lex) {
                     std.debug.assert(out_lex_result != null);
                     const str = out_lex_result.?.combineErrors(arena.allocator());
@@ -1075,7 +1101,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const jsobjs: []JSValue = &[_]JSValue{};
             var out_parser: ?bun.shell.Parser = null;
             var out_lex_result: ?bun.shell.LexResult = null;
-            const script = ThisInterpreter.parse(&arena, src, jsobjs, &out_parser, &out_lex_result) catch |err| {
+            const script = ThisInterpreter.parse(&arena, src, jsobjs, &[_]bun.String{}, &out_parser, &out_lex_result) catch |err| {
                 if (err == bun.shell.ParseError.Lex) {
                     std.debug.assert(out_lex_result != null);
                     const str = out_lex_result.?.combineErrors(arena.allocator());

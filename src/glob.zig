@@ -654,7 +654,7 @@ pub fn GlobWalker_(
                     .Double => log("  **", .{}),
                     .Dot => log("  .", .{}),
                     .DotBack => log("  ../", .{}),
-                    .Literal, .WildcardFilepath, .None => log("  hint={s} component_str={s}", .{ @tagName(cmp.syntax_hint), pattern[cmp.start..cmp.len] }),
+                    .Literal, .WildcardFilepath, .None => log("  hint={s} component_str={s}", .{ @tagName(cmp.syntax_hint), pattern[cmp.start .. cmp.start + cmp.len] }),
                 }
             }
         }

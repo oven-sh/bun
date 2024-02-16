@@ -881,6 +881,7 @@ pub const PackageInstall = struct {
         success: u32 = 0,
         skipped: u32 = 0,
         successfully_installed: ?Bitset = null,
+        packages_with_skipped_scripts: std.ArrayListUnmanaged(DependencyID) = .{},
     };
 
     pub const Method = enum {
@@ -4563,6 +4564,8 @@ pub const PackageManager = struct {
                     Global.crash();
                 };
 
+                package.meta.has_install_script = @intFromBool(package.scripts.hasAny());
+
                 package = manager.lockfile.appendPackage(package) catch unreachable;
                 package_id.* = package.meta.id;
 
@@ -4600,6 +4603,8 @@ pub const PackageManager = struct {
                     }
                     Global.crash();
                 };
+
+                package.meta.has_install_script = @intFromBool(package.scripts.hasAny());
 
                 package = manager.lockfile.appendPackage(package) catch unreachable;
                 package_id.* = package.meta.id;
@@ -5745,6 +5750,10 @@ pub const PackageManager = struct {
                     this.do.run_scripts = false;
                 }
 
+                if (cli.trusted) {
+                    this.do.trust_dependencies_from_args = true;
+                }
+
                 this.local_package_features.optional_dependencies = !cli.omit.optional;
 
                 const disable_progress_bar = default_disable_progress_bar or cli.no_progress;
@@ -5821,6 +5830,7 @@ pub const PackageManager = struct {
             verify_integrity: bool = true,
             summary: bool = true,
             install_peer_dependencies: bool = true,
+            trust_dependencies_from_args: bool = false,
         };
 
         pub const Enable = struct {
@@ -5892,17 +5902,28 @@ pub const PackageManager = struct {
     };
 
     const PackageJSONEditor = struct {
+        const Expr = JSAst.Expr;
+        const G = JSAst.G;
+        const E = JSAst.E;
+
+        const trusted_dependencies_string = "trustedDependencies";
+
+        pub const EditOptions = struct {
+            exact_versions: bool = false,
+            trust_update_requests: bool = false,
+        };
+
         pub fn edit(
             allocator: std.mem.Allocator,
             updates: []UpdateRequest,
             current_package_json: *JSAst.Expr,
             dependency_list: string,
-            exact_versions: bool,
+            options: EditOptions,
         ) !void {
-            const G = JSAst.G;
-
             var remaining = updates.len;
             var replacing: usize = 0;
+
+            var trusted_dependencies_to_add = if (options.trust_update_requests) updates.len else 0;
 
             // There are three possible scenarios here
             // 1. There is no "dependencies" (or equivalent list) or it is empty
@@ -5910,37 +5931,62 @@ pub const PackageManager = struct {
             // 3. There is a "dependencies" (or equivalent list), and the package name exists in multiple lists
             ast_modifier: {
                 // Try to use the existing spot in the dependencies list if possible
-                for (updates) |*request| {
-                    inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies" }) |list| {
-                        if (current_package_json.asProperty(list)) |query| {
-                            if (query.expr.data == .e_object) {
-                                if (query.expr.asProperty(
-                                    if (request.is_aliased)
-                                        request.name
-                                    else
-                                        request.version.literal.slice(request.version_buf),
-                                )) |value| {
-                                    if (value.expr.data == .e_string) {
-                                        if (!request.resolved_name.isEmpty() and strings.eql(list, dependency_list)) {
-                                            replacing += 1;
-                                        } else {
-                                            request.e_string = value.expr.data.e_string;
-                                            remaining -= 1;
+                {
+                    var original_trusted_dependencies = brk: {
+                        if (!options.trust_update_requests) break :brk E.Array{};
+                        if (current_package_json.asProperty(trusted_dependencies_string)) |query| {
+                            if (query.expr.data == .e_array) {
+                                // not modifying
+                                break :brk query.expr.data.e_array.*;
+                            }
+                        }
+                        break :brk E.Array{};
+                    };
+
+                    for (updates) |*request| {
+                        inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies" }) |list| {
+                            if (current_package_json.asProperty(list)) |query| {
+                                if (query.expr.data == .e_object) {
+                                    if (query.expr.asProperty(
+                                        if (request.is_aliased)
+                                            request.name
+                                        else
+                                            request.version.literal.slice(request.version_buf),
+                                    )) |value| {
+                                        if (value.expr.data == .e_string) {
+                                            if (!request.resolved_name.isEmpty() and strings.eqlLong(list, dependency_list, true)) {
+                                                replacing += 1;
+                                            } else {
+                                                request.e_string = value.expr.data.e_string;
+                                                remaining -= 1;
+                                            }
                                         }
-                                    }
-                                    break;
-                                } else {
-                                    if (request.version.tag == .github or request.version.tag == .git) {
-                                        for (query.expr.data.e_object.properties.slice()) |item| {
-                                            if (item.value) |v| {
-                                                const url = request.version.literal.slice(request.version_buf);
-                                                if (v.data == .e_string and v.data.e_string.eql(string, url)) {
-                                                    request.e_string = v.data.e_string;
-                                                    remaining -= 1;
-                                                    break;
+                                        break;
+                                    } else {
+                                        if (request.version.tag == .github or request.version.tag == .git) {
+                                            for (query.expr.data.e_object.properties.slice()) |item| {
+                                                if (item.value) |v| {
+                                                    const url = request.version.literal.slice(request.version_buf);
+                                                    if (v.data == .e_string and v.data.e_string.eql(string, url)) {
+                                                        request.e_string = v.data.e_string;
+                                                        remaining -= 1;
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+                        if (options.trust_update_requests) {
+                            const package_name = request.getResolvedName();
+
+                            for (original_trusted_dependencies.items.slice()) |item| {
+                                if (item.data == .e_string) {
+                                    if (item.data.e_string.eql(string, package_name)) {
+                                        trusted_dependencies_to_add -= 1;
+                                        break;
                                     }
                                 }
                             }
@@ -5961,6 +6007,72 @@ pub const PackageManager = struct {
                 var new_dependencies = try allocator.alloc(G.Property, dependencies.len + remaining - replacing);
                 bun.copy(G.Property, new_dependencies, dependencies);
                 @memset(new_dependencies[dependencies.len..], G.Property{});
+
+                var trusted_dependencies: []Expr = &[_]Expr{};
+                if (options.trust_update_requests) {
+                    if (current_package_json.asProperty(trusted_dependencies_string)) |query| {
+                        if (query.expr.data == .e_array) {
+                            trusted_dependencies = query.expr.data.e_array.items.slice();
+                        }
+                    }
+                }
+
+                var new_trusted_dependencies: []Expr = if (options.trust_update_requests)
+                    try allocator.alloc(Expr, trusted_dependencies.len + trusted_dependencies_to_add)
+                else
+                    &[_]Expr{};
+
+                if (options.trust_update_requests) {
+                    for (updates) |*request| {
+                        // Adding trusted dependencies is more simple than adding the other dependencies. The
+                        // only possible time they are added to the json is after installing, so we just need
+                        // to check if the update requests are already in the array, and add them if they're not.
+                        @memcpy(new_trusted_dependencies[0..trusted_dependencies.len], trusted_dependencies);
+                        @memset(new_trusted_dependencies[trusted_dependencies.len..], Expr.empty);
+                        var found = false;
+                        const package_name = request.getResolvedName();
+                        for (trusted_dependencies) |item| {
+                            switch (item.data) {
+                                .e_string => {
+                                    if (item.data.e_string.eql(string, package_name)) {
+                                        found = true;
+                                        break;
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+
+                        if (!found) {
+                            if (comptime Environment.allow_assert) {
+                                var has_missing = false;
+                                for (new_trusted_dependencies) |dep| {
+                                    if (dep.data == .e_missing) has_missing = true;
+                                }
+
+                                std.debug.assert(has_missing);
+                            }
+                            var i: usize = new_trusted_dependencies.len;
+                            while (i > 0) {
+                                i -= 1;
+                                if (new_trusted_dependencies[i].data == .e_missing) {
+                                    new_trusted_dependencies[i] = try Expr.init(
+                                        E.String,
+                                        E.String{
+                                            .data = try allocator.dupe(u8, package_name),
+                                        },
+                                        logger.Loc.Empty,
+                                    ).clone(allocator);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (comptime Environment.allow_assert) {
+                        for (new_trusted_dependencies) |dep| std.debug.assert(dep.data != .e_missing);
+                    }
+                }
 
                 outer: for (updates) |*request| {
                     if (request.e_string != null) continue;
@@ -6058,8 +6170,42 @@ pub const PackageManager = struct {
                 if (new_dependencies.len > 1)
                     dependencies_object.data.e_object.alphabetizeProperties();
 
+                var needs_new_trusted_dependencies_list = true;
+                const trusted_dependencies_array: Expr = brk: {
+                    if (!options.trust_update_requests) {
+                        needs_new_trusted_dependencies_list = false;
+                        break :brk Expr.empty;
+                    }
+                    if (current_package_json.asProperty(trusted_dependencies_string)) |query| {
+                        if (query.expr.data == .e_array) {
+                            needs_new_trusted_dependencies_list = false;
+                            break :brk query.expr;
+                        }
+                    }
+
+                    break :brk Expr.init(
+                        E.Array,
+                        E.Array{
+                            .items = JSAst.ExprNodeList.init(new_trusted_dependencies),
+                        },
+                        logger.Loc.Empty,
+                    );
+                };
+
+                if (options.trust_update_requests) {
+                    trusted_dependencies_array.data.e_array.items = JSAst.ExprNodeList.init(new_trusted_dependencies);
+                    if (new_trusted_dependencies.len > 1) {
+                        if (comptime Environment.allow_assert) {
+                            for (trusted_dependencies_array.data.e_array.items.slice()) |item| {
+                                std.debug.assert(item.data == .e_string);
+                            }
+                        }
+                        trusted_dependencies_array.data.e_array.alphabetizeStrings();
+                    }
+                }
+
                 if (current_package_json.data != .e_object or current_package_json.data.e_object.properties.len == 0) {
-                    var root_properties = try allocator.alloc(JSAst.G.Property, 1);
+                    var root_properties = try allocator.alloc(JSAst.G.Property, if (options.trust_update_requests) 2 else 1);
                     root_properties[0] = JSAst.G.Property{
                         .key = JSAst.Expr.init(
                             JSAst.E.String,
@@ -6070,27 +6216,73 @@ pub const PackageManager = struct {
                         ),
                         .value = dependencies_object,
                     };
-                    current_package_json.* = JSAst.Expr.init(JSAst.E.Object, JSAst.E.Object{ .properties = JSAst.G.Property.List.init(root_properties) }, logger.Loc.Empty);
-                } else if (needs_new_dependency_list) {
-                    var root_properties = try allocator.alloc(JSAst.G.Property, current_package_json.data.e_object.properties.len + 1);
-                    bun.copy(JSAst.G.Property, root_properties, current_package_json.data.e_object.properties.slice());
-                    root_properties[root_properties.len - 1] = .{
-                        .key = JSAst.Expr.init(
-                            JSAst.E.String,
-                            JSAst.E.String{
-                                .data = dependency_list,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        .value = dependencies_object,
-                    };
+
+                    if (options.trust_update_requests) {
+                        root_properties[1] = JSAst.G.Property{
+                            .key = Expr.init(
+                                E.String,
+                                E.String{
+                                    .data = trusted_dependencies_string,
+                                },
+                                logger.Loc.Empty,
+                            ),
+                            .value = trusted_dependencies_array,
+                        };
+                    }
+
                     current_package_json.* = JSAst.Expr.init(
                         JSAst.E.Object,
-                        JSAst.E.Object{
-                            .properties = JSAst.G.Property.List.init(root_properties),
-                        },
+                        JSAst.E.Object{ .properties = JSAst.G.Property.List.init(root_properties) },
                         logger.Loc.Empty,
                     );
+                } else {
+                    if (needs_new_dependency_list and needs_new_trusted_dependencies_list) {
+                        var root_properties = try allocator.alloc(G.Property, current_package_json.data.e_object.properties.len + 2);
+                        @memcpy(root_properties[0..current_package_json.data.e_object.properties.len], current_package_json.data.e_object.properties.slice());
+                        root_properties[root_properties.len - 2] = .{
+                            .key = Expr.init(E.String, E.String{
+                                .data = dependency_list,
+                            }, logger.Loc.Empty),
+                            .value = dependencies_object,
+                        };
+                        root_properties[root_properties.len - 1] = .{
+                            .key = Expr.init(
+                                E.String,
+                                E.String{
+                                    .data = trusted_dependencies_string,
+                                },
+                                logger.Loc.Empty,
+                            ),
+                            .value = trusted_dependencies_array,
+                        };
+                        current_package_json.* = Expr.init(
+                            E.Object,
+                            E.Object{
+                                .properties = G.Property.List.init(root_properties),
+                            },
+                            logger.Loc.Empty,
+                        );
+                    } else if (needs_new_dependency_list or needs_new_trusted_dependencies_list) {
+                        var root_properties = try allocator.alloc(JSAst.G.Property, current_package_json.data.e_object.properties.len + 1);
+                        @memcpy(root_properties[0..current_package_json.data.e_object.properties.len], current_package_json.data.e_object.properties.slice());
+                        root_properties[root_properties.len - 1] = .{
+                            .key = JSAst.Expr.init(
+                                JSAst.E.String,
+                                JSAst.E.String{
+                                    .data = if (needs_new_dependency_list) dependency_list else trusted_dependencies_string,
+                                },
+                                logger.Loc.Empty,
+                            ),
+                            .value = if (needs_new_dependency_list) dependencies_object else trusted_dependencies_array,
+                        };
+                        current_package_json.* = JSAst.Expr.init(
+                            JSAst.E.Object,
+                            JSAst.E.Object{
+                                .properties = JSAst.G.Property.List.init(root_properties),
+                            },
+                            logger.Loc.Empty,
+                        );
+                    }
                 }
             }
 
@@ -6098,7 +6290,7 @@ pub const PackageManager = struct {
                 if (request.e_string) |e_string| {
                     e_string.data = switch (request.resolution.tag) {
                         .npm => if (request.version.tag == .dist_tag and request.version.literal.isEmpty())
-                            switch (exact_versions) {
+                            switch (options.exact_versions) {
                                 false => std.fmt.allocPrint(allocator, "^{}", .{
                                     request.resolution.value.npm.version.fmt(request.version_buf),
                                 }) catch unreachable,
@@ -6903,6 +7095,7 @@ pub const PackageManager = struct {
         clap.parseParam("--no-summary                          Don't print a summary") catch unreachable,
         clap.parseParam("--no-verify                           Skip verifying integrity of newly downloaded packages") catch unreachable,
         clap.parseParam("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
+        clap.parseParam("--trusted                             Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
         clap.parseParam("-g, --global                          Install globally") catch unreachable,
         clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
@@ -6975,6 +7168,7 @@ pub const PackageManager = struct {
         no_progress: bool = false,
         no_verify: bool = false,
         ignore_scripts: bool = false,
+        trusted: bool = false,
         no_summary: bool = false,
 
         link_native_bins: []const string = &[_]string{},
@@ -7195,6 +7389,7 @@ pub const PackageManager = struct {
             cli.silent = args.flag("--silent");
             cli.verbose = args.flag("--verbose") or Output.is_verbose;
             cli.ignore_scripts = args.flag("--ignore-scripts");
+            cli.trusted = args.flag("--trusted");
             cli.no_summary = args.flag("--no-summary");
 
             // link and unlink default to not saving, all others default to
@@ -7292,6 +7487,20 @@ pub const PackageManager = struct {
                 String.Builder.stringHash(dependency.version.literal.slice(string_buf))
             else
                 dependency.name_hash;
+        }
+
+        /// It is incorrect to call this function before Lockfile.cleanWithLogger() because
+        /// resolved_name should be populated if possible.
+        ///
+        /// `this` needs to be a pointer! If `this` is a copy and the name returned from
+        /// resolved_name is inlined, you will return a pointer to stack memory.
+        pub fn getResolvedName(this: *UpdateRequest) string {
+            return if (this.is_aliased)
+                this.name
+            else if (this.resolved_name.isEmpty())
+                this.version.literal.slice(this.version_buf)
+            else
+                this.resolved_name.slice(this.version_buf);
         }
 
         pub fn parse(
@@ -7608,7 +7817,9 @@ pub const PackageManager = struct {
                     updates,
                     &current_package_json,
                     dependency_list,
-                    manager.options.enable.exact_versions,
+                    .{
+                        .exact_versions = manager.options.enable.exact_versions,
+                    },
                 );
                 manager.package_json_updates = updates;
             },
@@ -7671,7 +7882,10 @@ pub const PackageManager = struct {
                 updates,
                 &current_package_json,
                 dependency_list,
-                manager.options.enable.exact_versions,
+                .{
+                    .exact_versions = manager.options.enable.exact_versions,
+                    .trust_update_requests = manager.options.do.trust_dependencies_from_args,
+                },
             );
             var buffer_writer_two = try JSPrinter.BufferWriter.init(ctx.allocator);
             try buffer_writer_two.buffer.list.ensureTotalCapacity(ctx.allocator, new_package_json_source.len + 1);
@@ -8229,7 +8443,9 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (resolution.tag == .workspace or this.lockfile.hasTrustedDependency(alias)) {
+                        const is_trusted = this.lockfile.hasTrustedDependency(alias);
+
+                        if (resolution.tag == .workspace or is_trusted) {
                             this.enqueuePackageScriptsToLockfile(
                                 alias,
                                 log_level,
@@ -8237,6 +8453,13 @@ pub const PackageManager = struct {
                                 destination_dir_subpath,
                                 resolution,
                             );
+                        }
+
+                        if (!is_trusted and this.lockfile.packages.get(package_id).meta.has_install_script != 0) {
+                            this.summary.packages_with_skipped_scripts.append(
+                                this.manager.allocator,
+                                dependency_id,
+                            ) catch bun.outOfMemory();
                         }
 
                         this.incrementTreeInstallCount(this.current_tree_id, log_level);
@@ -8671,6 +8894,7 @@ pub const PackageManager = struct {
             this.lockfile = try this.lockfile.maybeCloneFilteringRootPackages(
                 this.options.local_package_features,
                 this.options.enable.exact_versions,
+                this.options.do.trust_dependencies_from_args,
             );
         }
 
@@ -9375,6 +9599,7 @@ pub const PackageManager = struct {
             manager.package_json_updates,
             manager.log,
             manager.options.enable.exact_versions,
+            manager.options.do.trust_dependencies_from_args,
         );
         if (manager.lockfile.packages.len > 0) {
             root = manager.lockfile.packages.get(0);
@@ -9549,7 +9774,30 @@ pub const PackageManager = struct {
                     },
                 }
 
-                manager.lifecycle_script_time_log.printAndDeinit(manager.lockfile.allocator);
+                // print warnings for long scripts and skipped scripts
+                {
+                    manager.lifecycle_script_time_log.printAndDeinit(manager.lockfile.allocator);
+
+                    // as long as the name isn't trusted, multiple versions of the same
+                    // package could have skipped scripts, so we need a dedupe set
+                    var dedupe_set = bun.StringHashMap(void).init(manager.allocator);
+                    defer dedupe_set.deinit();
+                    const buf = manager.lockfile.buffers.string_bytes.items;
+                    if (install_summary.packages_with_skipped_scripts.items.len > 0) {
+                        Output.warn("skipped lifecycle scripts:\n", .{});
+                        for (install_summary.packages_with_skipped_scripts.items) |dependency_id| {
+                            const name = manager.lockfile.buffers.dependencies.items[dependency_id].name.slice(buf);
+                            const gop = try dedupe_set.getOrPut(name);
+                            if (!gop.found_existing) {
+                                Output.prettyError(" <d>-<r> {s}\n", .{
+                                    name,
+                                });
+                            }
+                        }
+                        Output.prettyError("<r>\n", .{});
+                        Output.flush();
+                    }
+                }
 
                 if (!did_meta_hash_change) {
                     manager.summary.remove = 0;

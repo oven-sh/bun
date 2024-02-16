@@ -1458,6 +1458,23 @@ pub const E = struct {
 
             return array;
         }
+
+        /// debug.assert the array only contains strings before calling
+        /// this function
+        pub fn alphabetizeStrings(this: *Array) void {
+            for (this.items.slice()) |item| {
+                if (item.data != .e_string) {
+                    return;
+                }
+            }
+            std.sort.pdq(Expr, this.items.slice(), {}, Sorter.isLessThan);
+        }
+
+        const Sorter = struct {
+            pub fn isLessThan(ctx: void, lhs: Expr, rhs: Expr) bool {
+                return strings.cmpStringsAsc(ctx, lhs.data.e_string.data, rhs.data.e_string.data);
+            }
+        };
     };
 
     pub const Unary = struct {
@@ -3037,6 +3054,8 @@ pub const Stmt = struct {
 pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
+
+    pub const empty = Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = logger.Loc.Empty };
 
     pub fn isAnonymousNamed(expr: Expr) bool {
         return switch (expr.data) {

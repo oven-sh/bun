@@ -588,6 +588,7 @@ pub fn maybeCloneFilteringRootPackages(
     old: *Lockfile,
     features: Features,
     exact_versions: bool,
+    trust_update_requests: bool,
 ) !*Lockfile {
     const old_root_dependencies_list = old.packages.items(.dependencies)[0];
     var old_root_resolutions = old.packages.items(.resolutions)[0];
@@ -605,7 +606,7 @@ pub fn maybeCloneFilteringRootPackages(
 
     if (!any_changes) return old;
 
-    return try old.clean(&.{}, exact_versions);
+    return try old.clean(&.{}, exact_versions, trust_update_requests);
 }
 
 fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequest, exact_versions: bool) !void {
@@ -683,6 +684,7 @@ pub fn clean(
     old: *Lockfile,
     updates: []PackageManager.UpdateRequest,
     exact_versions: bool,
+    trust_update_requests: bool,
 ) !*Lockfile {
     // This is wasteful, but we rarely log anything so it's fine.
     var log = logger.Log.init(bun.default_allocator);
@@ -693,7 +695,7 @@ pub fn clean(
         log.deinit();
     }
 
-    return old.cleanWithLogger(updates, &log, exact_versions);
+    return old.cleanWithLogger(updates, &log, exact_versions, trust_update_requests);
 }
 
 pub fn cleanWithLogger(
@@ -701,6 +703,7 @@ pub fn cleanWithLogger(
     updates: []PackageManager.UpdateRequest,
     log: *logger.Log,
     exact_versions: bool,
+    trust_update_requests: bool,
 ) !*Lockfile {
     const old_trusted_dependencies = old.trusted_dependencies;
     const old_scripts = old.scripts;
@@ -851,6 +854,10 @@ pub fn cleanWithLogger(
     // This is where we update it in the lockfile from "latest" to "^17.0.2"
     try cloner.flush();
 
+    new.trusted_dependencies = old_trusted_dependencies;
+    new.scripts = old_scripts;
+    new.meta_hash = old.meta_hash;
+
     // Don't allow invalid memory to happen
     if (updates.len > 0) {
         const slice = new.packages.slice();
@@ -862,6 +869,13 @@ pub fn cleanWithLogger(
         const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
         const string_buf = new.buffers.string_bytes.items;
 
+        var new_trusted_dependencies = new.trusted_dependencies orelse NameHashSet{};
+        defer {
+            if (trust_update_requests) {
+                new.trusted_dependencies = new_trusted_dependencies;
+            }
+        }
+
         for (updates) |*update| {
             if (update.resolution.tag == .uninitialized) {
                 for (root_deps, resolved_ids) |dep, package_id| {
@@ -871,14 +885,18 @@ pub fn cleanWithLogger(
                         update.version = dep.version;
                         update.resolution = resolutions[package_id];
                         update.resolved_name = names[package_id];
+
+                        if (trust_update_requests) {
+                            // add the new trusted dependencies. they will be added to the package.json after
+                            // installing
+                            const update_name = update.getResolvedName();
+                            try new_trusted_dependencies.put(new.allocator, @truncate(String.Builder.stringHash(update_name)), {});
+                        }
                     }
                 }
             }
         }
     }
-    new.trusted_dependencies = old_trusted_dependencies;
-    new.scripts = old_scripts;
-    new.meta_hash = old.meta_hash;
 
     return new;
 }
@@ -1809,7 +1827,7 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
 }
 
 pub fn appendPackage(this: *Lockfile, package_: Lockfile.Package) !Lockfile.Package {
-    const id = @as(PackageID, @truncate(this.packages.len));
+    const id: PackageID = @truncate(this.packages.len);
     return try appendPackageWithID(this, package_, id);
 }
 
@@ -3039,8 +3057,8 @@ pub const Package = extern struct {
 
             package.meta.arch = package_version.cpu;
             package.meta.os = package_version.os;
-
             package.meta.integrity = package_version.integrity;
+            package.meta.has_install_script = @intFromBool(package_version.has_install_script);
 
             package.dependencies.off = @as(u32, @truncate(dependencies_list.items.len));
             package.dependencies.len = total_dependencies_count;
@@ -3395,20 +3413,19 @@ pub const Package = extern struct {
 
         switch (dependency_version.tag) {
             .folder => {
-                dependency_version.value.folder = string_builder.append(
-                    String,
-                    Path.relative(
+                const relative = Path.relative(
+                    FileSystem.instance.top_level_dir,
+                    Path.joinAbsString(
                         FileSystem.instance.top_level_dir,
-                        Path.joinAbsString(
-                            FileSystem.instance.top_level_dir,
-                            &[_]string{
-                                source.path.name.dir,
-                                dependency_version.value.folder.slice(buf),
-                            },
-                            .auto,
-                        ),
+                        &[_]string{
+                            source.path.name.dir,
+                            dependency_version.value.folder.slice(buf),
+                        },
+                        .auto,
                     ),
                 );
+                // if relative is empty, we are linking the package to itself
+                dependency_version.value.folder = string_builder.append(String, if (relative.len == 0) "." else relative);
             },
             .npm => if (comptime tag != null)
                 unreachable
@@ -4566,7 +4583,10 @@ pub const Package = extern struct {
 
         man_dir: String = String{},
         integrity: Integrity = Integrity{},
-        _padding_integrity: [3]u8 = .{0} ** 3,
+
+        has_install_script: u8 = 0,
+
+        _padding_integrity: [2]u8 = .{0} ** 2,
 
         /// Does the `cpu` arch and `os` match the requirements listed in the package?
         /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
@@ -4586,6 +4606,7 @@ pub const Package = extern struct {
                 .arch = this.arch,
                 .os = this.os,
                 .origin = this.origin,
+                .has_install_script = this.has_install_script,
             };
         }
     };
@@ -5051,10 +5072,10 @@ pub const Serializer = struct {
     pub const version = "bun-lockfile-format-v0\n";
     const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
-    const has_workspace_package_ids_tag: u64 = @bitCast([_]u8{ 'w', 'O', 'r', 'K', 's', 'P', 'a', 'C' });
-    const has_trusted_dependencies_tag: u64 = @bitCast([_]u8{ 't', 'R', 'u', 'S', 't', 'E', 'D', 'd' });
-    const has_empty_trusted_dependencies_tag: u64 = @bitCast([_]u8{ 'e', 'M', 'p', 'T', 'r', 'U', 's', 'T' });
-    const has_overrides_tag: u64 = @bitCast([_]u8{ 'o', 'V', 'e', 'R', 'r', 'i', 'D', 's' });
+    const has_workspace_package_ids_tag: u64 = @bitCast(@as([8]u8, "wOrKsPaC".*));
+    const has_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "tRuStEDd".*));
+    const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*));
+    const has_overrides_tag: u64 = @bitCast(@as([8]u8, "oVeRriDs".*));
 
     pub fn save(this: *Lockfile, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
         var old_package_list = this.packages;

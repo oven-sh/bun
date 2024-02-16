@@ -1387,13 +1387,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             word_idx: u32,
             current_out: std.ArrayList(u8),
-            state: enum {
-                normal,
-                braces,
-                glob,
-                done,
-                err,
-            },
+            state: Step,
             child_state: union(enum) {
                 idle,
                 cmd_subst: struct {
@@ -1408,6 +1402,15 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             },
             out: Result,
             out_idx: u32,
+
+            const Step = enum(u8) {
+                tilde,
+                normal,
+                braces,
+                glob,
+                done,
+                err,
+            };
 
             const ParentPtr = StatePtrUnion(.{
                 Cmd,
@@ -1508,9 +1511,36 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 this.next();
             }
 
+            pub fn nextStep(this: *Expansion) ?Step {
+                switch (this.state) {
+                    .tilde => {
+                        return .normal;
+                    },
+                    .normal => {
+                        return .braces;
+                    },
+                    .braces => {
+                        return .glob;
+                    },
+                    .glob => {
+                        return null;
+                    },
+                    .err => {
+                        return null;
+                    },
+                }
+            }
+
             pub fn next(this: *Expansion) void {
                 while (!(this.state == .done or this.state == .err)) {
                     switch (this.state) {
+                        .tilde => {
+                            const has_tilde = switch (this.node.*) {
+                                .simple => this.node.simple == .tilde,
+                                .compound => this.node.atoms.len > 0 and this.node.atoms[0] == .tilde,
+                            };
+                            if (!has_tilde)
+                        },
                         .normal => {
                             // initialize
                             if (this.word_idx == 0) {
@@ -1608,9 +1638,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
             }
 
+            // fn expandTilde(this: *Expansion, )
+
             fn transitionToGlobState(this: *Expansion) void {
                 var arena = Arena.init(this.base.interpreter.allocator);
-                this.child_state = .{ .glob = .{ .walker = .{} } };
+                this.child_state = ..glob = .{ .walker = .{} };
                 const pattern = this.current_out.items[0..];
 
                 switch (GlobWalker.init(&this.child_state.glob.walker, &arena, pattern, false, false, false, false, false) catch bun.outOfMemory()) {

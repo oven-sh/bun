@@ -1143,6 +1143,7 @@ pub const TokenTag = enum {
     CmdSubstEnd,
     OpenParen,
     CloseParen,
+    Tilde,
     Var,
     Text,
     JSObjRef,
@@ -1191,6 +1192,9 @@ pub const Token = union(TokenTag) {
     OpenParen,
     CloseParen,
 
+    /// ~
+    Tilde,
+
     Var: TextRange,
     Text: TextRange,
     JSObjRef: u32,
@@ -1225,6 +1229,7 @@ pub const Token = union(TokenTag) {
             .CmdSubstEnd => "`)`",
             .OpenParen => "`(`",
             .CloseParen => "`)",
+            .Tilde => "~",
             .Var => strpool[self.Var.start..self.Var.end],
             .Text => strpool[self.Text.start..self.Text.end],
             .JSObjRef => "JSObjRef",
@@ -1280,8 +1285,8 @@ pub const LexError = struct {
     /// Allocated with lexer arena
     msg: []const u8,
 };
-pub const LEX_JS_OBJREF_PREFIX = "~__bun_";
-pub const LEX_JS_STRING_PREFIX = "~__bunstr_";
+pub const LEX_JS_OBJREF_PREFIX = 8 ++ "__bun_";
+pub const LEX_JS_STRING_PREFIX = 8 ++ "__bunstr_";
 
 pub fn NewLexer(comptime encoding: StringEncoding) type {
     const Chars = ShellCharIter(encoding);
@@ -1420,7 +1425,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 const escaped = input.escaped;
 
                 // Special token to denote substituted JS variables
-                if (char == '~') {
+                // we use 8 or \b which is a non printable char
+                if (char == 8) {
                     if (self.looksLikeJSStringRef()) {
                         if (self.eatJSStringRef()) |bunstr| {
                             try self.break_word(false);
@@ -1445,6 +1451,20 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 // 3. word breakers (spaces, etc.)
                 else if (!escaped) escaped: {
                     switch (char) {
+                        // tilde expansion
+                        '~' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.chars.prev) |prev| {
+                                if (prev.escaped) break :escaped;
+                                switch (prev.char) {
+                                    ' ', '\n', '\r', '\t' => {},
+                                    else => break :escaped,
+                                }
+                            }
+
+                            try self.tokens.append(.Tilde);
+                            continue;
+                        },
                         '#' => {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             const whitespace_preceding =
@@ -2576,6 +2596,8 @@ pub const Test = struct {
         OpenParen,
         CloseParen,
 
+        Tilde,
+
         Var: []const u8,
         Text: []const u8,
         JSObjRef: u32,
@@ -2587,6 +2609,7 @@ pub const Test = struct {
             switch (the_token) {
                 .Var => |txt| return .{ .Var = buf[txt.start..txt.end] },
                 .Text => |txt| return .{ .Text = buf[txt.start..txt.end] },
+                .Tilde => return .Tilde,
                 .JSObjRef => |val| return .{ .JSObjRef = val },
                 .Pipe => return .Pipe,
                 .DoublePipe => return .DoublePipe,

@@ -1970,9 +1970,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 while (i < bytes.len) : (i += 1) {
                     switch (bytes[i]) {
                         '0'...'9' => {
-                            if (digit_buf_count >= 32) {
+                            if (digit_buf_count >= digit_buf.len) {
                                 const ERROR_STR = "Invalid " ++ name ++ " (number too high): ";
-                                var error_buf: [ERROR_STR.len + 33]u8 = undefined;
+                                var error_buf: [ERROR_STR.len + digit_buf.len + 1]u8 = undefined;
                                 const error_msg = std.fmt.bufPrint(error_buf[0..], "{s} {s}{c}", .{ ERROR_STR, digit_buf[0..digit_buf_count], bytes[i] }) catch @panic("Should not happen");
                                 self.add_error(error_msg);
                                 return null;
@@ -2229,7 +2229,7 @@ const SrcUnicode = struct {
 
     inline fn index(this: *const SrcUnicode) ?IndexValue {
         if (this.cursor.width + this.cursor.i > this.iter.bytes.len) return null;
-        return .{ .char = @intCast(this.cursor.c), .width = this.cursor.width };
+        return .{ .char = this.cursor.c, .width = this.cursor.width };
     }
 
     inline fn indexNext(this: *const SrcUnicode) ?IndexValue {
@@ -2723,8 +2723,7 @@ pub fn handleTemplateValue(
             while (array.next()) |arr| : (i += 1) {
                 if (!(try handleTemplateValue(globalThis, arr, out_jsobjs, out_script, jsstrings, jsobjref_buf))) return false;
                 if (i < last) {
-                    const str = bun.String.init(" ");
-                    defer str.deref();
+                    const str = bun.String.static(" ");
                     if (!try builder.appendBunStr(str, false)) return false;
                 }
             }

@@ -365,6 +365,14 @@ var access = function access(...args) {
 // TODO: make symbols a separate export somewhere
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 
+exists[kCustomPromisifiedSymbol] = async function (path) {
+  try {
+    return await fs.exists(path);
+  } catch (e) {
+    return false;
+  }
+};
+
 read[kCustomPromisifiedSymbol] = async function (fd, bufferOrOptions, ...rest) {
   const { isArrayBufferView } = require("node:util/types");
   let buffer;

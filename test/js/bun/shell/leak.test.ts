@@ -88,9 +88,6 @@ describe("fd leak", () => {
       writeFileSync(tempfile, testcode);
 
       const impl = /* ts */ `
-
-
-
             test("${name}", async () => {
               const threshold = ${threshold}
               let prev: number | undefined = undefined;

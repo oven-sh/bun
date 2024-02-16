@@ -303,9 +303,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       if (cwd) core.setCwd(cwd);
       if (env) core.setEnv(env);
 
-      return new ShellPromise(core, throws).catch(e => {
-        throw e;
-      });
+      return new ShellPromise(core, throws);
     };
 
     Object.setPrototypeOf(Shell, ShellPrototype.prototype);

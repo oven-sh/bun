@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { gcTick } from "harness";
 import path from "path";
@@ -499,7 +498,7 @@ function createServer(tls) {
     port: 0,
     tls,
     async fetch(req) {
-      const is_compressed = req.url.endsWith("gz");
+      const is_compressed = req.url.endsWith("/gzip");
 
       let payload;
       if (req.url.indexOf("chunked") !== -1) {
@@ -548,7 +547,7 @@ const request_types = ["/", "/gzip", "/chunked/gzip", "/chunked", "/file", "/fil
     it(`works with ${protocol} fetch using ${url}`, async () => {
       const server = protocol === "http" ? http_server : https_server;
       const server_url = server.url;
-      const res = await fetch(`${server_url}${url}`, { tls: { rejectUnauthorized: false } });
+      const res = await fetch(`${server_url}${url.slice(1)}`, { tls: { rejectUnauthorized: false } });
       let calls = 0;
       const rw = new HTMLRewriter();
       rw.on("h1", {

@@ -29,7 +29,7 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
-    // Best Practices
+    // Best practices
     "strict": true,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,

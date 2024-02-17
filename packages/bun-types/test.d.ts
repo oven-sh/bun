@@ -92,6 +92,7 @@ declare module "bun:test" {
   interface Jest {
     restoreAllMocks(): void;
     fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
+    setSystemTime(now?: number | Date): void;
   }
   export const jest: Jest;
   export namespace jest {

@@ -734,11 +734,6 @@ pub fn withoutTrailingSlashWindowsPath(this: string) []const u8 {
     return href;
 }
 
-pub fn withTrailingSlash(dir: string, in: string) []const u8 {
-    if (comptime Environment.allow_assert) std.debug.assert(bun.isSliceInBuffer(u8, dir, in));
-    return in[0..@min(strings.withoutTrailingSlash(in[0..@min(dir.len + 1, in.len)]).len + 1, in.len)];
-}
-
 pub fn withoutLeadingSlash(this: string) []const u8 {
     return std.mem.trimLeft(u8, this, "/");
 }
@@ -1037,14 +1032,23 @@ pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) 
     return buf;
 }
 
-pub inline fn append3(allocator: std.mem.Allocator, self: string, other: string, third: string) ![]u8 {
-    var buf = try allocator.alloc(u8, self.len + other.len + third.len);
-    if (self.len > 0)
-        @memcpy(buf[0..self.len], self);
-    if (other.len > 0)
-        @memcpy(buf[self.len..][0..other.len], other);
-    if (third.len > 0)
-        @memcpy(buf[self.len + other.len ..][0..third.len], third);
+pub inline fn joinAlloc(allocator: std.mem.Allocator, strs: anytype) ![]u8 {
+    const buf = try allocator.alloc(u8, len: {
+        var len: usize = 0;
+        inline for (strs) |s| {
+            len += s.len;
+        }
+        break :len len;
+    });
+
+    var remain = buf;
+    inline for (strs) |s| {
+        if (s.len > 0) {
+            @memcpy(remain, s);
+            remain = remain[s.len..];
+        }
+    }
+
     return buf;
 }
 

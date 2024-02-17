@@ -17,15 +17,44 @@ pub const StandaloneModuleGraph = struct {
     files: bun.StringArrayHashMap(File),
     entry_point_id: u32 = 0,
 
+    // We never want to hit the filesystem for these files
+    // We use the `/$bunfs/` prefix to indicate that it's a virtual path
+    // It is `/$bunfs/` because:
+    //
+    // - `$` makes it unlikely to collide with a real path
+    // - `/$bunfs/` is 8 characters which is fast to compare for 64-bit CPUs
+    pub const base_path = switch (Environment.os) {
+        else => "/$bunfs/",
+        // Special case for windows because of file URLs being invalid
+        // if they do not have a drive letter. B drive because 'bun' but
+        // also because it's more unlikely to collide with a real path.
+        .windows => "B:\\~BUN\\",
+    };
+
+    pub const base_public_path = switch (Environment.os) {
+        else => "/$bunfs/",
+        .windows => "B:/~BUN/",
+    };
+
+    pub fn isBunStandaloneFilePath(str: []const u8) bool {
+        return bun.strings.hasPrefixComptime(str, base_path) or
+            (Environment.isWindows and bun.strings.hasPrefixComptime(str, base_public_path));
+    }
+
     pub fn entryPoint(this: *const StandaloneModuleGraph) *File {
         return &this.files.values()[this.entry_point_id];
     }
 
+    // by normalized file path
     pub fn find(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
-        if (!bun.strings.isBunStandaloneFilePath(name)) {
+        if (!bun.strings.hasPrefixComptime(name, base_path)) {
             return null;
         }
-
+        if (Environment.isWindows) {
+            var normalized_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const normalized = bun.path.platformToPosixBuf(u8, name, &normalized_buf);
+            return this.files.getPtr(normalized);
+        }
         return this.files.getPtr(name);
     }
 
@@ -271,7 +300,7 @@ pub const StandaloneModuleGraph = struct {
                     Global.exit(1);
                 };
 
-                const file = bun.sys.ntCreateFile(
+                const file = bun.sys.openFileAtWindows(
                     bun.invalid_fd,
                     out,
                     // access_mask
@@ -716,7 +745,7 @@ pub const StandaloneModuleGraph = struct {
                 var nt_path_buf: bun.WPathBuffer = undefined;
                 const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);
 
-                return bun.sys.ntCreateFile(
+                return bun.sys.openFileAtWindows(
                     bun.invalid_fd,
                     nt_path,
                     // access_mask

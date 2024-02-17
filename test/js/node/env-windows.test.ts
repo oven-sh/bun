@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
+import { isWindows } from "harness";
 
-test.if(process.platform === "win32")("process.env is case insensitive on windows", () => {
+test.if(isWindows)("process.env is case insensitive on windows", () => {
   const keys = Object.keys(process.env);
   // this should have at least one character that is lowercase
   // it is likely that PATH will be 'Path', and also stuff like 'WindowsLibPath' and so on.

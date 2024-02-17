@@ -5,7 +5,7 @@ const { Duplex, Readable, Writable } = require("node:stream");
 const { getHeader, setHeader, assignHeaders: assignHeadersFast } = $lazy("http");
 
 const GlobalPromise = globalThis.Promise;
-
+let warnNotImplementedOnce;
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
  * True if val contains an invalid field-vchar
@@ -186,7 +186,9 @@ var FakeSocket = class Socket extends Duplex {
     }
   }
 
-  ref() {}
+  ref() {
+    return this;
+  }
 
   get remoteAddress() {
     return this.address()?.address;
@@ -224,10 +226,17 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   setTimeout(timeout, callback) {
+    if (!warnNotImplementedOnce) {
+      ({ warnNotImplementedOnce } = require("internal/shared"));
+    }
+
+    warnNotImplementedOnce("Socket in HTTP setTimeout");
     return this;
   }
 
-  unref() {}
+  unref() {
+    return this;
+  }
 
   _write(chunk, encoding, callback) {}
 };
@@ -351,9 +360,12 @@ var optionsSymbol = Symbol("options");
 var serverSymbol = Symbol("server");
 function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
+  EventEmitter.$call(this);
 
   this.listening = false;
-  EventEmitter.$call(this);
+  this._unref = false;
+  this[serverSymbol] = undefined;
+
   if (typeof options === "function") {
     callback = options;
     options = {};
@@ -426,6 +438,18 @@ function Server(options, callback) {
 }
 Object.setPrototypeOf((Server.prototype = {}), EventEmitter.prototype);
 Object.setPrototypeOf(Server, EventEmitter);
+
+Server.prototype.ref = function () {
+  this._unref = false;
+  this[serverSymbol]?.ref?.();
+  return this;
+};
+
+Server.prototype.unref = function () {
+  this._unref = true;
+  this[serverSymbol]?.unref?.();
+  return this;
+};
 
 Server.prototype.closeAllConnections = function () {
   const server = this[serverSymbol];
@@ -571,6 +595,11 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
       },
     });
     isHTTPS = this[serverSymbol].protocol === "https";
+
+    if (this?._unref) {
+      this[serverSymbol]?.unref?.();
+    }
+
     setTimeout(emitListeningNextTick, 1, this, onListen, null, this[serverSymbol].hostname, this[serverSymbol].port);
   } catch (err) {
     server.emit("error", err);
@@ -578,7 +607,14 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
 
   return this;
 };
-Server.prototype.setTimeout = function (msecs, callback) {};
+
+Server.prototype.setTimeout = function (msecs, callback) {
+  if (!warnNotImplementedOnce) {
+    ({ warnNotImplementedOnce } = require("internal/shared"));
+  }
+  warnNotImplementedOnce("Server.setTimeout");
+  return this;
+};
 
 function assignHeadersSlow(object, req) {
   const headers = req.headers;
@@ -821,7 +857,12 @@ Object.defineProperty(IncomingMessage.prototype, "socket", {
 });
 
 IncomingMessage.prototype.setTimeout = function (msecs, callback) {
-  throw new Error("not implemented");
+  if (!warnNotImplementedOnce) {
+    ({ warnNotImplementedOnce } = require("internal/shared"));
+  }
+  warnNotImplementedOnce("IncomingMessage.setTimeout");
+
+  return this;
 };
 
 function emitErrorNt(msg, err, callback) {
@@ -1243,7 +1284,12 @@ ServerResponse.prototype.writeContinue = function (callback) {
 };
 
 ServerResponse.prototype.setTimeout = function (msecs, callback) {
-  throw new Error("not implemented");
+  if (!warnNotImplementedOnce) {
+    ({ warnNotImplementedOnce } = require("internal/shared"));
+  }
+
+  warnNotImplementedOnce("ServerResponse.setTimeout");
+  return this;
 };
 
 ServerResponse.prototype.appendHeader = function (name, value) {

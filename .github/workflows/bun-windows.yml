@@ -178,6 +178,11 @@ jobs:
           path: bun-deps
           key: ${{ steps.cache-deps-restore.outputs.cache-primary-key }}
 
+  # TODO(@paperdave): stop relying on this and use bun.exe to build itself.
+  # we cant do that now because there isn't a tagged release to use.
+  #
+  # and at the time of writing, the minimum canary required to work is not
+  # yet released as it is the one *this* commit.
   windows-codegen:
     name: Codegen
     runs-on: ubuntu-latest
@@ -271,7 +276,7 @@ jobs:
         arch: [x86_64]
     name: Link
     needs: [windows-dependencies, windows-codegen, windows-cpp, windows-zig]
-    runs-on: windows-latest
+    runs-on: windows-small
     if: github.repository_owner == 'oven-sh'
     timeout-minutes: 30
     permissions: write-all
@@ -374,7 +379,7 @@ jobs:
             **[Build Output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})** | [Commit](https://github.com/oven-sh/bun/commits/${{github.sha}})
   windows-test:
     name: Test
-    runs-on: windows-latest
+    runs-on: windows-small
     needs: [windows-link]
     if: github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'
     permissions:

@@ -734,11 +734,6 @@ pub fn withoutTrailingSlashWindowsPath(this: string) []const u8 {
     return href;
 }
 
-pub fn withTrailingSlash(dir: string, in: string) []const u8 {
-    if (comptime Environment.allow_assert) std.debug.assert(bun.isSliceInBuffer(dir, in));
-    return in[0..@min(strings.withoutTrailingSlash(in[0..@min(dir.len + 1, in.len)]).len + 1, in.len)];
-}
-
 pub fn withoutLeadingSlash(this: string) []const u8 {
     return std.mem.trimLeft(u8, this, "/");
 }
@@ -867,10 +862,6 @@ pub fn eqlComptimeIgnoreLen(self: string, comptime alt: anytype) bool {
 
 pub fn hasPrefixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[0..alt.len], alt, false);
-}
-
-pub fn isBunStandaloneFilePath(self: string) bool {
-    return hasPrefixComptime(self, "/$bunfs/");
 }
 
 pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool {
@@ -1041,14 +1032,23 @@ pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) 
     return buf;
 }
 
-pub inline fn append3(allocator: std.mem.Allocator, self: string, other: string, third: string) ![]u8 {
-    var buf = try allocator.alloc(u8, self.len + other.len + third.len);
-    if (self.len > 0)
-        @memcpy(buf[0..self.len], self);
-    if (other.len > 0)
-        @memcpy(buf[self.len..][0..other.len], other);
-    if (third.len > 0)
-        @memcpy(buf[self.len + other.len ..][0..third.len], third);
+pub inline fn joinAlloc(allocator: std.mem.Allocator, strs: anytype) ![]u8 {
+    const buf = try allocator.alloc(u8, len: {
+        var len: usize = 0;
+        inline for (strs) |s| {
+            len += s.len;
+        }
+        break :len len;
+    });
+
+    var remain = buf;
+    inline for (strs) |s| {
+        if (s.len > 0) {
+            @memcpy(remain, s);
+            remain = remain[s.len..];
+        }
+    }
+
     return buf;
 }
 
@@ -1687,22 +1687,41 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     }
 }
 
-/// '/hello' -> true
-/// '\hello' -> true
-/// 'C:/hello' -> false
-/// '\??\C:\hello' -> false
-fn windowsPathIsPosixAbsolute(comptime T: type, chars: []const T) bool {
-    if (chars.len == 0) return false;
-    if (!(chars[0] == '/' or chars[0] == '\\')) return false;
+/// Checks if a path is missing a windows drive letter. Not a perfect check,
+/// but it is good enough for most cases. For windows APIs, this is used for
+/// an assertion, and PosixToWinNormalizer can help make an absolute path
+/// contain a drive letter.
+pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const T) bool {
+    std.debug.assert(bun.path.Platform.windows.isAbsoluteT(T, chars));
+    std.debug.assert(chars.len > 0);
+
+    // 'C:\hello' -> false
+    if (!(chars[0] == '/' or chars[0] == '\\')) {
+        std.debug.assert(chars.len > 2);
+        std.debug.assert(chars[1] == ':');
+        return false;
+    }
+
+    // '\\hello' -> false (probably a UNC path)
     if (chars.len > 1 and
         (chars[1] == '/' or chars[1] == '\\')) return false;
-    if (chars.len > 2 and
-        chars[2] == ':') return false;
-    if (chars.len > 4 and
-        chars[1] == '?' and
-        chars[2] == '?' and
-        (chars[3] == '/' or chars[3] == '\\'))
-        return windowsPathIsPosixAbsolute(T, chars[4..]);
+
+    if (chars.len > 4) {
+        // '\??\hello' -> false (has the NT object prefix)
+        if (chars[1] == '?' and
+            chars[2] == '?' and
+            (chars[3] == '/' or chars[3] == '\\'))
+            return false;
+        // '\\?\hello' -> false (has the other NT object prefix)
+        // '\\.\hello' -> false (has the NT device prefix)
+        if ((chars[1] == '/' or chars[1] == '\\') and
+            (chars[2] == '?' or chars[2] == '.') and
+            (chars[3] == '/' or chars[3] == '\\'))
+            return false;
+    }
+
+    // oh no, '/hello/world'
+    // where is the drive letter!
     return true;
 }
 
@@ -1805,7 +1824,9 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
 pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
     if (Environment.allow_assert and Environment.isWindows) {
-        if (windowsPathIsPosixAbsolute(T, path)) {
+        if (bun.path.Platform.windows.isAbsoluteT(T, path) and
+            isWindowsAbsolutePathMissingDriveLetter(T, path))
+        {
             std.debug.panic("Do not pass posix paths to windows APIs, was given '{s}' (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)", .{
                 if (T == u8) path else std.unicode.fmtUtf16le(path),
             });
@@ -1863,7 +1884,7 @@ pub fn convertUTF16ToUTF8Append(list: *std.ArrayList(u8), utf16: []const u16) !v
         return;
     }
 
-    list.items.len = result.count;
+    list.items.len += result.count;
 }
 
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {

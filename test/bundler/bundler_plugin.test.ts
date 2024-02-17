@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import assert from "assert";
 import dedent from "dedent";
 import path from "path";
@@ -514,7 +513,7 @@ describe("bundler", () => {
     };
   });
   itBundled("plugin/ManyFiles", ({ root }) => {
-    const FILES = 200;
+    const FILES = process.platform === "win32" ? 50 : 200; // windows is slower at this
     const create = (fn: (i: number) => string) => new Array(FILES).fill(0).map((_, i) => fn(i));
 
     let onResolveCount = 0;
@@ -818,7 +817,7 @@ describe("bundler", () => {
       plugins(build) {
         const opts = (build as any).initialOptions;
         expect(opts.bundle).toEqual(true);
-        expect(opts.entryPoints).toEqual([root + "/index.ts"]);
+        expect(opts.entryPoints).toEqual([root + path.sep + "index.ts"]);
         expect(opts.external).toEqual(["esbuild"]);
         expect(opts.format).toEqual(undefined);
         expect(opts.minify).toEqual(false);

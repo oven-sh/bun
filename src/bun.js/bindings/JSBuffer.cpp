@@ -1495,10 +1495,8 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
             return JSC::JSValue::encode(JSC::jsEmptyString(vm));
         } else {
             auto str = String::createUninitialized(u16length, data);
-            // always zero out the last byte of the string incase the buffer is not a multiple of 2
-            data[u16length - 1] = 0;
-            memcpy(data, reinterpret_cast<const char*>(castedThis->typedVector() + offset), length);
-            return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
+            memcpy(reinterpret_cast<void*>(data), reinterpret_cast<void*>(castedThis->typedVector() + offset), u16length * 2);
+            return JSC::JSValue::encode(JSC::jsString(vm, str));
         }
 
         break;

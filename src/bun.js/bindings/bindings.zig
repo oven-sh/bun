@@ -432,7 +432,6 @@ pub const ZigString = extern struct {
 
         pub const byteSlice = Slice.slice;
 
-
         pub fn fromUTF8NeverFree(input: []const u8) Slice {
             return .{
                 .ptr = input.ptr,
@@ -749,9 +748,9 @@ pub const ZigString = extern struct {
         if (is16Bit(&this)) {
             const buffer = this.toOwnedSlice(allocator) catch unreachable;
             return Slice{
+                .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
                 .len = @as(u32, @truncate(buffer.len)),
-                .allocator = NullableAllocator.init(allocator),
             };
         }
 
@@ -1683,6 +1682,20 @@ pub const JSCell = extern struct {
     }
 
     pub const Extern = [_][]const u8{ "getObject", "getType" };
+
+    pub fn getGetterSetter(this: *JSCell) *GetterSetter {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(JSValue.fromCell(this).isGetterSetter());
+        }
+        return @as(*GetterSetter, @ptrCast(@alignCast(this)));
+    }
+
+    pub fn getCustomGetterSetter(this: *JSCell) *CustomGetterSetter {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(JSValue.fromCell(this).isCustomGetterSetter());
+        }
+        return @as(*CustomGetterSetter, @ptrCast(@alignCast(this)));
+    }
 };
 
 pub const JSString = extern struct {
@@ -1772,6 +1785,40 @@ pub const JSString = extern struct {
     };
 
     pub const Extern = [_][]const u8{ "toZigString", "iterator", "toObject", "eql", "value", "length", "is8Bit", "createFromOwnedString", "createFromString" };
+};
+
+pub const GetterSetter = extern struct {
+    pub const shim = Shimmer("JSC", "GetterSetter", @This());
+    bytes: shim.Bytes,
+    const cppFn = shim.cppFn;
+    pub const include = "JavaScriptCore/GetterSetter.h";
+    pub const name = "JSC::GetterSetter";
+    pub const namespace = "JSC";
+
+    pub fn isGetterNull(this: *GetterSetter) bool {
+        return shim.cppFn("isGetterNull", .{this});
+    }
+
+    pub fn isSetterNull(this: *GetterSetter) bool {
+        return shim.cppFn("isSetterNull", .{this});
+    }
+};
+
+pub const CustomGetterSetter = extern struct {
+    pub const shim = Shimmer("JSC", "CustomGetterSetter", @This());
+    bytes: shim.Bytes,
+    const cppFn = shim.cppFn;
+    pub const include = "JavaScriptCore/CustomGetterSetter.h";
+    pub const name = "JSC::CustomGetterSetter";
+    pub const namespace = "JSC";
+
+    pub fn isGetterNull(this: *CustomGetterSetter) bool {
+        return shim.cppFn("isGetterNull", .{this});
+    }
+
+    pub fn isSetterNull(this: *CustomGetterSetter) bool {
+        return shim.cppFn("isSetterNull", .{this});
+    }
 };
 
 pub const JSPromiseRejectionOperation = enum(u32) {
@@ -2145,9 +2192,25 @@ pub const JSPromise = extern struct {
     /// The value can be another Promise
     /// If you want to create a new Promise that is already resolved, see JSPromise.resolvedPromiseValue
     pub fn resolve(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+        if (comptime bun.Environment.isDebug) {
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
+            if (loop.debug.track_last_fn_name and !loop.debug.is_inside_tick_queue) {
+                loop.debug.last_fn_name = String.static("resolve");
+            }
+        }
+
         cppFn("resolve", .{ this, globalThis, value });
     }
     pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+        if (comptime bun.Environment.isDebug) {
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
+            if (loop.debug.track_last_fn_name and !loop.debug.is_inside_tick_queue) {
+                loop.debug.last_fn_name = String.static("reject");
+            }
+        }
+
         cppFn("reject", .{ this, globalThis, value });
     }
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
@@ -2907,6 +2970,11 @@ pub const JSGlobalObject = extern struct {
         return cppFn("getCachedObject", .{ this, key });
     }
 
+    extern fn JSGlobalObject__hasException(*JSGlobalObject) bool;
+    pub fn hasException(this: *JSGlobalObject) bool {
+        return JSGlobalObject__hasException(this);
+    }
+
     pub fn vm(this: *JSGlobalObject) *VM {
         return cppFn("vm", .{this});
     }
@@ -3565,6 +3633,14 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn callWithGlobalThis(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
+        if (comptime bun.Environment.isDebug) {
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
+            if (loop.debug.track_last_fn_name and !loop.debug.is_inside_tick_queue) {
+                loop.debug.last_fn_name.deref();
+                loop.debug.last_fn_name = this.getName(globalThis);
+            }
+        }
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
             this,
@@ -3576,6 +3652,14 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn callWithThis(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
+        if (comptime bun.Environment.isDebug) {
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
+            if (loop.debug.track_last_fn_name and !loop.debug.is_inside_tick_queue) {
+                loop.debug.last_fn_name.deref();
+                loop.debug.last_fn_name = this.getName(globalThis);
+            }
+        }
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
             this,
@@ -3924,27 +4008,32 @@ pub const JSValue = enum(JSValueReprInt) {
         return null;
     }
 
-    pub fn jsNumber(number: anytype) JSValue {
-        return jsNumberWithType(@TypeOf(number), number);
+    pub inline fn jsBoolean(i: bool) JSValue {
+        return cppFn("jsBoolean", .{i});
+    }
+
+    pub fn jsDoubleNumber(i: f64) JSValue {
+        return cppFn("jsDoubleNumber", .{i});
+    }
+
+    pub inline fn jsEmptyString(globalThis: *JSGlobalObject) JSValue {
+        return cppFn("jsEmptyString", .{globalThis});
     }
 
     pub inline fn jsNull() JSValue {
         return JSValue.null;
     }
-    pub inline fn jsUndefined() JSValue {
-        return JSValue.undefined;
-    }
-    pub inline fn jsBoolean(i: bool) JSValue {
-        const out = cppFn("jsBoolean", .{i});
-        return out;
+
+    pub fn jsNumber(number: anytype) JSValue {
+        return jsNumberWithType(@TypeOf(number), number);
     }
 
-    pub fn jsTDZValue() JSValue {
+    pub inline fn jsTDZValue() JSValue {
         return cppFn("jsTDZValue", .{});
     }
 
-    pub fn jsDoubleNumber(i: f64) JSValue {
-        return cppFn("jsDoubleNumber", .{i});
+    pub inline fn jsUndefined() JSValue {
+        return JSValue.undefined;
     }
 
     pub fn className(this: JSValue, globalThis: *JSGlobalObject) ZigString {
@@ -4452,6 +4541,7 @@ pub const JSValue = enum(JSValueReprInt) {
         toString,
         redirect,
         inspectCustom,
+        asyncIterator,
     };
 
     // intended to be more lightweight than ZigString

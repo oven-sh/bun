@@ -699,7 +699,7 @@ pub const Subprocess = struct {
         return this.exit_code != null or this.signal_code != null;
     }
 
-    pub fn tryKill(this: *Subprocess, sig: i32) JSC.Node.Maybe(void) {
+    pub fn tryKill(this: *Subprocess, sig: i32) JSC.Maybe(void) {
         if (this.hasExited()) {
             return .{ .result = {} };
         }
@@ -2196,7 +2196,7 @@ pub const Subprocess = struct {
                     }
                 }
 
-                if (args.get(globalThis, "ipc")) |val| {
+                if (args.getTruthy(globalThis, "ipc")) |val| {
                     if (Environment.isWindows) {
                         globalThis.throwTODO("TODO: IPC is not yet supported on Windows");
                         return .zero;
@@ -2277,7 +2277,8 @@ pub const Subprocess = struct {
                 .flags = if (windows_hide == 1) uv.UV_PROCESS_WINDOWS_HIDE else 0,
             };
 
-            if (uv.uv_spawn(jsc_vm.uvLoop(), &subprocess.pid, &options).errEnum()) |errno| {
+            const loop = jsc_vm.uvLoop();
+            if (uv.uv_spawn(loop, &subprocess.pid, &options).errEnum()) |errno| {
                 alloc.destroy(subprocess);
                 globalThis.throwValue(bun.sys.Error.fromCode(errno, .uv_spawn).toJSC(globalThis));
                 return .zero;
@@ -2339,7 +2340,7 @@ pub const Subprocess = struct {
             // sync
 
             while (!subprocess.hasExited()) {
-                uv.Loop.get().tickWithTimeout(0);
+                loop.tickWithTimeout(0);
 
                 if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
                     subprocess.stderr.pipe.buffer.readAll();
@@ -2348,9 +2349,6 @@ pub const Subprocess = struct {
                 if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
                     subprocess.stdout.pipe.buffer.readAll();
                 }
-
-                jsc_vm.tick();
-                jsc_vm.eventLoop().autoTick();
             }
 
             const exitCode = subprocess.exit_code orelse 1;
@@ -2796,10 +2794,9 @@ pub const Subprocess = struct {
         var vm = this.globalThis.bunVM();
         const is_sync = this.flags.is_sync;
 
-        defer {
-            if (!is_sync)
-                vm.drainMicrotasks();
-        }
+        if (!is_sync) vm.eventLoop().enter();
+        defer if (!is_sync) vm.eventLoop().exit();
+
         this.wait(false);
     }
 
@@ -2965,15 +2962,12 @@ pub const Subprocess = struct {
                 waitpid_value,
             };
 
-            const result = callback.callWithThis(
+            globalThis.bunVM().eventLoop().runCallback(
+                callback,
                 globalThis,
                 this_value,
                 &args,
             );
-
-            if (result.isAnyError()) {
-                globalThis.bunVM().onUnhandledError(globalThis, result);
-            }
         }
     }
 
@@ -3386,15 +3380,12 @@ pub const Subprocess = struct {
             .data => |data| {
                 IPC.log("Received IPC message from child", .{});
                 if (this.ipc_callback.get()) |cb| {
-                    const result = cb.callWithThis(
+                    this.globalThis.bunVM().eventLoop().runCallback(
+                        cb,
                         this.globalThis,
                         this.this_jsvalue,
                         &[_]JSValue{ data, this.this_jsvalue },
                     );
-                    data.ensureStillAlive();
-                    if (result.isAnyError()) {
-                        this.globalThis.bunVM().onUnhandledError(this.globalThis, result);
-                    }
                 }
             },
         }

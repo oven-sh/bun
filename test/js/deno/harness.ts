@@ -1,5 +1,6 @@
 import type { Server } from "bun";
 import { serve, deepEquals, concatArrayBuffers } from "bun";
+import { join } from "path";
 import { hideFromStackTrace } from "harness";
 import resources from "./resources.json";
 
@@ -84,7 +85,7 @@ export function createDenoTest(path: string) {
     } else if (typeof arg1 === "function") {
       test.todo(arg1.name, arg1);
     } else {
-      unimplemented(`test.ignore(${typeof arg0}, ${typeof arg1})`);
+      unimplemented(`test.todo(${typeof arg0}, ${typeof arg1})`);
     }
   };
 
@@ -277,12 +278,7 @@ export function createDenoTest(path: string) {
   // https://deno.land/api@v1.31.1?s=Deno.readTextFile
 
   const readTextFile = async (path: string): Promise<string> => {
-    const url = new URL(path, resources.baseUrl);
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`${response.status}: ${response.url}`);
-    }
-    return response.text();
+    return await Bun.file(join(import.meta.dir, 'fixtures', path)).text();
   };
 
   // Globals

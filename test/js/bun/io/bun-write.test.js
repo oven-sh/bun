@@ -1,7 +1,7 @@
 import fs, { mkdirSync } from "fs";
 import { it, expect, describe } from "bun:test";
 import path, { join } from "path";
-import { gcTick, withoutAggressiveGC, bunExe, bunEnv } from "harness";
+import { gcTick, withoutAggressiveGC, bunExe, bunEnv, isWindows } from "harness";
 import { tmpdir } from "os";
 const tmpbase = tmpdir() + path.sep;
 
@@ -194,7 +194,7 @@ it("Bun.file lastModified update", async () => {
   const lastModified0 = file.lastModified;
 
   // sleep some time and write the file again.
-  await Bun.sleep(process.platform === "win32" ? 1000 : 100);
+  await Bun.sleep(isWindows ? 1000 : 100);
   await Bun.write(file, "test text2.");
   const lastModified1 = file.lastModified;
 
@@ -308,6 +308,14 @@ it("Bun.write(Bun.stdout, new TextEncoder().encode('Bun.write STDOUT TEST'))", a
 
 it("Bun.write(Bun.stderr, 'new TextEncoder().encode(Bun.write STDERR TEST'))", async () => {
   expect(await Bun.write(Bun.stderr, new TextEncoder().encode("\nBun.write STDERR TEST\n\n"))).toBe(24);
+});
+
+it("Bun.file(0) survives GC", async () => {
+  for (let i = 0; i < 10; i++) {
+    let f = Bun.file(0);
+    await gcTick();
+    expect(Bun.inspect(f)).toContain("FileRef (fd: 0)");
+  }
 });
 
 // FLAKY TEST

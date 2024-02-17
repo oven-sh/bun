@@ -86,6 +86,8 @@ pub const Blob = struct {
         closing,
     };
 
+    reported_estimated_size: usize = 0,
+
     size: SizeType = 0,
     offset: SizeType = 0,
     /// When set, the blob will be freed on finalization callbacks
@@ -1424,32 +1426,29 @@ pub const Blob = struct {
         return blob_;
     }
 
-    fn estimatedByteSize(this: *Blob) usize {
+    fn calculateEstimatedByteSize(this: *Blob) void {
         // in-memory size. not the size on disk.
-        if (this.size != Blob.max_size) {
-            return this.size;
-        }
-
-        const store = this.store orelse return 0;
-        if (store.data == .bytes) {
-            return store.data.bytes.len;
-        }
-
-        return 0;
-    }
-
-    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
-        var size = this.estimatedByteSize() + @sizeOf(Blob);
+        var size: usize = @sizeOf(Blob);
 
         if (this.store) |store| {
             size += @sizeOf(Blob.Store);
-            size += switch (store.data) {
-                .bytes => store.data.bytes.stored_name.estimatedSize(),
-                .file => store.data.file.pathlike.estimatedSize(),
-            };
+            switch (store.data) {
+                .bytes => {
+                    size += store.data.bytes.stored_name.estimatedSize();
+                    size += if (this.size != Blob.max_size)
+                        this.size
+                    else
+                        store.data.bytes.len;
+                },
+                .file => size += store.data.file.pathlike.estimatedSize(),
+            }
         }
 
-        return size + (this.content_type.len * @as(usize, @intFromBool(this.content_type_allocated)));
+        this.reported_estimated_size = size + (this.content_type.len * @intFromBool(this.content_type_allocated));
+    }
+
+    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
+        return this.reported_estimated_size;
     }
 
     comptime {
@@ -1526,12 +1525,17 @@ pub const Blob = struct {
         const path: JSC.Node.PathOrFileDescriptor = brk: {
             switch (path_or_fd.*) {
                 .path => {
-                    const slice = path_or_fd.path.slice();
+                    var slice = path_or_fd.path.slice();
 
                     if (Environment.isWindows and bun.strings.eqlComptime(slice, "/dev/null")) {
-                        // it is okay to use rodata here, because the '.string' case
-                        // in PathLike.deinit does not free anything.
-                        path_or_fd.* = .{ .path = .{ .string = bun.PathString.init("\\\\.\\NUL") } };
+                        path_or_fd.deinit();
+                        path_or_fd.* = .{
+                            .path = .{
+                                // this memory is freed with this allocator in `Blob.Store.deinit`
+                                .string = bun.PathString.init(allocator.dupe(u8, "\\\\.\\NUL") catch bun.outOfMemory()),
+                            },
+                        };
+                        slice = path_or_fd.path.slice();
                     }
 
                     if (vm.standalone_module_graph) |graph| {
@@ -1553,20 +1557,19 @@ pub const Blob = struct {
                     break :brk copy;
                 },
                 .fd => {
-                    switch (bun.FDTag.get(path_or_fd.fd)) {
-                        .stdin => return Blob.initWithStore(
-                            vm.rareData().stdin(),
+                    const optional_store: ?*Store = switch (bun.FDTag.get(path_or_fd.fd)) {
+                        .stdin => vm.rareData().stdin(),
+                        .stderr => vm.rareData().stderr(),
+                        .stdout => vm.rareData().stdout(),
+                        else => null,
+                    };
+
+                    if (optional_store) |store| {
+                        store.ref();
+                        return Blob.initWithStore(
+                            store,
                             globalThis,
-                        ),
-                        .stderr => return Blob.initWithStore(
-                            vm.rareData().stderr(),
-                            globalThis,
-                        ),
-                        .stdout => return Blob.initWithStore(
-                            vm.rareData().stdout(),
-                            globalThis,
-                        ),
-                        else => {},
+                        );
                     }
                     break :brk path_or_fd.*;
                 },
@@ -3411,6 +3414,8 @@ pub const Blob = struct {
             },
         }
 
+        blob.calculateEstimatedByteSize();
+
         var blob_ = bun.new(Blob, blob);
         blob_.allocator = allocator;
         return blob_;
@@ -3579,6 +3584,15 @@ pub const Blob = struct {
 
         duped.allocator = null;
         return duped;
+    }
+
+    pub fn toJS(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(this.allocator != null);
+        }
+
+        this.calculateEstimatedByteSize();
+        return Blob.toJSUnchecked(globalObject, this);
     }
 
     pub fn deinit(this: *Blob) void {
@@ -3770,7 +3784,7 @@ pub const Blob = struct {
                     if (this.store) |store| {
                         if (store.data == .bytes) {
                             const allocated_slice = store.data.bytes.allocatedSlice();
-                            if (bun.isSliceInBuffer(buf, allocated_slice)) {
+                            if (bun.isSliceInBuffer(u8, buf, allocated_slice)) {
                                 if (bun.linux.memfd_allocator.from(store.data.bytes.allocator)) |allocator| {
                                     allocator.ref();
                                     defer allocator.deref();

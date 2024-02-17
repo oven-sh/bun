@@ -1,4 +1,5 @@
 const server = Bun.serve({
+  hostname: "localhost",
   async fetch() {
     throw new Error("Error");
   },

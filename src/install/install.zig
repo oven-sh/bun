@@ -1291,7 +1291,7 @@ pub const PackageInstall = struct {
 
                             progress_.refresh();
 
-                            Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
+                            Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
                     };
@@ -1316,7 +1316,7 @@ pub const PackageInstall = struct {
 
                             progress_.refresh();
 
-                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
                     } else {
@@ -1330,7 +1330,7 @@ pub const PackageInstall = struct {
 
                             progress_.refresh();
 
-                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path) });
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
                     }
@@ -1378,8 +1378,8 @@ pub const PackageInstall = struct {
 
         defer subdir.close();
 
-        var buf: if (Environment.isWindows) bun.WPathBuffer else [0]u16 = undefined;
-        var buf2: if (Environment.isWindows) bun.WPathBuffer else [0]u16 = undefined;
+        var buf: bun.windows.WPathBuffer = undefined;
+        var buf2: bun.windows.WPathBuffer = undefined;
         var to_copy_buf: []u16 = undefined;
         var to_copy_buf2: []u16 = undefined;
         if (comptime Environment.isWindows) {
@@ -2705,7 +2705,7 @@ pub const PackageManager = struct {
 
     fn allocGitHubURL(this: *const PackageManager, repository: *const Repository) string {
         var github_api_url: string = "https://api.github.com";
-        if (this.env.map.get("GITHUB_API_URL")) |url| {
+        if (this.env.get("GITHUB_API_URL")) |url| {
             if (url.len > 0) {
                 github_api_url = url;
             }
@@ -4645,21 +4645,21 @@ pub const PackageManager = struct {
 
     const CacheDir = struct { path: string, is_node_modules: bool };
     pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader) CacheDir {
-        if (env.map.get("BUN_INSTALL_CACHE_DIR")) |dir| {
+        if (env.get("BUN_INSTALL_CACHE_DIR")) |dir| {
             return CacheDir{ .path = dir, .is_node_modules = false };
         }
 
-        if (env.map.get("BUN_INSTALL")) |dir| {
+        if (env.get("BUN_INSTALL")) |dir| {
             var parts = [_]string{ dir, "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
-        if (env.map.get("XDG_CACHE_HOME")) |dir| {
+        if (env.get("XDG_CACHE_HOME")) |dir| {
             var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
-        if (env.map.get(bun.DotEnv.home_env)) |dir| {
+        if (env.get(bun.DotEnv.home_env)) |dir| {
             var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
@@ -5604,7 +5604,7 @@ pub const PackageManager = struct {
 
                 inline for (registry_keys) |registry_key| {
                     if (!did_set) {
-                        if (env.map.get(registry_key)) |registry_| {
+                        if (env.get(registry_key)) |registry_| {
                             if (registry_.len > 0 and
                                 (strings.startsWith(registry_, "https://") or
                                 strings.startsWith(registry_, "http://")))
@@ -5631,7 +5631,7 @@ pub const PackageManager = struct {
 
                 inline for (token_keys) |registry_key| {
                     if (!did_set) {
-                        if (env.map.get(registry_key)) |registry_| {
+                        if (env.get(registry_key)) |registry_| {
                             if (registry_.len > 0) {
                                 this.scope.token = registry_;
                                 did_set = true;
@@ -5659,15 +5659,15 @@ pub const PackageManager = struct {
                 }
             }
 
-            if (env.map.get("BUN_CONFIG_YARN_LOCKFILE") != null) {
+            if (env.get("BUN_CONFIG_YARN_LOCKFILE") != null) {
                 this.do.save_yarn_lock = true;
             }
 
-            if (env.map.get("BUN_CONFIG_HTTP_RETRY_COUNT")) |retry_count| {
+            if (env.get("BUN_CONFIG_HTTP_RETRY_COUNT")) |retry_count| {
                 if (std.fmt.parseInt(u16, retry_count, 10)) |int| this.max_retry_count = int else |_| {}
             }
 
-            if (env.map.get("BUN_CONFIG_LINK_NATIVE_BINS")) |native_packages| {
+            if (env.get("BUN_CONFIG_LINK_NATIVE_BINS")) |native_packages| {
                 const len = std.mem.count(u8, native_packages, " ");
                 if (len > 0) {
                     var all = try allocator.alloc(PackageNameHash, this.native_bin_link_allowlist.len + len);
@@ -5683,25 +5683,25 @@ pub const PackageManager = struct {
                 }
             }
 
-            // if (env.map.get("BUN_CONFIG_NO_DEDUPLICATE") != null) {
+            // if (env.get("BUN_CONFIG_NO_DEDUPLICATE") != null) {
             //     this.enable.deduplicate_packages = false;
             // }
 
             AsyncHTTP.loadEnv(allocator, log, env);
 
-            if (env.map.get("BUN_CONFIG_SKIP_SAVE_LOCKFILE")) |check_bool| {
+            if (env.get("BUN_CONFIG_SKIP_SAVE_LOCKFILE")) |check_bool| {
                 this.do.save_lockfile = strings.eqlComptime(check_bool, "0");
             }
 
-            if (env.map.get("BUN_CONFIG_SKIP_LOAD_LOCKFILE")) |check_bool| {
+            if (env.get("BUN_CONFIG_SKIP_LOAD_LOCKFILE")) |check_bool| {
                 this.do.load_lockfile = strings.eqlComptime(check_bool, "0");
             }
 
-            if (env.map.get("BUN_CONFIG_SKIP_INSTALL_PACKAGES")) |check_bool| {
+            if (env.get("BUN_CONFIG_SKIP_INSTALL_PACKAGES")) |check_bool| {
                 this.do.install_packages = strings.eqlComptime(check_bool, "0");
             }
 
-            if (env.map.get("BUN_CONFIG_NO_VERIFY")) |check_bool| {
+            if (env.get("BUN_CONFIG_NO_VERIFY")) |check_bool| {
                 this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
             }
 
@@ -6327,7 +6327,7 @@ pub const PackageManager = struct {
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 
-        if (env.map.get("GOMAXPROCS")) |max_procs| {
+        if (env.get("GOMAXPROCS")) |max_procs| {
             if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
                 cpu_count = @min(cpu_count, cpu_count_);
             } else |_| {}
@@ -6338,11 +6338,11 @@ pub const PackageManager = struct {
             .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
         };
 
-        if (env.map.get("BUN_INSTALL_VERBOSE") != null) {
+        if (env.get("BUN_INSTALL_VERBOSE") != null) {
             PackageManager.verbose_install = true;
         }
 
-        if (env.map.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
+        if (env.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
             JSC.Subprocess.WaiterThread.setShouldUseWaiterThread();
         }
 
@@ -6394,7 +6394,7 @@ pub const PackageManager = struct {
             manager.options.enable.manifest_cache_control = false;
         }
 
-        if (env.map.get("BUN_MANIFEST_CACHE")) |manifest_cache| {
+        if (env.get("BUN_MANIFEST_CACHE")) |manifest_cache| {
             if (strings.eqlComptime(manifest_cache, "1")) {
                 manager.options.enable.manifest_cache = true;
                 manager.options.enable.manifest_cache_control = false;
@@ -6418,7 +6418,7 @@ pub const PackageManager = struct {
 
         manager.timestamp_for_manifest_cache_control = brk: {
             if (comptime bun.Environment.allow_assert) {
-                if (env.map.get("BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP")) |cache_control| {
+                if (env.get("BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP")) |cache_control| {
                     if (std.fmt.parseInt(u32, cache_control, 10)) |int| {
                         break :brk int;
                     } else |_| {}
@@ -6437,13 +6437,13 @@ pub const PackageManager = struct {
         cli: CommandLineArguments,
         env: *DotEnv.Loader,
     ) !*PackageManager {
-        if (env.map.get("BUN_INSTALL_VERBOSE") != null) {
+        if (env.get("BUN_INSTALL_VERBOSE") != null) {
             PackageManager.verbose_install = true;
         }
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 
-        if (env.map.get("GOMAXPROCS")) |max_procs| {
+        if (env.get("GOMAXPROCS")) |max_procs| {
             if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
                 cpu_count = @min(cpu_count, cpu_count_);
             } else |_| {}
@@ -6493,7 +6493,7 @@ pub const PackageManager = struct {
             manager.options.enable.manifest_cache_control = false;
         }
 
-        if (env.map.get("BUN_MANIFEST_CACHE")) |manifest_cache| {
+        if (env.get("BUN_MANIFEST_CACHE")) |manifest_cache| {
             if (strings.eqlComptime(manifest_cache, "1")) {
                 manager.options.enable.manifest_cache = true;
                 manager.options.enable.manifest_cache_control = false;
@@ -9652,7 +9652,7 @@ pub const PackageManager = struct {
 
         const cwd = list.first().cwd;
         const this_bundler = try this.configureEnvForScripts(ctx, log_level);
-        const original_path = this_bundler.env.map.get("PATH") orelse "";
+        const original_path = this_bundler.env.get("PATH") orelse "";
 
         var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
         var current_dir: ?*DirInfo = this_bundler.resolver.readDirInfo(cwd) catch null;

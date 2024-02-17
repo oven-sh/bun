@@ -273,7 +273,7 @@ pub const RunCommand = struct {
         silent: bool,
         use_native_shell: bool,
     ) !bool {
-        const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
+        const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         const script = original_script;
         var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
@@ -348,7 +348,7 @@ pub const RunCommand = struct {
         child_process.stdout_behavior = .Inherit;
 
         if (Environment.isWindows) {
-            try @import("../child_process_windows.zig").spawnWindows(&child_process);
+            try bun.WindowsSpawnWorkaround.spawnWindows(&child_process);
         } else {
             try child_process.spawn();
         }
@@ -434,7 +434,13 @@ pub const RunCommand = struct {
         child_process.stdout_behavior = .Inherit;
         const silent = ctx.debug.silent;
 
-        const result = child_process.spawnAndWait() catch |err| {
+        if (Environment.isWindows) {
+            try bun.WindowsSpawnWorkaround.spawnWindows(&child_process);
+        } else {
+            try child_process.spawn();
+        }
+
+        const result = child_process.wait() catch |err| {
             if (err == error.AccessDenied) {
                 if (comptime Environment.isPosix) {
                     var stat = std.mem.zeroes(std.c.Stat);
@@ -686,7 +692,7 @@ pub const RunCommand = struct {
         if (env == null) {
             this_bundler.env.loadProcess();
 
-            if (this_bundler.env.map.get("NODE_ENV")) |node_env| {
+            if (this_bundler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
                     this_bundler.options.production = true;
                 }
@@ -764,7 +770,7 @@ pub const RunCommand = struct {
             }
         }
 
-        const PATH = this_bundler.env.map.get("PATH") orelse "";
+        const PATH = this_bundler.env.get("PATH") orelse "";
         if (ORIGINAL_PATH) |original_path| {
             original_path.* = PATH;
         }
@@ -863,7 +869,7 @@ pub const RunCommand = struct {
         {
             this_bundler.env.loadProcess();
 
-            if (this_bundler.env.map.get("NODE_ENV")) |node_env| {
+            if (this_bundler.env.get("NODE_ENV")) |node_env| {
                 if (strings.eqlComptime(node_env, "production")) {
                     this_bundler.options.production = true;
                 }
@@ -872,7 +878,7 @@ pub const RunCommand = struct {
 
         const ResultList = bun.StringArrayHashMap(void);
 
-        if (this_bundler.env.map.get("SHELL")) |shell| {
+        if (this_bundler.env.get("SHELL")) |shell| {
             shell_out.shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell), shell);
         }
 
@@ -955,7 +961,7 @@ pub const RunCommand = struct {
                     }
 
                     var max_description_len: usize = 20;
-                    if (this_bundler.env.map.get("MAX_DESCRIPTION_LEN")) |max| {
+                    if (this_bundler.env.get("MAX_DESCRIPTION_LEN")) |max| {
                         if (std.fmt.parseInt(usize, max, 10) catch null) |max_len| {
                             max_description_len = max_len;
                         }
@@ -1377,7 +1383,7 @@ pub const RunCommand = struct {
             if (Environment.allow_assert) {
                 std.debug.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
             }
-            const handle = (bun.sys.ntCreateFile(
+            const handle = (bun.sys.openFileAtWindows(
                 bun.invalid_fd, // absolute path is given
                 path_to_use,
                 w.STANDARD_RIGHTS_READ | w.FILE_READ_DATA | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE,
@@ -1416,7 +1422,7 @@ pub const RunCommand = struct {
             comptime unreachable;
         }
 
-        const PATH = this_bundler.env.map.get("PATH") orelse "";
+        const PATH = this_bundler.env.get("PATH") orelse "";
         var path_for_which = PATH;
         if (comptime bin_dirs_only) {
             if (ORIGINAL_PATH.len < PATH.len) {

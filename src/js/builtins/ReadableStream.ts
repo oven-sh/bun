@@ -140,7 +140,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
 
   var result = Bun.readableStreamToArray(stream);
   if ($isPromise(result)) {
-    // `result` is an InternalPromise, which doesn't have a `.$then` method
+    // `result` is an InternalPromise, which doesn't have a `.then` method
     // but `.then` isn't user-overridable, so we can use it safely.
     return result.then(Bun.concatArrayBuffers);
   }
@@ -160,12 +160,12 @@ export function readableStreamToFormData(
 
 $linkTimeConstant;
 export function readableStreamToJSON(stream: ReadableStream): unknown {
-  return Bun.readableStreamToText(stream).$then(globalThis.JSON.parse);
+  return Promise.resolve(Bun.readableStreamToText(stream)).then(globalThis.JSON.parse);
 }
 
 $linkTimeConstant;
 export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
-  return Promise.resolve(Bun.readableStreamToArray(stream)).$then(array => new Blob(array));
+  return Promise.resolve(Bun.readableStreamToArray(stream)).then(array => new Blob(array));
 }
 
 $linkTimeConstant;

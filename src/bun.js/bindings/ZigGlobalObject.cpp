@@ -1,10 +1,10 @@
+
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "helpers.h"
 #include "BunClientData.h"
-
-#include "JavaScriptCore/AggregateError.h"
+#include "JavaScriptCore/JSObjectInlines.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CallFrameInlines.h"
@@ -24,7 +24,6 @@
 #include "JavaScriptCore/IteratorOperations.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSGlobalProxyInlines.h"
-
 #include "JavaScriptCore/JSCallbackConstructor.h"
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSCast.h"
@@ -2311,19 +2310,69 @@ extern "C" bool ReadableStream__isLocked(JSC__JSValue possibleReadableStream, Zi
     return stream != nullptr && ReadableStream::isLocked(globalObject, stream);
 }
 
-extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue possibleReadableStream, JSValue* ptr);
-extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue possibleReadableStream, JSValue* ptr)
+extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue* possibleReadableStream, JSValue* ptr)
 {
     ASSERT(globalObject);
-    JSC::JSObject* object = JSValue::decode(possibleReadableStream).getObject();
-    if (!object || !object->inherits<JSReadableStream>()) {
+    JSC::JSObject* object = JSValue::decode(*possibleReadableStream).getObject();
+    if (!object) {
         *ptr = JSC::JSValue();
         return -1;
     }
 
-    auto* readableStream = jsCast<JSReadableStream*>(object);
     auto& vm = globalObject->vm();
-    auto& builtinNames = WebCore::clientData(vm)->builtinNames();
+    const auto& builtinNames = WebCore::builtinNames(vm);
+
+    if (!object->inherits<JSReadableStream>()) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        JSValue target = object;
+        JSValue fn = JSValue();
+        auto* function = jsDynamicCast<JSC::JSFunction*>(object);
+        if (function && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator()) {
+            fn = object;
+            target = jsUndefined();
+        } else if (auto iterable = object->getIfPropertyExists(globalObject, vm.propertyNames->asyncIteratorSymbol)) {
+            if (iterable.isCallable()) {
+                fn = iterable;
+            }
+        }
+
+        if (UNLIKELY(throwScope.exception())) {
+            *ptr = JSC::JSValue();
+            return -1;
+        }
+
+        if (fn.isEmpty()) {
+            *ptr = JSC::JSValue();
+            return -1;
+        }
+
+        auto* createIterator = globalObject->builtinInternalFunctions().readableStreamInternals().m_readableStreamFromAsyncIteratorFunction.get();
+
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(target);
+        arguments.append(fn);
+
+        JSC::JSValue result = profiledCall(globalObject, JSC::ProfilingReason::API, createIterator, JSC::getCallData(createIterator), JSC::jsUndefined(), arguments);
+
+        if (UNLIKELY(throwScope.exception())) {
+            return -1;
+        }
+
+        if (!result.isObject()) {
+            *ptr = JSC::JSValue();
+            return -1;
+        }
+
+        object = result.getObject();
+
+        ASSERT(object->inherits<JSReadableStream>());
+        *possibleReadableStream = JSValue::encode(object);
+        *ptr = JSValue();
+        ensureStillAliveHere(object);
+        return 0;
+    }
+
+    auto* readableStream = jsCast<JSReadableStream*>(object);
 
     int32_t num = 0;
     if (JSValue numberValue = readableStream->getDirect(vm, builtinNames.bunNativeTypePrivateName())) {

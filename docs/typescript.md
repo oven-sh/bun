@@ -22,8 +22,8 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
     "target": "ESNext",
     "module": "ESNext",
     "moduleDetection": "force",
-    "jsx": "react-jsx",
-    "allowJs": true,
+    "jsx": "react-jsx", // support JSX
+    "allowJs": true, // allow importing `.js` from `.ts`
 
     // Bundler mode
     "moduleResolution": "bundler",
@@ -31,7 +31,7 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
-    // Linting
+    // Best practices
     "strict": true,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
@@ -44,7 +44,7 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
 }
 ```
 
-If you run `bun init` in a new directory, this `tsconfig.json` (without the stricter flags) will be generated for you.
+If you run `bun init` in a new directory, this `tsconfig.json` will be generated for you.
 
 ```sh
 $ bun init

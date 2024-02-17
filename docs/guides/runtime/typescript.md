@@ -20,8 +20,8 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
     "target": "ESNext",
     "module": "ESNext",
     "moduleDetection": "force",
-    "jsx": "react-jsx",
-    "allowJs": true,
+    "jsx": "react-jsx", // support JSX
+    "allowJs": true, // allow importing `.js` from `.ts`
 
     // Bundler mode
     "moduleResolution": "bundler",
@@ -29,7 +29,7 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
-    // Linting
+    // Best Practices
     "strict": true,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,

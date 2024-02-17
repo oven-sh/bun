@@ -267,6 +267,7 @@ pub const ReadableStream = struct {
     pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
         JSC.markBinding(@src());
         var out = value;
+        var ptr: ?*anyopaque = null;
         return switch (ReadableStreamTag__tagged(globalThis, &out, &ptr)) {
             .JavaScript => ReadableStream{
                 .value = out,

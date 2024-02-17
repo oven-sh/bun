@@ -2115,10 +2115,12 @@ pub const PosixToWinNormalizer = struct {
             const root = windowsFilesystemRoot(maybe_posix_path);
             if (root.len == 1) {
                 std.debug.assert(isSepAny(root[0]));
-                const source_root = windowsFilesystemRoot(source_dir);
-                @memcpy(buf[0..source_root.len], source_root);
-                @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
-                return buf[0 .. source_root.len + maybe_posix_path.len - 1];
+                if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
+                    const source_root = windowsFilesystemRoot(source_dir);
+                    @memcpy(buf[0..source_root.len], source_root);
+                    @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
+                    return buf[0 .. source_root.len + maybe_posix_path.len - 1];
+                }
             }
         }
         return maybe_posix_path;
@@ -2134,13 +2136,14 @@ pub const PosixToWinNormalizer = struct {
             const root = windowsFilesystemRoot(maybe_posix_path);
             if (root.len == 1) {
                 std.debug.assert(isSepAny(root[0]));
-                // note: bun.getcwd will return forward slashes, not what we want.
-                const cwd = try std.os.getcwd(buf);
-                std.debug.assert(cwd.ptr == buf.ptr);
-                const source_root = windowsFilesystemRoot(cwd);
-                std.debug.assert(source_root.ptr == source_root.ptr);
-                @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
-                return buf[0 .. source_root.len + maybe_posix_path.len - 1];
+                if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
+                    const cwd = try std.os.getcwd(buf);
+                    std.debug.assert(cwd.ptr == buf.ptr);
+                    const source_root = windowsFilesystemRoot(cwd);
+                    std.debug.assert(source_root.ptr == source_root.ptr);
+                    @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
+                    return buf[0 .. source_root.len + maybe_posix_path.len - 1];
+                }
             }
         }
 
@@ -2157,14 +2160,15 @@ pub const PosixToWinNormalizer = struct {
             const root = windowsFilesystemRoot(maybe_posix_path);
             if (root.len == 1) {
                 std.debug.assert(isSepAny(root[0]));
-                // note: bun.getcwd will return forward slashes, not what we want.
-                const cwd = try std.os.getcwd(buf);
-                std.debug.assert(cwd.ptr == buf.ptr);
-                const source_root = windowsFilesystemRoot(cwd);
-                std.debug.assert(source_root.ptr == source_root.ptr);
-                @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
-                buf[source_root.len + maybe_posix_path.len - 1] = 0;
-                return buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
+                if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
+                    const cwd = try std.os.getcwd(buf);
+                    std.debug.assert(cwd.ptr == buf.ptr);
+                    const source_root = windowsFilesystemRoot(cwd);
+                    std.debug.assert(source_root.ptr == source_root.ptr);
+                    @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
+                    buf[source_root.len + maybe_posix_path.len - 1] = 0;
+                    return buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
+                }
             }
         }
 

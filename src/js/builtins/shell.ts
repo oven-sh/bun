@@ -2,6 +2,42 @@ type ShellInterpreter = any;
 type Resolve = (value: ShellOutput) => void;
 
 export function createBunShellTemplateFunction(ShellInterpreter) {
+  class ShellError extends Error {
+    #output: ShellOutput;
+    constructor(output: ShellOutput) {
+      super(`Failed with exit code: ${output}`);
+      this.#output = output;
+    }
+
+    get exitCode() {
+      return this.#output.exitCode;
+    }
+
+    get stdout() {
+      return this.#output.stdout;
+    }
+
+    get stderr() {
+      return this.#output.stderr;
+    }
+
+    text(encoding) {
+      return this.#output.text(encoding);
+    }
+
+    json() {
+      return this.#output.json();
+    }
+
+    arrayBuffer() {
+      return this.#output.arrayBuffer();
+    }
+
+    blob() {
+      return this.#output.blob();
+    }
+  }
+
   class ShellOutput {
     stdout: Buffer;
     stderr: Buffer;
@@ -10,6 +46,22 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       this.stdout = stdout;
       this.stderr = stderr;
       this.exitCode = exitCode;
+    }
+
+    text(encoding) {
+      return this.stdout.toString(encoding);
+    }
+
+    json() {
+      return JSON.parse(this.stdout.toString());
+    }
+
+    arrayBuffer() {
+      return this.stdout.buffer;
+    }
+
+    blob() {
+      return new Blob([this.stdout]);
     }
   }
 
@@ -20,15 +72,24 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
   class ShellPromise extends Promise<ShellOutput> {
     #core: ShellInterpreter;
     #hasRun: boolean = false;
+    #throws: boolean = true;
     // #immediate;
-    constructor(core: ShellInterpreter) {
-      var resolve, reject;
+    constructor(core: ShellInterpreter, throws: boolean) {
+      let resolve, reject;
 
       super((res, rej) => {
-        resolve = code => res(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code));
-        reject = code => rej(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code));
+        resolve = code => {
+          const out = new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code);
+          if (this.#throws && code !== 0) {
+            rej(out);
+          } else {
+            res(out);
+          }
+        };
+        reject = code => rej(new ShellError(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code)));
       });
 
+      this.#throws = throws;
       this.#core = core;
       this.#hasRun = false;
 
@@ -93,6 +154,16 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       return this.#quiet();
     }
 
+    nothrow(): this {
+      this.#throws = false;
+      return this;
+    }
+
+    throws(doThrow: boolean | undefined): this {
+      this.#throws = !!doThrow;
+      return this;
+    }
+
     async text(encoding) {
       const { stdout } = (await this.#quiet()) as ShellOutput;
       return stdout.toString(encoding);
@@ -149,10 +220,12 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
   const cwdSymbol = Symbol("cwd");
   const envSymbol = Symbol("env");
+  const throwsSymbol = Symbol("throws");
 
   class ShellPrototype {
     [cwdSymbol]: string | undefined;
     [envSymbol]: Record<string, string | undefined> | undefined;
+    [throwsSymbol]: boolean = false;
 
     env(newEnv: Record<string, string | undefined>) {
       if (typeof newEnv === "undefined" || newEnv === originalDefaultEnv) {
@@ -178,19 +251,29 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
       return this;
     }
+    nothrow() {
+      this[throwsSymbol] = false;
+      return this;
+    }
+    throws(doThrow: boolean | undefined) {
+      this[throwsSymbol] = !!doThrow;
+      return this;
+    }
   }
 
-  var BunShell = function BunShell() {
-    const core = new ShellInterpreter(...arguments);
+  var BunShell = function BunShell(first, ...rest) {
+    if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
+    const core = new ShellInterpreter(first.raw, ...rest);
 
     const cwd = BunShell[cwdSymbol];
     const env = BunShell[envSymbol];
+    const throws = BunShell[throwsSymbol];
 
     // cwd must be set before env or else it will be injected into env as "PWD=/"
     if (cwd) core.setCwd(cwd);
     if (env) core.setEnv(env);
 
-    return new ShellPromise(core);
+    return new ShellPromise(core, throws);
   };
 
   function Shell() {
@@ -198,17 +281,19 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       throw new TypeError("Class constructor Shell cannot be invoked without 'new'");
     }
 
-    var Shell = function Shell() {
-      const core = new ShellInterpreter(...arguments);
+    var Shell = function Shell(first, ...rest) {
+      if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
+      const core = new ShellInterpreter(first.raw, ...rest);
 
       const cwd = Shell[cwdSymbol];
       const env = Shell[envSymbol];
+      const throws = Shell[throwsSymbol];
 
       // cwd must be set before env or else it will be injected into env as "PWD=/"
       if (cwd) core.setCwd(cwd);
       if (env) core.setEnv(env);
 
-      return new ShellPromise(core);
+      return new ShellPromise(core, throws);
     };
 
     Object.setPrototypeOf(Shell, ShellPrototype.prototype);
@@ -223,19 +308,16 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
   BunShell[cwdSymbol] = defaultCwd;
   BunShell[envSymbol] = defaultEnv;
+  BunShell[throwsSymbol] = false;
 
   Object.defineProperties(BunShell, {
     Shell: {
       value: Shell,
-      configurable: false,
       enumerable: true,
-      writable: false,
     },
     ShellPromise: {
       value: ShellPromise,
-      configurable: false,
       enumerable: true,
-      writable: false,
     },
   });
 

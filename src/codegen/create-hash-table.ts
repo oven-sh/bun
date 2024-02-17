@@ -18,8 +18,9 @@ const to_remove = new RegExp(`#if\\s+(!OS\\(${os}\\)|OS\\((${other_oses.join("|"
 
 const input_preprocessed = to_preprocess.replace(to_remove, "");
 
+console.log("Generating " + output + " from " + input);
 const proc = spawn({
-  cmd: [create_hash_table, "-"],
+  cmd: ["perl", create_hash_table, "-"],
   stdin: "pipe",
   stdout: "pipe",
   stderr: "inherit",

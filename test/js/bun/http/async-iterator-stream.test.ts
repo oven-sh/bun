@@ -46,7 +46,7 @@ describe("Streaming body via", () => {
       },
     });
 
-    const res = await fetch(`${server.url}/`);
+    const res = await fetch(server.url);
     expect(res.headers.get("X-Hey")).toBe("123");
     server.stop(true);
   });
@@ -122,10 +122,10 @@ describe("Streaming body via", () => {
           [Symbol.asyncIterator]() {
             return {
               async next() {
-                await Bun.sleep(30);
                 if (hasRun) {
                   return { value: Buffer.from("world!"), done: true };
                 }
+                await Bun.sleep(1000);
                 hasRun = true;
                 return { value: "Hello, ", done: false };
               },
@@ -135,7 +135,7 @@ describe("Streaming body via", () => {
       },
     });
 
-    const res = await fetch(`${server.url}/`);
+    const res = await fetch(server.url);
     const chunks = [];
     for await (const chunk of res.body) {
       chunks.push(chunk);
@@ -161,35 +161,64 @@ describe("Streaming body via", () => {
     {
       fn: async function* () {
         yield '"Hello, ';
-        yield Buffer.from('world!"');
+        yield Buffer.from('world! #1"');
         return;
       },
-      expected: '"Hello, world!"',
+      expected: '"Hello, world! #1"',
     },
     {
       fn: async function* () {
         yield '"Hello, ';
         await Bun.sleep(30);
-        yield Buffer.from('world!"');
+        yield Buffer.from('world! #2"');
         return;
       },
-      expected: '"Hello, world!"',
+      expected: '"Hello, world! #2"',
+    },
+    {
+      fn: async function* () {
+        yield '"Hello, ';
+        await 42;
+        yield Buffer.from('world! #3"');
+        return;
+      },
+      expected: '"Hello, world! #3"',
+    },
+    {
+      fn: async function* () {
+        yield '"Hello, ';
+        await 42;
+        return Buffer.from('world! #4"');
+      },
+      expected: '"Hello, world! #4"',
     },
   ];
 
   for (let { fn, expected } of callbacks) {
-    for (let bodyInit of [fn, { [Symbol.asyncIterator]: fn }] as const) {
-      for (let [label, constructFn] of [
-        ["Response", () => new Response(bodyInit)],
-        ["Request", () => new Request({ "url": "https://example.com", body: bodyInit })],
-      ]) {
-        for (let method of ["arrayBuffer", "json", "text"]) {
-          test(`${label}(${method})`, async () => {
-            const result = await constructFn()[method]();
-            expect(Buffer.from(result)).toEqual(Buffer.from(expected));
+    describe(expected, () => {
+      for (let bodyInit of [fn, { [Symbol.asyncIterator]: fn }] as const) {
+        for (let [label, constructFn] of [
+          ["Response", () => new Response(bodyInit)],
+          ["Request", () => new Request({ "url": "https://example.com", body: bodyInit })],
+        ]) {
+          for (let method of ["arrayBuffer", "text"]) {
+            test(`${label}(${method})`, async () => {
+              const result = await constructFn()[method]();
+              expect(Buffer.from(result)).toEqual(Buffer.from(expected));
+            });
+          }
+
+          test(`${label}(json)`, async () => {
+            const result = await constructFn().json();
+            expect(result).toEqual(JSON.parse(expected));
+          });
+
+          test(`${label}(blob)`, async () => {
+            const result = await constructFn().blob();
+            expect(await result.arrayBuffer()).toEqual(await new Blob([expected]).arrayBuffer());
           });
         }
       }
-    }
+    });
   }
 });

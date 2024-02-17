@@ -5441,50 +5441,6 @@ pub const PackageManager = struct {
             return error.@"No global directory found";
         }
 
-        /// `bunx`'s cache is in the global install directory so that
-        ///
-        /// - a user deleting the bun install cache '~/.bun/install' also clears the bunx cache
-        /// - someone on a multi-user system does not run into permission errors
-        ///   because someone else owns the bunx cache.
-        /// - someone else mutates the bunx cache and puts malware into it.
-        /// - not all operating systems autoclear '/tmp'. managing it ourself gives us consistency.
-        ///
-        /// by making this per-user like with the install cache, these issues are removed.
-        ///
-        /// Returns a open handle and the path used, as the path is needed for $PATH
-        pub fn openBunXCacheDir(path_buf: *bun.PathBuffer) !struct { std.fs.Dir, []const u8 } {
-            if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
-                var parts = [_]string{ "install", "bunx" };
-                const path = Path.joinAbsStringBuf(home_dir, path_buf, &parts, .auto);
-                return .{
-                    try std.fs.cwd().makeOpenPath(path, .{}),
-                    path,
-                };
-            }
-
-            if (!Environment.isWindows) {
-                if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
-                    var parts = [_]string{ ".bun", "install", "bunx" };
-                    const path = Path.joinAbsStringBuf(home_dir, path_buf, &parts, .auto);
-                    return .{
-                        try std.fs.cwd().makeOpenPath(path, .{}),
-                        path,
-                    };
-                }
-            } else {
-                if (bun.getenvZ("USERPROFILE")) |home_dir| {
-                    var parts = [_]string{ ".bun", "install", "bunx" };
-                    const path = Path.joinAbsStringBuf(home_dir, path_buf, &parts, .auto);
-                    return .{
-                        try std.fs.cwd().makeOpenPath(path, .{}),
-                        path,
-                    };
-                }
-            }
-
-            return error.@"No global directory found";
-        }
-
         pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
             if (bun.getenvZ("BUN_INSTALL_BIN")) |home_dir| {
                 return try std.fs.cwd().makeOpenPath(home_dir, .{});

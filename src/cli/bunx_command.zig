@@ -328,8 +328,7 @@ pub const BunxCommand = struct {
             );
         };
 
-        var temp_dir_buf: bun.PathBuffer = undefined;
-        const temp_dir_fd, const temp_dir_path = try bun.install.PackageManager.Options.openBunXCacheDir(&temp_dir_buf);
+        const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
 
         const PATH_FOR_BIN_DIRS = brk: {
             if (ignore_cwd.len == 0) break :brk PATH;
@@ -357,24 +356,44 @@ pub const BunxCommand = struct {
                 ctx.allocator.free(PATH_FOR_BIN_DIRS);
             }
         }
+
+        // The bunx cache path is at the following location
+        //
+        //   <temp_dir>/bunx-<uid>-<package_name>/node_modules/.bin/<bin>
+        //
+        // Reasoning:
+        // - Prefix with "bunx" to identify the bunx cache, make it easier to "rm -r"
+        //   - Suffix would not work because scoped packages have a "/" in them, and
+        //     before Bun 1.1 this was practically impossible to clear the cache manually.
+        //     It was easier to just remove the entire temp directory.
+        // - Use the uid to prevent conflicts between users. If the paths were the same
+        //   across users, you run into permission conflicts
+        //   - If you set permission to 777, you run into a potential attack vector
+        //     where a user can replace the directory with malicious code.
+        const uid = bun.C.getuid();
         if (PATH.len > 0) {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.pathLiteral("{s}/{s}/node_modules/.bin:{s}"),
-                .{ temp_dir_path, package_fmt, PATH },
+                bun.pathLiteral("{s}/bunx-{d}-{s}/node_modules/.bin:{s}"),
+                .{ temp_dir, uid, package_fmt, PATH },
             );
         } else {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.pathLiteral("{s}/{s}/node_modules/.bin"),
-                .{ temp_dir_path, package_fmt },
+                bun.pathLiteral("{s}/bunx-{d}-{s}/node_modules/.bin"),
+                .{ temp_dir, uid, package_fmt },
             );
         }
+
         try this_bundler.env.map.put("PATH", PATH);
-        const bunx_cache_dir = PATH[0 .. temp_dir_path.len + "/".len + package_fmt.len];
+        const bunx_cache_dir = PATH[0 .. temp_dir.len + "/bunx--".len + package_fmt.len + std.fmt.count("{d}", .{uid})];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}"), .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        var absolute_in_cache_dir = std.fmt.bufPrint(
+            &absolute_in_cache_dir_buf,
+            bun.pathLiteral("{s}/node_modules/.bin/{s}"),
+            .{ bunx_cache_dir, initial_bin_name },
+        ) catch unreachable;
 
         const passthrough = passthrough_list.items;
 
@@ -439,9 +458,6 @@ pub const BunxCommand = struct {
                     };
 
                     if (is_stale) {
-                        // If delete fails, oh well. Hope installation takes care of it.
-                        // std.fs.deleteDirAbsolute(out) catch {};
-
                         do_cache_bust = true;
                         break :try_run_existing;
                     }
@@ -506,7 +522,7 @@ pub const BunxCommand = struct {
             }
         }
 
-        const bunx_install_dir = try temp_dir_fd.makeOpenPath(package_fmt, .{});
+        const bunx_install_dir = try std.fs.cwd().makeOpenPath(bunx_cache_dir, .{});
 
         create_package_json: {
             // create package.json, but only if it doesn't exist
@@ -520,9 +536,11 @@ pub const BunxCommand = struct {
             "add",
             "--no-summary",
             package_fmt,
+
+            // the following two args are stripped off if `do_cache_bust` is false
+
             // disable the manifest cache when a tag is specified
             // so that @latest is fetched from the registry
-            // TODO: i dont think this works how we expect it to.
             "--no-cache",
             // forcefully re-install packages in this mode too
             "--force",
@@ -536,8 +554,7 @@ pub const BunxCommand = struct {
         if (Environment.isWindows) {
             const bunx_install_dir_path = try std.fmt.allocPrint(
                 ctx.allocator,
-                "{s}/{s}",
-                .{ temp_dir_path, package_fmt },
+                bun.pathLiteral("{s}/node_modules/.bin/{s}"),
             );
             child_process.cwd = bunx_install_dir_path;
         }

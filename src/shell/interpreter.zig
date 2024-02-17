@@ -206,7 +206,7 @@ pub const EnvStr = packed struct {
     tag: Tag,
     len: usize = 0,
 
-    const print = bun.Output.scoped(.EnvStr, false);
+    const print = bun.Output.scoped(.EnvStr, true);
 
     const Tag = enum(u16) {
         /// Dealloced by reference counting
@@ -841,9 +841,20 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             };
 
             const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+            var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+            var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
+                globalThis.throwOutOfMemory();
+                return null;
+            };
+            defer {
+                for (jsstrings.items[0..]) |bunstr| {
+                    bunstr.deref();
+                }
+                jsstrings.deinit();
+            }
             var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
             var script = std.ArrayList(u8).init(arena.allocator());
-            if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
+            if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
                 globalThis.throwOutOfMemory();
                 return null;
             })) {
@@ -856,6 +867,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 &arena,
                 script.items[0..],
                 jsobjs.items[0..],
+                jsstrings.items[0..],
                 &parser,
                 &lex_result,
             ) catch |err| {
@@ -901,14 +913,21 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             return interpreter;
         }
 
-        pub fn parse(arena: *bun.ArenaAllocator, script: []const u8, jsobjs: []JSValue, out_parser: *?bun.shell.Parser, out_lex_result: *?shell.LexResult) !ast.Script {
+        pub fn parse(
+            arena: *bun.ArenaAllocator,
+            script: []const u8,
+            jsobjs: []JSValue,
+            jsstrings_to_escape: []bun.String,
+            out_parser: *?bun.shell.Parser,
+            out_lex_result: *?shell.LexResult,
+        ) !ast.Script {
             const lex_result = brk: {
                 if (bun.strings.isAllASCII(script)) {
-                    var lexer = bun.shell.LexerAscii.new(arena.allocator(), script);
+                    var lexer = bun.shell.LexerAscii.new(arena.allocator(), script, jsstrings_to_escape);
                     try lexer.lex();
                     break :brk lexer.get_result();
                 }
-                var lexer = bun.shell.LexerUnicode.new(arena.allocator(), script);
+                var lexer = bun.shell.LexerUnicode.new(arena.allocator(), script, jsstrings_to_escape);
                 try lexer.lex();
                 break :brk lexer.get_result();
             };
@@ -1028,7 +1047,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const jsobjs: []JSValue = &[_]JSValue{};
             var out_parser: ?bun.shell.Parser = null;
             var out_lex_result: ?bun.shell.LexResult = null;
-            const script = ThisInterpreter.parse(&arena, src, jsobjs, &out_parser, &out_lex_result) catch |err| {
+            const script = ThisInterpreter.parse(
+                &arena,
+                src,
+                jsobjs,
+                &[_]bun.String{},
+                &out_parser,
+                &out_lex_result,
+            ) catch |err| {
                 if (err == bun.shell.ParseError.Lex) {
                     std.debug.assert(out_lex_result != null);
                     const str = out_lex_result.?.combineErrors(arena.allocator());
@@ -1074,7 +1100,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             const jsobjs: []JSValue = &[_]JSValue{};
             var out_parser: ?bun.shell.Parser = null;
             var out_lex_result: ?bun.shell.LexResult = null;
-            const script = ThisInterpreter.parse(&arena, src, jsobjs, &out_parser, &out_lex_result) catch |err| {
+            const script = ThisInterpreter.parse(&arena, src, jsobjs, &[_]bun.String{}, &out_parser, &out_lex_result) catch |err| {
                 if (err == bun.shell.ParseError.Lex) {
                     std.debug.assert(out_lex_result != null);
                     const str = out_lex_result.?.combineErrors(arena.allocator());
@@ -1156,6 +1182,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
         fn finish(this: *ThisInterpreter, exit_code: ExitCode) void {
             log("finish", .{});
+            defer decrPendingActivityFlag(&this.has_pending_activity);
             if (comptime EventLoopKind == .js) {
                 // defer this.deinit();
                 // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
@@ -1169,6 +1196,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
         fn errored(this: *ThisInterpreter, the_error: ShellError) void {
             _ = the_error; // autofix
+            defer decrPendingActivityFlag(&this.has_pending_activity);
 
             if (comptime EventLoopKind == .js) {
                 // defer this.deinit();
@@ -1319,6 +1347,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
         pub fn finalize(
             this: *ThisInterpreter,
         ) callconv(.C) void {
+            log("Interpreter finalize", .{});
             this.deinit();
         }
 
@@ -1360,12 +1389,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             word_idx: u32,
             current_out: std.ArrayList(u8),
-            state: enum {
+            state: union(enum) {
                 normal,
                 braces,
                 glob,
                 done,
-                err,
+                err: bun.shell.ShellErr,
             },
             child_state: union(enum) {
                 idle,
@@ -1582,6 +1611,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     this.parent.childDone(this, 0);
                     return;
                 }
+
+                // Parent will inspect the `this.state.err`
+                if (this.state == .err) {
+                    this.parent.childDone(this, 1);
+                    return;
+                }
             }
 
             fn transitionToGlobState(this: *Expansion) void {
@@ -1589,10 +1624,23 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 this.child_state = .{ .glob = .{ .walker = .{} } };
                 const pattern = this.current_out.items[0..];
 
-                switch (GlobWalker.init(&this.child_state.glob.walker, &arena, pattern, false, false, false, false, false) catch bun.outOfMemory()) {
+                const cwd = this.base.shell.cwd();
+
+                switch (GlobWalker.initWithCwd(
+                    &this.child_state.glob.walker,
+                    &arena,
+                    pattern,
+                    cwd,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                ) catch bun.outOfMemory()) {
                     .result => {},
                     .err => |e| {
-                        global_handle.get().actuallyThrow(bun.shell.ShellErr.newSys(e));
+                        this.state = .{ .err = bun.shell.ShellErr.newSys(e) };
+                        this.next();
                         return;
                     },
                 }
@@ -1801,6 +1849,19 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             });
                         },
                     }
+                }
+
+                if (task.result.items.len == 0) {
+                    const msg = std.fmt.allocPrint(bun.default_allocator, "no matches found: {s}", .{this.child_state.glob.walker.pattern}) catch bun.outOfMemory();
+                    this.state = .{
+                        .err = bun.shell.ShellErr{
+                            .custom = msg,
+                        },
+                    };
+                    this.child_state.glob.walker.deinit(true);
+                    this.child_state = .idle;
+                    this.next();
+                    return;
                 }
 
                 for (task.result.items) |sentinel_str| {
@@ -2172,10 +2233,13 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 this.base.shell.deinit();
+                bun.default_allocator.destroy(this);
             }
 
             pub fn deinitFromInterpreter(this: *Script) void {
-                this.base.shell.deinitImpl(false, false);
+                // Let the interpreter deinitialize the shell state
+                // this.base.shell.deinitImpl(false, false);
+                bun.default_allocator.destroy(this);
             }
         };
 
@@ -2193,6 +2257,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     current_expansion_result: std.ArrayList([:0]const u8),
                     expansion: Expansion,
                 },
+                err: bun.shell.ShellErr,
                 done,
             },
             ctx: AssignCtx,
@@ -2265,6 +2330,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             return;
                         },
                         .done => unreachable,
+                        .err => return this.parent.childDone(this, 1),
                     }
                 }
 
@@ -2272,9 +2338,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) void {
-                _ = exit_code;
-
                 if (child.ptr.is(Expansion)) {
+                    const expansion = child.ptr.as(Expansion);
+                    if (exit_code != 0) {
+                        this.state = .{
+                            .err = expansion.state.err,
+                        };
+                        return;
+                    }
                     var expanding = &this.state.expanding;
 
                     const label = this.node[expanding.idx].label;
@@ -3182,9 +3253,16 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) void {
-                _ = exit_code; // autofix
-
                 if (child.ptr.is(Assigns)) {
+                    if (exit_code != 0) {
+                        const err = this.state.expanding_assigns.state.err;
+                        defer err.deinit(bun.default_allocator);
+                        this.state.expanding_assigns.deinit();
+                        const buf = err.fmt();
+                        this.writeFailingError(buf, exit_code);
+                        return;
+                    }
+
                     this.state.expanding_assigns.deinit();
                     this.state = .{
                         .expanding_redirect = .{
@@ -3196,6 +3274,18 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
 
                 if (child.ptr.is(Expansion)) {
+                    child.deinit();
+                    if (exit_code != 0) {
+                        const err = switch (this.state) {
+                            .expanding_redirect => this.state.expanding_redirect.expansion.state.err,
+                            .expanding_args => this.state.expanding_args.expansion.state.err,
+                            else => @panic("Invalid state"),
+                        };
+                        defer err.deinit(bun.default_allocator);
+                        const buf = err.fmt();
+                        this.writeFailingError(buf, exit_code);
+                        return;
+                    }
                     this.next();
                     return;
                 }
@@ -3537,7 +3627,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     this.exec = .none;
                 }
 
-                if (!this.spawn_arena_freed) this.spawn_arena.deinit();
+                if (!this.spawn_arena_freed) {
+                    log("Spawn arena free", .{});
+                    this.spawn_arena.deinit();
+                }
                 this.freed = true;
                 this.base.interpreter.allocator.destroy(this);
             }

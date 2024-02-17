@@ -142,6 +142,8 @@ typedef void* JSClassRef;
   using WebCore__AbortSignal = WebCore::AbortSignal;
   using WebCore__DOMURL = WebCore::DOMURL;
 
+  using JSC__GetterSetter = JSC::GetterSetter;
+  using JSC__CustomGetterSetter = JSC::CustomGetterSetter;
 #endif
 
 
@@ -858,5 +860,15 @@ ZIG_DECL JSC__JSValue Bun__BodyValueBufferer__onResolveStream(JSC__JSGlobalObjec
 
 ZIG_DECL JSC__JSValue Bun__TestScope__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
 ZIG_DECL JSC__JSValue Bun__TestScope__onResolve(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+
+#endif
+
+#ifdef __cplusplus
+
+CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter *arg);
+CPP_DECL bool JSC__GetterSetter__isSetterNull(JSC__GetterSetter *arg);
+
+CPP_DECL bool JSC__CustomGetterSetter__isGetterNull(JSC__CustomGetterSetter *arg);
+CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter *arg);
 
 #endif

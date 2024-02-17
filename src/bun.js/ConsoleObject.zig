@@ -920,7 +920,8 @@ pub const Formatter = struct {
         JSX,
         Event,
 
-        Getter,
+        GetterSetter,
+        CustomGetterSetter,
 
         pub fn isPrimitive(this: Tag) bool {
             return switch (this) {
@@ -973,7 +974,8 @@ pub const Formatter = struct {
                 ArrayBuffer: void,
                 JSX: void,
                 Event: void,
-                Getter: void,
+                GetterSetter: void,
+                CustomGetterSetter: void,
 
                 pub fn isPrimitive(this: @This()) bool {
                     return @as(Tag, this).isPrimitive();
@@ -1178,7 +1180,8 @@ pub const Formatter = struct {
 
                     .Event => .Event,
 
-                    .GetterSetter, .CustomGetterSetter => .Getter,
+                    .GetterSetter => .GetterSetter,
+                    .CustomGetterSetter => .CustomGetterSetter,
 
                     .JSAsJSONType => .toJSON,
 
@@ -1888,8 +1891,31 @@ pub const Formatter = struct {
                     writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
                 }
             },
-            .Getter => {
-                writer.print(comptime Output.prettyFmt("<cyan>[Getter]<r>", enable_ansi_colors), .{});
+            .GetterSetter => {
+                const cell = value.asCell();
+                const getterSetter = cell.getGetterSetter();
+                const hasGetter = !getterSetter.isGetterNull();
+                const hasSetter = !getterSetter.isSetterNull();
+                if (hasGetter and hasSetter) {
+                    writer.print(comptime Output.prettyFmt("<cyan>[Getter/Setter]<r>", enable_ansi_colors), .{});
+                } else if (hasGetter) {
+                    writer.print(comptime Output.prettyFmt("<cyan>[Getter]<r>", enable_ansi_colors), .{});
+                } else if (hasSetter) {
+                    writer.print(comptime Output.prettyFmt("<cyan>[Setter]<r>", enable_ansi_colors), .{});
+                }
+            },
+            .CustomGetterSetter => {
+                const cell = value.asCell();
+                const getterSetter = cell.getCustomGetterSetter();
+                const hasGetter = !getterSetter.isGetterNull();
+                const hasSetter = !getterSetter.isSetterNull();
+                if (hasGetter and hasSetter) {
+                    writer.print(comptime Output.prettyFmt("<cyan>[Getter/Setter]<r>", enable_ansi_colors), .{});
+                } else if (hasGetter) {
+                    writer.print(comptime Output.prettyFmt("<cyan>[Getter]<r>", enable_ansi_colors), .{});
+                } else if (hasSetter) {
+                    writer.print(comptime Output.prettyFmt("<cyan>[Setter]<r>", enable_ansi_colors), .{});
+                }
             },
             .Array => {
                 const len = @as(u32, @truncate(value.getLength(this.globalThis)));
@@ -2926,7 +2952,8 @@ pub const Formatter = struct {
             .NativeCode => this.printAs(.NativeCode, Writer, writer, value, result.cell, enable_ansi_colors),
             .JSX => this.printAs(.JSX, Writer, writer, value, result.cell, enable_ansi_colors),
             .Event => this.printAs(.Event, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Getter => this.printAs(.Getter, Writer, writer, value, result.cell, enable_ansi_colors),
+            .GetterSetter => this.printAs(.GetterSetter, Writer, writer, value, result.cell, enable_ansi_colors),
+            .CustomGetterSetter => this.printAs(.CustomGetterSetter, Writer, writer, value, result.cell, enable_ansi_colors),
 
             .CustomFormattedObject => |callback| {
                 this.custom_formatted_object = callback;

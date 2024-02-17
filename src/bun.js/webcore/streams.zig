@@ -239,7 +239,7 @@ pub const ReadableStream = struct {
         Bytes: *ByteStream,
     };
 
-    extern fn ReadableStreamTag__tagged(globalObject: *JSGlobalObject, possibleReadableStream: JSValue, ptr: *?*anyopaque) Tag;
+    extern fn ReadableStreamTag__tagged(globalObject: *JSGlobalObject, possibleReadableStream: *JSValue, ptr: *?*anyopaque) Tag;
     extern fn ReadableStream__isDisturbed(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__isLocked(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__empty(*JSGlobalObject) JSC.JSValue;
@@ -266,42 +266,42 @@ pub const ReadableStream = struct {
 
     pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
         JSC.markBinding(@src());
-        var ptr: ?*anyopaque = null;
-        return switch (ReadableStreamTag__tagged(globalThis, value, &ptr)) {
+        var out = value;
+        return switch (ReadableStreamTag__tagged(globalThis, &out, &ptr)) {
             .JavaScript => ReadableStream{
-                .value = value,
+                .value = out,
                 .ptr = .{
                     .JavaScript = {},
                 },
             },
             .Blob => ReadableStream{
-                .value = value,
+                .value = out,
                 .ptr = .{
                     .Blob = @ptrCast(@alignCast(ptr.?)),
                 },
             },
             .File => ReadableStream{
-                .value = value,
+                .value = out,
                 .ptr = .{
                     .File = @ptrCast(@alignCast(ptr.?)),
                 },
             },
 
             .Bytes => ReadableStream{
-                .value = value,
+                .value = out,
                 .ptr = .{
                     .Bytes = @ptrCast(@alignCast(ptr.?)),
                 },
             },
 
             // .HTTPRequest => ReadableStream{
-            //     .value = value,
+            //     .value = out,
             //     .ptr = .{
             //         .HTTPRequest = ptr.asPtr(HTTPRequest),
             //     },
             // },
             // .HTTPSRequest => ReadableStream{
-            //     .value = value,
+            //     .value = out,
             //     .ptr = .{
             //         .HTTPSRequest = ptr.asPtr(HTTPSRequest),
             //     },

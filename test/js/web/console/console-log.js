@@ -173,3 +173,18 @@ console.log(hole([1, 2, 3], 0));
 // It appears to not be set and I don't know why.
 
 console.log({ "": "" });
+
+{
+  class FooBar {
+    constructor() {
+      this.abc = () => {};
+    }
+
+    method() {
+      return 123;
+    }
+  }
+
+  const f = new FooBar();
+  console.log(f);
+}

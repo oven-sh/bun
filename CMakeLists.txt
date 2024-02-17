@@ -1279,6 +1279,7 @@ if(USE_STATIC_SQLITE)
         "SQLITE_ENABLE_FTS3_PARENTHESIS=1"
         "SQLITE_ENABLE_FTS5=1"
         "SQLITE_ENABLE_JSON1=1"
+        "SQLITE_ENABLE_MATH_FUNCTIONS=1"
     )
     target_link_libraries(${bun} PRIVATE sqlite3)
     message(STATUS "Using static sqlite3")

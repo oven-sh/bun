@@ -1310,6 +1310,14 @@ describe("fs.exists", () => {
       }
     });
   });
+  it("should work with util.promisify when path exists", async () => {
+    const fsexists = promisify(fs.exists);
+    expect(await fsexists(import.meta.path)).toBe(true);
+  });
+  it("should work with util.promisify when path doesn't exist", async () => {
+    const fsexists = promisify(fs.exists);
+    expect(await fsexists(`${tmpdir()}/test-fs-exists-${Date.now()}`)).toBe(false);
+  });
 });
 
 describe("rm", () => {

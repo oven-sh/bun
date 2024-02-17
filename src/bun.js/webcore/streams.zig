@@ -2949,8 +2949,7 @@ pub const FileSink = struct {
             .event_loop_handle = JSC.EventLoopHandle.init(event_loop),
             .fd = pipe.fd(),
         });
-        this.writer.pipe = pipe;
-        this.writer.setParent(this);
+        this.writer.setPipe(pipe);
         return this;
     }
 

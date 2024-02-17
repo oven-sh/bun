@@ -3,6 +3,8 @@ const std = @import("std");
 const Async = bun.Async;
 const JSC = bun.JSC;
 
+const log = bun.Output.scoped(.PipeWriter, false);
+
 pub const WriteResult = union(enum) {
     done: usize,
     wrote: usize,
@@ -653,7 +655,7 @@ const uv = bun.windows.libuv;
 /// Will provide base behavior for pipe writers
 /// The WindowsPipeWriter type should implement the following interface:
 /// struct {
-///   pipe: ?*uv.Pipe = undefined,
+///   source: ?Source = null,
 ///   parent: *Parent = undefined,
 ///   is_done: bool = false,
 ///   pub fn startWithCurrentPipe(this: *WindowsPipeWriter) bun.JSC.Maybe(void),
@@ -665,7 +667,7 @@ fn BaseWindowsPipeWriter(
 ) type {
     return struct {
         pub fn getFd(this: *const WindowsPipeWriter) bun.FileDescriptor {
-            const pipe = this.pipe orelse return bun.invalid_fd;
+            const pipe = this.source orelse return bun.invalid_fd;
             return pipe.fd();
         }
 
@@ -673,7 +675,7 @@ fn BaseWindowsPipeWriter(
             if (this.is_done) {
                 return false;
             }
-            if (this.pipe) |pipe| return pipe.hasRef();
+            if (this.source) |pipe| return pipe.hasRef();
             return false;
         }
 
@@ -687,13 +689,17 @@ fn BaseWindowsPipeWriter(
 
         pub fn close(this: *WindowsPipeWriter) void {
             this.is_done = true;
-            if (this.pipe) |pipe| {
-                pipe.close(&WindowsPipeWriter.onClosePipe);
+            if (this.source) |source| {
+                switch (source) {
+                    .pipe => |pipe| pipe.close(&WindowsPipeWriter.onClosePipe),
+                    .tty => |tty| tty.close(&WindowsPipeWriter.onCloseTTY),
+                    .file => @panic("TODO"),
+                }
             }
         }
 
         pub fn updateRef(this: *WindowsPipeWriter, _: anytype, value: bool) void {
-            if (this.pipe) |pipe| {
+            if (this.source) |pipe| {
                 if (value) {
                     pipe.ref();
                 } else {
@@ -705,8 +711,8 @@ fn BaseWindowsPipeWriter(
         pub fn setParent(this: *WindowsPipeWriter, parent: *Parent) void {
             this.parent = parent;
             if (!this.is_done) {
-                if (this.pipe) |pipe| {
-                    pipe.data = this;
+                if (this.source) |pipe| {
+                    pipe.setData(this);
                 }
             }
         }
@@ -716,14 +722,15 @@ fn BaseWindowsPipeWriter(
         }
 
         pub fn startWithPipe(this: *WindowsPipeWriter, pipe: *uv.Pipe) bun.JSC.Maybe(void) {
-            std.debug.assert(this.pipe == null);
-            this.pipe = pipe;
+            std.debug.assert(this.source == null);
+            this.source = .{ .pipe = pipe };
             this.setParent(this.parent);
             return this.startWithCurrentPipe();
         }
 
-        pub fn open(this: *WindowsPipeWriter, loop: *uv.Loop, fd: bun.FileDescriptor, ipc: bool) bun.JSC.Maybe(void) {
-            const pipe = this.pipe orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.PIPE, .pipe) };
+        pub fn openPipe(this: *WindowsPipeWriter, loop: *uv.Loop, fd: bun.FileDescriptor, ipc: bool) bun.JSC.Maybe(*uv.Pipe) {
+            log("openPipe (fd = {})", .{fd});
+            const pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
 
             switch (pipe.init(loop, ipc)) {
                 .err => |err| {
@@ -735,26 +742,133 @@ fn BaseWindowsPipeWriter(
             pipe.data = this;
             const file_fd = bun.uvfdcast(fd);
 
-            switch (pipe.open(file_fd)) {
-                .err => |err| {
-                    return .{ .err = err };
+            return switch (pipe.open(file_fd)) {
+                .err => |err| .{
+                    .err = err,
                 },
-                else => {},
-            }
+                .result => .{
+                    .result = pipe,
+                },
+            };
+        }
 
-            return .{ .result = {} };
+        pub fn openTTY(this: *WindowsPipeWriter, loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(*uv.uv_tty_t) {
+            log("openTTY (fd = {})", .{fd});
+            const tty = bun.default_allocator.create(uv.uv_tty_t) catch bun.outOfMemory();
+
+            tty.data = this;
+            return switch (tty.init(loop, bun.uvfdcast(fd))) {
+                .err => |err| .{ .err = err },
+                .result => .{ .result = tty },
+            };
+        }
+
+        pub fn openFile(this: *WindowsPipeWriter, fd: bun.FileDescriptor) bun.JSC.Maybe(*Source.Write) {
+            log("openFile (fd = {})", .{fd});
+            const file = bun.default_allocator.create(Source.Write) catch bun.outOfMemory();
+
+            file.* = std.mem.zeroes(Source.Write);
+            file.fs.data = this;
+            file.file = bun.uvfdcast(fd);
+            return .{ .result = file };
         }
 
         pub fn start(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
-            //TODO: check detect if its a tty here and use uv_tty_t instead of pipe
-            std.debug.assert(this.pipe == null);
-            this.pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
-            if (this.open(uv.Loop.get(), fd, false).asErr()) |err| return .{ .err = err };
+            std.debug.assert(this.source == null);
+            const rc = bun.windows.GetFileType(fd.cast());
+            this.source = if (rc == bun.windows.FILE_TYPE_CHAR) .{ .tty = switch (this.openTTY(uv.Loop.get(), fd)) {
+                .result => |tty| tty,
+                .err => |err| return .{ .err = err },
+            } } else .{
+                // everything else
+                // .fd = bun.uvfdcast(fd),
+                .file = switch (this.openFile(fd)) {
+                    .result => |file| file,
+                    .err => |err| return .{ .err = err },
+                },
+            };
+
             this.setParent(this.parent);
             return this.startWithCurrentPipe();
         }
     };
 }
+
+const Source = union(enum) {
+    pipe: *uv.Pipe,
+    tty: *uv.uv_tty_t,
+    file: *Write,
+
+    const Write = struct {
+        fs: uv.fs_t,
+        iov: uv.uv_buf_t,
+        file: uv.uv_file,
+    };
+
+    pub fn toStream(this: Source) *uv.uv_stream_t {
+        switch (this) {
+            .pipe => return @ptrCast(this.pipe),
+            .tty => return @ptrCast(this.tty),
+            .file => unreachable,
+        }
+    }
+
+    pub fn tryWrite(this: Source, buffer: []const u8) bun.JSC.Maybe(usize) {
+        switch (this) {
+            .pipe => return this.pipe.tryWrite(buffer),
+            .tty => return this.tty.tryWrite(buffer),
+            .file => unreachable,
+        }
+    }
+
+    pub fn fd(this: Source) bun.FileDescriptor {
+        switch (this) {
+            .pipe => return this.pipe.fd(),
+            .tty => return this.tty.fd(),
+            .file => @panic("TODO"),
+        }
+    }
+
+    pub fn setData(this: Source, data: ?*anyopaque) void {
+        switch (this) {
+            .pipe => this.pipe.data = data,
+            .tty => this.tty.data = data,
+            .file => {},
+        }
+    }
+
+    pub fn getData(this: Source) ?*anyopaque {
+        switch (this) {
+            .pipe => |pipe| return pipe.data,
+            .tty => |tty| return tty.data,
+            .file => return null,
+        }
+    }
+
+    pub fn ref(this: Source) void {
+        switch (this) {
+            .pipe => this.pipe.ref(),
+            .tty => this.tty.ref(),
+            .file => {},
+        }
+    }
+
+    pub fn unref(this: Source) void {
+        switch (this) {
+            .pipe => this.pipe.unref(),
+            .tty => this.tty.unref(),
+            .file => {},
+        }
+    }
+
+    pub fn hasRef(this: Source) bool {
+        switch (this) {
+            .pipe => return this.pipe.hasRef(),
+            .tty => return this.tty.hasRef(),
+            .file => false,
+        }
+    }
+};
 
 pub fn WindowsBufferedWriter(
     comptime Parent: type,
@@ -765,7 +879,7 @@ pub fn WindowsBufferedWriter(
     comptime onWritable: ?*const fn (*Parent) void,
 ) type {
     return struct {
-        pipe: ?*uv.Pipe = undefined,
+        source: ?Source = null,
         parent: *Parent = undefined,
         is_done: bool = false,
         // we use only one write_req, any queued data in outgoing will be flushed after this ends
@@ -784,11 +898,30 @@ pub fn WindowsBufferedWriter(
             }
         }
 
+        fn onCloseTTY(tty: *uv.uv_tty_t) callconv(.C) void {
+            const this = bun.cast(*WindowsWriter, tty.data);
+            if (onClose) |onCloseFn| {
+                onCloseFn(this.parent);
+            }
+        }
+
+        fn onCloseFile(fs: *uv.fs_t) callconv(.C) void {
+            const this = bun.cast(*WindowsWriter, fs.data);
+            if (onClose) |onCloseFn| {
+                onCloseFn(this.parent);
+            }
+        }
+
         pub fn startWithCurrentPipe(this: *WindowsWriter) bun.JSC.Maybe(void) {
-            std.debug.assert(this.pipe != null);
+            std.debug.assert(this.source != null);
             this.is_done = false;
             this.write();
             return .{ .result = {} };
+        }
+
+        pub fn setPipe(this: *WindowsWriter, pipe: *uv.Pipe) void {
+            this.source = .{ .pipe = pipe };
+            this.setParent(this.parent);
         }
 
         fn onWriteComplete(this: *WindowsWriter, status: uv.ReturnCode) void {
@@ -818,6 +951,14 @@ pub fn WindowsBufferedWriter(
             }
         }
 
+        fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+            const this = bun.cast(*WindowsWriter, fs.data);
+            if (@intFromEnum(fs.result) != 0) {
+                @panic("Error writing to file");
+            }
+            this.onWriteComplete(.zero);
+        }
+
         pub fn write(this: *WindowsWriter) void {
             const buffer = this.getBufferInternal();
             // if we are already done or if we have some pending payload we just wait until next write
@@ -825,7 +966,21 @@ pub fn WindowsBufferedWriter(
                 return;
             }
 
-            const pipe = this.pipe orelse return;
+            const pipe = this.source orelse return;
+            switch (pipe) {
+                .file => |file| {
+                    this.pending_payload_size = buffer.len;
+                    uv.uv_fs_req_cleanup(&file.fs);
+                    file.iov = uv.uv_buf_t.init(buffer);
+                    file.fs.data = this;
+                    if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFsWriteComplete).toError(.write)) |err| {
+                        _ = err;
+                        @panic("Error writing to file");
+                    }
+                    return;
+                },
+                else => {},
+            }
             var to_write = buffer;
             while (to_write.len > 0) {
                 switch (pipe.tryWrite(to_write)) {
@@ -833,7 +988,7 @@ pub fn WindowsBufferedWriter(
                         if (err.isRetry()) {
                             // the buffered version should always have a stable ptr
                             this.pending_payload_size = to_write.len;
-                            if (this.write_req.write(@ptrCast(pipe), to_write, this, onWriteComplete).asErr()) |write_err| {
+                            if (this.write_req.write(pipe.toStream(), to_write, this, onWriteComplete).asErr()) |write_err| {
                                 this.close();
                                 onError(this.parent, write_err);
                                 return;
@@ -947,7 +1102,7 @@ pub fn WindowsStreamingWriter(
     comptime onClose: fn (*Parent) void,
 ) type {
     return struct {
-        pipe: ?*uv.Pipe = undefined,
+        source: ?Source = null,
         parent: *Parent = undefined,
         is_done: bool = false,
         // we use only one write_req, any queued data in outgoing will be flushed after this ends
@@ -966,16 +1121,29 @@ pub fn WindowsStreamingWriter(
 
         fn onClosePipe(pipe: *uv.Pipe) callconv(.C) void {
             const this = bun.cast(*WindowsWriter, pipe.data);
-            this.pipe = null;
+            this.source = null;
+            if (!this.closed_without_reporting) {
+                onClose(this.parent);
+            }
+        }
+
+        fn onCloseTTY(tty: *uv.uv_tty_t) callconv(.C) void {
+            const this = bun.cast(*WindowsWriter, tty.data);
+            this.source = null;
             if (!this.closed_without_reporting) {
                 onClose(this.parent);
             }
         }
 
         pub fn startWithCurrentPipe(this: *WindowsWriter) bun.JSC.Maybe(void) {
-            std.debug.assert(this.pipe != null);
+            std.debug.assert(this.source != null);
             this.is_done = false;
             return .{ .result = {} };
+        }
+
+        pub fn setPipe(this: *WindowsWriter, pipe: *uv.Pipe) void {
+            this.source = .{ .pipe = pipe };
+            this.setParent(this.parent);
         }
 
         fn hasPendingData(this: *WindowsWriter) bool {
@@ -988,6 +1156,7 @@ pub fn WindowsStreamingWriter(
         }
 
         fn onWriteComplete(this: *WindowsWriter, status: uv.ReturnCode) void {
+            log("onWriteComplete (status = {d})", .{@intFromEnum(status)});
             if (status.toError(.write)) |err| {
                 this.closeWithoutReporting();
                 this.last_write_result = .{ .err = err };
@@ -1022,8 +1191,19 @@ pub fn WindowsStreamingWriter(
             }
         }
 
+        fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+            const this = bun.cast(*WindowsWriter, fs.data);
+            if (@intFromEnum(fs.result) < 0) {
+                const code: c_int = @truncate(@intFromEnum(fs.result));
+                this.onWriteComplete(@enumFromInt(code));
+            } else {
+                this.onWriteComplete(.zero);
+            }
+        }
+
         /// this tries to send more data returning if we are writable or not after this
         fn processSend(this: *WindowsWriter) bool {
+            log("processSend", .{});
             if (this.current_payload.isNotEmpty()) {
                 // we have some pending async request, the next outgoing data will be processed after this finish
                 this.last_write_result = .{ .pending = 0 };
@@ -1038,13 +1218,34 @@ pub fn WindowsStreamingWriter(
             }
 
             const initial_payload_len = bytes.len;
-            var pipe = this.pipe orelse {
+            var pipe = this.source orelse {
                 this.closeWithoutReporting();
                 const err = bun.sys.Error.fromCode(bun.C.E.PIPE, .pipe);
                 this.last_write_result = .{ .err = err };
                 onError(this.parent, err);
                 return false;
             };
+            switch (pipe) {
+                .file => |file| {
+                    if (this.current_payload.isNotEmpty()) {
+                        return false;
+                    }
+
+                    const temp = this.current_payload;
+                    this.current_payload = this.outgoing;
+                    this.outgoing = temp;
+
+                    uv.uv_fs_req_cleanup(&file.fs);
+                    file.iov = uv.uv_buf_t.init(bytes);
+                    file.fs.data = this;
+                    if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFsWriteComplete).toError(.write)) |err| {
+                        _ = err;
+                        @panic("Error writing to file");
+                    }
+                    return false;
+                },
+                else => {},
+            }
             var writable = true;
             while (true) {
                 switch (pipe.tryWrite(bytes)) {
@@ -1070,7 +1271,7 @@ pub fn WindowsStreamingWriter(
                         this.outgoing = temp;
 
                         // enqueue the write
-                        if (this.write_req.write(@ptrCast(pipe), bytes, this, onWriteComplete).asErr()) |write_err| {
+                        if (this.write_req.write(pipe.toStream(), bytes, this, onWriteComplete).asErr()) |write_err| {
                             this.closeWithoutReporting();
                             this.last_write_result = .{ .err = err };
                             onError(this.parent, write_err);
@@ -1080,7 +1281,7 @@ pub fn WindowsStreamingWriter(
                         break;
                     },
                     .result => |written| {
-                        bytes = bytes[0..written];
+                        bytes = bytes[written..];
                         if (bytes.len == 0) {
                             this.outgoing.reset();
                             break;

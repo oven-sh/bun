@@ -1319,6 +1319,16 @@ pub const struct_uv_tty_s = extern struct {
     stream: union_unnamed_417,
     handle: HANDLE,
     tty: union_unnamed_420,
+
+    pub fn init(this: *uv_tty_t, loop: *uv_loop_t, fd: uv_file) Maybe(void) {
+        // last param is ignored
+        return if (uv_tty_init(loop, this, fd, 0).toError(.open)) |err|
+            .{ .err = err }
+        else
+            .{ .result = {} };
+    }
+
+    pub usingnamespace StreamMixin(@This());
 };
 pub const uv_tty_t = struct_uv_tty_s;
 const union_unnamed_423 = extern union {
@@ -2025,7 +2035,7 @@ pub const uv_tty_mode_t = c_uint;
 pub const UV_TTY_SUPPORTED: c_int = 0;
 pub const UV_TTY_UNSUPPORTED: c_int = 1;
 pub const uv_tty_vtermstate_t = c_uint;
-pub extern fn uv_tty_init(*uv_loop_t, [*c]uv_tty_t, fd: uv_file, readable: c_int) c_int;
+pub extern fn uv_tty_init(*uv_loop_t, [*c]uv_tty_t, fd: uv_file, readable: c_int) ReturnCode;
 pub extern fn uv_tty_set_mode([*c]uv_tty_t, mode: uv_tty_mode_t) c_int;
 pub extern fn uv_tty_reset_mode() c_int;
 pub extern fn uv_tty_get_winsize([*c]uv_tty_t, width: [*c]c_int, height: [*c]c_int) c_int;
@@ -2511,6 +2521,9 @@ pub fn translateUVErrorToE(code: anytype) bun.C.E {
 }
 
 pub const ReturnCode = enum(c_int) {
+    zero = 0,
+    _,
+
     pub fn format(this: ReturnCode, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt_;
         _ = options_;

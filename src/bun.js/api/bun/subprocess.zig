@@ -731,7 +731,7 @@ pub const Subprocess = struct {
                     .source = source,
                 });
                 if (Environment.isWindows) {
-                    this.writer.pipe = this.stdio_result.buffer;
+                    this.writer.setPipe(this.stdio_result.buffer);
                 }
                 this.writer.setParent(this);
                 return this;

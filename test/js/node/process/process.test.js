@@ -71,7 +71,7 @@ it("process.release", () => {
   expect(process.release.name).toBe("node");
   const platform = process.platform == "win32" ? "windows" : process.platform;
   expect(process.release.sourceUrl).toContain(
-    `https://github.com/oven-sh/bun/release/bun-v${process.versions.bun}/bun-${platform}-${
+    `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${
       { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch
     }`,
   );

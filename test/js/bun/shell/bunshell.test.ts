@@ -88,9 +88,11 @@ describe("bunshell", () => {
 
     test("can't escape a js string/obj ref", async () => {
       const shellvar = "$FOO";
-      await TestBuilder.command`FOO=bar && echo \\${shellvar}`.stdout(`$FOO\n`).run();
+      await TestBuilder.command`FOO=bar && echo \\${shellvar}`.stdout(`\\$FOO\n`).run();
       const buf = new Uint8Array(1);
-      await TestBuilder.command`echo hi > \\${buf}`.run();
+      expect(async () => {
+        await TestBuilder.command`echo hi > \\${buf}`.run();
+      }).toThrow("Redirection with no file");
     });
 
     test("in command position", async () => {

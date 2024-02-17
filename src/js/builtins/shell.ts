@@ -2,24 +2,33 @@ type ShellInterpreter = any;
 type Resolve = (value: ShellOutput) => void;
 
 export function createBunShellTemplateFunction(ShellInterpreter) {
+  function lazyBufferToHumanReadableString() {
+    return this.toString();
+  }
   class ShellError extends Error {
     #output: ShellOutput;
-    constructor(output: ShellOutput) {
-      super(`Failed with exit code: ${output}`);
+    constructor(output: ShellOutput, code: number) {
+      super(`Failed with exit code ${code}`);
       this.#output = output;
+      this.name = "ShellError";
+
+      // Maybe we should just print all the properties on the Error instance
+      // instead of speical ones
+      this.info = {
+        stderr: output.stderr,
+        exitCode: code,
+        stdout: output.stdout,
+      };
+
+      this.info.stdout.toJSON = lazyBufferToHumanReadableString;
+      this.info.stderr.toJSON = lazyBufferToHumanReadableString;
+
+      Object.assign(this, this.info);
     }
 
-    get exitCode() {
-      return this.#output.exitCode;
-    }
-
-    get stdout() {
-      return this.#output.stdout;
-    }
-
-    get stderr() {
-      return this.#output.stderr;
-    }
+    exitCode;
+    stdout;
+    stderr;
 
     text(encoding) {
       return this.#output.text(encoding);
@@ -81,12 +90,13 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
         resolve = code => {
           const out = new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code);
           if (this.#throws && code !== 0) {
-            rej(out);
+            rej(new ShellError(out, code));
           } else {
             res(out);
           }
         };
-        reject = code => rej(new ShellError(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code)));
+        reject = code =>
+          rej(new ShellError(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code), code));
       });
 
       this.#throws = throws;

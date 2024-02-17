@@ -115,14 +115,11 @@ pub const HTTPRequestBody = union(enum) {
     }
 };
 
-const TransmitFileContext = bun.windows.TransmitFileContext;
-
 pub const Sendfile = struct {
     fd: bun.FileDescriptor,
     remain: usize = 0,
     offset: usize = 0,
     content_size: usize = 0,
-    transmitFileContext: if (Environment.isWindows) ?TransmitFileContext else void = if (Environment.isWindows) null else {},
 
     pub fn isEligible(url: bun.URL) bool {
         return url.isHTTP() and url.href.len > 0 and FeatureFlags.streaming_file_uploads_for_http_client;
@@ -154,24 +151,6 @@ pub const Sendfile = struct {
                 }
 
                 return .{ .err = bun.errnoToZigErr(errcode) };
-            }
-        } else if (Environment.isWindows) {
-            if (this.transmitFileContext == null) {
-                this.transmitFileContext = TransmitFileContext.init();
-            }
-
-            const transmitFileContext = &(this.transmitFileContext.?);
-
-            const sended = transmitFileContext.sendfile(socket.fd(), this.fd).unwrap() catch |err| {
-                return .{ .err = err };
-            };
-
-            const begin = this.offset;
-            this.offset += sended;
-            this.remain -|= @as(u64, @intCast(this.offset -| begin));
-
-            if (this.remain == 0) {
-                return .{ .done = {} };
             }
         } else if (Environment.isPosix) {
             var sbytes: std.os.off_t = adjusted_count;

@@ -86,7 +86,6 @@ const SendfileContext = struct {
     has_listener: bool = false,
     has_set_on_writable: bool = false,
     auto_close: bool = false,
-    transmitFileContext: if (Environment.isWindows) ?bun.windows.TransmitFileContext else void = if (Environment.isWindows) null else {},
 };
 const DateTime = bun.DateTime;
 const linux = std.os.linux;
@@ -1280,7 +1279,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         defer_deinit_until_callback_completes: ?*bool = null,
 
         // TODO: support builtin compression
-        const can_sendfile = !ssl_enabled;
+        const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
         pub inline fn isAsync(this: *const RequestContext) bool {
             return this.defer_deinit_until_callback_completes == null;
@@ -1893,26 +1892,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
                     this.cleanupAndFinalizeAfterSendfile();
                     return errcode != .SUCCESS;
-                }
-            } else if (Environment.isWindows) {
-                if (this.sendfile.transmitFileContext == null) {
-                    this.sendfile.transmitFileContext = bun.windows.TransmitFileContext.init();
-                }
-
-                const sended = this.sendfile.transmitFileContext.?.sendfile(this.sendfile.socket_fd, this.sendfile.fd).unwrap() catch |err| {
-                    Output.prettyErrorln("Error: {}", .{err});
-                    Output.flush();
-                    this.cleanupAndFinalizeAfterSendfile();
-                    return false;
-                };
-
-                const start = this.sendfile.offset;
-                this.sendfile.offset += sended;
-                this.sendfile.remain -|= @as(Blob.SizeType, @intCast(this.sendfile.offset -| start));
-
-                if (this.sendfile.remain == 0) {
-                    this.cleanupAndFinalizeAfterSendfile();
-                    return true;
                 }
             } else {
                 var sbytes: std.os.off_t = adjusted_count;

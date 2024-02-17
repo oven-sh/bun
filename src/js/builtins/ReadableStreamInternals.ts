@@ -1247,7 +1247,6 @@ export function readableStreamError(stream, error) {
   $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);
   $putByIdDirectPrivate(stream, "state", $streamErrored);
   $putByIdDirectPrivate(stream, "storedError", error);
-
   const reader = $getByIdDirectPrivate(stream, "reader");
 
   if (!reader) return;
@@ -1533,22 +1532,16 @@ export function readableStreamFromAsyncIterator(target, fn) {
     },
 
     async pull(controller) {
-      try {
-        iter = fn.$call(target, controller);
-        fn = target = undefined;
+      // we deliberately want to throw on error
+      iter = fn.$call(target, controller);
+      fn = target = undefined;
 
-        if (!$isAsyncGenerator(iter) && typeof iter.next !== "function") {
-          iter = undefined;
-          throw new TypeError("Expected an async generator");
-        }
-      } catch (e) {
-        // TODO: report errors in close()
-        reportError(e);
-        controller.close(e);
-        return;
+      if (!$isAsyncGenerator(iter) && typeof iter.next !== "function") {
+        iter = undefined;
+        throw new TypeError("Expected an async generator");
       }
 
-      var closingError, value, done;
+      var closingError, value, done, immediateTask;
 
       try {
         while (!cancelled && !done) {
@@ -1561,9 +1554,11 @@ export function readableStreamFromAsyncIterator(target, fn) {
             $isPromise(promise) &&
             ($getPromiseInternalField(promise, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
           ) {
+            clearImmediate(immediateTask);
             ({ value, done } = $getPromiseInternalField(promise, $promiseFieldReactionsOrResult));
             $assert(!$isPromise(value), "Expected a value, not a promise");
           } else {
+            immediateTask = setImmediate(() => immediateTask && controller?.flush?.(true));
             ({ value, done } = await promise);
 
             if (cancelled) {
@@ -1578,6 +1573,9 @@ export function readableStreamFromAsyncIterator(target, fn) {
       } catch (e) {
         closingError = e;
       } finally {
+        clearImmediate(immediateTask);
+        immediateTask = undefined;
+
         // Stream was closed before we tried writing to it.
         if (closingError?.code === "ERR_INVALID_THIS") {
           await iter.return?.();
@@ -1585,8 +1583,11 @@ export function readableStreamFromAsyncIterator(target, fn) {
         }
 
         if (closingError) {
-          await controller.end(closingError);
-          await iter.throw?.(closingError);
+          try {
+            await iter.throw?.(closingError);
+          } finally {
+            throw closingError;
+          }
         } else {
           await controller.end();
           await iter.return?.();
@@ -1868,7 +1869,7 @@ export function readableStreamToArrayBufferDirect(stream, underlyingSource) {
     },
     e => {
       didError = true;
-      $readableStreamError(stream, e);
+      if ($getByIdDirectPrivate(stream, "state") === $streamReadable) $readableStreamError(stream, e);
       return Promise.$reject(e);
     },
   );

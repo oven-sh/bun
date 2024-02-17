@@ -15,7 +15,7 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
 ```jsonc
 {
   "compilerOptions": {
-    // enable latest features
+    // Enable latest features
     "lib": ["ESNext"],
     "target": "ESNext",
     "module": "ESNext",
@@ -32,12 +32,11 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
     // Best practices
     "strict": true,
     "skipLibCheck": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
 
     // Some stricter flags
-    "useUnknownInCatchVariables": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noPropertyAccessFromIndexSignature": true
   }
 }

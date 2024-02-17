@@ -70,6 +70,13 @@ function Install-Bun {
     else { "Bun tag='${Version}'" }
   )
 
+  # check if bun.exe or bunx.exe is in use
+  $BunProcesses = Get-Process -ea SilentlyContinue | Where-Object { $_.Path -like "${BunBin}\*.exe" }
+  if ($BunProcesses) {
+    Write-Output "Install Failed - An older installation exists and is open. Please close open Bun processes and try again"
+    exit 1
+  }
+
   $null = mkdir -Force $BunBin
   Remove-Item -Force $ZipPath -ErrorAction SilentlyContinue
   curl.exe "-#SfLo" "$ZipPath" "$URL" 
@@ -97,7 +104,13 @@ function Install-Bun {
     Write-Error $_
     exit 1
   }
-  Remove-Item "${BunBin}\bun.exe" -ErrorAction SilentlyContinue
+
+  try {
+    Remove-Item "${BunBin}\bun.exe" -Force
+  } catch [System.Management.Automation.ItemNotFoundException] {
+    # do nothing
+  } 
+
   Move-Item "${BunBin}\$Target\bun.exe" "${BunBin}\bun.exe" -Force
 
   Remove-Item "${BunBin}\$Target" -Recurse -Force
@@ -186,8 +199,10 @@ function Install-Bun {
   New-ItemProperty -Path $RegistryKey -Name "UninstallString" -Value "powershell -c `"& `'$BunRoot\uninstall.ps1`'`"" -PropertyType String -Force | Out-Null
 
   $UninstallScript = @"
+Write-Host "Uninstalling Bun..."
 if (-not (Test-Path "`$PSScriptRoot\bin\bun.exe")) {
   Write-Host "bun.exe not found in `$PSScriptRoot\bin"
+  pause
   exit 1
 }
 
@@ -196,10 +211,15 @@ if (-not (Test-Path "`$PSScriptRoot\bin\bun.exe")) {
 `$Path = `$Path | Where-Object { `$_ -ne "`$PSScriptRoot\bin" }
 [System.Environment]::SetEnvironmentVariable('Path', `$Path -join ';', `$User)
 
-Remove-Item "`$PSScriptRoot\bin" -Force -Recurse -ErrorAction SilentlyContinue
-Remove-Item "`$PSScriptRoot\install" -Force -Recurse -ErrorAction SilentlyContinue
-Remove-Item `$PSCommandPath -Force
-Remove-Item $RegistryKey -Force -ErrorAction SilentlyContinue
+try {
+  Get-Process | Where-Object { `$_.Path -like "`$PSScriptRoot\bin\*" } | Stop-Process -Force
+} catch {
+  Write-Host "Could not stop bun.exe processes"
+  pause
+  exit 1
+}
+
+Remove-Item "`$PSScriptRoot\bin", "`$PSScriptRoot\install", `$PSCommandPath, $RegistryKey -Force -Recurse -ErrorAction SilentlyContinue
 "@
 
   Set-Content -Path "${BunRoot}\uninstall.ps1" -Value $UninstallScript

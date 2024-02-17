@@ -933,11 +933,13 @@ class ClientHttp2Session extends Http2Session {
   }
 
   #onClose() {
+    this[bunHTTP2Socket]?.unref?.();
     this.#parser = null;
     this[bunHTTP2Socket] = null;
     this.emit("close");
   }
   #onError(error: Error) {
+    this[bunHTTP2Socket]?.unref?.();
     this.#parser = null;
     this[bunHTTP2Socket] = null;
     this.emit("error", error);

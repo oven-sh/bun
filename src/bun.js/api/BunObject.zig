@@ -1416,6 +1416,8 @@ pub fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callc
     if (comptime bun.is_heap_breakdown_enabled) {
         dump_zone_malloc_stats();
     }
+    if (comptime Environment.isDebug)
+        globalObject.bunVM().eventLoop().debug.queryActivePolls();
     return .undefined;
 }
 
@@ -3624,7 +3626,6 @@ pub const Timer = struct {
     const CallbackJob = struct {
         id: i32 = 0,
         task: JSC.AnyTask = undefined,
-        ref: JSC.Ref = JSC.Ref.init(),
         globalThis: *JSC.JSGlobalObject,
         callback: JSC.Strong = .{},
         arguments: JSC.Strong = .{},
@@ -3658,7 +3659,6 @@ pub const Timer = struct {
         pub fn deinit(this: *CallbackJob) void {
             this.callback.deinit();
             this.arguments.deinit();
-            this.ref.unref(this.globalThis.bunVM());
             bun.default_allocator.destroy(this);
         }
 
@@ -3815,12 +3815,6 @@ pub const Timer = struct {
                     if (vm.timer.maps.get(this.kind).getPtr(this.id)) |val_| {
                         if (val_.*) |*val| {
                             val.poll_ref.ref(vm);
-
-                            if (val.did_unref_timer) {
-                                val.did_unref_timer = false;
-                                if (comptime Environment.isPosix)
-                                    vm.event_loop_handle.?.num_polls += 1;
-                            }
                         }
                     }
                 },
@@ -3869,7 +3863,6 @@ pub const Timer = struct {
 
                     job.* = cb;
                     job.task = CallbackJob.Task.init(job);
-                    job.ref.ref(vm);
 
                     // cancel the current event if exists before re-adding it
                     if (map.fetchSwapRemove(this.id)) |timer| {
@@ -3903,8 +3896,6 @@ pub const Timer = struct {
                 }
                 timeout.timer.?.interval = this.interval;
 
-                timeout.poll_ref.ref(vm);
-
                 // cancel the current event if exists before re-adding it
                 if (map.fetchSwapRemove(this.id)) |timer| {
                     if (timer.value != null) {
@@ -3931,12 +3922,6 @@ pub const Timer = struct {
                     if (vm.timer.maps.get(this.kind).getPtr(this.id)) |val_| {
                         if (val_.*) |*val| {
                             val.poll_ref.unref(vm);
-
-                            if (!val.did_unref_timer) {
-                                val.did_unref_timer = true;
-                                if (comptime Environment.isPosix)
-                                    vm.event_loop_handle.?.num_polls -= 1;
-                            }
                         }
                     }
                 },
@@ -4222,7 +4207,6 @@ pub const Timer = struct {
             );
             job.* = cb;
             job.task = CallbackJob.Task.init(job);
-            job.ref.ref(vm);
 
             if (vm.isInspectorEnabled()) {
                 Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, timer_id.asyncID(), !repeats);
@@ -4307,7 +4291,6 @@ pub const Timer = struct {
 
             job.* = cb;
             job.task = CallbackJob.Task.init(job);
-            job.ref.ref(vm);
 
             vm.enqueueTask(JSC.Task.init(&job.task));
             if (vm.isInspectorEnabled()) {
@@ -4318,17 +4301,13 @@ pub const Timer = struct {
         pub fn deinit(this: *Timeout) void {
             JSC.markBinding(@src());
 
-            var vm = this.globalThis.bunVM();
+            const vm = this.globalThis.bunVM();
 
             this.poll_ref.unref(vm);
 
             if (this.timer) |timer| {
                 timer.cancelled = true;
             }
-
-            if (comptime Environment.isPosix)
-                // balance double unreffing in doUnref
-                vm.event_loop_handle.?.num_polls += @as(i32, @intFromBool(this.did_unref_timer));
 
             this.callback.deinit();
             this.arguments.deinit();
@@ -4369,7 +4348,6 @@ pub const Timer = struct {
 
             job.* = cb;
             job.task = CallbackJob.Task.init(job);
-            job.ref.ref(vm);
 
             vm.enqueueImmediateTask(JSC.Task.init(&job.task));
             if (vm.isInspectorEnabled()) {
@@ -4397,7 +4375,6 @@ pub const Timer = struct {
             timeout.arguments = JSC.Strong.create(arguments_array_or_zero, globalThis);
         }
 
-        timeout.poll_ref.ref(vm);
         map.put(vm.allocator, id, timeout) catch unreachable;
 
         if (vm.isInspectorEnabled()) {

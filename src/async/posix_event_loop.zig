@@ -11,6 +11,7 @@ pub const Loop = uws.Loop;
 /// This is not reference counted. It only tracks active or inactive.
 pub const KeepAlive = struct {
     status: Status = .inactive,
+    debug_poll_id: if (Environment.isDebug) i64 else void = if (Environment.isDebug) -1 else {},
 
     const log = Output.scoped(.KeepAlive, false);
 
@@ -54,7 +55,10 @@ pub const KeepAlive = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        // vm.event_loop_handle.?.subActive(1);
+        if (comptime Environment.isDebug) {
+            if (comptime @TypeOf(event_loop_ctx) == *JSC.VirtualMachine)
+                event_loop_ctx.vm.eventLoop().debug.removePoll(this.debug_poll_id);
+        }
         event_loop_ctx.platformEventLoop().subActive(1);
     }
 
@@ -65,6 +69,10 @@ pub const KeepAlive = struct {
             return;
         this.status = .inactive;
         // vm.event_loop_handle.?.unrefConcurrently();
+        if (comptime Environment.isDebug) {
+            if (comptime @TypeOf(event_loop_ctx) == *JSC.VirtualMachine)
+                event_loop_ctx.vm.eventLoop().debug.removePoll(this.debug_poll_id);
+        }
         event_loop_ctx.platformEventLoop().unrefConcurrently();
     }
 
@@ -75,6 +83,10 @@ pub const KeepAlive = struct {
             return;
         this.status = .inactive;
         // vm.pending_unref_counter +|= 1;
+        if (comptime Environment.isDebug) {
+            if (comptime @TypeOf(event_loop_ctx) == *JSC.VirtualMachine)
+                event_loop_ctx.vm.eventLoop().debug.removePoll(this.debug_poll_id);
+        }
         event_loop_ctx.incrementPendingUnrefCounter();
     }
 
@@ -83,6 +95,9 @@ pub const KeepAlive = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
+        if (comptime Environment.isDebug) {
+            vm.eventLoop().debug.removePoll(this.debug_poll_id);
+        }
         _ = @atomicRmw(@TypeOf(vm.pending_unref_counter), &vm.pending_unref_counter, .Add, 1, .Monotonic);
     }
 
@@ -92,6 +107,11 @@ pub const KeepAlive = struct {
         if (this.status != .inactive)
             return;
         this.status = .active;
+        if (comptime Environment.isDebug) {
+            if (comptime @TypeOf(event_loop_ctx) == *JSC.VirtualMachine)
+                event_loop_ctx.vm.eventLoop().debug.addPoll(&this.debug_poll_id);
+        }
+
         event_loop_ctx.platformEventLoop().ref();
         // vm.event_loop_handle.?.ref();
     }
@@ -103,6 +123,11 @@ pub const KeepAlive = struct {
             return;
         this.status = .active;
         // vm.event_loop_handle.?.refConcurrently();
+        if (comptime Environment.isDebug) {
+            if (comptime @TypeOf(event_loop_ctx) == *JSC.VirtualMachine)
+                event_loop_ctx.vm.eventLoop().debug.addPoll(&this.debug_poll_id);
+        }
+
         event_loop_ctx.platformEventLoop().refConcurrently();
     }
 
@@ -122,6 +147,7 @@ pub const FilePoll = struct {
     fd: bun.FileDescriptor = invalid_fd,
     flags: Flags.Set = Flags.Set{},
     owner: Owner = undefined,
+    debug_poll_id: if (Environment.isDebug) i64 else void = if (Environment.isDebug) -1 else {},
 
     /// We re-use FilePoll objects to avoid allocating new ones.
     ///
@@ -598,6 +624,13 @@ pub const FilePoll = struct {
 
     /// Only intended to be used from EventLoop.Pollable
     fn deactivate(this: *FilePoll, loop: *Loop) void {
+        if (comptime Environment.isDebug) {
+            if (this.event_loop_kind == .js) {
+                if (this.flags.contains(.has_incremented_poll_count))
+                    JSC.VirtualMachine.get().eventLoop().debug.removePoll(this.debug_poll_id);
+            }
+        }
+
         loop.num_polls -= @as(i32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
         this.flags.remove(.has_incremented_poll_count);
 
@@ -609,6 +642,13 @@ pub const FilePoll = struct {
     /// Only intended to be used from EventLoop.Pollable
     fn activate(this: *FilePoll, loop: *Loop) void {
         this.flags.remove(.closed);
+
+        if (comptime Environment.isDebug) {
+            if (this.event_loop_kind == .js) {
+                if (!this.flags.contains(.has_incremented_poll_count))
+                    JSC.VirtualMachine.get().eventLoop().debug.addPoll(&this.debug_poll_id);
+            }
+        }
 
         loop.num_polls += @as(i32, @intFromBool(!this.flags.contains(.has_incremented_poll_count)));
         this.flags.insert(.has_incremented_poll_count);

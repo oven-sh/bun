@@ -671,6 +671,49 @@ pub const EventLoop = struct {
         _prev_is_inside_tick_queue: bool = false,
         last_fn_name: bun.String = bun.String.empty,
         track_last_fn_name: bool = false,
+        lock: bun.Lock = bun.Lock.init(),
+        last_poll_id: i64 = 1,
+        active_polls: std.AutoHashMapUnmanaged(i64, void) = .{},
+
+        pub fn addPoll(this: *@This(), id: *i64) void {
+            this.lock.lock();
+            defer this.lock.unlock();
+            if (id.* <= 0) {
+                this.last_poll_id += 1;
+                id.* = this.last_poll_id;
+            }
+
+            // so it can be referenced in a debugger
+            const this_id = id.*;
+
+            const gpe = this.active_polls.getOrPut(bun.default_allocator, this_id) catch unreachable;
+            if (!gpe.found_existing) {
+                log("+ poll({d})", .{this_id});
+            }
+        }
+
+        pub fn queryActivePolls(this: *@This()) void {
+            var iter = this.active_polls.keyIterator();
+
+            const writer = bun.Output.writer();
+            writer.writeAll("\nPolls: [") catch unreachable;
+            while (iter.next()) |id| {
+                writer.print(" {d}, ", .{id}) catch unreachable;
+            }
+            writer.writeAll("]\n") catch unreachable;
+            bun.Output.flush();
+        }
+
+        pub fn removePoll(this: *@This(), id: i64) void {
+            if (id < 0) return;
+
+            this.lock.lock();
+            defer this.lock.unlock();
+
+            if (this.active_polls.remove(id)) {
+                log("- poll({d})", .{id});
+            }
+        }
 
         pub fn enter(this: *Debug) void {
             this._prev_is_inside_tick_queue = this.is_inside_tick_queue;

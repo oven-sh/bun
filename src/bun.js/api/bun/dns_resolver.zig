@@ -951,8 +951,8 @@ pub const CAresNameInfo = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolve(globalThis, result);
         this.deinit();
+        promise.resolve(globalThis, result);
     }
 
     pub fn deinit(this: *@This()) void {
@@ -1143,8 +1143,12 @@ pub const GetAddrInfoRequest = struct {
         const this = @as(*GetAddrInfoRequest, @ptrFromInt(@intFromPtr(arg)));
         log("getAddrInfoAsyncCallback: status={d}", .{status});
 
-        if (this.backend == .libinfo) {
-            if (this.backend.libinfo.file_poll) |poll| poll.deinit();
+        if (comptime Environment.isMac) {
+            if (this.backend == .libinfo) {
+                if (this.backend.libinfo.file_poll) |poll| {
+                    poll.deinit();
+                }
+            }
         }
 
         if (this.resolver_for_caching) |resolver| {
@@ -1369,8 +1373,8 @@ pub const CAresReverse = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolve(globalThis, result);
         this.deinit();
+        promise.resolve(globalThis, result);
     }
 
     pub fn deinit(this: *@This()) void {
@@ -1448,8 +1452,8 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             var promise = this.promise;
             const globalThis = this.globalThis;
             this.promise = .{};
-            promise.resolve(globalThis, result);
             this.deinit();
+            promise.resolve(globalThis, result);
         }
 
         pub fn deinit(this: *@This()) void {
@@ -1538,15 +1542,16 @@ pub const DNSLookup = struct {
         if (result == null or result.?.node == null) {
             var promise = this.promise;
             var globalThis = this.globalThis;
-
+            this.promise = .{};
             const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{"No results"});
             error_value.put(
                 globalThis,
                 JSC.ZigString.static("code"),
                 JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
             );
-            promise.reject(globalThis, error_value);
             this.deinit();
+            promise.reject(globalThis, error_value);
+
             return;
         }
         this.onComplete(result.?);
@@ -1564,8 +1569,8 @@ pub const DNSLookup = struct {
         var promise = this.promise;
         this.promise = .{};
         const globalThis = this.globalThis;
-        promise.resolve(globalThis, result);
         this.deinit();
+        promise.resolve(globalThis, result);
     }
 
     pub fn deinit(this: *DNSLookup) void {

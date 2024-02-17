@@ -196,13 +196,13 @@ function Install-Bun {
   # New-ItemProperty -Path $RegistryKey -Name "DisplayVersion" -Value $DisplayVersion -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $RegistryKey -Name "InstallLocation" -Value $BunRoot -PropertyType String -Force | Out-Null
   New-ItemProperty -Path $RegistryKey -Name "DisplayIcon" -Value $BunBin\bun.exe -PropertyType String -Force | Out-Null
-  New-ItemProperty -Path $RegistryKey -Name "UninstallString" -Value "powershell -c `"& `'$BunRoot\uninstall.ps1`'`"" -PropertyType String -Force | Out-Null
+  New-ItemProperty -Path $RegistryKey -Name "UninstallString" -Value "powershell -c `"& `'$BunRoot\uninstall.ps1`'-PauseOnError`"" -PropertyType String -Force | Out-Null
 
   $UninstallScript = @"
 Write-Host "Uninstalling Bun..."
 if (-not (Test-Path "`$PSScriptRoot\bin\bun.exe")) {
   Write-Host "bun.exe not found in `$PSScriptRoot\bin"
-  pause
+  if (`$args[0] -eq "-PauseOnError") { pause }
   exit 1
 }
 
@@ -215,7 +215,7 @@ try {
   Get-Process | Where-Object { `$_.Path -like "`$PSScriptRoot\bin\*" } | Stop-Process -Force
 } catch {
   Write-Host "Could not stop bun.exe processes"
-  pause
+  if (`$args[0] -eq "-PauseOnError") { pause }
   exit 1
 }
 

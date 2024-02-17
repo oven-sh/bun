@@ -152,9 +152,7 @@ it("Bun.sleep works with a Date object", async () => {
   var ten_ms = new Date();
   ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
   await Bun.sleep(ten_ms);
-  // TODO: Fix https://github.com/oven-sh/bun/issues/8834
-  // This should be .toBeGreaterThan(11), or maybe even 12
-  expect(performance.now() - now).toBeGreaterThan(10);
+  expect(performance.now() - now).toBeGreaterThan(11);
 });
 
 it("Bun.sleep(Date) fulfills after Date", async () => {

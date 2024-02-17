@@ -1,9 +1,10 @@
 // @known-failing-on-windows: 1 failing
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, test } from "bun:test";
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
-import { bunExe, bunEnv } from "harness";
+import { readdirSync } from "node:fs";
+import { bunExe, bunEnv, isLinux } from "harness";
 import path from "path";
 
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -213,6 +214,19 @@ describe("spawn()", () => {
   it("should spawn a process synchronously", () => {
     const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
     expect(stdout.trim()).toBe("hello");
+  });
+
+  test.if(isLinux)("should handle null for first 4 positions of stdio", async () => {
+    // Run a program that does nothing except pause indefinitely, thus an
+    // opportunity to inspect its file descriptors.
+    const proc = spawn("sleep", ["inf"], {stdio: [null, null, null, null]});
+    // Delay here because the command (above) opens and closes a bunch of
+    // files when starting up, so we have to wait for it to stabilize.  This
+    // still is a race condition though, would be nice to eliminate.
+    await Bun.sleep(10);
+    const fds = readdirSync(`/proc/${proc.pid}/fd/`).sort();
+    proc.kill();
+    expect(fds).toStrictEqual(["0", "1", "2"]);
   });
 });
 

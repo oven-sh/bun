@@ -2702,6 +2702,8 @@ pub fn ReadableStreamSource(
         pub const updateRefFromJS = JSReadableStreamSource.updateRef;
         pub const setOnCloseFromJS = JSReadableStreamSource.setOnCloseFromJS;
         pub const getOnCloseFromJS = JSReadableStreamSource.getOnCloseFromJS;
+        pub const setOnDrainFromJS = JSReadableStreamSource.setOnDrainFromJS;
+        pub const getOnDrainFromJS = JSReadableStreamSource.getOnDrainFromJS;
         pub const finalize = JSReadableStreamSource.finalize;
         pub const construct = JSReadableStreamSource.construct;
         pub const getIsClosedFromJS = JSReadableStreamSource.isClosed;
@@ -2802,12 +2804,42 @@ pub fn ReadableStreamSource(
                 return true;
             }
 
+            pub fn setOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
+                JSC.markBinding(@src());
+                this.globalThis = globalObject;
+
+                if (value.isUndefined()) {
+                    ReadableStreamSourceType.onDrainCallbackSetCached(this.this_jsvalue, globalObject, .undefined);
+                    return true;
+                }
+
+                if (!value.isCallable(globalObject.vm())) {
+                    globalObject.throwInvalidArgumentType("ReadableStreamSource", "onDrain", "function");
+                    return false;
+                }
+                const cb = value.withAsyncContextIfNeeded(globalObject);
+                ReadableStreamSourceType.onDrainCallbackSetCached(this.this_jsvalue, globalObject, cb);
+                return true;
+            }
+
             pub fn getOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                 _ = globalObject; // autofix
 
                 JSC.markBinding(@src());
 
                 return this.close_jsvalue.get() orelse .undefined;
+            }
+
+            pub fn getOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+                _ = globalObject; // autofix
+
+                JSC.markBinding(@src());
+
+                if (ReadableStreamSourceType.onDrainCallbackGetCached(this.this_jsvalue)) |val| {
+                    return val;
+                }
+
+                return .undefined;
             }
 
             pub fn updateRef(this: *ReadableStreamSourceType, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -3688,7 +3720,35 @@ pub const FileReader = struct {
         if (!this.isPulling()) {
             this.consumeReaderBuffer();
             if (this.pending.state == .pending) {
+                if (this.buffered.items.len > 0)
+                    this.pending.result = .{ .owned_and_done = bun.ByteList.fromList(this.buffered) };
+                this.buffered = .{};
                 this.pending.run();
+            } else if (this.buffered.items.len > 0) {
+                const this_value = this.parent().this_jsvalue;
+                const globalThis = this.parent().globalThis;
+                if (this_value != .zero) {
+                    if (Source.onDrainCallbackGetCached(this_value)) |cb| {
+                        const buffered = this.buffered;
+                        this.buffered = .{};
+                        this.parent().incrementCount();
+                        defer _ = this.parent().decrementCount();
+                        this.eventLoop().js.runCallback(
+                            cb,
+                            globalThis,
+                            .undefined,
+                            &.{
+                                JSC.ArrayBuffer.fromBytes(
+                                    buffered.items,
+                                    .Uint8Array,
+                                ).toJS(
+                                    globalThis,
+                                    null,
+                                ),
+                            },
+                        );
+                    }
+                }
             }
         }
 

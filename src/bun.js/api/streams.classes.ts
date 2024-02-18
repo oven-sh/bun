@@ -24,6 +24,10 @@ function source(name) {
         getter: "getOnCloseFromJS",
         setter: "setOnCloseFromJS",
       },
+      onDrain: {
+        getter: "getOnDrainFromJS",
+        setter: "setOnDrainFromJS",
+      },
       cancel: {
         fn: "cancelFromJS",
         length: 1,
@@ -37,7 +41,7 @@ function source(name) {
       },
     },
     klass: {},
-    values: ["pendingPromise", "onCloseCallback"],
+    values: ["pendingPromise", "onCloseCallback", "onDrainCallback"],
   });
 }
 

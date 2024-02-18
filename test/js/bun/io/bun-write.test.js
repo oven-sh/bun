@@ -485,12 +485,14 @@ test("timed output should work", async () => {
 
   const producer = Bun.spawn([bunExe(), "run", producer_file], {
     stderr: "pipe",
+    stdout: "inherit",
+    stdin: "inherit",
   });
 
   let text = "";
   for await (const chunk of producer.stderr) {
     text += [...chunk].map(x => String.fromCharCode(x)).join("");
-    await new Promise(r => setTimeout(r, 1000));
+    await Bun.sleep(1000);
   }
   expect(text).toBe("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n");
 });

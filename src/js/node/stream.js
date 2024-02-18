@@ -5251,10 +5251,15 @@ function createNativeStreamReadable(nativeType, Readable) {
       this.#remainingChunk = undefined;
       this.#pendingRead = false;
       ptr.onClose = this.#onClose.bind(this);
+      ptr.onDrain = this.#onDrain.bind(this);
     }
 
     #onClose() {
       this.push(null);
+    }
+
+    #onDrain(chunk) {
+      this.push(chunk);
     }
 
     // maxToRead is by default the highWaterMark passed from the Readable.read call to this fn

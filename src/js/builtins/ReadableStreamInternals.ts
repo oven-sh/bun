@@ -1679,6 +1679,14 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
         }
 
         handle.onClose = this.#onClose.bind(this);
+        handle.onDrain = this.#onDrain.bind(this);
+      }
+
+      #onDrain(chunk) {
+        var controller = this.#controller;
+        if (controller) {
+          controller.enqueue(chunk);
+        }
       }
 
       #controller;

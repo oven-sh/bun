@@ -18,7 +18,7 @@ pub const LifecycleScriptSubprocess = struct {
     scripts: [6]?Lockfile.Scripts.Entry,
     current_script_index: u8 = 0,
 
-    finished_fds: u8 = 0,
+    remaining_fds: i8 = 0,
     process: ?*Process = null,
     stdout: OutputReader = OutputReader.init(@This()),
     stderr: OutputReader = OutputReader.init(@This()),
@@ -52,15 +52,15 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     pub fn onReaderDone(this: *LifecycleScriptSubprocess) void {
-        std.debug.assert(this.finished_fds < 2);
-        this.finished_fds += 1;
+        std.debug.assert(this.remaining_fds > 0);
+        this.remaining_fds -= 1;
 
         this.maybeFinished();
     }
 
     pub fn onReaderError(this: *LifecycleScriptSubprocess, err: bun.sys.Error) void {
-        std.debug.assert(this.finished_fds < 2);
-        this.finished_fds += 1;
+        std.debug.assert(this.remaining_fds > 0);
+        this.remaining_fds -= 1;
 
         Output.prettyErrorln("<r><red>error<r>: Failed to read <b>{s}<r> script output from \"<b>{s}<r>\" due to error <b>{d} {s}<r>", .{
             this.scriptName(),
@@ -73,7 +73,7 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     fn maybeFinished(this: *LifecycleScriptSubprocess) void {
-        if (!this.has_called_process_exit or this.finished_fds < 2)
+        if (!this.has_called_process_exit or this.remaining_fds != 0)
             return;
 
         const process = this.process orelse return;
@@ -113,7 +113,7 @@ pub const LifecycleScriptSubprocess = struct {
 
         this.package_name = original_script.package_name;
         this.current_script_index = next_script_index;
-        this.finished_fds = 0;
+        this.remaining_fds = if (this.manager.options.log_level.isVerbose()) 0 else 2;
         this.has_called_process_exit = false;
 
         const shell_bin = bun.CLI.RunCommand.findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
@@ -161,7 +161,6 @@ pub const LifecycleScriptSubprocess = struct {
                 }
             else {},
         };
-
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), this.envp)).unwrap();
 
         if (comptime Environment.isPosix) {
@@ -229,12 +228,6 @@ pub const LifecycleScriptSubprocess = struct {
         switch (status) {
             .exited => |exit| {
                 const maybe_duration = if (this.timer) |*t| t.read() else null;
-                if (!this.manager.options.log_level.isVerbose()) {
-                    std.debug.assert(this.finished_fds <= 2);
-                    if (this.finished_fds < 2) {
-                        return;
-                    }
-                }
 
                 if (exit.code > 0) {
                     this.printOutput();
@@ -285,21 +278,9 @@ pub const LifecycleScriptSubprocess = struct {
 
                 // the last script finished
                 _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
-
-                if (!this.manager.options.log_level.isVerbose()) {
-                    if (this.finished_fds == 2) {
-                        this.deinit();
-                    }
-                } else {
-                    this.deinit();
-                }
+                this.deinit();
             },
             .signaled => |signal| {
-                if (!this.manager.options.log_level.isVerbose()) {
-                    if (this.finished_fds < 2) {
-                        return;
-                    }
-                }
                 this.printOutput();
                 Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {}<r>", .{
                     this.scriptName(),
@@ -343,9 +324,7 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     pub fn resetPolls(this: *LifecycleScriptSubprocess) void {
-        if (!this.manager.options.log_level.isVerbose()) {
-            std.debug.assert(this.finished_fds == 2);
-        }
+        std.debug.assert(this.remaining_fds == 0);
 
         if (this.process) |process| {
             this.process = null;

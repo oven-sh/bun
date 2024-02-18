@@ -44,12 +44,28 @@ describe("bunshell", () => {
     }
 
     runTest("number", TestBuilder.command`echo ${1}`.stdout("1\n"));
-    runTest("String", TestBuilder.command`echo ${new String("1")}`.stdout("1\n"));
+    runTest(
+      "String",
+      TestBuilder.command`echo ${new String("1")}`.stdout("1\n"),
+    );
     runTest("bool", TestBuilder.command`echo ${true}`.stdout("true\n"));
     runTest("null", TestBuilder.command`echo ${null}`.stdout("null\n"));
-    runTest("undefined", TestBuilder.command`echo ${undefined}`.stdout("undefined\n"));
-    runTest("Date", TestBuilder.command`echo hello ${new Date()}`.stdout(`hello ${new Date().toString()}\n`));
-    runTest("BigInt", TestBuilder.command`echo ${BigInt((2 ^ 52) - 1)}`.stdout(`${BigInt((2 ^ 52) - 1)}\n`));
+    runTest(
+      "undefined",
+      TestBuilder.command`echo ${undefined}`.stdout("undefined\n"),
+    );
+    runTest(
+      "Date",
+      TestBuilder.command`echo hello ${new Date()}`.stdout(
+        `hello ${new Date().toString()}\n`,
+      ),
+    );
+    runTest(
+      "BigInt",
+      TestBuilder.command`echo ${BigInt((2 ^ 52) - 1)}`.stdout(
+        `${BigInt((2 ^ 52) - 1)}\n`,
+      ),
+    );
     runTest("Array", TestBuilder.command`echo ${[1, 2, 3]}`.stdout(`1 2 3\n`));
   });
 
@@ -79,21 +95,32 @@ describe("bunshell", () => {
 
     test("escape var", async () => {
       const shellvar = "$FOO";
-      await TestBuilder.command`FOO=bar && echo "${shellvar}"`.stdout(`$FOO\n`).run();
-      await TestBuilder.command`FOO=bar && echo '${shellvar}'`.stdout(`$FOO\n`).run();
-      await TestBuilder.command`FOO=bar && echo ${shellvar}`.stdout(`$FOO\n`).run();
+      await TestBuilder.command`FOO=bar && echo "${shellvar}"`
+        .stdout(`$FOO\n`)
+        .run();
+      await TestBuilder.command`FOO=bar && echo '${shellvar}'`
+        .stdout(`$FOO\n`)
+        .run();
+      await TestBuilder.command`FOO=bar && echo ${shellvar}`
+        .stdout(`$FOO\n`)
+        .run();
     });
 
     test("can't escape a js string/obj ref", async () => {
       const shellvar = "$FOO";
-      await TestBuilder.command`FOO=bar && echo \\${shellvar}`.stdout(`$FOO\n`).run();
+      await TestBuilder.command`FOO=bar && echo \\${shellvar}`
+        .stdout(`$FOO\n`)
+        .run();
       const buf = new Uint8Array(1);
       await TestBuilder.command`echo hi > \\${buf}`.run();
     });
 
     test("in command position", async () => {
       const x = "echo hi";
-      await TestBuilder.command`${x}`.exitCode(1).stderr("bun: command not found: echo hi\n").run();
+      await TestBuilder.command`${x}`
+        .exitCode(1)
+        .stderr("bun: command not found: echo hi\n")
+        .run();
     });
 
     test("arrays", async () => {
@@ -106,7 +133,8 @@ describe("bunshell", () => {
     test("basic", async () => {
       // Check its buffered
       {
-        const { stdout, stderr } = await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log('hi'); console.error('lol')"`;
+        const { stdout, stderr } =
+          await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log('hi'); console.error('lol')"`;
         expect(stdout.toString()).toEqual("hi\n");
         expect(stderr.toString()).toEqual("lol\n");
       }
@@ -211,7 +239,9 @@ describe("bunshell", () => {
       const holymoly = "ホーリーモーリー";
       const { stdout } = await $`echo "${whatsupbro}&&nice"${holymoly}`;
 
-      expect(stdout.toString("utf-8")).toEqual(`${whatsupbro}&&nice${holymoly}\n`);
+      expect(stdout.toString("utf-8")).toEqual(
+        `${whatsupbro}&&nice${holymoly}\n`,
+      );
     });
 
     test("cmd subst", async () => {
@@ -248,7 +278,9 @@ describe("bunshell", () => {
     const sentinel = sentinelByte(buffer);
     const thisFile = Bun.file(import.meta.path);
 
-    expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(await thisFile.text());
+    expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(
+      await thisFile.text(),
+    );
   });
 
   test("redirect Buffer", async () => {
@@ -257,7 +289,9 @@ describe("bunshell", () => {
 
     const thisFile = Bun.file(import.meta.path);
 
-    expect(new TextDecoder().decode(buffer.slice(0, sentinelByte(buffer)))).toEqual(await thisFile.text());
+    expect(
+      new TextDecoder().decode(buffer.slice(0, sentinelByte(buffer))),
+    ).toEqual(await thisFile.text());
   });
 
   test("redirect Bun.File", async () => {
@@ -281,9 +315,9 @@ describe("bunshell", () => {
     await $`${BUN} -e ${code} 2> ${buffer}`.env(bunEnv);
 
     console.log(buffer);
-    expect(new TextDecoder().decode(buffer.slice(0, sentinelByte(buffer)))).toEqual(
-      `LMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\n`,
-    );
+    expect(
+      new TextDecoder().decode(buffer.slice(0, sentinelByte(buffer))),
+    ).toEqual(`LMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\nLMAO\n`);
   });
 
   test("pipeline", async () => {
@@ -296,6 +330,18 @@ describe("bunshell", () => {
     const haha = "noice";
     const { stdout } = await $`echo $(echo noice)`;
     expect(stdout.toString()).toEqual(`noice\n`);
+  });
+
+  describe("tilde expansion", () => {
+    test("with paths", async () => {
+      await TestBuilder.command`echo ~/Documents`
+        .stdout(`${process.env.HOME}/Documents\n`)
+        .run();
+    });
+
+    test("normal", async () => {
+      await TestBuilder.command`echo ~`.stdout(`${process.env.HOME}\n`).run();
+    });
   });
 
   describe("brace expansion", () => {
@@ -316,7 +362,10 @@ describe("bunshell", () => {
       doTest("{a,{b,{c,d}}}", "a b c d");
       doTest("{a,b,HI{c,e,LMAO{d,f}Q}}", "a b HIc HIe HILMAOdQ HILMAOfQ");
       doTest("{a,{b,c}}{1,2,3}", "a1 a2 a3 b1 b2 b3 c1 c2 c3");
-      doTest("{a,{b,c}HEY,d}{1,2,3}", "a1 a2 a3 bHEY1 bHEY2 bHEY3 cHEY1 cHEY2 cHEY3 d1 d2 d3");
+      doTest(
+        "{a,{b,c}HEY,d}{1,2,3}",
+        "a1 a2 a3 bHEY1 bHEY2 bHEY3 cHEY1 cHEY2 cHEY3 d1 d2 d3",
+      );
       doTest("{a,{b,c},d}{1,2,3}", "a1 a2 a3 b1 b2 b3 c1 c2 c3 d1 d2 d3");
 
       doTest(
@@ -333,7 +382,8 @@ describe("bunshell", () => {
 
   describe("variables", () => {
     test("cmd_local_var", async () => {
-      const { stdout } = await $`FOO=bar BOOP=1 ${BUN} -e "console.log(JSON.stringify(process.env))"`;
+      const { stdout } =
+        await $`FOO=bar BOOP=1 ${BUN} -e "console.log(JSON.stringify(process.env))"`;
       const str = stdout.toString();
       expect(JSON.parse(str)).toEqual({
         ...bunEnv,
@@ -350,7 +400,8 @@ describe("bunshell", () => {
     });
 
     test("shell var", async () => {
-      const { stdout } = await $`FOO=bar BAR=baz && BAZ=1 ${BUN} -e "console.log(JSON.stringify(process.env))"`;
+      const { stdout } =
+        await $`FOO=bar BAR=baz && BAZ=1 ${BUN} -e "console.log(JSON.stringify(process.env))"`;
       const str = stdout.toString();
 
       const procEnv = JSON.parse(str);
@@ -372,12 +423,18 @@ describe("bunshell", () => {
       let procEnv = JSON.parse(str1);
       expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar" });
       procEnv = JSON.parse(str2);
-      expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar", BUN_TEST_VAR: "1" });
+      expect(procEnv).toEqual({
+        ...bunEnv,
+        BAZ: "1",
+        FOO: "bar",
+        BUN_TEST_VAR: "1",
+      });
     });
 
     test("syntax edgecase", async () => {
       const buffer = new Uint8Array(8192);
-      const shellProc = await $`FOO=bar BUN_TEST_VAR=1 ${BUN} -e "console.log(JSON.stringify(process.env))"> ${buffer}`;
+      const shellProc =
+        await $`FOO=bar BUN_TEST_VAR=1 ${BUN} -e "console.log(JSON.stringify(process.env))"> ${buffer}`;
 
       const str = stringifyBuffer(buffer);
 
@@ -394,7 +451,7 @@ describe("bunshell", () => {
       expect(
         str
           .split("\n")
-          .filter(s => s.length > 0)
+          .filter((s) => s.length > 0)
           .sort(),
       ).toEqual(temp_files.sort());
     });
@@ -415,11 +472,11 @@ describe("bunshell", () => {
   describe("rm", () => {
     let temp_dir: string;
     const files = {
-      "foo": "bar",
-      "bar": "baz",
-      "dir": {
-        "some": "more",
-        "files": "here",
+      foo: "bar",
+      bar: "baz",
+      dir: {
+        some: "more",
+        files: "here",
       },
     };
     beforeAll(() => {
@@ -437,7 +494,7 @@ describe("bunshell", () => {
       expect(
         str
           .split("\n")
-          .filter(s => s.length !== 0)
+          .filter((s) => s.length !== 0)
           .sort(),
       ).toEqual(
         `${temp_dir}/foo
@@ -464,11 +521,21 @@ describe("deno_task", () => {
     await TestBuilder.command`echo 1 2   3`.stdout("1 2 3\n").run();
     await TestBuilder.command`echo "1 2   3"`.stdout("1 2   3\n").run();
     await TestBuilder.command`echo 1 2\\ \\ \\ 3`.stdout("1 2   3\n").run();
-    await TestBuilder.command`echo "1 2\\ \\ \\ 3"`.stdout("1 2\\ \\ \\ 3\n").run();
-    await TestBuilder.command`echo test$(echo 1    2)`.stdout("test1 2\n").run();
-    await TestBuilder.command`echo test$(echo "1    2")`.stdout("test1 2\n").run();
-    await TestBuilder.command`echo "test$(echo "1    2")"`.stdout("test1    2\n").run();
-    await TestBuilder.command`echo test$(echo "1 2 3")`.stdout("test1 2 3\n").run();
+    await TestBuilder.command`echo "1 2\\ \\ \\ 3"`
+      .stdout("1 2\\ \\ \\ 3\n")
+      .run();
+    await TestBuilder.command`echo test$(echo 1    2)`
+      .stdout("test1 2\n")
+      .run();
+    await TestBuilder.command`echo test$(echo "1    2")`
+      .stdout("test1 2\n")
+      .run();
+    await TestBuilder.command`echo "test$(echo "1    2")"`
+      .stdout("test1    2\n")
+      .run();
+    await TestBuilder.command`echo test$(echo "1 2 3")`
+      .stdout("test1 2 3\n")
+      .run();
     await TestBuilder.command`VAR=1 BUN_TEST_VAR=1 ${BUN} -e 'console.log(process.env.VAR)' && echo $VAR`
       .stdout("1\n\n")
       .run();
@@ -481,17 +548,27 @@ describe("deno_task", () => {
     await TestBuilder.command`"echo" "1"`.stdout("1\n").run();
     await TestBuilder.command`echo test-dashes`.stdout("test-dashes\n").run();
     await TestBuilder.command`echo 'a/b'/c`.stdout("a/b/c\n").run();
-    await TestBuilder.command`echo 'a/b'ctest\"te  st\"'asdf'`.stdout("a/bctestte  stasdf\n").run();
+    await TestBuilder.command`echo 'a/b'ctest\"te  st\"'asdf'`
+      .stdout("a/bctestte  stasdf\n")
+      .run();
     await TestBuilder.command`echo --test=\"2\" --test='2' test\"TEST\" TEST'test'TEST 'test''test' test'test'\"test\" \"test\"\"test\"'test'`
-      .stdout("--test=2 --test=2 testTEST TESTtestTEST testtest testtesttest testtesttest\n")
+      .stdout(
+        "--test=2 --test=2 testTEST TESTtestTEST testtest testtesttest testtesttest\n",
+      )
       .run();
   });
 
   test("boolean logic", async () => {
-    await TestBuilder.command`echo 1 && echo 2 || echo 3`.stdout("1\n2\n").run();
-    await TestBuilder.command`echo 1 || echo 2 && echo 3`.stdout("1\n3\n").run();
+    await TestBuilder.command`echo 1 && echo 2 || echo 3`
+      .stdout("1\n2\n")
+      .run();
+    await TestBuilder.command`echo 1 || echo 2 && echo 3`
+      .stdout("1\n3\n")
+      .run();
 
-    await TestBuilder.command`echo 1 || (echo 2 && echo 3)`.error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN).run();
+    await TestBuilder.command`echo 1 || (echo 2 && echo 3)`
+      .error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN)
+      .run();
     await TestBuilder.command`false || false || (echo 2 && false) || echo 3`
       .error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN)
       .run();
@@ -550,7 +627,9 @@ describe("deno_task", () => {
 
     await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(2);' |& BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       // .stdout("1\n2\n")
-      .error("Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.")
+      .error(
+        "Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.",
+      )
       .run();
 
     // await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_TEST_VAR=1 ${BUN} -e 'setTimeout(async () => { await Deno.stdin.readable.pipeTo(Deno.stderr.writable) }, 10)' |& BUN_TEST_VAR=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stderr.writable)'`
@@ -559,7 +638,9 @@ describe("deno_task", () => {
 
     await TestBuilder.command`echo 1 |& BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       // .stdout("1\n")
-      .error("Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.")
+      .error(
+        "Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.",
+      )
       .run();
 
     await TestBuilder.command`echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)' > output.txt`
@@ -582,7 +663,9 @@ describe("deno_task", () => {
       .run();
 
     // absolute path
-    await TestBuilder.command`echo 1 2 3 > "$PWD/test.txt"`.fileEquals("test.txt", "1 2 3\n").run();
+    await TestBuilder.command`echo 1 2 3 > "$PWD/test.txt"`
+      .fileEquals("test.txt", "1 2 3\n")
+      .run();
 
     // stdout
     await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(5)' 1> test.txt`
@@ -609,7 +692,9 @@ describe("deno_task", () => {
       .run();
 
     // appending
-    await TestBuilder.command`echo 1 > test.txt && echo 2 >> test.txt`.fileEquals("test.txt", "1\n2\n").run();
+    await TestBuilder.command`echo 1 > test.txt && echo 2 >> test.txt`
+      .fileEquals("test.txt", "1\n2\n")
+      .run();
 
     // &> and &>> redirect
     await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); setTimeout(() => console.error(23), 10)' &> file.txt && BUN_TEST_VAR=1 ${BUN} -e 'console.log(456); setTimeout(() => console.error(789), 10)' &>> file.txt`
@@ -625,7 +710,10 @@ describe("deno_task", () => {
     //   .run();
 
     // zero arguments after re-direct
-    await TestBuilder.command`echo 1 > $EMPTY`.stderr("bun: ambiguous redirect: at `echo`\n").exitCode(1).run();
+    await TestBuilder.command`echo 1 > $EMPTY`
+      .stderr("bun: ambiguous redirect: at `echo`\n")
+      .exitCode(1)
+      .run();
   });
 
   test("pwd", async () => {
@@ -644,18 +732,28 @@ describe("deno_task", () => {
     }
 
     {
-      const { stdout } = await $`BUN_TEST_VAR=1 ${BUN} -e 'console.log(JSON.stringify(process.env))'`.env({
+      const { stdout } =
+        await $`BUN_TEST_VAR=1 ${BUN} -e 'console.log(JSON.stringify(process.env))'`.env(
+          {
+            ...bunEnv,
+            FOO: "bar",
+          },
+        );
+      expect(JSON.parse(stdout.toString())).toEqual({
         ...bunEnv,
+        BUN_TEST_VAR: "1",
         FOO: "bar",
       });
-      expect(JSON.parse(stdout.toString())).toEqual({ ...bunEnv, BUN_TEST_VAR: "1", FOO: "bar" });
     }
 
     {
-      const { stdout } = await $`BUN_TEST_VAR=1 ${BUN} -e 'console.log(JSON.stringify(process.env))'`.env({
-        ...bunEnv,
-        FOO: "bar",
-      });
+      const { stdout } =
+        await $`BUN_TEST_VAR=1 ${BUN} -e 'console.log(JSON.stringify(process.env))'`.env(
+          {
+            ...bunEnv,
+            FOO: "bar",
+          },
+        );
       expect(JSON.parse(stdout.toString())).toEqual({
         ...bunEnv,
         BUN_TEST_VAR: "1",
@@ -679,15 +777,21 @@ function sentinelByte(buf: Uint8Array): number {
 }
 
 const foo = {
-  "stmts": [
+  stmts: [
     {
-      "exprs": [
+      exprs: [
         {
-          "cmd": {
-            "assigns": [],
-            "name_and_args": [{ "simple": { "Text": "echo" } }],
-            "redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 },
-            "redirect_file": { "jsbuf": { "idx": 0 } },
+          cmd: {
+            assigns: [],
+            name_and_args: [{ simple: { Text: "echo" } }],
+            redirect: {
+              stdin: false,
+              stdout: true,
+              stderr: false,
+              append: false,
+              __unused: 0,
+            },
+            redirect_file: { jsbuf: { idx: 0 } },
           },
         },
       ],
@@ -696,43 +800,65 @@ const foo = {
 };
 
 const lex = [
-  { "Text": "echo" },
-  { "Delimit": {} },
-  { "CmdSubstBegin": {} },
-  { "Text": "echo" },
-  { "Delimit": {} },
-  { "Text": "ハハ" },
-  { "Delimit": {} },
-  { "CmdSubstEnd": {} },
-  { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 } },
-  { "JSObjRef": 0 },
-  { "Eof": {} },
+  { Text: "echo" },
+  { Delimit: {} },
+  { CmdSubstBegin: {} },
+  { Text: "echo" },
+  { Delimit: {} },
+  { Text: "ハハ" },
+  { Delimit: {} },
+  { CmdSubstEnd: {} },
+  {
+    Redirect: {
+      stdin: false,
+      stdout: true,
+      stderr: false,
+      append: false,
+      __unused: 0,
+    },
+  },
+  { JSObjRef: 0 },
+  { Eof: {} },
 ];
 
 const lex2 = [
-  { "Text": "echo" },
-  { "Delimit": {} },
-  { "CmdSubstBegin": {} },
-  { "Text": "echo" },
-  { "Delimit": {} },
-  { "Text": "noice" },
-  { "Delimit": {} },
-  { "CmdSubstEnd": {} },
-  { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 } },
-  { "JSObjRef": 0 },
-  { "Eof": {} },
+  { Text: "echo" },
+  { Delimit: {} },
+  { CmdSubstBegin: {} },
+  { Text: "echo" },
+  { Delimit: {} },
+  { Text: "noice" },
+  { Delimit: {} },
+  { CmdSubstEnd: {} },
+  {
+    Redirect: {
+      stdin: false,
+      stdout: true,
+      stderr: false,
+      append: false,
+      __unused: 0,
+    },
+  },
+  { JSObjRef: 0 },
+  { Eof: {} },
 ];
 
 const parse2 = {
-  "stmts": [
+  stmts: [
     {
-      "exprs": [
+      exprs: [
         {
-          "cmd": {
-            "assigns": [],
-            "name_and_args": [{ "simple": { "Text": "echo" } }],
-            "redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 },
-            "redirect_file": { "jsbuf": { "idx": 0 } },
+          cmd: {
+            assigns: [],
+            name_and_args: [{ simple: { Text: "echo" } }],
+            redirect: {
+              stdin: false,
+              stdout: true,
+              stderr: false,
+              append: false,
+              __unused: 0,
+            },
+            redirect_file: { jsbuf: { idx: 0 } },
           },
         },
       ],
@@ -741,15 +867,21 @@ const parse2 = {
 };
 
 const lsdkjfs = {
-  "stmts": [
+  stmts: [
     {
-      "exprs": [
+      exprs: [
         {
-          "cmd": {
-            "assigns": [],
-            "name_and_args": [{ "simple": { "Text": "echo" } }],
-            "redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 },
-            "redirect_file": { "jsbuf": { "idx": 0 } },
+          cmd: {
+            assigns: [],
+            name_and_args: [{ simple: { Text: "echo" } }],
+            redirect: {
+              stdin: false,
+              stdout: true,
+              stderr: false,
+              append: false,
+              __unused: 0,
+            },
+            redirect_file: { jsbuf: { idx: 0 } },
           },
         },
       ],

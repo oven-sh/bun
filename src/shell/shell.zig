@@ -502,6 +502,13 @@ pub const AST = struct {
                 .compound => self.compound.brace_expansion_hint,
             };
         }
+
+        pub fn hasTildeExpansion(self: *const Atom) bool {
+            return switch (self.*) {
+                .simple => self.simple == .tilde,
+                .compound => self.compound.atoms.len > 0 and self.compound.atoms[0] == .tilde,
+            };
+        }
     };
 
     pub const SimpleAtom = union(enum) {
@@ -516,6 +523,7 @@ pub const AST = struct {
             script: Script,
             quoted: bool = false,
         },
+        tilde,
 
         pub fn glob_hint(this: SimpleAtom) bool {
             return switch (this) {
@@ -948,6 +956,14 @@ pub const Parser = struct {
                         try self.add_error("Unexpected token: `{s}`", .{if (peeked == .OpenParen) "(" else ")"});
                         return null;
                     },
+                    .Tilde => {
+                        _ = self.expect(.Tilde);
+                        try atoms.append(.tilde);
+                        if (next_delimits) {
+                            _ = self.match(.Delimit);
+                            if (should_break) break;
+                        }
+                    },
                     else => return null,
                 }
             }
@@ -1285,8 +1301,8 @@ pub const LexError = struct {
     /// Allocated with lexer arena
     msg: []const u8,
 };
-pub const LEX_JS_OBJREF_PREFIX = 8 ++ "__bun_";
-pub const LEX_JS_STRING_PREFIX = 8 ++ "__bunstr_";
+pub const LEX_JS_OBJREF_PREFIX = &[_]u8{8} ++ "__bun_";
+pub const LEX_JS_STRING_PREFIX = &[_]u8{8} ++ "__bunstr_";
 
 pub fn NewLexer(comptime encoding: StringEncoding) type {
     const Chars = ShellCharIter(encoding);
@@ -1454,6 +1470,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         // tilde expansion
                         '~' => {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+
+                            // tilde needs to be a new word
                             if (self.chars.prev) |prev| {
                                 if (prev.escaped) break :escaped;
                                 switch (prev.char) {

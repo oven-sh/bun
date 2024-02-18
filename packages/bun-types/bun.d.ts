@@ -50,12 +50,83 @@ declare module "bun" {
   export type ShellFunction = (input: Uint8Array) => Uint8Array;
 
   export type ShellExpression =
+    | { toString(): string }
+    | Array<ShellExpression>
     | string
     | { raw: string }
     | Subprocess
     | SpawnOptions.Readable
     | SpawnOptions.Writable
     | ReadableStream;
+
+  class ShellError extends Error implements ShellOutput {
+    readonly stdout: Buffer;
+    readonly stderr: Buffer;
+    readonly exitCode: number;
+
+    /**
+     * Read from stdout as a string
+     *
+     * @param encoding - The encoding to use when decoding the output
+     * @returns Stdout as a string with the given encoding
+     * @example
+     *
+     * ## Read as UTF-8 string
+     *
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.text()); // "hello\n"
+     * ```
+     *
+     * ## Read as base64 string
+     *
+     * ```ts
+     * const output = await $`echo ${atob("hello")}`;
+     * console.log(output.text("base64")); // "hello\n"
+     * ```
+     *
+     */
+    text(encoding?: BufferEncoding): string;
+
+    /**
+     * Read from stdout as a JSON object
+     *
+     * @returns Stdout as a JSON object
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo '{"hello": 123}'`;
+     * console.log(output.json()); // { hello: 123 }
+     * ```
+     *
+     */
+    json(): any;
+
+    /**
+     * Read from stdout as an ArrayBuffer
+     *
+     * @returns Stdout as an ArrayBuffer
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
+     * ```
+     */
+    arrayBuffer(): ArrayBuffer;
+
+    /**
+     * Read from stdout as a Blob
+     *
+     * @returns Stdout as a blob
+     * @example
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.blob()); // Blob { size: 6, type: "" }
+     * ```
+     */
+    blob(): Blob;
+  }
 
   class ShellPromise extends Promise<ShellOutput> {
     get stdin(): WritableStream;
@@ -156,6 +227,16 @@ declare module "bun" {
      * ```
      */
     blob(): Promise<Blob>;
+
+    /**
+     * Configure the shell to not throw an exception on non-zero exit codes.
+     */
+    nothrow(): this;
+
+    /**
+     * Configure whether or not the shell should throw an exception on non-zero exit codes.
+     */
+    throws(shouldThrow: boolean): this;
   }
 
   interface ShellConstructor {
@@ -207,6 +288,16 @@ declare module "bun" {
      */
     cwd(newCwd?: string): this;
 
+    /**
+     * Configure the shell to not throw an exception on non-zero exit codes.
+     */
+    nothrow(): this;
+
+    /**
+     * Configure whether or not the shell should throw an exception on non-zero exit codes.
+     */
+    throws(shouldThrow: boolean): this;
+
     readonly ShellPromise: typeof ShellPromise;
     readonly Shell: ShellConstructor;
   }
@@ -215,6 +306,69 @@ declare module "bun" {
     readonly stdout: Buffer;
     readonly stderr: Buffer;
     readonly exitCode: number;
+
+    /**
+     * Read from stdout as a string
+     *
+     * @param encoding - The encoding to use when decoding the output
+     * @returns Stdout as a string with the given encoding
+     * @example
+     *
+     * ## Read as UTF-8 string
+     *
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.text()); // "hello\n"
+     * ```
+     *
+     * ## Read as base64 string
+     *
+     * ```ts
+     * const output = await $`echo ${atob("hello")}`;
+     * console.log(output.text("base64")); // "hello\n"
+     * ```
+     *
+     */
+    text(encoding?: BufferEncoding): string;
+
+    /**
+     * Read from stdout as a JSON object
+     *
+     * @returns Stdout as a JSON object
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo '{"hello": 123}'`;
+     * console.log(output.json()); // { hello: 123 }
+     * ```
+     *
+     */
+    json(): any;
+
+    /**
+     * Read from stdout as an ArrayBuffer
+     *
+     * @returns Stdout as an ArrayBuffer
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
+     * ```
+     */
+    arrayBuffer(): ArrayBuffer;
+
+    /**
+     * Read from stdout as a Blob
+     *
+     * @returns Stdout as a blob
+     * @example
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.blob()); // Blob { size: 6, type: "" }
+     * ```
+     */
+    blob(): Blob;
   }
 
   export const $: Shell;

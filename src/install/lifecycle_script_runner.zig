@@ -22,6 +22,7 @@ pub const LifecycleScriptSubprocess = struct {
     process: ?*Process = null,
     stdout: OutputReader = OutputReader.init(@This()),
     stderr: OutputReader = OutputReader.init(@This()),
+    has_called_process_exit: bool = false,
     manager: *PackageManager,
     envp: [:null]?[*:0]u8,
 
@@ -72,13 +73,15 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     fn maybeFinished(this: *LifecycleScriptSubprocess) void {
-        if (this.process) |process| {
-            if (process.hasExited()) {
-                if (this.finished_fds == 2) {
-                    this.onProcessExit(process, process.status, undefined);
-                }
-            }
-        }
+        if (!this.has_called_process_exit or this.finished_fds < 2)
+            return;
+
+        const process = this.process orelse return;
+        this.process = null;
+        const status = process.status;
+        process.detach();
+        process.deref();
+        this.handleExit(status);
     }
 
     // This is only used on the main thread.
@@ -111,6 +114,7 @@ pub const LifecycleScriptSubprocess = struct {
         this.package_name = original_script.package_name;
         this.current_script_index = next_script_index;
         this.finished_fds = 0;
+        this.has_called_process_exit = false;
 
         const shell_bin = bun.CLI.RunCommand.findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
@@ -191,8 +195,10 @@ pub const LifecycleScriptSubprocess = struct {
             proc.detach();
             proc.deref();
         }
-        process.setExitHandler(this);
+
         this.process = process;
+        process.setExitHandler(this);
+
         try process.watch(event_loop).unwrap();
     }
 
@@ -219,8 +225,7 @@ pub const LifecycleScriptSubprocess = struct {
         }
     }
 
-    /// This function may free the *LifecycleScriptSubprocess
-    pub fn onProcessExit(this: *LifecycleScriptSubprocess, _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
+    fn handleExit(this: *LifecycleScriptSubprocess, status: bun.spawn.Status) void {
         switch (status) {
             .exited => |exit| {
                 const maybe_duration = if (this.timer) |*t| t.read() else null;
@@ -325,6 +330,16 @@ pub const LifecycleScriptSubprocess = struct {
                 });
             },
         }
+    }
+
+    /// This function may free the *LifecycleScriptSubprocess
+    pub fn onProcessExit(this: *LifecycleScriptSubprocess, proc: *Process, _: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
+        if (this.process != proc) {
+            Output.debugWarn("<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process", .{});
+            return;
+        }
+        this.has_called_process_exit = true;
+        this.maybeFinished();
     }
 
     pub fn resetPolls(this: *LifecycleScriptSubprocess) void {

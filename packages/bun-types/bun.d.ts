@@ -1985,6 +1985,7 @@ declare module "bun" {
    *     return new Response("Hello World");
    *  },
    * });
+   * ```
    */
   interface WebSocketHandler<T = undefined> {
     /**

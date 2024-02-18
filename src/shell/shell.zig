@@ -48,6 +48,27 @@ pub const ShellErr = union(enum) {
         };
     }
 
+    pub fn fmt(this: @This()) []const u8 {
+        switch (this) {
+            .sys => {
+                const err = this.sys;
+                const str = std.fmt.allocPrint(bun.default_allocator, "bun: {s}: {}\n", .{ err.message, err.path }) catch bun.outOfMemory();
+                return str;
+            },
+            .custom => {
+                return std.fmt.allocPrint(bun.default_allocator, "bun: {s}\n", .{this.custom}) catch bun.outOfMemory();
+            },
+            .invalid_arguments => {
+                const str = std.fmt.allocPrint(bun.default_allocator, "bun: invalid arguments: {s}\n", .{this.invalid_arguments.val}) catch bun.outOfMemory();
+                return str;
+            },
+            .todo => {
+                const str = std.fmt.allocPrint(bun.default_allocator, "bun: TODO: {s}\n", .{this.invalid_arguments.val}) catch bun.outOfMemory();
+                return str;
+            },
+        }
+    }
+
     pub fn throwJS(this: @This(), globalThis: *JSC.JSGlobalObject) void {
         switch (this) {
             .sys => {
@@ -931,7 +952,7 @@ pub const Parser = struct {
                         self.continue_from_subparser(&subparser);
                         if (self.delimits(self.peek())) {
                             _ = self.match(.Delimit);
-                            if (should_break) break;
+                            break;
                         }
                     },
                     .Text => |txtrng| {
@@ -1836,6 +1857,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         switch (char) {
                             '0'...'9' => {
                                 _ = self.eat();
+                                if (count >= 32) {
+                                    return null;
+                                }
                                 buf[count] = @intCast(char);
                                 count += 1;
                                 continue;
@@ -1921,6 +1945,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 const char = result.char;
                 switch (char) {
                     '0'...'9' => {
+                        if (count >= 32) return null;
                         // Safe to cast here because 0-8 is in ASCII range
                         buf[count] = @intCast(char);
                         count += 1;
@@ -2008,9 +2033,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 while (i < bytes.len) : (i += 1) {
                     switch (bytes[i]) {
                         '0'...'9' => {
-                            if (digit_buf_count >= 32) {
+                            if (digit_buf_count >= digit_buf.len) {
                                 const ERROR_STR = "Invalid " ++ name ++ " (number too high): ";
-                                var error_buf: [ERROR_STR.len + 33]u8 = undefined;
+                                var error_buf: [ERROR_STR.len + digit_buf.len + 1]u8 = undefined;
                                 const error_msg = std.fmt.bufPrint(error_buf[0..], "{s} {s}{c}", .{ ERROR_STR, digit_buf[0..digit_buf_count], bytes[i] }) catch @panic("Should not happen");
                                 self.add_error(error_msg);
                                 return null;
@@ -2764,8 +2789,7 @@ pub fn handleTemplateValue(
             while (array.next()) |arr| : (i += 1) {
                 if (!(try handleTemplateValue(globalThis, arr, out_jsobjs, out_script, jsstrings, jsobjref_buf))) return false;
                 if (i < last) {
-                    const str = bun.String.init(" ");
-                    defer str.deref();
+                    const str = bun.String.static(" ");
                     if (!try builder.appendBunStr(str, false)) return false;
                 }
             }
@@ -2987,7 +3011,7 @@ pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_qu
         const char: u32 = brk: {
             if (i < non_ascii) {
                 i += 1;
-                break :brk @intCast(str[i]);
+                break :brk str[i];
             }
             const ret = bun.strings.utf16Codepoint([]const u16, str[i..]);
             if (ret.fail) return false;

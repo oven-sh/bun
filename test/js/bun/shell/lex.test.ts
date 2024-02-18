@@ -5,15 +5,11 @@ import { TestBuilder, redirect } from "./util";
 
 const BUN = process.argv0;
 
+$.nothrow();
+
 describe("lex shell", () => {
   test("basic", () => {
-    const expected = [
-      { Text: "next" },
-      { Delimit: {} },
-      { Text: "dev" },
-      { Delimit: {} },
-      { Eof: {} },
-    ];
+    const expected = [{ Text: "next" }, { Delimit: {} }, { Text: "dev" }, { Delimit: {} }, { Eof: {} }];
     const result = JSON.parse($.lex`next dev`);
     expect(result).toEqual(expected);
   });
@@ -132,9 +128,7 @@ describe("lex shell", () => {
       { Var: "FULLNAME" },
       { Eof: {} },
     ];
-    const result = JSON.parse(
-      $.lex`NAME=zack FULLNAME="$NAME radisic" LOL= ; echo $FULLNAME`,
-    );
+    const result = JSON.parse($.lex`NAME=zack FULLNAME="$NAME radisic" LOL= ; echo $FULLNAME`);
     expect(result).toEqual(expected);
   });
 
@@ -497,9 +491,7 @@ describe("lex shell", () => {
     ];
     const buffer = new Uint8Array(1 << 20);
     const buffer2 = new Uint8Array(1 << 20);
-    const result = JSON.parse(
-      $.lex`echo foo > ${buffer} && echo lmao > ${buffer2}`,
-    );
+    const result = JSON.parse($.lex`echo foo > ${buffer} && echo lmao > ${buffer2}`);
     expect(result).toEqual(expected);
   });
 
@@ -739,27 +731,21 @@ describe("lex shell", () => {
     });
 
     test("Unclosed subshell", async () => {
-      await TestBuilder.command`echo hi && $(echo uh oh`
-        .error("Unclosed command substitution")
-        .run();
+      await TestBuilder.command`echo hi && $(echo uh oh`.error("Unclosed command substitution").run();
       await TestBuilder.command`echo hi && $(echo uh oh)`
         .stdout("hi\n")
         .stderr("bun: command not found: uh\n")
         .exitCode(1)
         .run();
 
-      await TestBuilder.command`echo hi && \`echo uh oh`
-        .error("Unclosed command substitution")
-        .run();
-      await TestBuilder.command`echo hi && \`echo uh oh\``
+      await TestBuilder.command`echo hi && ${{ raw: "`echo uh oh" }}`.error("Unclosed command substitution").run();
+      await TestBuilder.command`echo hi && ${{ raw: "`echo uh oh`" }}`
         .stdout("hi\n")
         .stderr("bun: command not found: uh\n")
         .exitCode(1)
         .run();
 
-      await TestBuilder.command`echo hi && (echo uh oh`
-        .error("Unclosed subshell")
-        .run();
+      await TestBuilder.command`echo hi && (echo uh oh`.error("Unclosed subshell").run();
       await TestBuilder.command`echo hi && (echo uh oh)`
         .error(
           "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.",

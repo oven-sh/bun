@@ -233,6 +233,10 @@ If you need to remove Bun from your system, use the following commands.
 $ rm -rf ~/.bun # for macOS, Linux, and WSL
 ```
 
+```bash#Windows
+$ Remove-Item ~\.bun -Recurse
+```
+
 ```bash#NPM
 $ npm uninstall -g bun
 ```

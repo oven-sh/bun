@@ -1859,7 +1859,15 @@ fn eachBind(
                 (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
             const formattedLabel = formatLabel(globalThis, label, function_args, test_idx) catch return .zero;
 
-            var is_skip = false;
+            const tag = parent.tag;
+
+            if (tag == .only) {
+                Jest.runner.?.setOnly();
+            }
+
+            var is_skip = tag == .skip or
+                (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
+                (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
             if (Jest.runner.?.filter_regex) |regex| {
                 var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
@@ -1874,21 +1882,25 @@ fn eachBind(
                 parent.skip_count += 1;
                 function.unprotect();
             } else if (each_data.is_test) {
-                function.protect();
-                parent.tests.append(allocator, TestScope{
-                    .label = formattedLabel,
-                    .parent = parent,
-                    .tag = parent.tag,
-                    .func = function,
-                    .func_arg = function_args,
-                    .func_has_callback = has_callback_function,
-                    .timeout_millis = timeout_ms,
-                }) catch unreachable;
+                if (Jest.runner.?.only and tag != .only) {
+                    return .zero;
+                } else {
+                    function.protect();
+                    parent.tests.append(allocator, TestScope{
+                        .label = formattedLabel,
+                        .parent = parent,
+                        .tag = tag,
+                        .func = function,
+                        .func_arg = function_args,
+                        .func_has_callback = has_callback_function,
+                        .timeout_millis = timeout_ms,
+                    }) catch unreachable;
 
-                if (test_elapsed_timer == null) create_timer: {
-                    const timer = allocator.create(std.time.Timer) catch unreachable;
-                    timer.* = std.time.Timer.start() catch break :create_timer;
-                    test_elapsed_timer = timer;
+                    if (test_elapsed_timer == null) create_timer: {
+                        const timer = allocator.create(std.time.Timer) catch unreachable;
+                        timer.* = std.time.Timer.start() catch break :create_timer;
+                        test_elapsed_timer = timer;
+                    }
                 }
             } else {
                 var scope = allocator.create(DescribeScope) catch unreachable;
@@ -1896,7 +1908,7 @@ fn eachBind(
                     .label = formattedLabel,
                     .parent = parent,
                     .file_id = parent.file_id,
-                    .tag = .pass,
+                    .tag = tag,
                 };
 
                 const ret = scope.run(globalThis, function, function_args);

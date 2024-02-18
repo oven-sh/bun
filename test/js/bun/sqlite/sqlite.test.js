@@ -744,7 +744,10 @@ it("multiple statements", () => {
   }
 });
 
-it("math functions", () => {
+it.skipIf(
+  // We use the system version, which may or may not have math functions
+  process.platform === "darwin",
+)("math functions", () => {
   const db = new Database(":memory:");
 
   expect(db.prepare("SELECT ABS(-243.5)").all()).toEqual([{ "ABS(-243.5)": 243.5 }]);

@@ -1,9 +1,10 @@
 // @known-failing-on-windows: 1 failing
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, test } from "bun:test";
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
-import { bunExe, bunEnv } from "harness";
+import { openSync } from "node:fs";
+import { bunExe, bunEnv, isLinux } from "harness";
 import path from "path";
 
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -259,6 +260,34 @@ describe("spawnSync()", () => {
   it("should spawn a process synchronously", () => {
     const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
     expect(stdout.trim()).toBe("hello");
+  });
+
+  test.if(isLinux)("should inherit for fds >= 3", async () => {
+    const fdA = openSync("/dev/null", "r");
+    const fdB = openSync("/dev/null", "r");
+    const nulls = new Array(Math.max(fdA, fdB) + 1).fill(null);
+    {
+      const stdio = [...nulls];
+      stdio[fdA] = "inherit";
+      stdio[fdB] = "inherit";
+      const fds = new Set(spawnSync("ls", [`/dev/fd/`], { stdio, encoding: "utf8" }).stdout.split(/\s+/));
+      expect(fds.has(`${fdA}`)).toBe(true);
+      expect(fds.has(`${fdB}`)).toBe(true);
+    }
+    {
+      const stdio = [...nulls];
+      stdio[fdA] = "inherit";
+      const fds = new Set(spawnSync("ls", [`/dev/fd/`], { stdio, encoding: "utf8" }).stdout.split(/\s+/));
+      expect(fds.has(`${fdA}`)).toBe(true);
+      expect(fds.has(`${fdB}`)).toBe(false);
+    }
+    {
+      const stdio = [...nulls];
+      stdio[fdB] = "inherit";
+      const fds = new Set(spawnSync("ls", [`/dev/fd/`], { stdio, encoding: "utf8" }).stdout.split(/\s+/));
+      expect(fds.has(`${fdA}`)).toBe(false);
+      expect(fds.has(`${fdB}`)).toBe(true);
+    }
   });
 });
 

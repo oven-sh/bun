@@ -3477,8 +3477,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             const path = this.redirection_file.items[0..this.redirection_file.items.len -| 1 :0];
                             log("EXPANDED REDIRECT: {s}\n", .{this.redirection_file.items[0..]});
                             const perm = 0o666;
+                            const read_write_flags: bun.Mode = if (this.node.redirect.stdin) std.os.O.RDONLY else std.os.O.WRONLY | std.os.O.CREAT;
                             const extra: bun.Mode = if (this.node.redirect.append) std.os.O.APPEND else std.os.O.TRUNC;
-                            const redirfd = switch (Syscall.openat(this.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT | extra, perm)) {
+                            const final_flags: bun.Mode = if (this.node.redirect.stdin) read_write_flags else extra | read_write_flags;
+                            const redirfd = switch (Syscall.openat(this.base.shell.cwd_fd, path, final_flags, perm)) {
                                 .err => |e| {
                                     const buf = std.fmt.allocPrint(this.spawn_arena.allocator(), "bun: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
                                     return this.writeFailingError(buf, 1);

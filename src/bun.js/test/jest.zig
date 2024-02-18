@@ -1553,8 +1553,11 @@ inline fn createScope(
     else
         (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
 
-    if (tag == .only) {
+    var tag_to_use = tag;
+
+    if (tag_to_use == .only or parent.tag == .only) {
         Jest.runner.?.setOnly();
+        tag_to_use = .only;
     } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
         return .zero;
     }
@@ -1563,7 +1566,6 @@ inline fn createScope(
         (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
-    var tag_to_use = tag;
     if (is_test) {
         if (!is_skip) {
             if (Jest.runner.?.filter_regex) |regex| {
@@ -1616,7 +1618,7 @@ inline fn createScope(
             .label = label,
             .parent = parent,
             .file_id = parent.file_id,
-            .tag = tag,
+            .tag = tag_to_use,
         };
 
         return scope.run(globalThis, function, &.{});

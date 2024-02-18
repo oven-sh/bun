@@ -219,7 +219,7 @@ describe("spawn()", () => {
   test.if(isLinux)("should handle null for first 4 positions of stdio", async () => {
     // Run a program that does nothing except pause indefinitely, thus an
     // opportunity to inspect its file descriptors.
-    const proc = spawn("sleep", ["inf"], {stdio: [null, null, null, null]});
+    const proc = spawn("sleep", ["inf"], { stdio: [null, null, null, null] });
     // Delay here because the command (above) opens and closes a bunch of
     // files when starting up, so we have to wait for it to stabilize.  This
     // still is a race condition though, would be nice to eliminate.

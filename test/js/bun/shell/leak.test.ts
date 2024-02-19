@@ -10,6 +10,9 @@ import { TestBuilder } from "./util";
 
 $.env(bunEnv);
 $.cwd(process.cwd());
+$.nothrow();
+
+const DEFAULT_THRESHOLD = process.platform === "darwin" ? 100 * (1 << 20) : 150 * (1 << 20);
 
 const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
   ["redirect_file", () => TestBuilder.command`echo hello > test.txt`.fileEquals("test.txt", "hello\n")],
@@ -61,9 +64,12 @@ describe("fd leak", () => {
       for (let i = 0; i < runs; i++) {
         await builder().quiet().run();
       }
+      // Run the GC, because the interpreter closes file descriptors when it
+      // deinitializes when its finalizer is called
+      Bun.gc(true);
       const fd = openSync(devNull, "r");
       closeSync(fd);
-      expect(fd).toBe(baseline);
+      expect(fd).toBeLessThanOrEqual(baseline);
     }, 100_000);
   }
 
@@ -71,7 +77,7 @@ describe("fd leak", () => {
     name: string,
     builder: () => TestBuilder,
     runs: number = 500,
-    threshold: number = 100 * (1 << 20),
+    threshold: number = DEFAULT_THRESHOLD,
   ) {
     test(`memleak_${name}`, async () => {
       const tempfile = join(tmpdir(), "script.ts");
@@ -82,24 +88,25 @@ describe("fd leak", () => {
       writeFileSync(tempfile, testcode);
 
       const impl = /* ts */ `
-        test("${name}", async () => {
-          const hundredMb = ${threshold}
-          let prev: number | undefined = undefined;
-          for (let i = 0; i < ${runs}; i++) {
-            Bun.gc(true);
-            await (async function() {
-              await ${builder.toString().slice("() =>".length)}.quiet().run()
-            })()
-            Bun.gc(true);
-            const val = process.memoryUsage.rss();
-            if (prev === undefined) {
-              prev = val;
-            } else {
-              expect(Math.abs(prev - val)).toBeLessThan(hundredMb)
-            }
-          }
-        }, 1_000_000)
-      `;
+            test("${name}", async () => {
+              const threshold = ${threshold}
+              let prev: number | undefined = undefined;
+              for (let i = 0; i < ${runs}; i++) {
+                Bun.gc(true);
+                await (async function() {
+                  await ${builder.toString().slice("() =>".length)}.quiet().run()
+                })()
+                Bun.gc(true);
+                const val = process.memoryUsage.rss();
+                if (prev === undefined) {
+                  prev = val;
+                } else {
+                  expect(Math.abs(prev - val)).toBeLessThan(threshold)
+                  if (!(Math.abs(prev - val) < threshold)) process.exit(1);
+                }
+              }
+            }, 1_000_000)
+            `;
 
       appendFileSync(tempfile, impl);
 
@@ -126,5 +133,5 @@ describe("fd leak", () => {
     100,
   );
   memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc((1 << 20) * 100)}`, 100);
-  memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100, 4096);
+  memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100);
 });

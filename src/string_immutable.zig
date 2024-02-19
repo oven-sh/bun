@@ -1884,7 +1884,7 @@ pub fn convertUTF16ToUTF8Append(list: *std.ArrayList(u8), utf16: []const u16) !v
         return;
     }
 
-    list.items.len = result.count;
+    list.items.len += result.count;
 }
 
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {

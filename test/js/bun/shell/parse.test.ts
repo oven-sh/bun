@@ -388,6 +388,74 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test("cmd subst edgecase", () => {
+    const expected = {
+      "stmts": [
+        {
+          "exprs": [
+            {
+              "cond": {
+                "op": "And",
+                "left": {
+                  "cmd": {
+                    "assigns": [],
+                    "name_and_args": [
+                      { "simple": { "Text": "echo" } },
+                      {
+                        "simple": {
+                          "cmd_subst": {
+                            "script": {
+                              "stmts": [
+                                {
+                                  "exprs": [
+                                    {
+                                      "cmd": {
+                                        "assigns": [],
+                                        "name_and_args": [
+                                          { "simple": { "Text": "ls" } },
+                                          { "simple": { "Text": "foo" } },
+                                        ],
+                                        "redirect": {
+                                          "stdin": false,
+                                          "stdout": false,
+                                          "stderr": false,
+                                          "append": false,
+                                          "__unused": 0,
+                                        },
+                                        "redirect_file": null,
+                                      },
+                                    },
+                                  ],
+                                },
+                              ],
+                            },
+                            "quoted": false,
+                          },
+                        },
+                      },
+                    ],
+                    "redirect": { "stdin": false, "stdout": false, "stderr": false, "append": false, "__unused": 0 },
+                    "redirect_file": null,
+                  },
+                },
+                "right": {
+                  "cmd": {
+                    "assigns": [],
+                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "nice" } }],
+                    "redirect": { "stdin": false, "stdout": false, "stderr": false, "append": false, "__unused": 0 },
+                    "redirect_file": null,
+                  },
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const result = JSON.parse($.parse`echo $(ls foo) && echo nice`);
+    expect(result).toEqual(expected);
+  });
+
   describe("bad syntax", () => {
     test("cmd subst edgecase", () => {
       const expected = {

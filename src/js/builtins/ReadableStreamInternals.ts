@@ -1532,7 +1532,6 @@ export function readableStreamFromAsyncIterator(target, fn) {
       }
     },
 
-
     close() {
       $debug("readableStreamFromAsyncIterator.close");
       cancelled = true;

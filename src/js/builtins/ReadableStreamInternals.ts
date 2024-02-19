@@ -928,8 +928,10 @@ export function onCloseDirectStream(reason) {
       var read = this._pendingRead;
       this._pendingRead = undefined;
       $rejectPromise(read, e);
+    } else {
+      throw e;
     }
-    $readableStreamError(stream, e);
+
     return;
   }
 
@@ -1244,7 +1246,6 @@ export function initializeArrayBufferStream(underlyingSource, highWaterMark) {
 
 export function readableStreamError(stream, error) {
   $assert($isReadableStream(stream));
-  $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);
   $putByIdDirectPrivate(stream, "state", $streamErrored);
   $putByIdDirectPrivate(stream, "storedError", error);
   const reader = $getByIdDirectPrivate(stream, "reader");
@@ -1519,6 +1520,16 @@ export function readableStreamDefaultControllerCanCloseOrEnqueue(controller) {
 export function readableStreamFromAsyncIterator(target, fn) {
   var cancelled = false,
     iter: AsyncIterator<any>;
+
+  // We must eagerly start the async generator to ensure that it works if objects are reused later.
+  // This impacts Astro, amongst others.
+  iter = fn.$call(target);
+  fn = target = undefined;
+
+  if (!$isAsyncGenerator(iter) && typeof iter.next !== "function") {
+    throw new TypeError("Expected an async generator");
+  }
+
   return new ReadableStream({
     type: "direct",
 
@@ -1528,19 +1539,15 @@ export function readableStreamFromAsyncIterator(target, fn) {
 
       if (iter) {
         iter.throw?.((reason ||= new DOMException("ReadableStream has been cancelled", "AbortError")));
+        iter = undefined;
       }
     },
 
+    close() {
+      cancelled = true;
+    },
+
     async pull(controller) {
-      // we deliberately want to throw on error
-      iter = fn.$call(target, controller);
-      fn = target = undefined;
-
-      if (!$isAsyncGenerator(iter) && typeof iter.next !== "function") {
-        iter = undefined;
-        throw new TypeError("Expected an async generator");
-      }
-
       var closingError, value, done, immediateTask;
 
       try {
@@ -1586,6 +1593,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
           try {
             await iter.throw?.(closingError);
           } finally {
+            iter = undefined;
             throw closingError;
           }
         } else {

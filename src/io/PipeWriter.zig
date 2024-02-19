@@ -691,6 +691,12 @@ fn BaseWindowsPipeWriter(
         pub fn close(this: *WindowsPipeWriter) void {
             this.is_done = true;
             if (this.source) |source| {
+                if (source == .file) {
+                    uv.uv_fs_req_cleanup(&source.file.fs);
+                    // TODO: handle this error instead of ignoring it
+                    _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, @ptrCast(&WindowsPipeWriter.onCloseSource));
+                    return;
+                }
                 source.getHandle().close(&WindowsPipeWriter.onCloseSource);
             }
         }
@@ -817,7 +823,7 @@ const Source = union(enum) {
         switch (this) {
             .pipe => return @ptrCast(this.pipe),
             .tty => return @ptrCast(this.tty),
-            .file => return @ptrCast(&this.file.fs),
+            .file => unreachable,
         }
     }
     pub fn toStream(this: Source) *uv.uv_stream_t {
@@ -856,7 +862,7 @@ const Source = union(enum) {
         switch (this) {
             .pipe => this.pipe.ref(),
             .tty => this.tty.ref(),
-            .file => this.file.fs.ref(),
+            .file => return,
         }
     }
 
@@ -864,7 +870,7 @@ const Source = union(enum) {
         switch (this) {
             .pipe => this.pipe.unref(),
             .tty => this.tty.unref(),
-            .file => this.file.fs.unref(),
+            .file => return,
         }
     }
 
@@ -872,7 +878,7 @@ const Source = union(enum) {
         switch (this) {
             .pipe => return this.pipe.hasRef(),
             .tty => return this.tty.hasRef(),
-            .file => return this.file.fs.hasRef(),
+            .file => return false,
         }
     }
 };

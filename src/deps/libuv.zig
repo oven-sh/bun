@@ -1714,8 +1714,6 @@ pub const fs_t = extern struct {
     file: union_unnamed_450,
     fs: union_unnamed_451,
 
-    pub usingnamespace HandleMixin(fs_t);
-
     pub inline fn deinit(this: *fs_t) void {
         this.assert();
         uv_fs_req_cleanup(this);

@@ -1246,7 +1246,6 @@ export function initializeArrayBufferStream(underlyingSource, highWaterMark) {
 
 export function readableStreamError(stream, error) {
   $assert($isReadableStream(stream));
-  $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);
   $putByIdDirectPrivate(stream, "state", $streamErrored);
   $putByIdDirectPrivate(stream, "storedError", error);
   const reader = $getByIdDirectPrivate(stream, "reader");

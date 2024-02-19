@@ -183,9 +183,10 @@ const NamedPipeIPCData = struct {
             server.close(onServerClose);
         } else {
             if (this.onClose) |handler| {
+                // deinit dont free the instance of IPCData we should call it before the onClose callback actually frees it
+                this.deinit();
                 handler.callback(handler.context);
             }
-            this.deinit();
         }
     }
 
@@ -195,13 +196,14 @@ const NamedPipeIPCData = struct {
         this.server = null;
         if (this.connected) {
             // close and deinit client if connected
-            this.writer.deinit();
+            this.writer.close();
             return;
         }
         if (this.onClose) |handler| {
+            // deinit dont free the instance of IPCData we should call it before the onClose callback actually frees it
+            this.deinit();
             handler.callback(handler.context);
         }
-        this.deinit();
     }
 
     pub fn writeVersionPacket(this: *NamedPipeIPCData) void {
@@ -316,6 +318,7 @@ const NamedPipeIPCData = struct {
         log("deinit", .{});
         this.writer.deinit();
         if (this.server) |server| {
+            this.server = null;
             bun.default_allocator.destroy(server);
         }
         this.incoming.deinitWithAllocator(bun.default_allocator);

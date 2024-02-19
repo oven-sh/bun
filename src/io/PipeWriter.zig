@@ -1071,7 +1071,9 @@ pub const StreamBuffer = struct {
 
     pub fn deinit(this: *StreamBuffer) void {
         this.cursor = 0;
-        this.list.clearAndFree();
+        if (this.list.capacity > 0) {
+            this.list.clearAndFree();
+        }
     }
 };
 

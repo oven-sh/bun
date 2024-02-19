@@ -369,7 +369,12 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       return typeof p === "string" ? Reflect.has(internalEnv, p.toUpperCase()) : false;
     },
     deleteProperty(_, p) {
-      return typeof p === "string" ? Reflect.deleteProperty(internalEnv, p.toUpperCase()) : true;
+      let k = String(p).toUpperCase();
+      let i = envMapList.findIndex(x => x.toUpperCase() === p);
+      if (i !== -1) {
+        envMapList.splice(i, 1);
+      }
+      return typeof p === "string" ? Reflect.deleteProperty(internalEnv, k) : true;
     },
     defineProperty(_, p, attributes) {
       var k = String(p).toUpperCase();

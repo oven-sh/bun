@@ -579,8 +579,6 @@ pub const VirtualMachine = struct {
     onUnhandledRejectionCtx: ?*anyopaque = null,
     unhandled_error_counter: usize = 0,
 
-    on_exception: ?*const OnException = null,
-
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
@@ -624,14 +622,6 @@ pub const VirtualMachine = struct {
 
     pub fn isInspectorEnabled(this: *const VirtualMachine) bool {
         return this.debugger != null;
-    }
-
-    pub fn setOnException(this: *VirtualMachine, callback: *const OnException) void {
-        this.on_exception = callback;
-    }
-
-    pub fn clearOnException(this: *VirtualMachine) void {
-        this.on_exception = null;
     }
 
     const VMHolder = struct {
@@ -820,10 +810,10 @@ pub const VirtualMachine = struct {
         Output.debug("Reloading...", .{});
         if (this.hot_reload == .watch) {
             Output.flush();
-            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
+            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
         }
 
-        if (!strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
+        if (!strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
             Output.flush();
             Output.disableBuffering();
             Output.resetTerminalAll();
@@ -1718,7 +1708,8 @@ pub const VirtualMachine = struct {
                         const buster_name = name: {
                             if (std.fs.path.isAbsolute(normalized_specifier)) {
                                 if (std.fs.path.dirname(normalized_specifier)) |dir| {
-                                    break :name strings.withTrailingSlash(dir, normalized_specifier);
+                                    // With trailing slash
+                                    break :name if (dir.len == 1) dir else normalized_specifier[0 .. dir.len + 1];
                                 }
                             }
 
@@ -1728,7 +1719,7 @@ pub const VirtualMachine = struct {
                                 "../",
                             };
 
-                            break :name bun.path.joinAbsStringBuf(
+                            break :name bun.path.joinAbsStringBufZTrailingSlash(
                                 jsc_vm.bundler.fs.top_level_dir,
                                 &specifier_cache_resolver_buf,
                                 &parts,
@@ -1736,8 +1727,10 @@ pub const VirtualMachine = struct {
                             );
                         };
 
-                        jsc_vm.bundler.resolver.bustDirCache(buster_name);
-                        continue;
+                        if (jsc_vm.bundler.resolver.bustDirCache(buster_name)) {
+                            continue;
+                        }
+                        return error.ModuleNotFound;
                     },
                 };
             }
@@ -2771,10 +2764,8 @@ pub const VirtualMachine = struct {
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;
 
-        if (allow_side_effects) {
-            defer if (this.on_exception) |cb| {
-                cb(exception);
-            };
+        if (allow_side_effects and Output.is_github_action) {
+            defer printGithubAnnotation(exception);
         }
 
         const line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
@@ -3007,6 +2998,127 @@ pub const VirtualMachine = struct {
         }
     }
 
+    // In Github Actions, emit an annotation that renders the error and location.
+    // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
+    pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
+        const name = exception.name;
+        const message = exception.message;
+        const frames = exception.stack.frames();
+        const top_frame = if (frames.len > 0) frames[0] else null;
+        const dir = bun.getenvZ("GITHUB_WORKSPACE") orelse bun.fs.FileSystem.instance.top_level_dir;
+        const allocator = bun.default_allocator;
+
+        var has_location = false;
+
+        if (top_frame) |frame| {
+            if (!frame.position.isInvalid()) {
+                const source_url = frame.source_url.toUTF8(allocator);
+                defer source_url.deinit();
+                const file = bun.path.relative(dir, source_url.slice());
+                Output.printError("\n::error file={s},line={d},col={d},title=", .{
+                    file,
+                    frame.position.line_start + 1,
+                    frame.position.column_start,
+                });
+                has_location = true;
+            }
+        }
+
+        if (!has_location) {
+            Output.printError("\n::error title=", .{});
+        }
+
+        if (name.isEmpty() or name.eqlComptime("Error")) {
+            Output.printError("error", .{});
+        } else {
+            Output.printError("{s}", .{name.githubAction()});
+        }
+
+        if (!message.isEmpty()) {
+            const message_slice = message.toUTF8(allocator);
+            defer message_slice.deinit();
+            const msg = message_slice.slice();
+
+            var cursor: u32 = 0;
+            while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
+                cursor = i + 1;
+                if (msg[i] == '\n') {
+                    const first_line = bun.String.fromUTF8(msg[0..i]);
+                    Output.printError(": {s}::", .{first_line.githubAction()});
+                    break;
+                }
+            } else {
+                Output.printError(": {s}::", .{message.githubAction()});
+            }
+
+            while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
+                cursor = i + 1;
+                if (msg[i] == '\n') {
+                    break;
+                }
+            }
+
+            if (cursor > 0) {
+                const body = ZigString.init(msg[cursor..]);
+                Output.printError("{s}", .{body.githubAction()});
+            }
+        } else {
+            Output.printError("::", .{});
+        }
+
+        // TODO: cleanup and refactor to use printStackTrace()
+        if (top_frame) |_| {
+            const vm = VirtualMachine.get();
+            const origin = if (vm.is_from_devserver) &vm.origin else null;
+
+            var i: i16 = 0;
+            while (i < frames.len) : (i += 1) {
+                const frame = frames[@as(usize, @intCast(i))];
+                const source_url = frame.source_url.toUTF8(allocator);
+                defer source_url.deinit();
+                const file = bun.path.relative(dir, source_url.slice());
+                const func = frame.function_name.toUTF8(allocator);
+
+                if (file.len == 0 and func.len == 0) continue;
+
+                const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
+                    false,
+                )}) > 0;
+
+                // %0A = escaped newline
+                if (has_name) {
+                    Output.printError(
+                        "%0A      at {any} ({any})",
+                        .{
+                            frame.nameFormatter(false),
+                            frame.sourceURLFormatter(
+                                file,
+                                origin,
+                                false,
+                                false,
+                            ),
+                        },
+                    );
+                } else {
+                    Output.printError(
+                        "%0A      at {any}",
+                        .{
+                            frame.sourceURLFormatter(
+                                file,
+                                origin,
+                                false,
+                                false,
+                            ),
+                        },
+                    );
+                }
+            }
+        }
+
+        Output.printError("\n", .{});
+        Output.flush();
+    }
+
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
 
@@ -3218,7 +3330,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
-            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.map.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
+            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
 
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }
@@ -3329,7 +3441,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             // on windows we receive file events for all items affected by a directory change
                             // so we only need to clear the directory cache. all other effects will be handled
                             // by the file events
-                            resolver.bustDirCache(file_path);
+                            _ = resolver.bustDirCache(file_path);
                             continue;
                         }
                         var affected_buf: [128][]const u8 = undefined;
@@ -3379,7 +3491,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             }
                         }
 
-                        resolver.bustDirCache(file_path);
+                        _ = resolver.bustDirCache(file_path);
 
                         if (entries_option) |dir_ent| {
                             var last_file_hash: GenericWatcher.HashType = std.math.maxInt(GenericWatcher.HashType);

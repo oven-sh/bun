@@ -861,28 +861,6 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (arg.getTruthy(global, "tls")) |tls| {
-                if (SSLConfig.inJS(global, tls, exception)) |ssl_config| {
-                    args.ssl_config = ssl_config;
-                }
-
-                if (exception.* != null) {
-                    return args;
-                }
-            }
-
-            // @compatibility Bun v0.x - v0.2.1
-            // this used to be top-level, now it's "tls" object
-            if (args.ssl_config == null) {
-                if (SSLConfig.inJS(global, arg, exception)) |ssl_config| {
-                    args.ssl_config = ssl_config;
-                }
-
-                if (exception.* != null) {
-                    return args;
-                }
-            }
-
             if (arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
                 if (max_request_body_size.isNumber()) {
                     args.max_request_body_size = @as(u64, @intCast(@max(0, max_request_body_size.toInt64())));
@@ -916,6 +894,36 @@ pub const ServerConfig = struct {
                     conf.deinit();
                 }
                 return args;
+            }
+
+            if (arg.getTruthy(global, "tls")) |tls| {
+                if (SSLConfig.inJS(global, tls, exception)) |ssl_config| {
+                    args.ssl_config = ssl_config;
+                }
+
+                if (exception.* != null) {
+                    return args;
+                }
+
+                if (global.hasException()) {
+                    return args;
+                }
+            }
+
+            // @compatibility Bun v0.x - v0.2.1
+            // this used to be top-level, now it's "tls" object
+            if (args.ssl_config == null) {
+                if (SSLConfig.inJS(global, arg, exception)) |ssl_config| {
+                    args.ssl_config = ssl_config;
+                }
+
+                if (exception.* != null) {
+                    return args;
+                }
+
+                if (global.hasException()) {
+                    return args;
+                }
             }
         } else {
             JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global, exception);
@@ -1271,7 +1279,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         defer_deinit_until_callback_completes: ?*bool = null,
 
         // TODO: support builtin compression
-        const can_sendfile = !ssl_enabled;
+        const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
         pub inline fn isAsync(this: *const RequestContext) bool {
             return this.defer_deinit_until_callback_completes == null;
@@ -1885,14 +1893,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.cleanupAndFinalizeAfterSendfile();
                     return errcode != .SUCCESS;
                 }
-            } else if (Environment.isWindows) {
-                const win = std.os.windows;
-                const uv = bun.windows.libuv;
-                const socket = bun.socketcast(this.sendfile.socket_fd);
-                const file_handle = uv.uv_get_osfhandle(bun.uvfdcast(this.sendfile.fd));
-                this.sendfile.offset += this.sendfile.remain;
-                this.sendfile.remain = 0;
-                return win.ws2_32.TransmitFile(socket, file_handle, 0, 0, null, null, 0) == 1;
             } else {
                 var sbytes: std.os.off_t = adjusted_count;
                 const signed_offset = @as(i64, @bitCast(@as(u64, this.sendfile.offset)));

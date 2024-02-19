@@ -750,9 +750,7 @@ pub const FileSystem = struct {
         };
 
         pub fn needToCloseFiles(rfs: *const RealFS) bool {
-            // On Windows, we must always close open file handles
-            // Windows locks files
-            if (comptime !FeatureFlags.store_file_descriptors) {
+            if (!FeatureFlags.store_file_descriptors) {
                 return true;
             }
 
@@ -760,8 +758,9 @@ pub const FileSystem = struct {
             return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd.int() + 1) * 2);
         }
 
-        pub fn bustEntriesCache(rfs: *RealFS, file_path: string) void {
-            rfs.entries.remove(file_path);
+        /// Returns `true` if an entry was removed
+        pub fn bustEntriesCache(rfs: *RealFS, file_path: string) bool {
+            return rfs.entries.remove(file_path);
         }
 
         pub const Limit = struct {
@@ -1662,6 +1661,16 @@ pub const Path = struct {
 
     pub inline fn prettyDir(this: *const Path) string {
         return this.name.dirWithTrailingSlash();
+    }
+
+    /// The bundler will hash path.pretty, so it needs to be consistent across platforms.
+    /// This assertion might be a bit too forceful though.
+    pub fn assertPrettyIsValid(path: *const Path) void {
+        if (Environment.isWindows and Environment.allow_assert) {
+            if (std.mem.indexOfScalar(u8, path.pretty, '\\') != null) {
+                std.debug.panic("Expected pretty file path to have only forward slashes, got '{s}'", .{path.pretty});
+            }
+        }
     }
 
     // This duplicates but only when strictly necessary

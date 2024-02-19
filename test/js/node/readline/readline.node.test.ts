@@ -1880,6 +1880,23 @@ describe("readline.createInterface()", () => {
     input.write("abc\n");
   });
 
+  it("should support reading-in lines via for await...of loop", async () => {
+    const sampleTextBuffer = new Buffer.from("Line1\nLine2\nLine3\nLine4");
+    const bufferStream = new PassThrough();
+
+    const rl = readline.createInterface({
+      input: bufferStream,
+    });
+
+    process.nextTick(() => {
+      bufferStream.end(sampleTextBuffer);
+    });
+
+    const result = [];
+    for await (const line of rl) result.push(line);
+    expect(result).toEqual(["Line1", "Line2", "Line3", "Line4"]);
+  });
+
   it("should respond to home and end sequences for common pttys ", () => {
     const input = new PassThrough();
     const rl = readline.createInterface({

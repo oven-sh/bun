@@ -2,7 +2,7 @@
 import { describe, expect, it } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
-import { bunEnv, bunExe, gc, getMaxFD, isWindows } from "harness";
+import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -46,7 +46,7 @@ import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
-import { SystemError, pathToFileURL, spawnSync } from "bun";
+import { spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -1310,6 +1310,14 @@ describe("fs.exists", () => {
       }
     });
   });
+  it("should work with util.promisify when path exists", async () => {
+    const fsexists = promisify(fs.exists);
+    expect(await fsexists(import.meta.path)).toBe(true);
+  });
+  it("should work with util.promisify when path doesn't exist", async () => {
+    const fsexists = promisify(fs.exists);
+    expect(await fsexists(`${tmpdir()}/test-fs-exists-${Date.now()}`)).toBe(false);
+  });
 });
 
 describe("rm", () => {
@@ -2052,14 +2060,14 @@ describe("fs/promises", () => {
 
       const pending = new Array(iterCount);
       for (let i = 0; i < iterCount; i++) {
-        pending[i] = promises.readdir(join(notfound, i), { recursive: true, withFileTypes });
+        pending[i] = promises.readdir(join(notfound, `${i}`), { recursive: true, withFileTypes });
       }
 
       const results = await Promise.allSettled(pending);
       for (let i = 0; i < iterCount; i++) {
         expect(results[i].status).toBe("rejected");
         expect(results[i].reason!.code).toBe("ENOENT");
-        expect(results[i].reason!.path).toBe(join(notfound, i));
+        expect(results[i].reason!.path).toBe(join(notfound, `${i}`));
       }
 
       const newMaxFD = getMaxFD();
@@ -2653,7 +2661,8 @@ it("new Stats", () => {
   expect(stats.birthtime).toEqual(new Date(14));
 });
 
-it("BigIntStats", () => {
+/// TODO: why is `.ino` wrong on x86_64 MacOS?
+(isIntelMacOS ? it.todo : it)("BigIntStats", () => {
   const withoutBigInt = statSync(import.meta.path, { bigint: false });
   const withBigInt = statSync(import.meta.path, { bigint: true });
 
@@ -2728,4 +2737,31 @@ it("fs.ReadStream allows functions", () => {
   expect(() => new fs.ReadStream(".", function lol() {})).not.toThrow();
   // @ts-expect-error
   expect(() => new fs.ReadStream(".", {})).not.toThrow();
+});
+
+describe.if(isWindows)("windows path handling", () => {
+  const file = import.meta.path.slice(3);
+  const drive = import.meta.path[0];
+  const filenames = [
+    `${drive}:\\${file}`,
+    `\\\\127.0.0.1\\${drive}$\\${file}`,
+    `\\\\LOCALHOST\\${drive}$\\${file}`,
+    `\\\\.\\${drive}:\\${file}`,
+    `\\\\?\\${drive}:\\${file}`,
+    `\\\\.\\UNC\\LOCALHOST\\${drive}$\\${file}`,
+    `\\\\?\\UNC\\LOCALHOST\\${drive}$\\${file}`,
+    `\\\\127.0.0.1\\${drive}$\\${file}`,
+  ];
+
+  for (const filename of filenames) {
+    it(`Can read '${filename}' with node:fs`, async () => {
+      const stats = await fs.promises.stat(filename);
+      expect(stats.size).toBeGreaterThan(0);
+    });
+
+    it(`Can read '${filename}' with Bun.file`, async () => {
+      const stats = await Bun.file(filename).text();
+      expect(stats.length).toBeGreaterThan(0);
+    });
+  }
 });

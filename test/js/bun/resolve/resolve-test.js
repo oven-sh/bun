@@ -71,6 +71,7 @@ it("import.meta.resolve", async () => {
   expect(await import.meta.resolve("foo/bar")).toBe(join(import.meta.path, "../baz.js"));
   expect(await import.meta.resolve("@faasjs/baz")).toBe(join(import.meta.path, "../baz.js"));
   expect(await import.meta.resolve("@faasjs/bar")).toBe(join(import.meta.path, "../bar/src/index.js"));
+  expect(await import.meta.resolve("@faasjs/larger/bar")).toBe(join(import.meta.path, "../bar/larger-index.js"));
 
   // works with package.json "exports"
   expect(await import.meta.resolve("package-json-exports/baz")).toBe(

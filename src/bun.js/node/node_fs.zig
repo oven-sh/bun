@@ -5275,8 +5275,13 @@ pub const NodeFS = struct {
                 // On Windows, we potentially mutate the path in posixToPlatformInPlace
                 // We cannot mutate JavaScript strings in-place. That will break many things.
                 // So we must always copy the path string on Windows.
-                path = args.file.path.sliceZWithForceCopy(pathbuf, Environment.isWindows);
-                bun.path.posixToPlatformInPlace(u8, @constCast(path));
+                path = path: {
+                    const temp_path = args.file.path.sliceZWithForceCopy(pathbuf, Environment.isWindows);
+                    if (Environment.isWindows) {
+                        bun.path.posixToPlatformInPlace(u8, temp_path);
+                    }
+                    break :path temp_path;
+                };
 
                 var is_dirfd_different = false;
                 var dirfd = args.dirfd;
@@ -5787,16 +5792,12 @@ pub const NodeFS = struct {
     pub fn watchFile(_: *NodeFS, args: Arguments.WatchFile, comptime flavor: Flavor) Maybe(Return.WatchFile) {
         std.debug.assert(flavor == .sync);
 
-        if (comptime Environment.isWindows) {
-            args.global_this.throwTODO("watch is not supported on Windows yet");
-            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
-        }
-
         const watcher = args.createStatWatcher() catch |err| {
             const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((JSC.SystemError{
                 .message = bun.String.init(buf),
+                .code = bun.String.init(@errorName(err)),
                 .path = bun.String.init(args.path.slice()),
             }).toErrorInstance(args.global_this));
             return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
@@ -5894,6 +5895,8 @@ pub const NodeFS = struct {
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((JSC.SystemError{
                 .message = bun.String.init(buf),
+                .code = bun.String.init(@errorName(err)),
+                .syscall = bun.String.static("watch"),
                 .path = bun.String.init(args.path.slice()),
             }).toErrorInstance(args.global_this));
             return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };

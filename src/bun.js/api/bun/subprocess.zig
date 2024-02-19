@@ -1534,20 +1534,18 @@ pub const Subprocess = struct {
 
                 // This must run before the stdio parsing happens
                 if (args.getTruthy(globalThis, "ipc")) |val| {
-                    if (Environment.isWindows) {
-                        globalThis.throwTODO("TODO: IPC is not yet supported on Windows");
-                        return .zero;
-                    }
-
                     if (val.isCell() and val.isCallable(globalThis.vm())) {
                         // In the future, we should add a way to use a different IPC serialization format, specifically `json`.
                         // but the only use case this has is doing interop with node.js IPC and other programs.
                         ipc_mode = .bun;
                         ipc_callback = val.withAsyncContextIfNeeded(globalThis);
-                        extra_fds.append(.{ .buffer = {} }) catch {
-                            globalThis.throwOutOfMemory();
-                            return .zero;
-                        };
+
+                        if (Environment.isPosix) {
+                            extra_fds.append(.{ .buffer = {} }) catch {
+                                globalThis.throwOutOfMemory();
+                                return .zero;
+                            };
+                        }
                     }
                 }
 
@@ -1706,27 +1704,34 @@ pub const Subprocess = struct {
             }
         }
 
-        // IPC is currently implemented in a very limited way.
-        //
-        // Node lets you pass as many fds as you want, they all become be sockets; then, IPC is just a special
-        // runtime-owned version of "pipe" (in which pipe is a misleading name since they're bidirectional sockets).
-        //
-        // Bun currently only supports three fds: stdin, stdout, and stderr, which are all unidirectional
-        //
-        // And then fd 3 is assigned specifically and only for IPC. This is quite lame, because Node.js allows
-        // the ipc fd to be any number and it just works. But most people only care about the default `.fork()`
-        // behavior, where this workaround suffices.
-        //
-        // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
-        var socket: IPC.Socket = undefined;
+        var ipc_info: if (Environment.isPosix) IPC.Socket else [74]u8 = undefined;
         if (ipc_mode != .none) {
             if (comptime is_sync) {
                 globalThis.throwInvalidArguments("IPC is not supported in Bun.spawnSync", .{});
                 return .zero;
             }
 
-            env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in posix_spawn");
-            env_array.appendAssumeCapacity("BUN_INTERNAL_IPC_FD=3");
+            if (Environment.isPosix) {
+                // IPC is currently implemented in a very limited way.
+                //
+                // Node lets you pass as many fds as you want, they all become be sockets; then, IPC is just a special
+                // runtime-owned version of "pipe" (in which pipe is a misleading name since they're bidirectional sockets).
+                //
+                // Bun currently only supports three fds: stdin, stdout, and stderr, which are all unidirectional
+                //
+                // And then fd 3 is assigned specifically and only for IPC. This is quite lame, because Node.js allows
+                // the ipc fd to be any number and it just works. But most people only care about the default `.fork()`
+                // behavior, where this workaround suffices.
+                //
+                // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
+                env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in posix_spawn");
+                env_array.appendAssumeCapacity("BUN_INTERNAL_IPC_FD=3");
+            } else {
+                env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in posix_spawn");
+                const uuid = globalThis.bunVM().rareData().nextUUID();
+                const pipe_env = std.fmt.bufPrintZ(&ipc_info, "BUN_INTERNAL_IPC_FD=\\\\.\\pipe\\BUN_IPC_{s}", .{uuid}) catch |err| return globalThis.handleError(err, "in uv_spawn");
+                env_array.appendAssumeCapacity(pipe_env);
+            }
         }
 
         env_array.append(allocator, null) catch {
@@ -1777,22 +1782,21 @@ pub const Subprocess = struct {
             .result => |result| result,
         };
 
-        if (ipc_mode != .none) {
-            if (Environment.isWindows) {
-                @panic("TODO: IPC");
+        if (Environment.isPosix) {
+            if (ipc_mode != .none) {
+                ipc_info = .{
+                    // we initialize ext later in the function
+                    .socket = uws.us_socket_from_fd(
+                        jsc_vm.rareData().spawnIPCContext(jsc_vm),
+                        @sizeOf(*Subprocess),
+                        spawned.extra_pipes.items[0].cast(),
+                    ) orelse {
+                        globalThis.throw("failed to create socket pair", .{});
+                        // TODO:
+                        return .zero;
+                    },
+                };
             }
-            socket = .{
-                // we initialize ext later in the function
-                .socket = uws.us_socket_from_fd(
-                    jsc_vm.rareData().spawnIPCContext(jsc_vm),
-                    @sizeOf(*Subprocess),
-                    spawned.extra_pipes.items[0].cast(),
-                ) orelse {
-                    globalThis.throw("failed to create socket pair", .{});
-                    // TODO:
-                    return .zero;
-                },
-            };
         }
 
         var subprocess = globalThis.allocator().create(Subprocess) catch {
@@ -1843,7 +1847,7 @@ pub const Subprocess = struct {
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .ipc_mode = ipc_mode,
             // will be assigned in the block below
-            .ipc = .{ .socket = socket },
+            .ipc = if (Environment.isWindows) .{} else .{ .socket = ipc_info },
             .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else undefined,
             .flags = .{
                 .is_sync = is_sync,
@@ -1852,8 +1856,16 @@ pub const Subprocess = struct {
         subprocess.process.setExitHandler(subprocess);
 
         if (ipc_mode != .none) {
-            const ptr = socket.ext(*Subprocess);
-            ptr.?.* = subprocess;
+            if (Environment.isPosix) {
+                const ptr = ipc_info.ext(*Subprocess);
+                ptr.?.* = subprocess;
+            } else {
+                if (subprocess.ipc.configureServer(Subprocess, subprocess, ipc_info[20..]).asErr()) |err| {
+                    globalThis.allocator().destroy(subprocess);
+                    globalThis.throwValue(err.toJSC(globalThis));
+                    return .zero;
+                }
+            }
             subprocess.ipc.writeVersionPacket();
         }
 
@@ -1986,7 +1998,7 @@ pub const Subprocess = struct {
         }
     }
 
-    pub fn handleIPCClose(this: *Subprocess, _: IPC.Socket) void {
+    pub fn handleIPCClose(this: *Subprocess) void {
         // uSocket is already freed so calling .close() on the socket can segfault
         this.ipc_mode = .none;
         this.updateHasPendingActivity();

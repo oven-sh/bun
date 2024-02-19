@@ -334,6 +334,7 @@ pub fn PosixStreamingWriter(
     comptime onClose: fn (*Parent) void,
 ) type {
     return struct {
+        // TODO: replace buffer + head for StreamBuffer
         buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
         handle: PollOrFd = .{ .closed = {} },
         parent: *Parent = undefined,
@@ -1036,7 +1037,7 @@ pub fn WindowsBufferedWriter(
 }
 
 /// Basic std.ArrayList(u8) + u32 cursor wrapper
-const StreamBuffer = struct {
+pub const StreamBuffer = struct {
     list: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     // should cursor be usize?
     cursor: u32 = 0,
@@ -1063,6 +1064,29 @@ const StreamBuffer = struct {
 
     pub fn write(this: *StreamBuffer, buffer: []const u8) !void {
         _ = try this.list.appendSlice(buffer);
+    }
+
+    pub fn writeAssumeCapacity(this: *StreamBuffer, buffer: []const u8) void {
+        var byte_list = bun.ByteList.fromList(this.list);
+        defer this.list = byte_list.listManaged(this.list.allocator);
+        byte_list.appendSliceAssumeCapacity(buffer);
+    }
+
+    pub fn ensureUnusedCapacity(this: *StreamBuffer, capacity: usize) !void {
+        var byte_list = bun.ByteList.fromList(this.list);
+        defer this.list = byte_list.listManaged(this.list.allocator);
+
+        _ = try byte_list.ensureUnusedCapacity(this.list.allocator, capacity);
+    }
+
+    pub fn writeTypeAsBytes(this: *StreamBuffer, comptime T: type, data: *const T) !void {
+        _ = try this.write(std.mem.asBytes(data));
+    }
+
+    pub fn writeTypeAsBytesAssumeCapacity(this: *StreamBuffer, comptime T: type, data: T) void {
+        var byte_list = bun.ByteList.fromList(this.list);
+        defer this.list = byte_list.listManaged(this.list.allocator);
+        byte_list.writeTypeAsBytesAssumeCapacity(T, data);
     }
 
     pub fn writeLatin1(this: *StreamBuffer, buffer: []const u8) !void {

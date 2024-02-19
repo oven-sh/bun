@@ -952,7 +952,7 @@ const struct_unnamed_385 = extern struct {
     write_reqs_pending: c_uint,
     shutdown_req: [*c]uv_shutdown_t,
 };
-pub const uv_connection_cb = ?*const fn ([*c]uv_stream_t, c_int) callconv(.C) void;
+pub const uv_connection_cb = ?*const fn (*uv_stream_t, ReturnCode) callconv(.C) void;
 const struct_unnamed_389 = extern struct {
     connection_cb: uv_connection_cb,
 };
@@ -1260,6 +1260,38 @@ pub const Pipe = extern struct {
         if (uv_pipe_open(this, file).toError(.open)) |err| return .{ .err = err };
 
         return .{ .result = {} };
+    }
+
+    pub fn listenNamedPipe(this: *@This(), named_pipe: []const u8, backlog: i32, context: anytype, comptime onClientConnect: *const (fn (@TypeOf(context), ReturnCode) void)) Maybe(void) {
+        if (this.bind(named_pipe, 0).asErr()) |err| {
+            return .{ .err = err };
+        }
+        return this.listen(backlog, context, onClientConnect);
+    }
+
+    pub fn bind(this: *@This(), named_pipe: []const u8, flags: i32) Maybe(void) {
+        if (uv_pipe_bind2(this, named_pipe.ptr, named_pipe.len, @intCast(flags)).toError(.bind2)) |err| {
+            return .{ .err = err };
+        }
+        return .{ .result = {} };
+    }
+
+    pub fn connect(this: *@This(), req: *uv_connect_t, name: []const u8, context: anytype, comptime onConnect: *const (fn (@TypeOf(context), ReturnCode) void)) Maybe(void) {
+        this.data = @ptrCast(context);
+        const Wrapper = struct {
+            pub fn uvConnectCb(handle: *uv_connect_t, status: ReturnCode) callconv(.C) void {
+                onConnect(@ptrCast(@alignCast(handle.data)), status);
+            }
+        };
+
+        if (uv_pipe_connect2(req, this, @ptrCast(name.ptr), name.len, 0, &Wrapper.uvConnectCb).toError(.connect2)) |err| {
+            return .{ .err = err };
+        }
+        return .{ .result = {} };
+    }
+
+    pub fn setPendingInstancesCount(this: *@This(), count: i32) void {
+        uv_pipe_pending_instances(this, count);
     }
 };
 const union_unnamed_416 = extern union {
@@ -1588,7 +1620,7 @@ const union_unnamed_441 = extern union {
     connect: struct_unnamed_443,
 };
 pub const uv_connect_t = struct_uv_connect_s;
-pub const uv_connect_cb = ?*const fn ([*c]uv_connect_t, c_int) callconv(.C) void;
+pub const uv_connect_cb = ?*const fn (*uv_connect_t, ReturnCode) callconv(.C) void;
 pub const struct_uv_connect_s = extern struct {
     data: ?*anyopaque,
     type: uv_req_type,
@@ -1974,8 +2006,8 @@ pub extern fn uv_buf_init(base: [*]u8, len: c_uint) uv_buf_t;
 pub extern fn uv_pipe(fds: *[2]uv_file, read_flags: c_int, write_flags: c_int) ReturnCode;
 pub extern fn uv_socketpair(@"type": c_int, protocol: c_int, socket_vector: [*]uv_os_sock_t, flags0: c_int, flags1: c_int) ReturnCode;
 pub extern fn uv_stream_get_write_queue_size(stream: [*c]const uv_stream_t) usize;
-pub extern fn uv_listen(stream: [*c]uv_stream_t, backlog: c_int, cb: uv_connection_cb) c_int;
-pub extern fn uv_accept(server: [*c]uv_stream_t, client: [*c]uv_stream_t) c_int;
+pub extern fn uv_listen(stream: [*c]uv_stream_t, backlog: c_int, cb: uv_connection_cb) ReturnCode;
+pub extern fn uv_accept(server: [*c]uv_stream_t, client: [*c]uv_stream_t) ReturnCode;
 pub extern fn uv_read_start(*uv_stream_t, alloc_cb: uv_alloc_cb, read_cb: uv_read_cb) ReturnCode;
 pub extern fn uv_read_stop(*uv_stream_t) ReturnCode;
 pub extern fn uv_write(req: *uv_write_t, handle: *uv_stream_t, bufs: [*]const uv_buf_t, nbufs: c_uint, cb: uv_write_cb) ReturnCode;
@@ -2047,9 +2079,9 @@ const enum_unnamed_462 = c_uint;
 pub extern fn uv_pipe_init(*uv_loop_t, handle: *Pipe, ipc: c_int) ReturnCode;
 pub extern fn uv_pipe_open(*Pipe, file: uv_file) ReturnCode;
 pub extern fn uv_pipe_bind(handle: *Pipe, name: [*]const u8) c_int;
-pub extern fn uv_pipe_bind2(handle: *Pipe, name: [*]const u8, namelen: usize, flags: c_uint) c_int;
+pub extern fn uv_pipe_bind2(handle: *Pipe, name: [*]const u8, namelen: usize, flags: c_uint) ReturnCode;
 pub extern fn uv_pipe_connect(req: [*c]uv_connect_t, handle: *Pipe, name: [*]const u8, cb: uv_connect_cb) void;
-pub extern fn uv_pipe_connect2(req: [*c]uv_connect_t, handle: *Pipe, name: [*]const u8, namelen: usize, flags: c_uint, cb: uv_connect_cb) c_int;
+pub extern fn uv_pipe_connect2(req: [*c]uv_connect_t, handle: *Pipe, name: [*]const u8, namelen: usize, flags: c_uint, cb: uv_connect_cb) ReturnCode;
 pub extern fn uv_pipe_getsockname(handle: *const Pipe, buffer: [*]u8, size: [*c]usize) c_int;
 pub extern fn uv_pipe_getpeername(handle: *const Pipe, buffer: [*]u8, size: [*c]usize) c_int;
 pub extern fn uv_pipe_pending_instances(handle: *Pipe, count: c_int) void;
@@ -2639,6 +2671,10 @@ pub const ReturnCodeI64 = enum(i64) {
     zero = 0,
     _,
 
+    pub fn init(i: i64) ReturnCodeI64 {
+        return @enumFromInt(i);
+    }
+
     pub fn format(this: ReturnCodeI64, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt_;
         _ = options_;
@@ -2759,22 +2795,26 @@ fn StreamMixin(comptime Type: type) type {
                     onConnect(@ptrCast(@alignCast(handle.data)), status);
                 }
             };
-            const rc = uv_listen(@ptrCast(this), backlog, &Wrapper.uvConnectCb);
-            if (rc.errno()) |errno| {
-                return .{ .err = .{ .errno = errno, .syscall = .listen } };
+            if (uv_listen(@ptrCast(this), backlog, &Wrapper.uvConnectCb).toError(.listen)) |err| {
+                return .{ .err = err };
             }
             return .{ .result = {} };
         }
 
         pub fn accept(this: *Type, client: *Type) Maybe(void) {
-            const rc = uv_accept(@ptrCast(this), @ptrCast(client));
-            if (rc.errno()) |errno| {
-                return .{ .err = .{ .errno = errno, .syscall = .accept } };
+            if (uv_accept(@ptrCast(this), @ptrCast(client)).toError(.accept)) |err| {
+                return .{ .err = err };
             }
             return .{ .result = {} };
         }
 
-        pub fn readStart(this: *Type, context: anytype, comptime alloc_cb: *const (fn (@TypeOf(context), suggested_size: usize) []u8), comptime error_cb: *const (fn (@TypeOf(context), err: bun.C.E) void), comptime read_cb: *const (fn (@TypeOf(context), data: []const u8) void)) Maybe(void) {
+        pub fn readStart(
+            this: *Type,
+            context: anytype,
+            comptime alloc_cb: *const (fn (@TypeOf(context), suggested_size: usize) []u8),
+            comptime error_cb: *const (fn (@TypeOf(context), err: bun.C.E) void),
+            comptime read_cb: *const (fn (@TypeOf(context), data: []const u8) void),
+        ) Maybe(void) {
             const Context = @TypeOf(context);
             this.data = @ptrCast(context);
             const Wrapper = struct {
@@ -2787,16 +2827,15 @@ fn StreamMixin(comptime Type: type) type {
                     if (nreads == 0) return; // EAGAIN or EWOULDBLOCK
                     if (nreads < 0) {
                         req.readStop();
-                        const rc = ReturnCodeI64{ .value = nreads };
-                        error_cb(context_data, rc.errEnum() orelse bun.C.E.CANCELED);
+                        error_cb(context_data, ReturnCodeI64.init(nreads).errEnum() orelse bun.C.E.CANCELED);
                     } else {
                         read_cb(context_data, buffer.slice());
                     }
                 }
             };
-            const rc = uv_read_start(@ptrCast(this), @ptrCast(&Wrapper.uvAllocb), @ptrCast(&Wrapper.uvReadcb));
-            if (rc.errno()) |errno| {
-                return .{ .err = .{ .errno = errno, .syscall = .listen } };
+
+            if (uv_read_start(@ptrCast(this), @ptrCast(&Wrapper.uvAllocb), @ptrCast(&Wrapper.uvReadcb)).toError(.listen)) |err| {
+                return .{ .err = err };
             }
             return .{ .result = {} };
         }
@@ -2821,33 +2860,31 @@ fn StreamMixin(comptime Type: type) type {
                 uv_data.data = context;
                 uv_data.write_buffer = uv_buf_t.init(input);
 
-                const rc = uv_write(uv_data, @ptrCast(this), @ptrCast(&uv_data.write_buffer), 1, &Wrapper.uvWriteCb);
-                if (rc.errno()) |errno| {
-                    return .{ .err = .{ .errno = errno, .syscall = .write } };
+                if (uv_write(uv_data, @ptrCast(this), @ptrCast(&uv_data.write_buffer), 1, &Wrapper.uvWriteCb).toError(.write)) |err| {
+                    return .{ .err = err };
                 }
                 return .{ .result = {} };
             }
 
             var req: uv_write_t = std.mem.zeroes(uv_write_t);
-            const rc = uv_write(&req, this, @ptrCast(&uv_buf_t.init(input)), 1, null);
-            if (rc.errno()) |errno| {
-                return .{ .err = .{ .errno = errno, .syscall = .write } };
+            if (uv_write(&req, this, @ptrCast(&uv_buf_t.init(input)), 1, null).toError(.write)) |err| {
+                return .{ .err = err };
             }
             return .{ .result = {} };
         }
 
         pub fn tryWrite(this: *Type, input: []const u8) Maybe(usize) {
             const rc = uv_try_write(@ptrCast(this), @ptrCast(&uv_buf_t.init(input)), 1);
-            if (rc.errno()) |errno| {
-                return .{ .err = .{ .errno = errno, .syscall = .try_write } };
+            if (rc.toError(.try_write)) |err| {
+                return .{ .err = err };
             }
             return .{ .result = @intCast(rc.int()) };
         }
 
         pub fn tryWrite2(this: *Type, input: []const u8, send_handle: *uv_stream_t) ReturnCode {
             const rc = uv_try_write2(@ptrCast(this), @ptrCast(&uv_buf_t.init(input)), 1, send_handle);
-            if (rc.errno()) |errno| {
-                return .{ .err = .{ .errno = errno, .syscall = .try_write2 } };
+            if (rc.toError(.try_write2)) |err| {
+                return .{ .err = err };
             }
             return .{ .result = @intCast(rc.int()) };
         }

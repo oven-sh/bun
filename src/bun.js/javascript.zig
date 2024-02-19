@@ -115,6 +115,8 @@ const SourceMap = @import("../sourcemap/sourcemap.zig");
 const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
 
+const uv = bun.windows.libuv;
+
 pub const SavedSourceMap = struct {
     pub const vlq_offset = 24;
 
@@ -756,7 +758,9 @@ pub const VirtualMachine = struct {
         }
 
         if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
-            if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
+            if (Environment.isWindows) {
+                this.initIPCInstance(kv.value.value);
+            } else if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
                 this.initIPCInstance(bun.toFD(fd));
             } else {
                 Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
@@ -3128,8 +3132,10 @@ pub const VirtualMachine = struct {
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
-        uws_context: *uws.SocketContext,
+        context: if (Environment.isPosix) *uws.SocketContext else u0,
         ipc: IPC.IPCData,
+
+        pub usingnamespace bun.New(@This());
 
         pub fn handleIPCMessage(
             this: *IPCInstance,
@@ -3151,36 +3157,56 @@ pub const VirtualMachine = struct {
             }
         }
 
-        pub fn handleIPCClose(this: *IPCInstance, _: IPC.Socket) void {
+        pub fn handleIPCClose(this: *IPCInstance) void {
             JSC.markBinding(@src());
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;
                 Process__emitDisconnectEvent(global);
             }
-            uws.us_socket_context_free(0, this.uws_context);
-            bun.default_allocator.destroy(this);
+            if (Environment.isPosix) {
+                uws.us_socket_context_free(0, this.context);
+            }
+            this.destroy();
         }
 
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
     };
 
-    pub fn initIPCInstance(this: *VirtualMachine, fd: bun.FileDescriptor) void {
+    const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
+    pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType) void {
         if (Environment.isWindows) {
             Output.warn("IPC is not supported on Windows", .{});
+
+            var instance = IPCInstance.new(.{
+                .globalThis = this.global,
+                .context = 0,
+                .ipc = .{},
+            });
+            instance.ipc.configureClient(IPCInstance, instance, info) catch {
+                instance.destroy();
+                Output.printErrorln("Unable to start IPC pipe", .{});
+                return;
+            };
+
+            this.ipc = instance;
+            instance.ipc.writeVersionPacket();
             return;
         }
         this.event_loop.ensureWaker();
         const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
         IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
 
-        var instance = bun.default_allocator.create(IPCInstance) catch @panic("OOM");
-        instance.* = .{
+        var instance = IPCInstance.new(.{
             .globalThis = this.global,
-            .uws_context = context,
+            .context = context,
             .ipc = undefined,
+        });
+        const socket = IPC.Socket.fromFd(context, info, IPCInstance, instance, null) orelse {
+            instance.destroy();
+            Output.printErrorln("Unable to start IPC socket", .{});
+            return;
         };
-        const socket = IPC.Socket.fromFd(context, fd, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
         socket.setTimeout(0);
         instance.ipc = .{ .socket = socket };
 

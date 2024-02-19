@@ -932,3 +932,4 @@ pub const BufferedReader = @import("./PipeReader.zig").BufferedReader;
 pub const BufferedWriter = @import("./PipeWriter.zig").BufferedWriter;
 pub const WriteResult = @import("./PipeWriter.zig").WriteResult;
 pub const StreamingWriter = @import("./PipeWriter.zig").StreamingWriter;
+pub const StreamBuffer = @import("./PipeWriter.zig").StreamBuffer;

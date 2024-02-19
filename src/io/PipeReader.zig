@@ -889,6 +889,7 @@ pub const WindowsBufferedReader = struct {
         this.pipe = pipe;
         return this.startWithCurrentPipe();
     }
+
     pub fn start(this: *WindowsOutputReader, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
         //TODO: check detect if its a tty here and use uv_tty_t instead of pipe
         std.debug.assert(this.pipe == null);

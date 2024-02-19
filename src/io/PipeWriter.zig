@@ -792,6 +792,17 @@ fn BaseWindowsPipeWriter(
             this.setParent(this.parent);
             return this.startWithCurrentPipe();
         }
+
+        pub fn setPipe(this: *WindowsPipeWriter, pipe: *uv.Pipe) void {
+            this.source = .{ .pipe = pipe };
+            this.setParent(this.parent);
+        }
+
+        pub fn getStream(this: *const WindowsPipeWriter) ?*uv.uv_stream_t {
+            const source = this.source orelse return null;
+            if (source == .file) return null;
+            return source.toStream();
+        }
     };
 }
 
@@ -826,15 +837,7 @@ const Source = union(enum) {
         switch (this) {
             .pipe => return this.pipe.fd(),
             .tty => return this.tty.fd(),
-            .file => @panic("TODO"),
-        }
-    }
-
-    pub fn getStream(this: *Source) ?*uv.uv_stream_t {
-        switch (this) {
-            .pipe => |pipe| return @ptrCast(pipe),
-            .tty => |tty| return @ptrCast(tty),
-            else => return null,
+            .file => return bun.FDImpl.fromUV(this.file.file).encode(),
         }
     }
 
@@ -926,16 +929,6 @@ pub fn WindowsBufferedWriter(
             this.is_done = false;
             this.write();
             return .{ .result = {} };
-        }
-
-        pub fn setPipe(this: *WindowsWriter, pipe: *uv.Pipe) void {
-            this.source = .{ .pipe = pipe };
-            this.setParent(this.parent);
-        }
-
-        pub fn getStream(this: *WindowsWriter) ?*uv.uv_stream_t {
-            const source = this.source orelse return null;
-            return source.getStream();
         }
 
         fn onWriteComplete(this: *WindowsWriter, status: uv.ReturnCode) void {
@@ -1176,16 +1169,6 @@ pub fn WindowsStreamingWriter(
             std.debug.assert(this.source != null);
             this.is_done = false;
             return .{ .result = {} };
-        }
-
-        pub fn setPipe(this: *WindowsWriter, pipe: *uv.Pipe) void {
-            this.source = .{ .pipe = pipe };
-            this.setParent(this.parent);
-        }
-
-        pub fn getStream(this: *WindowsWriter) ?*uv.uv_stream_t {
-            const source = this.source orelse return null;
-            return source.getStream();
         }
 
         fn hasPendingData(this: *WindowsWriter) bool {

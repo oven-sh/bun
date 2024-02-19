@@ -2496,7 +2496,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
 
     int result = kill(pid, signal);
 #else
-    int signal = 1;
+    int signal = SIGTERM;
     if (signalValue.isNumber()) {
         signal = signalValue.toInt32(globalObject);
         RETURN_IF_EXCEPTION(scope, {});

@@ -918,12 +918,14 @@ pub const H2FrameParser = struct {
             const header = this.decode(payload[offset..]) catch break;
             offset += header.next;
             log("header {s} {s}", .{ header.name, header.value });
-            const value = JSC.ZigString.fromUTF8(header.value).toValueGC(globalObject);
+
             if (headers.getTruthy(globalObject, header.name)) |current_value| {
                 // Duplicated of single value headers are discarded
                 if (SingleValueHeaders.has(header.name)) {
                     continue;
                 }
+
+                const value = JSC.ZigString.fromUTF8(header.value).toValueGC(globalObject);
 
                 if (current_value.jsType().isArray()) {
                     current_value.push(globalObject, value);
@@ -938,6 +940,7 @@ pub const H2FrameParser = struct {
             } else {
                 // TODO: check for well-known headers and use pre-allocated static strings (see lshpack.c)
                 const name = JSC.ZigString.fromUTF8(header.name);
+                const value = JSC.ZigString.fromUTF8(header.value).toValueGC(globalObject);
                 headers.put(globalObject, &name, value);
             }
 
@@ -2001,12 +2004,14 @@ pub const H2FrameParser = struct {
             };
 
             if (js_value.jsType().isArray()) {
-                if (SingleValueHeaders.has(name)) {
+                // https://github.com/oven-sh/bun/issues/8940
+                var value_iter = js_value.arrayIterator(globalObject);
+
+                if (SingleValueHeaders.has(name) and value_iter.len > 1) {
                     const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER", "Header field \"{s}\" must only have a single value", .{name}, globalObject);
                     globalObject.throwValue(exception);
                     return .zero;
                 }
-                var value_iter = js_value.arrayIterator(globalObject);
 
                 while (value_iter.next()) |item| {
                     if (item.isEmptyOrUndefinedOrNull()) {
@@ -2210,12 +2215,14 @@ pub const H2FrameParser = struct {
 
                 if (js_value.jsType().isArray()) {
                     log("array header {s}", .{name});
-                    if (SingleValueHeaders.has(name)) {
+                    // https://github.com/oven-sh/bun/issues/8940
+                    var value_iter = js_value.arrayIterator(globalObject);
+
+                    if (SingleValueHeaders.has(name) and value_iter.len > 1) {
                         const exception = JSC.toTypeErrorWithCode("ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER", "Header field \"{s}\" must only have a single value", .{name}, globalObject);
                         globalObject.throwValue(exception);
                         return .zero;
                     }
-                    var value_iter = js_value.arrayIterator(globalObject);
 
                     while (value_iter.next()) |item| {
                         if (item.isEmptyOrUndefinedOrNull()) {

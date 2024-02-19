@@ -1,11 +1,8 @@
-// @known-failing-on-windows: panic "switch on corrupt value"
+// @known-failing-on-windows: 1 failing
+// flaky with setTimeout
 // Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
 import { createDenoTest } from "deno:harness";
-const { test,
-  assert,
-  assertEquals,
-  assertThrows,
-} = createDenoTest(import.meta.path);
+const { test, assert, assertEquals, assertThrows } = createDenoTest(import.meta.path);
 
 test({ permissions: { hrtime: false } }, async function performanceNow() {
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -66,7 +63,7 @@ test(function performanceMarkDetailArrayBuffer() {
 });
 
 test(function performanceMarkDetailSubTypedArray() {
-  class SubUint8Array extends Uint8Array { }
+  class SubUint8Array extends Uint8Array {}
   const detail = new SubUint8Array([1, 2]);
   const mark = performance.mark("test", { detail });
   assert(mark instanceof PerformanceMark);
@@ -86,11 +83,7 @@ test(function performanceMeasure() {
       try {
         const later = new Date().valueOf();
         const measure1 = performance.measure(measureName1, markName1);
-        const measure2 = performance.measure(
-          measureName2,
-          undefined,
-          markName1,
-        );
+        const measure2 = performance.measure(measureName2, undefined, markName1);
         assert(measure1 instanceof PerformanceMeasure);
         assertEquals(measure1.detail, null);
         assertEquals(measure1.name, measureName1);
@@ -99,21 +92,14 @@ test(function performanceMeasure() {
         assertEquals(measure2.startTime, 0);
         assertEquals(mark1.startTime, measure1.startTime);
         assertEquals(mark1.startTime, measure2.duration);
+        assert(measure1.duration >= 100, `duration below 100ms: ${measure1.duration}`);
         assert(
-          measure1.duration >= 100,
-          `duration below 100ms: ${measure1.duration}`,
-        );
-        assert(
-          measure1.duration < (later - now) * 1.50,
-          `duration exceeds 150% of wallclock time: ${measure1.duration}ms vs ${later - now
-          }ms`,
+          measure1.duration < (later - now) * 1.5,
+          `duration exceeds 150% of wallclock time: ${measure1.duration}ms vs ${later - now}ms`,
         );
         const entries = performance.getEntries();
         assertEquals(entries[entries.length - 1], measure2);
-        const entriesByName = performance.getEntriesByName(
-          measureName1,
-          "measure",
-        );
+        const entriesByName = performance.getEntriesByName(measureName1, "measure");
         assertEquals(entriesByName[entriesByName.length - 1], measure1);
         const measureEntries = performance.getEntriesByType("measure");
         assertEquals(measureEntries[measureEntries.length - 1], measure2);
@@ -127,7 +113,7 @@ test(function performanceMeasure() {
 
 test(function performanceObserver() {
   function perfObserver(list, observer) {
-    list.getEntries().forEach((entry) => {
+    list.getEntries().forEach(entry => {
       if (entry.entryType === "mark") {
         assertEquals(entry.name, "testmark");
       }
@@ -154,17 +140,13 @@ test(function performanceEntryIllegalConstructor() {
 });
 
 test(function performanceMeasureIllegalConstructor() {
-  assertThrows(
-    () => new PerformanceMeasure(),
-    TypeError,
-    "Illegal constructor",
-  );
+  assertThrows(() => new PerformanceMeasure(), TypeError, "Illegal constructor");
 });
 
 test(function performanceIsEventTarget() {
   assert(performance instanceof EventTarget);
 
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     const handler = () => {
       resolve();
     };

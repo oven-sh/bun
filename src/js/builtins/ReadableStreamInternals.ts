@@ -613,7 +613,6 @@ export function isReadableStreamDefaultController(controller) {
 export function readDirectStream(stream, sink, underlyingSource) {
   $putByIdDirectPrivate(stream, "underlyingSource", undefined);
   $putByIdDirectPrivate(stream, "start", undefined);
-
   function close(stream, reason) {
     if (reason && underlyingSource?.cancel) {
       try {
@@ -647,21 +646,24 @@ export function readDirectStream(stream, sink, underlyingSource) {
     $throwTypeError("pull is not a function");
     return;
   }
-
   $putByIdDirectPrivate(stream, "readableStreamController", sink);
   const highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
-
   sink.start({
     highWaterMark: !highWaterMark || highWaterMark < 64 ? 64 : highWaterMark,
   });
 
   $startDirectStream.$call(sink, stream, underlyingSource.pull, close, stream.$asyncContext);
+
   $putByIdDirectPrivate(stream, "reader", {});
 
   var maybePromise = underlyingSource.pull(sink);
   sink = undefined;
   if (maybePromise && $isPromise(maybePromise)) {
-    return maybePromise.$then(() => {});
+    if (maybePromise.$then) {
+      return maybePromise.$then(() => {});
+    }
+
+    return maybePromise.then(() => {});
   }
 }
 
@@ -1245,7 +1247,6 @@ export function readableStreamError(stream, error) {
   $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);
   $putByIdDirectPrivate(stream, "state", $streamErrored);
   $putByIdDirectPrivate(stream, "storedError", error);
-
   const reader = $getByIdDirectPrivate(stream, "reader");
 
   if (!reader) return;
@@ -1515,6 +1516,88 @@ export function readableStreamDefaultControllerCanCloseOrEnqueue(controller) {
   return $getByIdDirectPrivate(controlledReadableStream, "state") === $streamReadable;
 }
 
+export function readableStreamFromAsyncIterator(target, fn) {
+  var cancelled = false,
+    iter: AsyncIterator<any>;
+  return new ReadableStream({
+    type: "direct",
+
+    cancel(reason) {
+      $debug("readableStreamFromAsyncIterator.cancel", reason);
+      cancelled = true;
+
+      if (iter) {
+        iter.throw?.((reason ||= new DOMException("ReadableStream has been cancelled", "AbortError")));
+      }
+    },
+
+    async pull(controller) {
+      // we deliberately want to throw on error
+      iter = fn.$call(target, controller);
+      fn = target = undefined;
+
+      if (!$isAsyncGenerator(iter) && typeof iter.next !== "function") {
+        iter = undefined;
+        throw new TypeError("Expected an async generator");
+      }
+
+      var closingError, value, done, immediateTask;
+
+      try {
+        while (!cancelled && !done) {
+          const promise = iter.next(controller);
+          if (cancelled) {
+            return;
+          }
+
+          if (
+            $isPromise(promise) &&
+            ($getPromiseInternalField(promise, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
+          ) {
+            clearImmediate(immediateTask);
+            ({ value, done } = $getPromiseInternalField(promise, $promiseFieldReactionsOrResult));
+            $assert(!$isPromise(value), "Expected a value, not a promise");
+          } else {
+            immediateTask = setImmediate(() => immediateTask && controller?.flush?.(true));
+            ({ value, done } = await promise);
+
+            if (cancelled) {
+              return;
+            }
+          }
+
+          if (!$isUndefinedOrNull(value)) {
+            controller.write(value);
+          }
+        }
+      } catch (e) {
+        closingError = e;
+      } finally {
+        clearImmediate(immediateTask);
+        immediateTask = undefined;
+
+        // Stream was closed before we tried writing to it.
+        if (closingError?.code === "ERR_INVALID_THIS") {
+          await iter.return?.();
+          return;
+        }
+
+        if (closingError) {
+          try {
+            await iter.throw?.(closingError);
+          } finally {
+            throw closingError;
+          }
+        } else {
+          await controller.end();
+          await iter.return?.();
+        }
+        iter = undefined;
+      }
+    },
+  });
+}
+
 export function lazyLoadStream(stream, autoAllocateChunkSize) {
   $debug("lazyLoadStream", stream, autoAllocateChunkSize);
   var nativeType = $getByIdDirectPrivate(stream, "bunNativeType");
@@ -1764,25 +1847,32 @@ export function readableStreamToArrayBufferDirect(stream, underlyingSource) {
 
   var didError = false;
   try {
-    const firstPull = pull(controller);
-    if (firstPull && $isObject(firstPull) && $isPromise(firstPull)) {
-      return (async function (controller, promise, pull) {
-        while (!ended) {
-          await pull(controller);
-        }
-        return await promise;
-      })(controller, promise, pull);
-    }
-
-    return capability.promise;
+    var firstPull = pull(controller);
   } catch (e) {
     didError = true;
     $readableStreamError(stream, e);
     return Promise.$reject(e);
   } finally {
-    if (!didError && stream) $readableStreamClose(stream);
-    controller = close = sink = pull = stream = undefined;
+    if (!$isPromise(firstPull)) {
+      if (!didError && stream) $readableStreamClose(stream);
+      controller = close = sink = pull = stream = undefined;
+      return capability.promise;
+    }
   }
+
+  $assert($isPromise(firstPull));
+  return firstPull.then(
+    () => {
+      if (!didError && stream) $readableStreamClose(stream);
+      controller = close = sink = pull = stream = undefined;
+      return capability.promise;
+    },
+    e => {
+      didError = true;
+      if ($getByIdDirectPrivate(stream, "state") === $streamReadable) $readableStreamError(stream, e);
+      return Promise.$reject(e);
+    },
+  );
 }
 
 export async function readableStreamToTextDirect(stream, underlyingSource) {

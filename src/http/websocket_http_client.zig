@@ -163,21 +163,47 @@ const CppWebSocket = opaque {
     extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, clone: bool, text: *const JSC.ZigString) void;
     extern fn WebSocket__didReceiveBytes(websocket_context: *CppWebSocket, bytes: [*]const u8, byte_len: usize, opcode: u8) void;
     extern fn WebSocket__rejectUnauthorized(websocket_context: *CppWebSocket) bool;
-    pub const didConnect = WebSocket__didConnect;
-    pub const didAbruptClose = WebSocket__didAbruptClose;
-    pub const didClose = WebSocket__didClose;
-    pub const didReceiveText = WebSocket__didReceiveText;
-    pub const didReceiveBytes = WebSocket__didReceiveBytes;
+    pub fn didAbruptClose(this: *CppWebSocket, reason: ErrorCode) void {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didAbruptClose(this, reason);
+    }
+    pub fn didClose(this: *CppWebSocket, code: u16, reason: *const bun.String) void {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didClose(this, code, reason);
+    }
+    pub fn didReceiveText(this: *CppWebSocket, clone: bool, text: *const JSC.ZigString) void {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didReceiveText(this, clone, text);
+    }
+    pub fn didReceiveBytes(this: *CppWebSocket, bytes: [*]const u8, byte_len: usize, opcode: u8) void {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didReceiveBytes(this, bytes, byte_len, opcode);
+    }
+    pub fn rejectUnauthorized(this: *CppWebSocket) bool {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        return WebSocket__rejectUnauthorized(this);
+    }
+    pub fn didConnect(this: *CppWebSocket, socket: *uws.Socket, buffered_data: ?[*]u8, buffered_len: usize) void {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didConnect(this, socket, buffered_data, buffered_len);
+    }
     extern fn WebSocket__incrementPendingActivity(websocket_context: *CppWebSocket) void;
     extern fn WebSocket__decrementPendingActivity(websocket_context: *CppWebSocket) void;
     pub fn ref(this: *CppWebSocket) void {
         JSC.markBinding(@src());
         WebSocket__incrementPendingActivity(this);
-    }
-
-    pub fn rejectUnauthorized(this: *CppWebSocket) bool {
-        JSC.markBinding(@src());
-        return WebSocket__rejectUnauthorized(this);
     }
 
     pub fn unref(this: *CppWebSocket) void {
@@ -344,6 +370,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             if (this.outgoing_websocket) |ws| {
                 this.outgoing_websocket = null;
+
                 ws.didAbruptClose(ErrorCode.ended);
             }
 
@@ -409,11 +436,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleData(this: *HTTPClient, socket: Socket, data: []const u8) void {
             log("onData", .{});
-            defer JSC.VirtualMachine.get().drainMicrotasks();
             if (this.outgoing_websocket == null) {
                 this.clearData();
                 return;
             }
+
             std.debug.assert(socket.socket == this.tcp.?.socket);
 
             if (comptime Environment.allow_assert)
@@ -980,6 +1007,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.outgoing_websocket) |ws| {
                 this.outgoing_websocket = null;
                 log("fail ({s})", .{@tagName(code)});
+
                 ws.didAbruptClose(code);
             }
 
@@ -1055,19 +1083,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.clearData();
                 return;
             };
-            if (comptime Environment.isDebug) {
-                this.event_loop.debug.enter();
-            }
-            defer {
-                if (comptime Environment.isDebug) {
-                    this.event_loop.debug.enter();
-                }
-            }
 
             switch (kind) {
                 .Text => {
-                    defer this.event_loop.drainMicrotasks();
-
                     // this function encodes to UTF-16 if > 127
                     // so we don't need to worry about latin1 non-ascii code points
                     // we avoid trim since we wanna keep the utf8 validation intact
@@ -1088,7 +1106,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     }
                 },
                 .Binary, .Ping, .Pong => {
-                    defer this.event_loop.drainMicrotasks();
                     JSC.markBinding(@src());
                     out.didReceiveBytes(data_.ptr, data_.len, @as(u8, @intFromEnum(kind)));
                 },
@@ -1137,9 +1154,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         pub fn handleData(this: *WebSocket, socket: Socket, data_: []const u8) void {
             // after receiving close we should ignore the data
             if (this.close_received) return;
-
-            // This is the start of a task, so we need to drain the microtask queue at the end
-            defer JSC.VirtualMachine.get().drainMicrotasks();
 
             // Due to scheduling, it is possible for the websocket onData
             // handler to run with additional data before the microtask queue is

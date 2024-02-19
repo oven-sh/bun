@@ -1041,7 +1041,7 @@ pub const BuildArtifact = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return @call(.always_inline, Blob.getText, .{ &this.blob, globalThis, callframe });
+        return @call(bun.callmod_inline, Blob.getText, .{ &this.blob, globalThis, callframe });
     }
 
     pub fn getJSON(
@@ -1049,27 +1049,27 @@ pub const BuildArtifact = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return @call(.always_inline, Blob.getJSON, .{ &this.blob, globalThis, callframe });
+        return @call(bun.callmod_inline, Blob.getJSON, .{ &this.blob, globalThis, callframe });
     }
     pub fn getArrayBuffer(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getArrayBuffer, .{ &this.blob, globalThis, callframe });
+        return @call(bun.callmod_inline, Blob.getArrayBuffer, .{ &this.blob, globalThis, callframe });
     }
     pub fn getSlice(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return @call(.always_inline, Blob.getSlice, .{ &this.blob, globalThis, callframe });
+        return @call(bun.callmod_inline, Blob.getSlice, .{ &this.blob, globalThis, callframe });
     }
     pub fn getType(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getType, .{ &this.blob, globalThis });
+        return @call(bun.callmod_inline, Blob.getType, .{ &this.blob, globalThis });
     }
 
     pub fn getStream(
@@ -1077,7 +1077,7 @@ pub const BuildArtifact = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getStream, .{
+        return @call(bun.callmod_inline, Blob.getStream, .{
             &this.blob,
             globalThis,
             callframe,
@@ -1108,11 +1108,11 @@ pub const BuildArtifact = struct {
     }
 
     pub fn getSize(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getSize, .{ &this.blob, globalObject });
+        return @call(bun.callmod_inline, Blob.getSize, .{ &this.blob, globalObject });
     }
 
     pub fn getMimeType(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getType, .{ &this.blob, globalObject });
+        return @call(bun.callmod_inline, Blob.getType, .{ &this.blob, globalObject });
     }
 
     pub fn getOutputKind(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {

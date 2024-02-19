@@ -27,6 +27,8 @@ else
 
 pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
 
+pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
+
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;

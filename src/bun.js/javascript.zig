@@ -3176,8 +3176,6 @@ pub const VirtualMachine = struct {
     const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
     pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType) void {
         if (Environment.isWindows) {
-            Output.warn("IPC is not supported on Windows", .{});
-
             var instance = IPCInstance.new(.{
                 .globalThis = this.global,
                 .context = 0,

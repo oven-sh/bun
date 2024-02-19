@@ -4114,20 +4114,27 @@ pub const Expect = struct {
         if (not) pass = !pass;
         if (pass) return .undefined;
 
-        // handle failure
-        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
-        const received_fmt = nthCallValue.toFmt(globalObject, &formatter);
+        const recieved = JSValue.createEmptyArray(globalObject, nthCallValue.getLength(globalObject));
+        for (0..nthCallValue.getLength(globalObject)) |i| {
+            recieved.putIndex(globalObject, @truncate(i), nthCallValue.getIndex(globalObject, @truncate(i)));
+        }
+        const expected = JSValue.createEmptyArray(globalObject, arguments.len);
+        for (1..(arguments.len)) |i| {
+            expected.putIndex(globalObject, @truncate(i - 1), arguments[i]);
+        }
+
+        const diff_formatter = DiffFormatter{ .received = recieved, .expected = expected, .globalObject = globalObject, .not = not };
 
         if (not) {
             const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>expected<r>", true);
             const fmt = signature ++ "\n\n" ++ "n: {any}\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n";
-            globalObject.throwPretty(fmt, .{ nthCallNum, received_fmt, totalCalls });
+            globalObject.throwPretty(fmt, .{ nthCallNum, diff_formatter, totalCalls });
             return .zero;
         }
 
         const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>expected<r>", false);
         const fmt = signature ++ "\n\n" ++ "n: {any}\n" ++ "Received: <red>{any}<r>" ++ "\n\n" ++ "Number of calls: <red>{any}<r>\n";
-        globalObject.throwPretty(fmt, .{ nthCallNum, received_fmt, totalCalls });
+        globalObject.throwPretty(fmt, .{ nthCallNum, diff_formatter, totalCalls });
         return .zero;
     }
 

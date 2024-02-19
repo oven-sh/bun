@@ -408,8 +408,8 @@ pub fn WindowsPipeReader(
         }
 
         pub fn close(this: *This) void {
-            this.stopReading().unwrap() catch unreachable;
             const pipe = this._pipe() orelse return;
+            this.stopReading().unwrap() catch unreachable;
             pipe.close(&onClosePipe);
         }
     };

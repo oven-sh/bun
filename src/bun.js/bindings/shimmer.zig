@@ -192,7 +192,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                 return matchNullable(
                     comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
                     comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
-                    @call(.auto, Fn, .{}),
+                    Fn(),
                 );
             }
         }

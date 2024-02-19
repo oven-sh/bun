@@ -47,7 +47,7 @@ pub const JSObject = extern struct {
     pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
         return struct {
             pub fn call(this: ?*anyopaque, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void {
-                @call(.always_inline, func, .{ @as(*Ctx, @ptrCast(@alignCast(this.?))), obj.?, global.? });
+                @call(bun.callmod_inline, func, .{ @as(*Ctx, @ptrCast(@alignCast(this.?))), obj.?, global.? });
             }
         };
     }
@@ -1833,7 +1833,7 @@ pub fn NewGlobalObject(comptime Type: type) type {
         const moduleNotImpl = "Module fetch not implemented";
         pub fn import(global: *JSGlobalObject, specifier: *String, source: *String) callconv(.C) ErrorableString {
             if (comptime @hasDecl(Type, "import")) {
-                return @call(.always_inline, Type.import, .{ global, specifier.*, source.* });
+                return @call(bun.callmod_inline, Type.import, .{ global, specifier.*, source.* });
             }
             return ErrorableString.err(error.ImportFailed, String.init(importNotImpl).toErrorInstance(global).asVoid());
         }
@@ -1845,35 +1845,35 @@ pub fn NewGlobalObject(comptime Type: type) type {
             query_string: *ZigString,
         ) callconv(.C) void {
             if (comptime @hasDecl(Type, "resolve")) {
-                @call(.always_inline, Type.resolve, .{ res, global, specifier.*, source.*, query_string, true });
+                @call(bun.callmod_inline, Type.resolve, .{ res, global, specifier.*, source.*, query_string, true });
                 return;
             }
             res.* = ErrorableString.err(error.ResolveFailed, String.init(resolveNotImpl).toErrorInstance(global).asVoid());
         }
         pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *String, source: *String) callconv(.C) void {
             if (comptime @hasDecl(Type, "fetch")) {
-                @call(.always_inline, Type.fetch, .{ ret, global, specifier.*, source.* });
+                @call(bun.callmod_inline, Type.fetch, .{ ret, global, specifier.*, source.* });
                 return;
             }
             ret.* = ErrorableResolvedSource.err(error.FetchFailed, String.init(moduleNotImpl).toErrorInstance(global).asVoid());
         }
         pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "promiseRejectionTracker")) {
-                return @call(.always_inline, Type.promiseRejectionTracker, .{ global, promise, rejection });
+                return @call(bun.callmod_inline, Type.promiseRejectionTracker, .{ global, promise, rejection });
             }
             return JSValue.jsUndefined();
         }
 
         pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "reportUncaughtException")) {
-                return @call(.always_inline, Type.reportUncaughtException, .{ global, exception });
+                return @call(bun.callmod_inline, Type.reportUncaughtException, .{ global, exception });
             }
             return JSValue.jsUndefined();
         }
 
         pub fn onCrash() callconv(.C) void {
             if (comptime @hasDecl(Type, "onCrash")) {
-                return @call(.always_inline, Type.onCrash, .{});
+                return @call(bun.callmod_inline, Type.onCrash, .{});
             }
 
             Output.flush();

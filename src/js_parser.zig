@@ -11995,7 +11995,7 @@ fn NewParser_(
         }
 
         fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
-            return try @call(.always_inline, declareSymbolMaybeGenerated, .{ p, kind, loc, name, false });
+            return try @call(bun.callmod_inline, declareSymbolMaybeGenerated, .{ p, kind, loc, name, false });
         }
 
         fn declareSymbolMaybeGenerated(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string, comptime is_generated: bool) !Ref {

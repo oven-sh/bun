@@ -50,7 +50,7 @@ pub fn isPackagePath(path: string) bool {
     // Always check for posix absolute paths (starts with "/")
     // But don't check window's style on posix
     // For a more in depth explanation, look above where `isPackagePathNotAbsolute` is used.
-    return !std.fs.path.isAbsolute(path) and @call(.always_inline, isPackagePathNotAbsolute, .{path});
+    return !std.fs.path.isAbsolute(path) and @call(bun.callmod_inline, isPackagePathNotAbsolute, .{path});
 }
 
 pub fn isPackagePathNotAbsolute(non_absolute_path: string) bool {
@@ -1494,7 +1494,7 @@ pub const Resolver = struct {
         r: *ThisResolver,
         result: *const Result,
     ) ?*const PackageJSON {
-        return @call(.always_inline, packageJSONForResolvedNodeModuleWithIgnoreMissingName, .{ r, result, true });
+        return @call(bun.callmod_inline, packageJSONForResolvedNodeModuleWithIgnoreMissingName, .{ r, result, true });
     }
 
     // This is a fallback, hopefully not called often. It should be relatively quick because everything should be in the cache.

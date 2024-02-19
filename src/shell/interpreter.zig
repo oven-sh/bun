@@ -793,7 +793,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     },
                     .pipe => {
                         const func = @field(ShellState, "buffered_" ++ @tagName(iotype));
-                        const bufio: *bun.ByteList = @call(.auto, func, .{this});
+                        const bufio: *bun.ByteList = func(this);
                         bufio.append(bun.default_allocator, buf) catch bun.outOfMemory();
                         // this.parent.childDone(this, 1);
                         return .cont;

@@ -70,7 +70,7 @@ const WyhashStateless = struct {
         var off: usize = 0;
         while (off < b.len) : (off += 32) {
             self.round(b[off .. off + 32]);
-            // @call(.always_inline, self.round, .{b[off .. off + 32]});
+            // @call(bun.callmod_inline, self.round, .{b[off .. off + 32]});
         }
 
         self.msg_len += b.len;
@@ -127,9 +127,9 @@ const WyhashStateless = struct {
 
         var c = WyhashStateless.init(seed);
         c.update(input[0..aligned_len]);
-        // @call(.always_inline, c.update, .{input[0..aligned_len]});
+        // @call(bun.callmod_inline, c.update, .{input[0..aligned_len]});
         return c.final(input[aligned_len..]);
-        // return @call(.always_inline, c.final, .{input[aligned_len..]});
+        // return @call(bun.callmod_inline, c.final, .{input[aligned_len..]});
     }
 };
 

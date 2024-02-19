@@ -177,7 +177,7 @@ pub const AnyTask = struct {
             }
 
             pub fn wrap(this: ?*anyopaque) void {
-                @call(.always_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
+                @call(bun.callmod_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
             }
         };
     }
@@ -211,7 +211,7 @@ pub const ManagedTask = struct {
             }
 
             pub fn wrap(this: ?*anyopaque) void {
-                @call(.always_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
+                @call(bun.callmod_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
             }
         };
     }

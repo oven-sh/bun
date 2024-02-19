@@ -3047,7 +3047,7 @@ pub const HTTPClientResult = struct {
 
                 pub fn wrapped_callback(ptr: *anyopaque, result: HTTPClientResult) void {
                     const casted = @as(Type, @ptrCast(@alignCast(ptr)));
-                    @call(.always_inline, callback, .{ casted, result });
+                    @call(bun.callmod_inline, callback, .{ casted, result });
                 }
             };
         }

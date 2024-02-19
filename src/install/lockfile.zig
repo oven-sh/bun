@@ -1899,7 +1899,7 @@ pub const StringBuilder = struct {
     }
 
     pub fn append(this: *StringBuilder, comptime Type: type, slice: string) Type {
-        return @call(.always_inline, appendWithHash, .{ this, Type, slice, String.Builder.stringHash(slice) });
+        return @call(bun.callmod_inline, appendWithHash, .{ this, Type, slice, String.Builder.stringHash(slice) });
     }
 
     // SlicedString is not supported due to inline strings.

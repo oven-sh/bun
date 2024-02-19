@@ -1196,7 +1196,7 @@ pub fn wrapTestFunction(comptime name: []const u8, comptime func: DescribeScope.
                 globalThis.throw("Cannot use " ++ name ++ "() outside of a test file.", .{});
                 return .zero;
             }
-            return @call(.always_inline, func, .{ globalThis, callframe });
+            return @call(bun.callmod_inline, func, .{ globalThis, callframe });
         }
     }.wrapped;
 }

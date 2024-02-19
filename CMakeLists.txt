@@ -1303,6 +1303,14 @@ else()
     target_link_libraries(${bun} PRIVATE lshpack)
 endif()
 
+if(WIN32)
+    target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/hwy.lib")
+else()
+    target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libhwy.a")
+endif()
+
+target_include_directories(${bun} PRIVATE "${BUN_DEPS_DIR}/highway")
+
 if(NOT WIN32)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libWTF.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")

@@ -1531,6 +1531,15 @@ export function readableStreamFromAsyncIterator(target, fn) {
       }
     },
 
+
+    close() {
+      $debug("readableStreamFromAsyncIterator.close");
+      cancelled = true;
+      if (iter) {
+        iter.return?.();
+      }
+    },
+
     async pull(controller) {
       // we deliberately want to throw on error
       iter = fn.$call(target, controller);

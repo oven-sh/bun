@@ -943,11 +943,11 @@ pub fn DOMCall(
             arguments_ptr: [*]const JSC.JSValue,
             arguments_len: usize,
         ) callconv(.C) JSValue {
-            return @call(.auto, @field(Container, functionName), .{
+            return @field(Container, functionName)(
                 globalObject,
                 thisValue,
                 arguments_ptr[0..arguments_len],
-            });
+            );
         }
 
         pub const fastpath = @field(Container, functionName ++ "WithoutTypeChecks");

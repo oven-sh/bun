@@ -1528,6 +1528,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
 
       if (iter) {
         iter.throw?.((reason ||= new DOMException("ReadableStream has been cancelled", "AbortError")));
+        iter = undefined;
       }
     },
 
@@ -1537,6 +1538,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
       cancelled = true;
       if (iter) {
         iter.return?.();
+        iter = undefined;
       }
     },
 
@@ -1595,6 +1597,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
           try {
             await iter.throw?.(closingError);
           } finally {
+            iter = undefined;
             throw closingError;
           }
         } else {

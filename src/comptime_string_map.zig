@@ -31,7 +31,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                 return std.mem.order(KeyType, a.key, b.key) == .lt;
             }
         }).lenAsc;
-        if (KeyType == u8) {
+        if (KeyType == u8 or KeyType == u16) {
             for (kvs_list, 0..) |kv, i| {
                 if (V != void) {
                     sorted_kvs[i] = .{ .key = kv.@"0", .value = kv.@"1" };

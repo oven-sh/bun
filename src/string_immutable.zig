@@ -51,7 +51,7 @@ pub inline fn literal(comptime T: type, comptime str: string) []const T {
 }
 
 pub inline fn literalBuf(comptime T: type, comptime str: string) [str.len]T {
-    return literal(u8, str)[0..str.len].*;
+    return comptime literal(T, str)[0..].*;
 }
 
 pub inline fn toUTF16LiteralZ(comptime str: []const u8) [:0]const u16 {

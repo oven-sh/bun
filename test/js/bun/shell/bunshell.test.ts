@@ -400,7 +400,12 @@ describe("bunshell", () => {
       let procEnv = JSON.parse(str1);
       expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar" });
       procEnv = JSON.parse(str2);
-      expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar", BUN_TEST_VAR: "1" });
+      expect(procEnv).toEqual({
+        ...bunEnv,
+        BAZ: "1",
+        FOO: "bar",
+        BUN_TEST_VAR: "1",
+      });
     });
 
     test("syntax edgecase", async () => {
@@ -443,11 +448,11 @@ describe("bunshell", () => {
   describe("rm", () => {
     let temp_dir: string;
     const files = {
-      "foo": "bar",
-      "bar": "baz",
-      "dir": {
-        "some": "more",
-        "files": "here",
+      foo: "bar",
+      bar: "baz",
+      dir: {
+        some: "more",
+        files: "here",
       },
     };
     beforeAll(() => {
@@ -654,6 +659,8 @@ describe("deno_task", () => {
 
     // zero arguments after re-direct
     await TestBuilder.command`echo 1 > $EMPTY`.stderr("bun: ambiguous redirect: at `echo`\n").exitCode(1).run();
+
+    await TestBuilder.command`echo foo bar > file.txt; cat < file.txt`.ensureTempDir().stdout("foo bar\n").run();
   });
 
   test("pwd", async () => {
@@ -676,7 +683,11 @@ describe("deno_task", () => {
         ...bunEnv,
         FOO: "bar",
       });
-      expect(JSON.parse(stdout.toString())).toEqual({ ...bunEnv, BUN_TEST_VAR: "1", FOO: "bar" });
+      expect(JSON.parse(stdout.toString())).toEqual({
+        ...bunEnv,
+        BUN_TEST_VAR: "1",
+        FOO: "bar",
+      });
     }
 
     {
@@ -705,82 +716,3 @@ function sentinelByte(buf: Uint8Array): number {
   }
   throw new Error("No sentinel byte");
 }
-
-const foo = {
-  "stmts": [
-    {
-      "exprs": [
-        {
-          "cmd": {
-            "assigns": [],
-            "name_and_args": [{ "simple": { "Text": "echo" } }],
-            "redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 },
-            "redirect_file": { "jsbuf": { "idx": 0 } },
-          },
-        },
-      ],
-    },
-  ],
-};
-
-const lex = [
-  { "Text": "echo" },
-  { "Delimit": {} },
-  { "CmdSubstBegin": {} },
-  { "Text": "echo" },
-  { "Delimit": {} },
-  { "Text": "ハハ" },
-  { "Delimit": {} },
-  { "CmdSubstEnd": {} },
-  { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 } },
-  { "JSObjRef": 0 },
-  { "Eof": {} },
-];
-
-const lex2 = [
-  { "Text": "echo" },
-  { "Delimit": {} },
-  { "CmdSubstBegin": {} },
-  { "Text": "echo" },
-  { "Delimit": {} },
-  { "Text": "noice" },
-  { "Delimit": {} },
-  { "CmdSubstEnd": {} },
-  { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 } },
-  { "JSObjRef": 0 },
-  { "Eof": {} },
-];
-
-const parse2 = {
-  "stmts": [
-    {
-      "exprs": [
-        {
-          "cmd": {
-            "assigns": [],
-            "name_and_args": [{ "simple": { "Text": "echo" } }],
-            "redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 },
-            "redirect_file": { "jsbuf": { "idx": 0 } },
-          },
-        },
-      ],
-    },
-  ],
-};
-
-const lsdkjfs = {
-  "stmts": [
-    {
-      "exprs": [
-        {
-          "cmd": {
-            "assigns": [],
-            "name_and_args": [{ "simple": { "Text": "echo" } }],
-            "redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 },
-            "redirect_file": { "jsbuf": { "idx": 0 } },
-          },
-        },
-      ],
-    },
-  ],
-};

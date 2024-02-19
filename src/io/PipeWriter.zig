@@ -830,6 +830,14 @@ const Source = union(enum) {
         }
     }
 
+    pub fn getStream(this: *Source) ?*uv.uv_stream_t {
+        switch (this) {
+            .pipe => |pipe| return @ptrCast(pipe),
+            .tty => |tty| return @ptrCast(tty),
+            else => return null,
+        }
+    }
+
     pub fn setData(this: Source, data: ?*anyopaque) void {
         switch (this) {
             .pipe => this.pipe.data = data,
@@ -923,6 +931,11 @@ pub fn WindowsBufferedWriter(
         pub fn setPipe(this: *WindowsWriter, pipe: *uv.Pipe) void {
             this.source = .{ .pipe = pipe };
             this.setParent(this.parent);
+        }
+
+        pub fn getStream(this: *WindowsWriter) ?*uv.uv_stream_t {
+            const source = this.source orelse return null;
+            return source.getStream();
         }
 
         fn onWriteComplete(this: *WindowsWriter, status: uv.ReturnCode) void {
@@ -1168,6 +1181,11 @@ pub fn WindowsStreamingWriter(
         pub fn setPipe(this: *WindowsWriter, pipe: *uv.Pipe) void {
             this.source = .{ .pipe = pipe };
             this.setParent(this.parent);
+        }
+
+        pub fn getStream(this: *WindowsWriter) ?*uv.uv_stream_t {
+            const source = this.source orelse return null;
+            return source.getStream();
         }
 
         fn hasPendingData(this: *WindowsWriter) bool {

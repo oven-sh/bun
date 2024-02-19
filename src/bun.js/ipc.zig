@@ -590,7 +590,13 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                 Output.printErrorln("Failed to connect IPC pipe", .{});
                 return;
             }
-            this.ipc.writer.pipe.?.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
+            const stream = this.ipc.writer.getStream() orelse {
+                this.ipc.close();
+                Output.printErrorln("Failed to connect IPC pipe", .{});
+                return;
+            };
+
+            stream.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
                 this.ipc.close();
                 Output.printErrorln("Failed to connect IPC pipe", .{});
                 return;

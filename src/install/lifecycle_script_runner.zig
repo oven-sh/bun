@@ -113,7 +113,6 @@ pub const LifecycleScriptSubprocess = struct {
 
         this.package_name = original_script.package_name;
         this.current_script_index = next_script_index;
-        this.remaining_fds = if (this.manager.options.log_level.isVerbose()) 0 else 2;
         this.has_called_process_exit = false;
 
         const shell_bin = bun.CLI.RunCommand.findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
@@ -161,25 +160,31 @@ pub const LifecycleScriptSubprocess = struct {
                 }
             else {},
         };
+
+        this.remaining_fds = 0;
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), this.envp)).unwrap();
 
         if (comptime Environment.isPosix) {
             if (spawned.stdout) |stdout| {
                 this.stdout.setParent(this);
+                this.remaining_fds += 1;
                 try this.stdout.start(stdout, true).unwrap();
             }
 
             if (spawned.stderr) |stderr| {
                 this.stderr.setParent(this);
+                this.remaining_fds += 1;
                 try this.stderr.start(stderr, true).unwrap();
             }
         } else if (comptime Environment.isWindows) {
             if (spawned.stdout == .buffer) {
                 this.stdout.parent = this;
+                this.remaining_fds += 1;
                 try this.stdout.startWithCurrentPipe().unwrap();
             }
             if (spawned.stderr == .buffer) {
                 this.stderr.parent = this;
+                this.remaining_fds += 1;
                 try this.stderr.startWithCurrentPipe().unwrap();
             }
         }

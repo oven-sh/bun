@@ -928,8 +928,10 @@ export function onCloseDirectStream(reason) {
       var read = this._pendingRead;
       this._pendingRead = undefined;
       $rejectPromise(read, e);
+    } else {
+      throw e;
     }
-    $readableStreamError(stream, e);
+
     return;
   }
 
@@ -1519,6 +1521,16 @@ export function readableStreamDefaultControllerCanCloseOrEnqueue(controller) {
 export function readableStreamFromAsyncIterator(target, fn) {
   var cancelled = false,
     iter: AsyncIterator<any>;
+
+  // We must eagerly start the async generator to ensure that it works if objects are reused later.
+  // This impacts Astro, amongst others.
+  iter = fn.$call(target);
+  fn = target = undefined;
+
+  if (!$isAsyncGenerator(iter) && typeof iter.next !== "function") {
+    throw new TypeError("Expected an async generator");
+  }
+
   return new ReadableStream({
     type: "direct",
 
@@ -1533,24 +1545,12 @@ export function readableStreamFromAsyncIterator(target, fn) {
     },
 
     close() {
-      $debug("readableStreamFromAsyncIterator.close");
       cancelled = true;
-      if (iter) {
-        iter.return?.();
-        iter = undefined;
-      }
+      iter?.return?.();
+      iter = undefined;
     },
 
     async pull(controller) {
-      // we deliberately want to throw on error
-      iter = fn.$call(target, controller);
-      fn = target = undefined;
-
-      if (!$isAsyncGenerator(iter) && typeof iter.next !== "function") {
-        iter = undefined;
-        throw new TypeError("Expected an async generator");
-      }
-
       var closingError, value, done, immediateTask;
 
       try {

@@ -2926,7 +2926,7 @@ pub const FileSink = struct {
 
         // Only keep the event loop ref'd while there's a pending write in progress.
         // If there's no pending write, no need to keep the event loop ref'd.
-        this.writer.updateRef(this.eventLoop(), !done);
+        this.writer.updateRef(this.eventLoop(), false);
 
         this.written += amount;
 

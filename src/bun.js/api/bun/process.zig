@@ -443,7 +443,7 @@ pub const Process = struct {
         }
 
         if (comptime Environment.isLinux) {
-            if (this.pidfd != bun.invalid_fd.int()) {
+            if (this.pidfd != bun.invalid_fd.int() and this.pidfd.int() > 0) {
                 _ = bun.sys.close(bun.toFD(this.pidfd));
                 this.pidfd = @intCast(bun.invalid_fd.int());
             }

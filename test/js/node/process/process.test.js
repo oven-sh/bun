@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "fs";
@@ -70,10 +69,9 @@ it("process.hrtime.bigint()", () => {
 it("process.release", () => {
   expect(process.release.name).toBe("node");
   const platform = process.platform == "win32" ? "windows" : process.platform;
-  expect(process.release.sourceUrl).toContain(
-    `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${
-      { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch
-    }`,
+  const arch = { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch;
+  expect(process.release.sourceUrl).toEqual(
+    `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}.zip`,
   );
 });
 

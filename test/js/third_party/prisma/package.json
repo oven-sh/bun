@@ -10,6 +10,7 @@
     "typescript": "5.0.0"
   },
   "dependencies": {
+    "@napi-rs/canvas": "0.1.47",
     "@prisma/client": "5.1.1"
   }
 }

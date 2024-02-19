@@ -303,13 +303,8 @@ pub const FDImpl = packed struct {
     }
 
     pub fn format(this: FDImpl, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (fmt.len == 1 and fmt[0] == 'd') {
-            try writer.print("{d}", .{this.system()});
-            return;
-        }
-
         if (fmt.len != 0) {
-            @compileError("invalid format string for FDImpl.format. must be either '' or 'd'");
+            @compileError("invalid format string for FDImpl.format. must be ''");
         }
 
         if (!this.isValid()) {

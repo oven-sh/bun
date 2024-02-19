@@ -193,7 +193,7 @@ pub const BunxCommand = struct {
         };
     }
 
-    fn exit_with_usage() noreturn {
+    fn exitWithUsage() noreturn {
         Command.Tag.printHelp(.BunxCommand, false);
         Global.exit(1);
     }
@@ -237,7 +237,7 @@ pub const BunxCommand = struct {
 
         // check if package_name_for_update_request is empty string or " "
         if (package_name_for_update_request[0].len == 0) {
-            exit_with_usage();
+            exitWithUsage();
         }
 
         const update_requests = bun.PackageManager.UpdateRequest.parse(
@@ -249,7 +249,7 @@ pub const BunxCommand = struct {
         );
 
         if (update_requests.len == 0) {
-            exit_with_usage();
+            exitWithUsage();
         }
 
         // this shouldn't happen
@@ -328,7 +328,8 @@ pub const BunxCommand = struct {
             );
         };
 
-        const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
+        var temp_dir_buf: bun.PathBuffer = undefined;
+        const temp_dir_fd, const temp_dir_path = try bun.install.PackageManager.Options.openBunXCacheDir(&temp_dir_buf);
 
         const PATH_FOR_BIN_DIRS = brk: {
             if (ignore_cwd.len == 0) break :brk PATH;
@@ -359,23 +360,25 @@ pub const BunxCommand = struct {
         if (PATH.len > 0) {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.pathLiteral("{s}/bunx--{s}/node_modules/.bin:{s}"),
-                .{ temp_dir, package_fmt, PATH },
+                bun.pathLiteral("{s}/{s}/node_modules/.bin:{s}"),
+                .{ temp_dir_path, package_fmt, PATH },
             );
         } else {
             PATH = try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.pathLiteral("{s}/bunx--{s}/node_modules/.bin"),
-                .{ temp_dir, package_fmt },
+                bun.pathLiteral("{s}/{s}/node_modules/.bin"),
+                .{ temp_dir_path, package_fmt },
             );
         }
         try this_bundler.env.map.put("PATH", PATH);
-        const bunx_cache_dir = PATH[0 .. temp_dir.len + "/bunx--".len + package_fmt.len];
+        const bunx_cache_dir = PATH[0 .. temp_dir_path.len + "/".len + package_fmt.len];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}"), .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         const passthrough = passthrough_list.items;
+
+        var do_cache_bust = update_request.version.tag == .dist_tag;
 
         if (update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag) try_run_existing: {
             var destination_: ?[:0]const u8 = null;
@@ -401,6 +404,8 @@ pub const BunxCommand = struct {
             )) |destination| {
                 const out = bun.asByteSlice(destination);
 
+                // If this directory was installed by bunx, we want to perform cache invalidation on it
+                // this way running `bunx hello` will update hello automatically to the latest version
                 if (std.mem.startsWith(u8, out, bunx_cache_dir)) {
                     const is_stale = is_stale: {
                         if (Environment.isWindows) {
@@ -409,7 +414,7 @@ pub const BunxCommand = struct {
                                 // and that error message is likely going to be better than the one from `bun add`
                                 break :is_stale false;
                             };
-                            defer std.os.close(fd);
+                            defer _ = bun.sys.close(fd);
 
                             var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
                             var info: std.os.windows.FILE_BASIC_INFORMATION = undefined;
@@ -435,7 +440,9 @@ pub const BunxCommand = struct {
 
                     if (is_stale) {
                         // If delete fails, oh well. Hope installation takes care of it.
-                        std.fs.deleteDirAbsolute(out) catch {};
+                        // std.fs.deleteDirAbsolute(out) catch {};
+
+                        do_cache_bust = true;
                         break :try_run_existing;
                     }
                 }
@@ -499,13 +506,7 @@ pub const BunxCommand = struct {
             }
         }
 
-        const bunx_install_dir_path = try std.fmt.allocPrint(
-            ctx.allocator,
-            "{s}/bunx--{s}",
-            .{ temp_dir, package_fmt },
-        );
-
-        const bunx_install_dir = try std.fs.cwd().makeOpenPath(bunx_install_dir_path, .{});
+        const bunx_install_dir = try temp_dir_fd.makeOpenPath(package_fmt, .{});
 
         create_package_json: {
             // create package.json, but only if it doesn't exist
@@ -521,14 +522,25 @@ pub const BunxCommand = struct {
             package_fmt,
             // disable the manifest cache when a tag is specified
             // so that @latest is fetched from the registry
+            // TODO: i dont think this works how we expect it to.
             "--no-cache",
+            // forcefully re-install packages in this mode too
+            "--force",
         };
 
-        const argv_to_use: []const string = args_buf[0 .. args_buf.len - @as(usize, @intFromBool(update_request.version.tag != .dist_tag))];
+        const argv_to_use: []const string = args_buf[0 .. args_buf.len - 2 * @as(usize, @intFromBool(!do_cache_bust))];
 
         var child_process = std.ChildProcess.init(argv_to_use, default_allocator);
-        child_process.cwd = bunx_install_dir_path;
         child_process.cwd_dir = bunx_install_dir;
+        // https://github.com/ziglang/zig/issues/5190
+        if (Environment.isWindows) {
+            const bunx_install_dir_path = try std.fmt.allocPrint(
+                ctx.allocator,
+                "{s}/{s}",
+                .{ temp_dir_path, package_fmt },
+            );
+            child_process.cwd = bunx_install_dir_path;
+        }
         const env_map = try this_bundler.env.map.cloneToEnvMap(ctx.allocator);
         child_process.env_map = &env_map;
         child_process.stderr_behavior = .Inherit;
@@ -557,7 +569,7 @@ pub const BunxCommand = struct {
             },
         }
 
-        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}"), .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         // Similar to "npx":
         //

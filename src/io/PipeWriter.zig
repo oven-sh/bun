@@ -691,11 +691,7 @@ fn BaseWindowsPipeWriter(
         pub fn close(this: *WindowsPipeWriter) void {
             this.is_done = true;
             if (this.source) |source| {
-                switch (source) {
-                    .pipe => |pipe| pipe.close(&WindowsPipeWriter.onClosePipe),
-                    .tty => |tty| tty.close(&WindowsPipeWriter.onCloseTTY),
-                    .file => @panic("TODO"),
-                }
+                source.getHandle().close(&WindowsPipeWriter.onCloseSource);
             }
         }
 
@@ -817,18 +813,17 @@ const Source = union(enum) {
         file: uv.uv_file,
     };
 
+    pub fn getHandle(this: Source) *uv.Handle {
+        switch (this) {
+            .pipe => return @ptrCast(this.pipe),
+            .tty => return @ptrCast(this.tty),
+            .file => return @ptrCast(&this.file.fs),
+        }
+    }
     pub fn toStream(this: Source) *uv.uv_stream_t {
         switch (this) {
             .pipe => return @ptrCast(this.pipe),
             .tty => return @ptrCast(this.tty),
-            .file => unreachable,
-        }
-    }
-
-    pub fn tryWrite(this: Source, buffer: []const u8) bun.JSC.Maybe(usize) {
-        switch (this) {
-            .pipe => return this.pipe.tryWrite(buffer),
-            .tty => return this.tty.tryWrite(buffer),
             .file => unreachable,
         }
     }
@@ -845,7 +840,7 @@ const Source = union(enum) {
         switch (this) {
             .pipe => this.pipe.data = data,
             .tty => this.tty.data = data,
-            .file => {},
+            .file => this.file.fs.data = data,
         }
     }
 
@@ -853,7 +848,7 @@ const Source = union(enum) {
         switch (this) {
             .pipe => |pipe| return pipe.data,
             .tty => |tty| return tty.data,
-            .file => return null,
+            .file => |file| return file.fs.data,
         }
     }
 
@@ -861,7 +856,7 @@ const Source = union(enum) {
         switch (this) {
             .pipe => this.pipe.ref(),
             .tty => this.tty.ref(),
-            .file => {},
+            .file => this.file.fs.ref(),
         }
     }
 
@@ -869,7 +864,7 @@ const Source = union(enum) {
         switch (this) {
             .pipe => this.pipe.unref(),
             .tty => this.tty.unref(),
-            .file => {},
+            .file => this.file.fs.unref(),
         }
     }
 
@@ -877,7 +872,7 @@ const Source = union(enum) {
         switch (this) {
             .pipe => return this.pipe.hasRef(),
             .tty => return this.tty.hasRef(),
-            .file => false,
+            .file => return this.file.fs.hasRef(),
         }
     }
 };
@@ -903,22 +898,8 @@ pub fn WindowsBufferedWriter(
 
         pub usingnamespace BaseWindowsPipeWriter(WindowsWriter, Parent);
 
-        fn onClosePipe(pipe: *uv.Pipe) callconv(.C) void {
+        fn onCloseSource(pipe: *uv.Handle) callconv(.C) void {
             const this = bun.cast(*WindowsWriter, pipe.data);
-            if (onClose) |onCloseFn| {
-                onCloseFn(this.parent);
-            }
-        }
-
-        fn onCloseTTY(tty: *uv.uv_tty_t) callconv(.C) void {
-            const this = bun.cast(*WindowsWriter, tty.data);
-            if (onClose) |onCloseFn| {
-                onCloseFn(this.parent);
-            }
-        }
-
-        fn onCloseFile(fs: *uv.fs_t) callconv(.C) void {
-            const this = bun.cast(*WindowsWriter, fs.data);
             if (onClose) |onCloseFn| {
                 onCloseFn(this.parent);
             }
@@ -979,48 +960,19 @@ pub fn WindowsBufferedWriter(
                     this.pending_payload_size = buffer.len;
                     uv.uv_fs_req_cleanup(&file.fs);
                     file.iov = uv.uv_buf_t.init(buffer);
-                    file.fs.data = this;
                     if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFsWriteComplete).toError(.write)) |err| {
-                        _ = err;
-                        @panic("Error writing to file");
-                    }
-                    return;
-                },
-                else => {},
-            }
-            var to_write = buffer;
-            while (to_write.len > 0) {
-                switch (pipe.tryWrite(to_write)) {
-                    .err => |err| {
-                        if (err.isRetry()) {
-                            // the buffered version should always have a stable ptr
-                            this.pending_payload_size = to_write.len;
-                            if (this.write_req.write(pipe.toStream(), to_write, this, onWriteComplete).asErr()) |write_err| {
-                                this.close();
-                                onError(this.parent, write_err);
-                                return;
-                            }
-                            const written = buffer.len - to_write.len;
-                            if (written > 0) {
-                                onWrite(this.parent, written, false);
-                            }
-                            return;
-                        }
                         this.close();
                         onError(this.parent, err);
-                        return;
-                    },
-                    .result => |bytes_written| {
-                        to_write = to_write[bytes_written..];
-                    },
-                }
-            }
-
-            const written = buffer.len - to_write.len;
-            const done = to_write.len == 0;
-            onWrite(this.parent, written, done);
-            if (done and this.is_done) {
-                this.close();
+                    }
+                },
+                else => {
+                    // the buffered version should always have a stable ptr
+                    this.pending_payload_size = buffer.len;
+                    if (this.write_req.write(pipe.toStream(), buffer, this, onWriteComplete).asErr()) |write_err| {
+                        this.close();
+                        onError(this.parent, write_err);
+                    }
+                },
             }
         }
 
@@ -1149,16 +1101,8 @@ pub fn WindowsStreamingWriter(
 
         pub usingnamespace BaseWindowsPipeWriter(WindowsWriter, Parent);
 
-        fn onClosePipe(pipe: *uv.Pipe) callconv(.C) void {
+        fn onCloseSource(pipe: *uv.Handle) callconv(.C) void {
             const this = bun.cast(*WindowsWriter, pipe.data);
-            this.source = null;
-            if (!this.closed_without_reporting) {
-                onClose(this.parent);
-            }
-        }
-
-        fn onCloseTTY(tty: *uv.uv_tty_t) callconv(.C) void {
-            const this = bun.cast(*WindowsWriter, tty.data);
             this.source = null;
             if (!this.closed_without_reporting) {
                 onClose(this.parent);
@@ -1183,9 +1127,9 @@ pub fn WindowsStreamingWriter(
         fn onWriteComplete(this: *WindowsWriter, status: uv.ReturnCode) void {
             log("onWriteComplete (status = {d})", .{@intFromEnum(status)});
             if (status.toError(.write)) |err| {
-                this.closeWithoutReporting();
                 this.last_write_result = .{ .err = err };
                 onError(this.parent, err);
+                this.closeWithoutReporting();
                 return;
             }
             // success means that we send all the data inside current_payload
@@ -1197,7 +1141,6 @@ pub fn WindowsStreamingWriter(
             if (this.is_done and done) {
                 // we already call .end lets close the connection
                 this.last_write_result = .{ .done = written };
-                this.close();
                 onWrite(this.parent, written, true);
                 return;
             }
@@ -1208,11 +1151,11 @@ pub fn WindowsStreamingWriter(
             onWrite(this.parent, written, done);
 
             // process pending outgoing data if any
-            if (done or this.processSend()) {
-                // we are still writable we should report now so more things can be written
-                if (onWritable) |onWritableFn| {
-                    onWritableFn(this.parent);
-                }
+            this.processSend();
+
+            // TODO: should we report writable?
+            if (onWritable) |onWritableFn| {
+                onWritableFn(this.parent);
             }
         }
 
@@ -1227,111 +1170,55 @@ pub fn WindowsStreamingWriter(
         }
 
         /// this tries to send more data returning if we are writable or not after this
-        fn processSend(this: *WindowsWriter) bool {
+        fn processSend(this: *WindowsWriter) void {
             log("processSend", .{});
             if (this.current_payload.isNotEmpty()) {
                 // we have some pending async request, the next outgoing data will be processed after this finish
                 this.last_write_result = .{ .pending = 0 };
-                return false;
+                return;
             }
 
-            var bytes = this.outgoing.slice();
+            const bytes = this.outgoing.slice();
             // nothing todo (we assume we are writable until we try to write something)
             if (bytes.len == 0) {
                 this.last_write_result = .{ .wrote = 0 };
-                return true;
+                return;
             }
 
-            const initial_payload_len = bytes.len;
             var pipe = this.source orelse {
-                this.closeWithoutReporting();
                 const err = bun.sys.Error.fromCode(bun.C.E.PIPE, .pipe);
                 this.last_write_result = .{ .err = err };
                 onError(this.parent, err);
-                return false;
+                this.closeWithoutReporting();
+                return;
             };
+
+            // current payload is empty we can just swap with outgoing
+            const temp = this.current_payload;
+            this.current_payload = this.outgoing;
+            this.outgoing = temp;
             switch (pipe) {
                 .file => |file| {
-                    if (this.current_payload.isNotEmpty()) {
-                        return false;
-                    }
-
-                    const temp = this.current_payload;
-                    this.current_payload = this.outgoing;
-                    this.outgoing = temp;
-
                     uv.uv_fs_req_cleanup(&file.fs);
                     file.iov = uv.uv_buf_t.init(bytes);
-                    file.fs.data = this;
                     if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFsWriteComplete).toError(.write)) |err| {
-                        _ = err;
-                        @panic("Error writing to file");
+                        this.last_write_result = .{ .err = err };
+                        onError(this.parent, err);
+                        this.closeWithoutReporting();
+                        return;
                     }
-                    return false;
                 },
-                else => {},
+                else => {
+                    // enqueue the write
+                    if (this.write_req.write(pipe.toStream(), bytes, this, onWriteComplete).asErr()) |err| {
+                        this.last_write_result = .{ .err = err };
+                        onError(this.parent, err);
+                        this.closeWithoutReporting();
+                        return;
+                    }
+                },
             }
-            var writable = true;
-            while (true) {
-                switch (pipe.tryWrite(bytes)) {
-                    .err => |err| {
-                        if (!err.isRetry()) {
-                            this.closeWithoutReporting();
-                            this.last_write_result = .{ .err = err };
-                            onError(this.parent, err);
-                            return false;
-                        }
-                        writable = false;
-
-                        // ok we hit EGAIN and need to go async
-                        if (this.current_payload.isNotEmpty()) {
-                            // we already have a under going queued process
-                            // just wait the current request finish to send the next outgoing data
-                            break;
-                        }
-
-                        // current payload is empty we can just swap with outgoing
-                        const temp = this.current_payload;
-                        this.current_payload = this.outgoing;
-                        this.outgoing = temp;
-
-                        // enqueue the write
-                        if (this.write_req.write(pipe.toStream(), bytes, this, onWriteComplete).asErr()) |write_err| {
-                            this.closeWithoutReporting();
-                            this.last_write_result = .{ .err = err };
-                            onError(this.parent, write_err);
-                            this.close();
-                            return false;
-                        }
-                        break;
-                    },
-                    .result => |written| {
-                        bytes = bytes[written..];
-                        if (bytes.len == 0) {
-                            this.outgoing.reset();
-                            break;
-                        }
-                        this.outgoing.cursor += @intCast(written);
-                    },
-                }
-            }
-            const written = initial_payload_len - bytes.len;
-            if (this.isDone()) {
-                // if we are done and have no more data this means we called .end() and needs to close after writting everything
-                this.close();
-                this.last_write_result = .{ .done = written };
-                writable = false;
-                onWrite(this.parent, written, true);
-            } else {
-                const done = !this.hasPendingData();
-                // if we queued some data we will report pending otherwise we should report that we wrote
-                this.last_write_result = if (done) .{ .wrote = written } else .{ .pending = written };
-                if (written > 0) {
-                    // we need to keep track of how much we wrote here
-                    onWrite(this.parent, written, done);
-                }
-            }
-            return writable;
+            this.last_write_result = .{ .pending = 0 };
         }
 
         const WindowsWriter = @This();
@@ -1364,7 +1251,7 @@ pub fn WindowsStreamingWriter(
             if (had_buffered_data) {
                 return .{ .pending = 0 };
             }
-            _ = this.processSend();
+            this.processSend();
             return this.last_write_result;
         }
 
@@ -1382,7 +1269,7 @@ pub fn WindowsStreamingWriter(
                 return .{ .pending = 0 };
             }
 
-            _ = this.processSend();
+            this.processSend();
             return this.last_write_result;
         }
 
@@ -1399,7 +1286,7 @@ pub fn WindowsStreamingWriter(
                 return .{ .pending = 0 };
             }
 
-            _ = this.processSend();
+            this.processSend();
             return this.last_write_result;
         }
 
@@ -1407,7 +1294,7 @@ pub fn WindowsStreamingWriter(
             if (this.is_done) {
                 return .{ .done = 0 };
             }
-            _ = this.processSend();
+            this.processSend();
             return this.last_write_result;
         }
 

@@ -381,6 +381,8 @@ pub const Handle = extern struct {
     endgame_next: ?*uv_handle_t = null,
     flags: c_uint,
 
+    pub usingnamespace HandleMixin(Handle);
+
     pub const Type = enum(c_uint) {
         unknown = 0,
         @"async" = 1,
@@ -1711,6 +1713,8 @@ pub const fs_t = extern struct {
     sys_errno_: DWORD,
     file: union_unnamed_450,
     fs: union_unnamed_451,
+
+    pub usingnamespace HandleMixin(fs_t);
 
     pub inline fn deinit(this: *fs_t) void {
         this.assert();

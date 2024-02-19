@@ -1546,8 +1546,6 @@ export function readableStreamFromAsyncIterator(target, fn) {
 
     close() {
       cancelled = true;
-      iter?.return?.();
-      iter = undefined;
     },
 
     async pull(controller) {

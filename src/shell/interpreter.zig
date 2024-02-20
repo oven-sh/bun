@@ -1757,7 +1757,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // "aa bbb"
 
                 this.current_out.appendSlice(stdout[a..b]) catch bun.outOfMemory();
-                this.pushCurrentOut();
+                // this.pushCurrentOut();
                 // const slice_z = this.base.interpreter.allocator.dupeZ(u8, stdout[a..b]) catch bun.outOfMemory();
                 // this.pushResultSlice(slice_z);
             }

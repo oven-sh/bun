@@ -1514,28 +1514,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             pub fn next(this: *Expansion) void {
                 while (!(this.state == .done or this.state == .err)) {
                     switch (this.state) {
-                        // .tilde => {
-                        //     to_next: {
-                        //         switch (this.node.*) {
-                        //             // a single tilde token
-                        //             .simple => {
-                        //                 if (this.node.simple != .tilde) break :to_next;
-                        //                 const homedir = this.base.shell.getHomedir();
-                        //                 defer homedir.deref();
-                        //                 this.current_out.appendSlice(homedir.slice()) catch bun.outOfMemory();
-                        //                 this.pushCurrentOut();
-                        //                 this.state = .done;
-                        //                 continue;
-                        //             },
-                        //             .compound => {
-                        //                 if (this.node.atoms.len == 0 or this.node.atoms[0] != .tilde) break :to_next;
-                        //             },
-                        //         }
-                        //     }
-
-                        //     this.state = .normal;
-                        //     continue;
-                        // },
                         .normal => {
                             // initialize
                             if (this.word_idx == 0) {
@@ -1916,13 +1894,6 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 this.child_state = .idle;
                 this.state = .done;
                 this.next();
-            }
-
-            pub fn atomNeedsIO(atom: *const ast.SimpleAtom) bool {
-                return switch (atom.*) {
-                    .cmd_subst => true,
-                    else => false,
-                };
             }
 
             /// If the atom is actually a command substitution then does nothing and returns true

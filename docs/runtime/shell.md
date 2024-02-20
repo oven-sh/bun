@@ -108,6 +108,34 @@ The following JavaScript objects are supported for redirection from:
 - `Bun.file(path)`, `Bun.file(fd)` (reads from the file)
 - `Response` (reads from the body)
 
+### To/From Files
+
+Redirection to or from a file is supported:
+```js
+import { $ } from "bun"
+
+await $`echo ${"console.log('hi')"} > src/index.ts`
+const code = await $`cat < src/index.ts`.text()
+```
+
+### Redirect file descriptor to another file descriptor
+
+To redirect stderr to stdout use the `oldfd>&newfd` syntax.
+
+Currently, this is only supported for the std file descriptors, so you can for example redirect stderr to stdout (`2>&1`) or stdout to stderr (`1>&2`).
+
+```js
+import { $ } from "bun"
+
+// redirects stderr to stdout, so all output
+// will be available on stdout
+await $`bun run ./index.ts 2>&1`
+
+// redirects stdout to stderr, so all output
+// will be readable from stderr
+await $`bun run ./index.ts 1>&2`
+```
+
 ### Piping (`|`)
 
 Like in bash, you can pipe the output of one command to another:

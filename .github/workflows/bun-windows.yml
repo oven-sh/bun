@@ -16,42 +16,43 @@ env:
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
+      - "*.zig"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
       - "packages/bun-uws/src/**/*"
       - "CMakeLists.txt"
-      - "build.zig"
       - "Makefile"
       - "Dockerfile"
+      - ".github/workflows/bun-windows.yml"
   pull_request:
-    branches: [main]
+    branches:
+      - main
     paths:
+      - "*.zig"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
       - "packages/bun-uws/src/**/*"
       - "CMakeLists.txt"
-      - "build.zig"
       - "Makefile"
       - "Dockerfile"
-  # Allows you to run this workflow manually from the Actions tab
+      - ".github/workflows/bun-windows.yml"
   workflow_dispatch:
-    # inputs:
-    #   is-canary:
-    #     type: boolean
-    #     description: Is Canary Build?
-    #     default: true
 
 jobs:
   windows-zig:
     strategy:
       fail-fast: false
       matrix:
-        cpu: [haswell, nehalem]
-        arch: [x86_64]
+        cpu:
+          - haswell
+          - nehalem
+        arch:
+          - x86_64
     name: Zig Build
     runs-on: ubicloud-standard-16
     timeout-minutes: 60
@@ -114,8 +115,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cpu: [haswell, nehalem]
-        arch: [x86_64]
+        cpu:
+          - haswell
+          - nehalem
+        arch:
+          - x86_64
     steps:
       - run: git config --global core.autocrlf false && git config --global core.eol lf
       - name: Checkout
@@ -191,7 +195,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [x86_64]
+        arch:
+          - x86_64
     steps:
       - uses: actions/checkout@v4
       - run: |
@@ -218,8 +223,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cpu: [haswell, nehalem]
-        arch: [x86_64]
+        cpu:
+          - haswell
+          - nehalem
+        arch:
+          - x86_64
     steps:
       - run: git config --global core.autocrlf false && git config --global core.eol lf
       - uses: actions/checkout@v4
@@ -272,8 +280,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cpu: [haswell, nehalem]
-        arch: [x86_64]
+        cpu:
+          - haswell
+          - nehalem
+        arch:
+          - x86_64
     name: Link
     needs: [windows-dependencies, windows-codegen, windows-cpp, windows-zig]
     runs-on: windows-small
@@ -392,8 +403,10 @@ jobs:
       fail-fast: false
       matrix:
         # TODO: test baseline, disabled due to noise
-        cpu: [haswell]
-        arch: [x86_64]
+        cpu:
+          - haswell
+        arch:
+          - x86_64
     steps:
       - run: git config --global core.autocrlf false && git config --global core.eol lf
       - id: checkout

@@ -29,7 +29,7 @@ pub const Source = union(enum) {
         switch (this) {
             .pipe => |pipe| return pipe.isActive(),
             .tty => |tty| return tty.isActive(),
-            .file => return false,
+            .file => return true,
         }
     }
 

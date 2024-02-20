@@ -674,15 +674,11 @@ describe("deno_task", () => {
   });
 
   test("pwd", async () => {
-    await TestBuilder.command`;
-    pwd && cd;
-    sub_dir && pwd && cd ../ && pwd`
+    await TestBuilder.command`pwd && cd sub_dir && pwd && cd ../ && pwd`
       .directory("sub_dir")
       .file("file.txt", "test")
       // $TEMP_DIR gets replaced with the actual temp dir by the test runner
-      .stdout(`
-    $TEMP_DIR;
-    \n$TEMP_DIR/sub_dir\n$TEMP_DIR\n`)
+      .stdout(`$TEMP_DIR\n$TEMP_DIR/sub_dir\n$TEMP_DIR\n`)
       .run();
   });
 

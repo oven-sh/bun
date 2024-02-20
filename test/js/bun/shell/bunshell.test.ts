@@ -310,10 +310,14 @@ describe("bunshell", () => {
   describe("tilde expansion", () => {
     test("with paths", async () => {
       await TestBuilder.command`echo ~/Documents`.stdout(`${process.env.HOME}/Documents\n`).run();
+      await TestBuilder.command`echo ~/Do"cu"me"nts"`.stdout(`${process.env.HOME}/Documents\n`).run();
+      await TestBuilder.command`echo ~/LOL hi hello`.stdout(`${process.env.HOME}/LOL hi hello\n`).run();
     });
 
     test("normal", async () => {
       await TestBuilder.command`echo ~`.stdout(`${process.env.HOME}\n`).run();
+      await TestBuilder.command`echo ~~`.stdout(`~~\n`).run();
+      await TestBuilder.command`echo ~ hi hello`.stdout(`${process.env.HOME} hi hello\n`).run();
     });
   });
 

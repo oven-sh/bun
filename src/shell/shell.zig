@@ -1798,7 +1798,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 }
             } else if ((in_normal_space or in_redirect_operator) and self.tokens.items.len > 0 and
                 switch (self.tokens.items[self.tokens.items.len - 1]) {
-                .Var, .Text, .BraceBegin, .Comma, .BraceEnd, .CmdSubstEnd => true,
+                .Var, .Text, .BraceBegin, .Comma, .BraceEnd, .CmdSubstEnd, .Tilde => true,
                 else => false,
             }) {
                 try self.tokens.append(.Delimit);

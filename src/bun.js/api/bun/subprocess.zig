@@ -140,7 +140,7 @@ pub const Subprocess = struct {
     stdin: Writable,
     stdout: Readable,
     stderr: Readable,
-    stdio_pipes: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
+    stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
     pid_rusage: ?Rusage = null,
 
     exit_promise: JSC.Strong = .{},
@@ -649,7 +649,14 @@ pub const Subprocess = struct {
         }
 
         for (pipes) |item| {
-            array.push(global, JSValue.jsNumber(item.cast()));
+            if (Environment.isWindows) {
+                if (item == .buffer) {
+                    const fdno: usize = @intFromPtr(item.buffer.fd().cast());
+                    array.push(global, JSValue.jsNumber(fdno));
+                }
+            } else {
+                array.push(global, JSValue.jsNumber(item.cast()));
+            }
         }
         return array;
     }
@@ -1317,6 +1324,11 @@ pub const Subprocess = struct {
         }
     }
 
+    fn onPipeClose(this: *uv.Pipe) callconv(.C) void {
+        // safely free the pipes
+        bun.default_allocator.destroy(this);
+    }
+
     // This must only be run once per Subprocess
     pub fn finalizeStreams(this: *Subprocess) void {
         log("finalizeStreams", .{});
@@ -1331,8 +1343,14 @@ pub const Subprocess = struct {
                 break :close_stdio_pipes;
             }
 
-            for (this.stdio_pipes.items) |pipe| {
-                _ = bun.sys.close(pipe);
+            for (this.stdio_pipes.items) |item| {
+                if (Environment.isWindows) {
+                    if (item == .buffer) {
+                        item.buffer.close(onPipeClose);
+                    }
+                } else {
+                    _ = bun.sys.close(item);
+                }
             }
             this.stdio_pipes.clearAndFree(bun.default_allocator);
         }
@@ -1451,7 +1469,6 @@ pub const Subprocess = struct {
         var ipc_mode = IPCMode.none;
         var ipc_callback: JSValue = .zero;
         var extra_fds = std.ArrayList(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
-        // TODO: FIX extra_fds memory leak
         var argv0: ?[*:0]const u8 = null;
 
         var windows_hide: bool = false;
@@ -1791,17 +1808,25 @@ pub const Subprocess = struct {
             } else {},
         };
 
+        const process_allocator = globalThis.allocator();
+        var subprocess = process_allocator.create(Subprocess) catch {
+            globalThis.throwOutOfMemory();
+            return .zero;
+        };
+
         var spawned = switch (bun.spawn.spawnProcess(
             &spawn_options,
             @ptrCast(argv.items.ptr),
             @ptrCast(env_array.items.ptr),
         ) catch |err| {
+            process_allocator.destroy(subprocess);
             spawn_options.deinit();
             globalThis.throwError(err, ": failed to spawn process");
 
             return .zero;
         }) {
             .err => |err| {
+                process_allocator.destroy(subprocess);
                 spawn_options.deinit();
                 globalThis.throwValue(err.toJSC(globalThis));
                 return .zero;
@@ -1818,19 +1843,14 @@ pub const Subprocess = struct {
                         @sizeOf(*Subprocess),
                         spawned.extra_pipes.items[0].cast(),
                     ) orelse {
+                        process_allocator.destroy(subprocess);
+                        spawn_options.deinit();
                         globalThis.throw("failed to create socket pair", .{});
-                        // TODO:
                         return .zero;
                     },
                 };
             }
         }
-
-        var subprocess = globalThis.allocator().create(Subprocess) catch {
-            // TODO: fix pipe memory leak in spawn_options/spawned
-            globalThis.throwOutOfMemory();
-            return .zero;
-        };
 
         const loop = jsc_vm.eventLoop();
 
@@ -1869,8 +1889,7 @@ pub const Subprocess = struct {
                 default_max_buffer_size,
                 is_sync,
             ),
-            // TODO: extra pipes on windows
-            .stdio_pipes = if (Environment.isWindows) .{} else spawned.extra_pipes.moveToUnmanaged(),
+            .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .ipc_mode = ipc_mode,
             // will be assigned in the block below
@@ -1888,7 +1907,7 @@ pub const Subprocess = struct {
                 ptr.?.* = subprocess;
             } else {
                 if (subprocess.ipc.configureServer(Subprocess, subprocess, ipc_info[20..]).asErr()) |err| {
-                    globalThis.allocator().destroy(subprocess);
+                    process_allocator.destroy(subprocess);
                     globalThis.throwValue(err.toJSC(globalThis));
                     return .zero;
                 }

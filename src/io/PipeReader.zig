@@ -1,5 +1,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
+const uv = bun.windows.libuv;
+const Source = @import("./source.zig").Source;
 
 const ReadState = @import("./pipes.zig").ReadState;
 const FileType = @import("./pipes.zig").FileType;
@@ -306,7 +308,6 @@ pub fn PosixPipeReader(
 
 const PollOrFd = @import("./pipes.zig").PollOrFd;
 
-const uv = bun.windows.libuv;
 pub fn WindowsPipeReader(
     comptime This: type,
     comptime _: anytype,

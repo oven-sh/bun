@@ -2,6 +2,8 @@ const bun = @import("root").bun;
 const std = @import("std");
 const Async = bun.Async;
 const JSC = bun.JSC;
+const uv = bun.windows.libuv;
+const Source = @import("./source.zig").Source;
 
 const log = bun.Output.scoped(.PipeWriter, false);
 
@@ -651,7 +653,6 @@ pub fn PosixStreamingWriter(
         }
     };
 }
-const uv = bun.windows.libuv;
 
 /// Will provide base behavior for pipe writers
 /// The WindowsPipeWriter type should implement the following interface:
@@ -669,7 +670,7 @@ fn BaseWindowsPipeWriter(
     return struct {
         pub fn getFd(this: *const WindowsPipeWriter) bun.FileDescriptor {
             const pipe = this.source orelse return bun.invalid_fd;
-            return pipe.fd();
+            return pipe.getFd();
         }
 
         pub fn hasRef(this: *const WindowsPipeWriter) bool {
@@ -731,66 +732,14 @@ fn BaseWindowsPipeWriter(
             return this.startWithCurrentPipe();
         }
 
-        pub fn openPipe(this: *WindowsPipeWriter, loop: *uv.Loop, fd: bun.FileDescriptor, ipc: bool) bun.JSC.Maybe(*uv.Pipe) {
-            log("openPipe (fd = {})", .{fd});
-            const pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
-
-            switch (pipe.init(loop, ipc)) {
-                .err => |err| {
-                    return .{ .err = err };
-                },
-                else => {},
-            }
-
-            pipe.data = this;
-            const file_fd = bun.uvfdcast(fd);
-
-            return switch (pipe.open(file_fd)) {
-                .err => |err| .{
-                    .err = err,
-                },
-                .result => .{
-                    .result = pipe,
-                },
-            };
-        }
-
-        pub fn openTTY(this: *WindowsPipeWriter, loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(*uv.uv_tty_t) {
-            log("openTTY (fd = {})", .{fd});
-            const tty = bun.default_allocator.create(uv.uv_tty_t) catch bun.outOfMemory();
-
-            tty.data = this;
-            return switch (tty.init(loop, bun.uvfdcast(fd))) {
-                .err => |err| .{ .err = err },
-                .result => .{ .result = tty },
-            };
-        }
-
-        pub fn openFile(this: *WindowsPipeWriter, fd: bun.FileDescriptor) bun.JSC.Maybe(*Source.Write) {
-            log("openFile (fd = {})", .{fd});
-            const file = bun.default_allocator.create(Source.Write) catch bun.outOfMemory();
-
-            file.* = std.mem.zeroes(Source.Write);
-            file.fs.data = this;
-            file.file = bun.uvfdcast(fd);
-            return .{ .result = file };
-        }
-
         pub fn start(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
             std.debug.assert(this.source == null);
-            const rc = bun.windows.GetFileType(fd.cast());
-            this.source = if (rc == bun.windows.FILE_TYPE_CHAR) .{ .tty = switch (this.openTTY(uv.Loop.get(), fd)) {
-                .result => |tty| tty,
+            const source = switch (Source.open(uv.Loop.get(), fd)) {
+                .result => |source| source,
                 .err => |err| return .{ .err = err },
-            } } else .{
-                // everything else
-                // .fd = bun.uvfdcast(fd),
-                .file = switch (this.openFile(fd)) {
-                    .result => |file| file,
-                    .err => |err| return .{ .err = err },
-                },
             };
-
+            source.setData(this);
+            this.source = source;
             this.setParent(this.parent);
             return this.startWithCurrentPipe();
         }
@@ -807,81 +756,6 @@ fn BaseWindowsPipeWriter(
         }
     };
 }
-
-const Source = union(enum) {
-    pipe: *uv.Pipe,
-    tty: *uv.uv_tty_t,
-    file: *Write,
-
-    const Write = struct {
-        fs: uv.fs_t,
-        iov: uv.uv_buf_t,
-        file: uv.uv_file,
-    };
-
-    pub fn getHandle(this: Source) *uv.Handle {
-        switch (this) {
-            .pipe => return @ptrCast(this.pipe),
-            .tty => return @ptrCast(this.tty),
-            .file => unreachable,
-        }
-    }
-    pub fn toStream(this: Source) *uv.uv_stream_t {
-        switch (this) {
-            .pipe => return @ptrCast(this.pipe),
-            .tty => return @ptrCast(this.tty),
-            .file => unreachable,
-        }
-    }
-
-    pub fn fd(this: Source) bun.FileDescriptor {
-        switch (this) {
-            .pipe => return this.pipe.fd(),
-            .tty => return this.tty.fd(),
-            .file => return bun.FDImpl.fromUV(this.file.file).encode(),
-        }
-    }
-
-    pub fn setData(this: Source, data: ?*anyopaque) void {
-        switch (this) {
-            .pipe => this.pipe.data = data,
-            .tty => this.tty.data = data,
-            .file => this.file.fs.data = data,
-        }
-    }
-
-    pub fn getData(this: Source) ?*anyopaque {
-        switch (this) {
-            .pipe => |pipe| return pipe.data,
-            .tty => |tty| return tty.data,
-            .file => |file| return file.fs.data,
-        }
-    }
-
-    pub fn ref(this: Source) void {
-        switch (this) {
-            .pipe => this.pipe.ref(),
-            .tty => this.tty.ref(),
-            .file => return,
-        }
-    }
-
-    pub fn unref(this: Source) void {
-        switch (this) {
-            .pipe => this.pipe.unref(),
-            .tty => this.tty.unref(),
-            .file => return,
-        }
-    }
-
-    pub fn hasRef(this: Source) bool {
-        switch (this) {
-            .pipe => return this.pipe.hasRef(),
-            .tty => return this.tty.hasRef(),
-            .file => return false,
-        }
-    }
-};
 
 pub fn WindowsBufferedWriter(
     comptime Parent: type,

@@ -217,13 +217,23 @@ describe("spawn()", () => {
   });
 
   test.if(isLinux)("should handle null for first 4 positions of stdio", async () => {
-    // Run a program that does nothing except pause indefinitely, thus an
-    // opportunity to inspect its file descriptors.
-    const proc = spawn("sleep", ["inf"], { stdio: [null, null, null, null] });
-    // Delay here because the command (above) opens and closes a bunch of
-    // files when starting up, so we have to wait for it to stabilize.  This
-    // still is a race condition though, would be nice to eliminate.
-    await Bun.sleep(10);
+    // Launch a program that runs forever (until killed), making it
+    // possible to inspect its file descriptors to make sure that exactly
+    // only fds 0, 1, and 2 are open, and importantly, that fd 3 (the
+    // regression) was not accidentally also passed into the process from
+    // the parent.
+    //
+    // There are some additional assumptions here, which most likely are
+    // satisfied: Fd 3 is assumed to be open in the parent, which ideally
+    // we should check for, but would need other APIs to do that check
+    // (e.g. fcntl w/ F_GETFD). Also assumed is that the version of "yes"
+    // used doesn't interfere with fd 3 (i.e., doens't open and keep open;
+    // and doesn't close it); GNU coreutils "yes" is adequate.
+    const proc = spawn("yes", [], { stdio: [null, null, null, null] });
+    // Synchronous read here because the command (above) opens and closes
+    // a bunch of files when starting up, so we wait for it to stabilize
+    // here by waiting for it to output its first character.
+    proc.stdout.read(1);
     const fds = readdirSync(`/proc/${proc.pid}/fd/`).sort();
     proc.kill();
     expect(fds).toStrictEqual(["0", "1", "2"]);

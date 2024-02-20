@@ -339,18 +339,20 @@ pub fn WindowsPipeReader(
             var this = bun.cast(*This, stream.data);
 
             const nread_int = nread.int();
-
+            //NOTE: pipes/tty need to call stopReading on errors (yeah)
             switch (nread_int) {
                 0 => {
                     // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)
                     return this.onRead(.{ .result = 0 }, "", .drained);
                 },
                 uv.UV_EOF => {
+                    _ = this.stopReading();
                     // EOF (buf is not safe to access here)
                     return this.onRead(.{ .result = 0 }, "", .eof);
                 },
                 else => {
                     if (nread.toError(.recv)) |err| {
+                        _ = this.stopReading();
                         // ERROR (buf is not safe to access here)
                         this.onRead(.{ .err = err }, "", .progress);
                         return;
@@ -375,13 +377,16 @@ pub fn WindowsPipeReader(
                     }
                 },
                 uv.UV_ECANCELED => {
+                    this.is_paused = true;
                     this.onRead(.{ .result = 0 }, "", .drained);
                 },
                 uv.UV_EOF => {
+                    this.is_paused = true;
                     this.onRead(.{ .result = 0 }, "", .eof);
                 },
                 else => {
                     if (fs.result.toError(.recv)) |err| {
+                        this.is_paused = true;
                         this.onRead(.{ .err = err }, "", .progress);
                         return;
                     }
@@ -1017,7 +1022,6 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn deinit(this: *WindowsOutputReader) void {
-        std.debug.print("deinit\n", .{});
         this.buffer().deinit();
         const source = this.source orelse return;
         std.debug.assert(source.isClosed());

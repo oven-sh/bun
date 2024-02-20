@@ -375,7 +375,7 @@ pub fn WindowsPipeReader(
                 // EAGAIN or EWOULDBLOCK
                 0 => {
                     // continue reading
-                    if (!continue_reading) {
+                    if (continue_reading) {
                         _ = this.startReading();
                     }
                 },
@@ -392,7 +392,7 @@ pub fn WindowsPipeReader(
                     }
                     // continue reading
                     defer {
-                        if (!continue_reading) {
+                        if (continue_reading) {
                             _ = this.startReading();
                         }
                     }

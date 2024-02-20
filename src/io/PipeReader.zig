@@ -368,31 +368,31 @@ pub fn WindowsPipeReader(
         fn onFileRead(fs: *uv.fs_t) callconv(.C) void {
             var this: *This = bun.cast(*This, fs.data);
             const nread_int = fs.result.int();
+            const continue_reading = !this.is_paused;
+            this.is_paused = true;
+
             switch (nread_int) {
                 // EAGAIN or EWOULDBLOCK
                 0 => {
                     // continue reading
-                    if (!this.is_paused) {
+                    if (!continue_reading) {
                         _ = this.startReading();
                     }
                 },
                 uv.UV_ECANCELED => {
-                    this.is_paused = true;
                     this.onRead(.{ .result = 0 }, "", .drained);
                 },
                 uv.UV_EOF => {
-                    this.is_paused = true;
                     this.onRead(.{ .result = 0 }, "", .eof);
                 },
                 else => {
                     if (fs.result.toError(.recv)) |err| {
-                        this.is_paused = true;
                         this.onRead(.{ .err = err }, "", .progress);
                         return;
                     }
                     // continue reading
                     defer {
-                        if (!this.is_paused) {
+                        if (!continue_reading) {
                             _ = this.startReading();
                         }
                     }

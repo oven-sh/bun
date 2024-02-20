@@ -94,7 +94,6 @@ describe("process.stdin", () => {
     child.stdout
       .on("readable", () => {
         let chunk;
-        console.log("called");
         while ((chunk = child.stdout.read()) !== null) {
           data += chunk;
         }

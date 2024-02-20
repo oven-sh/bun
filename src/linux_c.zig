@@ -567,13 +567,18 @@ const net_c = @cImport({
     @cInclude("ifaddrs.h"); // getifaddrs, freeifaddrs
     @cInclude("net/if.h"); // IFF_RUNNING, IFF_UP
     @cInclude("fcntl.h"); // F_DUPFD_CLOEXEC
+    @cInclude("sys/socket.h");
 });
-pub const ifaddrs = net_c.ifaddrs;
-pub const getifaddrs = net_c.getifaddrs;
+
+pub const FD_CLOEXEC = net_c.FD_CLOEXEC;
 pub const freeifaddrs = net_c.freeifaddrs;
+pub const getifaddrs = net_c.getifaddrs;
+pub const ifaddrs = net_c.ifaddrs;
+pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
 pub const IFF_RUNNING = net_c.IFF_RUNNING;
 pub const IFF_UP = net_c.IFF_UP;
-pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
+pub const MSG_DONTWAIT = net_c.MSG_DONTWAIT;
+pub const MSG_NOSIGNAL = net_c.MSG_NOSIGNAL;
 
 pub const F = struct {
     pub const DUPFD_CLOEXEC = net_c.F_DUPFD_CLOEXEC;

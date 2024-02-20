@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
-myvar=$(cat /dev/stdin)
+# On Linux/Cygwin, $(</dev/stdin) doesn't work when stdin is a socket.
+myvar=$(cat)
 echo -e "$myvar"

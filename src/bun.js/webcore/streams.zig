@@ -2895,6 +2895,7 @@ pub const FileSink = struct {
     // we should not duplicate these fields...
     pollable: bool = false,
     nonblocking: bool = false,
+    is_socket: bool = false,
     fd: bun.FileDescriptor = bun.invalid_fd,
     has_js_called_unref: bool = false,
 
@@ -2926,7 +2927,7 @@ pub const FileSink = struct {
 
         // Only keep the event loop ref'd while there's a pending write in progress.
         // If there's no pending write, no need to keep the event loop ref'd.
-        this.writer.updateRef(this.eventLoop(), !done);
+        this.writer.updateRef(this.eventLoop(), false);
 
         this.written += amount;
 
@@ -3018,6 +3019,7 @@ pub const FileSink = struct {
                 .result => |stat| {
                     this.pollable = bun.sys.isPollable(stat.mode) or std.os.isatty(fd.int());
                     this.fd = fd;
+                    this.is_socket = std.os.S.ISSOCK(stat.mode);
                     this.nonblocking = this.pollable and switch (options.input_path) {
                         .path => true,
                         .fd => |fd_| bun.FDTag.get(fd_) == .none,
@@ -3046,6 +3048,12 @@ pub const FileSink = struct {
                 if (comptime Environment.isPosix) {
                     if (this.nonblocking) {
                         this.writer.getPoll().?.flags.insert(.nonblocking);
+                    }
+
+                    if (this.is_socket) {
+                        this.writer.getPoll().?.flags.insert(.socket);
+                    } else if (this.pollable) {
+                        this.writer.getPoll().?.flags.insert(.fifo);
                     }
                 }
             },
@@ -3302,6 +3310,7 @@ pub const FileReader = struct {
             fd: bun.FileDescriptor,
             pollable: bool = false,
             nonblocking: bool = true,
+            file_type: bun.io.FileType = .file,
         };
 
         pub fn openFileBlob(
@@ -3358,7 +3367,12 @@ pub const FileReader = struct {
                 }
 
                 this.pollable = bun.sys.isPollable(stat.mode) or (file.is_atty orelse false);
+                this.file_type = if (bun.S.ISFIFO(stat.mode)) .pipe else if (bun.S.ISSOCK(stat.mode)) .socket else .file;
                 this.nonblocking = this.pollable and !(file.is_atty orelse false);
+
+                if (this.nonblocking and this.file_type == .pipe) {
+                    this.file_type = .nonblocking_pipe;
+                }
             }
 
             this.fd = fd;
@@ -3392,6 +3406,7 @@ pub const FileReader = struct {
         this.reader.setParent(this);
         const was_lazy = this.lazy != .none;
         var pollable = false;
+        var file_type: bun.io.FileType = .file;
         if (this.lazy == .blob) {
             switch (this.lazy.blob.data) {
                 .bytes => @panic("Invalid state in FileReader: expected file "),
@@ -3408,6 +3423,7 @@ pub const FileReader = struct {
                         .result => |opened| {
                             this.fd = opened.fd;
                             pollable = opened.pollable;
+                            file_type = opened.file_type;
                             this.reader.flags.nonblocking = opened.nonblocking;
                         },
                     }
@@ -3435,8 +3451,18 @@ pub const FileReader = struct {
         }
 
         if (comptime Environment.isPosix) {
-            if (this.reader.flags.nonblocking) {
-                if (this.reader.handle.getPoll()) |poll| poll.flags.insert(.nonblocking);
+            if (this.reader.handle.getPoll()) |poll| {
+                if (file_type == .pipe or file_type == .nonblocking_pipe) {
+                    poll.flags.insert(.fifo);
+                }
+
+                if (file_type == .socket) {
+                    poll.flags.insert(.socket);
+                }
+
+                if (this.reader.flags.nonblocking) {
+                    poll.flags.insert(.nonblocking);
+                }
             }
         }
 

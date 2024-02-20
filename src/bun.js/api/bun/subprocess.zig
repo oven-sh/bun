@@ -743,7 +743,19 @@ pub const Subprocess = struct {
                 if (Environment.isWindows) {
                     return this.writer.startWithCurrentPipe();
                 }
-                return this.writer.start(this.stdio_result.?, true);
+                switch (this.writer.start(this.stdio_result.?, true)) {
+                    .err => |err| {
+                        return .{ .err = err };
+                    },
+                    .result => {
+                        if (comptime Environment.isPosix) {
+                            const poll = this.writer.handle.poll;
+                            poll.flags.insert(.socket);
+                        }
+
+                        return .{ .result = {} };
+                    },
+                }
             }
 
             pub fn onWrite(this: *This, amount: usize, is_done: bool) void {
@@ -841,7 +853,20 @@ pub const Subprocess = struct {
                 return this.reader.startWithCurrentPipe();
             }
 
-            return this.reader.start(this.stdio_result.?, true);
+            switch (this.reader.start(this.stdio_result.?, true)) {
+                .err => |err| {
+                    return .{ .err = err };
+                },
+                .result => {
+                    if (comptime Environment.isPosix) {
+                        const poll = this.reader.handle.poll;
+                        poll.flags.insert(.nonblocking);
+                        poll.flags.insert(.socket);
+                    }
+
+                    return .{ .result = {} };
+                },
+            }
         }
 
         pub const toJS = toReadableStream;
@@ -1100,6 +1125,8 @@ pub const Subprocess = struct {
 
                     subprocess.weak_file_sink_stdin_ptr = pipe;
                     subprocess.flags.has_stdin_destructor_called = false;
+
+                    pipe.writer.handle.poll.flags.insert(.socket);
 
                     return Writable{
                         .pipe = pipe,

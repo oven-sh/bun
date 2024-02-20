@@ -1326,6 +1326,12 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     };
 }
 
+const socket_flags_nonblock = bun.C.MSG_DONTWAIT | bun.C.MSG_NOSIGNAL;
+
+pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
+    return recv(fd, buf, socket_flags_nonblock);
+}
+
 pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
     if (comptime Environment.allow_assert) {
@@ -1336,7 +1342,7 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
 
     if (comptime Environment.isMac) {
         const rc = system.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
-        log("recv({d}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
+        log("recv({}, {d}) = {d}", .{ fd, adjusted_len, rc });
 
         if (Maybe(usize).errnoSys(rc, .recv)) |err| {
             return err;
@@ -1346,7 +1352,7 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     } else {
         while (true) {
             const rc = linux.recvfrom(fd.cast(), buf.ptr, adjusted_len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
-            log("recv({d}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
+            log("recv({}, {d}) = {d}", .{ fd, adjusted_len, rc });
 
             if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -1357,16 +1363,25 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     }
 }
 
+pub fn sendNonBlock(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
+    return send(fd, buf, socket_flags_nonblock);
+}
+
 pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = system.@"sendto$NOCANCEL"(fd, buf.ptr, buf.len, flag, null, 0);
+        const rc = system.@"sendto$NOCANCEL"(fd.cast(), buf.ptr, buf.len, flag, null, 0);
+
+        syslog("send({}, {d}) = {d}", .{ fd, buf.len, rc });
+
         if (Maybe(usize).errnoSys(rc, .send)) |err| {
             return err;
         }
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = linux.sendto(fd, buf.ptr, buf.len, flag | os.SOCK.CLOEXEC | os.MSG.NOSIGNAL, null, 0);
+            const rc = linux.sendto(fd.cast(), buf.ptr, buf.len, flag, null, 0);
+
+            syslog("send({}, {d}) = {d}", .{ fd, buf.len, rc });
 
             if (Maybe(usize).errnoSys(rc, .send)) |err| {
                 if (err.getErrno() == .INTR) continue;

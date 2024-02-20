@@ -262,7 +262,7 @@ describe("spawnSync()", () => {
     expect(stdout.trim()).toBe("hello");
   });
 
-  test.if(isLinux)("should inherit for fds >= 3", async () => {
+  test.if(isLinux)("should support 'inherit' option in stdio for fds that are not stdin/stdout/stderr", async () => {
     const fdA = openSync("/dev/null", "r");
     const fdB = openSync("/dev/null", "r");
     const nulls = new Array(Math.max(fdA, fdB) + 1).fill(null);

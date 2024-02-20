@@ -13,6 +13,7 @@ pub const Source = union(enum) {
     const Tty = uv.uv_tty_t;
     const File = struct {
         fs: uv.fs_t,
+        iov: uv.uv_buf_t,
         file: uv.uv_file,
     };
 
@@ -75,22 +76,6 @@ pub const Source = union(enum) {
         switch (this) {
             .pipe => return this.pipe.hasRef(),
             .tty => return this.tty.hasRef(),
-            .file => return false,
-        }
-    }
-
-    pub fn isClosed(this: Source) bool {
-        switch (this) {
-            .pipe => |pipe| return pipe.isClosed(),
-            .tty => |tty| return tty.isClosed(),
-            .file => |file| return file.file == -1,
-        }
-    }
-
-    pub fn isActive(this: Source) bool {
-        switch (this) {
-            .pipe => |pipe| return pipe.isActive(),
-            .tty => |tty| return tty.isActive(),
             .file => return false,
         }
     }

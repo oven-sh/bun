@@ -407,7 +407,7 @@ pub fn WindowsPipeReader(
         }
 
         pub fn startReading(this: *This) bun.JSC.Maybe(void) {
-            if (!this.is_paused) return .{ .result = {} };
+            if (this.flags.is_done or !this.is_paused) return .{ .result = {} };
             this.is_paused = false;
             const source: Source = this.source orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.BADF, .read) };
 
@@ -431,7 +431,7 @@ pub fn WindowsPipeReader(
         }
 
         pub fn stopReading(this: *This) bun.JSC.Maybe(void) {
-            if (this.is_paused) return .{ .result = {} };
+            if (this.flags.is_done or this.is_paused) return .{ .result = {} };
             this.is_paused = true;
             const source = this.source orelse return .{ .result = {} };
             switch (source) {
@@ -951,7 +951,7 @@ pub const WindowsBufferedReader = struct {
 
     pub fn hasPendingActivity(this: *const WindowsOutputReader) bool {
         const source = this.source orelse return false;
-        return !source.isClosed();
+        return source.isActive();
     }
 
     pub fn hasPendingRead(this: *const WindowsOutputReader) bool {

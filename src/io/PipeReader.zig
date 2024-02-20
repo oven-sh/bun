@@ -372,18 +372,12 @@ pub fn WindowsPipeReader(
             this.is_paused = true;
 
             switch (nread_int) {
-                // EAGAIN or EWOULDBLOCK
-                0 => {
-                    // continue reading
-                    if (continue_reading) {
-                        _ = this.startReading();
-                    }
+                // 0 actually means EOF too
+                0, uv.UV_EOF => {
+                    this.onRead(.{ .result = 0 }, "", .eof);
                 },
                 uv.UV_ECANCELED => {
                     this.onRead(.{ .result = 0 }, "", .drained);
-                },
-                uv.UV_EOF => {
-                    this.onRead(.{ .result = 0 }, "", .eof);
                 },
                 else => {
                     if (fs.result.toError(.recv)) |err| {
@@ -399,7 +393,7 @@ pub fn WindowsPipeReader(
 
                     const len: usize = @intCast(nread_int);
                     // we got some data lets get the current iov
-                    if (this.*.source) |source| {
+                    if (this.source) |source| {
                         if (source == .file) {
                             var buf = source.file.iov.slice();
                             return this.onRead(.{ .result = len }, buf[0..len], .progress);
@@ -474,7 +468,11 @@ pub fn WindowsPipeReader(
         fn onCloseSource(handle: *uv.Handle) callconv(.C) void {
             const this = bun.cast(*This, handle.data);
             switch (this.source.?) {
-                .file => |file| file.fs.deinit(),
+                .file => |file| {
+                    file.fs.deinit();
+                    // mark "closed"
+                    this.fs.file = -1;
+                },
                 else => {},
             }
             done(this);

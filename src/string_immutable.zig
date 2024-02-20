@@ -687,7 +687,7 @@ pub fn startsWithGeneric(comptime T: type, self: []const T, str: []const T) bool
 }
 
 pub inline fn endsWith(self: string, str: string) bool {
-    return str.len == 0 or @call(.always_inline, std.mem.endsWith, .{ u8, self, str });
+    return str.len == 0 or @call(bun.callmod_inline, std.mem.endsWith, .{ u8, self, str });
 }
 
 pub inline fn endsWithComptime(self: string, comptime str: anytype) bool {

@@ -1533,7 +1533,7 @@ pub fn StatType(comptime Big: bool) type {
                     this: *This,
                     _: *JSC.JSGlobalObject,
                 ) callconv(.C) JSC.JSValue {
-                    return @call(.auto, @field(This, @tagName(decl)), .{this});
+                    return @field(This, @tagName(decl))(this);
                 }
             }.run;
         }

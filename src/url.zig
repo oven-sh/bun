@@ -562,7 +562,7 @@ pub const QueryStringMap = struct {
     pub fn getAll(this: *const QueryStringMap, input: string, target: []string) usize {
         const hash = bun.hash(input);
         const _slice = this.list.slice();
-        return @call(.always_inline, getAllWithHashFromOffset, .{ this, target, hash, 0, _slice });
+        return @call(bun.callmod_inline, getAllWithHashFromOffset, .{ this, target, hash, 0, _slice });
     }
 
     pub fn getAllWithHashFromOffset(this: *const QueryStringMap, target: []string, hash: u64, offset: usize, _slice: Param.List.Slice) usize {
@@ -795,7 +795,7 @@ pub const QueryStringMap = struct {
 
 pub const PercentEncoding = struct {
     pub fn decode(comptime Writer: type, writer: Writer, input: string) !u32 {
-        return @call(.always_inline, decodeFaultTolerant, .{ Writer, writer, input, null, false });
+        return @call(bun.callmod_inline, decodeFaultTolerant, .{ Writer, writer, input, null, false });
     }
 
     pub fn decodeFaultTolerant(

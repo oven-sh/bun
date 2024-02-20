@@ -414,6 +414,7 @@ pub fn WindowsPipeReader(
             switch (source) {
                 .file => |file| {
                     file.fs.deinit();
+                    source.setData(this);
                     const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
                     file.iov = uv.uv_buf_t.init(buf);
                     if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFileRead).toError(.write)) |err| {
@@ -450,8 +451,12 @@ pub fn WindowsPipeReader(
             if (this.source) |source| {
                 if (source == .file) {
                     source.file.fs.deinit();
-                    // TODO: handle this error instead of ignoring it
-                    _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, @ptrCast(&onCloseSource));
+                    source.setData(this);
+                    _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, null);
+                    source.file.fs.deinit();
+                    // mark "closed"
+                    this.source.?.file.file = -1;
+                    done(this);
                     return;
                 }
                 source.getHandle().close(onCloseSource);
@@ -467,14 +472,6 @@ pub fn WindowsPipeReader(
 
         fn onCloseSource(handle: *uv.Handle) callconv(.C) void {
             const this = bun.cast(*This, handle.data);
-            switch (this.source.?) {
-                .file => |file| {
-                    file.fs.deinit();
-                    // mark "closed"
-                    this.source.?.file.file = -1;
-                },
-                else => {},
-            }
             done(this);
         }
 
@@ -969,7 +966,6 @@ pub const WindowsBufferedReader = struct {
     }
 
     fn finish(this: *WindowsOutputReader) void {
-        std.debug.assert(!this.flags.is_done);
         this.has_inflight_read = false;
         this.flags.is_done = true;
     }

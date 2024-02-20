@@ -453,7 +453,6 @@ pub fn WindowsPipeReader(
                     .file => |file| {
                         file.fs.deinit();
                         file.fs.data = file;
-                        // TODO: handle this error instead of ignoring it
                         _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, @ptrCast(&onFileClose));
                     },
                     .pipe => |pipe| {

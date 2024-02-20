@@ -174,6 +174,25 @@ describe("bunshell", () => {
     doTest(`echo "$(echo 1; echo 2)"`, "1\n2\n");
     doTest(`echo "$(echo "1" ; echo "2")"`, "1\n2\n");
     doTest(`echo $(echo 1; echo 2)`, "1 2\n");
+
+    // Issue: #8982
+    // https://github.com/oven-sh/bun/issues/8982
+    test("word splitting", async () => {
+      await TestBuilder.command`echo $(echo id)/$(echo region)`.stdout("id/region\n").run();
+      await TestBuilder.command`echo $(echo hi id)/$(echo region)`.stdout("hi id/region\n").run();
+
+      // Make sure its one whole argument
+      await TestBuilder.command`echo {"console.log(JSON.stringify(process.argv.slice(2)))"} > temp_script.ts; BUN_DEBUG_QUIET_LOGS=1 ${BUN} run temp_script.ts $(echo id)/$(echo region)`
+        .stdout('["id/region"]\n')
+        .ensureTempDir()
+        .run();
+
+      // Make sure its two separate arguments
+      await TestBuilder.command`echo {"console.log(JSON.stringify(process.argv.slice(2)))"} > temp_script.ts; BUN_DEBUG_QUIET_LOGS=1 ${BUN} run temp_script.ts $(echo hi id)/$(echo region)`
+        .stdout('["hi","id/region"]\n')
+        .ensureTempDir()
+        .run();
+    });
   });
 
   describe("unicode", () => {

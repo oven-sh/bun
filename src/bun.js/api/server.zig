@@ -1279,7 +1279,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         defer_deinit_until_callback_completes: ?*bool = null,
 
         // TODO: support builtin compression
-        const can_sendfile = !ssl_enabled;
+        const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
         pub inline fn isAsync(this: *const RequestContext) bool {
             return this.defer_deinit_until_callback_completes == null;
@@ -1893,14 +1893,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.cleanupAndFinalizeAfterSendfile();
                     return errcode != .SUCCESS;
                 }
-            } else if (Environment.isWindows) {
-                const win = std.os.windows;
-                const uv = bun.windows.libuv;
-                const socket = bun.socketcast(this.sendfile.socket_fd);
-                const file_handle = uv.uv_get_osfhandle(bun.uvfdcast(this.sendfile.fd));
-                this.sendfile.offset += this.sendfile.remain;
-                this.sendfile.remain = 0;
-                return win.ws2_32.TransmitFile(socket, file_handle, 0, 0, null, null, 0) == 1;
             } else {
                 var sbytes: std.os.off_t = adjusted_count;
                 const signed_offset = @as(i64, @bitCast(@as(u64, this.sendfile.offset)));

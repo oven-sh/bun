@@ -411,7 +411,7 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
     };
 
     if (Wrapper.loaded == .pending) {
-        const result = _dlsym(@call(.always_inline, handle_getter, .{}), name);
+        const result = _dlsym(@call(bun.callmod_inline, handle_getter, .{}), name);
 
         if (result) |ptr| {
             Wrapper.function = bun.cast(Type, ptr);

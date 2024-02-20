@@ -1182,7 +1182,7 @@ pub const struct_uv_write_s = extern struct {
     event_handle: HANDLE,
     wait_handle: HANDLE,
 
-    pub fn write(req: *@This(), stream: *uv_stream_t, input: []const u8, context: anytype, comptime onWrite: ?*const (fn (@TypeOf(context), status: ReturnCode) void)) Maybe(void) {
+    pub fn write(req: *@This(), stream: *uv_stream_t, input: *uv_buf_t, context: anytype, comptime onWrite: ?*const (fn (@TypeOf(context), status: ReturnCode) void)) Maybe(void) {
         if (comptime onWrite) |callback| {
             const Wrapper = struct {
                 pub fn uvWriteCb(handler: *uv_write_t, status: ReturnCode) callconv(.C) void {
@@ -1191,20 +1191,19 @@ pub const struct_uv_write_s = extern struct {
             };
 
             req.data = context;
-            req.write_buffer = uv_buf_t.init(input);
 
-            const rc = uv_write(req, stream, @ptrCast(&req.write_buffer), 1, &Wrapper.uvWriteCb);
+            const rc = uv_write(req, stream, @ptrCast(input), 1, &Wrapper.uvWriteCb);
 
-            if (rc.errno()) |errno| {
-                return .{ .err = .{ .errno = errno, .syscall = .write } };
+            if (rc.toError(.write)) |err| {
+                return .{ .err = err };
             }
 
             return .{ .result = {} };
         }
 
-        const rc = uv_write(req, stream, @ptrCast(&uv_buf_t.init(input)), 1, null);
-        if (rc.errno()) |errno| {
-            return .{ .err = .{ .errno = errno, .syscall = .write } };
+        const rc = uv_write(req, stream, @ptrCast(input), 1, null);
+        if (rc.toError(.write)) |err| {
+            return .{ .err = err };
         }
         return .{ .result = {} };
     }
@@ -2847,7 +2846,7 @@ fn StreamMixin(comptime Type: type) type {
             _ = uv_read_stop(@ptrCast(this));
         }
 
-        pub fn write(this: *Type, input: []const u8, context: anytype, comptime onWrite: ?*const (fn (@TypeOf(context), status: ReturnCode) void)) Maybe(void) {
+        pub fn write(this: *Type, input: *uv_buf_t, context: anytype, comptime onWrite: ?*const (fn (@TypeOf(context), status: ReturnCode) void)) Maybe(void) {
             if (comptime onWrite) |callback| {
                 const Context = @TypeOf(context);
 
@@ -2860,16 +2859,14 @@ fn StreamMixin(comptime Type: type) type {
                 };
                 var uv_data = bun.new(uv_write_t, std.mem.zeroes(uv_write_t));
                 uv_data.data = context;
-                uv_data.write_buffer = uv_buf_t.init(input);
-
-                if (uv_write(uv_data, @ptrCast(this), @ptrCast(&uv_data.write_buffer), 1, &Wrapper.uvWriteCb).toError(.write)) |err| {
+                if (uv_write(uv_data, @ptrCast(this), @ptrCast(input), 1, &Wrapper.uvWriteCb).toError(.write)) |err| {
                     return .{ .err = err };
                 }
                 return .{ .result = {} };
             }
 
             var req: uv_write_t = std.mem.zeroes(uv_write_t);
-            if (uv_write(&req, this, @ptrCast(&uv_buf_t.init(input)), 1, null).toError(.write)) |err| {
+            if (uv_write(&req, this, @ptrCast(input), 1, null).toError(.write)) |err| {
                 return .{ .err = err };
             }
             return .{ .result = {} };

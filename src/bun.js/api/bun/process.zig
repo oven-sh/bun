@@ -1286,12 +1286,12 @@ pub fn spawnProcessWindows(
 
     const stdios = .{ &stdio_containers.items[0], &stdio_containers.items[1], &stdio_containers.items[2] };
     const stdio_options: [3]WindowsSpawnOptions.Stdio = .{ options.stdin, options.stdout, options.stderr };
+    const pipe_flags = uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE | uv.UV_WRITABLE_PIPE;
 
     inline for (0..3) |fd_i| {
         const stdio: *uv.uv_stdio_container_t = stdios[fd_i];
 
         const flag = comptime if (fd_i == 0) @as(u32, uv.O.RDONLY) else @as(u32, uv.O.WRONLY);
-        const pipe_flags = comptime if (fd_i == 0) uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE else uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE;
 
         switch (stdio_options[fd_i]) {
             .inherit => {
@@ -1316,7 +1316,7 @@ pub fn spawnProcessWindows(
                 stdio.data.fd = fd;
             },
             .buffer => |my_pipe| {
-                try my_pipe.init(loop, true).unwrap();
+                try my_pipe.init(loop, false).unwrap();
                 stdio.flags = pipe_flags;
                 stdio.data.stream = @ptrCast(my_pipe);
             },
@@ -1331,7 +1331,6 @@ pub fn spawnProcessWindows(
         const stdio: *uv.uv_stdio_container_t = &stdio_containers.items[3 + i];
 
         const flag = @as(u32, uv.O.RDWR);
-        const pipe_flags = uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE | uv.UV_WRITABLE_PIPE;
 
         switch (ipc) {
             .inherit => {
@@ -1356,7 +1355,7 @@ pub fn spawnProcessWindows(
                 stdio.data.fd = fd;
             },
             .buffer => |my_pipe| {
-                try my_pipe.init(loop, true).unwrap();
+                try my_pipe.init(loop, false).unwrap();
                 stdio.flags = pipe_flags;
                 stdio.data.stream = @ptrCast(my_pipe);
             },

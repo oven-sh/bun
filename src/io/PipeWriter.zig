@@ -799,7 +799,7 @@ pub fn WindowsBufferedWriter(
         is_done: bool = false,
         // we use only one write_req, any queued data in outgoing will be flushed after this ends
         write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
-
+        write_buffer: uv.uv_buf_t = uv.uv_buf_t.init(""),
         pending_payload_size: usize = 0,
 
         const WindowsWriter = @This();
@@ -849,8 +849,10 @@ pub fn WindowsBufferedWriter(
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
             const this = bun.cast(*WindowsWriter, fs.data);
-            if (@intFromEnum(fs.result) != 0) {
-                @panic("Error writing to file");
+            if (fs.result.toError(.write)) |err| {
+                this.close();
+                onError(this.parent, err);
+                return;
             }
             this.onWriteComplete(.zero);
         }
@@ -867,8 +869,8 @@ pub fn WindowsBufferedWriter(
                 .file => |file| {
                     this.pending_payload_size = buffer.len;
                     uv.uv_fs_req_cleanup(&file.fs);
-                    file.iov = uv.uv_buf_t.init(buffer);
-                    if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFsWriteComplete).toError(.write)) |err| {
+                    this.write_buffer = uv.uv_buf_t.init(buffer);
+                    if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
                         this.close();
                         onError(this.parent, err);
                     }
@@ -876,7 +878,8 @@ pub fn WindowsBufferedWriter(
                 else => {
                     // the buffered version should always have a stable ptr
                     this.pending_payload_size = buffer.len;
-                    if (this.write_req.write(pipe.toStream(), buffer, this, onWriteComplete).asErr()) |write_err| {
+                    this.write_buffer = uv.uv_buf_t.init(buffer);
+                    if (this.write_req.write(pipe.toStream(), &this.write_buffer, this, onWriteComplete).asErr()) |write_err| {
                         this.close();
                         onError(this.parent, write_err);
                     }
@@ -999,6 +1002,7 @@ pub fn WindowsStreamingWriter(
         is_done: bool = false,
         // we use only one write_req, any queued data in outgoing will be flushed after this ends
         write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
+        write_buffer: uv.uv_buf_t = uv.uv_buf_t.init(""),
 
         // queue any data that we want to write here
         outgoing: StreamBuffer = .{},
@@ -1071,12 +1075,13 @@ pub fn WindowsStreamingWriter(
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
             const this = bun.cast(*WindowsWriter, fs.data);
-            if (@intFromEnum(fs.result) < 0) {
-                const code: c_int = @truncate(@intFromEnum(fs.result));
-                this.onWriteComplete(@enumFromInt(code));
-            } else {
-                this.onWriteComplete(.zero);
+            if (fs.result.toError(.write)) |err| {
+                this.close();
+                onError(this.parent, err);
+                return;
             }
+
+            this.onWriteComplete(.zero);
         }
 
         /// this tries to send more data returning if we are writable or not after this
@@ -1110,8 +1115,8 @@ pub fn WindowsStreamingWriter(
             switch (pipe) {
                 .file => |file| {
                     uv.uv_fs_req_cleanup(&file.fs);
-                    file.iov = uv.uv_buf_t.init(bytes);
-                    if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFsWriteComplete).toError(.write)) |err| {
+                    this.write_buffer = uv.uv_buf_t.init(bytes);
+                    if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);
                         this.closeWithoutReporting();
@@ -1120,7 +1125,8 @@ pub fn WindowsStreamingWriter(
                 },
                 else => {
                     // enqueue the write
-                    if (this.write_req.write(pipe.toStream(), bytes, this, onWriteComplete).asErr()) |err| {
+                    this.write_buffer = uv.uv_buf_t.init(bytes);
+                    if (this.write_req.write(pipe.toStream(), &this.write_buffer, this, onWriteComplete).asErr()) |err| {
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);
                         this.closeWithoutReporting();

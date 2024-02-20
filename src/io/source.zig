@@ -13,7 +13,6 @@ pub const Source = union(enum) {
     const Tty = uv.uv_tty_t;
     const File = struct {
         fs: uv.fs_t,
-        iov: uv.uv_buf_t,
         file: uv.uv_file,
     };
 

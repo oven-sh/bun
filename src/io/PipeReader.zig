@@ -329,8 +329,6 @@ pub fn WindowsPipeReader(
     comptime onError: fn (*This, bun.sys.Error) void,
 ) type {
     return struct {
-        // pub usingnamespace uv.StreamReaderMixin(This, .pipe);
-
         fn uv_alloc_cb(handle: *uv.Handle, suggested_size: usize, buf: *uv.uv_buf_t) callconv(.C) void {
             var this = bun.cast(*This, handle.data);
             const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
@@ -380,6 +378,11 @@ pub fn WindowsPipeReader(
 
             switch (source) {
                 .file => |file| {
+                    if (file.iov.len == 0) {
+                        const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
+                        file.iov = uv.uv_buf_t.init(buf);
+                        std.debug.assert(file.iov.len > 0);
+                    }
                     if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, uv_file_read_cb).toError(.write)) |err| {
                         return .{ .err = err };
                     }
@@ -447,6 +450,7 @@ pub fn WindowsPipeReader(
 
             if (comptime bun.Environment.allow_assert) {
                 if (!bun.isSliceInBuffer(buf.slice()[0..amount.result], buffer.allocatedSlice())) {
+                    std.debug.print("buf len: {d}, buffer ln: {d}\n", .{ buf.slice().len, buffer.allocatedSlice().len });
                     @panic("uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it.");
                 }
             }
@@ -934,12 +938,15 @@ pub const WindowsBufferedReader = struct {
     pub fn getReadBufferWithStableMemoryAddress(this: *WindowsOutputReader, suggested_size: usize) []u8 {
         this.has_inflight_read = true;
         this._buffer.ensureUnusedCapacity(suggested_size) catch bun.outOfMemory();
-        return this._buffer.allocatedSlice()[this._buffer.items.len..];
+        const res = this._buffer.allocatedSlice()[this._buffer.items.len..];
+        std.debug.print("getReadBufferWithStableMemoryAddress({d}) = {d}\n", .{ suggested_size, res.len });
+        return res;
     }
 
     pub fn startWithCurrentPipe(this: *WindowsOutputReader) bun.JSC.Maybe(void) {
         std.debug.assert(this.source != null);
 
+        std.debug.print("clearRetainingCapacity\n", .{});
         this.buffer().clearRetainingCapacity();
         this.flags.is_done = false;
         this.unpause();
@@ -964,6 +971,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn deinit(this: *WindowsOutputReader) void {
+        std.debug.print("deinit\n", .{});
         this.buffer().deinit();
         const source = this.source orelse return;
         std.debug.assert(source.isClosed());

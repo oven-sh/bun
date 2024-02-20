@@ -2032,7 +2032,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (Environment.isLinux) {
-                if (!(bun.isRegularFile(stat.mode) or std.os.S.ISFIFO(stat.mode))) {
+                if (!(bun.isRegularFile(stat.mode) or std.os.S.ISFIFO(stat.mode) or std.os.S.ISSOCK(stat.mode))) {
                     if (auto_close) {
                         _ = bun.sys.close(fd);
                     }

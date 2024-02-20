@@ -54,15 +54,23 @@ it("should install vendored node_modules with hardlink", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toContain("1 package installed");
-  
+
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/vendor-baz`, `${root_url}/vendor-baz-0.0.1.tgz`]);
   expect(requested).toBe(2);
 
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "vendor-baz"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "vendor-baz"))).toEqual(["cjs", "index.js", "package.json"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "vendor-baz", "cjs", "node_modules"))).toEqual(["foo-dep"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "vendor-baz", "cjs", "node_modules", "foo-dep"))).toEqual(["index.js"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "vendor-baz"))).toEqual([
+    "cjs",
+    "index.js",
+    "package.json",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "vendor-baz", "cjs", "node_modules"))).toEqual([
+    "foo-dep",
+  ]);
+  expect(
+    await readdirSorted(join(package_dir, "node_modules", "vendor-baz", "cjs", "node_modules", "foo-dep")),
+  ).toEqual(["index.js"]);
 
   expect(await file(join(package_dir, "node_modules", "vendor-baz", "package.json")).json()).toEqual({
     name: "vendor-baz",

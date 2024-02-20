@@ -569,6 +569,7 @@ const net_c = @cImport({
     @cInclude("fcntl.h"); // F_DUPFD_CLOEXEC
     @cInclude("sys/socket.h");
 });
+pub const FD_CLOEXEC = net_c.FD_CLOEXEC;
 pub const ifaddrs = net_c.ifaddrs;
 pub const getifaddrs = net_c.getifaddrs;
 pub const freeifaddrs = net_c.freeifaddrs;

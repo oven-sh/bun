@@ -10,28 +10,31 @@ env:
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
+      - "*.zig"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
       - "packages/bun-uws/src/**/*"
       - "CMakeLists.txt"
-      - "build.zig"
       - "Makefile"
       - "Dockerfile"
+      - ".github/workflows/bun-mac-x64.yml"
   pull_request:
-    branches: [main]
+    branches:
+      - main
     paths:
+      - "*.zig"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
       - "packages/bun-uws/src/**/*"
       - "CMakeLists.txt"
-      - "build.zig"
       - "Makefile"
       - "Dockerfile"
-  # Allows you to run this workflow manually from the Actions tab
+      - ".github/workflows/bun-mac-x64.yml"
   workflow_dispatch:
 
 jobs:

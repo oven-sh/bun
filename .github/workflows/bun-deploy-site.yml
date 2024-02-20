@@ -6,7 +6,8 @@ on:
   push:
     paths:
       - "docs/**"
-    branches: [main]
+    branches:
+      - main
 
 jobs:
   deploy:

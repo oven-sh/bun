@@ -17,6 +17,22 @@ pub const Source = union(enum) {
         file: uv.uv_file,
     };
 
+    pub fn isClosed(this: Source) bool {
+        switch (this) {
+            .pipe => |pipe| return pipe.isClosed(),
+            .tty => |tty| return tty.isClosed(),
+            .file => |file| return file.file == -1,
+        }
+    }
+
+    pub fn isActive(this: Source) bool {
+        switch (this) {
+            .pipe => |pipe| return pipe.isActive(),
+            .tty => |tty| return tty.isActive(),
+            .file => return false,
+        }
+    }
+
     pub fn getHandle(this: Source) *uv.Handle {
         switch (this) {
             .pipe => return @ptrCast(this.pipe),

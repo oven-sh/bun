@@ -212,6 +212,20 @@ pub const FilePoll = struct {
         try writer.print("FilePoll({}) = {}", .{ poll.fd, Flags.Formatter{ .data = poll.flags } });
     }
 
+    pub fn fileType(poll: *const FilePoll) bun.io.FileType {
+        const flags = poll.flags;
+
+        if (flags.contains(.socket)) {
+            return .socket;
+        }
+
+        if (flags.contains(.nonblocking)) {
+            return .nonblocking_pipe;
+        }
+
+        return .pipe;
+    }
+
     pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.os.system.kevent64_s) void {
         if (KQueueGenerationNumber != u0)
             std.debug.assert(poll.generation_number == kqueue_event.ext[0]);
@@ -435,6 +449,8 @@ pub const FilePoll = struct {
 
         /// Was O_NONBLOCK set on the file descriptor?
         nonblock,
+
+        socket,
 
         pub fn poll(this: Flags) Flags {
             return switch (this) {

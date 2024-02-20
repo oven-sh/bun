@@ -6,6 +6,7 @@ const uv = bun.windows.libuv;
 const Source = @import("./source.zig").Source;
 
 const log = bun.Output.scoped(.PipeWriter, false);
+const FileType = @import("./pipes.zig").FileType;
 
 pub const WriteResult = union(enum) {
     done: usize,
@@ -24,15 +25,22 @@ pub fn PosixPipeWriter(
     comptime registerPoll: ?fn (*This) void,
     comptime onError: fn (*This, bun.sys.Error) void,
     comptime onWritable: fn (*This) void,
+    comptime getFileType: *const fn (*This) FileType,
 ) type {
     _ = onWritable; // autofix
     return struct {
         pub fn _tryWrite(this: *This, buf_: []const u8) WriteResult {
+            return switch (getFileType(this)) {
+                inline else => |ft| return _tryWriteWithWriteFn(this, buf_, comptime writeToFileType(ft)),
+            };
+        }
+
+        fn _tryWriteWithWriteFn(this: *This, buf_: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) WriteResult {
             const fd = getFd(this);
             var buf = buf_;
 
             while (buf.len > 0) {
-                switch (writeNonBlocking(fd, buf)) {
+                switch (write_fn(fd, buf)) {
                     .err => |err| {
                         if (err.isRetry()) {
                             return .{ .pending = buf_.len - buf.len };
@@ -54,7 +62,15 @@ pub fn PosixPipeWriter(
             return .{ .wrote = buf_.len - buf.len };
         }
 
-        fn writeNonBlocking(fd: bun.FileDescriptor, buf: []const u8) JSC.Maybe(usize) {
+        fn writeToFileType(comptime file_type: FileType) *const (fn (bun.FileDescriptor, []const u8) JSC.Maybe(usize)) {
+            comptime return switch (file_type) {
+                .nonblocking_pipe, .file => &bun.sys.write,
+                .pipe => &writeToBlockingPipe,
+                .socket => &bun.sys.sendNonBlock,
+            };
+        }
+
+        fn writeToBlockingPipe(fd: bun.FileDescriptor, buf: []const u8) JSC.Maybe(usize) {
             if (comptime bun.Environment.isLinux) {
                 if (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
                     return bun.sys.writeNonblocking(fd, buf);
@@ -171,6 +187,12 @@ pub fn PosixBufferedWriter(
             return this.handle.getPoll();
         }
 
+        pub fn getFileType(this: *const @This()) FileType {
+            const poll = getPoll(this) orelse return FileType.file;
+
+            return poll.fileType();
+        }
+
         pub fn getFd(this: *const PosixWriter) bun.FileDescriptor {
             return this.handle.getFd();
         }
@@ -247,7 +269,7 @@ pub fn PosixBufferedWriter(
             return getBuffer(this.parent);
         }
 
-        pub usingnamespace PosixPipeWriter(@This(), getFd, getBufferInternal, _onWrite, registerPoll, _onError, _onWritable);
+        pub usingnamespace PosixPipeWriter(@This(), getFd, getBufferInternal, _onWrite, registerPoll, _onError, _onWritable, getFileType);
 
         pub fn end(this: *PosixWriter) void {
             if (this.is_done) {
@@ -353,6 +375,12 @@ pub fn PosixStreamingWriter(
 
         pub fn getFd(this: *PosixWriter) bun.FileDescriptor {
             return this.handle.getFd();
+        }
+
+        pub fn getFileType(this: *PosixWriter) FileType {
+            const poll = this.getPoll() orelse return FileType.file;
+
+            return poll.fileType();
         }
 
         const PosixWriter = @This();
@@ -558,7 +586,7 @@ pub fn PosixStreamingWriter(
             return rc;
         }
 
-        pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable);
+        pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable, getFileType);
 
         pub fn flush(this: *PosixWriter) WriteResult {
             if (this.closed_without_reporting or this.is_done) {

@@ -77,9 +77,10 @@ pub const FileType = enum {
     file,
     pipe,
     nonblocking_pipe,
+    socket,
 
     pub fn isPollable(this: FileType) bool {
-        return this == .pipe or this == .nonblocking_pipe;
+        return this == .pipe or this == .nonblocking_pipe or this == .socket;
     }
 
     pub fn isBlocking(this: FileType) bool {

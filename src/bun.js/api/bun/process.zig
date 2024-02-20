@@ -1125,19 +1125,26 @@ pub fn spawnProcessPosix(
                 try actions.open(fileno, path, flag | std.os.O.CREAT, 0o664);
             },
             .buffer => {
-                const pipe = try bun.sys.pipe().unwrap();
-                const idx: usize = comptime if (i == 0) 0 else 1;
-                const theirs = pipe[idx];
-                const ours = pipe[1 - idx];
+                const fds: [2]bun.FileDescriptor = brk: {
+                    var fds_: [2]std.c.fd_t = undefined;
+                    const rc = std.c.socketpair(std.os.AF.UNIX, std.os.SOCK.STREAM, 0, &fds_);
+                    if (rc != 0) {
+                        return error.SystemResources;
+                    }
 
-                try actions.dup2(theirs, fileno);
-                try actions.close(ours);
+                    const before = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.GETFL);
+                    _ = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.SETFL, before | bun.C.FD_CLOEXEC);
 
-                try to_close_at_end.append(theirs);
-                try to_close_on_error.append(ours);
-                try to_set_cloexec.append(ours);
+                    break :brk .{ bun.toFD(fds_[if (i == 0) 1 else 0]), bun.toFD(fds_[if (i == 0) 0 else 1]) };
+                };
 
-                stdio.* = ours;
+                try to_close_at_end.append(fds[1]);
+                try to_close_on_error.append(fds[0]);
+
+                try actions.dup2(fds[1], fileno);
+                try actions.close(fds[1]);
+
+                stdio.* = fds[0];
             },
             .pipe => |fd| {
                 try actions.dup2(fd, fileno);
@@ -1170,7 +1177,6 @@ pub fn spawnProcessPosix(
 
                     // enable non-block
                     const before = std.c.fcntl(fds_[0], std.os.F.GETFL);
-                    // disable sigpipe
 
                     _ = std.c.fcntl(fds_[0], std.os.F.SETFL, before | std.os.O.NONBLOCK | std.os.FD_CLOEXEC);
 

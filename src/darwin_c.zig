@@ -767,6 +767,7 @@ pub const sockaddr_dl = extern struct {
 pub usingnamespace @cImport({
     @cInclude("sys/spawn.h");
     @cInclude("sys/fcntl.h");
+    @cInclude("sys/socket.h");
 });
 
 pub const F = struct {

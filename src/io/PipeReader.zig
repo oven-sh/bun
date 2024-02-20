@@ -34,6 +34,10 @@ pub fn PosixPipeReader(
                     readFile(this, buffer, fd, 0, false);
                     return;
                 },
+                .socket => {
+                    readSocket(this, buffer, fd, 0, false);
+                    return;
+                },
                 .pipe => {
                     switch (bun.isReadable(fd)) {
                         .ready => {
@@ -64,6 +68,9 @@ pub fn PosixPipeReader(
                 .file => {
                     readFile(parent, resizable_buffer, fd, size_hint, received_hup);
                 },
+                .socket => {
+                    readSocket(parent, resizable_buffer, fd, size_hint, received_hup);
+                },
                 .pipe => {
                     readFromBlockingPipeWithoutBlocking(parent, resizable_buffer, fd, size_hint, received_hup);
                 },
@@ -84,6 +91,10 @@ pub fn PosixPipeReader(
 
         fn readFile(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
             return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .file, bun.sys.read);
+        }
+
+        fn readSocket(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .file, bun.sys.recvNonBlock);
         }
 
         fn readPipe(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {

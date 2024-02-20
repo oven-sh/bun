@@ -1084,7 +1084,7 @@ pub fn spawnProcessPosix(
     defer {
         for (to_set_cloexec.items) |fd| {
             const fcntl_flags = bun.sys.fcntl(fd, std.os.F.GETFD, 0).unwrap() catch continue;
-            _ = bun.sys.fcntl(fd, std.os.F.SETFD, std.os.FD_CLOEXEC | fcntl_flags);
+            _ = bun.sys.fcntl(fd, std.os.F.SETFD, bun.C.FD_CLOEXEC | fcntl_flags);
         }
         to_set_cloexec.clearAndFree();
 
@@ -1178,7 +1178,7 @@ pub fn spawnProcessPosix(
                     // enable non-block
                     const before = std.c.fcntl(fds_[0], std.os.F.GETFL);
 
-                    _ = std.c.fcntl(fds_[0], std.os.F.SETFL, before | std.os.O.NONBLOCK | std.os.FD_CLOEXEC);
+                    _ = std.c.fcntl(fds_[0], std.os.F.SETFL, before | std.os.O.NONBLOCK | bun.C.FD_CLOEXEC);
 
                     break :brk .{ bun.toFD(fds_[0]), bun.toFD(fds_[1]) };
                 };

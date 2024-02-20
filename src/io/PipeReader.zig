@@ -471,7 +471,7 @@ pub fn WindowsPipeReader(
                 .file => |file| {
                     file.fs.deinit();
                     // mark "closed"
-                    this.fs.file = -1;
+                    this.source.?.file.file = -1;
                 },
                 else => {},
             }
@@ -951,7 +951,7 @@ pub const WindowsBufferedReader = struct {
 
     pub fn hasPendingActivity(this: *const WindowsOutputReader) bool {
         const source = this.source orelse return false;
-        return source.isClosed();
+        return !source.isClosed();
     }
 
     pub fn hasPendingRead(this: *const WindowsOutputReader) bool {

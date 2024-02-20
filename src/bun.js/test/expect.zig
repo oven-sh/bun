@@ -4114,16 +4114,16 @@ pub const Expect = struct {
         if (not) pass = !pass;
         if (pass) return .undefined;
 
-        const recieved = JSValue.createEmptyArray(globalObject, nthCallValue.getLength(globalObject));
+        const received = JSValue.createEmptyArray(globalObject, nthCallValue.getLength(globalObject));
         for (0..nthCallValue.getLength(globalObject)) |i| {
-            recieved.putIndex(globalObject, @truncate(i), nthCallValue.getIndex(globalObject, @truncate(i)));
+            received.putIndex(globalObject, @truncate(i), nthCallValue.getIndex(globalObject, @truncate(i)));
         }
         const expected = JSValue.createEmptyArray(globalObject, arguments.len);
         for (1..(arguments.len)) |i| {
             expected.putIndex(globalObject, @truncate(i - 1), arguments[i]);
         }
 
-        const diff_formatter = DiffFormatter{ .received = recieved, .expected = expected, .globalObject = globalObject, .not = not };
+        const diff_formatter = DiffFormatter{ .received = received, .expected = expected, .globalObject = globalObject, .not = not };
 
         if (not) {
             const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>expected<r>", true);

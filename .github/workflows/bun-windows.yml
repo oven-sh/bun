@@ -53,7 +53,7 @@ jobs:
         cpu: [haswell, nehalem]
         arch: [x86_64]
     name: Zig Build
-    runs-on: med-ubuntu
+    runs-on: ubicloud-standard-16
     timeout-minutes: 60
     if: github.repository_owner == 'oven-sh'
     steps:
@@ -185,7 +185,7 @@ jobs:
   # yet released as it is the one *this* commit.
   windows-codegen:
     name: Codegen
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     timeout-minutes: 10
     if: github.repository_owner == 'oven-sh'
     strategy:

@@ -37,7 +37,7 @@ on:
 jobs:
   macos-object-files:
     name: macOS Object
-    runs-on: med-ubuntu
+    runs-on: ubicloud-standard-16
     if: github.repository_owner == 'oven-sh'
     strategy:
       matrix:

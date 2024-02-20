@@ -11,7 +11,7 @@ on:
 jobs:
   tests:
     name: type-tests
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     defaults:
       run:
         working-directory: packages/bun-types

@@ -47,7 +47,7 @@ jobs:
             tag: linux-x64
             arch: x86_64
             build_arch: amd64
-            runner: big-ubuntu
+            runner: ubicloud-standard-16
             build_machine_arch: x86_64
             assertions: "OFF"
             zig_optimize: "ReleaseFast"
@@ -56,7 +56,7 @@ jobs:
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
-            runner: big-ubuntu
+            runner: ubicloud-standard-16
             build_machine_arch: x86_64
             assertions: "OFF"
             zig_optimize: "ReleaseFast"
@@ -65,7 +65,7 @@ jobs:
           #   tag: linux-x64-assertions
           #   arch: x86_64
           #   build_arch: amd64
-          #   runner: big-ubuntu
+          #   runner: ubicloud-standard-16
           #   build_machine_arch: x86_64
           #   assertions: "ON"
           #   zig_optimize: "ReleaseSafe"
@@ -74,7 +74,7 @@ jobs:
           #   tag: linux-x64-baseline-assertions
           #   arch: x86_64
           #   build_arch: amd64
-          #   runner: big-ubuntu
+          #   runner: ubicloud-standard-16
           #   build_machine_arch: x86_64
           #   assertions: "ON"
           #   zig_optimize: "ReleaseSafe"
@@ -208,7 +208,7 @@ jobs:
             [Commit ${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})
   linux-test:
     name: Tests ${{matrix.tag}}
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-16
     needs: [linux]
     if: github.event_name == 'pull_request'
     timeout-minutes: 20

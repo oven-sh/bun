@@ -37,7 +37,7 @@ on:
 jobs:
   macOS-zig:
     name: macOS Zig Object
-    runs-on: med-ubuntu
+    runs-on: ubicloud-standard-16
     if: github.repository_owner == 'oven-sh'
     strategy:
       matrix:

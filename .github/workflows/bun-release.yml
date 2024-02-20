@@ -42,7 +42,7 @@ on:
 jobs:
   sign:
     name: Sign Release
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     if: ${{ github.repository_owner == 'oven-sh' }}
     permissions:
       contents: write
@@ -71,7 +71,7 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
   npm:
     name: Release to NPM
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-npm == 'true' }}
     permissions:
@@ -95,7 +95,7 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
   npm-types:
     name: Release types to NPM
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
     permissions:
@@ -148,7 +148,7 @@ jobs:
           token: ${{ secrets.NPM_TOKEN }}
   docker:
     name: Release to Dockerhub
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-docker == 'true' }}
     permissions:
@@ -209,7 +209,7 @@ jobs:
             BUN_VERSION=${{ env.BUN_VERSION }}
   homebrew:
     name: Release to Homebrew
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     needs: sign
     permissions:
       contents: read
@@ -242,7 +242,7 @@ jobs:
           commit_author: robobun <robobun@oven.sh>
   s3:
     name: Upload to S3
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-s3 == 'true' }}
     permissions:

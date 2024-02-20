@@ -48,7 +48,7 @@ jobs:
             tag: linux-aarch64
             arch: aarch64
             build_arch: arm64
-            runner: linux-arm64
+            runner: ubicloud-standard-16-arm
             build_machine_arch: aarch64
     steps:
       - uses: actions/checkout@v3

@@ -11,7 +11,7 @@ on:
 jobs:
   deploy:
     name: Deploy site
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     if: github.repository_owner == 'oven-sh'
     steps:
       - name: Trigger Vercel build

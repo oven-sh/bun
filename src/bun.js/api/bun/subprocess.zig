@@ -1978,9 +1978,7 @@ pub const Subprocess = struct {
         var ipc_callback: JSValue = .zero;
         var stdio_pipes: std.ArrayListUnmanaged(Stdio.PipeExtra) = .{};
         var stdio_inherits: std.ArrayListUnmanaged(i32) = .{};
-        defer stdio_inherits.deinit(bun.default_allocator);
         var stdio_close: std.ArrayListUnmanaged(i32) = .{};
-        defer stdio_close.deinit(bun.default_allocator);
         var pipes_to_close: std.ArrayListUnmanaged(bun.FileDescriptor) = .{};
         defer {
             for (pipes_to_close.items) |pipe_fd| {
@@ -2162,7 +2160,7 @@ pub const Subprocess = struct {
                                         };
                                     },
                                     .inherit => {
-                                        stdio_inherits.append(bun.default_allocator,
+                                        stdio_inherits.append(allocator,
                                             @intCast(i)
                                         ) catch {
                                             globalThis.throwOutOfMemory();
@@ -2170,7 +2168,7 @@ pub const Subprocess = struct {
                                         };
                                     },
                                     else => {
-                                        stdio_close.append(bun.default_allocator,
+                                        stdio_close.append(allocator,
                                             @intCast(i)
                                         ) catch {
                                             globalThis.throwOutOfMemory();

@@ -6399,7 +6399,7 @@ pub const DeclaredSymbol = struct {
         // TODO: SIMD
         for (is_top_level, refs) |top, ref| {
             if (top) {
-                @call(.always_inline, Fn, .{ ctx, ref });
+                @call(bun.callmod_inline, Fn, .{ ctx, ref });
             }
         }
     }
@@ -6607,7 +6607,7 @@ pub const Scope = struct {
         loc: logger.Loc,
 
         pub fn eql(a: Member, b: Member) bool {
-            return @call(.always_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
+            return @call(bun.callmod_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
         }
     };
 

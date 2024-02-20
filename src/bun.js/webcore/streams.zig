@@ -720,7 +720,7 @@ pub const StreamResult = union(Tag) {
                     this.handler = struct {
                         const handler = handler_fn;
                         pub fn onHandle(ctx_: *anyopaque, result: StreamResult.Writable) void {
-                            @call(.always_inline, handler, .{ bun.cast(*Context, ctx_), result });
+                            @call(bun.callmod_inline, handler, .{ bun.cast(*Context, ctx_), result });
                         }
                     }.onHandle;
                 }
@@ -843,7 +843,7 @@ pub const StreamResult = union(Tag) {
                 this.handler = struct {
                     const handler = handler_fn;
                     pub fn onHandle(ctx_: *anyopaque, result: StreamResult) void {
-                        @call(.always_inline, handler, .{ bun.cast(*Context, ctx_), result });
+                        @call(bun.callmod_inline, handler, .{ bun.cast(*Context, ctx_), result });
                     }
                 }.onHandle;
             }

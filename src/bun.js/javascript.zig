@@ -102,7 +102,7 @@ pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context)
     return struct {
         pub fn callback(ctx: ?*anyopaque) callconv(.C) void {
             const context: *Context = @as(*Context, @ptrCast(@alignCast(ctx.?)));
-            @call(.auto, Function, .{context});
+            Function(context);
         }
     }.callback;
 }

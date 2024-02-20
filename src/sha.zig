@@ -50,7 +50,7 @@ fn NewEVP(
         pub fn init() @This() {
             BoringSSL.load();
 
-            const md = @call(.auto, @field(BoringSSL, MDName), .{});
+            const md = @field(BoringSSL, MDName)();
             var this = @This(){};
 
             BoringSSL.EVP_MD_CTX_init(&this.ctx);
@@ -61,7 +61,7 @@ fn NewEVP(
         }
 
         pub fn hash(bytes: []const u8, out: *Digest, engine: *BoringSSL.ENGINE) void {
-            const md = @call(.auto, @field(BoringSSL, MDName), .{});
+            const md = @field(BoringSSL, MDName)();
 
             std.debug.assert(BoringSSL.EVP_Digest(bytes.ptr, bytes.len, out, null, md, engine) == 1);
         }

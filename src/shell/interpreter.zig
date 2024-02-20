@@ -158,7 +158,7 @@ pub const IO = struct {
         std: struct { captured: ?*bun.ByteList = null },
         /// Write/Read to/from file descriptor
         fd: bun.FileDescriptor,
-        /// Buffers the output
+        /// Buffers the output (handled in Cmd.BufferedIoClosed.close())
         pipe,
         /// Discards output
         ignore,
@@ -2919,6 +2919,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             exec: Exec = .none,
             exit_code: ?ExitCode = null,
             io: IO,
+            // duplicate_out: enum { none, stdout, stderr } = .none,
             freed: bool = false,
 
             state: union(enum) {
@@ -3004,9 +3005,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 const readable = io.stdout;
 
                                 // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
-                                if (cmd.base.shell.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.node.redirect.stdout) {
+                                if (cmd.base.shell.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.node.redirect.redirectsElsewhere(.stdout)) {
                                     cmd.base.shell.buffered_stdout().append(bun.default_allocator, readable.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                                 }
+                                // else if (cmd.base.shell.io.stdout == .pipe and cmd.node.redirect.duplicate_out and cmd.node.redirect.stderr) {
+                                //     cmd.base.shell.buffered_stderr().append(bun.default_allocator, readable.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
+                                // }
 
                                 stdout.state = .{ .closed = readable.pipe.buffer.internal_buffer };
                                 io.stdout.pipe.buffer.internal_buffer = .{};
@@ -3017,9 +3021,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 const readable = io.stderr;
 
                                 // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
-                                if (cmd.base.shell.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.node.redirect.stdout) {
+                                if (cmd.base.shell.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.node.redirect.redirectsElsewhere(.stderr)) {
                                     cmd.base.shell.buffered_stderr().append(bun.default_allocator, readable.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                                 }
+                                // else if (cmd.base.shell.io.stderr == .pipe and cmd.node.redirect.duplicate_out and cmd.node.redirect.stdout) {
+                                //     cmd.base.shell.buffered_stdout().append(bun.default_allocator, readable.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
+                                // }
 
                                 stderr.state = .{ .closed = readable.pipe.buffer.internal_buffer };
                                 io.stderr.pipe.buffer.internal_buffer = .{};
@@ -3063,6 +3070,26 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
 
             pub fn isSubproc(this: *Cmd) bool {
                 return this.exec == .subproc;
+            }
+
+            /// If the stdout/stderr is supposed to be captured then get the bytelist associated with that
+            pub fn stdBufferedBytelist(this: *Cmd, comptime io_kind: @Type(.EnumLiteral)) ?*bun.ByteList {
+                if (comptime io_kind != .stdout and io_kind != .stderr) {
+                    @compileError("Bad IO" ++ @tagName(io_kind));
+                }
+
+                const io: IO = &@field(this.io, @tagName(io_kind));
+                return switch (io.*) {
+                    // .captured => if (comptime io_kind == .stdout) this.parentCmd().base.shell.buffered_stdout() else this.parentCmd().base.shell.buffered_stderr(),
+                    .captured => {
+                        switch (this.duplicate_out) {
+                            .none => if (comptime io_kind == .stdout) this.base.shell.buffered_stdout() else this.base.shell.buffered_stderr(),
+                            .stdout => this.base.shell.buffered_stdout(),
+                            .stdeerr => this.base.shell.buffered_stderr(),
+                        }
+                    },
+                    else => null,
+                };
             }
 
             /// If starting a command results in an error (failed to find executable in path for example)
@@ -3489,6 +3516,17 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, .{ .fd = redirfd });
                         },
                     }
+                } else if (this.node.redirect.duplicate_out) {
+                    if (this.node.redirect.stdout) {
+                        spawn_args.stdio[stderr_no] = .{ .dup2 = .{ .out = .stderr, .to = .stdout } };
+                        // this.duplicate_out = .stdout;
+                    }
+
+                    if (this.node.redirect.stderr) {
+                        spawn_args.stdio[stdout_no] = .{ .dup2 = .{ .out = .stdout, .to = .stderr } };
+                        // setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, spawn_args.stdio[stderr_no]);
+                        // this.duplicate_out = .stderr;
+                    }
                 }
 
                 const buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
@@ -3519,12 +3557,17 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     stdio.*[stdin_no] = val;
                 }
 
-                if (flags.stdout) {
+                if (flags.duplicate_out) {
                     stdio.*[stdout_no] = val;
-                }
-
-                if (flags.stderr) {
                     stdio.*[stderr_no] = val;
+                } else {
+                    if (flags.stdout) {
+                        stdio.*[stdout_no] = val;
+                    }
+
+                    if (flags.stderr) {
+                        stdio.*[stderr_no] = val;
+                    }
                 }
             }
 
@@ -3649,10 +3692,15 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     std.debug.assert(this.exec == .subproc);
                 }
                 log("cmd ({x}) close buffered stdout", .{@intFromPtr(this)});
-                if (this.io.stdout == .std and this.io.stdout.std.captured != null and !this.node.redirect.stdout) {
+                if (this.io.stdout == .std and this.io.stdout.std.captured != null and !this.node.redirect.redirectsElsewhere(.stdout)) {
                     var buf = this.io.stdout.std.captured.?;
                     buf.append(bun.default_allocator, this.exec.subproc.child.stdout.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                 }
+                // 2>&1 (redirect stdout to stderr)
+                // else if (this.node.redirect.duplicate_out and this.node.redirect.stderr and this.io.stderr == .std and this.io.stderr.std.captured != null) {
+                //     var buf = this.io.stderr.std.captured.?;
+                //     buf.append(bun.default_allocator, this.exec.subproc.child.stdout.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
+                // }
                 this.exec.subproc.buffered_closed.close(this, .{ .stdout = &this.exec.subproc.child.stdout });
                 this.exec.subproc.child.closeIO(.stdout);
             }
@@ -3662,10 +3710,15 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     std.debug.assert(this.exec == .subproc);
                 }
                 log("cmd ({x}) close buffered stderr", .{@intFromPtr(this)});
-                if (this.io.stderr == .std and this.io.stderr.std.captured != null and !this.node.redirect.stderr) {
+                if (this.io.stderr == .std and this.io.stderr.std.captured != null and !this.node.redirect.redirectsElsewhere(.stderr)) {
                     var buf = this.io.stderr.std.captured.?;
                     buf.append(bun.default_allocator, this.exec.subproc.child.stderr.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
                 }
+                // 1>&2 (redirect stderr to stdout)
+                // else if (this.node.redirect.duplicate_out and this.node.redirect.stdout and this.io.stdout == .std and this.io.stdout.std.captured != null) {
+                //     var buf = this.io.stdout.std.captured.?;
+                //     buf.append(bun.default_allocator, this.exec.subproc.child.stderr.pipe.buffer.internal_buffer.slice()) catch bun.outOfMemory();
+                // }
                 this.exec.subproc.buffered_closed.close(this, .{ .stderr = &this.exec.subproc.child.stderr });
                 this.exec.subproc.child.closeIO(.stderr);
             }
@@ -4072,6 +4125,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 return .yield;
                             }
                         },
+                    }
+                } else if (node.redirect.duplicate_out) {
+                    if (node.redirect.stdout) {
+                        cmd.exec.bltn.stderr = cmd.exec.bltn.stdout;
+                    }
+
+                    if (node.redirect.stderr) {
+                        cmd.exec.bltn.stdout = cmd.exec.bltn.stderr;
                     }
                 }
 

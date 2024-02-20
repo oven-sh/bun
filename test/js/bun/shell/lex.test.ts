@@ -313,7 +313,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": true, "stdout": false, "stderr": false, "append": false, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": true,
+          "stdout": false,
+          "stderr": false,
+          "append": false,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -324,7 +333,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": true,
+          "stderr": false,
+          "append": false,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -335,7 +353,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": false, "stderr": true, "append": false, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": false,
+          "stderr": true,
+          "append": false,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -346,7 +373,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": true, "stderr": true, "append": false, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": true,
+          "stderr": true,
+          "append": false,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -357,7 +393,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": true, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": true,
+          "stderr": false,
+          "append": true,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -368,7 +413,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": false, "stderr": true, "append": true, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": false,
+          "stderr": true,
+          "append": true,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -379,7 +433,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": true, "stderr": true, "append": true, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": true,
+          "stderr": true,
+          "append": true,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },

@@ -717,16 +717,43 @@ fn BaseWindowsPipeWriter(
             this.updateRef(event_loop, false);
         }
 
+        fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
+            const file = bun.cast(*Source.File, handle.data);
+            file.fs.deinit();
+            bun.default_allocator.destroy(file);
+        }
+
+        fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
+            const this = bun.cast(*uv.Pipe, handle.data);
+            bun.default_allocator.destroy(this);
+        }
+
+        fn onTTYClose(handle: *uv.uv_tty_t) callconv(.C) void {
+            const this = bun.cast(*uv.uv_tty_t, handle.data);
+            bun.default_allocator.destroy(this);
+        }
+
         pub fn close(this: *WindowsPipeWriter) void {
             this.is_done = true;
             if (this.source) |source| {
-                if (source == .file) {
-                    source.file.fs.deinit();
-                    // TODO: handle this error instead of ignoring it
-                    _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, @ptrCast(&WindowsPipeWriter.onCloseSource));
-                    return;
+                switch (source) {
+                    .file => |file| {
+                        file.fs.deinit();
+                        file.fs.data = file;
+                        // TODO: handle this error instead of ignoring it
+                        _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, @ptrCast(&onFileClose));
+                    },
+                    .pipe => |pipe| {
+                        pipe.data = pipe;
+                        pipe.close(onPipeClose);
+                    },
+                    .tty => |tty| {
+                        tty.data = tty;
+                        tty.close(onTTYClose);
+                    },
                 }
-                source.getHandle().close(&WindowsPipeWriter.onCloseSource);
+                this.source = null;
+                this.onCloseSource();
             }
         }
 
@@ -806,8 +833,7 @@ pub fn WindowsBufferedWriter(
 
         pub usingnamespace BaseWindowsPipeWriter(WindowsWriter, Parent);
 
-        fn onCloseSource(pipe: *uv.Handle) callconv(.C) void {
-            const this = bun.cast(*WindowsWriter, pipe.data);
+        fn onCloseSource(this: *WindowsWriter) void {
             if (onClose) |onCloseFn| {
                 onCloseFn(this.parent);
             }
@@ -868,8 +894,10 @@ pub fn WindowsBufferedWriter(
             switch (pipe) {
                 .file => |file| {
                     this.pending_payload_size = buffer.len;
-                    uv.uv_fs_req_cleanup(&file.fs);
+                    file.fs.deinit();
+                    file.fs.setData(this);
                     this.write_buffer = uv.uv_buf_t.init(buffer);
+
                     if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
                         this.close();
                         onError(this.parent, err);
@@ -1015,8 +1043,7 @@ pub fn WindowsStreamingWriter(
 
         pub usingnamespace BaseWindowsPipeWriter(WindowsWriter, Parent);
 
-        fn onCloseSource(pipe: *uv.Handle) callconv(.C) void {
-            const this = bun.cast(*WindowsWriter, pipe.data);
+        fn onCloseSource(this: *WindowsWriter) void {
             this.source = null;
             if (!this.closed_without_reporting) {
                 onClose(this.parent);
@@ -1114,8 +1141,10 @@ pub fn WindowsStreamingWriter(
             this.outgoing = temp;
             switch (pipe) {
                 .file => |file| {
-                    uv.uv_fs_req_cleanup(&file.fs);
+                    file.fs.deinit();
+                    file.fs.setData(this);
                     this.write_buffer = uv.uv_buf_t.init(bytes);
+
                     if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);

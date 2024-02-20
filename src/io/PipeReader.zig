@@ -449,17 +449,24 @@ pub fn WindowsPipeReader(
         pub fn close(this: *This) void {
             _ = this.stopReading();
             if (this.source) |source| {
-                if (source == .file) {
-                    source.file.fs.deinit();
-                    source.setData(this);
-                    _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, null);
-                    source.file.fs.deinit();
-                    // mark "closed"
-                    this.source.?.file.file = -1;
-                    done(this);
-                    return;
+                switch (source) {
+                    .file => |file| {
+                        file.fs.deinit();
+                        file.fs.data = file;
+                        // TODO: handle this error instead of ignoring it
+                        _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, @ptrCast(&onFileClose));
+                    },
+                    .pipe => |pipe| {
+                        pipe.data = pipe;
+                        pipe.close(onPipeClose);
+                    },
+                    .tty => |tty| {
+                        tty.data = tty;
+                        tty.close(onTTYClose);
+                    },
                 }
-                source.getHandle().close(onCloseSource);
+                this.source = null;
+                done(this);
             }
         }
 
@@ -470,9 +477,20 @@ pub fn WindowsPipeReader(
             .onError = onError,
         };
 
-        fn onCloseSource(handle: *uv.Handle) callconv(.C) void {
-            const this = bun.cast(*This, handle.data);
-            done(this);
+        fn onFileClose(handle: *uv.fs_t) callconv(.C) void {
+            const file = bun.cast(*Source.File, handle.data);
+            file.fs.deinit();
+            bun.default_allocator.destroy(file);
+        }
+
+        fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
+            const this = bun.cast(*uv.Pipe, handle.data);
+            bun.default_allocator.destroy(this);
+        }
+
+        fn onTTYClose(handle: *uv.uv_tty_t) callconv(.C) void {
+            const this = bun.cast(*uv.uv_tty_t, handle.data);
+            bun.default_allocator.destroy(this);
         }
 
         pub fn onRead(this: *This, amount: bun.JSC.Maybe(usize), slice: []u8, hasMore: ReadState) void {

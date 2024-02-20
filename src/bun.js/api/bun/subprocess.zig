@@ -822,7 +822,7 @@ pub const Subprocess = struct {
                 .stdio_result = result,
             });
             if (Environment.isWindows) {
-                this.reader.pipe = this.stdio_result.buffer;
+                this.reader.source = .{ .pipe = this.stdio_result.buffer };
             }
             this.reader.setParent(this);
             return this;
@@ -956,7 +956,7 @@ pub const Subprocess = struct {
             }
 
             if (comptime Environment.isWindows) {
-                std.debug.assert(this.reader.pipe == null or this.reader.pipe.?.isClosed());
+                std.debug.assert(this.reader.source == null or this.reader.source.?.isClosed());
             }
 
             if (this.state == .done) {

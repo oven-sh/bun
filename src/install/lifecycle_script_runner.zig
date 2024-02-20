@@ -131,8 +131,8 @@ pub const LifecycleScriptSubprocess = struct {
             null,
         };
         if (Environment.isWindows) {
-            this.stdout.pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
-            this.stderr.pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
+            this.stdout.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+            this.stderr.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
         }
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = .ignore,
@@ -142,7 +142,7 @@ pub const LifecycleScriptSubprocess = struct {
                 .buffer
             else
                 .{
-                    .buffer = this.stdout.pipe.?,
+                    .buffer = this.stdout.source.?.pipe,
                 },
             .stderr = if (this.manager.options.log_level.isVerbose())
                 .inherit
@@ -150,7 +150,7 @@ pub const LifecycleScriptSubprocess = struct {
                 .buffer
             else
                 .{
-                    .buffer = this.stderr.pipe.?,
+                    .buffer = this.stderr.source.?.pipe,
                 },
             .cwd = cwd,
 

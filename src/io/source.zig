@@ -80,6 +80,22 @@ pub const Source = union(enum) {
         }
     }
 
+    pub fn isClosed(this: Source) bool {
+        switch (this) {
+            .pipe => |pipe| return pipe.isClosed(),
+            .tty => |tty| return tty.isClosed(),
+            .file => |file| return file.file == -1,
+        }
+    }
+
+    pub fn isActive(this: Source) bool {
+        switch (this) {
+            .pipe => |pipe| return pipe.isActive(),
+            .tty => |tty| return tty.isActive(),
+            .file => return false,
+        }
+    }
+
     pub fn openPipe(loop: *uv.Loop, fd: bun.FileDescriptor, ipc: bool) bun.JSC.Maybe(*Source.Pipe) {
         log("openPipe (fd = {})", .{fd});
         const pipe = bun.default_allocator.create(Source.Pipe) catch bun.outOfMemory();

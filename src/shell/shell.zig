@@ -437,7 +437,7 @@ pub const AST = struct {
         /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
         ///
         /// Multiple redirects and redirecting stdin is not supported yet.
-        pub const RedirectFlags = struct {
+        pub const RedirectFlags = packed struct(u8) {
             stdin: bool = false,
             stdout: bool = false,
             stderr: bool = false,
@@ -453,13 +453,6 @@ pub const AST = struct {
                     .stdout => if (this.duplicate_out) !this.stdout else this.stdout,
                     .stderr => if (this.duplicate_out) !this.stderr else this.stderr,
                 };
-            }
-
-            pub fn toFlags(this: RedirectFlags) bun.Mode {
-                const read_write_flags: bun.Mode = if (this.stdin) std.os.O.RDONLY else std.os.O.WRONLY | std.os.O.CREAT;
-                const extra: bun.Mode = if (this.append) std.os.O.APPEND else std.os.O.TRUNC;
-                const final_flags: bun.Mode = if (this.stdin) read_write_flags else extra | read_write_flags;
-                return final_flags;
             }
 
             pub fn @"2>&1"() RedirectFlags {

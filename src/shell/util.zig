@@ -53,6 +53,13 @@ pub const Stdio = union(enum) {
     ) !void {
         switch (stdio) {
             .dup2 => {
+                // This is a hack to get around the ordering of the spawn actions.
+                // If stdout is set so that it redirects to stderr, the order of actions will be like this:
+                // 0. dup2(stderr, stdout) - this makes stdout point to stderr
+                // 1. setup stderr (will make stderr point to write end of `stderr_pipe_fds`)
+                // This is actually wrong, 0 will execute before 1 so stdout ends up writing to stderr instead of the pipe
+                // So we have to instead do `dup2(stderr_pipe_fd[1], stdout)`
+                // Right now we only allow one output redirection so it's okay.
                 if (comptime std_fileno == bun.STDOUT_FD) {
                     const idx: usize = if (std_fileno == bun.STDIN_FD) 0 else 1;
                     try actions.dup2(stderr_pipe_fds[idx], stdio.dup2.out.toFd());

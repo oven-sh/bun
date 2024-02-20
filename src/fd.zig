@@ -34,13 +34,15 @@ fn numberToHandle(handle: FDImpl.SystemAsInt) FDImpl.System {
 
 pub fn uv_get_osfhandle(in: c_int) libuv.uv_os_fd_t {
     const out = libuv.uv_get_osfhandle(in);
-    log("uv_get_osfhandle({d}) = {d}", .{ in, @intFromPtr(out) });
+    // TODO: this is causing a dead lock because is also used on fd format
+    // log("uv_get_osfhandle({d}) = {d}", .{ in, @intFromPtr(out) });
     return out;
 }
 
 pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
     const out = libuv.uv_open_osfhandle(in);
-    log("uv_open_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
+    // TODO: this is causing a dead lock because is also used on fd format
+    // log("uv_open_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
     return out;
 }
 

@@ -468,7 +468,7 @@ fn ReqMixin(comptime Type: type) type {
             uv_req_set_data(@ptrCast(handle), ptr);
         }
         pub fn cancel(this: *Type) void {
-            uv_cancel(@ptrCast(this));
+            _ = uv_cancel(@ptrCast(this));
         }
     };
 }
@@ -1712,6 +1712,7 @@ pub const fs_t = extern struct {
     sys_errno_: DWORD,
     file: union_unnamed_450,
     fs: union_unnamed_451,
+    pub usingnamespace ReqMixin(@This());
 
     pub inline fn deinit(this: *fs_t) void {
         this.assert();
@@ -2722,63 +2723,6 @@ pub const ReturnCodeI64 = enum(i64) {
 };
 
 pub const addrinfo = std.os.windows.ws2_32.addrinfo;
-
-pub fn StreamReaderMixin(comptime Type: type, comptime pipe_field_name: std.meta.FieldEnum(Type)) type {
-    return struct {
-        fn uv_alloc_cb(pipe: *uv_stream_t, suggested_size: usize, buf: *uv_buf_t) callconv(.C) void {
-            var this = bun.cast(*Type, pipe.data);
-            const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
-            buf.* = uv_buf_t.init(result);
-        }
-
-        fn uv_read_cb(pipe: *uv_stream_t, nread: ReturnCodeI64, buf: *const uv_buf_t) callconv(.C) void {
-            var this = bun.cast(*Type, pipe.data);
-
-            const read = nread.int();
-
-            switch (read) {
-                0 => {
-                    // EAGAIN or EWOULDBLOCK
-                    return this.onRead(.{ .result = 0 }, buf, .drained);
-                },
-                UV_EOF => {
-                    // EOF
-                    return this.onRead(.{ .result = 0 }, buf, .eof);
-                },
-                else => {
-                    this.onRead(if (nread.toError(.recv)) |err| .{ .err = err } else .{ .result = @intCast(read) }, buf, .progress);
-                },
-            }
-        }
-
-        fn __get_pipe(this: *Type) ?*uv_stream_t {
-            switch (@TypeOf(@field(this, @tagName(pipe_field_name)))) {
-                ?*Pipe, ?*uv_tcp_t, ?*uv_tty_t => return if (@field(this, @tagName(pipe_field_name))) |ptr| @ptrCast(ptr) else null,
-                *Pipe, *uv_tcp_t, *uv_tty_t => return @ptrCast(@field(this, @tagName(pipe_field_name))),
-                Pipe, uv_tcp_t, uv_tty_t => return @ptrCast(&@field(this, @tagName(pipe_field_name))),
-                else => @compileError("StreamWriterMixin only works with Pipe, uv_tcp_t, uv_tty_t"),
-            }
-        }
-
-        pub fn startReading(this: *Type) Maybe(void) {
-            const pipe = __get_pipe(this) orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.PIPE, .pipe) };
-
-            //TODO: change to pipe.readStart
-            if (uv_read_start(pipe, @ptrCast(&@This().uv_alloc_cb), @ptrCast(&@This().uv_read_cb)).toError(.open)) |err| {
-                return .{ .err = err };
-            }
-
-            return .{ .result = {} };
-        }
-
-        pub fn stopReading(this: *Type) Maybe(void) {
-            const pipe = __get_pipe(this) orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.PIPE, .pipe) };
-            pipe.readStop();
-
-            return .{ .result = {} };
-        }
-    };
-}
 
 // https://docs.libuv.org/en/v1.x/stream.html
 fn StreamMixin(comptime Type: type) type {

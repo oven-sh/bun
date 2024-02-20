@@ -721,7 +721,7 @@ fn BaseWindowsPipeWriter(
             this.is_done = true;
             if (this.source) |source| {
                 if (source == .file) {
-                    uv.uv_fs_req_cleanup(&source.file.fs);
+                    source.file.fs.deinit();
                     // TODO: handle this error instead of ignoring it
                     _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, @ptrCast(&WindowsPipeWriter.onCloseSource));
                     return;

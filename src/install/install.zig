@@ -1366,7 +1366,7 @@ pub const PackageInstall = struct {
             cached_package_dir,
             this.allocator,
             &[_]bun.OSPathSlice{},
-            &[_]bun.OSPathSlice{bun.OSPathLiteral("node_modules")},
+            &[_]bun.OSPathSlice{},
         ) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };

@@ -152,18 +152,6 @@ pub const Sendfile = struct {
 
                 return .{ .err = bun.errnoToZigErr(errcode) };
             }
-        } else if (Environment.isWindows) {
-            const win = std.os.windows;
-            const uv = bun.windows.libuv;
-            const wsocket = bun.socketcast(socket.fd());
-            const file_handle = uv.uv_get_osfhandle(bun.uvfdcast(this.fd));
-            if (win.ws2_32.TransmitFile(wsocket, file_handle, 0, 0, null, null, 0) == 1) {
-                return .{ .done = {} };
-            }
-            this.offset += this.remain;
-            this.remain = 0;
-            const errorno = win.ws2_32.WSAGetLastError();
-            return .{ .err = bun.errnoToZigErr(errorno) };
         } else if (Environment.isPosix) {
             var sbytes: std.os.off_t = adjusted_count;
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
@@ -1307,7 +1295,7 @@ const Decompressor = union(enum) {
             },
             .brotli => |reader| {
                 reader.input = buffer;
-                reader.total_in = @as(u32, @truncate(buffer.len));
+                reader.total_in = 0;
 
                 const initial = body_out_str.list.items.len;
                 reader.list = body_out_str.list;
@@ -3059,7 +3047,7 @@ pub const HTTPClientResult = struct {
 
                 pub fn wrapped_callback(ptr: *anyopaque, result: HTTPClientResult) void {
                     const casted = @as(Type, @ptrCast(@alignCast(ptr)));
-                    @call(.always_inline, callback, .{ casted, result });
+                    @call(bun.callmod_inline, callback, .{ casted, result });
                 }
             };
         }

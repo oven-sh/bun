@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.26")
+set(Bun_VERSION "1.0.28")
 set(WEBKIT_TAG c3712c13dcdc091cfe4c7cb8f2c1fd16472e6f92)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -1279,6 +1279,7 @@ if(USE_STATIC_SQLITE)
         "SQLITE_ENABLE_FTS3_PARENTHESIS=1"
         "SQLITE_ENABLE_FTS5=1"
         "SQLITE_ENABLE_JSON1=1"
+        "SQLITE_ENABLE_MATH_FUNCTIONS=1"
     )
     target_link_libraries(${bun} PRIVATE sqlite3)
     message(STATUS "Using static sqlite3")

@@ -317,7 +317,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         pub fn appendMutable(self: *Self, comptime AppendType: type, _value: AppendType) ![]u8 {
-            const appended = try @call(.always_inline, append, .{ self, AppendType, _value });
+            const appended = try @call(bun.callmod_inline, append, .{ self, AppendType, _value });
             return @constCast(appended);
         }
 
@@ -569,14 +569,18 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             }
         }
 
-        pub fn remove(self: *Self, denormalized_key: []const u8) void {
+        /// Returns true if the entry was removed
+        pub fn remove(self: *Self, denormalized_key: []const u8) bool {
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, "/") else denormalized_key;
+            const key = if (comptime remove_trailing_slashes)
+                std.mem.trimRight(u8, denormalized_key, "/")
+            else
+                denormalized_key;
 
             const _key = bun.hash(key);
-            _ = self.index.remove(_key);
+            return self.index.remove(_key);
             // const index = self.index.get(_key) orelse return;
             // switch (index) {
             //     Unassigned.index, NotFound.index => {
@@ -633,11 +637,11 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             return try self.map.getOrPut(key);
         }
         pub fn get(self: *Self, key: []const u8) ?*ValueType {
-            return @call(.always_inline, BSSMapType.get, .{ self.map, key });
+            return @call(bun.callmod_inline, BSSMapType.get, .{ self.map, key });
         }
 
         pub fn atIndex(self: *Self, index: IndexType) ?*ValueType {
-            return @call(.always_inline, BSSMapType.atIndex, .{ self.map, index });
+            return @call(bun.callmod_inline, BSSMapType.atIndex, .{ self.map, index });
         }
 
         pub fn keyAtIndex(_: *Self, index: IndexType) ?[]const u8 {
@@ -709,8 +713,9 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             self.map.markNotFound(result);
         }
 
-        // For now, don't free the keys.
-        pub fn remove(self: *Self, key: []const u8) void {
+        /// This does not free the keys.
+        /// Returns `true` if an entry had previously existed.
+        pub fn remove(self: *Self, key: []const u8) bool {
             return self.map.remove(key);
         }
     };

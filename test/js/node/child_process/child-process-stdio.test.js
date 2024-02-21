@@ -75,8 +75,7 @@ describe("process.stdin", () => {
           done(err);
         }
       });
-    child.stdin.write(input);
-    child.stdin.end();
+    child.stdin.end(input);
   });
 
   it("should allow us to read > 65kb from stdin", done => {
@@ -106,8 +105,7 @@ describe("process.stdin", () => {
           done(err);
         }
       });
-    child.stdin.write(input);
-    child.stdin.end();
+    child.stdin.end(input);
   });
 
   it("should allow us to read from a file", () => {

@@ -831,6 +831,7 @@ pub fn WindowsBufferedWriter(
     comptime onClose: ?*const fn (*Parent) void,
     comptime getBuffer: *const fn (*Parent) []const u8,
     comptime onWritable: ?*const fn (*Parent) void,
+    comptime _: ?*const fn (*Parent, written: usize) bool,
 ) type {
     return struct {
         source: ?Source = null,
@@ -873,7 +874,8 @@ pub fn WindowsBufferedWriter(
             }
             const pending = this.getBufferInternal();
             const has_pending_data = (pending.len - written) == 0;
-            onWrite(this.parent, @intCast(written), this.is_done and has_pending_data);
+            onWrite(this.parent, @intCast(written), this.is_done and !has_pending_data);
+            // is_done can be changed inside onWrite
             if (this.is_done and !has_pending_data) {
                 // already done and end was called
                 this.close();
@@ -1035,6 +1037,7 @@ pub fn WindowsStreamingWriter(
     comptime onError: fn (*Parent, bun.sys.Error) void,
     comptime onWritable: ?fn (*Parent) void,
     comptime onClose: fn (*Parent) void,
+    comptime _: ?*const fn (*Parent, written: usize) bool,
 ) type {
     return struct {
         source: ?Source = null,

@@ -965,7 +965,7 @@ pub const WindowsBufferedReader = struct {
         onError,
     );
 
-    pub fn takeBuffer(this: *PosixBufferedReader) std.ArrayList(u8) {
+    pub fn takeBuffer(this: *WindowsOutputReader) std.ArrayList(u8) {
         const out = this._buffer;
         this._buffer = std.ArrayList(u8).init(out.allocator);
         return out;

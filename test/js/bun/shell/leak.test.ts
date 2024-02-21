@@ -101,7 +101,7 @@ describe("fd leak", () => {
                 if (prev === undefined) {
                   prev = val;
                 } else {
-                  if (!(Math.abs(prev - val) < threshold)) process.exit(1);
+                  if (!(Math.abs(prev - val) < threshold)) { console.error(Math.abs(prev - val), '>=', threshold); process.exit(1); }
                 }
               }
 

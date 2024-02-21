@@ -1960,7 +1960,19 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         fn appendStringToStrPool(self: *@This(), bunstr: bun.String) !void {
             const start = self.strpool.items.len;
-            if (bunstr.is8Bit() or bunstr.isUTF8()) {
+            if (bunstr.is8Bit()) {
+                if (isAllAscii(bunstr.byteSlice())) {
+                    try self.strpool.appendSlice(bunstr.byteSlice());
+                } else {
+                    const bytes = bunstr.byteSlice();
+                    const non_ascii_idx = bun.strings.firstNonASCII(bytes) orelse 0;
+
+                    if (non_ascii_idx > 0) {
+                        try self.strpool.appendSlice(bytes[0..non_ascii_idx]);
+                    }
+                    self.strpool = try bun.strings.allocateLatin1IntoUTF8WithList(self.strpool, self.strpool.items.len, []const u8, bytes[non_ascii_idx..]);
+                }
+            } else if (bunstr.isUTF8()) {
                 try self.strpool.appendSlice(bunstr.byteSlice());
             } else {
                 const utf16 = bunstr.utf16();

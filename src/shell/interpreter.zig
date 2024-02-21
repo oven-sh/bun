@@ -269,7 +269,11 @@ pub const RefCountedStr = struct {
     len: u32 = 0,
     ptr: [*]const u8 = undefined,
 
-    const print = bun.Output.scoped(.RefCountedEnvStr, true);
+    const print = if (!bun.Environment.isDebug and bun.Environment.allow_assert) struct {
+        pub fn log(comptime fmt: []const u8, args: anytype) void {
+            std.debug.print("[RefCountedEnvStr] " ++ fmt, args);
+        }
+    }.log else bun.Output.scoped(.RefCountedEnvStr, false);
 
     // /// Use bun.default_allocator
     // const DEFAULT_ALLOC_TAG: usize = 1 << 63;

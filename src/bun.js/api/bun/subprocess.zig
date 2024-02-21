@@ -27,7 +27,7 @@ const Process = bun.posix.spawn.Process;
 const WaiterThread = bun.posix.spawn.WaiterThread;
 const Stdio = bun.spawn.Stdio;
 const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
-inline fn assertStdioResult(result: StdioResult) void {
+pub inline fn assertStdioResult(result: StdioResult) void {
     if (comptime Environment.allow_assert) {
         if (Environment.isPosix) {
             if (result) |fd| {
@@ -703,6 +703,7 @@ pub const Subprocess = struct {
                 onClose,
                 getBuffer,
                 flush,
+                null,
             );
             pub const Poll = IOWriter;
 

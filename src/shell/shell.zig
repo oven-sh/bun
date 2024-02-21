@@ -25,7 +25,6 @@ pub const subproc = @import("./subproc.zig");
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
 pub const Interpreter = eval.Interpreter;
-pub const InterpreterMini = eval.InterpreterMini;
 pub const Subprocess = subproc.ShellSubprocess;
 // pub const SubprocessMini = subproc.ShellSubprocessMini;
 

@@ -26,6 +26,7 @@ pub fn PosixPipeWriter(
     comptime onError: fn (*This, bun.sys.Error) void,
     comptime onWritable: fn (*This) void,
     comptime getFileType: *const fn (*This) FileType,
+    comptime isDone: ?(fn (*This, written: usize) bool),
 ) type {
     _ = onWritable; // autofix
     return struct {
@@ -116,7 +117,7 @@ pub fn PosixPipeWriter(
                     onError(parent, err);
                 },
                 .done => |amt| {
-                    onWrite(parent, amt, true);
+                    onWrite(parent, amt, if (isDone) |d| d(parent, amt) else true);
                 },
             }
         }
@@ -173,6 +174,7 @@ pub fn PosixBufferedWriter(
     comptime onClose: ?*const fn (*Parent) void,
     comptime getBuffer: *const fn (*Parent) []const u8,
     comptime onWritable: ?*const fn (*Parent) void,
+    comptime isDone: ?*const fn (*Parent, written: usize) bool,
 ) type {
     return struct {
         handle: PollOrFd = .{ .closed = {} },
@@ -195,6 +197,11 @@ pub fn PosixBufferedWriter(
 
         pub fn getFd(this: *const PosixWriter) bun.FileDescriptor {
             return this.handle.getFd();
+        }
+
+        pub fn _isDone(this: *PosixWriter, written: usize) bool {
+            if (isDone == null) @compileError("_isDone called with no parent implementation");
+            return isDone(this.parent, written);
         }
 
         fn _onError(
@@ -269,7 +276,7 @@ pub fn PosixBufferedWriter(
             return getBuffer(this.parent);
         }
 
-        pub usingnamespace PosixPipeWriter(@This(), getFd, getBufferInternal, _onWrite, registerPoll, _onError, _onWritable, getFileType);
+        pub usingnamespace PosixPipeWriter(@This(), getFd, getBufferInternal, _onWrite, registerPoll, _onError, _onWritable, getFileType, if (isDone != null) _isDone else null);
 
         pub fn end(this: *PosixWriter) void {
             if (this.is_done) {
@@ -356,6 +363,7 @@ pub fn PosixStreamingWriter(
     comptime onError: fn (*Parent, bun.sys.Error) void,
     comptime onReady: ?fn (*Parent) void,
     comptime onClose: fn (*Parent) void,
+    comptime isDone: ?*const fn (*Parent, written: usize) bool,
 ) type {
     return struct {
         // TODO: replace buffer + head for StreamBuffer
@@ -387,6 +395,11 @@ pub fn PosixStreamingWriter(
 
         pub fn getBuffer(this: *PosixWriter) []const u8 {
             return this.buffer.items[this.head..];
+        }
+
+        pub fn _isDone(this: *PosixWriter, written: usize) bool {
+            if (isDone == null) @compileError("_isDone called with no parent implementation");
+            return isDone(this.parent, written);
         }
 
         fn _onError(
@@ -586,7 +599,7 @@ pub fn PosixStreamingWriter(
             return rc;
         }
 
-        pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable, getFileType);
+        pub usingnamespace PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable, getFileType, if (isDone != null) _isDone else null);
 
         pub fn flush(this: *PosixWriter) WriteResult {
             if (this.closed_without_reporting or this.is_done) {

@@ -660,6 +660,12 @@ const PosixBufferedReader = struct {
 
     }
 
+    pub fn takeBuffer(this: *PosixBufferedReader) std.ArrayList(u8) {
+        const out = this._buffer;
+        this._buffer = std.ArrayList(u8).init(out.allocator);
+        return out;
+    }
+
     pub fn buffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
         return &@as(*PosixBufferedReader, @alignCast(@ptrCast(this)))._buffer;
     }
@@ -892,6 +898,12 @@ pub const WindowsBufferedReader = struct {
         done,
         onError,
     );
+
+    pub fn takeBuffer(this: *PosixBufferedReader) std.ArrayList(u8) {
+        const out = this._buffer;
+        this._buffer = std.ArrayList(u8).init(out.allocator);
+        return out;
+    }
 
     pub fn buffer(this: *WindowsOutputReader) *std.ArrayList(u8) {
         return &this._buffer;

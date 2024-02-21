@@ -2,6 +2,7 @@ const std = @import("std");
 const JSC = @import("root").bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
+const Allocator = std.mem.Allocator;
 const Lock = @import("../lock.zig").Lock;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
@@ -351,7 +352,6 @@ const Unlink = JSC.Node.Async.unlink;
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
 const ShellRmDirTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask.DirTask;
-const ShellRmDirTaskMini = bun.shell.InterpreterMini.Builtin.Rm.ShellRmTask.DirTask;
 const ShellLsTask = bun.shell.Interpreter.Builtin.Ls.ShellLsTask;
 const ShellMvCheckTargetTask = bun.shell.Interpreter.Builtin.Mv.ShellMvCheckTargetTask;
 const ShellMvBatchedTask = bun.shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
@@ -419,7 +419,6 @@ pub const Task = TaggedPointerUnion(.{
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
-    ShellRmDirTaskMini,
     ShellMvCheckTargetTask,
     ShellMvBatchedTask,
     ShellLsTask,
@@ -898,12 +897,6 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTask))) => {
                     if (comptime true) @panic("TODO");
                     var shell_rm_task: *ShellRmDirTask = task.get(ShellRmDirTask).?;
-                    shell_rm_task.runFromMainThread();
-                    // shell_rm_task.deinit();
-                },
-                @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTaskMini))) => {
-                    if (comptime true) @panic("TODO");
-                    var shell_rm_task: *ShellRmDirTaskMini = task.get(ShellRmDirTaskMini).?;
                     shell_rm_task.runFromMainThread();
                     // shell_rm_task.deinit();
                 },
@@ -1977,6 +1970,20 @@ pub const EventLoopHandle = union(enum) {
     js: *JSC.EventLoop,
     mini: *MiniEventLoop,
 
+    pub fn cast(this: EventLoopHandle, comptime as: @Type(.EnumLiteral)) if (as == .js) *JSC.EventLoop else *MiniEventLoop {
+        if (as == .js) {
+            if (this != .js) @panic("Expected *JSC.EventLoop but got *MiniEventLoop");
+            return this.js;
+        }
+
+        if (as == .mini) {
+            if (this != .mini) @panic("Expected *MiniEventLoop but got *JSC.EventLoop");
+            return this.js;
+        }
+
+        @compileError("Invalid event loop kind " ++ @typeName(as));
+    }
+
     pub fn enter(this: EventLoopHandle) void {
         switch (this) {
             .js => this.js.enter(),
@@ -2058,4 +2065,37 @@ pub const EventLoopHandle = union(enum) {
     pub fn unref(this: EventLoopHandle) void {
         this.loop().unref();
     }
+
+    pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
+        return switch (this) {
+            .js => this.js.virtual_machine.bundler.env.map.createNullDelimitedEnvMap(alloc),
+            .mini => this.mini.env.?.map.createNullDelimitedEnvMap(alloc),
+        };
+    }
+
+    pub inline fn allocator(this: EventLoopHandle) Allocator {
+        return switch (this) {
+            .js => this.js.virtual_machine.allocator,
+            .mini => this.mini.allocator,
+        };
+    }
+
+    pub inline fn topLevelDir(this: EventLoopHandle) []const u8 {
+        return switch (this) {
+            .js => this.js.virtual_machine.bundler.fs.top_level_dir,
+            .mini => this.mini.top_level_dir,
+        };
+    }
+
+    pub inline fn env(this: EventLoopHandle) *bun.DotEnv.Loader {
+        return switch (this) {
+            .js => this.js.virtual_machine.bundler.env,
+            .mini => this.mini.env.?,
+        };
+    }
+};
+
+pub const EventLoopTask = union {
+    js: ConcurrentTask,
+    mini: JSC.AnyTaskWithExtraContext,
 };

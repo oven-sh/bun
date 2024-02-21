@@ -944,7 +944,7 @@ pub const String = extern struct {
         } else if (this.isUTF16()) {
             return bun.strings.visible.width.utf16(this.utf16());
         } else {
-            return bun.strings.visible.width.ascii(this.latin1());
+            return bun.strings.visible.width.latin1(this.latin1());
         }
     }
 
@@ -954,7 +954,7 @@ pub const String = extern struct {
         } else if (this.isUTF16()) {
             return bun.strings.visible.width.exclude_ansi_colors.utf16(this.utf16());
         } else {
-            return bun.strings.visible.width.exclude_ansi_colors.ascii(this.latin1());
+            return bun.strings.visible.width.exclude_ansi_colors.latin1(this.latin1());
         }
     }
 

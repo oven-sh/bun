@@ -5814,7 +5814,8 @@ pub fn visibleCodepointWidthType(comptime T: type, cp: T) u3 {
 }
 
 pub const visible = struct {
-    fn visibleASCIIWidth(input_: anytype) usize {
+    // Ref: https://cs.stanford.edu/people/miles/iso8859.html
+    fn visibleLatin1Width(input_: []const u8) usize {
         var length: usize = 0;
         var input = input_;
 
@@ -5842,13 +5843,18 @@ pub const visible = struct {
         }
 
         for (input) |c| {
-            length += if (c > 0x1f) 1 else 0;
+            length += switch (c) {
+                0...31 => 0,
+                32...126 => 1,
+                127...159 => 0,
+                160...255 => 1,
+            };
         }
 
         return length;
     }
 
-    fn visibleASCIIWidthExcludeANSIColors(input_: anytype) usize {
+    fn visibleLatin1WidthExcludeANSIColors(input_: anytype) usize {
         var length: usize = 0;
         var input = input_;
 
@@ -5856,7 +5862,7 @@ pub const visible = struct {
         const indexFn = if (comptime ElementType == u8) strings.indexOfCharUsize else strings.indexOfChar16Usize;
 
         while (indexFn(input, '\x1b')) |i| {
-            length += visibleASCIIWidth(input[0..i]);
+            length += visibleLatin1Width(input[0..i]);
             input = input[i..];
 
             if (input.len < 3) return length;
@@ -5869,7 +5875,7 @@ pub const visible = struct {
             }
         }
 
-        length += visibleASCIIWidth(input);
+        length += visibleLatin1Width(input);
 
         return length;
     }
@@ -5930,16 +5936,16 @@ pub const visible = struct {
     }
 
     fn visibleLatin1WidthFn(input: []const u8) usize {
-        return visibleASCIIWidth(input);
+        return visibleLatin1Width(input);
     }
 
     pub const width = struct {
-        pub fn ascii(input: []const u8) usize {
-            return visibleASCIIWidth(input);
+        pub fn latin1(input: []const u8) usize {
+            return visibleLatin1Width(input);
         }
 
         pub fn utf8(input: []const u8) usize {
-            return visibleUTF8WidthFn(input, visibleASCIIWidth);
+            return visibleUTF8WidthFn(input, visibleLatin1Width);
         }
 
         pub fn utf16(input: []const u16) usize {
@@ -5947,12 +5953,12 @@ pub const visible = struct {
         }
 
         pub const exclude_ansi_colors = struct {
-            pub fn ascii(input: []const u8) usize {
-                return visibleASCIIWidthExcludeANSIColors(input);
+            pub fn latin1(input: []const u8) usize {
+                return visibleLatin1WidthExcludeANSIColors(input);
             }
 
             pub fn utf8(input: []const u8) usize {
-                return visibleUTF8WidthFn(input, visibleASCIIWidthExcludeANSIColors);
+                return visibleUTF8WidthFn(input, visibleLatin1WidthExcludeANSIColors);
             }
 
             pub fn utf16(input: []const u16) usize {

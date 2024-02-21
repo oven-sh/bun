@@ -123,9 +123,9 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
   test.skipIf(!bun_has_stringwidth)("ignores control characters", () => {
     expect(String.fromCodePoint(0))[matcher]();
     expect(String.fromCodePoint(31))[matcher]();
-    // expect(String.fromCodePoint(127))[matcher]();
-    // expect(String.fromCodePoint(134))[matcher]();
-    // expect(String.fromCodePoint(159))[matcher]();
+    expect(String.fromCodePoint(127))[matcher]();
+    expect(String.fromCodePoint(134))[matcher]();
+    expect(String.fromCodePoint(159))[matcher]();
     expect("\u001B")[matcher]();
   });
 }

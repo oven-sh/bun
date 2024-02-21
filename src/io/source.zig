@@ -11,7 +11,7 @@ pub const Source = union(enum) {
 
     const Pipe = uv.Pipe;
     const Tty = uv.uv_tty_t;
-    const File = struct {
+    pub const File = struct {
         fs: uv.fs_t,
         iov: uv.uv_buf_t,
         file: uv.uv_file,
@@ -29,7 +29,7 @@ pub const Source = union(enum) {
         switch (this) {
             .pipe => |pipe| return pipe.isActive(),
             .tty => |tty| return tty.isActive(),
-            .file => return false,
+            .file => return true,
         }
     }
 

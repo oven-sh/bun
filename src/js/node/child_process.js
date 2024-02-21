@@ -343,9 +343,9 @@ function execFile(file, args, options, callback) {
 
   if (options.timeout > 0) {
     timeoutId = setTimeout(function delayedKill() {
-      kill();
+      timeoutId && kill();
       timeoutId = null;
-    }, options.timeout);
+    }, options.timeout).unref();
   }
 
   if (child.stdout) {
@@ -980,7 +980,6 @@ function checkExecSyncError(ret, args, cmd) {
 //------------------------------------------------------------------------------
 class ChildProcess extends EventEmitter {
   #handle;
-  #exited = false;
   #closesNeeded = 1;
   #closesGot = 0;
 
@@ -998,26 +997,54 @@ class ChildProcess extends EventEmitter {
 
   // constructor(options) {
   //   super(options);
-  //   this.#handle[owner_symbol] = this;
   // }
 
   #handleOnExit(exitCode, signalCode, err) {
-    if (this.#exited) return;
     if (signalCode) {
       this.signalCode = signalCode;
     } else {
       this.exitCode = exitCode;
     }
 
-    if (this.#stdin) {
-      this.#stdin.destroy();
+    // Drain stdio streams
+    {
+      if (this.#stdin) {
+        this.#stdin.destroy();
+      } else {
+        this.#stdioOptions[0] = "destroyed";
+      }
+
+      // If there was an error while spawning the subprocess, then we will never have any IO to drain.
+      if (err) {
+        this.#stdioOptions[1] = this.#stdioOptions[2] = "destroyed";
+      }
+
+      const stdout = this.#stdout,
+        stderr = this.#stderr;
+
+      if (stdout === undefined) {
+        this.#stdout = this.#getBunSpawnIo(1, this.#encoding, true);
+      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout?.destroyed) {
+        stdout.resume?.();
+      }
+
+      if (stderr === undefined) {
+        this.#stderr = this.#getBunSpawnIo(2, this.#encoding, true);
+      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr?.destroyed) {
+        stderr.resume?.();
+      }
     }
 
     if (this.#handle) {
       this.#handle = null;
     }
 
-    if (exitCode < 0) {
+    if (err) {
+      if (this.spawnfile) err.path = this.spawnfile;
+      err.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
+      err.pid = this.pid;
+      this.emit("error", err);
+    } else if (exitCode < 0) {
       const err = new SystemError(
         `Spawned process exited with error code: ${exitCode}`,
         undefined,
@@ -1025,29 +1052,20 @@ class ChildProcess extends EventEmitter {
         "EUNKNOWN",
         "ERR_CHILD_PROCESS_UNKNOWN_ERROR",
       );
+      err.pid = this.pid;
 
       if (this.spawnfile) err.path = this.spawnfile;
 
       err.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
       this.emit("error", err);
-    } else {
-      this.emit("exit", this.exitCode, this.signalCode);
     }
 
-    // If any of the stdio streams have not been touched,
-    // then pull all the data through so that it can get the
-    // eof and emit a 'close' event.
-    // Do it on nextTick so that the user has one last chance
-    // to consume the output, if for example they only want to
-    // start reading the data once the process exits.
-    process.nextTick(flushStdio, this);
+    this.emit("exit", this.exitCode, this.signalCode);
 
     this.#maybeClose();
-    this.#exited = true;
-    this.#stdioOptions = ["destroyed", "destroyed", "destroyed"];
   }
 
-  #getBunSpawnIo(i, encoding) {
+  #getBunSpawnIo(i, encoding, autoResume = false) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1058,7 +1076,6 @@ class ChildProcess extends EventEmitter {
 
     NativeWritable ||= StreamModule.NativeWritable;
     ReadableFromWeb ||= StreamModule.Readable.fromWeb;
-    if (!NetModule) NetModule = require("node:net");
 
     const io = this.#stdioOptions[i];
     switch (i) {
@@ -1077,8 +1094,13 @@ class ChildProcess extends EventEmitter {
       case 2:
       case 1: {
         switch (io) {
-          case "pipe":
-            return ReadableFromWeb(this.#handle[fdToStdioName(i)], { encoding });
+          case "pipe": {
+            const pipe = ReadableFromWeb(this.#handle[fdToStdioName(i)], { encoding });
+            this.#closesNeeded++;
+            pipe.once("close", () => this.#maybeClose());
+            if (autoResume) pipe.resume();
+            return pipe;
+          }
           case "inherit":
             return process[fdToStdioName(i)] || null;
           case "destroyed":
@@ -1090,6 +1112,7 @@ class ChildProcess extends EventEmitter {
       default:
         switch (io) {
           case "pipe":
+            if (!NetModule) NetModule = require("node:net");
             const fd = this.#handle.stdio[i];
             if (!fd) return null;
             return new NetModule.connect({ fd });
@@ -1127,7 +1150,7 @@ class ChildProcess extends EventEmitter {
           result[i] = this.stderr;
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, this.#encoding);
+          result[i] = this.#getBunSpawnIo(i, this.#encoding, false);
           continue;
       }
     }
@@ -1135,15 +1158,15 @@ class ChildProcess extends EventEmitter {
   }
 
   get stdin() {
-    return (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding));
+    return (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
   }
 
   get stdout() {
-    return (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding));
+    return (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
   }
 
   get stderr() {
-    return (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding));
+    return (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
   }
 
   get stdio() {
@@ -1201,6 +1224,8 @@ class ChildProcess extends EventEmitter {
     this.#stdioOptions = bunStdio;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
+    this.#closesNeeded = 1;
+
     this.#handle = Bun.spawn({
       cmd: spawnargs,
       stdio: bunStdio,
@@ -1301,8 +1326,6 @@ class ChildProcess extends EventEmitter {
     if (this.#handle) {
       this.#handle.kill(signal);
     }
-
-    this.#maybeClose();
 
     // TODO: Figure out how to make this conform to the Node spec...
     // The problem is that the handle does not report killed until the process exits
@@ -1426,22 +1449,6 @@ function normalizeStdio(stdio) {
   }
 }
 
-function flushStdio(subprocess) {
-  const stdio = subprocess.stdio;
-  if (stdio == null) return;
-
-  for (let i = 0; i < stdio.length; i++) {
-    const stream = stdio[i];
-    // TODO(addaleax): This doesn't necessarily account for all the ways in
-    // which data can be read from a stream, e.g. being consumed on the
-    // native layer directly as a StreamBase.
-    if (!stream || !stream.readable) {
-      continue;
-    }
-    stream.resume();
-  }
-}
-
 function onSpawnNT(self) {
   self.emit("spawn");
 }
@@ -1465,12 +1472,30 @@ class ShimmedStdin extends EventEmitter {
     return false;
   }
   destroy() {}
-  end() {}
-  pipe() {}
+  end() {
+    return this;
+  }
+  pipe() {
+    return this;
+  }
+  resume() {
+    return this;
+  }
 }
 
 class ShimmedStdioOutStream extends EventEmitter {
   pipe() {}
+  get destroyed() {
+    return true;
+  }
+
+  resume() {
+    return this;
+  }
+
+  destroy() {
+    return this;
+  }
 }
 
 //------------------------------------------------------------------------------

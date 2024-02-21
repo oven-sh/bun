@@ -303,13 +303,18 @@ pub const FDImpl = packed struct {
     }
 
     pub fn format(this: FDImpl, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (fmt.len == 1 and fmt[0] == 'd') {
-            try writer.print("{d}", .{this.system()});
-            return;
-        }
-
         if (fmt.len != 0) {
-            @compileError("invalid format string for FDImpl.format. must be either '' or 'd'");
+            // The reason for this error is because formatting FD as an integer on windows is
+            // ambiguous and almost certainly a mistake. You probably meant to format fd.cast().
+            //
+            // Remember this formatter will
+            // - on posix, print the numebr
+            // - on windows, print if it is a handle or a libuv file descriptor
+            // - in debug on all platforms, print the path of the file descriptor
+            //
+            // Not having this error caused a linux+debug only crash in bun.sys.getFdPath because
+            // we forgot to change the thing being printed to "fd.cast()" when FDImpl was introduced.
+            @compileError("invalid format string for FDImpl.format. must be empty like '{}'");
         }
 
         if (!this.isValid()) {

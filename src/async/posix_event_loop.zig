@@ -309,59 +309,59 @@ pub const FilePoll = struct {
         var ptr = poll.owner;
         switch (ptr.tag()) {
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(FIFO))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FIFO", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) FIFO", .{poll.fd});
                 ptr.as(FIFO).ready(size_or_offset, poll.flags.contains(.hup));
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedInput))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedInput", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) ShellBufferedInput", .{poll.fd});
                 ptr.as(ShellBufferedInput).onPoll(size_or_offset, 0);
             },
             @field(Owner.Tag, "Subprocess") => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Subprocess", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) Subprocess", .{poll.fd});
                 var loader = ptr.as(JSC.Subprocess);
 
                 loader.onExitNotificationTask();
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriter))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedWriter", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) ShellBufferedWriter", .{poll.fd});
                 var loader = ptr.as(ShellBufferedWriter);
                 loader.onPoll(size_or_offset, 0);
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriterMini))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellBufferedWriterMini", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) ShellBufferedWriterMini", .{poll.fd});
                 var loader = ptr.as(ShellBufferedWriterMini);
                 loader.onPoll(size_or_offset, 0);
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocessCapturedBufferedWriter))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocessCapturedBufferedWriter", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) ShellSubprocessCapturedBufferedWriter", .{poll.fd});
                 var loader = ptr.as(ShellSubprocessCapturedBufferedWriter);
                 loader.onPoll(size_or_offset, 0);
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocessCapturedBufferedWriterMini))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocessCapturedBufferedWriterMini", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) ShellSubprocessCapturedBufferedWriterMini", .{poll.fd});
                 var loader = ptr.as(ShellSubprocessCapturedBufferedWriterMini);
                 loader.onPoll(size_or_offset, 0);
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocess))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocess", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) ShellSubprocess", .{poll.fd});
                 var loader = ptr.as(ShellSubprocess);
 
                 loader.onExitNotificationTask();
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellSubprocessMini))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) ShellSubprocessMini", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) ShellSubprocessMini", .{poll.fd});
                 var loader = ptr.as(ShellSubprocessMini);
 
                 loader.onExitNotificationTask();
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(JSC.WebCore.FileSink))) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FileSink", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) FileSink", .{poll.fd});
                 var loader = ptr.as(JSC.WebCore.FileSink);
                 loader.onPoll(size_or_offset, 0);
             },
 
             @field(Owner.Tag, "DNSResolver") => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) DNSResolver", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) DNSResolver", .{poll.fd});
                 var loader: *DNSResolver = ptr.as(DNSResolver);
                 loader.onDNSPoll(poll);
             },
@@ -371,25 +371,25 @@ pub const FilePoll = struct {
                     unreachable;
                 }
 
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) GetAddrInfoRequest", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) GetAddrInfoRequest", .{poll.fd});
                 var loader: *GetAddrInfoRequest = ptr.as(GetAddrInfoRequest);
                 loader.onMachportChange();
             },
 
             @field(Owner.Tag, "OutputReader") => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) OutputReader", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) OutputReader", .{poll.fd});
                 var output: *LifecycleScriptSubprocessOutputReader = ptr.as(LifecycleScriptSubprocessOutputReader);
                 output.onPoll(size_or_offset);
             },
             @field(Owner.Tag, "PidPollData") => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) LifecycleScriptSubprocess Pid", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) LifecycleScriptSubprocess Pid", .{poll.fd});
                 var loader: *bun.install.LifecycleScriptSubprocess = @ptrCast(ptr.as(LifecycleScriptSubprocessPid));
                 loader.onProcessUpdate(size_or_offset);
             },
 
             else => {
                 const possible_name = Owner.typeNameFromTag(@intFromEnum(ptr.tag()));
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) disconnected? (maybe: {s})", .{ poll.fd, possible_name orelse "<unknown>" });
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) disconnected? (maybe: {s})", .{ poll.fd, possible_name orelse "<unknown>" });
             },
         }
     }
@@ -731,7 +731,7 @@ pub const FilePoll = struct {
     pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: bool, fd: bun.FileDescriptor) JSC.Maybe(void) {
         const watcher_fd = loop.fd;
 
-        log("register: {s} ({d})", .{ @tagName(flag), fd });
+        log("register: {s} ({})", .{ @tagName(flag), fd });
 
         std.debug.assert(fd != invalid_fd);
 
@@ -908,7 +908,7 @@ pub const FilePoll = struct {
         };
 
         if (this.flags.contains(.needs_rearm) and !force_unregister) {
-            log("unregister: {s} ({d}) skipped due to needs_rearm", .{ @tagName(flag), fd });
+            log("unregister: {s} ({}) skipped due to needs_rearm", .{ @tagName(flag), fd });
             this.flags.remove(.poll_process);
             this.flags.remove(.poll_readable);
             this.flags.remove(.poll_process);
@@ -916,7 +916,7 @@ pub const FilePoll = struct {
             return JSC.Maybe(void).success;
         }
 
-        log("unregister: {s} ({d})", .{ @tagName(flag), fd });
+        log("unregister: {s} ({})", .{ @tagName(flag), fd });
 
         if (comptime Environment.isLinux) {
             const ctl = linux.epoll_ctl(

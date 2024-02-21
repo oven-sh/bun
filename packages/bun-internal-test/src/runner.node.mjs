@@ -148,7 +148,6 @@ function getMaxFileDescriptor(path) {
   const devnullfd = openSync("/dev/null", "r");
   closeSync(devnullfd);
   maxFd = devnullfd + 1;
-  console.log({ maxFd });
   return maxFd;
 }
 let hasInitialMaxFD = false;
@@ -185,7 +184,6 @@ async function runTest(path) {
       },
     });
     proc.stdout.once("end", () => {
-      console.log("[stdout] closed");
       done();
     });
 
@@ -228,7 +226,6 @@ async function runTest(path) {
   } else if (maxFd > 0) {
     const prevMaxFd = maxFd;
     maxFd = getMaxFileDescriptor();
-    console.log({ maxFd, prevMaxFd });
     if (maxFd > prevMaxFd) {
       process.stderr.write(
         `\n\x1b[31mewarn\x1b[0;2m:\x1b[0m file descriptor leak in ${name}, delta: ${

@@ -269,7 +269,7 @@ pub const RefCountedStr = struct {
     len: u32 = 0,
     ptr: [*]const u8 = undefined,
 
-    const print = bun.Output.scoped(.RefCountedEnvStr, false);
+    const print = bun.Output.scoped(.RefCountedEnvStr, true);
 
     // /// Use bun.default_allocator
     // const DEFAULT_ALLOC_TAG: usize = 1 << 63;

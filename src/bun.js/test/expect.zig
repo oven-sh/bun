@@ -402,11 +402,7 @@ pub const Expect = struct {
         if (not) {
             const signature = comptime getSignature("pass", "", true);
             const fmt = signature ++ "\n\n{s}\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{msg.slice()});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{msg.slice()});
+            globalObject.throwPretty(fmt, .{msg.slice()});
             return .zero;
         }
 
@@ -453,11 +449,7 @@ pub const Expect = struct {
 
         const signature = comptime getSignature("fail", "", true);
         const fmt = signature ++ "\n\n{s}\n";
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{msg.slice()});
-            return .zero;
-        }
-        globalObject.throw(Output.prettyFmt(fmt, false), .{msg.slice()});
+        globalObject.throwPretty(fmt, .{msg.slice()});
         return .zero;
     }
 
@@ -493,11 +485,7 @@ pub const Expect = struct {
         if (not) {
             const signature = comptime getSignature("toBe", "<green>expected<r>", true);
             const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{right.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{right.toFmt(globalObject, &formatter)});
+            globalObject.throwPretty(fmt, .{right.toFmt(globalObject, &formatter)});
             return .zero;
         }
 
@@ -507,11 +495,7 @@ pub const Expect = struct {
                 "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" ++
                 "\n\nExpected: <green>{any}<r>\n" ++
                 "Received: serializes to the same string\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{right.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{right.toFmt(globalObject, &formatter)});
+            globalObject.throwPretty(fmt, .{right.toFmt(globalObject, &formatter)});
             return .zero;
         }
 
@@ -523,23 +507,12 @@ pub const Expect = struct {
                 .not = not,
             };
             const fmt = comptime signature ++ "\n\n{any}\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(comptime Output.prettyFmt(fmt, true), .{diff_format});
-                return .zero;
-            }
-            globalObject.throw(comptime Output.prettyFmt(fmt, false), .{diff_format});
+            globalObject.throwPretty(fmt, .{diff_format});
             return .zero;
         }
 
         const fmt = signature ++ "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n";
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{
-                right.toFmt(globalObject, &formatter),
-                left.toFmt(globalObject, &formatter),
-            });
-            return .zero;
-        }
-        globalObject.throw(Output.prettyFmt(fmt, false), .{
+        globalObject.throwPretty(fmt, .{
             right.toFmt(globalObject, &formatter),
             left.toFmt(globalObject, &formatter),
         });
@@ -610,12 +583,7 @@ pub const Expect = struct {
         if (not) {
             const expected_line = "Expected length: not <green>{d}<r>\n";
             const fmt = comptime getSignature("toHaveLength", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{expected_length});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{expected_length});
+            globalObject.throwPretty(fmt, .{expected_length});
             return .zero;
         }
 
@@ -623,12 +591,8 @@ pub const Expect = struct {
         const received_line = "Received length: <red>{d}<r>\n";
         const fmt = comptime getSignature("toHaveLength", "<green>expected<r>", false) ++ "\n\n" ++
             expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_length, actual_length });
-            return .zero;
-        }
 
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_length, actual_length });
+        globalObject.throwPretty(fmt, .{ expected_length, actual_length });
         return .zero;
     }
 
@@ -726,12 +690,7 @@ pub const Expect = struct {
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toContain", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -777,12 +736,7 @@ pub const Expect = struct {
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toContainKey", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -846,12 +800,7 @@ pub const Expect = struct {
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toContainKeys", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -915,12 +864,7 @@ pub const Expect = struct {
         const expected_line = "Expected to contain: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toContainAnyKeys", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -1052,23 +996,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeTruthy", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeTruthy", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1092,23 +1026,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeUndefined", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeUndefined", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1136,23 +1060,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeNaN", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeNaN", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1175,23 +1089,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeNull", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeNull", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1214,23 +1118,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeDefined", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeDefined", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1258,23 +1152,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeFalsy", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeFalsy", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1351,21 +1235,13 @@ pub const Expect = struct {
         if (not) {
             const signature = comptime getSignature("toStrictEqual", "<green>expected<r>", true);
             const fmt = signature ++ "\n\n{any}\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{diff_formatter});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{diff_formatter});
+            globalObject.throwPretty(fmt, .{diff_formatter});
             return .zero;
         }
 
         const signature = comptime getSignature("toStrictEqual", "<green>expected<r>", false);
         const fmt = signature ++ "\n\n{any}\n";
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{diff_formatter});
-            return .zero;
-        }
-        globalObject.throw(Output.prettyFmt(fmt, false), .{diff_formatter});
+        globalObject.throwPretty(fmt, .{diff_formatter});
         return .zero;
     }
 
@@ -1421,14 +1297,7 @@ pub const Expect = struct {
                 const signature = comptime getSignature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", true);
                 if (!received_property.isEmpty()) {
                     const fmt = signature ++ "\n\nExpected path: <green>{any}<r>\n\nExpected value: not <green>{any}<r>\n";
-                    if (Output.enable_ansi_colors) {
-                        globalObject.throw(Output.prettyFmt(fmt, true), .{
-                            expected_property_path.toFmt(globalObject, &formatter),
-                            expected_property.?.toFmt(globalObject, &formatter),
-                        });
-                        return .zero;
-                    }
-                    globalObject.throw(Output.prettyFmt(fmt, true), .{
+                    globalObject.throwPretty(fmt, .{
                         expected_property_path.toFmt(globalObject, &formatter),
                         expected_property.?.toFmt(globalObject, &formatter),
                     });
@@ -1438,14 +1307,7 @@ pub const Expect = struct {
 
             const signature = comptime getSignature("toHaveProperty", "<green>path<r>", true);
             const fmt = signature ++ "\n\nExpected path: not <green>{any}<r>\n\nReceived value: <red>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{
-                    expected_property_path.toFmt(globalObject, &formatter),
-                    received_property.toFmt(globalObject, &formatter),
-                });
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{
+            globalObject.throwPretty(fmt, .{
                 expected_property_path.toFmt(globalObject, &formatter),
                 received_property.toFmt(globalObject, &formatter),
             });
@@ -1463,24 +1325,13 @@ pub const Expect = struct {
                     .globalObject = globalObject,
                 };
 
-                if (Output.enable_ansi_colors) {
-                    globalObject.throw(Output.prettyFmt(fmt, true), .{diff_format});
-                    return .zero;
-                }
-                globalObject.throw(Output.prettyFmt(fmt, false), .{diff_format});
+                globalObject.throwPretty(fmt, .{diff_format});
                 return .zero;
             }
 
             const fmt = signature ++ "\n\nExpected path: <green>{any}<r>\n\nExpected value: <green>{any}<r>\n\n" ++
                 "Unable to find property\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{
-                    expected_property_path.toFmt(globalObject, &formatter),
-                    expected_property.?.toFmt(globalObject, &formatter),
-                });
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{
+            globalObject.throwPretty(fmt, .{
                 expected_property_path.toFmt(globalObject, &formatter),
                 expected_property.?.toFmt(globalObject, &formatter),
             });
@@ -1489,11 +1340,7 @@ pub const Expect = struct {
 
         const signature = comptime getSignature("toHaveProperty", "<green>path<r>", false);
         const fmt = signature ++ "\n\nExpected path: <green>{any}<r>\n\nUnable to find property\n";
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{expected_property_path.toFmt(globalObject, &formatter)});
-            return .zero;
-        }
-        globalObject.throw(Output.prettyFmt(fmt, false), .{expected_property_path.toFmt(globalObject, &formatter)});
+        globalObject.throwPretty(fmt, .{expected_property_path.toFmt(globalObject, &formatter)});
         return .zero;
     }
 
@@ -1541,23 +1388,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeEven", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeEven", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -1613,12 +1450,8 @@ pub const Expect = struct {
             const expected_line = "Expected: not \\> <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeGreaterThan", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-                return .zero;
-            }
 
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+            globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
             return .zero;
         }
 
@@ -1626,12 +1459,8 @@ pub const Expect = struct {
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeGreaterThan", "<green>expected<r>", false) ++ "\n\n" ++
             expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
 
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -1687,23 +1516,14 @@ pub const Expect = struct {
             const expected_line = "Expected: not \\>= <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeGreaterThanOrEqual", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+            globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
             return .zero;
         }
 
         const expected_line = "Expected: \\>= <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeGreaterThanOrEqual", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-        globalObject.throw(comptime Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -1759,23 +1579,14 @@ pub const Expect = struct {
             const expected_line = "Expected: not \\< <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeLessThan", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+            globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
             return .zero;
         }
 
         const expected_line = "Expected: \\< <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeLessThan", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-        globalObject.throw(comptime Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -1831,23 +1642,14 @@ pub const Expect = struct {
             const expected_line = "Expected: not \\<= <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeLessThanOrEqual", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+            globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
             return .zero;
         }
 
         const expected_line = "Expected: \\<= <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeLessThanOrEqual", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(comptime Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-        globalObject.throw(comptime Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -1925,23 +1727,13 @@ pub const Expect = struct {
 
         if (not) {
             const fmt = comptime getSignature("toBeCloseTo", "<green>expected<r>, precision", true) ++ suffix_fmt;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
+            globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
             return .zero;
         }
 
         const fmt = comptime getSignature("toBeCloseTo", "<green>expected<r>, precision", false) ++ suffix_fmt;
 
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
+        globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt, precision, expected_diff, actual_diff });
         return .zero;
     }
 
@@ -1987,23 +1779,13 @@ pub const Expect = struct {
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeOdd", "", true) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throwPretty(fmt, .{value_fmt});
             return .zero;
         }
 
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeOdd", "", false) ++ "\n\n" ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throwPretty(fmt, .{value_fmt});
         return .zero;
     }
 
@@ -2173,11 +1955,7 @@ pub const Expect = struct {
             expected_value.getClassName(globalObject, &expected_class);
             const received_message = result.getIfPropertyExistsImpl(globalObject, "message", 7);
             const fmt = signature ++ "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_class, received_message.toFmt(globalObject, &formatter) });
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_class, received_message.toFmt(globalObject, &formatter) });
+            globalObject.throwPretty(fmt, .{ expected_class, received_message.toFmt(globalObject, &formatter) });
             return .zero;
         }
 
@@ -2320,47 +2098,28 @@ pub const Expect = struct {
 
         if (expected_value.isEmpty() or expected_value.isUndefined()) {
             const fmt = comptime getSignature("toThrow", "", false) ++ "\n\n" ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{});
+            globalObject.throwPretty(fmt, .{});
             return .zero;
         }
 
         if (expected_value.isString()) {
             const expected_fmt = "\n\nExpected substring: <green>{any}<r>\n\n" ++ received_line;
             const fmt = signature ++ expected_fmt;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{expected_value.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{expected_value.toFmt(globalObject, &formatter)});
+            globalObject.throwPretty(fmt, .{expected_value.toFmt(globalObject, &formatter)});
             return .zero;
         }
 
         if (expected_value.isRegExp()) {
             const expected_fmt = "\n\nExpected pattern: <green>{any}<r>\n\n" ++ received_line;
             const fmt = signature ++ expected_fmt;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{expected_value.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{expected_value.toFmt(globalObject, &formatter)});
+            globalObject.throwPretty(fmt, .{expected_value.toFmt(globalObject, &formatter)});
             return .zero;
         }
 
         if (expected_value.get(globalObject, "message")) |expected_message| {
             const expected_fmt = "\n\nExpected message: <green>{any}<r>\n\n" ++ received_line;
             const fmt = signature ++ expected_fmt;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{expected_message.toFmt(globalObject, &formatter)});
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{expected_message.toFmt(globalObject, &formatter)});
+            globalObject.throwPretty(fmt, .{expected_message.toFmt(globalObject, &formatter)});
             return .zero;
         }
 
@@ -2368,11 +2127,7 @@ pub const Expect = struct {
         var expected_class = ZigString.Empty;
         expected_value.getClassName(globalObject, &expected_class);
         const fmt = signature ++ expected_fmt;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{expected_class});
-            return .zero;
-        }
-        globalObject.throw(Output.prettyFmt(fmt, true), .{expected_class});
+        globalObject.throwPretty(fmt, .{expected_class});
         return .zero;
     }
 
@@ -3529,11 +3284,7 @@ pub const Expect = struct {
         if (not) {
             const signature = comptime getSignature("toSatisfy", "<green>expected<r>", true);
             const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalThis.throw(Output.prettyFmt(fmt, true), .{predicate.toFmt(globalThis, &formatter)});
-                return .zero;
-            }
-            globalThis.throw(Output.prettyFmt(fmt, false), .{predicate.toFmt(globalThis, &formatter)});
+            globalThis.throwPretty(fmt, .{predicate.toFmt(globalThis, &formatter)});
             return .zero;
         }
 
@@ -3541,15 +3292,7 @@ pub const Expect = struct {
 
         const fmt = signature ++ "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n";
 
-        if (Output.enable_ansi_colors) {
-            globalThis.throw(Output.prettyFmt(fmt, true), .{
-                predicate.toFmt(globalThis, &formatter),
-                value.toFmt(globalThis, &formatter),
-            });
-            return .zero;
-        }
-
-        globalThis.throw(Output.prettyFmt(fmt, false), .{
+        globalThis.throwPretty(fmt, .{
             predicate.toFmt(globalThis, &formatter),
             value.toFmt(globalThis, &formatter),
         });
@@ -3703,12 +3446,7 @@ pub const Expect = struct {
             const expected_line = "Expected constructor: not <green>{any}<r>\n";
             const received_line = "Received value: <red>{any}<r>\n";
             const fmt = comptime getSignature("toBeInstanceOf", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+            globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
             return .zero;
         }
 

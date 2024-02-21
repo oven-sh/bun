@@ -340,6 +340,16 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies("5.0 || 1.2 - 1.3", "5.0.2", true);
     testSatisfies("5.0 || 1.2 - 1.3 || >8", "9.0.2", true);
 
+    testSatisfies(">=0.34.0-next.3 <1.0.0", "0.34.0-next.8", true);
+    testSatisfies("<1.0.0", "0.34.0-next.8", false);
+
+    testSatisfies("<=7.0.0", "7.0.0-rc2", false);
+    testSatisfies(">=7.0.0", "7.0.0-rc2", false);
+    testSatisfies("<=7.0.0-rc2", "7.0.0-rc2", true);
+    testSatisfies(">=7.0.0-rc2", "7.0.0-rc2", true);
+
+    testSatisfies("^1.2.3-pr.1 || >=1.2.4-alpha", "1.2.4-alpha.notready", true);
+
     const notPassing = [
       "0.1.0",
       "0.10.0",

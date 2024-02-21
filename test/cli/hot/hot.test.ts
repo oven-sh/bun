@@ -245,54 +245,63 @@ it("should hot reload when a file is deleted and rewritten", async () => {
   } finally {
     // @ts-ignore
     runner?.unref?.();
+    // @ts-ignore
+    runner?.kill?.(9);
   }
 });
 
 it("should hot reload when a file is renamed() into place", async () => {
   const root = hotRunnerRoot + ".tmp.js";
   copyFileSync(hotRunnerRoot, root);
-  const runner = spawn({
-    cmd: [bunExe(), "--hot", "run", root],
-    env: bunEnv,
-    cwd,
-    stdout: "pipe",
-    stderr: "inherit",
-    stdin: "ignore",
-  });
+  try {
+    var runner = spawn({
+      cmd: [bunExe(), "--hot", "run", root],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
 
-  var reloadCounter = 0;
+    var reloadCounter = 0;
 
-  async function onReload() {
-    const contents = readFileSync(root, "utf-8");
-    rmSync(root + ".tmpfile", { force: true });
-    await 1;
-    writeFileSync(root + ".tmpfile", contents);
-    await 1;
-    rmSync(root);
-    await 1;
-    renameSync(root + ".tmpfile", root);
-    await 1;
-  }
-
-  for await (const line of runner.stdout) {
-    var str = new TextDecoder().decode(line);
-    var any = false;
-    for (let line of str.split("\n")) {
-      if (!line.includes("[#!root]")) continue;
-      reloadCounter++;
-
-      if (reloadCounter === 3) {
-        runner.unref();
-        runner.kill();
-        break;
-      }
-
-      expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
-      any = true;
+    async function onReload() {
+      const contents = readFileSync(root, "utf-8");
+      rmSync(root + ".tmpfile", { force: true });
+      await 1;
+      writeFileSync(root + ".tmpfile", contents);
+      await 1;
+      rmSync(root);
+      await 1;
+      renameSync(root + ".tmpfile", root);
+      await 1;
     }
 
-    if (any) await onReload();
+    for await (const line of runner.stdout) {
+      var str = new TextDecoder().decode(line);
+      var any = false;
+      for (let line of str.split("\n")) {
+        if (!line.includes("[#!root]")) continue;
+        reloadCounter++;
+
+        if (reloadCounter === 3) {
+          runner.unref();
+          runner.kill();
+          break;
+        }
+
+        expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
+        any = true;
+      }
+
+      if (any) await onReload();
+    }
+    rmSync(root);
+    expect(reloadCounter).toBe(3);
+  } finally {
+    // @ts-ignore
+    runner?.unref?.();
+    // @ts-ignore
+    runner?.kill?.(9);
   }
-  rmSync(root);
-  expect(reloadCounter).toBe(3);
 });

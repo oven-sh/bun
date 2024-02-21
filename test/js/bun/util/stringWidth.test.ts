@@ -91,3 +91,56 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
     expect("a\x1b[31mhshh🌎a")[matcher]();
   });
 }
+
+for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
+  test.skipIf(!bun_has_stringwidth)("upstream", () => {
+    expect("abcde")[matcher]();
+    expect("古池や")[matcher]();
+    expect("あいうabc")[matcher]();
+    expect("あいう★")[matcher]();
+    expect("±")[matcher]();
+    expect("ノード.js")[matcher]();
+    expect("你好")[matcher]();
+    expect("안녕하세요")[matcher]();
+    expect("A\uD83C\uDE00BC")[matcher]();
+    expect("\u001B[31m\u001B[39m")[matcher]();
+    // expect("\u001B]8;;https://github.com\u0007Click\u001B]8;;\u0007")[matcher]();
+    expect("\u{231A}")[matcher]();
+    // expect("\u{2194}\u{FE0F}")[matcher]();
+    expect("\u{1F469}")[matcher]();
+    // expect("\u{1F469}\u{1F3FF}")[matcher]();
+    expect("\u{845B}\u{E0100}")[matcher]();
+    // expect("ปฏัก")[matcher]();
+    // expect("_\u0E34")[matcher]();
+    expect("\u001B[31m\u001B[39m")[matcher]();
+    //   expect(stringWidth("⛣", { ambiguousIsNarrow: false }), 2);
+    //   expect(stringWidth("あいう★", { ambiguousIsNarrow: false }), 8);
+    //   expect(stringWidth("“", { ambiguousIsNarrow: false }), 2);
+  });
+}
+
+for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
+  test.skipIf(!bun_has_stringwidth)("ignores control characters", () => {
+    expect(String.fromCodePoint(0))[matcher]();
+    expect(String.fromCodePoint(31))[matcher]();
+    // expect(String.fromCodePoint(127))[matcher]();
+    // expect(String.fromCodePoint(134))[matcher]();
+    // expect(String.fromCodePoint(159))[matcher]();
+    expect("\u001B")[matcher]();
+  });
+}
+
+for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
+  test.skipIf(!bun_has_stringwidth)("handles combining characters", () => {
+    expect("x\u0300")[matcher]();
+  });
+}
+
+for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
+  test.skipIf(!bun_has_stringwidth)("handles ZWJ characters", () => {
+    expect("👶")[matcher]();
+    // expect("👶🏽")[matcher]();
+    // expect("👩‍👩‍👦‍👦")[matcher]();
+    // expect("👨‍❤️‍💋‍👨")[matcher]();
+  });
+}

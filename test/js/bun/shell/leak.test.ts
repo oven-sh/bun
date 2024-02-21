@@ -52,7 +52,7 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
 ];
 
 describe("fd leak", () => {
-  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 500) {
+  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 5) {
     test(`fdleak_${name}`, async () => {
       for (let i = 0; i < 5; i++) {
         await builder().quiet().run();

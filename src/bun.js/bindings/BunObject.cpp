@@ -675,7 +675,7 @@ public:
         auto structure = createStructure(vm, globalObject, globalObject->objectPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSBunObject>(vm)) JSBunObject(vm, structure);
         object->finishCreation(vm);
-#ifndef NDEBUG // move this to table above when all the tests in test/js/bun/util/stringWidth.test.ts pass
+#ifdef BUN_DEBUG // move this to table above when all the tests in test/js/bun/util/stringWidth.test.ts pass
         object->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "stringWidth"_s), 2, BunObject_callback_stringWidth, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::Function | 0);
 #endif
         return object;

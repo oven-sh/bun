@@ -88,7 +88,6 @@ describe("fd leak", () => {
       writeFileSync(tempfile, testcode);
 
       const impl = /* ts */ `
-            test("${name}", async () => {
               const threshold = ${threshold}
               let prev: number | undefined = undefined;
               for (let i = 0; i < ${runs}; i++) {
@@ -102,18 +101,17 @@ describe("fd leak", () => {
                 if (prev === undefined) {
                   prev = val;
                 } else {
-                  expect(Math.abs(prev - val)).toBeLessThan(threshold)
                   if (!(Math.abs(prev - val) < threshold)) process.exit(1);
                 }
               }
-            }, 1_000_000)
+
             `;
 
       appendFileSync(tempfile, impl);
 
       // console.log("THE CODE", readFileSync(tempfile, "utf-8"));
 
-      const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "test", tempfile], {
+      const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "run", tempfile], {
         env: bunEnv,
       });
       // console.log('STDOUT:', stdout.toString(), '\n\nSTDERR:', stderr.toString());

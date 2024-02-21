@@ -51,6 +51,15 @@ pub const ReadableStream = struct {
     value: JSValue,
     ptr: Source,
 
+    pub fn incrementCount(this: *const ReadableStream) void {
+        switch (this.ptr) {
+            .Blob => |blob| blob.parent().incrementCount(),
+            .File => |file| file.parent().incrementCount(),
+            .Bytes => |bytes| bytes.parent().incrementCount(),
+            else => {},
+        }
+    }
+
     pub const Strong = struct {
         held: JSC.Strong = .{},
 
@@ -59,18 +68,7 @@ pub const ReadableStream = struct {
         }
 
         pub fn init(this: ReadableStream, global: *JSGlobalObject) Strong {
-            switch (this.ptr) {
-                .Blob => |stream| {
-                    stream.parent().incrementCount();
-                },
-                .File => |stream| {
-                    stream.parent().incrementCount();
-                },
-                .Bytes => |stream| {
-                    stream.parent().incrementCount();
-                },
-                else => {},
-            }
+            this.incrementCount();
             return .{
                 .held = JSC.Strong.create(this.value, global),
             };
@@ -156,8 +154,8 @@ pub const ReadableStream = struct {
         return null;
     }
 
-    pub fn done(this: *const ReadableStream) void {
-        this.value.unprotect();
+    pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
+        this.detachIfPossible(globalThis);
     }
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {

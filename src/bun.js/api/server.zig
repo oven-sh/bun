@@ -2558,7 +2558,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (req.response_ptr) |resp| {
                 if (resp.body.value == .Locked) {
-                    resp.body.value.Locked.readable.?.done();
+                    resp.body.value.Locked.readable.?.done(req.server.globalThis);
                     resp.body.value = .{ .Used = {} };
                 }
             }
@@ -2618,7 +2618,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (req.response_ptr) |resp| {
                 if (resp.body.value == .Locked) {
-                    resp.body.value.Locked.readable.?.done();
+                    resp.body.value.Locked.readable.?.done(req.server.globalThis);
                     resp.body.value = .{ .Used = {} };
                 }
             }
@@ -2714,7 +2714,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             .Bytes => |byte_stream| {
                                 std.debug.assert(byte_stream.pipe.ctx == null);
                                 std.debug.assert(this.byte_stream == null);
-
                                 if (this.resp == null) {
                                     // we don't have a response, so we can discard the stream
                                     stream.detachIfPossible(this.server.globalThis);

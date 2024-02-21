@@ -167,7 +167,7 @@ pub const Body = struct {
                                 if (value.onStartBuffering != null) {
                                     if (readable.isDisturbed(globalThis)) {
                                         form_data.?.deinit();
-                                        readable.value.unprotect();
+                                        readable.detachIfPossible(globalThis);
                                         value.readable = null;
                                         value.action = .{ .none = {} };
                                         return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("ReadableStream is already used", .{}));
@@ -191,7 +191,7 @@ pub const Body = struct {
                             else => unreachable,
                         };
                         value.promise.?.ensureStillAlive();
-                        readable.value.unprotect();
+                        readable.detachIfPossible(globalThis);
 
                         // js now owns the memory
                         value.readable = null;
@@ -393,7 +393,7 @@ pub const Body = struct {
                             .global = globalThis,
                         },
                     };
-                    this.Locked.readable.?.value.protect();
+                    this.Locked.readable.?.incrementCount();
 
                     return value;
                 },
@@ -580,7 +580,7 @@ pub const Body = struct {
         }
 
         pub fn fromReadableStreamWithoutLockCheck(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
-            readable.value.protect();
+            readable.incrementCount();
             return .{
                 .Locked = .{
                     .readable = readable,
@@ -589,20 +589,12 @@ pub const Body = struct {
             };
         }
 
-        pub fn fromReadableStream(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
-            if (readable.isLocked(globalThis)) {
-                return .{ .Error = ZigString.init("Cannot use a locked ReadableStream").toErrorInstance(globalThis) };
-            }
-
-            return fromReadableStreamWithoutLockCheck(readable, globalThis);
-        }
-
         pub fn resolve(to_resolve: *Value, new: *Value, global: *JSGlobalObject) void {
             log("resolve", .{});
             if (to_resolve.* == .Locked) {
                 var locked = &to_resolve.Locked;
                 if (locked.readable) |readable| {
-                    readable.done();
+                    readable.done(global);
                     locked.readable = null;
                 }
 
@@ -821,7 +813,7 @@ pub const Body = struct {
                 }
 
                 if (locked.readable) |readable| {
-                    readable.done();
+                    readable.done(global);
                     locked.readable = null;
                 }
                 // will be unprotected by body value deinit
@@ -862,7 +854,7 @@ pub const Body = struct {
                     this.Locked.deinit = true;
 
                     if (this.Locked.readable) |*readable| {
-                        readable.done();
+                        readable.done(this.Locked.global);
                     }
                 }
 

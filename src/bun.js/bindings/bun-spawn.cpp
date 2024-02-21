@@ -12,12 +12,13 @@
 #include <sys/syscall.h>
 #include <sys/resource.h>
 
-static int close_range(unsigned int first)
-{
-    return syscall(__NR_close_range, first, ~0U, 0);
-}
-
 extern char** environ;
+
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
+
+extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
 
 enum FileActionType : uint8_t {
     None,
@@ -70,7 +71,7 @@ extern "C" ssize_t posix_spawn_bun(
     const auto childFailed = [&]() -> ssize_t {
         res = errno;
         status = res;
-        close_range(0);
+        bun_close_range(0, ~0U, 0);
         _exit(127);
 
         // should never be reached
@@ -151,7 +152,9 @@ extern "C" ssize_t posix_spawn_bun(
         if (!envp)
             envp = environ;
 
-        close_range(current_max_fd + 1);
+        if (bun_close_range(current_max_fd + 1, ~0U, CLOSE_RANGE_CLOEXEC) != 0) {
+            bun_close_range(current_max_fd + 1, ~0U, 0);
+        }
         execve(path, argv, envp);
         _exit(127);
 

@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # ...
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 +     - uses: oven-sh/setup-bun@v1
 
       # run any `bun` or `bunx` command

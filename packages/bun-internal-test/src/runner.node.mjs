@@ -1,10 +1,11 @@
 import * as action from "@actions/core";
 import { spawn, spawnSync } from "child_process";
-import { rmSync, writeFileSync, readFileSync } from "fs";
+import { rmSync, writeFileSync, readFileSync, mkdirSync, openSync, close, closeSync } from "fs";
 import { readFile } from "fs/promises";
 import { readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
-import { cpus, hostname, totalmem, userInfo } from "os";
+import { cpus, hostname, tmpdir, totalmem, userInfo } from "os";
+import { join } from "path";
 import { fileURLToPath } from "url";
 
 const run_start = new Date();
@@ -24,6 +25,20 @@ process.chdir(cwd);
 const ci = !!process.env["GITHUB_ACTIONS"];
 const enableProgressBar = !ci;
 
+var prevTmpdir = "";
+function maketemp() {
+  if (prevTmpdir && !windows) {
+    spawn("rm", ["-rf", prevTmpdir], { stdio: "inherit", detached: true }).unref();
+  }
+
+  prevTmpdir = join(
+    tmpdir(),
+    "bun-test-tmp-" + (Date.now() | 0).toString() + "_" + ((Math.random() * 100_000_0) | 0).toString(36),
+  );
+  mkdirSync(prevTmpdir, { recursive: true });
+  return prevTmpdir;
+}
+
 function defaultConcurrency() {
   // Concurrency causes more flaky tests, only enable it by default on windows
   // See https://github.com/oven-sh/bun/issues/8071
@@ -40,10 +55,19 @@ const extensions = [".js", ".ts", ".jsx", ".tsx"];
 const git_sha =
   process.env["GITHUB_SHA"] ?? spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).stdout.trim();
 
+const TEST_FILTER = process.env.BUN_TEST_FILTER;
+
 function isTest(path) {
   if (!basename(path).includes(".test.") || !extensions.some(ext => path.endsWith(ext))) {
     return false;
   }
+
+  if (TEST_FILTER) {
+    if (!path.includes(TEST_FILTER)) {
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -100,6 +124,33 @@ const failing_tests = [];
 const passing_tests = [];
 const fixes = [];
 const regressions = [];
+let maxFd = -1;
+function getMaxFileDescriptor(path) {
+  if (process.platform === "win32") {
+    return -1;
+  }
+
+  hasInitialMaxFD = true;
+
+  if (process.platform === "linux") {
+    try {
+      readdirSync("/proc/self/fd").forEach(name => {
+        const fd = parseInt(name.trim(), 10);
+        if (Number.isSafeInteger(fd) && fd >= 0) {
+          maxFd = Math.max(maxFd, fd);
+        }
+      });
+
+      return maxFd;
+    } catch {}
+  }
+
+  const devnullfd = openSync("/dev/null", "r");
+  closeSync(devnullfd);
+  maxFd = devnullfd + 1;
+  return maxFd;
+}
+let hasInitialMaxFD = false;
 
 async function runTest(path) {
   const name = path.replace(cwd, "").slice(1);
@@ -107,14 +158,16 @@ async function runTest(path) {
 
   const expected_crash_reason = windows
     ? await readFile(resolve(path), "utf-8").then(data => {
-      const match = data.match(/@known-failing-on-windows:(.*)\n/);
-      return match ? match[1].trim() : null;
-    })
+        const match = data.match(/@known-failing-on-windows:(.*)\n/);
+        return match ? match[1].trim() : null;
+      })
     : null;
 
   const start = Date.now();
 
-  await new Promise((done, reject) => {
+  await new Promise((finish, reject) => {
+    const chunks = [];
+
     const proc = spawn(bunExe, ["test", resolve(path)], {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 1000 * 60 * 3,
@@ -127,10 +180,26 @@ async function runTest(path) {
         // reproduce CI results locally
         GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
         BUN_DEBUG_QUIET_LOGS: "1",
+        TMPDIR: maketemp(),
       },
     });
+    proc.stdout.once("end", () => {
+      done();
+    });
 
-    const chunks = [];
+    let doneCalls = 0;
+    let done = () => {
+      // TODO: wait for stderr as well
+      // spawn.test currently causes it to hang
+      if (doneCalls++ == 1) {
+        actuallyDone();
+      }
+    };
+    function actuallyDone() {
+      output = Buffer.concat(chunks).toString();
+      finish();
+    }
+
     proc.stdout.on("data", chunk => {
       chunks.push(chunk);
       if (run_concurrency === 1) process.stdout.write(chunk);
@@ -140,17 +209,31 @@ async function runTest(path) {
       if (run_concurrency === 1) process.stderr.write(chunk);
     });
 
-    proc.on("exit", (code_, signal_) => {
+    proc.once("exit", (code_, signal_) => {
       exitCode = code_;
       signal = signal_;
-      output = Buffer.concat(chunks).toString();
       done();
     });
-    proc.on("error", err_ => {
+    proc.once("error", err_ => {
       err = err_;
-      done();
+      done = () => {};
+      actuallyDone();
     });
   });
+
+  if (!hasInitialMaxFD) {
+    getMaxFileDescriptor();
+  } else if (maxFd > 0) {
+    const prevMaxFd = maxFd;
+    maxFd = getMaxFileDescriptor();
+    if (maxFd > prevMaxFd) {
+      process.stderr.write(
+        `\n\x1b[31mewarn\x1b[0;2m:\x1b[0m file descriptor leak in ${name}, delta: ${
+          maxFd - prevMaxFd
+        }, current: ${maxFd}, previous: ${prevMaxFd}\n`,
+      );
+    }
+  }
 
   const passed = exitCode === 0 && !err && !signal;
 
@@ -195,7 +278,8 @@ async function runTest(path) {
   }
 
   console.log(
-    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${passed ? "\x1b[32m✔" : expected_crash_reason ? "\x1b[33m⚠" : "\x1b[31m✖"
+    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${
+      passed ? "\x1b[32m✔" : expected_crash_reason ? "\x1b[33m⚠" : "\x1b[31m✖"
     } ${name}\x1b[0m${reason ? ` (${reason})` : ""}`,
   );
 
@@ -319,9 +403,10 @@ console.log("\n" + "-".repeat(Math.min(process.stdout.columns || 40, 80)) + "\n"
 console.log(header);
 console.log("\n" + "-".repeat(Math.min(process.stdout.columns || 40, 80)) + "\n");
 
-let report = `# bun test on ${process.env["GITHUB_REF"] ??
+let report = `# bun test on ${
+  process.env["GITHUB_REF"] ??
   spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf-8" }).stdout.trim()
-  }
+}
 
 \`\`\`
 ${header}
@@ -345,7 +430,8 @@ if (regressions.length > 0) {
   report += regressions
     .map(
       ({ path, reason, expected_crash_reason }) =>
-        `- [\`${path}\`](${sectionLink(path)}) ${reason}${expected_crash_reason ? ` (expected: ${expected_crash_reason})` : ""
+        `- [\`${path}\`](${sectionLink(path)}) ${reason}${
+          expected_crash_reason ? ` (expected: ${expected_crash_reason})` : ""
         }`,
     )
     .join("\n");

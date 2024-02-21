@@ -314,7 +314,7 @@ pub const RunCommand = struct {
             }
 
             const mini = bun.JSC.MiniEventLoop.initGlobal(env);
-            bun.shell.InterpreterMini.initAndRunFromSource(mini, name, combined_script) catch |err| {
+            bun.shell.ShellSubprocessMini.initAndRunFromSource(mini, name, combined_script) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }

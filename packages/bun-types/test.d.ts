@@ -731,8 +731,6 @@ declare module "bun:test" {
   }
 
   export interface MatchersBuiltin<T = unknown> {
-    [key: string]: any;
-
     /**
      * Negates the result of a subsequent assertion.
      * If you know how to test something, `.not` lets you test its opposite.
@@ -745,7 +743,7 @@ declare module "bun:test" {
      * expect(42).toEqual(42); // will pass
      * expect(42).not.toEqual(42); // will fail
      */
-    not: Matchers<T>;
+    not: Matchers<unknown>;
 
     /**
      * Expects the value to be a promise that resolves.
@@ -761,7 +759,7 @@ declare module "bun:test" {
      * @example
      * expect(Promise.reject("error")).rejects.toBe("error");
      */
-    rejects: Matchers<T>;
+    rejects: Matchers<unknown>;
 
     /**
      * Assertion which passes.

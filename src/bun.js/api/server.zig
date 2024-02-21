@@ -2158,7 +2158,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     .auto_close = false,
                     .socket_fd = bun.invalid_fd,
                 };
-
                 this.response_buf_owned = .{ .items = result.result.buf, .capacity = result.result.buf.len };
                 this.resp.?.runCorkedWithType(*RequestContext, renderResponseBufferAndMetadata, this);
             }
@@ -3047,8 +3046,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             var response: *JSC.WebCore.Response = this.response_ptr.?;
             var status = response.statusCode();
-            var needs_content_range = this.flags.needs_content_range and this.sendfile.remain < this.blob.size();
-
+            var needs_content_range = this.flags.needs_content_range and this.sendfile.remain <= this.blob.size();
             const size = if (needs_content_range)
                 this.sendfile.remain
             else

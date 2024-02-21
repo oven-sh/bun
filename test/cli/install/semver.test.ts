@@ -343,6 +343,11 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies(">=0.34.0-next.3 <1.0.0", "0.34.0-next.8", true);
     testSatisfies("<1.0.0", "0.34.0-next.8", false);
 
+    testSatisfies("<=7.0.0", "7.0.0-rc2", false);
+    testSatisfies(">=7.0.0", "7.0.0-rc2", false);
+    testSatisfies("<=7.0.0-rc2", "7.0.0-rc2", true);
+    testSatisfies(">=7.0.0-rc2", "7.0.0-rc2", true);
+
     const notPassing = [
       "0.1.0",
       "0.10.0",

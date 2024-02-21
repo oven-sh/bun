@@ -4902,11 +4902,11 @@ pub const Interpreter = struct {
                             if (paths) |p| {
                                 for (p) |path_raw| {
                                     const path = path_raw[0..std.mem.len(path_raw) :0];
-                                    var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, path, null);
+                                    var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, path, this.bltn.parentCmd().base.eventLoop());
                                     task.schedule();
                                 }
                             } else {
-                                var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, ".", null);
+                                var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, ".", this.bltn.parentCmd().base.eventLoop());
                                 task.schedule();
                             }
                         },
@@ -5069,7 +5069,7 @@ pub const Interpreter = struct {
                 err: ?Syscall.Error = null,
                 result_kind: enum { file, dir, idk } = .idk,
 
-                event_loop: JSC.EventLoop,
+                event_loop: JSC.EventLoopHandle,
                 concurrent_task: JSC.EventLoopTask,
                 task: JSC.WorkPoolTask = .{
                     .callback = workPoolCallback,
@@ -5079,7 +5079,7 @@ pub const Interpreter = struct {
                     JSC.WorkPool.schedule(&this.task);
                 }
 
-                pub fn create(ls: *Ls, opts: Opts, task_count: *std.atomic.Value(usize), cwd: bun.FileDescriptor, path: [:0]const u8, event_loop: ?JSC.EventLoopHandle) *@This() {
+                pub fn create(ls: *Ls, opts: Opts, task_count: *std.atomic.Value(usize), cwd: bun.FileDescriptor, path: [:0]const u8, event_loop: JSC.EventLoopHandle) *@This() {
                     const task = bun.default_allocator.create(@This()) catch bun.outOfMemory();
                     task.* = @This(){
                         .ls = ls,
@@ -5088,6 +5088,7 @@ pub const Interpreter = struct {
                         .path = bun.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory(),
                         .output = std.ArrayList(u8).init(bun.default_allocator),
                         // .event_loop = event_loop orelse JSC.VirtualMachine.get().eventLoop(),
+                        .concurrent_task = @panic("TODO SHELL"),
                         .event_loop = event_loop,
                         .task_count = task_count,
                     };
@@ -5883,6 +5884,7 @@ pub const Interpreter = struct {
                                         .task = .{
                                             // .event_loop = JSC.VirtualMachine.get().eventLoop(),
                                             .event_loop = this.bltn.parentCmd().base.eventLoop(),
+                                            .concurrent_task = @panic("TODO SHELL"),
                                         },
                                     },
                                     .state = .running,
@@ -5956,6 +5958,7 @@ pub const Interpreter = struct {
                                         .error_signal = undefined,
                                         .task = .{
                                             .event_loop = this.bltn.parentCmd().base.eventLoop(),
+                                            .concurrent_task = @panic("TODO SHELL"),
                                         },
                                     };
                                 }
@@ -5973,6 +5976,7 @@ pub const Interpreter = struct {
                                         .error_signal = undefined,
                                         .task = .{
                                             .event_loop = this.bltn.parentCmd().base.eventLoop(),
+                                            .concurrent_task = @panic("TODO SHELL"),
                                         },
                                     };
                                 }
@@ -7396,17 +7400,15 @@ pub const Interpreter = struct {
         }
 
         pub fn onError(this: *BufferedWriter, err: bun.sys.Error) void {
-            _ = this; // autofix
-            _ = err; // autofix
-
+            this.err = err;
         }
+
         pub fn onReady(this: *BufferedWriter) void {
             _ = this; // autofix
 
         }
         pub fn onClose(this: *BufferedWriter) void {
-            _ = this; // autofix
-
+            this.parent.onDone(this.err);
         }
 
         pub const ParentPtr = struct {
@@ -7658,7 +7660,7 @@ pub fn ShellTask(
 
         pub fn schedule(this: *@This()) void {
             print("schedule", .{});
-            this.ref.ref(this.event_loop.getVmImpl());
+            this.ref.ref(this.event_loop);
             WorkPool.schedule(&this.task);
         }
 
@@ -7685,111 +7687,6 @@ pub fn ShellTask(
             const ctx = @fieldParentPtr(Ctx, "task", this);
             this.ref.unref(this.event_loop.getVmImpl());
             runFromMainThread_(ctx);
-        }
-    };
-}
-
-const SliceBufferSrc = struct {
-    remain: []const u8 = "",
-
-    fn bufToWrite(this: SliceBufferSrc, written: usize) []const u8 {
-        if (written >= this.remain.len) return "";
-        return this.remain[written..];
-    }
-
-    fn isDone(this: SliceBufferSrc, written: usize) bool {
-        return written >= this.remain.len;
-    }
-};
-
-/// This is modified version of BufferedInput for file descriptors only. This
-/// struct cleans itself up when it is done, so no need to call `.deinit()` on
-/// it.
-pub fn NewBufferedWriter(comptime Src: type, comptime Parent: type, comptime EventLoopKind: JSC.EventLoopKind) type {
-    const SrcHandler = struct {
-        src: Src,
-
-        inline fn bufToWrite(src: Src, written: usize) []const u8 {
-            if (!@hasDecl(Src, "bufToWrite")) @compileError("Need `bufToWrite`");
-            return src.bufToWrite(written);
-        }
-
-        inline fn isDone(src: Src, written: usize) bool {
-            if (!@hasDecl(Src, "isDone")) @compileError("Need `bufToWrite`");
-            return src.isDone(written);
-        }
-    };
-
-    return struct {
-        src: Src,
-        written: usize = 0,
-        parent: Parent,
-        err: ?Syscall.Error = null,
-        writer: Writer = .{},
-
-        pub const Writer = bun.io.BufferedWriter(
-            @This(),
-            onWrite,
-            onError,
-            // we don't close it
-            null,
-            getBuffer,
-            onReady,
-        );
-
-        pub const ParentType = Parent;
-
-        const print = bun.Output.scoped(.BufferedWriter, false);
-
-        pub fn isDone(this: *@This()) bool {
-            return SrcHandler.isDone(this.src, this.written) or this.err != null;
-        }
-
-        pub const event_loop_kind = EventLoopKind;
-        pub usingnamespace JSC.WebCore.NewReadyWatcher(@This(), .writable, onReady);
-
-        pub fn onReady(this: *@This()) void {
-            if (this.src.isDone(this.written)) {
-                this.parent.onDone(this.err);
-                return;
-            }
-
-            const buf = this.getBuffer();
-            this.writer.write(buf);
-        }
-
-        pub fn getBuffer(this: *@This()) []const u8 {
-            return SrcHandler.bufToWrite(this.src, this.written);
-        }
-
-        pub fn write(this: *@This()) void {
-            if (this.src.isDone(this.written)) {
-                return;
-            }
-
-            const buf = this.getBuffer();
-            this.writer.write(buf);
-        }
-
-        pub fn onWrite(this: *@This(), amount: usize, done: bool) void {
-            this.written += amount;
-
-            if (done or this.src.isDone(this.written)) {
-                this.parent.onDone(this.err);
-            } else {
-                const buf = this.getBuffer();
-                this.writer.write(buf);
-            }
-        }
-
-        pub fn onError(this: *@This(), err: bun.sys.Error) void {
-            this.err = err;
-
-            this.parent.onDone(this.err);
-        }
-
-        pub fn deinit(this: *@This()) void {
-            this.writer.deinit();
         }
     };
 }

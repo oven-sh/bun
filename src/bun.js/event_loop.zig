@@ -2028,7 +2028,7 @@ pub const EventLoopHandle = union(enum) {
     }
 
     pub fn enqueueTaskConcurrent(this: EventLoopHandle, context: anytype) void {
-        switch (this.*) {
+        switch (this) {
             .js => {
                 this.js.enqueueTaskConcurrent(
                     context.toJSTask(),

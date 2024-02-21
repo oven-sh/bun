@@ -54,9 +54,44 @@ pub const BunxCommand = struct {
         return new_str;
     }
 
+    const seconds_cache_valid = 60 * 60 * 24; // 1 day
+    const nanoseconds_cache_valid = seconds_cache_valid * 1000000000;
+
     fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {
         const target_package_json_fd = try std.os.openatZ(dir_fd.cast(), subpath_z, std.os.O.RDONLY, 0);
         const target_package_json = std.fs.File{ .handle = target_package_json_fd };
+
+        const is_stale = is_stale: {
+            if (Environment.isWindows) {
+                var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
+                var info: std.os.windows.FILE_BASIC_INFORMATION = undefined;
+                const rc = std.os.windows.ntdll.NtQueryInformationFile(target_package_json_fd, &io_status_block, &info, @sizeOf(std.os.windows.FILE_BASIC_INFORMATION), .FileBasicInformation);
+                switch (rc) {
+                    .SUCCESS => {
+                        const time = std.os.windows.fromSysTime(info.LastWriteTime);
+                        const now = std.time.nanoTimestamp();
+                        break :is_stale (now - time > nanoseconds_cache_valid);
+                    },
+                    // treat failures to stat as stale
+                    else => break :is_stale true,
+                }
+            } else {
+                var stat: std.os.Stat = undefined;
+                const rc = std.c.fstat(target_package_json_fd, &stat);
+                if (rc != 0) {
+                    break :is_stale true;
+                }
+                break :is_stale std.time.timestamp() - stat.mtime().tv_sec > seconds_cache_valid;
+            }
+        };
+
+        if (is_stale) {
+            target_package_json.close();
+            // If delete fails, oh well. Hope installation takes care of it.
+            dir_fd.asDir().deleteTree(subpath_z) catch {};
+            return error.NeedToInstall;
+        }
+
         defer target_package_json.close();
 
         const package_json_contents = try target_package_json.readToEndAlloc(bundler.allocator, std.math.maxInt(u32));
@@ -158,7 +193,7 @@ pub const BunxCommand = struct {
         };
     }
 
-    fn exit_with_usage() noreturn {
+    fn exitWithUsage() noreturn {
         Command.Tag.printHelp(.BunxCommand, false);
         Global.exit(1);
     }
@@ -202,7 +237,7 @@ pub const BunxCommand = struct {
 
         // check if package_name_for_update_request is empty string or " "
         if (package_name_for_update_request[0].len == 0) {
-            exit_with_usage();
+            exitWithUsage();
         }
 
         const update_requests = bun.PackageManager.UpdateRequest.parse(
@@ -214,7 +249,7 @@ pub const BunxCommand = struct {
         );
 
         if (update_requests.len == 0) {
-            exit_with_usage();
+            exitWithUsage();
         }
 
         // this shouldn't happen
@@ -321,28 +356,56 @@ pub const BunxCommand = struct {
                 ctx.allocator.free(PATH_FOR_BIN_DIRS);
             }
         }
-        if (PATH.len > 0) {
-            PATH = try std.fmt.allocPrint(
+
+        // The bunx cache path is at the following location
+        //
+        //   <temp_dir>/bunx-<uid>-<package_name>/node_modules/.bin/<bin>
+        //
+        // Reasoning:
+        // - Prefix with "bunx" to identify the bunx cache, make it easier to "rm -r"
+        //   - Suffix would not work because scoped packages have a "/" in them, and
+        //     before Bun 1.1 this was practically impossible to clear the cache manually.
+        //     It was easier to just remove the entire temp directory.
+        // - Use the uid to prevent conflicts between users. If the paths were the same
+        //   across users, you run into permission conflicts
+        //   - If you set permission to 777, you run into a potential attack vector
+        //     where a user can replace the directory with malicious code.
+        const uid = if (bun.Environment.isPosix) bun.C.getuid() else windowsUserUniqueId();
+        PATH = switch (PATH.len > 0) {
+            inline else => |path_is_nonzero| try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.pathLiteral("{s}/{s}--bunx/node_modules/.bin:{s}"),
-                .{ temp_dir, package_fmt, PATH },
-            );
-        } else {
-            PATH = try std.fmt.allocPrint(
-                ctx.allocator,
-                bun.pathLiteral("{s}/{s}--bunx/node_modules/.bin"),
-                .{ temp_dir, package_fmt },
-            );
-        }
+                bun.pathLiteral("{s}/bunx-{d}-{s}/node_modules/.bin{s}{s}"),
+                .{
+                    temp_dir,
+                    uid,
+                    package_fmt,
+                    if (path_is_nonzero) ":" else "",
+                    PATH,
+                },
+            ),
+        };
+
         try this_bundler.env.map.put("PATH", PATH);
-        const bunx_cache_dir = PATH[0 .. temp_dir.len + "/--bunx".len + package_fmt.len];
+        const bunx_cache_dir = PATH[0 .. temp_dir.len +
+            "/bunx--".len +
+            package_fmt.len +
+            if (Environment.isPosix)
+            std.fmt.count("{d}", .{uid})
+        else
+            0];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}"), .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        var absolute_in_cache_dir = std.fmt.bufPrint(
+            &absolute_in_cache_dir_buf,
+            bun.pathLiteral("{s}/node_modules/.bin/{s}"),
+            .{ bunx_cache_dir, initial_bin_name },
+        ) catch unreachable;
 
         const passthrough = passthrough_list.items;
 
-        if (update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag) {
+        var do_cache_bust = update_request.version.tag == .dist_tag;
+
+        if (update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag) try_run_existing: {
             var destination_: ?[:0]const u8 = null;
 
             // Only use the system-installed version if there is no version specified
@@ -365,7 +428,48 @@ pub const BunxCommand = struct {
                 absolute_in_cache_dir,
             )) |destination| {
                 const out = bun.asByteSlice(destination);
-                _ = try Run.runBinary(
+
+                // If this directory was installed by bunx, we want to perform cache invalidation on it
+                // this way running `bunx hello` will update hello automatically to the latest version
+                if (bun.strings.hasPrefix(out, bunx_cache_dir)) {
+                    const is_stale = is_stale: {
+                        if (Environment.isWindows) {
+                            const fd = bun.sys.openat(bun.invalid_fd, destination, std.os.O.RDONLY, 0).unwrap() catch {
+                                // if we cant open this, we probably will just fail when we run it
+                                // and that error message is likely going to be better than the one from `bun add`
+                                break :is_stale false;
+                            };
+                            defer _ = bun.sys.close(fd);
+
+                            var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
+                            var info: std.os.windows.FILE_BASIC_INFORMATION = undefined;
+                            const rc = std.os.windows.ntdll.NtQueryInformationFile(fd.cast(), &io_status_block, &info, @sizeOf(std.os.windows.FILE_BASIC_INFORMATION), .FileBasicInformation);
+                            switch (rc) {
+                                .SUCCESS => {
+                                    const time = std.os.windows.fromSysTime(info.LastWriteTime);
+                                    const now = std.time.nanoTimestamp();
+                                    break :is_stale (now - time > nanoseconds_cache_valid);
+                                },
+                                // treat failures to stat as stale
+                                else => break :is_stale true,
+                            }
+                        } else {
+                            var stat: std.os.Stat = undefined;
+                            const rc = std.c.stat(destination, &stat);
+                            if (rc != 0) {
+                                break :is_stale true;
+                            }
+                            break :is_stale std.time.timestamp() - stat.mtime().tv_sec > seconds_cache_valid;
+                        }
+                    };
+
+                    if (is_stale) {
+                        do_cache_bust = true;
+                        break :try_run_existing;
+                    }
+                }
+
+                try Run.runBinary(
                     ctx,
                     try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                     this_bundler.fs.top_level_dir,
@@ -373,11 +477,12 @@ pub const BunxCommand = struct {
                     passthrough,
                     null,
                 );
-                // we are done!
-                Global.exit(0);
+                // runBinary is noreturn
+                comptime unreachable;
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
+            // TODO: root_dir_fd was observed on Windows to be zero, which is incorrect. figure out why
             const root_dir_fd = root_dir_info.getFileDescriptor();
             if (root_dir_fd != .zero) {
                 if (getBinName(&this_bundler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
@@ -402,7 +507,7 @@ pub const BunxCommand = struct {
                             absolute_in_cache_dir,
                         )) |destination| {
                             const out = bun.asByteSlice(destination);
-                            _ = try Run.runBinary(
+                            try Run.runBinary(
                                 ctx,
                                 try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                                 this_bundler.fs.top_level_dir,
@@ -410,8 +515,8 @@ pub const BunxCommand = struct {
                                 passthrough,
                                 null,
                             );
-                            // we are done!
-                            Global.exit(0);
+                            // runBinary is noreturn
+                            comptime unreachable;
                         }
                     }
                 } else |err| {
@@ -423,15 +528,7 @@ pub const BunxCommand = struct {
             }
         }
 
-        const bunx_install_dir_path = try std.fmt.allocPrint(
-            ctx.allocator,
-            "{s}/{s}--bunx",
-            .{ temp_dir, package_fmt },
-        );
-
-        // TODO: fix this after zig upgrade
-        const bunx_install_iterable_dir = try std.fs.cwd().makeOpenPath(bunx_install_dir_path, .{});
-        var bunx_install_dir = bunx_install_iterable_dir;
+        const bunx_install_dir = try std.fs.cwd().makeOpenPath(bunx_cache_dir, .{});
 
         create_package_json: {
             // create package.json, but only if it doesn't exist
@@ -441,18 +538,28 @@ pub const BunxCommand = struct {
         }
 
         var args_buf = [_]string{
-            try std.fs.selfExePathAlloc(ctx.allocator), "add",        "--no-summary",
+            try std.fs.selfExePathAlloc(ctx.allocator),
+            "add",
+            "--no-summary",
             package_fmt,
+
+            // the following two args are stripped off if `do_cache_bust` is false
+
             // disable the manifest cache when a tag is specified
             // so that @latest is fetched from the registry
-                                           "--no-cache",
+            "--no-cache",
+            // forcefully re-install packages in this mode too
+            "--force",
         };
 
-        const argv_to_use: []const string = args_buf[0 .. args_buf.len - @as(usize, @intFromBool(update_request.version.tag != .dist_tag))];
+        const argv_to_use: []const string = args_buf[0 .. args_buf.len - 2 * @as(usize, @intFromBool(!do_cache_bust))];
 
         var child_process = std.ChildProcess.init(argv_to_use, default_allocator);
-        child_process.cwd = bunx_install_dir_path;
         child_process.cwd_dir = bunx_install_dir;
+        // https://github.com/ziglang/zig/issues/5190
+        if (Environment.isWindows) {
+            child_process.cwd = bunx_cache_dir;
+        }
         const env_map = try this_bundler.env.map.cloneToEnvMap(ctx.allocator);
         child_process.env_map = &env_map;
         child_process.stderr_behavior = .Inherit;
@@ -473,19 +580,15 @@ pub const BunxCommand = struct {
                     Global.exit(exit_code);
                 }
             },
-            .Signal => |signal| {
-                Global.exit(@as(u7, @truncate(signal)));
+            .Signal, .Stopped => |signal| {
+                Global.raiseIgnoringPanicHandler(signal);
             },
-            .Stopped => |signal| {
-                Global.exit(@as(u7, @truncate(signal)));
-            },
-            // shouldn't happen
-            else => {
+            .Unknown => {
                 Global.exit(1);
             },
         }
 
-        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}"), .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         // Similar to "npx":
         //
@@ -498,7 +601,7 @@ pub const BunxCommand = struct {
             absolute_in_cache_dir,
         )) |destination| {
             const out = bun.asByteSlice(destination);
-            _ = try Run.runBinary(
+            try Run.runBinary(
                 ctx,
                 try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                 this_bundler.fs.top_level_dir,
@@ -506,8 +609,8 @@ pub const BunxCommand = struct {
                 passthrough,
                 null,
             );
-            // we are done!
-            Global.exit(0);
+            // runBinary is noreturn
+            comptime unreachable;
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -522,7 +625,7 @@ pub const BunxCommand = struct {
                     absolute_in_cache_dir,
                 )) |destination| {
                     const out = bun.asByteSlice(destination);
-                    _ = try Run.runBinary(
+                    try Run.runBinary(
                         ctx,
                         try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                         this_bundler.fs.top_level_dir,
@@ -530,8 +633,8 @@ pub const BunxCommand = struct {
                         passthrough,
                         null,
                     );
-                    // we are done!
-                    Global.exit(0);
+                    // runBinary is noreturn
+                    comptime unreachable;
                 }
             }
         } else |_| {}
@@ -540,3 +643,25 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 };
+
+extern fn GetUserNameW(
+    lpBuffer: bun.windows.LPWSTR,
+    pcbBuffer: bun.windows.LPDWORD,
+) bun.windows.BOOL;
+
+/// Is not the actual UID of the user, but just a hash of username.
+fn windowsUserUniqueId() u32 {
+    // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/165836c1-89d7-4abb-840d-80cf2510aa3e
+    // UNLEN + 1
+    var buf: [257]u16 = undefined;
+    var size: u32 = buf.len;
+    if (GetUserNameW(@ptrCast(&buf), &size) == 0) {
+        if (Environment.isDebug) std.debug.panic("GetUserNameW failed: {}", .{bun.windows.GetLastError()});
+        return 0;
+    }
+    const name = buf[0..size];
+    if (Environment.isWindows) {
+        Output.scoped(.windowsUserUniqueId, false)("username: {}", .{std.unicode.fmtUtf16le(name)});
+    }
+    return bun.hash32(std.mem.sliceAsBytes(name));
+}

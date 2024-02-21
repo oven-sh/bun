@@ -1519,7 +1519,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
                     remain = remain[res.result..];
                     total += res.result;
 
-                    log("Wrote {d} bytes (fd: {d}, head: {d}, {d}/{d})", .{ res.result, fd, this.head, remain.len, total });
+                    log("Wrote {d} bytes (fd: {}, head: {d}, {d}/{d})", .{ res.result, fd, this.head, remain.len, total });
 
                     if (res.result == 0) {
                         if (this.poll_ref) |poll| {

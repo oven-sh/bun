@@ -192,7 +192,7 @@ pub const Loop = struct {
 
             const current_events: []std.os.linux.epoll_event = events[0..rc];
             if (rc != 0) {
-                log("epoll_wait({d}) = {d}", .{ this.pollfd(), rc });
+                log("epoll_wait({}) = {d}", .{ this.pollfd(), rc });
             }
 
             for (current_events) |event| {
@@ -743,7 +743,7 @@ pub const Poll = struct {
             fd: bun.FileDescriptor,
             kqueue_event: *std.os.system.kevent64_s,
         ) void {
-            log("register({s}, {d})", .{ @tagName(action), fd });
+            log("register({s}, {})", .{ @tagName(action), fd });
             defer {
                 switch (comptime action) {
                     .readable => poll.flags.insert(Flags.poll_readable),
@@ -873,7 +873,7 @@ pub const Poll = struct {
     pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FileDescriptor) JSC.Maybe(void) {
         const watcher_fd = loop.pollfd();
 
-        log("register: {s} ({d})", .{ @tagName(flag), fd });
+        log("register: {s} ({})", .{ @tagName(flag), fd });
 
         std.debug.assert(fd != bun.invalid_fd);
 

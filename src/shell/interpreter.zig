@@ -2010,6 +2010,10 @@ pub const Interpreter = struct {
                     .expansion = expansion,
                     .result = std.ArrayList([:0]const u8).init(allocator),
                 };
+                if (bun.Environment.isWindows) {
+                    // event loop here is js event loop
+                    @panic("TODO SHELL WINDOWS!");
+                }
                 // this.ref.ref(this.event_loop.virtual_machine);
                 this.ref.ref(this.event_loop);
 
@@ -2050,6 +2054,10 @@ pub const Interpreter = struct {
 
             pub fn runFromMainThread(this: *This) void {
                 print("runFromJS", .{});
+                if (bun.Environment.isWindows) {
+                    // event loop here is js event loop
+                    @panic("TODO SHELL WINDOWS!");
+                }
                 this.expansion.onGlobWalkDone(this);
                 // this.ref.unref(this.event_loop.virtual_machine);
                 this.ref.unref(this.event_loop);
@@ -7377,7 +7385,7 @@ pub const Interpreter = struct {
     /// it. IT DOES NOT CLOSE FILE DESCRIPTORS
     pub const BufferedWriter =
         struct {
-        writer: Writer = .{
+        writer: Writer = if (bun.Environment.isWindows) .{} else .{
             .close_fd = false,
         },
         fd: bun.FileDescriptor = bun.invalid_fd,
@@ -7689,6 +7697,11 @@ pub fn ShellTask(
 
         pub fn schedule(this: *@This()) void {
             print("schedule", .{});
+
+            if (bun.Environment.isWindows) {
+                // event loop here is js event loop
+                @panic("TODO SHELL WINDOWS!");
+            }
             this.ref.ref(this.event_loop);
             WorkPool.schedule(&this.task);
         }

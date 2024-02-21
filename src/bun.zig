@@ -49,7 +49,7 @@ pub const allocators = @import("./allocators.zig");
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
     pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
-    pub const ShellSubprocessMini = @import("./shell/subproc.zig").ShellSubprocessMini;
+    // pub const ShellSubprocessMini = @import("./shell/subproc.zig").ShellSubprocessMini;
 };
 
 pub const Output = @import("./output.zig");

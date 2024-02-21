@@ -2027,17 +2027,13 @@ pub const EventLoopHandle = union(enum) {
         }
     }
 
-    pub fn enqueueTaskConcurrent(this: EventLoopHandle, context: anytype) void {
+    pub fn enqueueTaskConcurrent(this: EventLoopHandle, context: EventLoopTaskPtr) void {
         switch (this) {
             .js => {
-                this.js.enqueueTaskConcurrent(
-                    context.toJSTask(),
-                );
+                this.js.enqueueTaskConcurrent(context.js);
             },
             .mini => {
-                this.mini.enqueueTaskConcurrent(
-                    context.toMiniTask(),
-                );
+                this.mini.enqueueTaskConcurrent(context.mini);
             },
         }
     }
@@ -2098,4 +2094,24 @@ pub const EventLoopHandle = union(enum) {
 pub const EventLoopTask = union {
     js: ConcurrentTask,
     mini: JSC.AnyTaskWithExtraContext,
+
+    pub fn init(comptime kind: @TypeOf(.EnumLiteral)) EventLoopTask {
+        switch (kind) {
+            .js => return .{ .js = ConcurrentTask{} },
+            .mini => return .{ .mini = JSC.AnyTaskWithExtraContext{} },
+            else => @compileError("Invalid kind: " ++ @typeName(kind)),
+        }
+    }
+
+    pub fn fromEventLoop(loop: JSC.EventLoopHandle) EventLoopTask {
+        switch (loop) {
+            .js => return .{ .js = ConcurrentTask{} },
+            .mini => return .{ .mini = JSC.AnyTaskWithExtraContext{} },
+        }
+    }
+};
+
+pub const EventLoopTaskPtr = union {
+    js: *ConcurrentTask,
+    mini: *JSC.AnyTaskWithExtraContext,
 };

@@ -2065,9 +2065,9 @@ pub const Interpreter = struct {
             pub fn onFinish(this: *This) void {
                 print("onFinish", .{});
                 if (this.event_loop == .js) {
-                    this.event_loop.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
+                    this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
                 } else {
-                    this.event_loop.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+                    this.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
                 }
             }
 
@@ -5088,7 +5088,7 @@ pub const Interpreter = struct {
                         .path = bun.default_allocator.dupeZ(u8, path[0..path.len]) catch bun.outOfMemory(),
                         .output = std.ArrayList(u8).init(bun.default_allocator),
                         // .event_loop = event_loop orelse JSC.VirtualMachine.get().eventLoop(),
-                        .concurrent_task = @panic("TODO SHELL"),
+                        .concurrent_task = JSC.EventLoopTask.fromEventLoop(event_loop),
                         .event_loop = event_loop,
                         .task_count = task_count,
                     };
@@ -5213,9 +5213,9 @@ pub const Interpreter = struct {
                 fn doneLogic(this: *@This()) void {
                     print("Done", .{});
                     if (this.event_loop == .js) {
-                        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
+                        this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
                     } else {
-                        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+                        this.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
                     }
 
                     // if (this.parent) |parent| {
@@ -5884,7 +5884,7 @@ pub const Interpreter = struct {
                                         .task = .{
                                             // .event_loop = JSC.VirtualMachine.get().eventLoop(),
                                             .event_loop = this.bltn.parentCmd().base.eventLoop(),
-                                            .concurrent_task = @panic("TODO SHELL"),
+                                            .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn.parentCmd().base.eventLoop()),
                                         },
                                     },
                                     .state = .running,
@@ -5957,9 +5957,10 @@ pub const Interpreter = struct {
                                         // We set this later
                                         .error_signal = undefined,
                                         .task = .{
+                                            .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn.parentCmd().base.eventLoop()),
                                             .event_loop = this.bltn.parentCmd().base.eventLoop(),
-                                            .concurrent_task = @panic("TODO SHELL"),
                                         },
+                                        .event_loop = this.bltn.parentCmd().base.eventLoop(),
                                     };
                                 }
 
@@ -5976,8 +5977,9 @@ pub const Interpreter = struct {
                                         .error_signal = undefined,
                                         .task = .{
                                             .event_loop = this.bltn.parentCmd().base.eventLoop(),
-                                            .concurrent_task = @panic("TODO SHELL"),
+                                            .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn.parentCmd().base.eventLoop()),
                                         },
+                                        .event_loop = this.bltn.parentCmd().base.eventLoop(),
                                     };
                                 }
                             }
@@ -7017,9 +7019,9 @@ pub const Interpreter = struct {
 
                 pub fn finishConcurrently(this: *ShellRmTask) void {
                     if (this.event_loop == .js) {
-                        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
+                        this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
                     } else {
-                        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+                        this.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
                     }
                 }
 
@@ -7668,9 +7670,9 @@ pub fn ShellTask(
             print("onFinish", .{});
             const ctx = @fieldParentPtr(Ctx, "task", this);
             if (this.event_loop == .js) {
-                this.event_loop.enqueueTaskConcurrent(this.concurrent_task.js.from(ctx, .manual_deinit));
+                this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(ctx, .manual_deinit));
             } else {
-                this.event_loop.enqueueTaskConcurrent(this.concurrent_task.mini.from(ctx, "runFromMainThreadMini"));
+                this.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(ctx, "runFromMainThreadMini"));
             }
         }
 

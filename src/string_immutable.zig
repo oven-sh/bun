@@ -4404,7 +4404,6 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
             if (char > 127 or char < 0x20) {
                 return @as(u32, @truncate(i));
             }
-
             i += 1;
         }
     } else {
@@ -4413,7 +4412,6 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
             if (char > 127) {
                 return @as(u32, @truncate(i));
             }
-
             i += 1;
         }
     }
@@ -5799,11 +5797,11 @@ pub fn isFullWidthCodepointType(comptime T: type, cp: T) bool {
     };
 }
 
-pub fn visibleCodepointWidth(cp: anytype) u3 {
-    return visibleCodepointWidthType(@TypeOf(cp), cp);
+pub fn visibleCodepointWidth(cp: u21) u3 {
+    return visibleCodepointWidthType(u21, cp);
 }
 
-pub fn visibleCodepointWidthType(comptime T: type, cp: T) usize {
+pub fn visibleCodepointWidthType(comptime T: type, cp: T) u3 {
     if (isZeroWidthCodepointType(T, cp)) {
         return 0;
     }
@@ -5905,20 +5903,29 @@ pub const visible = struct {
         return len;
     }
 
-    fn visibleUTF16WidthFn(input: []const u16, comptime asciiFn: anytype) usize {
-        var bytes = input;
+    fn visibleUTF16WidthFn(input: []const u16, exclude_ansi_colors: bool) usize {
         var len: usize = 0;
-        while (bun.strings.firstNonASCII16CheckMin([]const u16, bytes, false)) |i| {
-            len += asciiFn(bytes[0..i]);
-            bytes = bytes[i..];
-
-            const utf8 = utf16CodepointWithFFFD([]const u16, bytes);
-            len += visibleCodepointWidthType(u32, utf8.code_point);
-            bytes = bytes[@min(@as(usize, utf8.len), bytes.len)..];
+        var iter = std.unicode.Utf16LeIterator.init(input);
+        while (iter.nextCodepoint() catch return 0) |cp| blk: {
+            if (!exclude_ansi_colors) {
+                len += visibleCodepointWidth(cp);
+                continue;
+            }
+            if (cp != 0x1b) {
+                len += visibleCodepointWidth(cp);
+                continue;
+            }
+            if ((iter.nextCodepoint() catch return 0) != '[') {
+                len += visibleCodepointWidth(cp);
+                continue;
+            }
+            var stretch_len: usize = 0;
+            while (iter.nextCodepoint() catch return 0) |cp2| {
+                if (cp2 == 'm') break :blk;
+                stretch_len += visibleCodepointWidth(cp2);
+            }
+            len += stretch_len;
         }
-
-        len += asciiFn(bytes);
-
         return len;
     }
 
@@ -5936,7 +5943,7 @@ pub const visible = struct {
         }
 
         pub fn utf16(input: []const u16) usize {
-            return visibleUTF16WidthFn(input, visibleASCIIWidth);
+            return visibleUTF16WidthFn(input, false);
         }
 
         pub const exclude_ansi_colors = struct {
@@ -5949,7 +5956,7 @@ pub const visible = struct {
             }
 
             pub fn utf16(input: []const u16) usize {
-                return visibleUTF16WidthFn(input, visibleASCIIWidthExcludeANSIColors);
+                return visibleUTF16WidthFn(input, true);
             }
         };
     };

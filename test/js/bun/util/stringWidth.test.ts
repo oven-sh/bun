@@ -1,26 +1,26 @@
 import { test, expect, describe } from "bun:test";
-
 import npmStringWidth from "string-width";
-import { stringWidth } from "bun";
+
+const bun_has_stringwidth = "stringWidth" in Bun;
 
 expect.extend({
   toMatchNPMStringWidth(received: string) {
-    const width = npmStringWidth(received);
-    const bunWidth = stringWidth(received);
+    const width = npmStringWidth(received, { countAnsiEscapeCodes: true });
+    const bunWidth = Bun.stringWidth(received, { countAnsiEscapeCodes: true });
     const pass = width === bunWidth;
     const message = () => `expected ${received} to have npm string width ${width} but got ${bunWidth}`;
     return { pass, message };
   },
   toMatchNPMStringWidthExcludeANSI(received: string) {
     const width = npmStringWidth(received, { countAnsiEscapeCodes: false });
-    const bunWidth = stringWidth(received, { countAnsiEscapeCodes: false });
+    const bunWidth = Bun.stringWidth(received, { countAnsiEscapeCodes: false });
     const pass = width === bunWidth;
     const message = () => `expected ${received} to have npm string width ${width} but got ${bunWidth}`;
     return { pass, message };
   },
 });
 
-test.skipIf(!stringWidth)("stringWidth", () => {
+test.skipIf(!bun_has_stringwidth)("stringWidth", () => {
   expect(undefined).toMatchNPMStringWidth();
   expect("").toMatchNPMStringWidth();
   expect("a").toMatchNPMStringWidth();
@@ -40,7 +40,7 @@ test.skipIf(!stringWidth)("stringWidth", () => {
 
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
   describe(matcher, () => {
-    test.skipIf(!stringWidth)("ansi colors", () => {
+    test.skipIf(!bun_has_stringwidth)("ansi colors", () => {
       expect("\u001b[31m")[matcher]();
       expect("\u001b[31ma")[matcher]();
       expect("\u001b[31mab")[matcher]();
@@ -85,7 +85,7 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
 }
 
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
-  test.todo("leading non-ansi characters in UTF-16 string seems to fail", () => {
+  test.skipIf(!bun_has_stringwidth)("leading non-ansi characters in UTF-16 string seems to fail", () => {
     expect("\x1b[31mhshh🌎")[matcher]();
     expect("a\x1b[31mhshh🌎")[matcher]();
     expect("a\x1b[31mhshh🌎a")[matcher]();

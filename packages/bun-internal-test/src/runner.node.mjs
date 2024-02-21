@@ -1,6 +1,6 @@
 import * as action from "@actions/core";
 import { spawn, spawnSync } from "child_process";
-import { rmSync, writeFileSync, readFileSync, rm, mkdirSync } from "fs";
+import { rmSync, writeFileSync, readFileSync, mkdirSync } from "fs";
 import { readFile } from "fs/promises";
 import { readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
@@ -27,8 +27,8 @@ const enableProgressBar = !ci;
 
 var prevTmpdir = "";
 function maketemp() {
-  if (prevTmpdir) {
-    rm(prevTmpdir, { recursive: true, force: true }, () => {});
+  if (prevTmpdir && !windows) {
+    spawn("rm", ["-rf", prevTmpdir], { stdio: "inherit", detached: true }).unref();
   }
 
   prevTmpdir = join(

@@ -806,7 +806,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
 
 fn scopedWriter() std.fs.File.Writer {
     if (comptime !Environment.isDebug) {
-        unreachable;
+        @compileError("scopedWriter() should only be called in debug mode");
     }
 
     const Scoped = struct {

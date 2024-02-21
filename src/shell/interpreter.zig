@@ -22,9 +22,9 @@ const bun = @import("root").bun;
 const os = std.os;
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
+const ArrayList = std.ArrayList;
 const JSPromise = bun.JSC.JSPromise;
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 const which = @import("../which.zig").which;
@@ -207,7 +207,7 @@ pub const EnvStr = packed struct {
     tag: Tag,
     len: usize = 0,
 
-    const print = bun.Output.scoped(.EnvStr, true);
+    const print = bun.Output.scoped(.EnvStr, false);
 
     const Tag = enum(u16) {
         /// Dealloced by reference counting
@@ -269,7 +269,7 @@ pub const RefCountedStr = struct {
     len: u32 = 0,
     ptr: [*]const u8 = undefined,
 
-    const print = bun.Output.scoped(.RefCountedEnvStr, true);
+    const print = bun.Output.scoped(.RefCountedEnvStr, false);
 
     // /// Use bun.default_allocator
     // const DEFAULT_ALLOC_TAG: usize = 1 << 63;
@@ -291,10 +291,12 @@ pub const RefCountedStr = struct {
     }
 
     fn ref(this: *RefCountedStr) void {
+        print("ref({s}) = {d}", .{ this.byteSlice(), this.refcount + 1 });
         this.refcount += 1;
     }
 
     fn deref(this: *RefCountedStr) void {
+        print("deref({s}) = {d}", .{ this.byteSlice(), this.refcount - 1 });
         this.refcount -= 1;
         if (this.refcount == 0) {
             this.deinit();
@@ -721,18 +723,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn getHomedir(self: *ShellState) EnvStr {
-                if (comptime bun.Environment.isWindows) {
-                    if (self.export_env.get(EnvStr.initSlice("USERPROFILE"))) |env| {
-                        env.ref();
-                        return env;
-                    }
-                } else {
-                    if (self.export_env.get(EnvStr.initSlice("HOME"))) |env| {
-                        env.ref();
-                        return env;
-                    }
-                }
-                return EnvStr.initSlice("unknown");
+                const env_var: ?EnvStr = brk: {
+                    const static_str = if (comptime bun.Environment.isWindows) EnvStr.initSlice("USERPROFILE") else EnvStr.initSlice("HOME");
+                    break :brk self.shell_env.get(static_str) orelse self.export_env.get(static_str);
+                };
+                return env_var orelse EnvStr.initSlice("unknown");
             }
 
             pub fn writeFailingError(
@@ -1908,7 +1903,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         str_list.appendSlice(txt) catch bun.outOfMemory();
                     },
                     .Var => |label| {
-                        str_list.appendSlice(this.expandVar(label).slice()) catch bun.outOfMemory();
+                        str_list.appendSlice(this.expandVar(label)) catch bun.outOfMemory();
                     },
                     .asterisk => {
                         str_list.append('*') catch bun.outOfMemory();
@@ -1979,11 +1974,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // this.out.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.items.ptr))) catch bun.outOfMemory();
             }
 
-            fn expandVar(this: *const Expansion, label: []const u8) EnvStr {
+            fn expandVar(this: *const Expansion, label: []const u8) []const u8 {
                 const value = this.base.shell.shell_env.get(EnvStr.initSlice(label)) orelse brk: {
-                    break :brk this.base.shell.export_env.get(EnvStr.initSlice(label)) orelse return EnvStr.initSlice("");
+                    break :brk this.base.shell.export_env.get(EnvStr.initSlice(label)) orelse return "";
                 };
-                return value;
+                defer value.deref();
+                return value.slice();
             }
 
             fn currentWord(this: *Expansion) *const ast.SimpleAtom {

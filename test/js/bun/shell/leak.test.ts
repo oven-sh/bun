@@ -97,6 +97,7 @@ describe("fd leak", () => {
                   await ${builder.toString().slice("() =>".length)}.quiet().run()
                 })()
                 Bun.gc(true);
+                Bun.gc(true);
                 const val = process.memoryUsage.rss();
                 if (prev === undefined) {
                   prev = val;

@@ -1960,7 +1960,14 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         fn appendStringToStrPool(self: *@This(), bunstr: bun.String) !void {
             const start = self.strpool.items.len;
-            if (bunstr.is8Bit()) {
+            if (bunstr.isUTF16()) {
+                const utf16 = bunstr.utf16();
+                const additional = bun.simdutf.simdutf__utf8_length_from_utf16le(utf16.ptr, utf16.len);
+                try self.strpool.ensureUnusedCapacity(additional);
+                try bun.strings.convertUTF16ToUTF8Append(&self.strpool, bunstr.utf16());
+            } else if (bunstr.isUTF8()) {
+                try self.strpool.appendSlice(bunstr.byteSlice());
+            } else if (bunstr.is8Bit()) {
                 if (isAllAscii(bunstr.byteSlice())) {
                     try self.strpool.appendSlice(bunstr.byteSlice());
                 } else {
@@ -1972,13 +1979,6 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     }
                     self.strpool = try bun.strings.allocateLatin1IntoUTF8WithList(self.strpool, self.strpool.items.len, []const u8, bytes[non_ascii_idx..]);
                 }
-            } else if (bunstr.isUTF8()) {
-                try self.strpool.appendSlice(bunstr.byteSlice());
-            } else {
-                const utf16 = bunstr.utf16();
-                const additional = bun.simdutf.simdutf__utf8_length_from_utf16le(utf16.ptr, utf16.len);
-                try self.strpool.ensureUnusedCapacity(additional);
-                try bun.strings.convertUTF16ToUTF8Append(&self.strpool, bunstr.utf16());
             }
             const end = self.strpool.items.len;
             self.j += @intCast(end - start);
@@ -2911,16 +2911,15 @@ const SPECIAL_CHARS = [_]u8{ '$', '>', '&', '|', '=', ';', '\n', '{', '}', ',', 
 const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };
 
 pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !bool {
-    // latin-1 or ascii
-    if (bunstr.is8Bit()) {
-        try escape8Bit(bunstr.byteSlice(), outbuf, add_quotes);
-        return true;
-    }
     if (bunstr.isUTF16()) {
         return try escapeUtf16(bunstr.utf16(), outbuf, add_quotes);
     }
-    // Otherwise is utf-8
-    try escapeWTF8(bunstr.byteSlice(), outbuf, add_quotes);
+    if (bunstr.isUTF8()) {
+        try escapeWTF8(bunstr.byteSlice(), outbuf, add_quotes);
+        return true;
+    }
+    // otherwise should be latin-1 or ascii
+    try escape8Bit(bunstr.byteSlice(), outbuf, add_quotes);
     return true;
 }
 

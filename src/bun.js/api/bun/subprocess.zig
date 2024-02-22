@@ -710,7 +710,6 @@ pub const Subprocess = struct {
                 onClose,
                 getBuffer,
                 flush,
-                null,
             );
             pub const Poll = IOWriter;
 

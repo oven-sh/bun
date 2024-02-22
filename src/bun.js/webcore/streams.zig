@@ -2903,7 +2903,7 @@ pub const FileSink = struct {
 
     pub usingnamespace bun.NewRefCounted(FileSink, deinit);
 
-    pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose, null);
+    pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
     pub const Poll = IOWriter;
 
     pub fn onAttachedProcessExit(this: *FileSink) void {

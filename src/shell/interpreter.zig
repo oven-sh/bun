@@ -7377,6 +7377,7 @@ pub const Interpreter = struct {
     /// it. IT DOES NOT CLOSE FILE DESCRIPTORS
     pub const BufferedWriter =
         struct {
+        pseudoref_count: u32 = 1,
         writer: Writer = .{
             .close_fd = false,
         },
@@ -7393,6 +7394,8 @@ pub const Interpreter = struct {
 
         pub fn write(this: *@This()) void {
             if (comptime bun.Environment.isPosix) {
+                this.writer.parent = this;
+                // if (bun.Environment.allow_assert) std.debug.assert(@intFromPtr(this) == @intFromPtr(this.writer.parent));
                 if (this.writer.start(this.fd, true).asErr()) |_| {
                     @panic("TODO handle file poll register faill");
                 }
@@ -7409,7 +7412,6 @@ pub const Interpreter = struct {
             onError,
             onClose,
             getBuffer,
-            null,
             null,
         );
 
@@ -7433,11 +7435,14 @@ pub const Interpreter = struct {
         }
 
         pub fn onWrite(this: *BufferedWriter, amount: usize, done: bool) void {
-            _ = done;
             if (this.bytelist) |bytelist| {
                 bytelist.append(bun.default_allocator, this.buffer[this.written .. this.written + amount]) catch bun.outOfMemory();
             }
             this.written += amount;
+            if (done) return;
+            // if (this.written >= this.buffer.len) {
+            //     this.writer.end();
+            // }
         }
 
         pub fn onError(this: *BufferedWriter, err: bun.sys.Error) void {
@@ -7495,14 +7500,16 @@ pub const Interpreter = struct {
             }
         };
 
-        pub fn isDone(this: *BufferedWriter) bool {
-            return this.remain() == 0 or this.err != null;
-        }
-
         pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedWriter, .writable, onReady);
+
+        pub fn deref(this: *BufferedWriter) void {
+            this.pseudoref_count -= 1;
+            if (this.pseudoref_count == 0) {}
+        }
 
         pub fn deinit(this: *BufferedWriter) void {
             this.writer.deinit();
+            this.parent.onDone(this.err);
         }
     };
 };

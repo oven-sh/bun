@@ -363,6 +363,10 @@ pub const FilePoll = struct {
             //     var loader = ptr.as(ShellSubprocessCapturedBufferedWriterMini);
             //     loader.onPoll(size_or_offset, 0);
             // },
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriter))) => {
+                var handler: *ShellBufferedWriter = ptr.as(ShellBufferedWriter);
+                handler.onPoll(size_or_offset, poll.flags.contains(.hup));
+            },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(StaticPipeWriter))) => {
                 var handler: *StaticPipeWriter = ptr.as(StaticPipeWriter);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));

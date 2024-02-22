@@ -31,7 +31,7 @@ pub const PollOrFd = union(enum) {
         };
     }
 
-    pub fn close(this: *PollOrFd, ctx: ?*anyopaque, comptime onCloseFn: anytype) void {
+    pub fn closeImpl(this: *PollOrFd, ctx: ?*anyopaque, comptime onCloseFn: anytype, close_fd: bool) void {
         const fd = this.getFd();
         var close_async = true;
         if (this.* == .poll) {
@@ -60,16 +60,20 @@ pub const PollOrFd = union(enum) {
             //TODO: We should make this call compatible using bun.FileDescriptor
             if (Environment.isWindows) {
                 bun.Async.Closer.close(bun.uvfdcast(fd), bun.windows.libuv.Loop.get());
-            } else if (close_async) {
+            } else if (close_async and close_fd) {
                 bun.Async.Closer.close(fd, {});
             } else {
-                _ = bun.sys.close(fd);
+                if (close_fd) _ = bun.sys.close(fd);
             }
             if (comptime @TypeOf(onCloseFn) != void)
                 onCloseFn(@alignCast(@ptrCast(ctx.?)));
         } else {
             this.* = .{ .closed = {} };
         }
+    }
+
+    pub fn close(this: *PollOrFd, ctx: ?*anyopaque, comptime onCloseFn: anytype) void {
+        this.closeImpl(ctx, onCloseFn, true);
     }
 };
 

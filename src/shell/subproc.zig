@@ -683,7 +683,6 @@ pub const PipeReader = struct {
             onClose,
             getBuffer,
             null,
-            CapturedWriter.isDone,
         );
 
         pub const Poll = IOWriter;
@@ -706,8 +705,11 @@ pub const PipeReader = struct {
         }
 
         pub fn onWrite(this: *CapturedWriter, amount: usize, done: bool) void {
-            _ = done;
             this.written += amount;
+            if (done) return;
+            if (this.written >= this.parent().reader.buffer().items.len) {
+                this.writer.end();
+            }
         }
 
         pub fn onError(this: *CapturedWriter, err: bun.sys.Error) void {

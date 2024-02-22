@@ -1241,7 +1241,7 @@ else()
 endif()
 
 if(USE_CUSTOM_CARES)
-    target_link_libraries(${bun} PRIVATE c-ares::cares_static)
+    target_link_libraries(${bun} PRIVATE cares_static)
 else()
     find_package(c-ares CONFIG REQUIRED)
     target_link_libraries(${bun} PRIVATE c-ares::cares)

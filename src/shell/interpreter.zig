@@ -7419,6 +7419,8 @@ pub const Interpreter = struct {
 
         const print = bun.Output.scoped(.BufferedWriter, false);
 
+        pub const auto_poll = false;
+
         pub fn write(this: *@This()) void {
             if (comptime bun.Environment.isPosix) {
                 this.writer.parent = this;
@@ -7467,9 +7469,8 @@ pub const Interpreter = struct {
             }
             this.written += amount;
             if (done) return;
-            // if (this.written >= this.buffer.len) {
-            //     this.writer.end();
-            // }
+            if (this.written >= this.buffer.len) return this.writer.end();
+            this.writer.registerPoll();
         }
 
         pub fn onError(this: *BufferedWriter, err: bun.sys.Error) void {

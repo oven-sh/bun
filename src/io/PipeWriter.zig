@@ -106,6 +106,9 @@ pub fn PosixPipeWriter(
                 },
                 .wrote => |amt| {
                     onWrite(parent, amt, false);
+                    if (@hasDecl(This, "auto_poll")) {
+                        if (!This.auto_poll) return;
+                    }
                     if (getBuffer(parent).len > 0) {
                         if (comptime registerPoll) |register| {
                             register(parent);
@@ -184,6 +187,8 @@ pub fn PosixBufferedWriter(
 
         const PosixWriter = @This();
 
+        pub const auto_poll = if (@hasDecl(Parent, "auto_poll")) Parent.auto_poll else true;
+
         pub fn getPoll(this: *const @This()) ?*Async.FilePoll {
             return this.handle.getPoll();
         }
@@ -237,7 +242,7 @@ pub fn PosixBufferedWriter(
             }
         }
 
-        fn registerPoll(this: *PosixWriter) void {
+        pub fn registerPoll(this: *PosixWriter) void {
             var poll = this.getPoll() orelse return;
             switch (poll.registerWithFd(bun.uws.Loop.get(), .writable, .dispatch, poll.fd)) {
                 .err => |err| {

@@ -628,7 +628,8 @@ pub const Expect = struct {
         if (list_value.jsTypeLoose().isArrayLike()) {
             var itr = list_value.arrayIterator(globalObject);
             while (itr.next()) |item| {
-                if (item.isSameValue(expected, globalObject)) {
+                // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
+                if (item.jestDeepEquals(expected, globalObject)) {
                     pass = true;
                     break;
                 }
@@ -647,7 +648,8 @@ pub const Expect = struct {
                     item: JSValue,
                 ) callconv(.C) void {
                     const entry = bun.cast(*ExpectedEntry, entry_.?);
-                    if (item.isSameValue(entry.expected, entry.globalObject)) {
+                    // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
+                    if (item.jestDeepEquals(entry.expected, entry.globalObject)) {
                         entry.pass.* = true;
                         // TODO(perf): break out of the `forEach` when a match is found
                     }

@@ -4356,11 +4356,11 @@ pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: us
 
 pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime check_min: bool) ?u32 {
     var remaining = slice;
+    const remaining_start = remaining.ptr;
 
-    if (comptime Environment.enableSIMD and Environment.isNative) {
+    if (Environment.enableSIMD and Environment.isNative) {
         const end_ptr = remaining.ptr + remaining.len - (remaining.len % ascii_u16_vector_size);
         if (remaining.len > ascii_u16_vector_size) {
-            const remaining_start = remaining.ptr;
             while (remaining.ptr != end_ptr) {
                 const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
                 const max_value = @reduce(.Max, vec);
@@ -4381,19 +4381,17 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
                         const bitmask: u8 = @as(u8, @bitCast(cmp));
                         const first = @ctz(bitmask);
 
-                        return @as(u32, @intCast(@as(u32, first) +
-                            @as(u32, @intCast(slice.len - remaining.len))));
+                        return @as(u32, @intCast(@as(u32, first) + @as(u32, @intCast(slice.len - remaining.len))));
                     }
-                } else if (comptime !check_min) {
+                } else {
                     if (max_value > 127) {
-                        remaining.len -= (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
-
                         const cmp = vec > max_u16_ascii;
                         const bitmask: u8 = @as(u8, @bitCast(cmp));
-                        const first = @ctz(bitmask);
+                        const index_of_first_nonascii_in_vector = @ctz(bitmask);
 
-                        return @as(u32, @intCast(@as(u32, first) +
-                            @as(u32, @intCast(slice.len - remaining.len))));
+                        const offset_of_vector_in_input = (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
+
+                        return @intCast(offset_of_vector_in_input + index_of_first_nonascii_in_vector);
                     }
                 }
 
@@ -4403,8 +4401,8 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
         }
     }
 
+    var i: usize = (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
     if (comptime check_min) {
-        var i: usize = 0;
         for (remaining) |char| {
             if (char > 127 or char < 0x20) {
                 return @as(u32, @truncate(i));
@@ -4412,7 +4410,6 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
             i += 1;
         }
     } else {
-        var i: usize = 0;
         for (remaining) |char| {
             if (char > 127) {
                 return @as(u32, @truncate(i));

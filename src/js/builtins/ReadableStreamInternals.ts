@@ -243,7 +243,7 @@ export function readableStreamPipeToWritableStream(
   pipeState.reader = $acquireReadableStreamDefaultReader(source);
   pipeState.writer = $acquireWritableStreamDefaultWriter(destination);
 
-  $putByIdDirectPrivate(source, "disturbed", true);
+  source.$disturbed = true;
 
   pipeState.finalized = false;
   pipeState.shuttingDown = false;
@@ -1345,7 +1345,7 @@ export function readableStreamReaderGenericCancel(reader, reason) {
 }
 
 export function readableStreamCancel(stream, reason) {
-  $putByIdDirectPrivate(stream, "disturbed", true);
+  stream.$disturbed = true;
   const state = $getByIdDirectPrivate(stream, "state");
   if (state === $streamClosed) return Promise.$resolve();
   if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
@@ -1449,7 +1449,7 @@ export function readableStreamDefaultReaderRead(reader) {
   $assert(!!stream);
   const state = $getByIdDirectPrivate(stream, "state");
 
-  $putByIdDirectPrivate(stream, "disturbed", true);
+  stream.$disturbed = true;
   if (state === $streamClosed) return $createFulfilledPromise({ value: undefined, done: true });
   if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
   $assert(state === $streamReadable);
@@ -1472,7 +1472,7 @@ export function readableStreamAddReadRequest(stream) {
 
 export function isReadableStreamDisturbed(stream) {
   $assert($isReadableStream(stream));
-  return $getByIdDirectPrivate(stream, "disturbed");
+  return stream.$disturbed;
 }
 
 $visibility = "Private";
@@ -1494,7 +1494,7 @@ export function readableStreamReaderGenericRelease(reader) {
   $markPromiseAsHandled(promise);
 
   var stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
-  if ($getByIdDirectPrivate(stream, "bunNativePtr")) {
+  if (stream.$bunNativePtr) {
     $getByIdDirectPrivate($getByIdDirectPrivate(stream, "readableStreamController"), "underlyingByteSource").$resume(
       false,
     );
@@ -1608,7 +1608,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
 
 export function lazyLoadStream(stream, autoAllocateChunkSize) {
   $debug("lazyLoadStream", stream, autoAllocateChunkSize);
-  var handle = $getByIdDirectPrivate(stream, "bunNativePtr");
+  var handle = stream.$bunNativePtr;
   var Prototype = $lazyStreamPrototypeMap.$get($getPrototypeOf(handle));
   if (Prototype === undefined) {
     var closer = [false];
@@ -1746,8 +1746,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
     $lazyStreamPrototypeMap.$set($getPrototypeOf(handle), Prototype);
   }
 
-  $putByIdDirectPrivate(stream, "disturbed", true);
-
+  stream.$disturbed = true;
   const chunkSizeOrCompleteBuffer = handle.start(autoAllocateChunkSize);
   let chunkSize, drainValue;
   if ($isTypedArrayView(chunkSizeOrCompleteBuffer)) {

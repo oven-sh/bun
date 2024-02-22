@@ -2860,7 +2860,7 @@ pub fn ReadableStreamSource(
 
             pub fn finalize(this: *ReadableStreamSourceType) callconv(.C) void {
                 this.this_jsvalue = .zero;
-                _ = this.decrementCount();
+                // _ = this.decrementCount();
             }
 
             pub fn drain(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {

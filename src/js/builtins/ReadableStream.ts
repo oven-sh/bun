@@ -43,11 +43,11 @@ export function initializeReadableStream(
 
   $putByIdDirectPrivate(this, "storedError", undefined);
 
-  $putByIdDirectPrivate(this, "disturbed", false);
+  this.$disturbed = false;
 
   // Initialized with null value to enable distinction with undefined case.
   $putByIdDirectPrivate(this, "readableStreamController", null);
-  $putByIdDirectPrivate(this, "bunNativePtr", $getByIdDirectPrivate(underlyingSource, "bunNativePtr") ?? undefined);
+  this.$bunNativePtr = underlyingSource.$bunNativePtr ?? undefined;
 
   $putByIdDirectPrivate(this, "asyncContext", $getInternalField($asyncContext, 0));
 

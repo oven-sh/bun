@@ -3707,7 +3707,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGetDirectStreamDetails, (JSC::JSGlobalObject * 
     if (type.isUndefined())
         return JSC::JSValue::encode(JSC::jsNull());
 
-    readableStream->setNativePtr(globalObject, jsNumber(-1));
+    readableStream->setNativePtr(globalObject, jsUndefined());
     readableStream->setDisturbed(globalObject, jsBoolean(true));
 
     auto* resultObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);

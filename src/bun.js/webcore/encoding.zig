@@ -527,7 +527,7 @@ pub const TextDecoder = struct {
         while (remainder.len > 0) {
             switch (remainder[0]) {
                 0...127 => {
-                    const count: usize = if (strings.firstNonASCII16CheckMin(Slice, remainder, false)) |index| index + 1 else remainder.len;
+                    const count: usize = if (strings.firstNonASCII16IgnoreMin(Slice, remainder)) |index| index + 1 else remainder.len;
 
                     buffer.ensureUnusedCapacity(allocator, count) catch unreachable;
 

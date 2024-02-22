@@ -4209,6 +4209,10 @@ pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
     return firstNonASCII16CheckMin(Slice, slice, true);
 }
 
+pub fn firstNonASCII16IgnoreMin(comptime Slice: type, slice: Slice) ?u32 {
+    return firstNonASCII16CheckMin(Slice, slice, false);
+}
+
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number
 /// The final element is the end index of the desired line
 const LineRange = struct {

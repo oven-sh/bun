@@ -121,7 +121,7 @@ describe("jest-extended", () => {
       expect.unreachable();
     } catch (e) {
       expect(e.message).not.toContain("unreachable");
-      expect(Bun.inspect(e)).not.toBeEmpty(); // verify that logging it doesn't cause a crash
+      if (typeof Bun === "object") expect(Bun.inspect(e)).not.toBeEmpty(); // verify that logging it doesn't cause a crash
     }
 
     try {
@@ -129,7 +129,7 @@ describe("jest-extended", () => {
       expect.unreachable();
     } catch (e) {
       expect(e.message).not.toContain("unreachable");
-      expect(Bun.inspect(e)).not.toBeEmpty(); // verify that logging it doesn't cause a crash
+      if (typeof Bun === "object") expect(Bun.inspect(e)).not.toBeEmpty(); // verify that logging it doesn't cause a crash
     }
   });
 

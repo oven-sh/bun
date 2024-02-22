@@ -520,9 +520,9 @@ pub const ShellSubprocess = struct {
 
         var spawn_options = bun.spawn.SpawnOptions{
             .cwd = spawn_args.cwd,
-            .stdin = spawn_args.stdio[0].toPosix(),
-            .stdout = spawn_args.stdio[1].toPosix(),
-            .stderr = spawn_args.stdio[2].toPosix(),
+            .stdin = spawn_args.stdio[0].asSpawnOption(),
+            .stdout = spawn_args.stdio[1].asSpawnOption(),
+            .stderr = spawn_args.stdio[2].asSpawnOption(),
         };
 
         spawn_args.argv.append(allocator, null) catch {

@@ -2140,11 +2140,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 if (this.blob == .Blob) {
                     const original_size = this.blob.Blob.size;
-
+                    // if we dont know the size we use the stat size
                     this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
                         stat_size
-                    else
-                        @min(original_size, stat_size);
+                    else // the blob can be a slice of a file
+                        @max(original_size, stat_size);
                 }
 
                 if (!this.flags.has_written_status)
@@ -2714,7 +2714,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             .Bytes => |byte_stream| {
                                 std.debug.assert(byte_stream.pipe.ctx == null);
                                 std.debug.assert(this.byte_stream == null);
-
                                 if (this.resp == null) {
                                     // we don't have a response, so we can discard the stream
                                     stream.detachIfPossible(this.server.globalThis);

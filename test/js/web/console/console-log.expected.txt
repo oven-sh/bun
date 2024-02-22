@@ -244,3 +244,8 @@ myCustomName {
 {
   "": "",
 }
+{
+  hello: 2,
+}
+<Revoked Proxy>
+custom inspect

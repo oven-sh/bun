@@ -22,6 +22,7 @@ const defaultRedirect = {
   stderr: false,
   stdin: false,
   stdout: false,
+  duplicate_out: false,
 };
 
 export const redirect = (opts?: Partial<typeof defaultRedirect>): typeof defaultRedirect =>

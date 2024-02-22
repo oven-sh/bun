@@ -216,7 +216,7 @@ pub const FDImpl = packed struct {
         // Format the file descriptor for logging BEFORE closing it.
         // Otherwise the file descriptor is always invalid after closing it.
         var buf: if (env.isDebug) [1050]u8 else void = undefined;
-        const this_fmt = if (env.isDebug) std.fmt.bufPrint(&buf, "{d}", .{this}) catch unreachable;
+        const this_fmt = if (env.isDebug) std.fmt.bufPrint(&buf, "{}", .{this}) catch unreachable;
 
         const result: ?bun.sys.Error = switch (env.os) {
             .linux => result: {
@@ -310,13 +310,18 @@ pub const FDImpl = packed struct {
             return;
         }
 
-        if (fmt.len == 1 and fmt[0] == 'd') {
-            try writer.print("{d}", .{this.system()});
-            return;
-        }
-
         if (fmt.len != 0) {
-            @compileError("invalid format string for FDImpl.format. must be either '' or 'd'");
+            // The reason for this error is because formatting FD as an integer on windows is
+            // ambiguous and almost certainly a mistake. You probably meant to format fd.cast().
+            //
+            // Remember this formatter will
+            // - on posix, print the numebr
+            // - on windows, print if it is a handle or a libuv file descriptor
+            // - in debug on all platforms, print the path of the file descriptor
+            //
+            // Not having this error caused a linux+debug only crash in bun.sys.getFdPath because
+            // we forgot to change the thing being printed to "fd.cast()" when FDImpl was introduced.
+            @compileError("invalid format string for FDImpl.format. must be empty like '{}'");
         }
 
         switch (env.os) {

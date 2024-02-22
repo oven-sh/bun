@@ -305,25 +305,26 @@ pub const RunCommand = struct {
         }
 
         if (Environment.isWindows and !use_native_shell) {
-            if (!silent) {
-                if (Environment.isDebug) {
-                    Output.prettyError("[bun shell] ", .{});
-                }
-                Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
-                Output.flush();
-            }
+            @panic("TODO: Windows shell support");
+            // if (!silent) {
+            //     if (Environment.isDebug) {
+            //         Output.prettyError("[bun shell] ", .{});
+            //     }
+            //     Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
+            //     Output.flush();
+            // }
 
-            const mini = bun.JSC.MiniEventLoop.initGlobal(env);
-            bun.shell.ShellSubprocessMini.initAndRunFromSource(mini, name, combined_script) catch |err| {
-                if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
-                }
+            // const mini = bun.JSC.MiniEventLoop.initGlobal(env);
+            // bun.shell.ShellSubprocessMini.initAndRunFromSource(mini, name, combined_script) catch |err| {
+            //     if (!silent) {
+            //         Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+            //     }
 
-                Output.flush();
-                Global.exit(1);
-            };
+            //     Output.flush();
+            //     Global.exit(1);
+            // };
 
-            return true;
+            // return true;
         }
 
         var argv = [_]string{
@@ -413,7 +414,7 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         original_script_for_bun_run: ?[]const u8,
-    ) !bool {
+    ) !noreturn {
         var argv_ = [_]string{executable};
         var argv: []const string = &argv_;
 
@@ -509,8 +510,6 @@ pub const RunCommand = struct {
                 Global.exit(1);
             },
         }
-
-        return true;
     }
 
     pub fn ls(ctx: Command.Context) !void {

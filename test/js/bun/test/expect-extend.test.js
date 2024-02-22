@@ -7,12 +7,23 @@
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect-extend.test.js`
  */
 
+import { withoutAggressiveGC } from "harness";
 import test_interop from "./test-interop.js";
 var { isBun, expect, describe, test, it } = await test_interop();
 
 //expect.addSnapshotSerializer(alignedAnsiStyleSerializer);
 
 expect.extend({
+  // @ts-expect-error
+  _toHaveMessageThatThrows(actual, expected) {
+    const message = () => ({
+      [Symbol.toPrimitive]: () => {
+        throw new Error("i have successfully propagated the error message!");
+      },
+    });
+
+    return { message, pass: 42 };
+  },
   _toBeDivisibleBy(actual, expected) {
     const pass = typeof actual === "number" && actual % expected === 0;
     const message = pass
@@ -308,8 +319,17 @@ describe("async support", () => {
 });
 
 it("should not crash under intensive usage", () => {
-  for (let i = 0; i < 10000; ++i) {
-    expect(i)._toBeDivisibleBy(1);
-    expect(i).toEqual(expect._toBeDivisibleBy(1));
-  }
+  withoutAggressiveGC(() => {
+    for (let i = 0; i < 10000; ++i) {
+      expect(i)._toBeDivisibleBy(1);
+      expect(i).toEqual(expect._toBeDivisibleBy(1));
+    }
+  });
+  Bun.gc(true);
+});
+
+it("should propagate errors from calling .toString() on the message callback value", () => {
+  expect(() => expect("abc").not._toHaveMessageThatThrows("def")).toThrow(
+    "i have successfully propagated the error message!",
+  );
 });

@@ -418,7 +418,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
     const rc = fstatSym(fd.cast(), &stat_);
 
     if (comptime Environment.allow_assert)
-        log("fstat({d}) = {d}", .{ fd, rc });
+        log("fstat({}) = {d}", .{ fd, rc });
 
     if (Maybe(bun.Stat).errnoSys(rc, .fstat)) |err| return err;
     return Maybe(bun.Stat){ .result = stat_ };
@@ -764,12 +764,12 @@ pub fn openFileAtWindowsNtPath(
                 // - access_mask probably needs w.SYNCHRONIZE,
                 // - options probably needs w.FILE_SYNCHRONOUS_IO_NONALERT
                 // - disposition probably needs w.FILE_OPEN
-                bun.Output.debugWarn("NtCreateFile({d}, {}) = {s} (file) = {d}\nYou are calling this function with the wrong flags!!!", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
+                bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function with the wrong flags!!!", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
             } else if (rc == .OBJECT_PATH_SYNTAX_BAD or rc == .OBJECT_NAME_INVALID) {
                 // See above comment. For absolute paths you must have \??\ at the start.
-                bun.Output.debugWarn("NtCreateFile({d}, {}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
+                bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
             } else {
-                log("NtCreateFile({d}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
+                log("NtCreateFile({}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
             }
         }
 
@@ -914,7 +914,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
         const rc = system.@"openat$NOCANCEL"(dirfd.cast(), file_path.ptr, @as(c_uint, @intCast(flags)), @as(c_int, @intCast(perm)));
         if (comptime Environment.allow_assert)
-            log("openat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
+            log("openat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
 
         return Maybe(bun.FileDescriptor).errnoSys(rc, .open) orelse .{ .result = bun.toFD(rc) };
     } else if (comptime Environment.isWindows) {
@@ -924,7 +924,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
     while (true) {
         const rc = Syscall.system.openat(dirfd.cast(), file_path, flags, perm);
         if (comptime Environment.allow_assert)
-            log("openat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
+            log("openat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
         return switch (Syscall.getErrno(rc)) {
             .SUCCESS => .{ .result = bun.toFD(rc) },
             .INTR => continue,
@@ -990,7 +990,7 @@ pub fn close(fd: bun.FileDescriptor) ?Syscall.Error {
 
 pub fn close2(fd: bun.FileDescriptor) ?Syscall.Error {
     if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD or fd == bun.STDIN_FD) {
-        log("close({d}) SKIPPED", .{fd});
+        log("close({}) SKIPPED", .{fd});
         return null;
     }
 
@@ -1055,7 +1055,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                 &bytes_written,
                 null,
             );
-            log("WriteFile({d}, {d}) = {d} (written: {d}) {}", .{ @intFromPtr(fd.cast()), adjusted_len, rc, bytes_written, debug_timer });
+            log("WriteFile({}, {d}) = {d} (written: {d}) {}", .{ fd, adjusted_len, rc, bytes_written, debug_timer });
             if (rc == 0) {
                 return .{
                     .err = Syscall.Error{
@@ -1083,7 +1083,7 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = writev_sym(fd.cast(), @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
-            log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+            log("writev({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
         if (Maybe(usize).errnoSysFd(rc, .writev, fd)) |err| {
             return err;
@@ -1094,7 +1094,7 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
         while (true) {
             const rc = writev_sym(fd.cast(), @as([*]std.os.iovec_const, @ptrCast(buffers.ptr)), buffers.len);
             if (comptime Environment.allow_assert)
-                log("writev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+                log("writev({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
             if (Maybe(usize).errnoSysFd(rc, .writev, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -1114,7 +1114,7 @@ pub fn pwritev(fd: bun.FileDescriptor, buffers: []const bun.PlatformIOVecConst, 
     if (comptime Environment.isMac) {
         const rc = pwritev_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
-            log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+            log("pwritev({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
         if (Maybe(usize).errnoSysFd(rc, .pwritev, fd)) |err| {
             return err;
@@ -1125,7 +1125,7 @@ pub fn pwritev(fd: bun.FileDescriptor, buffers: []const bun.PlatformIOVecConst, 
         while (true) {
             const rc = pwritev_sym(fd.cast(), buffers.ptr, buffers.len, position);
             if (comptime Environment.allow_assert)
-                log("pwritev({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+                log("pwritev({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
             if (Maybe(usize).errnoSysFd(rc, .pwritev, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -1148,7 +1148,7 @@ pub fn readv(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = readv_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
-            log("readv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+            log("readv({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
         if (Maybe(usize).errnoSysFd(rc, .readv, fd)) |err| {
             return err;
@@ -1159,7 +1159,7 @@ pub fn readv(fd: bun.FileDescriptor, buffers: []std.os.iovec) Maybe(usize) {
         while (true) {
             const rc = readv_sym(fd.cast(), buffers.ptr, buffers.len);
             if (comptime Environment.allow_assert)
-                log("readv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+                log("readv({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
             if (Maybe(usize).errnoSysFd(rc, .readv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -1182,7 +1182,7 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) 
     if (comptime Environment.isMac) {
         const rc = preadv_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
-            log("preadv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+            log("preadv({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
         if (Maybe(usize).errnoSysFd(rc, .preadv, fd)) |err| {
             return err;
@@ -1193,7 +1193,7 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.os.iovec, position: isize) 
         while (true) {
             const rc = preadv_sym(fd.cast(), buffers.ptr, buffers.len, position);
             if (comptime Environment.allow_assert)
-                log("preadv({d}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+                log("preadv({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
             if (Maybe(usize).errnoSysFd(rc, .preadv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -1301,7 +1301,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
         .mac => {
             const rc = system.@"read$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len);
 
-            log("read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
+            log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                 return err;
@@ -1312,7 +1312,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
         .linux => {
             while (true) {
                 const rc = sys.read(fd.cast(), buf.ptr, adjusted_len);
-                log("read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
+                log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
                 if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                     if (err.getErrno() == .INTR) continue;
@@ -1342,7 +1342,7 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
 
     if (comptime Environment.isMac) {
         const rc = system.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
-        log("recv({}, {d}) = {d}", .{ fd, adjusted_len, rc });
+        log("recv({}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
 
         if (Maybe(usize).errnoSys(rc, .recv)) |err| {
             return err;
@@ -1352,7 +1352,7 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     } else {
         while (true) {
             const rc = linux.recvfrom(fd.cast(), buf.ptr, adjusted_len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
-            log("recv({}, {d}) = {d}", .{ fd, adjusted_len, rc });
+            log("recv({}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
 
             if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -1465,11 +1465,11 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
         if (Maybe(void).errnoSys(sys.renameat(from_dir.cast(), from, to_dir.cast(), to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("renameat({d}, {s}, {d}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
+                log("renameat({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
-            log("renameat({d}, {s}, {d}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
+            log("renameat({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
         return Maybe(void).success;
     }
 }
@@ -1561,11 +1561,11 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
         if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, flags), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("unlinkat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
+                log("unlinkat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
-            log("unlinkat({d}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
+            log("unlinkat({}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
         return Maybe(void).success;
     }
     unreachable;
@@ -1579,11 +1579,11 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         if (Maybe(void).errnoSys(sys.unlinkat(dirfd.cast(), to, 0), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("unlinkat({d}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
+                log("unlinkat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(to, 0), @intFromEnum(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
-            log("unlinkat({d}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
+            log("unlinkat({}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
         return Maybe(void).success;
     }
 }
@@ -1611,7 +1611,7 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
         },
         .linux => {
             // TODO: alpine linux may not have /proc/self
-            var procfs_buf: ["/proc/self/fd/-2147483648".len:0]u8 = undefined;
+            var procfs_buf: ["/proc/self/fd/-2147483648".len + 1:0]u8 = undefined;
             const proc_path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
             return switch (readlink(proc_path, out_buffer)) {
                 .err => |err| return .{ .err = err },
@@ -1971,6 +1971,7 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
         }
         return Maybe(bun.FileDescriptor){ .result = bun.toFD(target) };
     }
+
     const ArgType = if (comptime Environment.isLinux) usize else c_int;
     const out = system.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(ArgType, 0));
     log("dup({d}) = {d}", .{ fd.cast(), out });

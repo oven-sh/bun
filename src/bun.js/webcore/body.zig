@@ -172,7 +172,7 @@ pub const Body = struct {
                                         value.action = .{ .none = {} };
                                         return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("ReadableStream is already used", .{}));
                                     } else {
-                                        readable.detachIfPossible(globalThis);
+                                        readable.value.unprotect();
                                         value.readable = null;
                                     }
 
@@ -393,6 +393,7 @@ pub const Body = struct {
                             .global = globalThis,
                         },
                     };
+
                     this.Locked.readable.?.value.protect();
 
                     return value;
@@ -587,14 +588,6 @@ pub const Body = struct {
                     .global = globalThis,
                 },
             };
-        }
-
-        pub fn fromReadableStream(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
-            if (readable.isLocked(globalThis)) {
-                return .{ .Error = ZigString.init("Cannot use a locked ReadableStream").toErrorInstance(globalThis) };
-            }
-
-            return fromReadableStreamWithoutLockCheck(readable, globalThis);
         }
 
         pub fn resolve(to_resolve: *Value, new: *Value, global: *JSGlobalObject) void {

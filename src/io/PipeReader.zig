@@ -59,7 +59,7 @@ pub fn PosixPipeReader(
         pub fn onPoll(parent: *This, size_hint: isize, received_hup: bool) void {
             const resizable_buffer = vtable.getBuffer(parent);
             const fd = vtable.getFd(parent);
-            bun.sys.syslog("onPoll({d}) = {d}", .{ fd, size_hint });
+            bun.sys.syslog("onPoll({}) = {d}", .{ fd, size_hint });
 
             switch (vtable.getFileType(parent)) {
                 .nonblocking_pipe => {

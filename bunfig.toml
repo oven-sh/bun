@@ -6,3 +6,4 @@
 #
 # Instead, we can only scan the test directory for Bun's runtime tests
 root = "test"
+preload = "./test/preload.ts"

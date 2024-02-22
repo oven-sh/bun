@@ -157,7 +157,7 @@ pub const IO = struct {
         std: struct { captured: ?*bun.ByteList = null },
         /// Write/Read to/from file descriptor
         fd: bun.FileDescriptor,
-        /// Buffers the output
+        /// Buffers the output (handled in Cmd.BufferedIoClosed.close())
         pipe,
         /// Discards output
         ignore,
@@ -856,7 +856,7 @@ pub const Interpreter = struct {
             jsobjs.items[0..],
         )) {
             .result => |i| i,
-            .err => |e| {
+            .err => |*e| {
                 arena.deinit();
                 throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
                 return null;
@@ -1026,7 +1026,7 @@ pub const Interpreter = struct {
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
         var interp = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
-            .err => |e| {
+            .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return;
             },
@@ -1072,7 +1072,7 @@ pub const Interpreter = struct {
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
         var interp = switch (ThisInterpreter.init(mini, bun.default_allocator, &arena, script_heap, jsobjs)) {
-            .err => |e| {
+            .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return;
             },
@@ -1610,7 +1610,7 @@ pub const Interpreter = struct {
                         const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .cmd_subst)) {
                             .result => |s| s,
                             .err => |e| {
-                                throwShellErr(bun.shell.ShellErr.newSys(e), this.base.eventLoop());
+                                this.base.throw(&bun.shell.ShellErr.newSys(e));
                                 return false;
                             },
                         };
@@ -1637,7 +1637,7 @@ pub const Interpreter = struct {
                             const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .cmd_subst)) {
                                 .result => |s| s,
                                 .err => |e| {
-                                    throwShellErr(bun.shell.ShellErr.newSys(e), this.base.eventLoop());
+                                    this.base.throw(&bun.shell.ShellErr.newSys(e));
                                     return false;
                                 },
                             };
@@ -1790,15 +1790,15 @@ pub const Interpreter = struct {
                 std.debug.assert(this.child_state == .glob);
             }
 
-            if (task.err != null) {
-                switch (task.err.?) {
+            if (task.err) |*err| {
+                switch (err.*) {
                     .syscall => {
-                        throwShellErr(bun.shell.ShellErr.newSys(task.err.?.syscall), this.base.eventLoop());
+                        this.base.throw(&bun.shell.ShellErr.newSys(task.err.?.syscall));
                     },
                     .unknown => |errtag| {
-                        throwShellErr(.{
+                        this.base.throw(&.{
                             .custom = bun.default_allocator.dupe(u8, @errorName(errtag)) catch bun.outOfMemory(),
-                        }, this.base.eventLoop());
+                        });
                     },
                 }
             }
@@ -2010,6 +2010,10 @@ pub const Interpreter = struct {
                     .expansion = expansion,
                     .result = std.ArrayList([:0]const u8).init(allocator),
                 };
+                if (bun.Environment.isWindows) {
+                    // event loop here is js event loop
+                    @panic("TODO SHELL WINDOWS!");
+                }
                 // this.ref.ref(this.event_loop.virtual_machine);
                 this.ref.ref(this.event_loop);
 
@@ -2050,6 +2054,10 @@ pub const Interpreter = struct {
 
             pub fn runFromMainThread(this: *This) void {
                 print("runFromJS", .{});
+                if (bun.Environment.isWindows) {
+                    // event loop here is js event loop
+                    @panic("TODO SHELL WINDOWS!");
+                }
                 this.expansion.onGlobWalkDone(this);
                 // this.ref.unref(this.event_loop.virtual_machine);
                 this.ref.unref(this.event_loop);
@@ -2086,8 +2094,12 @@ pub const Interpreter = struct {
         interpreter: *ThisInterpreter,
         shell: *ShellState,
 
-        pub inline fn eventLoop(this: *State) JSC.EventLoopHandle {
+        pub inline fn eventLoop(this: *const State) JSC.EventLoopHandle {
             return this.interpreter.event_loop;
+        }
+
+        pub fn throw(this: *const State, err: *const bun.shell.ShellErr) void {
+            throwShellErr(err, this.eventLoop());
         }
     };
 
@@ -2766,7 +2778,7 @@ pub const Interpreter = struct {
             }
 
             if (err) |e| {
-                throwShellErr(shell.ShellErr.newSys(e), this.base.eventLoop());
+                this.base.throw(&shell.ShellErr.newSys(e));
                 return;
             }
 
@@ -3202,7 +3214,7 @@ pub const Interpreter = struct {
 
         pub fn onBufferedWriterDone(this: *Cmd, e: ?Syscall.Error) void {
             if (e) |err| {
-                throwShellErr(bun.shell.ShellErr.newSys(err), this.base.eventLoop());
+                this.base.throw(&bun.shell.ShellErr.newSys(err));
                 return;
             }
             std.debug.assert(this.state == .waiting_write_err);
@@ -3461,8 +3473,8 @@ pub const Interpreter = struct {
             } };
             const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), spawn_args, &this.exec.subproc.child)) {
                 .result => this.exec.subproc.child,
-                .err => |e| {
-                    throwShellErr(e, this.base.eventLoop());
+                .err => |*e| {
+                    this.base.throw(e);
                     return;
                 },
             };
@@ -3975,8 +3987,8 @@ pub const Interpreter = struct {
                         const path = cmd.redirection_file.items[0..cmd.redirection_file.items.len -| 1 :0];
                         log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
                         const perm = 0o666;
-                        const extra: bun.Mode = if (node.redirect.append) std.os.O.APPEND else std.os.O.TRUNC;
-                        const redirfd = switch (Syscall.openat(cmd.base.shell.cwd_fd, path, std.os.O.WRONLY | std.os.O.CREAT | extra, perm)) {
+                        const flags = node.redirect.toFlags();
+                        const redirfd = switch (Syscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
                             .err => |e| {
                                 const buf = std.fmt.allocPrint(arena.allocator(), "bun: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
                                 cmd.writeFailingError(buf, 1);
@@ -3996,12 +4008,11 @@ pub const Interpreter = struct {
                         }
                     },
                     .jsbuf => |val| {
-                        if (cmd.base.eventLoop() == .mini) @panic("This should never happened");
-                        const global = cmd.base.eventLoop().js.global;
-                        if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(global)) |buf| {
+                        const globalObject = interpreter.event_loop.js.global;
+                        if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(globalObject)) |buf| {
                             const builtinio: Builtin.BuiltinIO = .{ .arraybuf = .{ .buf = JSC.ArrayBuffer.Strong{
                                 .array_buffer = buf,
-                                .held = JSC.Strong.create(buf.value, global),
+                                .held = JSC.Strong.create(buf.value, globalObject),
                             }, .i = 0 } };
 
                             if (node.redirect.stdin) {
@@ -4031,21 +4042,38 @@ pub const Interpreter = struct {
                             }
                         } else {
                             const jsval = cmd.base.interpreter.jsobjs[val.idx];
-                            global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)});
+                            cmd.base.interpreter.event_loop.js.global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(globalObject)});
                             return .yield;
                         }
                     },
+                }
+            } else if (node.redirect.duplicate_out) {
+                if (node.redirect.stdout) {
+                    cmd.exec.bltn.stderr = cmd.exec.bltn.stdout;
+                }
+
+                if (node.redirect.stderr) {
+                    cmd.exec.bltn.stdout = cmd.exec.bltn.stderr;
                 }
             }
 
             return .cont;
         }
 
-        pub inline fn eventLoop(this: *Builtin) JSC.EventLoopHandle {
+        pub inline fn eventLoop(this: *const Builtin) JSC.EventLoopHandle {
             return this.parentCmd().base.eventLoop();
         }
 
-        pub inline fn parentCmd(this: *Builtin) *Cmd {
+        pub inline fn throw(this: *const Builtin, err: *const bun.shell.ShellErr) void {
+            this.parentCmd().base.throw(err);
+        }
+
+        pub inline fn parentCmd(this: *const Builtin) *const Cmd {
+            const union_ptr = @fieldParentPtr(Cmd.Exec, "bltn", this);
+            return @fieldParentPtr(Cmd, "exec", union_ptr);
+        }
+
+        pub inline fn parentCmdMut(this: *Builtin) *Cmd {
             const union_ptr = @fieldParentPtr(Cmd.Exec, "bltn", this);
             return @fieldParentPtr(Cmd, "exec", union_ptr);
         }
@@ -4056,7 +4084,7 @@ pub const Interpreter = struct {
             // }
             this.exit_code = exit_code;
 
-            var cmd = this.parentCmd();
+            var cmd = this.parentCmdMut();
             log("builtin done ({s}: exit={d}) cmd to free: ({x})", .{ @tagName(this.kind), exit_code, @intFromPtr(cmd) });
             cmd.exit_code = this.exit_code.?;
 
@@ -4913,11 +4941,11 @@ pub const Interpreter = struct {
                             if (paths) |p| {
                                 for (p) |path_raw| {
                                     const path = path_raw[0..std.mem.len(path_raw) :0];
-                                    var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, path, this.bltn.parentCmd().base.eventLoop());
+                                    var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, path, this.bltn.eventLoop());
                                     task.schedule();
                                 }
                             } else {
-                                var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, ".", this.bltn.parentCmd().base.eventLoop());
+                                var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, ".", this.bltn.eventLoop());
                                 task.schedule();
                             }
                         },
@@ -5027,7 +5055,7 @@ pub const Interpreter = struct {
                         // if (!need_to_write_to_stdout_with_io) return; // yield execution
                     } else {
                         if (this.bltn.writeNoIO(.stderr, error_string).asErr()) |theerr| {
-                            throwShellErr(bun.shell.ShellErr.newSys(theerr), this.bltn.eventLoop());
+                            this.bltn.throw(&bun.shell.ShellErr.newSys(theerr));
                         }
                     }
                 }
@@ -5058,7 +5086,7 @@ pub const Interpreter = struct {
                 defer output.deinit();
 
                 if (this.bltn.writeNoIO(.stdout, output.items[0..]).asErr()) |e| {
-                    throwShellErr(bun.shell.ShellErr.newSys(e), this.bltn.eventLoop());
+                    this.bltn.throw(&bun.shell.ShellErr.newSys(e));
                     return;
                 }
 
@@ -6711,7 +6739,7 @@ pub const Interpreter = struct {
                             const error_string = this.bltn.taskErrorToString(.rm, err);
                             if (!this.bltn.stderr.needsIO()) {
                                 if (this.bltn.writeNoIO(.stderr, error_string).asErr()) |e| {
-                                    throwShellErr(bun.shell.ShellErr.newSys(e), this.bltn.parentCmd().base.eventLoop());
+                                    this.bltn.throw(&bun.shell.ShellErr.newSys(e));
                                     return;
                                 }
                             } else {
@@ -6747,7 +6775,7 @@ pub const Interpreter = struct {
             fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) void {
                 if (!this.bltn.stdout.needsIO()) {
                     if (this.bltn.writeNoIO(.stdout, verbose.deleted_entries.items[0..]).asErr()) |err| {
-                        throwShellErr(bun.shell.ShellErr.newSys(err), this.bltn.parentCmd().base.eventLoop());
+                        this.bltn.parentCmd().base.throw(&bun.shell.ShellErr.newSys(err));
                         return;
                     }
                     // _ = this.state.exec.output_done.fetchAdd(1, .SeqCst);
@@ -7377,8 +7405,7 @@ pub const Interpreter = struct {
     /// it. IT DOES NOT CLOSE FILE DESCRIPTORS
     pub const BufferedWriter =
         struct {
-        pseudoref_count: u32 = 1,
-        writer: Writer = .{
+        writer: Writer = if (bun.Environment.isWindows) .{} else .{
             .close_fd = false,
         },
         fd: bun.FileDescriptor = bun.invalid_fd,
@@ -7613,7 +7640,7 @@ pub fn MaybeChild(comptime T: type) type {
 pub fn closefd(fd: bun.FileDescriptor) void {
     if (Syscall.close2(fd)) |err| {
         _ = err;
-        log("ERR closefd: {d}\n", .{fd});
+        log("ERR closefd: {}\n", .{fd});
         // stderr_mutex.lock();
         // defer stderr_mutex.unlock();
         // const stderr = std.io.getStdErr().writer();
@@ -7696,6 +7723,11 @@ pub fn ShellTask(
 
         pub fn schedule(this: *@This()) void {
             print("schedule", .{});
+
+            if (bun.Environment.isWindows) {
+                // event loop here is js event loop
+                @panic("TODO SHELL WINDOWS!");
+            }
             this.ref.ref(this.event_loop);
             WorkPool.schedule(&this.task);
         }
@@ -7742,7 +7774,7 @@ inline fn fastMod(val: anytype, comptime rhs: comptime_int) @TypeOf(val) {
     return val & (rhs - 1);
 }
 
-fn throwShellErr(e: bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) void {
+fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) void {
     switch (event_loop) {
         .mini => e.throwMini(),
         .js => e.throwJS(event_loop.js.global),

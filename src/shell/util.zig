@@ -14,7 +14,16 @@ const Output = @import("root").bun.Output;
 const PosixSpawn = @import("../bun.js/api/bun/spawn.zig").PosixSpawn;
 const os = std.os;
 
-pub const OutKind = enum { stdout, stderr };
+pub const OutKind = enum {
+    stdout,
+    stderr,
+    pub fn toFd(this: OutKind) bun.FileDescriptor {
+        return switch (this) {
+            .stdout => bun.STDOUT_FD,
+            .stderr => bun.STDERR_FD,
+        };
+    }
+};
 
 pub const Stdio = bun.spawn.Stdio;
 

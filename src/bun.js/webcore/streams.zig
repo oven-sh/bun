@@ -51,6 +51,16 @@ pub const ReadableStream = struct {
     value: JSValue,
     ptr: Source,
 
+    pub fn incrementCount(this: *const ReadableStream) void {
+        this.value.protect();
+        switch (this.ptr) {
+            .Blob => |blob| blob.parent().incrementCount(),
+            .File => |file| file.parent().incrementCount(),
+            .Bytes => |bytes| bytes.parent().incrementCount(),
+            else => {},
+        }
+    }
+
     pub const Strong = struct {
         held: JSC.Strong = .{},
 
@@ -59,18 +69,7 @@ pub const ReadableStream = struct {
         }
 
         pub fn init(this: ReadableStream, global: *JSGlobalObject) Strong {
-            switch (this.ptr) {
-                .Blob => |stream| {
-                    stream.parent().incrementCount();
-                },
-                .File => |stream| {
-                    stream.parent().incrementCount();
-                },
-                .Bytes => |stream| {
-                    stream.parent().incrementCount();
-                },
-                else => {},
-            }
+            this.incrementCount();
             return .{
                 .held = JSC.Strong.create(this.value, global),
             };
@@ -503,14 +502,18 @@ pub const StreamStart = union(Tag) {
                 var chunk_size: JSC.WebCore.Blob.SizeType = 0;
                 var empty = true;
 
-                if (value.get(globalThis, "asUint8Array")) |as_array| {
-                    as_uint8array = as_array.toBoolean();
-                    empty = false;
+                if (value.get(globalThis, "asUint8Array")) |val| {
+                    if (val.isBoolean()) {
+                        as_uint8array = val.toBoolean();
+                        empty = false;
+                    }
                 }
 
-                if (value.fastGet(globalThis, .stream)) |as_array| {
-                    stream = as_array.toBoolean();
-                    empty = false;
+                if (value.fastGet(globalThis, .stream)) |val| {
+                    if (val.isBoolean()) {
+                        stream = val.toBoolean();
+                        empty = false;
+                    }
                 }
 
                 if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {

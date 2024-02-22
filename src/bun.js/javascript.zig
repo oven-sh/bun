@@ -2764,8 +2764,10 @@ pub const VirtualMachine = struct {
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;
 
-        if (allow_side_effects and Output.is_github_action) {
-            defer printGithubAnnotation(exception);
+        if (comptime allow_side_effects) {
+            if (Output.is_github_action) {
+                defer printGithubAnnotation(exception);
+            }
         }
 
         const line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
@@ -3078,6 +3080,7 @@ pub const VirtualMachine = struct {
                 defer source_url.deinit();
                 const file = bun.path.relative(dir, source_url.slice());
                 const func = frame.function_name.toUTF8(allocator);
+                defer func.deinit();
 
                 if (file.len == 0 and func.len == 0) continue;
 

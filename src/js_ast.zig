@@ -6953,7 +6953,7 @@ pub const Macro = struct {
         var loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
 
         if (loaded_result.status(vm.global.vm()) == JSC.JSPromise.Status.Rejected) {
-            vm.runErrorHandler(loaded_result.result(vm.global.vm()), null);
+            vm.onUnhandledError(vm.global, loaded_result.result(vm.global.vm()));
             vm.disableMacroMode();
             return error.MacroLoadError;
         }
@@ -7064,7 +7064,7 @@ pub const Macro = struct {
             ) MacroError!Expr {
                 switch (comptime tag) {
                     .Error => {
-                        this.macro.vm.runErrorHandler(value, null);
+                        this.macro.vm.onUnhandledError(this.macro.vm.global, value);
                         return this.caller;
                     },
                     .Undefined => if (this.is_top_level)

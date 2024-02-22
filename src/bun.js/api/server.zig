@@ -3923,7 +3923,7 @@ pub const ServerWebSocket = struct {
     pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) void {
         log("onPing: {s}", .{data});
 
-        var handler = this.handler;
+        const handler = this.handler;
         var cb = handler.onPing;
         if (cb.isEmptyOrUndefinedOrNull()) return;
         var globalThis = handler.globalObject;
@@ -3957,14 +3957,14 @@ pub const ServerWebSocket = struct {
 
         if (result.toError()) |err| {
             log("onPing error", .{});
-            handler.globalObject.bunVM().runErrorHandler(err, null);
+            globalThis.bunVM().runErrorHandler(err, null);
         }
     }
 
     pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) void {
         log("onPong: {s}", .{data});
 
-        var handler = this.handler;
+        const handler = this.handler;
         var cb = handler.onPong;
         if (cb.isEmptyOrUndefinedOrNull()) return;
 
@@ -3999,7 +3999,7 @@ pub const ServerWebSocket = struct {
 
         if (result.toError()) |err| {
             log("onPong error", .{});
-            handler.globalObject.bunVM().runErrorHandler(err, null);
+            globalThis.bunVM().runErrorHandler(err, null);
         }
     }
 

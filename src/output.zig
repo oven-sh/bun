@@ -189,13 +189,6 @@ pub inline fn isEmojiEnabled() bool {
     return enable_ansi_colors;
 }
 
-pub fn isGithubAction() bool {
-    if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
-        return strings.eqlComptime(value, "true");
-    }
-    return false;
-}
-
 pub fn isVerbose() bool {
     // Set by Github Actions when a workflow is run using debug mode.
     if (bun.getenvZ("RUNNER_DEBUG")) |value| {

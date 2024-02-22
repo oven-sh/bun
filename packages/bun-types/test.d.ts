@@ -187,6 +187,12 @@ declare module "bun:test" {
      */
     todo(label: string, fn?: () => void): void;
     /**
+     * Marks this group of tests as broken and in need of fixing.
+     * @param label the label for the tests
+     * @param fn the function that defines the tests
+     */
+    fixme(label: string, fn?: () => void): void;
+    /**
      * Runs this group of tests, only if `condition` is true.
      *
      * This is the opposite of `describe.skipIf()`.
@@ -388,6 +394,21 @@ declare module "bun:test" {
       options?: number | TestOptions,
     ): void;
     /**
+     * Marks this test as broken and in need of fixing.
+     *
+     * If the test function fails, it will be marked as `fixme` in the test results
+     * instead of `fail`. This is useful for marking tests that are known to be broken.
+     *
+     * @param label the label for the test
+     * @param fn the test function
+     * @param options the test timeout or options
+     */
+    fixme(
+      label: string,
+      fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ): void;
+    /**
      * Runs this test, if `condition` is true.
      *
      * This is the opposite of `test.skipIf()`.
@@ -411,6 +432,30 @@ declare module "bun:test" {
     ): (
       label: string,
       fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
+    /**
+     * Marks this test as `todo`, if `condition` is true.
+     *
+     * @param condition if the test should be marked as `todo`
+     */
+    todoIf(
+      condition: boolean,
+    ): (
+      label: string,
+      fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
+    /**
+     * Marks this test as `fixme`, if `condition` is true.
+     *
+     * @param condition if the test should be marked as `fixme`
+     */
+    fixmeIf(
+      condition: boolean,
+    ): (
+      label: string,
+      fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ) => void;
     /**

@@ -56,6 +56,7 @@ fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_col
                 .fail => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
                 .skip => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
                 .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
+                .fixme => Output.prettyFmt("<r><red>‼<r>", emoji_or_color),
                 else => @compileError("Invalid status " ++ @tagName(status)),
             },
             else => switch (status) {
@@ -63,6 +64,7 @@ fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_col
                 .fail => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
                 .skip => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
                 .todo => Output.prettyFmt("<r><magenta>(todo)<r>", emoji_or_color),
+                .fixme => Output.prettyFmt("<r><red>(fixme)<r>", emoji_or_color),
                 else => @compileError("Invalid status " ++ @tagName(status)),
             },
         };
@@ -87,14 +89,16 @@ pub const CommandLineReporter = struct {
     failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     skips_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     todos_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
+    fixmes_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
 
     pub const Summary = struct {
         pass: u32 = 0,
-        expectations: u32 = 0,
+        fail: u32 = 0,
         skip: u32 = 0,
         todo: u32 = 0,
-        fail: u32 = 0,
+        fixme: u32 = 0,
         files: u32 = 0,
+        expectations: u32 = 0,
     };
 
     const DotColorMap = std.EnumMap(TestRunner.Test.Status, string);
@@ -262,8 +266,29 @@ pub const CommandLineReporter = struct {
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.todo;
     }
 
+    pub fn handleTestFixme(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
+        var writer_: std.fs.File.Writer = Output.errorWriter();
+        var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+
+        // when the tests skip, we want to repeat the failures at the end
+        // so that you can see them better when there are lots of tests that ran
+        const initial_length = this.fixmes_to_repeat_buf.items.len;
+        var writer = this.fixmes_to_repeat_buf.writer(bun.default_allocator);
+
+        writeTestStatusLine(.fixme, &writer);
+        printTestLine(label, elapsed_ns, parent, false, writer);
+
+        writer_.writeAll(this.fixmes_to_repeat_buf.items[initial_length..]) catch unreachable;
+        Output.flush();
+
+        // this.updateDots();
+        this.summary.fixme += 1;
+        this.summary.expectations += expectations;
+        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fixme;
+    }
+
     pub fn printSummary(this: *CommandLineReporter) void {
-        const tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
+        const tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo + this.summary.fixme;
         const files = this.summary.files;
 
         Output.prettyError("Ran {d} tests across {d} files. ", .{ tests, files });
@@ -581,8 +606,6 @@ pub const TestCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
 
-        Output.is_github_action = Output.isGithubAction();
-
         // print the version so you know its doing stuff if it takes a sec
         Output.prettyErrorln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
@@ -632,6 +655,7 @@ pub const TestCommand = struct {
             .onTestFail = CommandLineReporter.handleTestFail,
             .onTestSkip = CommandLineReporter.handleTestSkip,
             .onTestTodo = CommandLineReporter.handleTestTodo,
+            .onTestFixme = CommandLineReporter.handleTestFixme,
         };
         reporter.repeat_count = @max(ctx.test_options.repeat_count, 1);
         reporter.jest.callback = &reporter.callback;
@@ -672,6 +696,12 @@ pub const TestCommand = struct {
         try vm.bundler.configureDefines();
 
         vm.loadExtraEnv();
+        if (env_loader.get("GITHUB_ACTIONS")) |value| {
+            if (strings.eqlComptime(value, "true")) {
+                Output.is_github_action = true;
+            }
+        }
+
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
@@ -794,6 +824,18 @@ pub const TestCommand = struct {
                 error_writer.writeAll(reporter.todos_to_repeat_buf.items) catch unreachable;
             }
 
+            if (reporter.summary.fixme > 0) {
+                if (reporter.summary.todo > 0) {
+                    Output.prettyError("\n", .{});
+                }
+
+                Output.prettyError("\n<r><d>{d} tests fixme:<r>\n", .{reporter.summary.fixme});
+                Output.flush();
+
+                var error_writer = Output.errorWriter();
+                error_writer.writeAll(reporter.fixmes_to_repeat_buf.items) catch unreachable;
+            }
+
             if (reporter.summary.fail > 0) {
                 if (reporter.summary.skip > 0 or reporter.summary.todo > 0) {
                     Output.prettyError("\n", .{});
@@ -875,6 +917,10 @@ pub const TestCommand = struct {
 
             if (reporter.summary.todo > 0) {
                 Output.prettyError(" <r><magenta>{d:5>} todo<r>\n", .{reporter.summary.todo});
+            }
+
+            if (reporter.summary.fixme > 0) {
+                Output.prettyError(" <r><red>{d:5>} fixme<r>\n", .{reporter.summary.fixme});
             }
 
             if (reporter.summary.fail > 0) {

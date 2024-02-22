@@ -306,7 +306,7 @@ pub const Run = struct {
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .Rejected) {
-                vm.runErrorHandler(promise.result(vm.global.vm()), null);
+                vm.onUnhandledError(vm.global, promise.result(vm.global.vm()));
 
                 if (vm.hot_reload != .none) {
                     vm.eventLoop().tick();

@@ -915,13 +915,15 @@ pub const Formatter = struct {
         JSON,
         toJSON,
         NativeCode,
-        ArrayBuffer,
 
         JSX,
         Event,
 
         GetterSetter,
         CustomGetterSetter,
+
+        Proxy,
+        RevokedProxy,
 
         pub fn isPrimitive(this: Tag) bool {
             return switch (this) {
@@ -971,14 +973,19 @@ pub const Formatter = struct {
                 JSON: void,
                 toJSON: void,
                 NativeCode: void,
-                ArrayBuffer: void,
                 JSX: void,
                 Event: void,
                 GetterSetter: void,
                 CustomGetterSetter: void,
+                Proxy: void,
+                RevokedProxy: void,
 
                 pub fn isPrimitive(this: @This()) bool {
                     return @as(Tag, this).isPrimitive();
+                }
+
+                pub fn tag(this: @This()) Tag {
+                    return @as(Tag, this);
                 }
             },
             cell: JSValue.JSType = JSValue.JSType.Cell,
@@ -1126,9 +1133,16 @@ pub const Formatter = struct {
 
                     .Object,
                     .FinalObject,
-                    .ProxyObject,
                     .ModuleNamespaceObject,
                     => .Object,
+
+                    .ProxyObject => tag: {
+                        const handler = value.getProxyInternalField(.handler);
+                        if (handler == .zero or handler == .undefined or handler == .null) {
+                            break :tag .RevokedProxy;
+                        }
+                        break :tag .Proxy;
+                    },
 
                     .GlobalObject => if (!opts.hide_global)
                         .Object
@@ -2877,7 +2891,20 @@ pub const Formatter = struct {
 
                 writer.writeAll(" ]");
             },
-            else => {},
+            .RevokedProxy => {
+                this.addForNewLine("<Revoked Proxy>".len);
+                writer.print(comptime Output.prettyFmt("<r><cyan>\\<Revoked Proxy\\><r>", enable_ansi_colors), .{});
+            },
+            .Proxy => {
+                const target = value.getProxyInternalField(.target);
+                if (Environment.allow_assert) {
+                    // Proxy does not allow non-objects here.
+                    std.debug.assert(target.isCell());
+                }
+                // TODO: if (options.showProxy), print like `Proxy { target: ..., handlers: ... }`
+                // this is default off so it is not used.
+                this.format(ConsoleObject.Formatter.Tag.get(target, this.globalThis), Writer, writer_, target, this.globalThis, enable_ansi_colors);
+            },
         }
     }
 
@@ -2908,9 +2935,6 @@ pub const Formatter = struct {
     }
 
     pub fn format(this: *ConsoleObject.Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) void {
-        if (comptime is_bindgen) {
-            return;
-        }
         const prevGlobalThis = this.globalThis;
         defer this.globalThis = prevGlobalThis;
         this.globalThis = globalThis;
@@ -2919,44 +2943,11 @@ pub const Formatter = struct {
         // comptime var so we have to repeat it here. The rationale there is
         // it _should_ limit the stack usage because each version of the
         // function will be relatively small
-        switch (result.tag) {
-            .StringPossiblyFormatted => this.printAs(.StringPossiblyFormatted, Writer, writer, value, result.cell, enable_ansi_colors),
-            .String => this.printAs(.String, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Undefined => this.printAs(.Undefined, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Double => this.printAs(.Double, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Integer => this.printAs(.Integer, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Null => this.printAs(.Null, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Boolean => this.printAs(.Boolean, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Array => this.printAs(.Array, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Object => this.printAs(.Object, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Function => this.printAs(.Function, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Class => this.printAs(.Class, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Error => this.printAs(.Error, Writer, writer, value, result.cell, enable_ansi_colors),
-            .ArrayBuffer, .TypedArray => this.printAs(.TypedArray, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Map => this.printAs(.Map, Writer, writer, value, result.cell, enable_ansi_colors),
-            .MapIterator => this.printAs(.MapIterator, Writer, writer, value, result.cell, enable_ansi_colors),
-            .SetIterator => this.printAs(.SetIterator, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Set => this.printAs(.Set, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Symbol => this.printAs(.Symbol, Writer, writer, value, result.cell, enable_ansi_colors),
-            .BigInt => this.printAs(.BigInt, Writer, writer, value, result.cell, enable_ansi_colors),
-            .GlobalObject => this.printAs(.GlobalObject, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Private => this.printAs(.Private, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Promise => this.printAs(.Promise, Writer, writer, value, result.cell, enable_ansi_colors),
+        switch (result.tag.tag()) {
+            inline else => |tag| this.printAs(tag, Writer, writer, value, result.cell, enable_ansi_colors),
 
-            // Call JSON.stringify on the value
-            .JSON => this.printAs(.JSON, Writer, writer, value, result.cell, enable_ansi_colors),
-
-            // Call value.toJSON() and print as an object
-            .toJSON => this.printAs(.toJSON, Writer, writer, value, result.cell, enable_ansi_colors),
-
-            .NativeCode => this.printAs(.NativeCode, Writer, writer, value, result.cell, enable_ansi_colors),
-            .JSX => this.printAs(.JSX, Writer, writer, value, result.cell, enable_ansi_colors),
-            .Event => this.printAs(.Event, Writer, writer, value, result.cell, enable_ansi_colors),
-            .GetterSetter => this.printAs(.GetterSetter, Writer, writer, value, result.cell, enable_ansi_colors),
-            .CustomGetterSetter => this.printAs(.CustomGetterSetter, Writer, writer, value, result.cell, enable_ansi_colors),
-
-            .CustomFormattedObject => |callback| {
-                this.custom_formatted_object = callback;
+            .CustomFormattedObject => {
+                this.custom_formatted_object = result.tag.CustomFormattedObject;
                 this.printAs(.CustomFormattedObject, Writer, writer, value, result.cell, enable_ansi_colors);
             },
         }

@@ -32,6 +32,7 @@
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSSet.h"
 #include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Microtask.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ParserError.h"
@@ -5432,4 +5433,9 @@ CPP_DECL bool JSC__CustomGetterSetter__isGetterNull(JSC__CustomGetterSetter* get
 CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter* gettersetter)
 {
     return gettersetter->setter() == nullptr;
+}
+
+CPP_DECL JSC__JSValue Bun__ProxyObject__getInternalField(JSC__JSValue value, uint32_t id)
+{
+    return JSValue::encode(jsCast<ProxyObject*>(JSValue::decode(value))->internalField((ProxyObject::Field)id).get());
 }

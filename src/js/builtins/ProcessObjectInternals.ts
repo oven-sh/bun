@@ -353,6 +353,14 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
   //
   // it throws "Cannot convert a Symbol value to a string"
 
+  (internalEnv as any)[Bun.inspect.custom] = () => {
+    let o = {};
+    for (let k of envMapList) {
+      o[k] = internalEnv[k.toUpperCase()];
+    }
+    return o;
+  };
+
   return new Proxy(internalEnv, {
     get(_, p) {
       return typeof p === "string" ? Reflect.get(internalEnv, p.toUpperCase()) : undefined;

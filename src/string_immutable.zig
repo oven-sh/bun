@@ -8,6 +8,7 @@ const bun = @import("root").bun;
 pub const joiner = @import("./string_joiner.zig");
 const log = bun.Output.scoped(.STR, true);
 const js_lexer = @import("./js_lexer.zig");
+const grapheme = @import("./grapheme.zig");
 
 pub const Encoding = enum {
     ascii,
@@ -5815,32 +5816,8 @@ pub fn visibleCodepointWidthType(comptime T: type, cp: T) u3 {
 
 pub const visible = struct {
     // Ref: https://cs.stanford.edu/people/miles/iso8859.html
-    fn visibleLatin1Width(input_: []const u8) usize {
+    fn visibleLatin1Width(input: []const u8) usize {
         var length: usize = 0;
-        var input = input_;
-
-        if (comptime Environment.enableSIMD) {
-            // https://zig.godbolt.org/z/hxhjncvq7
-            const ElementType = std.meta.Child(@TypeOf(input_));
-            const simd = 16 / @sizeOf(ElementType);
-            if (input.len >= simd) {
-                const input_end = input.ptr + input.len - (input.len % simd);
-                while (input.ptr != input_end) {
-                    const chunk: @Vector(simd, ElementType) = input[0..simd].*;
-                    input = input[simd..];
-
-                    const cmp: @Vector(simd, ElementType) = @splat(0x1f);
-                    const match1: @Vector(simd, u1) = @bitCast(chunk >= cmp);
-                    const match: @Vector(simd, ElementType) = match1;
-
-                    length += @reduce(.Add, match);
-                }
-            }
-
-            // this is a deliberate compiler optimization
-            // it disables auto-vectorizing the "input" for loop.
-            if (!(input.len < simd)) unreachable;
-        }
 
         for (input) |c| {
             length += switch (c) {
@@ -5910,15 +5887,26 @@ pub const visible = struct {
     }
 
     fn visibleUTF16WidthFn(input: []const u16, exclude_ansi_colors: bool) usize {
+        var i: usize = 0;
         var len: usize = 0;
         var iter = std.unicode.Utf16LeIterator.init(input);
-        while (iter.nextCodepoint() catch return 0) |cp| blk: {
-            if (!exclude_ansi_colors) {
-                len += visibleCodepointWidth(cp);
-                continue;
-            }
-            if (cp != 0x1b) {
-                len += visibleCodepointWidth(cp);
+        var prev: ?u21 = 0;
+        var break_state = grapheme.BreakState{};
+        var break_start: u21 = 0;
+
+        while (iter.nextCodepoint() catch return 0) |cp| : (i += 1) blk: {
+            if (!exclude_ansi_colors or cp != 0x1b) {
+                if (prev) |prev_| {
+                    const should_break = grapheme.graphemeBreak(prev_, cp, &break_state);
+                    if (should_break) {
+                        len += visibleCodepointWidth(break_start);
+                        break_start = cp;
+                    }
+                } else {
+                    len += visibleCodepointWidth(cp);
+                    break_start = cp;
+                }
+                prev = cp;
                 continue;
             }
             if ((iter.nextCodepoint() catch return 0) != '[') {
@@ -5926,11 +5914,14 @@ pub const visible = struct {
                 continue;
             }
             var stretch_len: usize = 0;
-            while (iter.nextCodepoint() catch return 0) |cp2| {
+            while (iter.nextCodepoint() catch return 0) |cp2| : (i += 1) {
                 if (cp2 == 'm') break :blk;
                 stretch_len += visibleCodepointWidth(cp2);
             }
             len += stretch_len;
+        }
+        if (break_start > 0) {
+            len += visibleCodepointWidth(break_start);
         }
         return len;
     }

@@ -108,10 +108,10 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
     expect("\u{231A}")[matcher]();
     // expect("\u{2194}\u{FE0F}")[matcher]();
     expect("\u{1F469}")[matcher]();
-    // expect("\u{1F469}\u{1F3FF}")[matcher]();
+    expect("\u{1F469}\u{1F3FF}")[matcher]();
     expect("\u{845B}\u{E0100}")[matcher]();
-    // expect("ปฏัก")[matcher]();
-    // expect("_\u0E34")[matcher]();
+    expect("ปฏัก")[matcher]();
+    expect("_\u0E34")[matcher]();
     expect("\u001B[31m\u001B[39m")[matcher]();
     //   expect(stringWidth("⛣", { ambiguousIsNarrow: false }), 2);
     //   expect(stringWidth("あいう★", { ambiguousIsNarrow: false }), 8);
@@ -139,8 +139,9 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
   test.skipIf(!bun_has_stringwidth)("handles ZWJ characters", () => {
     expect("👶")[matcher]();
-    // expect("👶🏽")[matcher]();
-    // expect("👩‍👩‍👦‍👦")[matcher]();
-    // expect("👨‍❤️‍💋‍👨")[matcher]();
+    expect("👶🏽")[matcher]();
+    expect("aa👶🏽aa")[matcher]();
+    expect("👩‍👩‍👦‍👦")[matcher]();
+    expect("👨‍❤️‍💋‍👨")[matcher]();
   });
 }

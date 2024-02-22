@@ -167,12 +167,12 @@ pub const Body = struct {
                                 if (value.onStartBuffering != null) {
                                     if (readable.isDisturbed(globalThis)) {
                                         form_data.?.deinit();
-                                        readable.detachIfPossible(globalThis);
+                                        readable.value.unprotect();
                                         value.readable = null;
                                         value.action = .{ .none = {} };
                                         return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("ReadableStream is already used", .{}));
                                     } else {
-                                        readable.detachIfPossible(globalThis);
+                                        readable.value.unprotect();
                                         value.readable = null;
                                     }
 
@@ -191,7 +191,7 @@ pub const Body = struct {
                             else => unreachable,
                         };
                         value.promise.?.ensureStillAlive();
-                        readable.detachIfPossible(globalThis);
+                        readable.value.unprotect();
 
                         // js now owns the memory
                         value.readable = null;
@@ -394,7 +394,7 @@ pub const Body = struct {
                         },
                     };
 
-                    this.Locked.readable.?.incrementCount();
+                    this.Locked.readable.?.value.protect();
 
                     return value;
                 },
@@ -443,7 +443,7 @@ pub const Body = struct {
                         .ptr = .{ .Bytes = &reader.context },
                         .value = reader.toReadableStream(globalThis),
                     };
-                    locked.readable.?.incrementCount();
+                    locked.readable.?.value.protect();
 
                     if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
                         onReadableStreamAvailable(locked.task.?, locked.readable.?);
@@ -581,7 +581,7 @@ pub const Body = struct {
         }
 
         pub fn fromReadableStreamWithoutLockCheck(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
-            readable.incrementCount();
+            readable.value.protect();
             return .{
                 .Locked = .{
                     .readable = readable,
@@ -595,7 +595,7 @@ pub const Body = struct {
             if (to_resolve.* == .Locked) {
                 var locked = &to_resolve.Locked;
                 if (locked.readable) |readable| {
-                    readable.done(global);
+                    readable.done();
                     locked.readable = null;
                 }
 
@@ -814,7 +814,7 @@ pub const Body = struct {
                 }
 
                 if (locked.readable) |readable| {
-                    readable.done(global);
+                    readable.done();
                     locked.readable = null;
                 }
                 // will be unprotected by body value deinit
@@ -855,7 +855,7 @@ pub const Body = struct {
                     this.Locked.deinit = true;
 
                     if (this.Locked.readable) |*readable| {
-                        readable.done(this.Locked.global);
+                        readable.done();
                     }
                 }
 
@@ -1361,12 +1361,12 @@ pub const BodyValueBufferer = struct {
                         );
                     },
                     .Fulfilled => {
-                        // defer stream.value.unprotect();
+                        defer stream.value.unprotect();
 
                         sink.handleResolveStream(false);
                     },
                     .Rejected => {
-                        // defer stream.value.unprotect();
+                        defer stream.value.unprotect();
 
                         sink.handleRejectStream(promise.result(globalThis.vm()), false);
                     },

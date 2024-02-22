@@ -155,20 +155,20 @@ pub const ReadableStream = struct {
         return null;
     }
 
-    pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
-        this.detachIfPossible(globalThis);
+    pub fn done(this: *const ReadableStream) void {
+        this.value.unprotect();
     }
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
         ReadableStream__cancel(this.value, globalThis);
-        this.detachIfPossible(globalThis);
+        this.value.unprotect();
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
         ReadableStream__cancel(this.value, globalThis);
-        this.detachIfPossible(globalThis);
+        this.value.unprotect();
     }
 
     pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) void {

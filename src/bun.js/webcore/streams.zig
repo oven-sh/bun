@@ -149,21 +149,19 @@ pub const ReadableStream = struct {
     }
 
     pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
-        // this.detachIfPossible(globalThis);
-        _ = this;
-        _ = globalThis;
+        this.detachIfPossible(globalThis);
     }
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
         ReadableStream__cancel(this.value, globalThis);
-        // this.detachIfPossible(globalThis);
+        this.detachIfPossible(globalThis);
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
         ReadableStream__cancel(this.value, globalThis);
-        // this.detachIfPossible(globalThis);
+        this.detachIfPossible(globalThis);
     }
 
     pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) void {

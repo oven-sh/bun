@@ -5818,17 +5818,17 @@ pub const visible = struct {
     // Ref: https://cs.stanford.edu/people/miles/iso8859.html
     fn visibleLatin1Width(input: []const u8) usize {
         var length: usize = 0;
-
-        for (input) |c| {
-            length += switch (c) {
-                0...31 => 0,
-                32...126 => 1,
-                127...159 => 0,
-                160...255 => 1,
-            };
-        }
-
+        for (input) |c| length += visibleLatin1WidthScalar(c);
         return length;
+    }
+
+    fn visibleLatin1WidthScalar(c: u8) u8 {
+        return switch (c) {
+            0...31 => 0,
+            32...126 => 1,
+            127...159 => 0,
+            160...255 => 1,
+        };
     }
 
     fn visibleLatin1WidthExcludeANSIColors(input_: anytype) usize {
@@ -5886,9 +5886,19 @@ pub const visible = struct {
         return len;
     }
 
-    fn visibleUTF16WidthFn(input: []const u16, exclude_ansi_colors: bool) usize {
-        var i: usize = 0;
+    fn visibleUTF16WidthFn(input_: []const u16, exclude_ansi_colors: bool) usize {
+        var input = input_;
+        _ = &input;
         var len: usize = 0;
+
+        if (firstNonASCII16([]const u16, input)) |idx| {
+            for (0..idx) |i| {
+                len += visibleLatin1WidthScalar(@intCast(input[i]));
+            }
+            input = input[idx..];
+        }
+
+        var i: usize = 0;
         var iter = std.unicode.Utf16LeIterator.init(input);
         var prev: ?u21 = 0;
         var break_state = grapheme.BreakState{};

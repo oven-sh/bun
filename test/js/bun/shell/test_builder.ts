@@ -11,7 +11,7 @@ export class TestBuilder {
   private _testName: string | undefined = undefined;
 
   private expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
-  private expected_stderr: string = "";
+  private expected_stderr: string | ((stderr: string, tempdir: string) => void) = "";
   private expected_exit_code: number = 0;
   private expected_error: ShellError | string | boolean | undefined = undefined;
   private file_equals: { [filename: string]: string } = {};
@@ -75,7 +75,7 @@ export class TestBuilder {
     return this;
   }
 
-  stderr(expected: string): this {
+  stderr(expected: string | ((stderr: string, tempDir: string) => void)): this {
     this.expected_stderr = expected;
     return this;
   }
@@ -160,8 +160,13 @@ export class TestBuilder {
         this.expected_stdout(stdout.toString(), tempdir);
       }
     }
-    if (this.expected_stderr !== undefined)
-      expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
+    if (this.expected_stderr !== undefined) {
+      if (typeof this.expected_stderr === "string") {
+        expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
+      } else {
+        this.expected_stderr(stderr.toString(), tempdir);
+      }
+    }
     if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
     for (const [filename, expected] of Object.entries(this.file_equals)) {

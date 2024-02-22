@@ -442,7 +442,26 @@ pub const AST = struct {
             stdout: bool = false,
             stderr: bool = false,
             append: bool = false,
-            __unused: u4 = 0,
+            /// 1>&2 === stdout=true and duplicate_out=true
+            /// 2>&1 === stderr=true and duplicate_out=true
+            duplicate_out: bool = false,
+            __unused: u3 = 0,
+
+            pub fn redirectsElsewhere(this: RedirectFlags, io_kind: enum { stdin, stdout, stderr }) bool {
+                return switch (io_kind) {
+                    .stdin => this.stdin,
+                    .stdout => if (this.duplicate_out) !this.stdout else this.stdout,
+                    .stderr => if (this.duplicate_out) !this.stderr else this.stderr,
+                };
+            }
+
+            pub fn @"2>&1"() RedirectFlags {
+                return .{ .stderr = true, .duplicate = true };
+            }
+
+            pub fn @"1>&2"() RedirectFlags {
+                return .{ .stdout = true, .duplicate = true };
+            }
 
             pub fn toFlags(this: RedirectFlags) bun.Mode {
                 const read_write_flags: bun.Mode = if (this.stdin) std.os.O.RDONLY else std.os.O.WRONLY | std.os.O.CREAT;
@@ -792,6 +811,7 @@ pub const Parser = struct {
                 }
 
                 const redirect_file = try self.parse_atom() orelse {
+                    if (redirect.duplicate_out) break :redirect_file null;
                     try self.add_error("Redirection with no file", .{});
                     return ParseError.Expected;
                 };
@@ -808,6 +828,8 @@ pub const Parser = struct {
             .redirect_file = redirect_file,
         } };
     }
+
+    const ParsedRedirect = struct { flags: AST.Cmd.RedirectFlags, redirect: AST.Cmd.Redirect };
 
     /// Try to parse an assignment. If no assignment could be parsed then return
     /// null and backtrack the parser state
@@ -1812,9 +1834,67 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return false;
         }
 
+        // TODO Arbitrary file descriptor redirect
         fn eat_redirect(self: *@This(), first: InputChar) ?AST.Cmd.RedirectFlags {
             var flags: AST.Cmd.RedirectFlags = .{};
             switch (first.char) {
+                '0' => flags.stdin = true,
+                '1' => flags.stdout = true,
+                '2' => flags.stderr = true,
+                // Just allow the std file descriptors for now
+                else => return null,
+            }
+            var dir: RedirectDirection = .out;
+            if (self.peek()) |input| {
+                if (input.escaped) return null;
+                switch (input.char) {
+                    '>' => {
+                        _ = self.eat();
+                        dir = .out;
+                        const is_double = self.eat_simple_redirect_operator(dir);
+                        if (is_double) flags.append = true;
+                        if (self.peek()) |peeked| {
+                            if (!peeked.escaped and peeked.char == '&') {
+                                _ = self.eat();
+                                if (self.peek()) |peeked2| {
+                                    switch (peeked2.char) {
+                                        '1' => {
+                                            _ = self.eat();
+                                            if (!flags.stdout and flags.stderr) {
+                                                flags.duplicate_out = true;
+                                                flags.stdout = true;
+                                                flags.stderr = false;
+                                            } else return null;
+                                        },
+                                        '2' => {
+                                            _ = self.eat();
+                                            if (!flags.stderr and flags.stdout) {
+                                                flags.duplicate_out = true;
+                                                flags.stderr = true;
+                                                flags.stdout = false;
+                                            } else return null;
+                                        },
+                                        else => return null,
+                                    }
+                                }
+                            }
+                        }
+                        return flags;
+                    },
+                    '<' => {
+                        dir = .in;
+                        const is_double = self.eat_simple_redirect_operator(dir);
+                        if (is_double) flags.append = true;
+                        return flags;
+                    },
+                    else => return null,
+                }
+            } else return null;
+        }
+
+        fn eat_redirect_old(self: *@This(), first: InputChar) ?AST.Cmd.RedirectFlags {
+            var flags: AST.Cmd.RedirectFlags = .{};
+            if (self.matchesAsciiLiteral("2>&1")) {} else if (self.matchesAsciiLiteral("1>&2")) {} else switch (first.char) {
                 '0'...'9' => {
                     // Codepoint int casts are safe here because the digits are in the ASCII range
                     var count: usize = 1;
@@ -2000,10 +2080,33 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return std.mem.eql(u8, bytes[0 .. LEX_JS_STRING_PREFIX.len - 1], LEX_JS_STRING_PREFIX[1..]);
         }
 
-        fn eatJSSubstitutionIdx(self: *@This(), comptime literal: []const u8, comptime name: []const u8, comptime validate: *const fn (*@This(), usize) bool) ?usize {
+        fn bumpCursorAscii(self: *@This(), new_idx: usize, prev_ascii_char: ?u7, cur_ascii_char: u7) void {
+            if (comptime encoding == .ascii) {
+                self.chars.src.i = new_idx;
+                if (prev_ascii_char) |pc| self.chars.prev = .{ .char = pc };
+                self.chars.current = .{ .char = cur_ascii_char };
+                return;
+            }
+            self.chars.src.cursor = CodepointIterator.Cursor{
+                .i = @intCast(new_idx),
+                .c = cur_ascii_char,
+                .width = 1,
+            };
+            self.chars.src.next_cursor = self.chars.src.cursor;
+            SrcUnicode.nextCursor(&self.chars.src.iter, &self.chars.src.next_cursor);
+            if (prev_ascii_char) |pc| self.chars.prev = .{ .char = pc };
+            self.chars.current = .{ .char = cur_ascii_char };
+        }
+
+        fn matchesAsciiLiteral(self: *@This(), literal: []const u8) bool {
             const bytes = self.chars.srcBytesAtCursor();
-            if (literal.len - 1 >= bytes.len) return null;
-            if (std.mem.eql(u8, bytes[0 .. literal.len - 1], literal[1..])) {
+            if (literal.len >= bytes.len) return false;
+            return std.mem.eql(u8, bytes[0..literal.len], literal[0..]);
+        }
+
+        fn eatJSSubstitutionIdx(self: *@This(), comptime literal: []const u8, comptime name: []const u8, comptime validate: *const fn (*@This(), usize) bool) ?usize {
+            if (self.matchesAsciiLiteral(literal[1..literal.len])) {
+                const bytes = self.chars.srcBytesAtCursor();
                 var i: usize = 0;
                 var digit_buf: [32]u8 = undefined;
                 var digit_buf_count: u8 = 0;
@@ -2044,26 +2147,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 // }
 
                 // Bump the cursor
-                brk: {
-                    const new_idx = self.chars.cursorPos() + i;
-                    const prev_ascii_char: ?u7 = if (digit_buf_count == 1) null else @truncate(digit_buf[digit_buf_count - 2]);
-                    const cur_ascii_char: u7 = @truncate(digit_buf[digit_buf_count - 1]);
-                    if (comptime encoding == .ascii) {
-                        self.chars.src.i = new_idx;
-                        if (prev_ascii_char) |pc| self.chars.prev = .{ .char = pc };
-                        self.chars.current = .{ .char = cur_ascii_char };
-                        break :brk;
-                    }
-                    self.chars.src.cursor = CodepointIterator.Cursor{
-                        .i = @intCast(new_idx),
-                        .c = cur_ascii_char,
-                        .width = 1,
-                    };
-                    self.chars.src.next_cursor = self.chars.src.cursor;
-                    SrcUnicode.nextCursor(&self.chars.src.iter, &self.chars.src.next_cursor);
-                    if (prev_ascii_char) |pc| self.chars.prev = .{ .char = pc };
-                    self.chars.current = .{ .char = cur_ascii_char };
-                }
+                const new_idx = self.chars.cursorPos() + i;
+                const prev_ascii_char: ?u7 = if (digit_buf_count == 1) null else @truncate(digit_buf[digit_buf_count - 2]);
+                const cur_ascii_char: u7 = @truncate(digit_buf[digit_buf_count - 1]);
+                self.bumpCursorAscii(new_idx, prev_ascii_char, cur_ascii_char);
 
                 // return self.string_refs[idx];
                 return idx;

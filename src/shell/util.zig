@@ -14,13 +14,23 @@ const Output = @import("root").bun.Output;
 const PosixSpawn = @import("../bun.js/api/bun/spawn.zig").PosixSpawn;
 const os = std.os;
 
-pub const OutKind = enum { stdout, stderr };
+pub const OutKind = enum {
+    stdout,
+    stderr,
+    pub fn toFd(this: OutKind) bun.FileDescriptor {
+        return switch (this) {
+            .stdout => bun.STDOUT_FD,
+            .stderr => bun.STDERR_FD,
+        };
+    }
+};
 
 pub const Stdio = union(enum) {
     /// When set to true, it means to capture the output
     inherit: struct { captured: ?*bun.ByteList = null },
     ignore: void,
     fd: bun.FileDescriptor,
+    dup2: struct { out: OutKind, to: OutKind },
     path: JSC.Node.PathLike,
     blob: JSC.WebCore.AnyBlob,
     pipe: ?JSC.WebCore.ReadableStream,
@@ -38,9 +48,23 @@ pub const Stdio = union(enum) {
         stdio: @This(),
         actions: *PosixSpawn.Actions,
         pipe_fd: [2]bun.FileDescriptor,
+        stderr_pipe_fds: [2]bun.FileDescriptor,
         comptime std_fileno: bun.FileDescriptor,
     ) !void {
         switch (stdio) {
+            .dup2 => {
+                // This is a hack to get around the ordering of the spawn actions.
+                // If stdout is set so that it redirects to stderr, the order of actions will be like this:
+                // 0. dup2(stderr, stdout) - this makes stdout point to stderr
+                // 1. setup stderr (will make stderr point to write end of `stderr_pipe_fds`)
+                // This is actually wrong, 0 will execute before 1 so stdout ends up writing to stderr instead of the pipe
+                // So we have to instead do `dup2(stderr_pipe_fd[1], stdout)`
+                // Right now we only allow one output redirection so it's okay.
+                if (comptime std_fileno == bun.STDOUT_FD) {
+                    const idx: usize = if (std_fileno == bun.STDIN_FD) 0 else 1;
+                    try actions.dup2(stderr_pipe_fds[idx], stdio.dup2.out.toFd());
+                } else try actions.dup2(stdio.dup2.to.toFd(), stdio.dup2.out.toFd());
+            },
             .array_buffer, .blob, .pipe => {
                 std.debug.assert(!(stdio == .blob and stdio.blob.needsToReadFile()));
                 const idx: usize = if (std_fileno == bun.STDIN_FD) 0 else 1;

@@ -689,6 +689,24 @@ describe("deno_task", () => {
     await TestBuilder.command`echo 1 > $EMPTY`.stderr("bun: ambiguous redirect: at `echo`\n").exitCode(1).run();
 
     await TestBuilder.command`echo foo bar > file.txt; cat < file.txt`.ensureTempDir().stdout("foo bar\n").run();
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 2>&1`
+      .stdout("Stdout\nStderr\n")
+      .run();
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 1>&2`
+      .stderr("Stdout\nStderr\n")
+      .run();
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 2>&1`
+      .stdout("Stdout\nStderr\n")
+      .quiet()
+      .run();
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 1>&2`
+      .stderr("Stdout\nStderr\n")
+      .quiet()
+      .run();
   });
 
   test("pwd", async () => {

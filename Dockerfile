@@ -192,6 +192,21 @@ ENV CCACHE_DIR=/ccache
 RUN --mount=type=cache,target=/ccache cd ${BUN_DIR} && \ 
   make mimalloc && rm -rf src/deps/mimalloc Makefile;
 
+FROM bun-base as highway
+
+ARG BUN_DIR
+ARG CPU_TARGET
+ARG ASSERTIONS
+ENV CPU_TARGET=${CPU_TARGET}
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY scripts ${BUN_DIR}/scripts
+COPY src/deps/highway ${BUN_DIR}/src/deps/highway
+
+ENV CCACHE_DIR=/ccache
+
+RUN --mount=type=cache,target=/ccache cd ${BUN_DIR} && bash scripts/build-highway.sh && rm -rf src/deps/highway Makefile
+
 FROM bun-base as mimalloc-debug
 
 ARG BUN_DIR
@@ -465,6 +480,7 @@ COPY --from=zstd ${BUN_DEPS_OUT_DIR}/*  ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=ls-hpack ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=highway ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=bun-compile-zig-obj /tmp/bun-zig.o ${BUN_DIR}/build/bun-zig.o
 COPY --from=bun-cpp-objects ${BUN_DIR}/build/bun-cpp-objects.a ${BUN_DIR}/build/bun-cpp-objects.a
 COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib

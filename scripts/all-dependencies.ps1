@@ -80,6 +80,9 @@ Build-Dependency `
 Build-Dependency `
   -Script "lshpack" `
   -Outputs @("lshpack.lib")
+Build-Dependency `
+  -Script "highway" `
+  -Outputs @("hwy.lib")
 
 if (!($Script:DidAnything)) {
   Write-Host "(run with -Force to rebuild all)"

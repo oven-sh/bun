@@ -83,3 +83,6 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
+[submodule "src/deps/highway"]
+	path = src/deps/highway
+	url = https://github.com/google/highway.git

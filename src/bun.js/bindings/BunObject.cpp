@@ -628,6 +628,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     sleepSync                                      BunObject_callback_sleepSync                                        DontDelete|Function 1
     spawn                                          BunObject_callback_spawn                                            DontDelete|Function 1
     spawnSync                                      BunObject_callback_spawnSync                                        DontDelete|Function 1
+    stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 1
     stderr                                         BunObject_getter_wrap_stderr                                        DontDelete|PropertyCallback
     stdin                                          BunObject_getter_wrap_stdin                                         DontDelete|PropertyCallback
     stdout                                         BunObject_getter_wrap_stdout                                        DontDelete|PropertyCallback

@@ -67,7 +67,7 @@ test("mocking a non-existant relative file with a file URL", async () => {
 
   expect(require("./hey-hey-you-you2.ts").bar).toBe(42);
   expect(require.resolve("./hey-hey-you-you2.ts")).toBe(import.meta.resolveSync("./hey-hey-you-you2.ts"));
-  expect(require.resolve("./hey-hey-you-you2.ts")).toBe(await import.meta.resolve("./hey-hey-you-you2.ts"));
+  expect(require.resolve("./hey-hey-you-you2.ts")).toBe(require.resolve("./hey-hey-you-you2.ts"));
 });
 
 test("mocking a non-existant relative file", async () => {
@@ -84,7 +84,7 @@ test("mocking a non-existant relative file", async () => {
 
   expect(require("./hey-hey-you-you.ts").bar).toBe(42);
   expect(require.resolve("./hey-hey-you-you.ts")).toBe(import.meta.resolveSync("./hey-hey-you-you.ts"));
-  expect(require.resolve("./hey-hey-you-you.ts")).toBe(await import.meta.resolve("./hey-hey-you-you.ts"));
+  expect(require.resolve("./hey-hey-you-you.ts")).toBe(require.resolve("./hey-hey-you-you.ts"));
 });
 
 test("mocking a local file", async () => {

@@ -77,6 +77,8 @@ fileUrlRelTo(() => import.meta.resolve("/haha"), "/haha");
 fileUrlRelTo(() => import.meta.resolve("/~"), "/~");
 fileUrlRelTo(() => import.meta.resolve("./🅱️un"), "./🅱️un");
 
+exact(() => import.meta.resolve("file:///oh/haha"), "file:///oh/haha");
+
 // will fail on deno because it is `npm:*` specifier not a file path
 fileUrlRelTo(() => import.meta.resolve("lodash"), "../../../node_modules/lodash/lodash.js");
 

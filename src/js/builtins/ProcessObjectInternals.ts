@@ -359,7 +359,7 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       o[k] = internalEnv[k.toUpperCase()];
     }
     return o;
-  }
+  };
 
   return new Proxy(internalEnv, {
     get(_, p) {

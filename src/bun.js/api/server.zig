@@ -2140,11 +2140,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 if (this.blob == .Blob) {
                     const original_size = this.blob.Blob.size;
-
+                    // if we dont know the size we use the stat size
                     this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
                         stat_size
-                    else
-                        @min(original_size, stat_size);
+                    else // the blob can be a slice of a file
+                        @max(original_size, stat_size);
                 }
 
                 if (!this.flags.has_written_status)
@@ -2158,6 +2158,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     .auto_close = false,
                     .socket_fd = bun.invalid_fd,
                 };
+
                 this.response_buf_owned = .{ .items = result.result.buf, .capacity = result.result.buf.len };
                 this.resp.?.runCorkedWithType(*RequestContext, renderResponseBufferAndMetadata, this);
             }
@@ -2196,7 +2197,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var this = pair.this;
             var stream = pair.stream;
             if (this.resp == null or this.flags.aborted) {
-                stream.value.unprotect();
+                // stream.value.unprotect();
                 this.finalizeForAbort();
                 return;
             }
@@ -2264,7 +2265,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 response_stream.sink.destroy();
                 this.endStream(this.shouldCloseConnection());
                 this.finalize();
-                stream.value.unprotect();
+                // stream.value.unprotect();
                 return;
             }
 
@@ -2293,6 +2294,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     .global = globalThis,
                                 },
                             };
+                            stream.incrementCount();
                             assignment_result.then(
                                 globalThis,
                                 this,
@@ -2304,13 +2306,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         },
                         .Fulfilled => {
                             streamLog("promise Fulfilled", .{});
-                            defer stream.value.unprotect();
+                            // defer stream.value.unprotect();
 
                             this.handleResolveStream();
                         },
                         .Rejected => {
                             streamLog("promise Rejected", .{});
-                            defer stream.value.unprotect();
+                            // defer stream.value.unprotect();
 
                             this.handleRejectStream(globalThis, promise.result(globalThis.vm()));
                         },
@@ -2330,7 +2332,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.flags.aborted) {
                 response_stream.detach();
                 stream.cancel(globalThis);
-                defer stream.value.unprotect();
+                // defer stream.value.unprotect();
                 response_stream.sink.markDone();
                 this.finalizeForAbort();
                 response_stream.sink.onFirstWrite = null;
@@ -2340,7 +2342,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             stream.value.ensureStillAlive();
-            defer stream.value.unprotect();
+            // defer stream.value.unprotect();
 
             const is_in_progress = response_stream.sink.has_backpressure or !(response_stream.sink.wrote == 0 and
                 response_stream.sink.buffer.len == 0);
@@ -2691,7 +2693,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
                                 .message = bun.String.static("Stream already used, please create a new one"),
                             };
-                            stream.value.unprotect();
+                            // stream.value.unprotect();
                             this.runErrorHandler(err.toErrorInstance(this.server.globalThis));
                             return;
                         }
@@ -3046,7 +3048,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             var response: *JSC.WebCore.Response = this.response_ptr.?;
             var status = response.statusCode();
-            var needs_content_range = this.flags.needs_content_range and this.sendfile.remain <= this.blob.size();
+            var needs_content_range = this.flags.needs_content_range and this.sendfile.remain < this.blob.size();
+
             const size = if (needs_content_range)
                 this.sendfile.remain
             else

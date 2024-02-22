@@ -393,6 +393,7 @@ pub const Body = struct {
                             .global = globalThis,
                         },
                     };
+
                     this.Locked.readable.?.incrementCount();
 
                     return value;
@@ -442,7 +443,7 @@ pub const Body = struct {
                         .ptr = .{ .Bytes = &reader.context },
                         .value = reader.toReadableStream(globalThis),
                     };
-                    locked.readable.?.value.protect();
+                    locked.readable.?.incrementCount();
 
                     if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
                         onReadableStreamAvailable(locked.task.?, locked.readable.?);
@@ -1360,12 +1361,12 @@ pub const BodyValueBufferer = struct {
                         );
                     },
                     .Fulfilled => {
-                        defer stream.value.unprotect();
+                        // defer stream.value.unprotect();
 
                         sink.handleResolveStream(false);
                     },
                     .Rejected => {
-                        defer stream.value.unprotect();
+                        // defer stream.value.unprotect();
 
                         sink.handleRejectStream(promise.result(globalThis.vm()), false);
                     },

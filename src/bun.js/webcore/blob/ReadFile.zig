@@ -63,6 +63,7 @@ pub const ReadFile = struct {
     store: ?*Store = null,
     offset: SizeType = 0,
     max_length: SizeType = Blob.max_size,
+    total_size: SizeType = Blob.max_size,
     opened_fd: bun.FileDescriptor = invalid_fd,
     read_off: SizeType = 0,
     read_eof: bool = false,
@@ -287,7 +288,6 @@ pub const ReadFile = struct {
         const buf = this.buffer.items;
 
         defer store.deref();
-        const total_size = this.size;
         const system_error = this.system_error;
         bun.destroy(this);
 
@@ -296,7 +296,7 @@ pub const ReadFile = struct {
             return;
         }
 
-        cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = total_size, .is_temporary = true } });
+        cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = this.total_size, .is_temporary = true } });
     }
 
     pub fn run(this: *ReadFile, task: *ReadFileTask) void {
@@ -368,12 +368,10 @@ pub const ReadFile = struct {
         }
 
         this.could_block = !bun.isRegularFile(stat.mode);
+        this.total_size = @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))));
 
         if (stat.size > 0 and !this.could_block) {
-            this.size = @min(
-                @as(SizeType, @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))))),
-                this.max_length,
-            );
+            this.size = @min(this.total_size, this.max_length);
             // read up to 4k at a time if
             // they didn't explicitly set a size and we're reading from something that's not a regular file
         } else if (stat.size == 0 and this.could_block) {
@@ -556,6 +554,7 @@ pub const ReadFileUV = struct {
     store: *Store,
     offset: SizeType = 0,
     max_length: SizeType = Blob.max_size,
+    total_size: SizeType = Blob.max_size,
     opened_fd: bun.FileDescriptor = invalid_fd,
     read_len: SizeType = 0,
     read_off: SizeType = 0,
@@ -602,9 +601,8 @@ pub const ReadFileUV = struct {
             cb(cb_ctx, ReadFile.ResultType{ .err = err });
             return;
         }
-        const size = this.size;
 
-        cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = size, .is_temporary = true } });
+        cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = this.total_size, .is_temporary = true } });
     }
 
     pub fn isAllowedToClose(this: *const ReadFileUV) bool {
@@ -617,6 +615,7 @@ pub const ReadFileUV = struct {
         const needs_close = fd != bun.invalid_fd;
 
         this.size = @max(this.read_len, this.size);
+        this.total_size = @max(this.total_size, this.size);
 
         if (needs_close) {
             if (this.doClose(this.isAllowedToClose())) {
@@ -678,13 +677,11 @@ pub const ReadFileUV = struct {
                 this.onFinish();
                 return;
             }
+            this.total_size = @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))));
             this.could_block = !bun.isRegularFile(stat.mode);
 
             if (stat.size > 0 and !this.could_block) {
-                this.size = @min(
-                    @as(SizeType, @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))))),
-                    this.max_length,
-                );
+                this.size = @min(this.total_size, this.max_length);
                 // read up to 4k at a time if
                 // they didn't explicitly set a size and we're reading from something that's not a regular file
             } else if (stat.size == 0 and this.could_block) {

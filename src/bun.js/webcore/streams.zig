@@ -52,6 +52,7 @@ pub const ReadableStream = struct {
     ptr: Source,
 
     pub fn incrementCount(this: *const ReadableStream) void {
+        this.value.protect();
         switch (this.ptr) {
             .Blob => |blob| blob.parent().incrementCount(),
             .File => |file| file.parent().incrementCount(),
@@ -161,13 +162,13 @@ pub const ReadableStream = struct {
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
         ReadableStream__cancel(this.value, globalThis);
-        this.value.unprotect();
+        this.detachIfPossible(globalThis);
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
         ReadableStream__cancel(this.value, globalThis);
-        this.value.unprotect();
+        this.detachIfPossible(globalThis);
     }
 
     pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) void {

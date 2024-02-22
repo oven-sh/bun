@@ -25,6 +25,6 @@ pub const OutKind = enum {
     }
 };
 
-    pub const Stdio = bun.spawn.Stdio;
+pub const Stdio = bun.spawn.Stdio;
 
 pub const WatchFd = if (Environment.isLinux) std.os.fd_t else i32;

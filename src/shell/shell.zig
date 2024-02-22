@@ -67,8 +67,8 @@ pub const ShellErr = union(enum) {
         }
     }
 
-    pub fn throwJS(this: @This(), globalThis: *JSC.JSGlobalObject) void {
-        switch (this) {
+    pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) void {
+        switch (this.*) {
             .sys => {
                 const err = this.sys.toErrorInstance(globalThis);
                 globalThis.throwValue(err);
@@ -77,7 +77,7 @@ pub const ShellErr = union(enum) {
                 var str = JSC.ZigString.init(this.custom);
                 str.markUTF8();
                 const err_value = str.toErrorInstance(globalThis);
-                globalThis.vm().throwError(globalThis, err_value);
+                globalThis.throwValue(err_value);
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
             .invalid_arguments => {
@@ -2105,7 +2105,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         fn eatJSSubstitutionIdx(self: *@This(), comptime literal: []const u8, comptime name: []const u8, comptime validate: *const fn (*@This(), usize) bool) ?usize {
             if (self.matchesAsciiLiteral(literal[1..literal.len])) {
-            const bytes = self.chars.srcBytesAtCursor();
+                const bytes = self.chars.srcBytesAtCursor();
                 var i: usize = 0;
                 var digit_buf: [32]u8 = undefined;
                 var digit_buf_count: u8 = 0;
@@ -2146,9 +2146,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 // }
 
                 // Bump the cursor
-                    const new_idx = self.chars.cursorPos() + i;
-                    const prev_ascii_char: ?u7 = if (digit_buf_count == 1) null else @truncate(digit_buf[digit_buf_count - 2]);
-                    const cur_ascii_char: u7 = @truncate(digit_buf[digit_buf_count - 1]);
+                const new_idx = self.chars.cursorPos() + i;
+                const prev_ascii_char: ?u7 = if (digit_buf_count == 1) null else @truncate(digit_buf[digit_buf_count - 2]);
+                const cur_ascii_char: u7 = @truncate(digit_buf[digit_buf_count - 1]);
                 self.bumpCursorAscii(new_idx, prev_ascii_char, cur_ascii_char);
 
                 // return self.string_refs[idx];
@@ -3001,8 +3001,8 @@ pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime add
         return try escapeUtf16(bunstr.utf16(), outbuf, add_quotes);
     }
     if (bunstr.isUTF8()) {
-    try escapeWTF8(bunstr.byteSlice(), outbuf, add_quotes);
-    return true;
+        try escapeWTF8(bunstr.byteSlice(), outbuf, add_quotes);
+        return true;
     }
     // otherwise should be latin-1 or ascii
     try escape8Bit(bunstr.byteSlice(), outbuf, add_quotes);

@@ -856,7 +856,7 @@ pub const Interpreter = struct {
             jsobjs.items[0..],
         )) {
             .result => |i| i,
-            .err => |e| {
+            .err => |*e| {
                 arena.deinit();
                 throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
                 return null;
@@ -1026,7 +1026,7 @@ pub const Interpreter = struct {
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
         var interp = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
-            .err => |e| {
+            .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return;
             },
@@ -1072,7 +1072,7 @@ pub const Interpreter = struct {
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
         var interp = switch (ThisInterpreter.init(mini, bun.default_allocator, &arena, script_heap, jsobjs)) {
-            .err => |e| {
+            .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return;
             },
@@ -1610,7 +1610,7 @@ pub const Interpreter = struct {
                         const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .cmd_subst)) {
                             .result => |s| s,
                             .err => |e| {
-                                throwShellErr(bun.shell.ShellErr.newSys(e), this.base.eventLoop());
+                                this.base.throw(&bun.shell.ShellErr.newSys(e));
                                 return false;
                             },
                         };
@@ -1637,7 +1637,7 @@ pub const Interpreter = struct {
                             const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .cmd_subst)) {
                                 .result => |s| s,
                                 .err => |e| {
-                                    throwShellErr(bun.shell.ShellErr.newSys(e), this.base.eventLoop());
+                                    this.base.throw(&bun.shell.ShellErr.newSys(e));
                                     return false;
                                 },
                             };
@@ -1655,23 +1655,7 @@ pub const Interpreter = struct {
                             this.child_state = .idle;
                         }
                     }
-
-                    b = i + 1;
-                    if (c == ' ') {
-                        b = i;
-                        prev_whitespace = true;
-                        this.current_out.appendSlice(stdout[a..b]) catch bun.outOfMemory();
-                        this.pushCurrentOut();
-                        // const slice_z = this.base.interpreter.allocator.dupeZ(u8, stdout[a..b]) catch bun.outOfMemory();
-                        // this.pushResultSlice(slice_z);
-                    }
-                }
-                // "aa bbb"
-
-                this.current_out.appendSlice(stdout[a..b]) catch bun.outOfMemory();
-                // this.pushCurrentOut();
-                // const slice_z = this.base.interpreter.allocator.dupeZ(u8, stdout[a..b]) catch bun.outOfMemory();
-                // this.pushResultSlice(slice_z);
+                },
             }
 
             return false;
@@ -1806,15 +1790,15 @@ pub const Interpreter = struct {
                 std.debug.assert(this.child_state == .glob);
             }
 
-            if (task.err != null) {
-                switch (task.err.?) {
+            if (task.err) |*err| {
+                switch (err.*) {
                     .syscall => {
-                        throwShellErr(bun.shell.ShellErr.newSys(task.err.?.syscall), this.base.eventLoop());
+                        this.base.throw(&bun.shell.ShellErr.newSys(task.err.?.syscall));
                     },
                     .unknown => |errtag| {
-                        throwShellErr(.{
+                        this.base.throw(&.{
                             .custom = bun.default_allocator.dupe(u8, @errorName(errtag)) catch bun.outOfMemory(),
-                        }, this.base.eventLoop());
+                        });
                     },
                 }
             }
@@ -2110,8 +2094,12 @@ pub const Interpreter = struct {
         interpreter: *ThisInterpreter,
         shell: *ShellState,
 
-        pub inline fn eventLoop(this: *State) JSC.EventLoopHandle {
+        pub inline fn eventLoop(this: *const State) JSC.EventLoopHandle {
             return this.interpreter.event_loop;
+        }
+
+        pub fn throw(this: *const State, err: *const bun.shell.ShellErr) void {
+            throwShellErr(err, this.eventLoop());
         }
     };
 
@@ -2790,7 +2778,7 @@ pub const Interpreter = struct {
             }
 
             if (err) |e| {
-                throwShellErr(shell.ShellErr.newSys(e), this.base.eventLoop());
+                this.base.throw(&shell.ShellErr.newSys(e));
                 return;
             }
 
@@ -3104,7 +3092,6 @@ pub const Interpreter = struct {
                 .node = node,
                 .parent = parent,
 
-
                 .spawn_arena = bun.ArenaAllocator.init(interpreter.allocator),
                 .args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.spawn_arena.allocator(), node.name_and_args.len) catch bun.outOfMemory(),
                 .redirection_file = undefined,
@@ -3227,7 +3214,7 @@ pub const Interpreter = struct {
 
         pub fn onBufferedWriterDone(this: *Cmd, e: ?Syscall.Error) void {
             if (e) |err| {
-                throwShellErr(bun.shell.ShellErr.newSys(err), this.base.eventLoop());
+                this.base.throw(&bun.shell.ShellErr.newSys(err));
                 return;
             }
             std.debug.assert(this.state == .waiting_write_err);
@@ -3486,8 +3473,8 @@ pub const Interpreter = struct {
             } };
             const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), spawn_args, &this.exec.subproc.child)) {
                 .result => this.exec.subproc.child,
-                .err => |e| {
-                    throwShellErr(e, this.base.eventLoop());
+                .err => |*e| {
+                    this.base.throw(e);
                     return;
                 },
             };
@@ -3881,203 +3868,212 @@ pub const Interpreter = struct {
             io_: *IO,
             comptime in_cmd_subst: bool,
         ) CoroutineResult {
-                const io = io_.*;
+            const io = io_.*;
 
-                const stdin: Builtin.BuiltinIO = switch (io.stdin) {
-                    .std => .{ .fd = bun.STDIN_FD },
-                    .fd => |fd| .{ .fd = fd },
-                    .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
-                    .ignore => .ignore,
-                };
-                const stdout: Builtin.BuiltinIO = switch (io.stdout) {
-                    .std => if (io.stdout.std.captured) |bytelist| .{ .captured = .{ .out_kind = .stdout, .bytelist = bytelist } } else .{ .fd = bun.STDOUT_FD },
-                    .fd => |fd| .{ .fd = fd },
-                    .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
-                    .ignore => .ignore,
-                };
-                const stderr: Builtin.BuiltinIO = switch (io.stderr) {
-                    .std => if (io.stderr.std.captured) |bytelist| .{ .captured = .{ .out_kind = .stderr, .bytelist = bytelist } } else .{ .fd = bun.STDERR_FD },
-                    .fd => |fd| .{ .fd = fd },
-                    .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
-                    .ignore => .ignore,
-                };
+            const stdin: Builtin.BuiltinIO = switch (io.stdin) {
+                .std => .{ .fd = bun.STDIN_FD },
+                .fd => |fd| .{ .fd = fd },
+                .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
+                .ignore => .ignore,
+            };
+            const stdout: Builtin.BuiltinIO = switch (io.stdout) {
+                .std => if (io.stdout.std.captured) |bytelist| .{ .captured = .{ .out_kind = .stdout, .bytelist = bytelist } } else .{ .fd = bun.STDOUT_FD },
+                .fd => |fd| .{ .fd = fd },
+                .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
+                .ignore => .ignore,
+            };
+            const stderr: Builtin.BuiltinIO = switch (io.stderr) {
+                .std => if (io.stderr.std.captured) |bytelist| .{ .captured = .{ .out_kind = .stderr, .bytelist = bytelist } } else .{ .fd = bun.STDERR_FD },
+                .fd => |fd| .{ .fd = fd },
+                .pipe => .{ .buf = std.ArrayList(u8).init(interpreter.allocator) },
+                .ignore => .ignore,
+            };
 
-                cmd.exec = .{
-                    .bltn = Builtin{
-                        .kind = kind,
-                        .stdin = stdin,
-                        .stdout = stdout,
-                        .stderr = stderr,
-                        .exit_code = null,
-                        .arena = arena,
-                        .args = args,
-                        .export_env = export_env,
-                        .cmd_local_env = cmd_local_env,
-                        .cwd = cwd,
-                        .impl = undefined,
-                    },
-                };
+            cmd.exec = .{
+                .bltn = Builtin{
+                    .kind = kind,
+                    .stdin = stdin,
+                    .stdout = stdout,
+                    .stderr = stderr,
+                    .exit_code = null,
+                    .arena = arena,
+                    .args = args,
+                    .export_env = export_env,
+                    .cmd_local_env = cmd_local_env,
+                    .cwd = cwd,
+                    .impl = undefined,
+                },
+            };
 
-                switch (kind) {
-                    .@"export" => {
-                        cmd.exec.bltn.impl = .{
-                            .@"export" = Export{ .bltn = &cmd.exec.bltn },
-                        };
-                    },
-                    .rm => {
-                        cmd.exec.bltn.impl = .{
-                            .rm = Rm{
-                                .bltn = &cmd.exec.bltn,
-                                .opts = .{},
-                            },
-                        };
-                    },
-                    .echo => {
-                        cmd.exec.bltn.impl = .{
-                            .echo = Echo{
-                                .bltn = &cmd.exec.bltn,
-                                .output = std.ArrayList(u8).init(arena.allocator()),
-                            },
-                        };
-                    },
-                    .cd => {
-                        cmd.exec.bltn.impl = .{
-                            .cd = Cd{
-                                .bltn = &cmd.exec.bltn,
-                            },
-                        };
-                    },
-                    .which => {
-                        cmd.exec.bltn.impl = .{
-                            .which = Which{
-                                .bltn = &cmd.exec.bltn,
-                            },
-                        };
-                    },
-                    .pwd => {
-                        cmd.exec.bltn.impl = .{
-                            .pwd = Pwd{ .bltn = &cmd.exec.bltn },
-                        };
-                    },
-                    .mv => {
-                        cmd.exec.bltn.impl = .{
-                            .mv = Mv{ .bltn = &cmd.exec.bltn },
-                        };
-                    },
-                    .ls => {
-                        cmd.exec.bltn.impl = .{
-                            .ls = Ls{
-                                .bltn = &cmd.exec.bltn,
-                            },
-                        };
-                    },
-                }
+            switch (kind) {
+                .@"export" => {
+                    cmd.exec.bltn.impl = .{
+                        .@"export" = Export{ .bltn = &cmd.exec.bltn },
+                    };
+                },
+                .rm => {
+                    cmd.exec.bltn.impl = .{
+                        .rm = Rm{
+                            .bltn = &cmd.exec.bltn,
+                            .opts = .{},
+                        },
+                    };
+                },
+                .echo => {
+                    cmd.exec.bltn.impl = .{
+                        .echo = Echo{
+                            .bltn = &cmd.exec.bltn,
+                            .output = std.ArrayList(u8).init(arena.allocator()),
+                        },
+                    };
+                },
+                .cd => {
+                    cmd.exec.bltn.impl = .{
+                        .cd = Cd{
+                            .bltn = &cmd.exec.bltn,
+                        },
+                    };
+                },
+                .which => {
+                    cmd.exec.bltn.impl = .{
+                        .which = Which{
+                            .bltn = &cmd.exec.bltn,
+                        },
+                    };
+                },
+                .pwd => {
+                    cmd.exec.bltn.impl = .{
+                        .pwd = Pwd{ .bltn = &cmd.exec.bltn },
+                    };
+                },
+                .mv => {
+                    cmd.exec.bltn.impl = .{
+                        .mv = Mv{ .bltn = &cmd.exec.bltn },
+                    };
+                },
+                .ls => {
+                    cmd.exec.bltn.impl = .{
+                        .ls = Ls{
+                            .bltn = &cmd.exec.bltn,
+                        },
+                    };
+                },
+            }
 
-                if (node.redirect_file) |file| brk: {
-                    if (comptime in_cmd_subst) {
-                        if (node.redirect.stdin) {
-                            stdin = .ignore;
-                        }
-
-                        if (node.redirect.stdout) {
-                            stdout = .ignore;
-                        }
-
-                        if (node.redirect.stderr) {
-                            stdout = .ignore;
-                        }
-
-                        break :brk;
+            if (node.redirect_file) |file| brk: {
+                if (comptime in_cmd_subst) {
+                    if (node.redirect.stdin) {
+                        stdin = .ignore;
                     }
 
-                    switch (file) {
-                        .atom => {
-                            if (cmd.redirection_file.items.len == 0) {
-                                const buf = std.fmt.allocPrint(arena.allocator(), "bun: ambiguous redirect: at `{s}`\n", .{@tagName(kind)}) catch bun.outOfMemory();
-                                cmd.writeFailingError(buf, 1);
-                                return .yield;
-                            }
-                            const path = cmd.redirection_file.items[0..cmd.redirection_file.items.len -| 1 :0];
-                            log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
-                            const perm = 0o666;
-                            const flags = node.redirect.toFlags();
-                            const redirfd = switch (Syscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
-                                .err => |e| {
-                                    const buf = std.fmt.allocPrint(arena.allocator(), "bun: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
-                                    cmd.writeFailingError(buf, 1);
-                                    return .yield;
-                                },
-                                .result => |f| f,
-                            };
-                            // cmd.redirection_fd = redirfd;
-                            if (node.redirect.stdin) {
-                                cmd.exec.bltn.stdin = .{ .fd = redirfd };
-                            }
-                            if (node.redirect.stdout) {
-                                cmd.exec.bltn.stdout = .{ .fd = redirfd };
-                            }
-                            if (node.redirect.stderr) {
-                                cmd.exec.bltn.stderr = .{ .fd = redirfd };
-                            }
-                        },
-                        .jsbuf => |val| {
-                            if (comptime EventLoopKind == .mini) @panic("This should nevver happened");
-                            if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(interpreter.global)) |buf| {
-                                const builtinio: Builtin.BuiltinIO = .{ .arraybuf = .{ .buf = JSC.ArrayBuffer.Strong{
-                                    .array_buffer = buf,
-                                    .held = JSC.Strong.create(buf.value, interpreter.global),
-                                }, .i = 0 } };
-
-                                if (node.redirect.stdin) {
-                                    cmd.exec.bltn.stdin = builtinio;
-                                }
-
-                                if (node.redirect.stdout) {
-                                    cmd.exec.bltn.stdout = builtinio;
-                                }
-
-                                if (node.redirect.stderr) {
-                                    cmd.exec.bltn.stderr = builtinio;
-                                }
-                            } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
-                                const builtinio: Builtin.BuiltinIO = .{ .blob = bun.newWithAlloc(arena.allocator(), JSC.WebCore.Blob, blob.dupe()) };
-
-                                if (node.redirect.stdin) {
-                                    cmd.exec.bltn.stdin = builtinio;
-                                }
-
-                                if (node.redirect.stdout) {
-                                    cmd.exec.bltn.stdout = builtinio;
-                                }
-
-                                if (node.redirect.stderr) {
-                                    cmd.exec.bltn.stderr = builtinio;
-                                }
-                            } else {
-                                const jsval = cmd.base.interpreter.jsobjs[val.idx];
-                                global_handle.get().globalThis.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global_handle.get().globalThis)});
-                                return .yield;
-                            }
-                        },
-                    }
-                } else if (node.redirect.duplicate_out) {
                     if (node.redirect.stdout) {
-                        cmd.exec.bltn.stderr = cmd.exec.bltn.stdout;
+                        stdout = .ignore;
                     }
 
                     if (node.redirect.stderr) {
-                        cmd.exec.bltn.stdout = cmd.exec.bltn.stderr;
+                        stdout = .ignore;
                     }
+
+                    break :brk;
                 }
 
-                return .cont;
+                switch (file) {
+                    .atom => {
+                        if (cmd.redirection_file.items.len == 0) {
+                            const buf = std.fmt.allocPrint(arena.allocator(), "bun: ambiguous redirect: at `{s}`\n", .{@tagName(kind)}) catch bun.outOfMemory();
+                            cmd.writeFailingError(buf, 1);
+                            return .yield;
+                        }
+                        const path = cmd.redirection_file.items[0..cmd.redirection_file.items.len -| 1 :0];
+                        log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
+                        const perm = 0o666;
+                        const flags = node.redirect.toFlags();
+                        const redirfd = switch (Syscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
+                            .err => |e| {
+                                const buf = std.fmt.allocPrint(arena.allocator(), "bun: {s}: {s}", .{ e.toSystemError().message, path }) catch bun.outOfMemory();
+                                cmd.writeFailingError(buf, 1);
+                                return .yield;
+                            },
+                            .result => |f| f,
+                        };
+                        // cmd.redirection_fd = redirfd;
+                        if (node.redirect.stdin) {
+                            cmd.exec.bltn.stdin = .{ .fd = redirfd };
+                        }
+                        if (node.redirect.stdout) {
+                            cmd.exec.bltn.stdout = .{ .fd = redirfd };
+                        }
+                        if (node.redirect.stderr) {
+                            cmd.exec.bltn.stderr = .{ .fd = redirfd };
+                        }
+                    },
+                    .jsbuf => |val| {
+                        const globalObject = interpreter.event_loop.js.global;
+                        if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(globalObject)) |buf| {
+                            const builtinio: Builtin.BuiltinIO = .{ .arraybuf = .{ .buf = JSC.ArrayBuffer.Strong{
+                                .array_buffer = buf,
+                                .held = JSC.Strong.create(buf.value, globalObject),
+                            }, .i = 0 } };
+
+                            if (node.redirect.stdin) {
+                                cmd.exec.bltn.stdin = builtinio;
+                            }
+
+                            if (node.redirect.stdout) {
+                                cmd.exec.bltn.stdout = builtinio;
+                            }
+
+                            if (node.redirect.stderr) {
+                                cmd.exec.bltn.stderr = builtinio;
+                            }
+                        } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
+                            const builtinio: Builtin.BuiltinIO = .{ .blob = bun.newWithAlloc(arena.allocator(), JSC.WebCore.Blob, blob.dupe()) };
+
+                            if (node.redirect.stdin) {
+                                cmd.exec.bltn.stdin = builtinio;
+                            }
+
+                            if (node.redirect.stdout) {
+                                cmd.exec.bltn.stdout = builtinio;
+                            }
+
+                            if (node.redirect.stderr) {
+                                cmd.exec.bltn.stderr = builtinio;
+                            }
+                        } else {
+                            const jsval = cmd.base.interpreter.jsobjs[val.idx];
+                            cmd.base.interpreter.event_loop.js.global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(globalObject)});
+                            return .yield;
+                        }
+                    },
+                }
+            } else if (node.redirect.duplicate_out) {
+                if (node.redirect.stdout) {
+                    cmd.exec.bltn.stderr = cmd.exec.bltn.stdout;
+                }
+
+                if (node.redirect.stderr) {
+                    cmd.exec.bltn.stdout = cmd.exec.bltn.stderr;
+                }
+            }
+
+            return .cont;
         }
 
-        pub inline fn eventLoop(this: *Builtin) JSC.EventLoopHandle {
+        pub inline fn eventLoop(this: *const Builtin) JSC.EventLoopHandle {
             return this.parentCmd().base.eventLoop();
         }
 
-        pub inline fn parentCmd(this: *Builtin) *Cmd {
+        pub inline fn throw(this: *const Builtin, err: *const bun.shell.ShellErr) void {
+            this.parentCmd().base.throw(err);
+        }
+
+        pub inline fn parentCmd(this: *const Builtin) *const Cmd {
+            const union_ptr = @fieldParentPtr(Cmd.Exec, "bltn", this);
+            return @fieldParentPtr(Cmd, "exec", union_ptr);
+        }
+
+        pub inline fn parentCmdMut(this: *Builtin) *Cmd {
             const union_ptr = @fieldParentPtr(Cmd.Exec, "bltn", this);
             return @fieldParentPtr(Cmd, "exec", union_ptr);
         }
@@ -4088,7 +4084,7 @@ pub const Interpreter = struct {
             // }
             this.exit_code = exit_code;
 
-            var cmd = this.parentCmd();
+            var cmd = this.parentCmdMut();
             log("builtin done ({s}: exit={d}) cmd to free: ({x})", .{ @tagName(this.kind), exit_code, @intFromPtr(cmd) });
             cmd.exit_code = this.exit_code.?;
 
@@ -4945,11 +4941,11 @@ pub const Interpreter = struct {
                             if (paths) |p| {
                                 for (p) |path_raw| {
                                     const path = path_raw[0..std.mem.len(path_raw) :0];
-                                    var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, path, this.bltn.parentCmd().base.eventLoop());
+                                    var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, path, this.bltn.eventLoop());
                                     task.schedule();
                                 }
                             } else {
-                                var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, ".", this.bltn.parentCmd().base.eventLoop());
+                                var task = ShellLsTask.create(this, this.opts, &this.state.exec.task_count, cwd, ".", this.bltn.eventLoop());
                                 task.schedule();
                             }
                         },
@@ -5059,7 +5055,7 @@ pub const Interpreter = struct {
                         // if (!need_to_write_to_stdout_with_io) return; // yield execution
                     } else {
                         if (this.bltn.writeNoIO(.stderr, error_string).asErr()) |theerr| {
-                            throwShellErr(bun.shell.ShellErr.newSys(theerr), this.bltn.eventLoop());
+                            this.bltn.throw(&bun.shell.ShellErr.newSys(theerr));
                         }
                     }
                 }
@@ -5090,7 +5086,7 @@ pub const Interpreter = struct {
                 defer output.deinit();
 
                 if (this.bltn.writeNoIO(.stdout, output.items[0..]).asErr()) |e| {
-                    throwShellErr(bun.shell.ShellErr.newSys(e), this.bltn.eventLoop());
+                    this.bltn.throw(&bun.shell.ShellErr.newSys(e));
                     return;
                 }
 
@@ -6743,7 +6739,7 @@ pub const Interpreter = struct {
                             const error_string = this.bltn.taskErrorToString(.rm, err);
                             if (!this.bltn.stderr.needsIO()) {
                                 if (this.bltn.writeNoIO(.stderr, error_string).asErr()) |e| {
-                                    throwShellErr(bun.shell.ShellErr.newSys(e), this.bltn.parentCmd().base.eventLoop());
+                                    this.bltn.throw(&bun.shell.ShellErr.newSys(e));
                                     return;
                                 }
                             } else {
@@ -6779,7 +6775,7 @@ pub const Interpreter = struct {
             fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) void {
                 if (!this.bltn.stdout.needsIO()) {
                     if (this.bltn.writeNoIO(.stdout, verbose.deleted_entries.items[0..]).asErr()) |err| {
-                        throwShellErr(bun.shell.ShellErr.newSys(err), this.bltn.parentCmd().base.eventLoop());
+                        this.bltn.parentCmd().base.throw(&bun.shell.ShellErr.newSys(err));
                         return;
                     }
                     // _ = this.state.exec.output_done.fetchAdd(1, .SeqCst);
@@ -7772,7 +7768,7 @@ inline fn fastMod(val: anytype, comptime rhs: comptime_int) @TypeOf(val) {
     return val & (rhs - 1);
 }
 
-fn throwShellErr(e: bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) void {
+fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) void {
     switch (event_loop) {
         .mini => e.throwMini(),
         .js => e.throwJS(event_loop.js.global),

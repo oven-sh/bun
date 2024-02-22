@@ -216,7 +216,7 @@ pub const FDImpl = packed struct {
         // Format the file descriptor for logging BEFORE closing it.
         // Otherwise the file descriptor is always invalid after closing it.
         var buf: if (env.isDebug) [1050]u8 else void = undefined;
-        const this_fmt = if (env.isDebug) std.fmt.bufPrint(&buf, "{d}", .{this}) catch unreachable;
+        const this_fmt = if (env.isDebug) std.fmt.bufPrint(&buf, "{}", .{this}) catch unreachable;
 
         const result: ?bun.sys.Error = switch (env.os) {
             .linux => result: {
@@ -310,7 +310,6 @@ pub const FDImpl = packed struct {
             return;
         }
 
-       
         if (fmt.len != 0) {
             // The reason for this error is because formatting FD as an integer on windows is
             // ambiguous and almost certainly a mistake. You probably meant to format fd.cast().

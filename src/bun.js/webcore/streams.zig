@@ -2642,7 +2642,7 @@ pub fn ReadableStreamSource(
         }
 
         pub fn decrementCount(this: *This) u32 {
-            std.debug.print("[ReadableStreamSource] this.ref_count = {d}\n", .{this.ref_count});
+            // std.debug.print("[ReadableStreamSource] this.ref_count = {d}\n", .{this.ref_count});
             if (comptime Environment.isDebug) {
                 if (this.ref_count == 0) {
                     @panic("Attempted to decrement ref count below zero");
@@ -2860,7 +2860,7 @@ pub fn ReadableStreamSource(
 
             pub fn finalize(this: *ReadableStreamSourceType) callconv(.C) void {
                 this.this_jsvalue = .zero;
-                // _ = this.decrementCount();
+                _ = this.decrementCount();
             }
 
             pub fn drain(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {

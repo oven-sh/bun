@@ -1343,9 +1343,8 @@ export fn Bun__resolveSyncWithStrings(
     source: *bun.String,
     is_esm: bool,
 ) JSC.JSValue {
-    var exception_ = [1]JSC.JSValueRef{null};
-    var exception = &exception_;
-    return doResolveWithArgs(global, specifier.*, source.*, exception, is_esm, true) orelse {
+    var exception = [1]JSC.JSValueRef{null};
+    return doResolveWithArgs(global, specifier.*, source.*, &exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }

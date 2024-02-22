@@ -153,7 +153,7 @@ pub const FilePoll = struct {
     // const FIFO = JSC.WebCore.FIFO;
     // const FIFOMini = JSC.WebCore.FIFOMini;
 
-    // const ShellBufferedWriter = bun.shell.Interpreter.BufferedWriter;
+    const ShellBufferedWriter = bun.shell.Interpreter.BufferedWriter.Poll;
     // const ShellBufferedWriterMini = bun.shell.InterpreterMini.BufferedWriter;
     // const ShellBufferedInput = bun.shell.ShellSubprocess.BufferedInput;
     // const ShellBufferedInputMini = bun.shell.SubprocessMini.BufferedInput;
@@ -187,7 +187,7 @@ pub const FilePoll = struct {
         // ShellBufferedOutputMini,
 
         StaticPipeWriter,
-
+        ShellBufferedWriter,
         Deactivated,
         DNSResolver,
         GetAddrInfoRequest,

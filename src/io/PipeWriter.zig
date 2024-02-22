@@ -182,6 +182,7 @@ pub fn PosixBufferedWriter(
         is_done: bool = false,
         pollable: bool = false,
         closed_without_reporting: bool = false,
+        close_fd: bool = true,
 
         const PosixWriter = @This();
 
@@ -291,7 +292,7 @@ pub fn PosixBufferedWriter(
             if (this.getFd() != bun.invalid_fd) {
                 std.debug.assert(!this.closed_without_reporting);
                 this.closed_without_reporting = true;
-                this.handle.close(null, {});
+                if (this.close_fd) this.handle.close(null, {});
             }
         }
 
@@ -301,7 +302,7 @@ pub fn PosixBufferedWriter(
                     this.closed_without_reporting = false;
                     closer(this.parent);
                 } else {
-                    this.handle.close(this.parent, closer);
+                    if (this.close_fd) this.handle.close(this.parent, closer);
                 }
             }
         }

@@ -691,6 +691,7 @@ pub const Interpreter = struct {
                 c: @TypeOf(ctx),
                 bufw: BufferedWriter,
             ) void,
+            event_loop: JSC.EventLoopHandle,
         ) CoroutineResult {
             const IOWriteFn = struct {
                 pub fn run(c: @TypeOf(ctx), bufw: BufferedWriter) void {
@@ -698,7 +699,7 @@ pub const Interpreter = struct {
                 }
             };
 
-            switch (this.writeIO(.stderr, buf, ctx, IOWriteFn.run)) {
+            switch (this.writeIO(.stderr, buf, ctx, IOWriteFn.run, event_loop)) {
                 .cont => {
                     ctx.parent.childDone(ctx, 1);
                     return .yield;
@@ -716,14 +717,16 @@ pub const Interpreter = struct {
                 c: @TypeOf(ctx),
                 bufw: BufferedWriter,
             ) void,
+            event_loop: JSC.EventLoopHandle,
         ) CoroutineResult {
             const io: *IO.Kind = &@field(this.io, @tagName(iotype));
 
             switch (io.*) {
                 .std => |val| {
                     const bw = BufferedWriter{
+                        .event_loop = event_loop,
                         .fd = if (iotype == .stdout) bun.STDOUT_FD else bun.STDERR_FD,
-                        .remain = buf,
+                        .buffer = buf,
                         .parent = BufferedWriter.ParentPtr.init(ctx),
                         .bytelist = val.captured,
                     };
@@ -732,8 +735,9 @@ pub const Interpreter = struct {
                 },
                 .fd => {
                     const bw = BufferedWriter{
+                        .event_loop = event_loop,
                         .fd = if (iotype == .stdout) bun.STDOUT_FD else bun.STDERR_FD,
-                        .remain = buf,
+                        .buffer = buf,
                         .parent = BufferedWriter.ParentPtr.init(ctx),
                     };
                     handleIOWrite(ctx, bw);
@@ -2702,7 +2706,12 @@ pub const Interpreter = struct {
             return .cont;
         }
 
-        pub fn writeFailingError(this: *Pipeline, comptime fmt: []const u8, args: anytype, exit_code: ExitCode) void {
+        pub fn writeFailingError(
+            this: *Pipeline,
+            comptime fmt: []const u8,
+            args: anytype,
+            exit_code: ExitCode,
+        ) void {
             _ = exit_code; // autofix
 
             const HandleIOWrite = struct {
@@ -2713,7 +2722,7 @@ pub const Interpreter = struct {
             };
 
             const buf = std.fmt.allocPrint(this.base.interpreter.arena.allocator(), fmt, args) catch bun.outOfMemory();
-            _ = this.base.shell.writeFailingError(buf, this, HandleIOWrite.run);
+            _ = this.base.shell.writeFailingError(buf, this, HandleIOWrite.run, this.base.eventLoop());
         }
 
         pub fn start(this: *Pipeline) void {
@@ -3030,13 +3039,13 @@ pub const Interpreter = struct {
                     cmd.state.waiting_write_err.write();
                 }
             };
-            _ = this.base.shell.writeFailingError(buf, this, HandleIOWrite.run);
+            _ = this.base.shell.writeFailingError(buf, this, HandleIOWrite.run, this.base.eventLoop());
 
             // switch (this.base.shell.io.stderr) {
             //     .std => |val| {
             //         this.state = .{ .waiting_write_err = BufferedWriter{
             //             .fd = stderr_no,
-            //             .remain = buf,
+            //             .buffer =  buf,
             //             .parent = BufferedWriter.ParentPtr.init(this),
             //             .bytelist = val.captured,
             //         } };
@@ -3045,7 +3054,7 @@ pub const Interpreter = struct {
             //     .fd => {
             //         this.state = .{ .waiting_write_err = BufferedWriter{
             //             .fd = stderr_no,
-            //             .remain = buf,
+            //             .buffer =  buf,
             //             .parent = BufferedWriter.ParentPtr.init(this),
             //         } };
             //         this.state.waiting_write_err.write();
@@ -4042,6 +4051,10 @@ pub const Interpreter = struct {
             return .cont;
         }
 
+        pub inline fn eventLoop(this: *Builtin) JSC.EventLoopHandle {
+            return this.parentCmd().base.eventLoop();
+        }
+
         pub inline fn parentCmd(this: *Builtin) *Cmd {
             const union_ptr = @fieldParentPtr(Cmd.Exec, "bltn", this);
             return @fieldParentPtr(Cmd, "exec", union_ptr);
@@ -4219,7 +4232,8 @@ pub const Interpreter = struct {
 
                 this.print_state = .{
                     .bufwriter = BufferedWriter{
-                        .remain = buf,
+                        .event_loop = this.bltn.eventLoop(),
+                        .buffer = buf,
                         .fd = if (comptime io_kind == .stdout) this.bltn.stdout.expectFd() else this.bltn.stderr.expectFd(),
                         .parent = BufferedWriter.ParentPtr{ .ptr = BufferedWriter.ParentPtr.Repr.init(this) },
                         .bytelist = this.bltn.stdBufferedBytelist(io_kind),
@@ -4291,7 +4305,8 @@ pub const Interpreter = struct {
 
                     this.print_state = .{
                         .bufwriter = BufferedWriter{
-                            .remain = buf,
+                            .event_loop = this.bltn.eventLoop(),
+                            .buffer = buf,
                             .fd = this.bltn.stdout.expectFd(),
                             .parent = BufferedWriter.ParentPtr{ .ptr = BufferedWriter.ParentPtr.Repr.init(this) },
                             .bytelist = this.bltn.stdBufferedBytelist(.stdout),
@@ -4385,8 +4400,9 @@ pub const Interpreter = struct {
                 }
 
                 this.io_write_state = BufferedWriter{
+                    .event_loop = this.bltn.eventLoop(),
                     .fd = this.bltn.stdout.expectFd(),
-                    .remain = this.output.items[0..],
+                    .buffer = this.output.items[0..],
                     .parent = BufferedWriter.ParentPtr.init(this),
                     .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                 };
@@ -4455,8 +4471,9 @@ pub const Interpreter = struct {
                     this.state = .{
                         .one_arg = .{
                             .writer = BufferedWriter{
+                                .event_loop = this.bltn.eventLoop(),
                                 .fd = this.bltn.stdout.expectFd(),
-                                .remain = "\n",
+                                .buffer = "\n",
                                 .parent = BufferedWriter.ParentPtr.init(this),
                                 .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                             },
@@ -4522,7 +4539,8 @@ pub const Interpreter = struct {
                     multiargs.state = .{
                         .waiting_write = BufferedWriter{
                             .fd = this.bltn.stdout.expectFd(),
-                            .remain = buf,
+                            .buffer = buf,
+                            .event_loop = this.bltn.eventLoop(),
                             .parent = BufferedWriter.ParentPtr.init(this),
                             .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                         },
@@ -4536,7 +4554,8 @@ pub const Interpreter = struct {
                 multiargs.state = .{
                     .waiting_write = BufferedWriter{
                         .fd = this.bltn.stdout.expectFd(),
-                        .remain = buf,
+                        .buffer = buf,
+                        .event_loop = this.bltn.eventLoop(),
                         .parent = BufferedWriter.ParentPtr.init(this),
                         .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                     },
@@ -4602,7 +4621,8 @@ pub const Interpreter = struct {
                     .waiting_write_stderr = .{
                         .buffered_writer = BufferedWriter{
                             .fd = this.bltn.stderr.expectFd(),
-                            .remain = buf,
+                            .buffer = buf,
+                            .event_loop = this.bltn.eventLoop(),
                             .parent = BufferedWriter.ParentPtr.init(this),
                             .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                         },
@@ -4732,7 +4752,8 @@ pub const Interpreter = struct {
                                 .kind = .stderr,
                                 .writer = BufferedWriter{
                                     .fd = this.bltn.stderr.expectFd(),
-                                    .remain = msg,
+                                    .buffer = msg,
+                                    .event_loop = this.bltn.eventLoop(),
                                     .parent = BufferedWriter.ParentPtr.init(this),
                                     .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                 },
@@ -4758,7 +4779,8 @@ pub const Interpreter = struct {
                             .kind = .stdout,
                             .writer = BufferedWriter{
                                 .fd = this.bltn.stdout.expectFd(),
-                                .remain = buf,
+                                .buffer = buf,
+                                .event_loop = this.bltn.eventLoop(),
                                 .parent = BufferedWriter.ParentPtr.init(this),
                                 .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                             },
@@ -4855,7 +4877,8 @@ pub const Interpreter = struct {
                     this.state = .{
                         .waiting_write_err = BufferedWriter{
                             .fd = this.bltn.stderr.expectFd(),
-                            .remain = buf,
+                            .buffer = buf,
+                            .event_loop = this.bltn.eventLoop(),
                             .parent = BufferedWriter.ParentPtr.init(this),
                             .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                         },
@@ -5005,7 +5028,8 @@ pub const Interpreter = struct {
                         const blocking_output: BlockingOutput = .{
                             .writer = BufferedWriter{
                                 .fd = this.bltn.stderr.expectFd(),
-                                .remain = error_string,
+                                .buffer = error_string,
+                                .event_loop = this.bltn.eventLoop(),
                                 .parent = BufferedWriter.ParentPtr.init(this),
                                 .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                             },
@@ -5025,7 +5049,8 @@ pub const Interpreter = struct {
                     const blocking_output: BlockingOutput = .{
                         .writer = BufferedWriter{
                             .fd = this.bltn.stdout.expectFd(),
-                            .remain = output.items[0..],
+                            .buffer = output.items[0..],
+                            .event_loop = this.bltn.eventLoop(),
                             .parent = BufferedWriter.ParentPtr.init(this),
                             .bytelist = this.bltn.stdBufferedBytelist(.stdout),
                         },
@@ -5844,7 +5869,8 @@ pub const Interpreter = struct {
                         .waiting_write_err = .{
                             .writer = BufferedWriter{
                                 .fd = this.bltn.stderr.expectFd(),
-                                .remain = buf,
+                                .buffer = buf,
+                                .event_loop = this.bltn.eventLoop(),
                                 .parent = BufferedWriter.ParentPtr.init(this),
                                 .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                             },
@@ -6329,7 +6355,8 @@ pub const Interpreter = struct {
                                             parse_opts.state = .{
                                                 .wait_write_err = BufferedWriter{
                                                     .fd = this.bltn.stderr.expectFd(),
-                                                    .remain = error_string,
+                                                    .event_loop = this.bltn.eventLoop(),
+                                                    .buffer = error_string,
                                                     .parent = BufferedWriter.ParentPtr.init(this),
                                                     .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                 },
@@ -6367,7 +6394,7 @@ pub const Interpreter = struct {
                                                     parse_opts.state = .{
                                                         .wait_write_err = BufferedWriter{
                                                             .fd = this.bltn.stderr.expectFd(),
-                                                            .remain = buf,
+                                                            .buffer = buf,
                                                             .parent = BufferedWriter.ParentPtr.init(this),
                                                             .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                         },
@@ -6412,7 +6439,7 @@ pub const Interpreter = struct {
                                                             parse_opts.state = .{
                                                                 .wait_write_err = BufferedWriter{
                                                                     .fd = this.bltn.stderr.expectFd(),
-                                                                    .remain = error_string,
+                                                                    .buffer = error_string,
                                                                     .parent = BufferedWriter.ParentPtr.init(this),
                                                                     .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                                 },
@@ -6451,7 +6478,7 @@ pub const Interpreter = struct {
                                                 parse_opts.state = .{
                                                     .wait_write_err = BufferedWriter{
                                                         .fd = this.bltn.stderr.expectFd(),
-                                                        .remain = error_string,
+                                                        .buffer = error_string,
                                                         .parent = BufferedWriter.ParentPtr.init(this),
                                                         .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                     },
@@ -6474,7 +6501,7 @@ pub const Interpreter = struct {
                                                 parse_opts.state = .{
                                                     .wait_write_err = BufferedWriter{
                                                         .fd = this.bltn.stderr.expectFd(),
-                                                        .remain = error_string,
+                                                        .buffer = error_string,
                                                         .parent = BufferedWriter.ParentPtr.init(this),
                                                         .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                                     },
@@ -6699,7 +6726,7 @@ pub const Interpreter = struct {
                                 const bo = BlockingOutput{
                                     .writer = BufferedWriter{
                                         .fd = this.bltn.stderr.expectFd(),
-                                        .remain = error_string,
+                                        .buffer = error_string,
                                         .parent = BufferedWriter.ParentPtr.init(this),
                                         .bytelist = this.bltn.stdBufferedBytelist(.stderr),
                                     },
@@ -6811,7 +6838,7 @@ pub const Interpreter = struct {
                             .arr = arr,
                             .writer = BufferedWriter{
                                 .fd = bun.STDOUT_FD,
-                                .remain = arr.items[0..],
+                                .buffer = arr.items[0..],
                                 .parent = BufferedWriter.ParentPtr.init(this.task_manager.rm),
                                 .bytelist = this.task_manager.rm.bltn.stdBufferedBytelist(.stdout),
                             },
@@ -7354,31 +7381,39 @@ pub const Interpreter = struct {
     /// it. IT DOES NOT CLOSE FILE DESCRIPTORS
     pub const BufferedWriter =
         struct {
-        writer: Writer = .{},
+        writer: Writer = .{
+            .close_fd = false,
+        },
         fd: bun.FileDescriptor = bun.invalid_fd,
-        remain: []const u8 = "",
+        buffer: []const u8 = "",
         written: usize = 0,
         parent: ParentPtr,
         err: ?Syscall.Error = null,
         /// optional bytelist for capturing the data
         bytelist: ?*bun.ByteList = null,
+        event_loop: JSC.EventLoopHandle,
 
         const print = bun.Output.scoped(.BufferedWriter, false);
 
         pub fn write(this: *@This()) void {
-            _ = this; // autofix
-            if (comptime true) {
-                @panic("TODO SHELL");
+            if (comptime bun.Environment.isPosix) {
+                if (this.writer.start(this.fd, true).asErr()) |_| {
+                    @panic("TODO handle file poll register faill");
+                }
+                return;
             }
+            @panic("TODO SHELL WINDOWS!");
         }
 
+        const This = @This();
+        pub const Poll = Writer;
         pub const Writer = bun.io.BufferedWriter(
-            @This(),
+            This,
             onWrite,
             onError,
             onClose,
             getBuffer,
-            onReady,
+            null,
             null,
         );
 
@@ -7388,17 +7423,21 @@ pub const Interpreter = struct {
             err: bun.sys.Error,
         };
 
+        pub fn eventLoop(this: *BufferedWriter) JSC.EventLoopHandle {
+            return this.event_loop;
+        }
+
         pub fn getBuffer(this: *BufferedWriter) []const u8 {
-            _ = this; // autofix
-            // TODO:
-            return "";
+            if (this.written >= this.buffer.len) return "";
+            return this.buffer[this.written..];
         }
 
         pub fn onWrite(this: *BufferedWriter, amount: usize, done: bool) void {
-            _ = done; // autofix
+            _ = done;
             if (this.bytelist) |bytelist| {
-                bytelist.append(bun.default_allocator, this.getBuffer()[this.getBuffer().len - amount ..]) catch bun.outOfMemory();
+                bytelist.append(bun.default_allocator, this.buffer[this.written .. this.written + amount]) catch bun.outOfMemory();
             }
+            this.written += amount;
         }
 
         pub fn onError(this: *BufferedWriter, err: bun.sys.Error) void {
@@ -7407,8 +7446,8 @@ pub const Interpreter = struct {
 
         pub fn onReady(this: *BufferedWriter) void {
             _ = this; // autofix
-
         }
+
         pub fn onClose(this: *BufferedWriter) void {
             this.parent.onDone(this.err);
         }

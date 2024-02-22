@@ -269,6 +269,15 @@ describe("bunshell", () => {
     // });
   });
 
+  describe("latin-1", async () => {
+    test("basic", async () => {
+      await TestBuilder.command`echo ${"à"}`.stdout("à\n").run();
+      await TestBuilder.command`echo ${" à"}`.stdout(" à\n").run();
+      await TestBuilder.command`echo ${"à¿"}`.stdout("à¿\n").run();
+      await TestBuilder.command`echo ${'"à¿"'}`.stdout('"à¿"\n').run();
+    });
+  });
+
   test("redirect Uint8Array", async () => {
     const buffer = new Uint8Array(1 << 20);
     const result = await $`cat ${import.meta.path} > ${buffer}`;

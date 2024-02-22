@@ -232,11 +232,7 @@ export function readableByteStreamControllerShouldCallPull(controller) {
   if (!($getByIdDirectPrivate(controller, "started") > 0)) return false;
   const reader = $getByIdDirectPrivate(stream, "reader");
 
-  if (
-    reader &&
-    ($getByIdDirectPrivate(reader, "readRequests")?.isNotEmpty() || !!reader.$bunNativePtr))
-  )
-  return true;
+  if (reader && ($getByIdDirectPrivate(reader, "readRequests")?.isNotEmpty() || !!reader.$bunNativePtr)) return true;
   if (
     $readableStreamHasBYOBReader(stream) &&
     $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readIntoRequests")?.isNotEmpty()

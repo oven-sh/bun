@@ -47,7 +47,7 @@ export function initializeReadableStream(
 
   // Initialized with null value to enable distinction with undefined case.
   $putByIdDirectPrivate(this, "readableStreamController", null);
-  this.$bunNativePtr = underlyingSource.$bunNativePtr ?? undefined;
+  this.$bunNativePtr = $getByIdDirectPrivate(underlyingSource, "bunNativePtr") ?? undefined;
 
   $putByIdDirectPrivate(this, "asyncContext", $getInternalField($asyncContext, 0));
 

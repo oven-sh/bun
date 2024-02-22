@@ -1,12 +1,9 @@
 import { AsyncLocalStorage } from "async_hooks";
-import { hideFromStackTrace } from "harness";
 import { createTest } from "node-harness";
 const store = new AsyncLocalStorage();
 const data = Symbol("verifier");
 
-const { beforeAll, describe, expect, it, throws, assert, createCallCheckCtx, createDoneDotAll } = createTest(
-  import.meta.path,
-);
+const { assert, createCallCheckCtx } = createTest(import.meta.path);
 
 test("node.js test test-async-local-storage-no-mix-contexts.js", async () => {
   const asyncLocalStorage = new AsyncLocalStorage();

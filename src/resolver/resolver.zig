@@ -791,7 +791,7 @@ pub const Resolver = struct {
 
     pub fn resolveAndAutoInstall(
         r: *ThisResolver,
-        source_dir_: string,
+        source_dir: string,
         import_path: string,
         kind: ast.ImportKind,
         global_cache: GlobalCache,
@@ -876,34 +876,6 @@ pub const Resolver = struct {
             };
         }
 
-        // When using `bun build --compile`, module resolution is never
-        // relative to our special /$bunfs/ directory.
-        //
-        // It's always relative to the current working directory of the project root.
-        const source_dir = brk: {
-            if (r.standalone_module_graph) |graph| {
-                if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(import_path)) {
-                    if (graph.files.contains(import_path)) {
-                        return .{
-                            .success = Result{
-                                .import_kind = kind,
-                                .path_pair = PathPair{
-                                    .primary = Path.init(import_path),
-                                },
-                                .is_standalone_module = true,
-                                .module_type = .esm,
-                            },
-                        };
-                    }
-
-                    return .{ .not_found = {} };
-                } else if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(source_dir_)) {
-                    break :brk Fs.FileSystem.instance.top_level_dir;
-                }
-            }
-            break :brk source_dir_;
-        };
-
         if (DataURL.parse(import_path) catch {
             return .{ .failure = error.InvalidDataURL };
         }) |_data_url| {
@@ -936,22 +908,63 @@ pub const Resolver = struct {
             };
         }
 
-        // Fail now if there is no directory to resolve in. This can happen for
-        // virtual modules (e.g. stdin) if a resolve directory is not specified.
-        if (source_dir.len == 0) {
-            if (r.debug_logs) |*debug| {
-                debug.addNote("Cannot resolve this path without a directory");
-                r.flushDebugLogs(.fail) catch {};
+        // When using `bun build --compile`, module resolution is never
+        // relative to our special /$bunfs/ directory.
+        //
+        // It's always relative to the current working directory of the project root.
+        const source_dir_normalized = brk: {
+            if (r.standalone_module_graph) |graph| {
+                if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(import_path)) {
+                    if (graph.files.contains(import_path)) {
+                        return .{
+                            .success = Result{
+                                .import_kind = kind,
+                                .path_pair = PathPair{
+                                    .primary = Path.init(import_path),
+                                },
+                                .is_standalone_module = true,
+                                .module_type = .esm,
+                            },
+                        };
+                    }
+
+                    return .{ .not_found = {} };
+                } else if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(source_dir)) {
+                    break :brk Fs.FileSystem.instance.top_level_dir;
+                }
             }
 
-            return .{ .failure = error.MissingResolveDir };
-        }
+            // Fail now if there is no directory to resolve in. This can happen for
+            // virtual modules (e.g. stdin) if a resolve directory is not specified.
+            //
+            if (source_dir.len == 0) {
+                if (r.debug_logs) |*debug| {
+                    debug.addNote("Cannot resolve this path without a directory");
+                    r.flushDebugLogs(.fail) catch {};
+                }
+
+                return .{ .failure = error.MissingResolveDir };
+            }
+
+            // This can also be hit if you use plugins with odd specifiers, or call
+            // the module resolver from javascript (import.meta.resolveSync, or
+            // import.meta.resolve) with a faulty parent specifier.
+            if (!std.fs.path.isAbsolute(source_dir)) {
+                if (r.debug_logs) |*debug| {
+                    debug.addNote("Cannot resolve this path without an absolute directory");
+                    r.flushDebugLogs(.fail) catch {};
+                }
+
+                return .{ .failure = error.InvalidResolveDir };
+            }
+            break :brk source_dir;
+        };
 
         // r.mutex.lock();
         // defer r.mutex.unlock();
         errdefer (r.flushDebugLogs(.fail) catch {});
 
-        var tmp = r.resolveWithoutSymlinks(source_dir, import_path, kind, global_cache);
+        var tmp = r.resolveWithoutSymlinks(source_dir_normalized, import_path, kind, global_cache);
         switch (tmp) {
             .success => |*result| {
                 if (!strings.eqlComptime(result.path_pair.primary.namespace, "node") and !result.is_standalone_module)
@@ -1119,6 +1132,8 @@ pub const Resolver = struct {
         kind: ast.ImportKind,
         global_cache: GlobalCache,
     ) Result.Union {
+        std.debug.assert(std.fs.path.isAbsolute(source_dir));
+
         var import_path = import_path_;
 
         // This implements the module resolution algorithm from node.js, which is
@@ -2525,19 +2540,22 @@ pub const Resolver = struct {
     }
 
     threadlocal var win32_normalized_dir_info_cache_buf: if (Environment.isWindows) [bun.MAX_PATH_BYTES * 2]u8 else void = undefined;
-    fn dirInfoCachedMaybeLog(r: *ThisResolver, __path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
+    fn dirInfoCachedMaybeLog(r: *ThisResolver, raw_input_path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
         r.mutex.lock();
         defer r.mutex.unlock();
-        var _path = __path;
+        var input_path = raw_input_path;
 
-        if (isDotSlash(_path) or strings.eqlComptime(_path, "."))
-            _path = r.fs.top_level_dir;
-
-        if (comptime Environment.isWindows) {
-            _path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, _path);
+        if (isDotSlash(input_path) or strings.eqlComptime(input_path, ".")) {
+            input_path = r.fs.top_level_dir;
         }
 
-        const top_result = try r.dir_cache.getOrPut(_path);
+        if (comptime Environment.isWindows) {
+            input_path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, input_path);
+        }
+
+        std.debug.assert(std.fs.path.isAbsolute(input_path));
+
+        const top_result = try r.dir_cache.getOrPut(input_path);
         if (top_result.status != .unknown) {
             return r.dir_cache.atIndex(top_result.index);
         }
@@ -2545,8 +2563,8 @@ pub const Resolver = struct {
         var dir_info_uncached_path_buf = bufs(.dir_info_uncached_path);
 
         var i: i32 = 1;
-        bun.copy(u8, dir_info_uncached_path_buf, _path);
-        var path = dir_info_uncached_path_buf[0.._path.len];
+        bun.copy(u8, dir_info_uncached_path_buf, input_path);
+        var path = dir_info_uncached_path_buf[0..input_path.len];
 
         bufs(.dir_entry_paths_to_resolve)[0] = (DirEntryResolveQueueItem{ .result = top_result, .unsafe_path = path, .safe_path = "" });
         var top = Dirname.dirname(path);

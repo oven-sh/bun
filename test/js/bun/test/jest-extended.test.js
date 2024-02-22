@@ -99,6 +99,36 @@ describe("jest-extended", () => {
 
   // toBeOneOf('toSatisfy()')
 
+  test("toBeOneOf()", () => {
+    expect(1).toBeOneOf([1, 2, 3]);
+    expect(2).toBeOneOf([1, 2, 3]);
+    expect(3).toBeOneOf([1, 2, 3]);
+    expect(4).not.toBeOneOf([1, 2, 3]);
+    expect("a").toBeOneOf(["a", "b", "c"]);
+    expect("b").toBeOneOf(["a", "b", "c"]);
+    expect("c").toBeOneOf(["a", "b", "c"]);
+    expect("d").not.toBeOneOf(["a", "b", "c"]);
+    expect(true).toBeOneOf([true, false]);
+    expect(false).toBeOneOf([true, false]);
+    expect(null).toBeOneOf([null, undefined]);
+    expect(undefined).toBeOneOf([null, undefined]);
+    const abc = {};
+    expect({}).not.toBeOneOf([{}, []]);
+    expect(abc).toBeOneOf([abc, {}]);
+    expect({}).not.toBeOneOf([abc, {}]);
+    try {
+      expect(0).toBeOneOf([1, 2]);
+    } catch (e) {
+      console.log(e);
+    }
+
+    try {
+      expect(1).not.toBeOneOf([1, 2]);
+    } catch (e) {
+      console.log(e);
+    }
+  });
+
   test("toBeNil()", () => {
     expect(null).toBeNil();
     expect(undefined).toBeNil();

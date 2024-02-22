@@ -596,6 +596,90 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toBeOneOf(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toBeOneOf() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = this.getValue(globalObject, thisValue, "toBeOneOf", "<green>expected<r>") orelse return .zero;
+        const list_value: JSValue = arguments[0];
+
+        const not = this.flags.not;
+        var pass = false;
+
+        const ExpectedEntry = struct {
+            globalObject: *JSC.JSGlobalObject,
+            expected: JSValue,
+            pass: *bool,
+        };
+
+        if (list_value.jsTypeLoose().isArrayLike()) {
+            var itr = list_value.arrayIterator(globalObject);
+            while (itr.next()) |item| {
+                if (item.isSameValue(expected, globalObject)) {
+                    pass = true;
+                    break;
+                }
+            }
+        } else if (list_value.isIterable(globalObject)) {
+            var expected_entry = ExpectedEntry{
+                .globalObject = globalObject,
+                .expected = expected,
+                .pass = &pass,
+            };
+            list_value.forEach(globalObject, &expected_entry, struct {
+                pub fn sameValueIterator(
+                    _: *JSC.VM,
+                    _: *JSGlobalObject,
+                    entry_: ?*anyopaque,
+                    item: JSValue,
+                ) callconv(.C) void {
+                    const entry = bun.cast(*ExpectedEntry, entry_.?);
+                    if (item.isSameValue(entry.expected, entry.globalObject)) {
+                        entry.pass.* = true;
+                        // TODO(perf): break out of the `forEach` when a match is found
+                    }
+                }
+            }.sameValueIterator);
+        } else {
+            globalObject.throw("Received value must be an array type, or both received and expected values must be strings.", .{});
+            return .zero;
+        }
+
+        if (not) pass = !pass;
+        if (pass) return .undefined;
+
+        // handle failure
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = list_value.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_fmt = list_value.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not be one of: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toBeOneOf", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
+            globalObject.throwPretty(fmt, .{ received_fmt, expected_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to be one of: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toBeOneOf", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalObject.throwPretty(fmt, .{ value_fmt, expected_fmt });
+        return .zero;
+    }
+
     pub fn toContain(
         this: *Expect,
         globalObject: *JSC.JSGlobalObject,

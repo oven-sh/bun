@@ -175,9 +175,9 @@ pub const IO = struct {
 
         fn to_subproc_stdio(this: Kind) bun.shell.subproc.Stdio {
             return switch (this) {
-                .std => .{ .inherit = .{ .captured = this.std.captured } },
+                .std => if (this.std.captured) |cap| .{ .capture = cap } else .inherit,
                 .fd => |val| .{ .fd = val },
-                .pipe => .{ .pipe = null },
+                .pipe => .pipe,
                 .ignore => .ignore,
             };
         }
@@ -3252,9 +3252,6 @@ pub const Interpreter = struct {
         }
 
         fn initSubproc(this: *Cmd) void {
-            if (comptime true) {
-                @panic("SHELL TODO");
-            }
             log("cmd init subproc ({x}, cwd={s})", .{ @intFromPtr(this), this.base.shell.cwd() });
 
             var arena = &this.spawn_arena;
@@ -3264,7 +3261,7 @@ pub const Interpreter = struct {
             //     this.base.interpreter.assignVar(assign, .cmd);
             // }
 
-            var spawn_args = Subprocess.SpawnArgs.default(arena, this.base.interpreter.global, false);
+            var spawn_args = Subprocess.SpawnArgs.default(arena, this.base.interpreter.event_loop, false);
 
             spawn_args.argv = std.ArrayListUnmanaged(?[*:0]const u8){};
             spawn_args.cmd_parent = this;
@@ -3367,65 +3364,64 @@ pub const Interpreter = struct {
                     .jsbuf => |val| {
                         // JS values in here is probably a bug
                         if (this.base.eventLoop() == .js) @panic("JS values not allowed in this context");
+                        const global = this.base.eventLoop().js.global;
 
-                        if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(this.base.interpreter.global)) |buf| {
-                            const stdio: bun.shell.subproc.Stdio = .{ .array_buffer = .{
-                                .buf = JSC.ArrayBuffer.Strong{
-                                    .array_buffer = buf,
-                                    .held = JSC.Strong.create(buf.value, this.base.interpreter.global),
-                                },
-                                .from_jsc = true,
+                        if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(global)) |buf| {
+                            const stdio: bun.shell.subproc.Stdio = .{ .array_buffer = JSC.ArrayBuffer.Strong{
+                                .array_buffer = buf,
+                                .held = JSC.Strong.create(buf.value, global),
                             } };
 
                             setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
                         } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
                             if (this.node.redirect.stdin) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(this.base.interpreter.global, .{
+                                if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
                                     .Blob = blob.*,
                                 }, stdin_no)) {
                                     return;
                                 }
                             }
                             if (this.node.redirect.stdout) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(this.base.interpreter.global, .{
+                                if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
                                     .Blob = blob.*,
                                 }, stdout_no)) {
                                     return;
                                 }
                             }
                             if (this.node.redirect.stderr) {
-                                if (!spawn_args.stdio[stdin_no].extractBlob(this.base.interpreter.global, .{
+                                if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
                                     .Blob = blob.*,
                                 }, stderr_no)) {
                                     return;
                                 }
                             }
-                        } else if (JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], this.base.interpreter.global)) |rstream| {
-                            const stdio: bun.shell.subproc.Stdio = .{
-                                .pipe = rstream,
-                            };
+                        } else if (JSC.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
+                            _ = rstream;
+                            @panic("TODO SHELL READABLE STREAM");
+                            // const stdio: bun.shell.subproc.Stdio = .{
+                            //     .pipe = rstream,
+                            // };
 
-                            setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
+                            // setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
                         } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Response)) |req| {
                             req.getBodyValue().toBlobIfPossible();
                             if (this.node.redirect.stdin) {
-                                if (!spawn_args.stdio[stdout_no].extractBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), stdin_no)) {
+                                if (!spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no)) {
                                     return;
                                 }
                             }
                             if (this.node.redirect.stdout) {
-                                if (!spawn_args.stdio[stdout_no].extractBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), stdout_no)) {
+                                if (!spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no)) {
                                     return;
                                 }
                             }
                             if (this.node.redirect.stderr) {
-                                if (!spawn_args.stdio[stdout_no].extractBlob(this.base.interpreter.global, req.getBodyValue().useAsAnyBlob(), stderr_no)) {
+                                if (!spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no)) {
                                     return;
                                 }
                             }
                         } else {
                             const jsval = this.base.interpreter.jsobjs[val.idx];
-                            const global: *JSC.JSGlobalObject = this.base.eventLoop().cast(.js).virtual_machine.global;
                             global.throw(
                                 "Unknown JS value used in shell: {}",
                                 .{jsval.fmtString(global)},
@@ -3463,7 +3459,7 @@ pub const Interpreter = struct {
                 .child = undefined,
                 .buffered_closed = buffered_closed,
             } };
-            const subproc = switch (Subprocess.spawnAsync(this.base.interpreter.global, spawn_args, &this.exec.subproc.child)) {
+            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), spawn_args, &this.exec.subproc.child)) {
                 .result => this.exec.subproc.child,
                 .err => |e| {
                     throwShellErr(e, this.base.eventLoop());
@@ -4001,10 +3997,11 @@ pub const Interpreter = struct {
                     },
                     .jsbuf => |val| {
                         if (cmd.base.eventLoop() == .mini) @panic("This should never happened");
-                        if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(interpreter.global)) |buf| {
+                        const global = cmd.base.eventLoop().js.global;
+                        if (interpreter.jsobjs[file.jsbuf.idx].asArrayBuffer(global)) |buf| {
                             const builtinio: Builtin.BuiltinIO = .{ .arraybuf = .{ .buf = JSC.ArrayBuffer.Strong{
                                 .array_buffer = buf,
-                                .held = JSC.Strong.create(buf.value, interpreter.global),
+                                .held = JSC.Strong.create(buf.value, global),
                             }, .i = 0 } };
 
                             if (node.redirect.stdin) {
@@ -4034,7 +4031,6 @@ pub const Interpreter = struct {
                             }
                         } else {
                             const jsval = cmd.base.interpreter.jsobjs[val.idx];
-                            const global: *JSC.JSGlobalObject = cmd.base.eventLoop().cast(.js).virtual_machine.global;
                             global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)});
                             return .yield;
                         }
@@ -4196,7 +4192,7 @@ pub const Interpreter = struct {
                 err: ?Syscall.Error = null,
 
                 pub fn isDone(this: *@This()) bool {
-                    return this.err != null or this.bufwriter.written >= this.bufwriter.remain.len;
+                    return this.err != null or this.bufwriter.written >= this.bufwriter.buffer.len;
                 }
             } = null,
 
@@ -4850,8 +4846,6 @@ pub const Interpreter = struct {
                 done,
             } = .idle,
 
-            event_loop: JSC.EventLoopHandle,
-
             const BlockingOutput = struct {
                 writer: BufferedWriter,
                 arr: std.ArrayList(u8),
@@ -5033,7 +5027,7 @@ pub const Interpreter = struct {
                         // if (!need_to_write_to_stdout_with_io) return; // yield execution
                     } else {
                         if (this.bltn.writeNoIO(.stderr, error_string).asErr()) |theerr| {
-                            throwShellErr(bun.shell.ShellErr.newSys(theerr), this.event_loop);
+                            throwShellErr(bun.shell.ShellErr.newSys(theerr), this.bltn.eventLoop());
                         }
                     }
                 }
@@ -5064,7 +5058,7 @@ pub const Interpreter = struct {
                 defer output.deinit();
 
                 if (this.bltn.writeNoIO(.stdout, output.items[0..]).asErr()) |e| {
-                    throwShellErr(bun.shell.ShellErr.newSys(e), this.event_loop);
+                    throwShellErr(bun.shell.ShellErr.newSys(e), this.bltn.eventLoop());
                     return;
                 }
 
@@ -6387,6 +6381,7 @@ pub const Interpreter = struct {
                                                 if (this.bltn.stderr.needsIO()) {
                                                     parse_opts.state = .{
                                                         .wait_write_err = BufferedWriter{
+                                                            .event_loop = this.bltn.eventLoop(),
                                                             .fd = this.bltn.stderr.expectFd(),
                                                             .buffer = buf,
                                                             .parent = BufferedWriter.ParentPtr.init(this),
@@ -6432,6 +6427,7 @@ pub const Interpreter = struct {
                                                         if (this.bltn.stderr.needsIO()) {
                                                             parse_opts.state = .{
                                                                 .wait_write_err = BufferedWriter{
+                                                                    .event_loop = this.bltn.eventLoop(),
                                                                     .fd = this.bltn.stderr.expectFd(),
                                                                     .buffer = error_string,
                                                                     .parent = BufferedWriter.ParentPtr.init(this),
@@ -6471,6 +6467,7 @@ pub const Interpreter = struct {
                                             if (this.bltn.stderr.needsIO()) {
                                                 parse_opts.state = .{
                                                     .wait_write_err = BufferedWriter{
+                                                        .event_loop = this.bltn.eventLoop(),
                                                         .fd = this.bltn.stderr.expectFd(),
                                                         .buffer = error_string,
                                                         .parent = BufferedWriter.ParentPtr.init(this),
@@ -6494,6 +6491,7 @@ pub const Interpreter = struct {
                                             if (this.bltn.stderr.needsIO()) {
                                                 parse_opts.state = .{
                                                     .wait_write_err = BufferedWriter{
+                                                        .event_loop = this.bltn.eventLoop(),
                                                         .fd = this.bltn.stderr.expectFd(),
                                                         .buffer = error_string,
                                                         .parent = BufferedWriter.ParentPtr.init(this),
@@ -6521,7 +6519,7 @@ pub const Interpreter = struct {
                                     }
 
                                     // Done writing
-                                    if (this.state.parse_opts.state.wait_write_err.remain.len == 0) {
+                                    if (this.state.parse_opts.state.wait_write_err.remain() == 0) {
                                         this.state = .{ .done = .{ .exit_code = 0 } };
                                         continue;
                                     }
@@ -6719,6 +6717,7 @@ pub const Interpreter = struct {
                             } else {
                                 const bo = BlockingOutput{
                                     .writer = BufferedWriter{
+                                        .event_loop = this.bltn.eventLoop(),
                                         .fd = this.bltn.stderr.expectFd(),
                                         .buffer = error_string,
                                         .parent = BufferedWriter.ParentPtr.init(this),
@@ -6831,6 +6830,7 @@ pub const Interpreter = struct {
                         const bo = BlockingOutput{
                             .arr = arr,
                             .writer = BufferedWriter{
+                                .event_loop = this.task_manager.event_loop,
                                 .fd = bun.STDOUT_FD,
                                 .buffer = arr.items[0..],
                                 .parent = BufferedWriter.ParentPtr.init(this.task_manager.rm),
@@ -6943,9 +6943,9 @@ pub const Interpreter = struct {
                     pub fn queueForWrite(this: *DirTask) void {
                         if (this.deleted_entries.items.len == 0) return;
                         if (this.task_manager.event_loop == .js) {
-                            this.task_manager.event_loop.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
+                            this.task_manager.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
                         } else {
-                            this.task_manager.event_loop.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+                            this.task_manager.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
                         }
                     }
 
@@ -6974,9 +6974,10 @@ pub const Interpreter = struct {
                             .subtask_count = std.atomic.Value(usize).init(1),
                             .kind_hint = .idk,
                             .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
+                            .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn.eventLoop()),
                         },
-                        // .event_loop = JSC.VirtualMachine.get().event_loop,
                         .event_loop = rm.bltn.parentCmd().base.eventLoop(),
+                        .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn.eventLoop()),
                         .error_signal = error_signal,
                         .root_is_absolute = is_absolute,
                     };
@@ -7021,6 +7022,7 @@ pub const Interpreter = struct {
                         .subtask_count = std.atomic.Value(usize).init(1),
                         .kind_hint = kind_hint,
                         .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
+                        .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.event_loop),
                     };
                     std.debug.assert(parent_task.subtask_count.fetchAdd(1, .Monotonic) > 0);
                     print("enqueue: {s}", .{path});
@@ -7417,6 +7419,10 @@ pub const Interpreter = struct {
             err: bun.sys.Error,
         };
 
+        pub fn remain(this: *BufferedWriter) usize {
+            return this.buffer.len -| this.written;
+        }
+
         pub fn eventLoop(this: *BufferedWriter) JSC.EventLoopHandle {
             return this.event_loop;
         }
@@ -7490,7 +7496,7 @@ pub const Interpreter = struct {
         };
 
         pub fn isDone(this: *BufferedWriter) bool {
-            return this.remain.len == 0 or this.err != null;
+            return this.remain() == 0 or this.err != null;
         }
 
         pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedWriter, .writable, onReady);

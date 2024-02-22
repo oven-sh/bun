@@ -334,9 +334,9 @@ pub const ShellSubprocess = struct {
         },
         cwd: []const u8,
         stdio: [3]Stdio = .{
-            .{ .ignore = {} },
-            .{ .pipe = null },
-            .{ .inherit = .{} },
+            .ignore,
+            .pipe,
+            .inherit,
         },
         lazy: bool = false,
         PATH: []const u8,
@@ -412,7 +412,7 @@ pub const ShellSubprocess = struct {
                 .stdio = .{
                     .{ .ignore = {} },
                     .{ .pipe = {} },
-                    .{ .inherit = .{} },
+                    .inherit,
                 },
                 .lazy = false,
                 .PATH = event_loop.env().get("PATH") orelse "",

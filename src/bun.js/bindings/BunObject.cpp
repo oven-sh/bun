@@ -632,6 +632,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     stdin                                          BunObject_getter_wrap_stdin                                         DontDelete|PropertyCallback
     stdout                                         BunObject_getter_wrap_stdout                                        DontDelete|PropertyCallback
     stringHashCode                                 functionHashCode                                                    DontDelete|Function 1
+    stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 2
     unsafe                                         BunObject_getter_wrap_unsafe                                        DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
@@ -675,9 +676,6 @@ public:
         auto structure = createStructure(vm, globalObject, globalObject->objectPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSBunObject>(vm)) JSBunObject(vm, structure);
         object->finishCreation(vm);
-#ifdef BUN_DEBUG // move this to table above when all the tests in test/js/bun/util/stringWidth.test.ts pass
-        object->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "stringWidth"_s), 2, BunObject_callback_stringWidth, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::Function | 0);
-#endif
         return object;
     }
 };

@@ -255,6 +255,6 @@ it("import.meta paths have the correct slash", () => {
   expect(import.meta.url).not.toInclude("\\");
 });
 
-describe('import.meta.resolve', () => {
-  import.meta.resolve('./does-not-exist.js');
-})
+describe("import.meta.resolve", () => {
+  import.meta.resolve("./does-not-exist.js");
+});

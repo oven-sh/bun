@@ -16,7 +16,7 @@ interface CustomMatchersForTest {
   _toCustomB(): any;
 
   _toThrowErrorMatchingSnapshot(): any; // TODO: remove when implemented
-  _toHaveMessageThatThrows(a: any, b: any): any;
+  _toHaveMessageThatThrows(a: any): any;
 }
 
 declare module "bun:test" {

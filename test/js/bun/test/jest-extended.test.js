@@ -118,14 +118,18 @@ describe("jest-extended", () => {
     expect({}).not.toBeOneOf([abc, {}]);
     try {
       expect(0).toBeOneOf([1, 2]);
+      expect.unreachable();
     } catch (e) {
-      console.log(e);
+      expect(e.message).not.toContain("unreachable");
+      expect(Bun.inspect(e)).not.toBeEmpty(); // verify that logging it doesn't cause a crash
     }
 
     try {
       expect(1).not.toBeOneOf([1, 2]);
+      expect.unreachable();
     } catch (e) {
-      console.log(e);
+      expect(e.message).not.toContain("unreachable");
+      expect(Bun.inspect(e)).not.toBeEmpty(); // verify that logging it doesn't cause a crash
     }
   });
 

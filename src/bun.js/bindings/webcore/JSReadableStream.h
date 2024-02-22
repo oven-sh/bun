@@ -72,7 +72,7 @@ public:
         return this->m_nativePtr.get();
         if (JSC::JSValue value = this->m_nativePtr.get())
             return value;
-        return JSC::jsNumber(0);
+        return JSC::jsNumber(-1);
     }
 
     void setNativePtr(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value)

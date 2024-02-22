@@ -149,19 +149,21 @@ pub const ReadableStream = struct {
     }
 
     pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
-        this.detachIfPossible(globalThis);
+        // this.detachIfPossible(globalThis);
+        _ = this;
+        _ = globalThis;
     }
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
         ReadableStream__cancel(this.value, globalThis);
-        this.detachIfPossible(globalThis);
+        // this.detachIfPossible(globalThis);
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
         ReadableStream__cancel(this.value, globalThis);
-        this.detachIfPossible(globalThis);
+        // this.detachIfPossible(globalThis);
     }
 
     pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) void {
@@ -2860,7 +2862,7 @@ pub fn ReadableStreamSource(
 
             pub fn finalize(this: *ReadableStreamSourceType) callconv(.C) void {
                 this.this_jsvalue = .zero;
-                // _ = this.decrementCount();
+                _ = this.decrementCount();
             }
 
             pub fn drain(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -3438,7 +3440,7 @@ pub const FileReader = struct {
         this.event_loop = JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop());
 
         if (was_lazy) {
-            // _ = this.parent().incrementCount();
+            _ = this.parent().incrementCount();
             switch (this.reader.start(this.fd, pollable)) {
                 .result => {},
                 .err => |e| {
@@ -3777,7 +3779,7 @@ pub const FileReader = struct {
         }
 
         this.parent().onClose();
-        // _ = this.parent().decrementCount();
+        _ = this.parent().decrementCount();
     }
 
     pub fn onReaderError(this: *FileReader, err: bun.sys.Error) void {

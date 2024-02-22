@@ -4964,7 +4964,7 @@ restart:
                     continue;
 
                 // ignore constructor
-                if (property == vm.propertyNames->constructor)
+                if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
                     continue;
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
@@ -5071,7 +5071,7 @@ void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalOb
             continue;
 
         // ignore constructor
-        if (property == vm.propertyNames->constructor)
+        if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
             continue;
 
         JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);

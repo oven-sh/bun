@@ -7,4 +7,13 @@ for (let key in process.env) {
   delete process.env[key];
 }
 
-Bun.$.env(Object.assign(process.env, harness.bunEnv));
+for (let key in harness.bunEnv) {
+  if (key === "TZ") continue;
+  if (harness.bunEnv[key] === undefined) {
+    continue;
+  }
+
+  process.env[key] = harness.bunEnv[key] + "";
+}
+
+Bun.$.env(process.env);

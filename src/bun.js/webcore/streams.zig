@@ -77,10 +77,10 @@ pub const ReadableStream = struct {
         }
 
         pub fn deinit(this: *Strong) void {
-            // if (this.get()) |readable| {
-            //     // decrement the ref count and if it's zero we auto detach
-            //     readable.detachIfPossible(this.globalThis().?);
-            // }
+            if (this.get()) |readable| {
+                // decrement the ref count and if it's zero we auto detach
+                readable.detachIfPossible(this.globalThis().?);
+            }
             this.held.deinit();
         }
     };
@@ -113,7 +113,7 @@ pub const ReadableStream = struct {
                 blob.offset = blobby.offset;
                 blob.size = blobby.remain;
                 blob.store.?.ref();
-                // stream.detachIfPossible(globalThis);
+                stream.detachIfPossible(globalThis);
 
                 return AnyBlob{ .Blob = blob };
             },
@@ -123,7 +123,7 @@ pub const ReadableStream = struct {
                     blob.store.?.ref();
                     // it should be lazy, file shouldn't have opened yet.
                     std.debug.assert(!blobby.started);
-                    // stream.detachIfPossible(globalThis);
+                    stream.detachIfPossible(globalThis);
                     return AnyBlob{ .Blob = blob };
                 }
             },
@@ -136,7 +136,7 @@ pub const ReadableStream = struct {
                     blob.from(bytes.buffer);
                     bytes.buffer.items = &.{};
                     bytes.buffer.capacity = 0;
-                    // stream.detachIfPossible(globalThis);
+                    stream.detachIfPossible(globalThis);
                     return blob;
                 }
 
@@ -149,27 +149,23 @@ pub const ReadableStream = struct {
     }
 
     pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
-        // this.detachIfPossible(globalThis);
-        _ = this;
-        _ = globalThis;
+        this.detachIfPossible(globalThis);
     }
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
         ReadableStream__cancel(this.value, globalThis);
-        // this.detachIfPossible(globalThis);
+        this.detachIfPossible(globalThis);
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
         ReadableStream__cancel(this.value, globalThis);
-        // this.detachIfPossible(globalThis);
+        this.detachIfPossible(globalThis);
     }
 
     pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) void {
-        // ReadableStream__detach(this.value, globalObject);
-        _ = this;
-        _ = globalObject;
+        ReadableStream__detach(this.value, globalObject);
     }
 
     /// Decrement Source ref count and detach the underlying stream if ref count is zero
@@ -260,7 +256,9 @@ pub const ReadableStream = struct {
 
     pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
         JSC.markBinding(@src());
+        value.ensureStillAlive();
         var out = value;
+
         var ptr: ?*anyopaque = null;
         return switch (ReadableStreamTag__tagged(globalThis, &out, &ptr)) {
             .JavaScript => ReadableStream{
@@ -2644,7 +2642,7 @@ pub fn ReadableStreamSource(
         }
 
         pub fn decrementCount(this: *This) u32 {
-            // std.debug.print("[ReadableStreamSource] this.ref_count = {d}\n", .{this.ref_count});
+            std.debug.print("[ReadableStreamSource] this.ref_count = {d}\n", .{this.ref_count});
             if (comptime Environment.isDebug) {
                 if (this.ref_count == 0) {
                     @panic("Attempted to decrement ref count below zero");
@@ -3440,7 +3438,7 @@ pub const FileReader = struct {
         this.event_loop = JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop());
 
         if (was_lazy) {
-            _ = this.parent().incrementCount();
+            // _ = this.parent().incrementCount();
             switch (this.reader.start(this.fd, pollable)) {
                 .result => {},
                 .err => |e| {

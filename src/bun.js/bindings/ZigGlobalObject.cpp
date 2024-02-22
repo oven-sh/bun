@@ -2271,11 +2271,9 @@ extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig:
     auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
     if (UNLIKELY(!readableStream))
         return;
-    auto& vm = globalObject->vm();
-    auto clientData = WebCore::clientData(vm);
-    readableStream->putDirect(vm, clientData->builtinNames().bunNativePtrPrivateName(), jsNumber(-1), 0);
-    readableStream->putDirect(vm, clientData->builtinNames().bunNativeTypePrivateName(), jsNumber(0), 0);
-    readableStream->putDirect(vm, clientData->builtinNames().disturbedPrivateName(), jsBoolean(true), 0);
+    readableStream->setNativePtr(globalObject, jsNumber(-1));
+    readableStream->setNativeType(globalObject, jsNumber(0));
+    readableStream->setDisturbed(globalObject, jsBoolean(true));
 }
 extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
 extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
@@ -2356,7 +2354,7 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
 
     auto* readableStream = jsCast<JSReadableStream*>(object);
 
-    JSValue nativePtrHandle = readableStream->getDirect(vm, builtinNames.bunNativePtrPrivateName());
+    JSValue nativePtrHandle = readableStream->nativePtr();
     if (nativePtrHandle.isEmpty() || !nativePtrHandle.isCell()) {
         *ptr = nullptr;
         return 0;
@@ -3682,7 +3680,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGetDirectStreamDetails, (JSC::JSGlobalObject * 
 
     auto clientData = WebCore::clientData(vm);
 
-    JSValue handle = readableStream->getIfPropertyExists(globalObject, clientData->builtinNames().bunNativePtrPrivateName());
+    JSValue handle = readableStream->nativePtr();
 
     if (handle.isEmpty() || !handle.isCell())
         return JSC::JSValue::encode(JSC::jsNull());
@@ -3709,8 +3707,8 @@ JSC_DEFINE_HOST_FUNCTION(functionGetDirectStreamDetails, (JSC::JSGlobalObject * 
     if (type.isUndefined())
         return JSC::JSValue::encode(JSC::jsNull());
 
-    readableStream->putDirect(vm, clientData->builtinNames().bunNativePtrPrivateName(), jsUndefined(), 0);
-    readableStream->putDirect(vm, clientData->builtinNames().disturbedPrivateName(), jsBoolean(true), 0);
+    readableStream->setNativePtr(globalObject, jsNumber(-1));
+    readableStream->setDisturbed(globalObject, jsBoolean(true));
 
     auto* resultObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     resultObject->putDirectIndex(globalObject, 0, handle);

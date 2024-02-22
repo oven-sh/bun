@@ -25,6 +25,7 @@
 namespace WebCore {
 
 class JSReadableStream : public JSDOMObject {
+
 public:
     using Base = JSDOMObject;
     static JSReadableStream* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject)
@@ -54,7 +55,46 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
+    JSC::JSValue nativeType()
+    {
+        if (JSC::JSValue value = this->m_nativeType.get())
+            return value;
+        return JSC::jsNumber(0);
+    }
+    JSC::JSValue disturbed()
+    {
+        if (JSC::JSValue value = this->m_disturbed.get())
+            return value;
+        return JSC::jsBoolean(false);
+    }
+    JSC::JSValue nativePtr()
+    {
+        return this->m_nativePtr.get();
+        if (JSC::JSValue value = this->m_nativePtr.get())
+            return value;
+        return JSC::jsNumber(0);
+    }
+
+    void setNativePtr(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value)
+    {
+        this->m_nativePtr.set(JSC::getVM(lexicalGlobalObject), this, value);
+    }
+
+    void setNativeType(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value)
+    {
+        this->m_nativeType.set(JSC::getVM(lexicalGlobalObject), this, value);
+    }
+
+    void setDisturbed(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value)
+    {
+        this->m_disturbed.set(JSC::getVM(lexicalGlobalObject), this, value);
+    }
+
 protected:
+    mutable JSC::WriteBarrier<JSC::Unknown> m_nativePtr;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_nativeType;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_disturbed;
+
     JSReadableStream(JSC::Structure*, JSDOMGlobalObject&);
 
     void finishCreation(JSC::VM&);

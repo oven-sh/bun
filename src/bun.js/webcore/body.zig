@@ -1434,13 +1434,13 @@ pub const BodyValueBufferer = struct {
                         log("byte stream has_received_last_chunk {}", .{bytes.len});
                         sink.onFinishedBuffering(sink.ctx, bytes, null, false);
                         // is safe to detach here because we're not going to receive any more data
-                        // stream.detachIfPossible(sink.global);
+                        stream.detachIfPossible(sink.global);
                         return;
                     }
                     // keep the stream alive until we're done with it
                     sink.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, sink.global);
                     // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
-                    // stream.detachIfPossible(sink.global);
+                    stream.detachIfPossible(sink.global);
 
                     byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);
                     sink.byte_stream = byte_stream;

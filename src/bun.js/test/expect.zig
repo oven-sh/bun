@@ -4230,6 +4230,7 @@ pub const Expect = struct {
             if (bun.String.tryFromJS(message_result, globalObject)) |str| {
                 message_text = str;
             } else {
+                if (globalObject.hasException()) return false;
                 var formatter = JSC.ConsoleObject.Formatter{
                     .globalThis = globalObject,
                     .quote_strings = true,

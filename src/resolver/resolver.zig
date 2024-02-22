@@ -2118,7 +2118,7 @@ pub const Resolver = struct {
                 dir_entries_ptr.fd = bun.toFD(open_dir.fd);
             }
 
-            bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
+            bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2779,7 +2779,7 @@ pub const Resolver = struct {
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = dir_entries_ptr,
                 });
-                bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
+                bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.

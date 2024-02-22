@@ -2131,7 +2131,9 @@ pub const PosixToWinNormalizer = struct {
                     const source_root = windowsFilesystemRoot(source_dir);
                     @memcpy(buf[0..source_root.len], source_root);
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
-                    return buf[0 .. source_root.len + maybe_posix_path.len - 1];
+                    const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
+                    std.debug.assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    return res;
                 }
             }
         }
@@ -2154,7 +2156,9 @@ pub const PosixToWinNormalizer = struct {
                     const source_root = windowsFilesystemRoot(cwd);
                     std.debug.assert(source_root.ptr == source_root.ptr);
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
-                    return buf[0 .. source_root.len + maybe_posix_path.len - 1];
+                    const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
+                    std.debug.assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    return res;
                 }
             }
         }
@@ -2179,7 +2183,9 @@ pub const PosixToWinNormalizer = struct {
                     std.debug.assert(source_root.ptr == source_root.ptr);
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
                     buf[source_root.len + maybe_posix_path.len - 1] = 0;
-                    return buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
+                    const res = buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
+                    std.debug.assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
+                    return res;
                 }
             }
         }

@@ -1394,7 +1394,6 @@ pub const Range = struct {
             version: Version,
             comparator_buf: string,
             version_buf: string,
-            include_pre: bool,
         ) bool {
             const order = version.orderWithoutBuild(comparator.version, version_buf, comparator_buf);
 
@@ -1404,11 +1403,11 @@ pub const Range = struct {
                     else => false,
                 },
                 .gt => switch (comparator.op) {
-                    .gt, .gte => if (!include_pre) false else true,
+                    .gt, .gte => true,
                     else => false,
                 },
                 .lt => switch (comparator.op) {
-                    .lt, .lte => if (!include_pre) false else true,
+                    .lt, .lte => true,
                     else => false,
                 },
             };
@@ -1423,39 +1422,46 @@ pub const Range = struct {
             return true;
         }
 
-        // When the boundaries of a range do not include a pre-release tag on either side,
-        // we should not consider that '7.0.0-rc2' < "7.0.0"
-        // ```
-        // > semver.satisfies("7.0.0-rc2", "<=7.0.0")
-        // false
-        // > semver.satisfies("7.0.0-rc2", ">=7.0.0")
-        // false
-        // > semver.satisfies("7.0.0-rc2", "<=7.0.0-rc2")
-        // true
-        // > semver.satisfies("7.0.0-rc2", ">=7.0.0-rc2")
-        // true
-        // ```
-        //
-        // - https://github.com/npm/node-semver#prerelease-tags
-        // - https://github.com/npm/node-semver/blob/cce61804ba6f997225a1267135c06676fe0524d2/classes/range.js#L505-L539
-        var include_pre = true;
-        if (version.tag.hasPre()) {
-            if (!has_right) {
-                if (!range.left.version.tag.hasPre()) {
-                    include_pre = false;
-                }
-            } else {
-                if (!range.left.version.tag.hasPre() and !range.right.version.tag.hasPre()) {
-                    include_pre = false;
-                }
-            }
-        }
-
-        if (!range.left.satisfies(version, range_buf, version_buf, include_pre)) {
+        if (!range.left.satisfies(version, range_buf, version_buf)) {
             return false;
         }
 
-        if (has_right and !range.right.satisfies(version, range_buf, version_buf, include_pre)) {
+        if (has_right and !range.right.satisfies(version, range_buf, version_buf)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_buf: string, pre_matched: *bool) bool {
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(version.tag.hasPre());
+        }
+        const has_left = range.hasLeft();
+        const has_right = range.hasRight();
+
+        if (!has_left) {
+            return true;
+        }
+
+        // If left has prerelease check if major,minor,patch matches with left. If
+        // not, check the same with right if right exists and has prerelease.
+        pre_matched.* = pre_matched.* or
+            (range.left.version.tag.hasPre() and
+            version.patch == range.left.version.patch and
+            version.minor == range.left.version.minor and
+            version.major == range.left.version.major) or
+            (has_right and
+            range.right.version.tag.hasPre() and
+            version.patch == range.right.version.patch and
+            version.minor == range.right.version.minor and
+            version.major == range.right.version.major);
+
+        if (!range.left.satisfies(version, range_buf, version_buf)) {
+            return false;
+        }
+
+        if (has_right and !range.right.satisfies(version, range_buf, version_buf)) {
             return false;
         }
 
@@ -1496,6 +1502,29 @@ pub const Query = struct {
                 list_buf,
                 version_buf,
             ) or (list.next orelse return false).satisfies(
+                version,
+                list_buf,
+                version_buf,
+            );
+        }
+
+        pub fn satisfiesPre(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(version.tag.hasPre());
+            }
+
+            // `version` has a prerelease tag:
+            // - needs to satisfy each comparator in the query (<comparator> AND <comparator> AND ...) like normal comparison
+            // - if it does, also needs to match major, minor, patch with at least one of the other versions
+            //   with a prerelease
+            // https://github.com/npm/node-semver/blob/ac9b35769ab0ddfefd5a3af4a3ecaf3da2012352/classes/range.js#L505
+            var pre_matched = false;
+            return (list.head.satisfiesPre(
+                version,
+                list_buf,
+                version_buf,
+                &pre_matched,
+            ) and pre_matched) or (list.next orelse return false).satisfiesPre(
                 version,
                 list_buf,
                 version_buf,
@@ -1647,7 +1676,10 @@ pub const Query = struct {
             group_buf: string,
             version_buf: string,
         ) bool {
-            return group.head.satisfies(version, group_buf, version_buf);
+            return if (version.tag.hasPre())
+                group.head.satisfiesPre(version, group_buf, version_buf)
+            else
+                group.head.satisfies(version, group_buf, version_buf);
         }
     };
 
@@ -1669,6 +1701,23 @@ pub const Query = struct {
             version,
             query_buf,
             version_buf,
+        );
+    }
+
+    pub fn satisfiesPre(query: *const Query, version: Version, query_buf: string, version_buf: string, pre_matched: *bool) bool {
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(version.tag.hasPre());
+        }
+        return query.range.satisfiesPre(
+            version,
+            query_buf,
+            version_buf,
+            pre_matched,
+        ) and (query.next orelse return true).satisfiesPre(
+            version,
+            query_buf,
+            version_buf,
+            pre_matched,
         );
     }
 

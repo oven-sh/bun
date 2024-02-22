@@ -501,14 +501,18 @@ pub const StreamStart = union(Tag) {
                 var chunk_size: JSC.WebCore.Blob.SizeType = 0;
                 var empty = true;
 
-                if (value.get(globalThis, "asUint8Array")) |as_array| {
-                    as_uint8array = as_array.toBoolean();
-                    empty = false;
+                if (value.get(globalThis, "asUint8Array")) |val| {
+                    if (val.isBoolean()) {
+                        as_uint8array = val.toBoolean();
+                        empty = false;
+                    }
                 }
 
-                if (value.fastGet(globalThis, .stream)) |as_array| {
-                    stream = as_array.toBoolean();
-                    empty = false;
+                if (value.fastGet(globalThis, .stream)) |val| {
+                    if (val.isBoolean()) {
+                        stream = val.toBoolean();
+                        empty = false;
+                    }
                 }
 
                 if (value.fastGet(globalThis, .highWaterMark)) |chunkSize| {

@@ -90,5 +90,5 @@ process.on("exit", exitCode => {
 });
 
 const hostname = process.env.HOST || "127.0.0.1";
-const port = parseInt(process.env.PORT) || 0;
+const port = parseInt(process.env.PORT || "0");
 server.listen(port, hostname);

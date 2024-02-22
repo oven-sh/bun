@@ -174,6 +174,25 @@ describe("bunshell", () => {
     doTest(`echo "$(echo 1; echo 2)"`, "1\n2\n");
     doTest(`echo "$(echo "1" ; echo "2")"`, "1\n2\n");
     doTest(`echo $(echo 1; echo 2)`, "1 2\n");
+
+    // Issue: #8982
+    // https://github.com/oven-sh/bun/issues/8982
+    test("word splitting", async () => {
+      await TestBuilder.command`echo $(echo id)/$(echo region)`.stdout("id/region\n").run();
+      await TestBuilder.command`echo $(echo hi id)/$(echo region)`.stdout("hi id/region\n").run();
+
+      // Make sure its one whole argument
+      await TestBuilder.command`echo {"console.log(JSON.stringify(process.argv.slice(2)))"} > temp_script.ts; BUN_DEBUG_QUIET_LOGS=1 ${BUN} run temp_script.ts $(echo id)/$(echo region)`
+        .stdout('["id/region"]\n')
+        .ensureTempDir()
+        .run();
+
+      // Make sure its two separate arguments
+      await TestBuilder.command`echo {"console.log(JSON.stringify(process.argv.slice(2)))"} > temp_script.ts; BUN_DEBUG_QUIET_LOGS=1 ${BUN} run temp_script.ts $(echo hi id)/$(echo region)`
+        .stdout('["hi","id/region"]\n')
+        .ensureTempDir()
+        .run();
+    });
   });
 
   describe("unicode", () => {
@@ -248,6 +267,15 @@ describe("bunshell", () => {
     //   });
     //   expect(err?.message).toEqual("Shell script string contains invalid UTF-16");
     // });
+  });
+
+  describe("latin-1", async () => {
+    test("basic", async () => {
+      await TestBuilder.command`echo ${"à"}`.stdout("à\n").run();
+      await TestBuilder.command`echo ${" à"}`.stdout(" à\n").run();
+      await TestBuilder.command`echo ${"à¿"}`.stdout("à¿\n").run();
+      await TestBuilder.command`echo ${'"à¿"'}`.stdout('"à¿"\n').run();
+    });
   });
 
   test("redirect Uint8Array", async () => {
@@ -400,7 +428,12 @@ describe("bunshell", () => {
       let procEnv = JSON.parse(str1);
       expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar" });
       procEnv = JSON.parse(str2);
-      expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar", BUN_TEST_VAR: "1" });
+      expect(procEnv).toEqual({
+        ...bunEnv,
+        BAZ: "1",
+        FOO: "bar",
+        BUN_TEST_VAR: "1",
+      });
     });
 
     test("syntax edgecase", async () => {
@@ -443,11 +476,11 @@ describe("bunshell", () => {
   describe("rm", () => {
     let temp_dir: string;
     const files = {
-      "foo": "bar",
-      "bar": "baz",
-      "dir": {
-        "some": "more",
-        "files": "here",
+      foo: "bar",
+      bar: "baz",
+      dir: {
+        some: "more",
+        files: "here",
       },
     };
     beforeAll(() => {
@@ -654,6 +687,26 @@ describe("deno_task", () => {
 
     // zero arguments after re-direct
     await TestBuilder.command`echo 1 > $EMPTY`.stderr("bun: ambiguous redirect: at `echo`\n").exitCode(1).run();
+
+    await TestBuilder.command`echo foo bar > file.txt; cat < file.txt`.ensureTempDir().stdout("foo bar\n").run();
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 2>&1`
+      .stdout("Stdout\nStderr\n")
+      .run();
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 1>&2`
+      .stderr("Stdout\nStderr\n")
+      .run();
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 2>&1`
+      .stdout("Stdout\nStderr\n")
+      .quiet()
+      .run();
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 1>&2`
+      .stderr("Stdout\nStderr\n")
+      .quiet()
+      .run();
   });
 
   test("pwd", async () => {
@@ -676,7 +729,11 @@ describe("deno_task", () => {
         ...bunEnv,
         FOO: "bar",
       });
-      expect(JSON.parse(stdout.toString())).toEqual({ ...bunEnv, BUN_TEST_VAR: "1", FOO: "bar" });
+      expect(JSON.parse(stdout.toString())).toEqual({
+        ...bunEnv,
+        BUN_TEST_VAR: "1",
+        FOO: "bar",
+      });
     }
 
     {
@@ -705,82 +762,3 @@ function sentinelByte(buf: Uint8Array): number {
   }
   throw new Error("No sentinel byte");
 }
-
-const foo = {
-  "stmts": [
-    {
-      "exprs": [
-        {
-          "cmd": {
-            "assigns": [],
-            "name_and_args": [{ "simple": { "Text": "echo" } }],
-            "redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 },
-            "redirect_file": { "jsbuf": { "idx": 0 } },
-          },
-        },
-      ],
-    },
-  ],
-};
-
-const lex = [
-  { "Text": "echo" },
-  { "Delimit": {} },
-  { "CmdSubstBegin": {} },
-  { "Text": "echo" },
-  { "Delimit": {} },
-  { "Text": "ハハ" },
-  { "Delimit": {} },
-  { "CmdSubstEnd": {} },
-  { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 } },
-  { "JSObjRef": 0 },
-  { "Eof": {} },
-];
-
-const lex2 = [
-  { "Text": "echo" },
-  { "Delimit": {} },
-  { "CmdSubstBegin": {} },
-  { "Text": "echo" },
-  { "Delimit": {} },
-  { "Text": "noice" },
-  { "Delimit": {} },
-  { "CmdSubstEnd": {} },
-  { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 } },
-  { "JSObjRef": 0 },
-  { "Eof": {} },
-];
-
-const parse2 = {
-  "stmts": [
-    {
-      "exprs": [
-        {
-          "cmd": {
-            "assigns": [],
-            "name_and_args": [{ "simple": { "Text": "echo" } }],
-            "redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 },
-            "redirect_file": { "jsbuf": { "idx": 0 } },
-          },
-        },
-      ],
-    },
-  ],
-};
-
-const lsdkjfs = {
-  "stmts": [
-    {
-      "exprs": [
-        {
-          "cmd": {
-            "assigns": [],
-            "name_and_args": [{ "simple": { "Text": "echo" } }],
-            "redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 },
-            "redirect_file": { "jsbuf": { "idx": 0 } },
-          },
-        },
-      ],
-    },
-  ],
-};

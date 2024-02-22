@@ -414,7 +414,7 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         original_script_for_bun_run: ?[]const u8,
-    ) !bool {
+    ) !noreturn {
         var argv_ = [_]string{executable};
         var argv: []const string = &argv_;
 
@@ -510,8 +510,6 @@ pub const RunCommand = struct {
                 Global.exit(1);
             },
         }
-
-        return true;
     }
 
     pub fn ls(ctx: Command.Context) !void {

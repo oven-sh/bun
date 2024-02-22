@@ -1680,9 +1680,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         // the promise is pending
                         if (body.value.Locked.action != .none or body.value.Locked.promise != null) {
                             this.pending_promises_for_abort += 1;
-                        } else if (body.value.Locked.readable != null) {
-                            body.value.Locked.readable.?.abort(this.server.globalThis);
-                            body.value.Locked.readable = null;
+                        } else if (body.value.Locked.readable.get()) |readable| {
+                            readable.abort(this.server.globalThis);
+                            body.value.Locked.readable.deinit();
                             any_js_calls = true;
                         }
                         body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
@@ -1691,8 +1691,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 if (this.response_ptr) |response| {
                     if (response.body.value == .Locked) {
-                        if (response.body.value.Locked.readable) |*readable| {
-                            response.body.value.Locked.readable = null;
+                        if (response.body.value.Locked.readable.get()) |readable| {
+                            defer response.body.value.Locked.readable.deinit();
                             readable.abort(this.server.globalThis);
                             any_js_calls = true;
                         }
@@ -2290,7 +2290,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             this.pending_promises_for_abort += 1;
                             this.response_ptr.?.body.value = .{
                                 .Locked = .{
-                                    .readable = stream,
+                                    .readable = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis),
                                     .global = globalThis,
                                 },
                             };
@@ -2558,7 +2558,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (req.response_ptr) |resp| {
                 if (resp.body.value == .Locked) {
-                    resp.body.value.Locked.readable.?.done();
+                    if (resp.body.value.Locked.readable.get()) |stream| {
+                        stream.done(req.server.globalThis);
+                    }
+                    resp.body.value.Locked.readable.deinit();
                     resp.body.value = .{ .Used = {} };
                 }
             }
@@ -2603,7 +2606,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn handleRejectStream(req: *@This(), globalThis: *JSC.JSGlobalObject, err: JSValue) void {
-            _ = globalThis;
             streamLog("handleRejectStream", .{});
 
             if (req.sink) |wrapper| {
@@ -2618,7 +2620,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (req.response_ptr) |resp| {
                 if (resp.body.value == .Locked) {
-                    resp.body.value.Locked.readable.?.done();
+                    if (resp.body.value.Locked.readable.get()) |stream| {
+                        stream.done(globalThis);
+                    }
+                    resp.body.value.Locked.readable.deinit();
                     resp.body.value = .{ .Used = {} };
                 }
             }
@@ -2680,10 +2685,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         return;
                     }
 
-                    if (lock.readable) |stream_| {
+                    if (lock.readable.get()) |stream_| {
                         const stream: JSC.WebCore.ReadableStream = stream_;
                         stream.value.ensureStillAlive();
-
+                        lock.readable.deinit();
                         value.* = .{ .Used = {} };
 
                         if (stream.isLocked(this.server.globalThis)) {
@@ -2716,7 +2721,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 std.debug.assert(this.byte_stream == null);
                                 if (this.resp == null) {
                                     // we don't have a response, so we can discard the stream
-                                    stream.detachIfPossible(this.server.globalThis);
+                                    // stream.detachIfPossible(this.server.globalThis);
                                     return;
                                 }
                                 const resp = this.resp.?;
@@ -2726,14 +2731,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     this.blob.from(byte_stream.buffer);
                                     this.doRenderBlob();
                                     // is safe to detach here because we're not going to receive any more data
-                                    stream.detachIfPossible(this.server.globalThis);
+                                    // stream.detachIfPossible(this.server.globalThis);
                                     return;
                                 }
 
                                 byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onPipe).init(this);
                                 this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, this.server.globalThis);
                                 // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
-                                stream.detachIfPossible(this.server.globalThis);
+                                // stream.detachIfPossible(this.server.globalThis);
 
                                 this.byte_stream = byte_stream;
                                 this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
@@ -3196,7 +3201,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 var body = this.request_body.?;
 
                 if (body.value == .Locked) {
-                    if (body.value.Locked.readable) |readable| {
+                    if (body.value.Locked.readable.get()) |readable| {
                         if (readable.ptr == .Bytes) {
                             std.debug.assert(this.request_body_buf.items.len == 0);
                             var vm = this.server.vm;

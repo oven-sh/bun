@@ -719,9 +719,9 @@ pub const Expect = struct {
                 }
             }
         } else if (value.isStringLiteral() and expected.isStringLiteral()) {
-            const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator);
+            const value_string = value.toSlice(globalObject, default_allocator);
             defer value_string.deinit();
-            const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator);
+            const expected_string = expected.toSlice(globalObject, default_allocator);
             defer expected_string.deinit();
 
             if (expected_string.len == 0) { // edge case empty string is always contained
@@ -765,7 +765,7 @@ pub const Expect = struct {
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
             const received_fmt = value.toFmt(globalObject, &formatter);
-            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
+            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContain", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
@@ -800,7 +800,7 @@ pub const Expect = struct {
         const value: JSValue = this.getValue(globalObject, thisValue, "toContainKey", "<green>expected<r>") orelse return .zero;
 
         const not = this.flags.not;
-        var pass = value.hasOwnProperty(globalObject, expected.toString(globalObject).getZigString(globalObject));
+        var pass = value.hasOwnPropertyValue(globalObject, expected);
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -811,7 +811,7 @@ pub const Expect = struct {
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
             const received_fmt = value.toFmt(globalObject, &formatter);
-            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
+            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContainKey", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
@@ -860,7 +860,7 @@ pub const Expect = struct {
         while (i < count) : (i += 1) {
             const key = expected.getIndex(globalObject, i);
 
-            if (!value.hasOwnProperty(globalObject, key.toString(globalObject).getZigString(globalObject))) {
+            if (!value.hasOwnPropertyValue(globalObject, key)) {
                 pass = false;
                 break;
             }
@@ -875,7 +875,7 @@ pub const Expect = struct {
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
             const received_fmt = value.toFmt(globalObject, &formatter);
-            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
+            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContainKeys", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
@@ -924,7 +924,7 @@ pub const Expect = struct {
         while (i < count) : (i += 1) {
             const key = expected.getIndex(globalObject, i);
 
-            if (value.hasOwnProperty(globalObject, key.toString(globalObject).getZigString(globalObject))) {
+            if (value.hasOwnPropertyValue(globalObject, key)) {
                 pass = true;
                 break;
             }
@@ -939,7 +939,7 @@ pub const Expect = struct {
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
             const received_fmt = value.toFmt(globalObject, &formatter);
-            const expected_line = "Expected to not contain: <green>{any}<r>\n\nReceived: <red>{any}<r>\n";
+            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContainAnyKeys", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;
@@ -995,9 +995,9 @@ pub const Expect = struct {
             }
         } else if (value_type.isStringLike() and expected_type.isStringLike()) {
             if (expected_type.isStringObjectLike() and value_type.isString()) pass = false else {
-                const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator);
+                const value_string = value.toSliceOrNull(globalObject) orelse return .zero;
                 defer value_string.deinit();
-                const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator);
+                const expected_string = expected.toSliceOrNull(globalObject) orelse return .zero;
                 defer expected_string.deinit();
 
                 // jest does not have a `typeof === "string"` check for `toContainEqual`.
@@ -2582,18 +2582,19 @@ pub const Expect = struct {
         const expected = arguments[0];
         expected.ensureStillAlive();
 
-        const expectedAsStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-        incrementExpectCallCounter();
-
         if (!expected.isString()) {
             globalThis.throwInvalidArguments("toBeTypeOf() requires a string argument", .{});
             return .zero;
         }
 
-        if (!JSTypeOfMap.has(expectedAsStr)) {
+        const expected_type = expected.toBunString(globalThis);
+        defer expected_type.deref();
+        incrementExpectCallCounter();
+
+        const typeof = expected_type.inMap(JSTypeOfMap) orelse {
             globalThis.throwInvalidArguments("toBeTypeOf() requires a valid type string argument ('function', 'object', 'bigint', 'boolean', 'number', 'string', 'symbol', 'undefined')", .{});
             return .zero;
-        }
+        };
 
         const not = this.flags.not;
         var pass = false;
@@ -2621,7 +2622,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        pass = strings.eql(expectedAsStr, whatIsTheType);
+        pass = strings.eql(typeof, whatIsTheType);
 
         if (not) pass = !pass;
         if (pass) return .undefined;
@@ -2964,19 +2965,24 @@ pub const Expect = struct {
         var pass = value.isString() and expected.isString();
 
         if (pass) {
-            const valueStr = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            const expectedStr = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
+            const value_slice = value.toSlice(globalThis, default_allocator);
+            defer value_slice.deinit();
+            const expected_slice = expected.toSlice(globalThis, default_allocator);
+            defer expected_slice.deinit();
+
+            const value_utf8 = value_slice.slice();
+            const expected_utf8 = expected_slice.slice();
 
             var left: usize = 0;
             var right: usize = 0;
 
             // Skip leading whitespaces
-            while (left < valueStr.len and std.ascii.isWhitespace(valueStr[left])) left += 1;
-            while (right < expectedStr.len and std.ascii.isWhitespace(expectedStr[right])) right += 1;
+            while (left < value_utf8.len and std.ascii.isWhitespace(value_utf8[left])) left += 1;
+            while (right < expected_utf8.len and std.ascii.isWhitespace(expected_utf8[right])) right += 1;
 
-            while (left < valueStr.len and right < expectedStr.len) {
-                const left_char = valueStr[left];
-                const right_char = expectedStr[right];
+            while (left < value_utf8.len and right < expected_utf8.len) {
+                const left_char = value_utf8[left];
+                const right_char = expected_utf8[right];
 
                 if (left_char != right_char) {
                     pass = false;
@@ -2987,11 +2993,11 @@ pub const Expect = struct {
                 right += 1;
 
                 // Skip trailing whitespaces
-                while (left < valueStr.len and std.ascii.isWhitespace(valueStr[left])) left += 1;
-                while (right < expectedStr.len and std.ascii.isWhitespace(expectedStr[right])) right += 1;
+                while (left < value_utf8.len and std.ascii.isWhitespace(value_utf8[left])) left += 1;
+                while (right < expected_utf8.len and std.ascii.isWhitespace(expected_utf8[right])) right += 1;
             }
 
-            if (left < valueStr.len or right < expectedStr.len) {
+            if (left < value_utf8.len or right < expected_utf8.len) {
                 pass = false;
             }
         }
@@ -3177,9 +3183,11 @@ pub const Expect = struct {
 
         var pass = value.isString();
         if (pass) {
-            const value_string = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            const expected_string = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            pass = strings.contains(value_string, expected_string) or expected_string.len == 0;
+            const value_string = value.toSliceOrNull(globalThis) orelse return .zero;
+            defer value_string.deinit();
+            const expected_string = expected.toSliceOrNull(globalThis) orelse return .zero;
+            defer expected_string.deinit();
+            pass = strings.contains(value_string.slice(), expected_string.slice()) or expected_string.len == 0;
         }
 
         const not = this.flags.not;
@@ -3410,9 +3418,11 @@ pub const Expect = struct {
 
         var pass = value.isString();
         if (pass) {
-            const value_string = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            const expected_string = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            pass = strings.startsWith(value_string, expected_string) or expected_string.len == 0;
+            const value_string = value.toSliceOrNull(globalThis) orelse return .zero;
+            defer value_string.deinit();
+            const expected_string = expected.toSliceOrNull(globalThis) orelse return .zero;
+            defer expected_string.deinit();
+            pass = strings.startsWith(value_string.slice(), expected_string.slice()) or expected_string.len == 0;
         }
 
         const not = this.flags.not;
@@ -3465,9 +3475,11 @@ pub const Expect = struct {
 
         var pass = value.isString();
         if (pass) {
-            const value_string = value.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            const expected_string = expected.toString(globalThis).toSlice(globalThis, default_allocator).slice();
-            pass = strings.endsWith(value_string, expected_string) or expected_string.len == 0;
+            const value_string = value.toSliceOrNull(globalThis) orelse return .zero;
+            defer value_string.deinit();
+            const expected_string = expected.toSliceOrNull(globalThis) orelse return .zero;
+            defer expected_string.deinit();
+            pass = strings.endsWith(value_string.slice(), expected_string.slice()) or expected_string.len == 0;
         }
 
         const not = this.flags.not;
@@ -4173,7 +4185,8 @@ pub const Expect = struct {
         const is_valid = valid: {
             if (result.isObject()) {
                 if (result.get(globalObject, "pass")) |pass_value| {
-                    pass = pass_value.toBoolean();
+                    pass = pass_value.toBooleanSlow(globalObject);
+                    if (globalObject.hasException()) return false;
 
                     if (result.get(globalObject, "message")) |message_value| {
                         if (!message_value.isString() and !message_value.isCallable(globalObject.vm())) {
@@ -4204,16 +4217,27 @@ pub const Expect = struct {
             message_text = bun.String.static("No message was specified for this matcher.");
         } else if (message.isString()) {
             message_text = message.toBunString(globalObject);
-        } else { // callable
+        } else {
+            if (comptime Environment.allow_assert)
+                std.debug.assert(message.isCallable(globalObject.vm())); // checked above
+
             var message_result = message.callWithGlobalThis(globalObject, &[_]JSValue{});
             std.debug.assert(!message_result.isEmpty());
             if (message_result.toError()) |err| {
                 globalObject.throwValue(err);
                 return false;
             }
-            if (message_result.toStringOrNull(globalObject)) |str| {
-                message_text = bun.String.init(str.getZigString(globalObject));
+            if (bun.String.tryFromJS(message_result, globalObject)) |str| {
+                message_text = str;
             } else {
+                var formatter = JSC.ConsoleObject.Formatter{
+                    .globalThis = globalObject,
+                    .quote_strings = true,
+                };
+                globalObject.throw(
+                    "Expected custom matcher message to return a string, but got: {}",
+                    .{message_result.toFmt(globalObject, &formatter)},
+                );
                 return false;
             }
         }
@@ -4984,7 +5008,8 @@ pub const ExpectMatcherUtils = struct {
             globalObject.throw("matcherHint: the first argument (matcher name) must be a string", .{});
             return .zero;
         }
-        const matcher_name = bun.String.init(arguments[0].toString(globalObject).getZigString(globalObject));
+        const matcher_name = arguments[0].toBunString(globalObject);
+        defer matcher_name.deref();
 
         const received = if (arguments.len > 1) arguments[1] else bun.String.static("received").toJS(globalObject);
         const expected = if (arguments.len > 2) arguments[2] else bun.String.static("expected").toJS(globalObject);
@@ -5005,7 +5030,7 @@ pub const ExpectMatcherUtils = struct {
                 return .zero;
             }
             if (options.get(globalObject, "isNot")) |val| {
-                is_not = val.toBoolean();
+                is_not = val.coerce(bool, globalObject);
             }
             if (options.get(globalObject, "comment")) |val| {
                 comment = val.toStringOrNull(globalObject);

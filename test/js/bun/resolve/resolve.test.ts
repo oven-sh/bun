@@ -5,8 +5,7 @@ import { bunExe, bunEnv, tempDirWithFiles } from "harness";
 import { pathToFileURL } from "bun";
 import { sep } from "path";
 
-// make this something else okay
-it.skip("spawn test file", () => {
+it("spawn test file", () => {
   writePackageJSONImportsFixture();
   writePackageJSONExportsFixture();
 

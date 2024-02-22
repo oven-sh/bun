@@ -874,7 +874,7 @@ declare module "bun:test" {
      */
     toStrictEqual(expected: T): void;
     /**
-     * Asserts that the value is === to an element in the expected array.
+     * Asserts that the value is deep equal to an element in the expected array.
      *
      * The value must be an array or iterable, which includes strings.
      *

@@ -112,10 +112,10 @@ describe("jest-extended", () => {
     expect(false).toBeOneOf([true, false]);
     expect(null).toBeOneOf([null, undefined]);
     expect(undefined).toBeOneOf([null, undefined]);
-    const abc = {};
-    expect({}).not.toBeOneOf([{}, []]);
+    const abc = { c: 1 };
+    expect({}).not.toBeOneOf([{ b: 1 }, []]);
     expect(abc).toBeOneOf([abc, {}]);
-    expect({}).not.toBeOneOf([abc, {}]);
+    expect({}).not.toBeOneOf([abc, { a: 1 }]);
     try {
       expect(0).toBeOneOf([1, 2]);
       expect.unreachable();

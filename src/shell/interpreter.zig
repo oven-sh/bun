@@ -1454,9 +1454,6 @@ pub const Interpreter = struct {
         }
 
         pub fn start(this: *Expansion) void {
-            if (comptime true) {
-                @panic("TODO SHELL");
-            }
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.child_state == .idle);
                 std.debug.assert(this.word_idx == 0);
@@ -1983,7 +1980,7 @@ pub const Interpreter = struct {
             result: std.ArrayList([:0]const u8),
             allocator: Allocator,
             event_loop: JSC.EventLoopHandle,
-            concurrent_task: JSC.EventLoopTask = .{},
+            concurrent_task: JSC.EventLoopTask,
             // This is a poll because we want it to enter the uSockets loop
             ref: bun.Async.KeepAlive = .{},
             err: ?Err = null,
@@ -2007,13 +2004,14 @@ pub const Interpreter = struct {
                 var this = allocator.create(This) catch bun.outOfMemory();
                 this.* = .{
                     .event_loop = expansion.base.eventLoop(),
+                    .concurrent_task = JSC.EventLoopTask.fromEventLoop(expansion.base.eventLoop()),
                     .walker = walker,
                     .allocator = allocator,
                     .expansion = expansion,
                     .result = std.ArrayList([:0]const u8).init(allocator),
                 };
                 // this.ref.ref(this.event_loop.virtual_machine);
-                this.ref.ref(this.base.eventLoop());
+                this.ref.ref(this.event_loop);
 
                 return this;
             }
@@ -2054,7 +2052,7 @@ pub const Interpreter = struct {
                 print("runFromJS", .{});
                 this.expansion.onGlobWalkDone(this);
                 // this.ref.unref(this.event_loop.virtual_machine);
-                this.ref.unref(this.event_loop.getVmImpl());
+                this.ref.unref(this.event_loop);
             }
 
             pub fn runFromMainThreadMini(this: *This, _: *void) void {
@@ -3829,10 +3827,6 @@ pub const Interpreter = struct {
         }
 
         fn callImplWithType(this: *Builtin, comptime Impl: type, comptime Ret: type, comptime union_field: []const u8, comptime field: []const u8, args_: anytype) Ret {
-            if (comptime true) {
-                @panic("TODO SHELL");
-            }
-
             const self = &@field(this.impl, union_field);
             const args = brk: {
                 var args: std.meta.ArgsTuple(@TypeOf(@field(Impl, field))) = undefined;
@@ -7524,10 +7518,6 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         }
 
         pub fn start(this: @This()) void {
-            if (comptime true) {
-                @panic("TODO SHELL");
-            }
-
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
@@ -7541,10 +7531,6 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         }
 
         pub fn deinit(this: @This()) void {
-            if (comptime true) {
-                @panic("TODO SHELL");
-            }
-
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
@@ -7561,10 +7547,6 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
         }
 
         pub fn childDone(this: @This(), child: anytype, exit_code: ExitCode) void {
-            if (comptime true) {
-                @panic("TODO SHELL");
-            }
-
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {

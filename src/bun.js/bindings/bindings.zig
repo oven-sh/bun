@@ -4094,6 +4094,11 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    pub fn hasOwnPropertyValue(this: JSValue, globalThis: *JSGlobalObject, value: JSC.JSValue) bool {
+        // TODO: add a binding for this
+        return hasOwnProperty(this, globalThis, value.getZigString(globalThis));
+    }
+
     pub fn hasOwnProperty(this: JSValue, globalThis: *JSGlobalObject, key: ZigString) bool {
         return cppFn("hasOwnProperty", .{ this, globalThis, key });
     }
@@ -4489,8 +4494,9 @@ pub const JSValue = enum(JSValueReprInt) {
     /// Call `toString()` on the JSValue and clone the result.
     /// On exception, this returns null.
     pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) ?ZigString.Slice {
-        var str = this.toStringOrNull(globalThis) orelse return null;
-        return str.toSlice(globalThis, globalThis.allocator());
+        const str = bun.String.tryFromJS(this, globalThis) orelse return null;
+        defer str.deref();
+        return str.toUTF8(bun.default_allocator);
     }
 
     /// Call `toString()` on the JSValue and clone the result.

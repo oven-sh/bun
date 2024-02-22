@@ -874,6 +874,19 @@ declare module "bun:test" {
      */
     toStrictEqual(expected: T): void;
     /**
+     * Asserts that the value is deep equal to an element in the expected array.
+     *
+     * The value must be an array or iterable, which includes strings.
+     *
+     * @example
+     * expect(1).toBeOneOf([1,2,3]);
+     * expect("foo").toBeOneOf(["foo", "bar"]);
+     * expect(true).toBeOneOf(new Set([true]));
+     *
+     * @param expected the expected value
+     */
+    toBeOneOf(expected: Array<unknown> | Iterable<unknown>): void;
+    /**
      * Asserts that a value contains what is expected.
      *
      * The value must be an array or iterable, which

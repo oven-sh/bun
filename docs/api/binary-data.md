@@ -26,10 +26,10 @@ Below is a quick "cheat sheet" that doubles as a table of contents. Click an ite
 
 ---
 
-<!-- - [`File`](#file)
-- _Browser only_. A subclass of `Blob` that represents a file. Has a `name` and `lastModified` timestamp. There is experimental support in Node.js v20; Bun does not support `File` yet; most of its functionality is provided by `BunFile`.
+- [`File`](#file)
+- A subclass of `Blob` that represents a file. Has a `name` and `lastModified` timestamp. There is experimental support in Node.js v20.
 
---- -->
+---
 
 - [`BunFile`](#bunfile)
 - _Bun only_. A subclass of `Blob` that represents a lazily-loaded file on disk. Created with `Bun.file(path)`.
@@ -49,7 +49,6 @@ Despite the name, it isn't an array and supports none of the array methods and o
 
 ```ts
 const buf = new ArrayBuffer(8);
-
 buf.byteLength; // => 8
 
 const slice = buf.slice(0, 4); // returns new ArrayBuffer
@@ -66,19 +65,19 @@ Below we create a new `DataView` and set the first byte to 5.
 
 ```ts
 const buf = new ArrayBuffer(4);
-// [0x0, 0x0, 0x0, 0x0]
+// [0b00000000, 0b00000000, 0b00000000, 0b00000000]
 
 const dv = new DataView(buf);
 dv.setUint8(0, 3); // write value 3 at byte offset 0
 dv.getUint8(0); // => 3
-// [0x11, 0x0, 0x0, 0x0]
+// [0b00000011, 0b00000000, 0b00000000, 0b00000000]
 ```
 
 Now let's write a `Uint16` at byte offset `1`. This requires two bytes. We're using the value `513`, which is `2 * 256 + 1`; in bytes, that's `00000010 00000001`.
 
 ```ts
 dv.setUint16(1, 513);
-// [0x11, 0x10, 0x1, 0x0]
+// [0b00000011, 0b00000010, 0b00000001, 0b00000000]
 
 console.log(dv.getUint16(1)); // => 513
 ```

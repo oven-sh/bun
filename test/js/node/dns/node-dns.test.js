@@ -3,6 +3,9 @@ import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import * as util from "node:util";
+
+const isWindows = process.platform === "win32";
 
 // TODO:
 test("it exists", () => {
@@ -228,7 +231,7 @@ test("dns.lookup (localhost)", done => {
   });
 });
 
-test("dns.getServers", done => {
+test.skipIf(isWindows)("dns.getServers", done => {
   function parseResolvConf() {
     let servers = [];
     try {
@@ -326,5 +329,110 @@ describe("test invalid arguments", () => {
         done(e);
       }
     });
+  });
+
+  it("dns.lookupService", async () => {
+    expect(() => {
+      dns.lookupService("", 443, (err, hostname, service) => {});
+    }).toThrow("Expected address to be a non-empty string for 'lookupService'.");
+    expect(() => {
+      dns.lookupService("google.com", 443, (err, hostname, service) => {});
+    }).toThrow("Expected address to be a invalid address for 'lookupService'.");
+  });
+});
+
+describe("dns.lookupService", () => {
+  it.each([
+    ["1.1.1.1", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1111", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1001", 53, ["one.one.one.one", "domain"]],
+    ["1.1.1.1", 80, ["one.one.one.one", "http"]],
+    ["1.1.1.1", 443, ["one.one.one.one", "https"]],
+  ])("lookupService(%s, %d)", (address, port, expected, done) => {
+    dns.lookupService(address, port, (err, hostname, service) => {
+      try {
+        expect(err).toBeNull();
+        expect(hostname).toStrictEqual(expected[0]);
+        expect(service).toStrictEqual(expected[1]);
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
+
+  it("lookupService(255.255.255.255, 443)", done => {
+    dns.lookupService("255.255.255.255", 443, (err, hostname, service) => {
+      if (process.platform == "darwin") {
+        try {
+          expect(err).toBeNull();
+          expect(hostname).toStrictEqual("broadcasthost");
+          expect(service).toStrictEqual("https");
+          done();
+        } catch (err) {
+          done(err);
+        }
+      } else {
+        try {
+          expect(err).not.toBeNull();
+          expect(hostname).toBeUndefined();
+          expect(service).toBeUndefined();
+          done();
+        } catch (err) {
+          done(err);
+        }
+      }
+    });
+  });
+
+  it.each([
+    ["1.1.1.1", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1111", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1001", 53, ["one.one.one.one", "domain"]],
+    ["1.1.1.1", 80, ["one.one.one.one", "http"]],
+    ["1.1.1.1", 443, ["one.one.one.one", "https"]],
+  ])("promises.lookupService(%s, %d)", async (address, port, expected) => {
+    const [hostname, service] = await dns.promises.lookupService(address, port);
+    expect(hostname).toStrictEqual(expected[0]);
+    expect(service).toStrictEqual(expected[1]);
+  });
+});
+
+// Deprecated reference: https://nodejs.org/api/deprecations.html#DEP0118
+describe("lookup deprecated behavior", () => {
+  it.each([undefined, false, null, NaN, ""])("dns.lookup", domain => {
+    dns.lookup(domain, (error, address, family) => {
+      expect(error).toBeNull();
+      expect(address).toBeNull();
+      expect(family).toBe(4);
+    });
+  });
+});
+
+describe("uses `dns.promises` implementations for `util.promisify` factory", () => {
+  it.each([
+    "lookup",
+    "lookupService",
+    "resolve",
+    "reverse",
+    "resolve4",
+    "resolve6",
+    "resolveAny",
+    "resolveCname",
+    "resolveCaa",
+    "resolveMx",
+    "resolveNs",
+    "resolvePtr",
+    "resolveSoa",
+    "resolveSrv",
+    "resolveTxt",
+    "resolveNaptr",
+  ])("%s", method => {
+    expect(dns[method][util.promisify.custom]).toBe(dns_promises[method]);
+    expect(dns.promises[method]).toBe(dns_promises[method]);
+  });
+
+  it("util.promisify(dns.lookup) acts like dns.promises.lookup", async () => {
+    expect(await util.promisify(dns.lookup)("example.com")).toEqual(await dns.promises.lookup("example.com"));
   });
 });

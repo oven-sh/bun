@@ -3,19 +3,27 @@
 
 #include "helpers.h"
 
-#include "JavaScriptCore/JSObject.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSArrayInlines.h>
+#include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/JSStringInlines.h>
+
 #include "BunClientData.h"
+
 using namespace JSC;
 
-extern "C" size_t Bun__getEnvNames(JSGlobalObject*, ZigString* names, size_t max);
+extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
+extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
+
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
 
 namespace Bun {
 
 using namespace WebCore;
 
-JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -39,18 +47,22 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     return JSValue::encode(result);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSValue::decode(thisValue).getObject();
     if (!object)
         return false;
 
-    object->putDirect(vm, propertyName, JSValue::decode(value), 0);
+    auto string = JSValue::decode(value).toString(globalObject);
+    if (UNLIKELY(!string))
+        return false;
+
+    object->putDirect(vm, propertyName, string, 0);
     return true;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -81,7 +93,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
 // In Node.js, the "TZ" environment variable is special.
 // Setting it automatically updates the timezone.
 // We also expose an explicit setTimeZone function in bun:jsc
-JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSValue::decode(thisValue).getObject();
@@ -103,8 +115,9 @@ JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * 
     auto privateName = builtinNames->dataPrivateName();
     object->putDirect(vm, privateName, JSValue::decode(value), 0);
 
+    // TODO: this is an assertion failure
     // Recreate this because the property visibility needs to be set correctly
-    object->putDirectCustomAccessor(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
     return true;
 }
 
@@ -113,9 +126,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    size_t max = 768;
-    ZigString names[max];
-    size_t count = Bun__getEnvNames(globalObject, names, max);
+    void* list;
+    size_t count = Bun__getEnvCount(globalObject, &list);
     JSC::JSObject* object = nullptr;
     if (count < 63) {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
@@ -123,15 +135,47 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         object = constructEmptyObject(globalObject, globalObject->objectPrototype());
     }
 
+#if OS(WINDOWS)
+    JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
+#endif
+
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
     bool hasTZ = false;
     for (size_t i = 0; i < count; i++) {
-        auto name = Zig::toStringCopy(names[i]);
+        unsigned char* chars;
+        size_t len = Bun__getEnvKey(list, i, &chars);
+        auto name = String::fromUTF8(chars, len);
+#if OS(WINDOWS)
+        keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
+#endif
         if (name == TZ) {
             hasTZ = true;
             continue;
         }
-        object->putDirectCustomAccessor(vm, Identifier::fromString(vm, name), JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, jsSetterEnvironmentVariable), JSC::PropertyAttribute::CustomAccessor | 0);
+        ASSERT(len > 0);
+#if OS(WINDOWS)
+        String idName = name.convertToASCIIUppercase();
+#else
+        String idName = name;
+#endif
+        Identifier identifier = Identifier::fromString(vm, idName);
+
+        // CustomGetterSetter doesn't support indexed properties yet.
+        // This causes strange issues when the environment variable name is an integer.
+        if (UNLIKELY(chars[0] >= '0' && chars[0] <= '9')) {
+            if (auto index = parseIndex(identifier)) {
+                ZigString valueString = { nullptr, 0 };
+                ZigString nameStr = toZigString(name);
+                JSValue value = jsUndefined();
+                if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
+                    value = jsString(vm, Zig::toStringCopy(valueString));
+                }
+                object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
+                continue;
+            }
+        }
+
+        object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, jsSetterEnvironmentVariable), JSC::PropertyAttribute::CustomAccessor | 0);
     }
 
     unsigned int TZAttrs = JSC::PropertyAttribute::CustomAccessor | 0;
@@ -142,6 +186,26 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         vm,
         Identifier::fromString(vm, TZ), JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), TZAttrs);
 
+#if OS(WINDOWS)
+    JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::MarkedArgumentBuffer args;
+    args.append(object);
+    args.append(keyArray);
+    auto clientData = WebCore::clientData(vm);
+    JSC::CallData callData = JSC::getCallData(getSourceEvent);
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::call(globalObject, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (returnedException) {
+        throwException(globalObject, scope, returnedException.get());
+        return jsUndefined();
+    }
+
+    RELEASE_AND_RETURN(scope, result);
+#else
     return object;
+#endif
 }
 }

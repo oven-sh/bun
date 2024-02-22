@@ -1,8 +1,11 @@
+#pragma once
+
 #include "CommonJSModuleRecord.h"
 #include "ImportMetaObject.h"
-#include "JavaScriptCore/JSBoundFunction.h"
-#include "JavaScriptCore/ObjectConstructor.h"
 #include "_NativeModule.h"
+#include "isBuiltinModule.h"
+#include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 
 using namespace Zig;
 using namespace JSC;
@@ -32,6 +35,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "bun:ffi"_s,
     "bun:jsc"_s,
     "bun:sqlite"_s,
+    "bun:test"_s,
     "bun:wrap"_s,
     "child_process"_s,
     "cluster"_s,
@@ -87,18 +91,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "ws"_s,
     "zlib"_s,
 };
-
-static bool isBuiltinModule(const String &namePossiblyWithNodePrefix) {
-  String name = namePossiblyWithNodePrefix;
-  if (name.startsWith("node:"_s))
-    name = name.substringSharingImpl(5);
-
-  for (auto &builtinModule : builtinModuleNames) {
-    if (name == builtinModule)
-      return true;
-  }
-  return false;
-}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
                          (JSC::JSGlobalObject * globalObject,
@@ -158,7 +150,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBuiltinModule,
   auto moduleStr = moduleName.toWTFString(globalObject);
   RETURN_IF_EXCEPTION(scope, JSValue::encode(jsBoolean(false)));
 
-  return JSValue::encode(jsBoolean(isBuiltinModule(moduleStr)));
+  return JSValue::encode(jsBoolean(Bun::isBuiltinModule(moduleStr)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionWrap, (JSC::JSGlobalObject * globalObject,
@@ -188,17 +180,35 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
   if (callFrame->argumentCount() < 1) {
     throwTypeError(globalObject, scope,
                    "createRequire() requires at least one argument"_s);
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode({}));
   }
 
   auto val = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+
+  if (val.startsWith("file://"_s)) {
+    WTF::URL url(val);
+    if (!url.isValid()) {
+      throwTypeError(globalObject, scope,
+                     makeString("createRequire() was given an invalid URL '"_s,
+                                url.string(), "'"_s));
+      ;
+      RELEASE_AND_RETURN(scope, JSValue::encode({}));
+    }
+    if (!url.protocolIsFile()) {
+      throwTypeError(globalObject, scope,
+                     "createRequire() does not support non-file URLs"_s);
+      RELEASE_AND_RETURN(scope, JSValue::encode({}));
+    }
+    val = url.fileSystemPath();
+  }
+
   RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
   RELEASE_AND_RETURN(
       scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(
                  vm, globalObject, val)));
 }
-extern "C" EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *,
-                                                         CallFrame *);
+extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *,
+                                                              CallFrame *);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
                          (JSGlobalObject * globalObject,
@@ -242,6 +252,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
   }
   default: {
     JSC::JSValue moduleName = callFrame->argument(0);
+    JSC::JSValue fromValue = callFrame->argument(1);
 
     if (moduleName.isUndefinedOrNull()) {
       auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -251,9 +262,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
       return JSC::JSValue::encode(JSC::JSValue{});
     }
 
+    if (
+        // fast path: it's a real CommonJS module object.
+        auto *cjs = jsDynamicCast<Bun::JSCommonJSModule *>(fromValue)) {
+      fromValue = cjs->id();
+    } else if
+        // slow path: userland code did something weird. lets let them do that
+        // weird thing.
+        (fromValue.isObject()) {
+
+      if (auto idValue = fromValue.getObject()->getIfPropertyExists(
+              globalObject, Identifier::fromString(vm, "filename"_s))) {
+        if (idValue.isString()) {
+          fromValue = idValue;
+        }
+      }
+    }
+
     auto result =
         Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName),
-                         JSValue::encode(callFrame->argument(1)), false);
+                         JSValue::encode(fromValue), false);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     if (!JSC::JSValue::decode(result).isString()) {
@@ -304,6 +332,39 @@ JSC_DEFINE_CUSTOM_SETTER(set_resolveFilename,
   return false;
 }
 
+// These two setters are only used if you directly hit
+// `Module.prototype.require` or `module.require`. When accessing the cjs
+// require argument, this is a bound version of `require`, which calls into the
+// overridden one.
+//
+// This require function also intentionally does not have .resolve on it, nor
+// does it have any of the other properties.
+//
+// Note: allowing require to be overridable at all is only needed for Next.js to
+// work (they do Module.prototype.require = ...)
+
+JSC_DEFINE_CUSTOM_GETTER(getterRequireFunction,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::EncodedJSValue thisValue, JSC::PropertyName)) {
+  return JSValue::encode(globalObject->getDirect(
+      globalObject->vm(), WebCore::clientData(globalObject->vm())
+                              ->builtinNames()
+                              .overridableRequirePrivateName()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::EncodedJSValue thisValue,
+                          JSC::EncodedJSValue value,
+                          JSC::PropertyName propertyName)) {
+  globalObject->putDirect(globalObject->vm(),
+                          WebCore::clientData(globalObject->vm())
+                              ->builtinNames()
+                              .overridableRequirePrivateName(),
+                          JSValue::decode(value), 0);
+  return true;
+}
+
 namespace Zig {
 
 DEFINE_NATIVE_MODULE(NodeModule) {
@@ -330,12 +391,17 @@ DEFINE_NATIVE_MODULE(NodeModule) {
     exportNames.append(name);
     exportValues.append(value);
   };
-  exportNames.reserveCapacity(15);
-  exportValues.ensureCapacity(15);
+  exportNames.reserveCapacity(16);
+  exportValues.ensureCapacity(16);
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(defaultObject);
 
   put(Identifier::fromString(vm, "Module"_s), defaultObject);
+
+  // Module._extensions === require.extensions
+  put(Identifier::fromString(vm, "_extensions"_s),
+      globalObject->requireFunctionUnbound()->get(
+          globalObject, Identifier::fromString(vm, "extensions"_s)));
 
   defaultObject->putDirectCustomAccessor(
       vm, JSC::Identifier::fromString(vm, "_resolveFilename"_s),
@@ -366,8 +432,15 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   put(Identifier::fromString(vm, "globalPaths"_s),
       constructEmptyArray(globalObject, nullptr, 0));
 
-  put(Identifier::fromString(vm, "prototype"_s),
-      constructEmptyObject(globalObject));
+  auto prototype =
+      constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+  prototype->putDirectCustomAccessor(
+      vm, JSC::Identifier::fromString(vm, "require"_s),
+      JSC::CustomGetterSetter::create(vm, getterRequireFunction,
+                                      setterRequireFunction),
+      0);
+
+  defaultObject->putDirect(vm, vm.propertyNames->prototype, prototype);
 
   JSC::JSArray *builtinModules = JSC::JSArray::create(
       vm,
@@ -381,8 +454,6 @@ DEFINE_NATIVE_MODULE(NodeModule) {
   }
 
   put(JSC::Identifier::fromString(vm, "builtinModules"_s), builtinModules);
-
-  RETURN_NATIVE_MODULE();
 }
 
 } // namespace Zig

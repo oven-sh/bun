@@ -14,7 +14,11 @@
 
 #ifdef __cplusplus
   #define AUTO_EXTERN_C extern "C"
-  #define AUTO_EXTERN_C_ZIG extern "C" __attribute__((weak))
+  #ifdef WIN32
+    #define AUTO_EXTERN_C_ZIG extern "C" 
+  #else
+    #define AUTO_EXTERN_C_ZIG extern "C" __attribute__((weak))
+  #endif
 #else
   #define AUTO_EXTERN_C
   #define AUTO_EXTERN_C_ZIG __attribute__((weak))
@@ -29,7 +33,7 @@ typedef void* JSClassRef;
 
 #ifdef __cplusplus
 #include "root.h"
-#include "JavaScriptCore/JSClassRef.h"
+#include <JavaScriptCore/JSClassRef.h>
 #endif
 #include "headers-handwritten.h"
  typedef struct bJSC__JSPromise { unsigned char bytes[32]; } bJSC__JSPromise;
@@ -138,23 +142,25 @@ typedef void* JSClassRef;
   using WebCore__AbortSignal = WebCore::AbortSignal;
   using WebCore__DOMURL = WebCore::DOMURL;
 
+  using JSC__GetterSetter = JSC::GetterSetter;
+  using JSC__CustomGetterSetter = JSC::CustomGetterSetter;
 #endif
 
 
 #pragma mark - JSC::JSObject
 
-CPP_DECL JSC__JSValue JSC__JSObject__create(JSC__JSGlobalObject* arg0, size_t arg1, void* arg2, void(* ArgFn3)(void* arg0, JSC__JSObject* arg1, JSC__JSGlobalObject* arg2)) __attribute__((nonnull (3)));
+CPP_DECL JSC__JSValue JSC__JSObject__create(JSC__JSGlobalObject* arg0, size_t arg1, void* arg2, void(* ArgFn3)(void* arg0, JSC__JSObject* arg1, JSC__JSGlobalObject* arg2));
 CPP_DECL size_t JSC__JSObject__getArrayLength(JSC__JSObject* arg0);
 CPP_DECL JSC__JSValue JSC__JSObject__getDirect(JSC__JSObject* arg0, JSC__JSGlobalObject* arg1, const ZigString* arg2);
 CPP_DECL JSC__JSValue JSC__JSObject__getIndex(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2);
 CPP_DECL void JSC__JSObject__putRecord(JSC__JSObject* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2, ZigString* arg3, size_t arg4);
-CPP_DECL JSC__JSValue ZigString__external(const ZigString* arg0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(void* arg0, void* arg1, size_t arg2)) __attribute__((nonnull (3)));
+CPP_DECL JSC__JSValue ZigString__external(const ZigString* arg0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(void* arg0, void* arg1, size_t arg2));
 CPP_DECL JSC__JSValue ZigString__to16BitValue(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toAtomicValue(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toErrorInstance(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toExternalU16(const uint16_t* arg0, size_t arg1, JSC__JSGlobalObject* arg2);
 CPP_DECL JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObject* arg1);
-CPP_DECL JSC__JSValue ZigString__toExternalValueWithCallback(const ZigString* arg0, JSC__JSGlobalObject* arg1, void(* ArgFn2)(void* arg0, void* arg1, size_t arg2)) __attribute__((nonnull (2)));
+CPP_DECL JSC__JSValue ZigString__toExternalValueWithCallback(const ZigString* arg0, JSC__JSGlobalObject* arg1, void(* ArgFn2)(void* arg0, void* arg1, size_t arg2));
 CPP_DECL JSC__JSValue ZigString__toRangeErrorInstance(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toSyntaxErrorInstance(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toTypeErrorInstance(const ZigString* arg0, JSC__JSGlobalObject* arg1);
@@ -223,7 +229,7 @@ CPP_DECL JSC__JSInternalPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC_
 
 CPP_DECL bool WebCore__AbortSignal__aborted(WebCore__AbortSignal* arg0);
 CPP_DECL JSC__JSValue WebCore__AbortSignal__abortReason(WebCore__AbortSignal* arg0);
-CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__addListener(WebCore__AbortSignal* arg0, void* arg1, void(* ArgFn2)(void* arg0, JSC__JSValue JSValue1)) __attribute__((nonnull (2)));
+CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__addListener(WebCore__AbortSignal* arg0, void* arg1, void(* ArgFn2)(void* arg0, JSC__JSValue JSValue1));
 CPP_DECL void WebCore__AbortSignal__cleanNativeBindings(WebCore__AbortSignal* arg0, void* arg1);
 CPP_DECL JSC__JSValue WebCore__AbortSignal__create(JSC__JSGlobalObject* arg0);
 CPP_DECL JSC__JSValue WebCore__AbortSignal__createAbortError(const ZigString* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
@@ -298,7 +304,7 @@ CPP_DECL void JSC__JSMap__set(JSC__JSMap* arg0, JSC__JSGlobalObject* arg1, JSC__
 
 #pragma mark - JSC::JSValue
 
-CPP_DECL void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, JSC__JSValue(* ArgFn3)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1), JSC__JSValue(* ArgFn4)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1)) __attribute__((nonnull (3, 4)));
+CPP_DECL void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, JSC__JSValue(* ArgFn3)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1), JSC__JSValue(* ArgFn4)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 CPP_DECL bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, Bun__ArrayBuffer* arg2);
 CPP_DECL unsigned char JSC__JSValue__asBigIntCompare(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSCell* JSC__JSValue__asCell(JSC__JSValue JSValue0);
@@ -325,12 +331,14 @@ CPP_DECL bool JSC__JSValue__eqlCell(JSC__JSValue JSValue0, JSC__JSCell* arg1);
 CPP_DECL bool JSC__JSValue__eqlValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, unsigned char arg2);
-CPP_DECL void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__VM* arg0, JSC__JSGlobalObject* arg1, void* arg2, JSC__JSValue JSValue3)) __attribute__((nonnull (3)));
-CPP_DECL void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, ZigString* arg2, JSC__JSValue JSValue3, bool arg4)) __attribute__((nonnull (3)));
-CPP_DECL void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, ZigString* arg2, JSC__JSValue JSValue3, bool arg4)) __attribute__((nonnull (3)));
+CPP_DECL void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__VM* arg0, JSC__JSGlobalObject* arg1, void* arg2, JSC__JSValue JSValue3));
+CPP_DECL void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, ZigString* arg2, JSC__JSValue JSValue3, bool arg4, bool arg5));
+CPP_DECL void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, ZigString* arg2, JSC__JSValue JSValue3, bool arg4, bool arg5));
 CPP_DECL JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* arg0, ZigString* arg1, ZigString* arg2, size_t arg3, bool arg4);
 CPP_DECL JSC__JSValue JSC__JSValue__fromInt64NoTruncate(JSC__JSGlobalObject* arg0, int64_t arg1);
 CPP_DECL JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* arg0, uint64_t arg1);
+CPP_DECL JSC__JSValue JSC__JSValue__fromTimevalNoTruncate(JSC__JSGlobalObject* arg0, int64_t nsec, int64_t sec);
+CPP_DECL JSC__JSValue JSC__JSValue__bigIntSum(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue0, JSC__JSValue JSValue1);
 CPP_DECL void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2);
 CPP_DECL JSC__JSValue JSC__JSValue__getErrorsProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
@@ -340,6 +348,7 @@ CPP_DECL void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobal
 CPP_DECL JSC__JSValue JSC__JSValue__getPrototype(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__JSValue__getSymbolDescription(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2);
 CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue JSValue0);
+CPP_DECL bool JSC__JSValue__hasOwnProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString arg2);
 CPP_DECL bool JSC__JSValue__isAggregateError(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isAnyInt(JSC__JSValue JSValue0);
@@ -379,6 +388,7 @@ CPP_DECL void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalOb
 CPP_DECL JSC__JSValue JSC__JSValue__jsTDZValue();
 CPP_DECL unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsUndefined();
+CPP_DECL JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* arg0, JSC__JSValue arg1);
 CPP_DECL JSC__JSValue JSC__JSValue__makeWithNameAndPrototype(JSC__JSGlobalObject* arg0, void* arg1, void* arg2, const ZigString* arg3);
 CPP_DECL JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__JSValue__push(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
@@ -414,14 +424,14 @@ CPP_DECL size_t JSC__VM__blockBytesAllocated(JSC__VM* arg0);
 CPP_DECL void JSC__VM__clearExecutionTimeLimit(JSC__VM* arg0);
 CPP_DECL void JSC__VM__collectAsync(JSC__VM* arg0);
 CPP_DECL JSC__VM* JSC__VM__create(unsigned char HeapType0);
-CPP_DECL void JSC__VM__deferGC(JSC__VM* arg0, void* arg1, void(* ArgFn2)(void* arg0)) __attribute__((nonnull (2)));
+CPP_DECL void JSC__VM__deferGC(JSC__VM* arg0, void* arg1, void(* ArgFn2)(void* arg0));
 CPP_DECL void JSC__VM__deinit(JSC__VM* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__deleteAllCode(JSC__VM* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__drainMicrotasks(JSC__VM* arg0);
 CPP_DECL bool JSC__VM__executionForbidden(JSC__VM* arg0);
 CPP_DECL size_t JSC__VM__externalMemorySize(JSC__VM* arg0);
 CPP_DECL size_t JSC__VM__heapSize(JSC__VM* arg0);
-CPP_DECL void JSC__VM__holdAPILock(JSC__VM* arg0, void* arg1, void(* ArgFn2)(void* arg0)) __attribute__((nonnull (2)));
+CPP_DECL void JSC__VM__holdAPILock(JSC__VM* arg0, void* arg1, void(* ArgFn2)(void* arg0));
 CPP_DECL bool JSC__VM__isEntered(JSC__VM* arg0);
 CPP_DECL bool JSC__VM__isJITEnabled();
 CPP_DECL void JSC__VM__notifyNeedDebuggerBreak(JSC__VM* arg0);
@@ -436,7 +446,7 @@ CPP_DECL void JSC__VM__setExecutionTimeLimit(JSC__VM* arg0, double arg1);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC__VM* arg0);
 CPP_DECL void JSC__VM__throwError(JSC__VM* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL void JSC__VM__throwError(JSC__VM* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
-CPP_DECL void JSC__VM__whenIdle(JSC__VM* arg0, void(* ArgFn1)()) __attribute__((nonnull (1)));
+CPP_DECL void JSC__VM__whenIdle(JSC__VM* arg0, void(* ArgFn1)());
 
 #pragma mark - JSC::ThrowScope
 
@@ -588,6 +598,7 @@ ZIG_DECL JSC__JSValue Bun__Path__normalize(JSC__JSGlobalObject* arg0, bool arg1,
 ZIG_DECL JSC__JSValue Bun__Path__parse(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
 ZIG_DECL JSC__JSValue Bun__Path__relative(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
 ZIG_DECL JSC__JSValue Bun__Path__resolve(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+ZIG_DECL JSC__JSValue Bun__Path__toNamespacedPath(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
 
 #endif
 
@@ -689,6 +700,27 @@ ZIG_DECL JSC__JSValue FileSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame*
 
 #endif
 
+CPP_DECL JSC__JSValue UVStreamSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC__JSValue UVStreamSink__createObject(JSC__JSGlobalObject* arg0, void* arg1);
+CPP_DECL void UVStreamSink__detachPtr(JSC__JSValue JSValue0);
+CPP_DECL void* UVStreamSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
+CPP_DECL void UVStreamSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
+CPP_DECL void UVStreamSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
+
+#ifdef __cplusplus
+
+ZIG_DECL JSC__JSValue UVStreamSink__close(JSC__JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL void UVStreamSink__finalize(void* arg0);
+ZIG_DECL JSC__JSValue UVStreamSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL void UVStreamSink__updateRef(void* arg0, bool arg1);
+ZIG_DECL JSC__JSValue UVStreamSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+
+#endif
+
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
@@ -744,24 +776,24 @@ ZIG_DECL JSC__JSValue Bun__Process__setTitle(JSC__JSGlobalObject* arg0, ZigStrin
 #endif
 CPP_DECL ZigException ZigException__fromException(JSC__Exception* arg0);
 
-#pragma mark - Zig::ConsoleClient
+#pragma mark - Bun::ConsoleObject
 
 
 #ifdef __cplusplus
 
-ZIG_DECL void Zig__ConsoleClient__count(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__countReset(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__messageWithTypeAndLevel(void* arg0, uint32_t MessageType1, uint32_t MessageLevel2, JSC__JSGlobalObject* arg3, JSC__JSValue* arg4, size_t arg5);
-ZIG_DECL void Zig__ConsoleClient__profile(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__profileEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__record(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
-ZIG_DECL void Zig__ConsoleClient__recordEnd(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
-ZIG_DECL void Zig__ConsoleClient__screenshot(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
-ZIG_DECL void Zig__ConsoleClient__takeHeapSnapshot(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__time(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__timeEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Zig__ConsoleClient__timeLog(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3, ScriptArguments* arg4);
-ZIG_DECL void Zig__ConsoleClient__timeStamp(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
+ZIG_DECL void Bun__ConsoleObject__count(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__countReset(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__messageWithTypeAndLevel(void* arg0, uint32_t MessageType1, uint32_t MessageLevel2, JSC__JSGlobalObject* arg3, JSC__JSValue* arg4, size_t arg5);
+ZIG_DECL void Bun__ConsoleObject__profile(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__profileEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__record(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
+ZIG_DECL void Bun__ConsoleObject__recordEnd(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
+ZIG_DECL void Bun__ConsoleObject__screenshot(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
+ZIG_DECL void Bun__ConsoleObject__takeHeapSnapshot(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__time(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__timeEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+ZIG_DECL void Bun__ConsoleObject__timeLog(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3, JSC__JSValue* arg4, size_t arg5);
+ZIG_DECL void Bun__ConsoleObject__timeStamp(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
 
 #endif
 
@@ -828,5 +860,15 @@ ZIG_DECL JSC__JSValue Bun__BodyValueBufferer__onResolveStream(JSC__JSGlobalObjec
 
 ZIG_DECL JSC__JSValue Bun__TestScope__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
 ZIG_DECL JSC__JSValue Bun__TestScope__onResolve(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+
+#endif
+
+#ifdef __cplusplus
+
+CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter *arg);
+CPP_DECL bool JSC__GetterSetter__isSetterNull(JSC__GetterSetter *arg);
+
+CPP_DECL bool JSC__CustomGetterSetter__isGetterNull(JSC__CustomGetterSetter *arg);
+CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter *arg);
 
 #endif

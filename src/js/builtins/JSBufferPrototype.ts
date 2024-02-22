@@ -140,12 +140,10 @@ export function readUIntBE(this: BufferExt, offset, byteLength) {
       return view.getUint32(offset, false);
     }
     case 5: {
-      const last = view.getUint8(offset);
-      return (last | ((last & (2 ** 7)) * 0x1fffffe)) * 2 ** 32 + view.getUint32(offset + 1, false);
+      return view.getUint8(offset) * 2 ** 32 + view.getUint32(offset + 1, false);
     }
     case 6: {
-      const last = view.getUint16(offset, false);
-      return (last | ((last & (2 ** 15)) * 0x1fffe)) * 2 ** 32 + view.getUint32(offset + 2, false);
+      return view.getUint16(offset, false) * 2 ** 32 + view.getUint32(offset + 2, false);
     }
   }
   throw new RangeError("byteLength must be >= 1 and <= 6");
@@ -464,7 +462,7 @@ export function slice(this: BufferExt, start, end) {
   function adjustOffset(offset, length) {
     // Use Math.trunc() to convert offset to an integer value that can be larger
     // than an Int32. Hence, don't use offset | 0 or similar techniques.
-    offset = $trunc(offset);
+    offset = Math.trunc(offset);
     if (offset === 0 || offset !== offset) {
       return 0;
     } else if (offset < 0) {

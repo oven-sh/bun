@@ -1,20 +1,18 @@
+#include "root.h"
 #include "wtf-bindings.h"
 
-#include "wtf/StackTrace.h"
-#include "wtf/dtoa.h"
-#include <termios.h>
+#include <wtf/StackTrace.h>
+#include <wtf/dtoa.h>
+#include <atomic>
+
+#if OS(WINDOWS)
+#include <uv.h>
+#endif
+
+#if !OS(WINDOWS)
 #include <stdatomic.h>
 
-extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
-{
-    return WTF::parseDouble(string, length, *position);
-}
-
-extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* source, size_t length)
-{
-    WTF::StringImpl::copyCharacters(destination, source, length);
-}
-
+#include <termios.h>
 static int orig_termios_fd = -1;
 static struct termios orig_termios;
 static _Atomic int orig_termios_spinlock;
@@ -94,9 +92,13 @@ static void uv__tty_make_raw(struct termios* tio)
 #endif /* #ifdef __sun */
 }
 
-extern "C" int
-Bun__ttySetMode(int fd, int mode)
+#endif
+
+extern "C" void Bun__atexit(void (*func)(void));
+
+extern "C" int Bun__ttySetMode(int fd, int mode)
 {
+#if !OS(WINDOWS)
     struct termios tmp;
     int expected;
     int rc;
@@ -138,7 +140,7 @@ Bun__ttySetMode(int fd, int mode)
         tmp.c_cc[VTIME] = 0;
 
         std::call_once(reset_once_flag, [] {
-            atexit([] {
+            Bun__atexit([] {
                 uv_tty_reset_mode();
             });
         });
@@ -147,7 +149,7 @@ Bun__ttySetMode(int fd, int mode)
         uv__tty_make_raw(&tmp);
 
         std::call_once(reset_once_flag, [] {
-            atexit([] {
+            Bun__atexit([] {
                 uv_tty_reset_mode();
             });
         });
@@ -160,6 +162,20 @@ Bun__ttySetMode(int fd, int mode)
         current_tty_mode = mode;
 
     return rc;
+#else
+    return 0;
+
+#endif
+}
+
+extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
+{
+    return WTF::parseDouble(string, length, *position);
+}
+
+extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* source, size_t length)
+{
+    WTF::StringImpl::copyCharacters(destination, source, length);
 }
 
 extern "C" void Bun__crashReportWrite(void* ctx, const char* message, size_t length);
@@ -237,4 +253,57 @@ extern "C" size_t WTF__base64URLEncode(const unsigned char* __restrict inputData
         destinationDataBuffer[didx++] = '=';
 
     return destinationDataBufferSize;
+}
+
+namespace Bun {
+String base64URLEncodeToString(Vector<uint8_t> data)
+{
+    auto size = data.size();
+    size_t encodedLength = ((size * 4) + 2) / 3;
+    if (!encodedLength)
+        return String();
+
+    LChar* ptr;
+    auto result = String::createUninitialized(encodedLength, ptr);
+    if (UNLIKELY(!ptr)) {
+        RELEASE_ASSERT_NOT_REACHED();
+        return String();
+    }
+    encodedLength = WTF__base64URLEncode(data.data(), data.size(), ptr, encodedLength);
+    RELEASE_ASSERT(result.length() == encodedLength);
+    return result;
+}
+
+// https://github.com/oven-sh/WebKit/blob/b7bc2ba65db9774d201018f2e1a0a891d6365c13/Source/JavaScriptCore/runtime/DatePrototype.cpp#L323-L345
+size_t toISOString(JSC::VM& vm, double date, char in[64])
+{
+    if (!std::isfinite(date))
+        return 0;
+
+    GregorianDateTime gregorianDateTime;
+    vm.dateCache.msToGregorianDateTime(date, WTF::TimeType::UTCTime, gregorianDateTime);
+
+    // Maximum amount of space we need in buffer: 7 (max. digits in year) + 2 * 5 (2 characters each for month, day, hour, minute, second) + 4 (. + 3 digits for milliseconds)
+    // 6 for formatting and one for null termination = 28. We add one extra character to allow us to force null termination.
+    char buffer[28];
+    // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
+    int ms = static_cast<int>(fmod(date, msPerSecond));
+    if (ms < 0)
+        ms += msPerSecond;
+
+    int charactersWritten;
+    if (gregorianDateTime.year() > 9999 || gregorianDateTime.year() < 0)
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
+    else
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
+
+    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < sizeof(buffer));
+
+    memcpy(in, buffer, charactersWritten + 1);
+    if (static_cast<unsigned>(charactersWritten) >= sizeof(buffer))
+        return 0;
+
+    return charactersWritten;
+}
+
 }

@@ -138,6 +138,8 @@ test("uploads roundtrip with sendfile()", async () => {
   require("fs").writeFileSync(path, hugeTxt);
 
   const server = Bun.serve({
+    port: 0,
+    development: false,
     maxRequestBodySize: 1024 * 1024 * 1024 * 8,
     async fetch(req) {
       var count = 0;

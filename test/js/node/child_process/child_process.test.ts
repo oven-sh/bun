@@ -1,3 +1,4 @@
+// @known-failing-on-windows: 1 failing
 import { describe, it, expect } from "bun:test";
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -22,7 +23,7 @@ describe("ChildProcess.spawn()", () => {
         resolve(true);
       });
       // @ts-ignore
-      proc.spawn({ file: "bun", args: ["bun", "-v"] });
+      proc.spawn({ file: bunExe(), args: [bunExe(), "-v"] });
     });
     expect(result).toBe(true);
   });
@@ -34,7 +35,7 @@ describe("ChildProcess.spawn()", () => {
         resolve(true);
       });
       // @ts-ignore
-      proc.spawn({ file: "bun", args: ["bun", "-v"] });
+      proc.spawn({ file: bunExe(), args: [bunExe(), "-v"] });
       proc.kill();
     });
     expect(result).toBe(true);
@@ -60,8 +61,8 @@ describe("spawn()", () => {
     expect(!!child2).toBe(false);
   });
 
-  it.todo("should allow stdout to be read via Node stream.Readable `data` events", async () => {
-    const child = spawn("bun", ["-v"]);
+  it("should allow stdout to be read via Node stream.Readable `data` events", async () => {
+    const child = spawn(bunExe(), ["-v"]);
     const result: string = await new Promise(resolve => {
       child.stdout.on("error", e => {
         console.error(e);
@@ -77,8 +78,8 @@ describe("spawn()", () => {
     expect(SEMVER_REGEX.test(result.trim())).toBe(true);
   });
 
-  it.todo("should allow stdout to be read via .read() API", async () => {
-    const child = spawn("bun", ["-v"]);
+  it("should allow stdout to be read via .read() API", async () => {
+    const child = spawn(bunExe(), ["-v"]);
     const result: string = await new Promise((resolve, reject) => {
       let finalData = "";
       child.stdout.on("error", e => {
@@ -97,10 +98,10 @@ describe("spawn()", () => {
   });
 
   it("should accept stdio option with 'ignore' for no stdio fds", async () => {
-    const child1 = spawn("bun", ["-v"], {
+    const child1 = spawn(bunExe(), ["-v"], {
       stdio: "ignore",
     });
-    const child2 = spawn("bun", ["-v"], {
+    const child2 = spawn(bunExe(), ["-v"], {
       stdio: ["ignore", "ignore", "ignore"],
     });
 
@@ -177,7 +178,7 @@ describe("spawn()", () => {
       resolve = resolve1;
     });
     process.env.NO_COLOR = "1";
-    const child = spawn("node", ["--help"], { argv0: "bun" });
+    const child = spawn("node", ["--help"], { argv0: bunExe() });
     delete process.env.NO_COLOR;
     let msg = "";
 
@@ -216,9 +217,9 @@ describe("spawn()", () => {
 });
 
 describe("execFile()", () => {
-  it.todo("should execute a file", async () => {
+  it("should execute a file", async () => {
     const result: Buffer = await new Promise((resolve, reject) => {
-      execFile("bun", ["-v"], { encoding: "buffer" }, (error, stdout, stderr) => {
+      execFile(bunExe(), ["-v"], { encoding: "buffer" }, (error, stdout, stderr) => {
         if (error) {
           reject(error);
         }
@@ -230,7 +231,7 @@ describe("execFile()", () => {
 });
 
 describe("exec()", () => {
-  it.todo("should execute a command in a shell", async () => {
+  it("should execute a command in a shell", async () => {
     const result: Buffer = await new Promise((resolve, reject) => {
       exec("bun -v", { encoding: "buffer" }, (error, stdout, stderr) => {
         if (error) {
@@ -242,7 +243,7 @@ describe("exec()", () => {
     expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
   });
 
-  it.todo("should return an object w/ stdout and stderr when promisified", async () => {
+  it("should return an object w/ stdout and stderr when promisified", async () => {
     const result = await promisify(exec)("bun -v");
     expect(typeof result).toBe("object");
     expect(typeof result.stdout).toBe("string");
@@ -262,8 +263,8 @@ describe("spawnSync()", () => {
 });
 
 describe("execFileSync()", () => {
-  it.todo("should execute a file synchronously", () => {
-    const result = execFileSync("bun", ["-v"], { encoding: "utf8" });
+  it("should execute a file synchronously", () => {
+    const result = execFileSync(bunExe(), ["-v"], { encoding: "utf8" });
     expect(SEMVER_REGEX.test(result.trim())).toBe(true);
   });
 
@@ -277,7 +278,7 @@ describe("execFileSync()", () => {
 });
 
 describe("execSync()", () => {
-  it.todo("should execute a command in the shell synchronously", () => {
+  it("should execute a command in the shell synchronously", () => {
     const result = execSync("bun -v", { encoding: "utf8" });
     expect(SEMVER_REGEX.test(result.trim())).toBe(true);
   });

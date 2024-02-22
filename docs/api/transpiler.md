@@ -50,7 +50,7 @@ export default jsx(
 To override the default loader specified in the `new Bun.Transpiler()` constructor, pass a second argument to `.transformSync()`.
 
 ```ts
-await transpiler.transform("<div>hi!</div>", "tsx");
+transpiler.transformSync("<div>hi!</div>", "tsx");
 ```
 
 {% details summary="Nitty gritty" %}

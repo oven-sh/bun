@@ -2,7 +2,7 @@
 name: Add a peer dependency
 ---
 
-To add an npm package as a peer dependency, directly modify the `peerDependencies` object in your package.json. Running `bun install` will not install peer dependencies.
+To add an npm package as a peer dependency, directly modify the `peerDependencies` object in your package.json. Running `bun install` will install peer dependencies by default, unless marked optional in `peerDependenciesMeta`.
 
 ```json-diff
 {

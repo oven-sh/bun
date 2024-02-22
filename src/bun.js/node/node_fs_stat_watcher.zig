@@ -25,9 +25,9 @@ const log = bun.Output.scoped(.StatWatcher, false);
 
 fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool) JSC.JSValue {
     if (bigint) {
-        return StatsBig.initWithAllocator(globalThis.allocator(), stats).toJS(globalThis);
+        return bun.new(StatsBig, StatsBig.init(stats)).toJS(globalThis);
     } else {
-        return StatsSmall.initWithAllocator(globalThis.allocator(), stats).toJS(globalThis);
+        return bun.new(StatsSmall, StatsSmall.init(stats)).toJS(globalThis);
     }
 }
 
@@ -35,13 +35,13 @@ fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool)
 pub const StatWatcherScheduler = struct {
     timer: ?*uws.Timer = null,
 
-    head: std.atomic.Atomic(?*StatWatcher) = .{ .value = null },
-    is_running: std.atomic.Atomic(bool) = .{ .value = false },
+    head: std.atomic.Value(?*StatWatcher) = .{ .raw = null },
+    is_running: std.atomic.Value(bool) = .{ .raw = false },
 
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
 
     pub fn init(allocator: std.mem.Allocator, _: *bun.JSC.VirtualMachine) *StatWatcherScheduler {
-        var this = allocator.create(StatWatcherScheduler) catch @panic("out of memory");
+        const this = allocator.create(StatWatcherScheduler) catch @panic("out of memory");
         this.* = .{};
         return this;
     }
@@ -62,7 +62,7 @@ pub const StatWatcherScheduler = struct {
 
                 const vm = watcher.globalThis.bunVM();
                 this.timer = uws.Timer.create(
-                    vm.event_loop_handle orelse @panic("UWS Loop was not initialized yet."),
+                    vm.uwsLoop(),
                     this,
                 );
 
@@ -83,7 +83,7 @@ pub const StatWatcherScheduler = struct {
         // Instant.now will not fail on our target platforms.
         const now = std.time.Instant.now() catch unreachable;
 
-        var head: *StatWatcher = this.head.swap(null, .Monotonic).?;
+        const head: *StatWatcher = this.head.swap(null, .Monotonic).?;
 
         var prev = head;
         while (prev.closed) {
@@ -97,7 +97,7 @@ pub const StatWatcherScheduler = struct {
                 prev = next;
             } else {
                 if (this.head.load(.Monotonic) == null) {
-                    this.timer.?.deinit();
+                    this.timer.?.deinit(false);
                     this.timer = null;
                     // The scheduler is not deinit here, but it will get reused.
                 }
@@ -156,7 +156,7 @@ pub const StatWatcher = struct {
     globalThis: *JSC.JSGlobalObject,
     js_this: JSC.JSValue,
 
-    poll_ref: JSC.PollRef = .{},
+    poll_ref: bun.Async.KeepAlive = .{},
 
     last_stat: bun.Stat,
     last_jsvalue: JSC.Strong,
@@ -198,7 +198,7 @@ pub const StatWatcher = struct {
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Arguments {
             const vm = ctx.vm();
-            const path = PathLike.fromJS(ctx, arguments, exception) orelse {
+            const path = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "filename must be a string or TypedArray",
@@ -220,31 +220,11 @@ pub const StatWatcher = struct {
             if (arguments.nextEat()) |options_or_callable| {
                 // options
                 if (options_or_callable.isObject()) {
-                    if (options_or_callable.get(ctx, "persistent")) |persistent_| {
-                        if (!persistent_.isBoolean()) {
-                            JSC.throwInvalidArguments(
-                                "persistent must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
-                        }
-                        persistent = persistent_.toBoolean();
-                    }
+                    // default true
+                    persistent = (options_or_callable.getOptional(ctx, "persistent", bool) catch return null) orelse true;
 
-                    if (options_or_callable.get(ctx, "bigint")) |bigint_| {
-                        if (!bigint_.isBoolean()) {
-                            JSC.throwInvalidArguments(
-                                "bigint must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
-                        }
-                        bigint = bigint_.toBoolean();
-                    }
+                    // default false
+                    bigint = (options_or_callable.getOptional(ctx, "bigint", bool) catch return null) orelse false;
 
                     if (options_or_callable.get(ctx, "interval")) |interval_| {
                         if (!interval_.isNumber()) {
@@ -347,7 +327,7 @@ pub const StatWatcher = struct {
         }
 
         fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-            var initial_stat_task: *InitialStatTask = @fieldParentPtr(InitialStatTask, "task", task);
+            const initial_stat_task: *InitialStatTask = @fieldParentPtr(InitialStatTask, "task", task);
             defer bun.default_allocator.destroy(initial_stat_task);
             const this = initial_stat_task.watcher;
 
@@ -457,15 +437,16 @@ pub const StatWatcher = struct {
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];
         }
+
         var parts = [_]string{slice};
-        var file_path = Path.joinAbsStringBuf(
+        const file_path = Path.joinAbsStringBuf(
             Fs.FileSystem.instance.top_level_dir,
             &buf,
             &parts,
             .auto,
         );
 
-        var alloc_file_path = try bun.default_allocator.allocSentinel(u8, file_path.len, 0);
+        const alloc_file_path = try bun.default_allocator.allocSentinel(u8, file_path.len, 0);
         errdefer bun.default_allocator.free(alloc_file_path);
         @memcpy(alloc_file_path, file_path);
 

@@ -1,0 +1,45 @@
+{
+	"name": "native-foo-x64",
+	"versions": {
+		"1.0.0": {
+			"name": "native-foo-x64",
+			"version": "1.0.0",
+			"os": [
+				"foo"
+			],
+			"cpu": [
+				"x64"
+			],
+			"_id": "native-foo-x64@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-+KlZNC/c4RF1wx4ZYdrr2ZfouSHMWM4YLT/yCfh97dlIW1JuRs9LnbdUwrsM007hVF0khUGM9TSVcx+elB6NpQ==",
+				"shasum": "1304cfe94ead66002ecf882395957e45839bfff7",
+				"tarball": "http://localhost:4873/native-foo-x64/-/native-foo-x64-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:13.343Z",
+		"created": "2023-11-01T22:05:13.343Z",
+		"1.0.0": "2023-11-01T22:05:13.343Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"native-foo-x64-1.0.0.tgz": {
+			"shasum": "1304cfe94ead66002ecf882395957e45839bfff7",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-535d6c32694d1013",
+	"_id": "native-foo-x64",
+	"readme": "ERROR: No README data found!"
+}

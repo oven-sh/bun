@@ -3,6 +3,9 @@ import { readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
+// TODO(@paperdave)
+const todoOnWindows = process.platform === "win32" ? test.todo : test;
+
 describe("Bun.build", () => {
   test("passing undefined doesnt segfault", () => {
     try {
@@ -76,7 +79,7 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  test("rebuilding busts the directory entries cache", () => {
+  todoOnWindows("rebuilding busts the directory entries cache", () => {
     Bun.gc(true);
     const { exitCode, stderr } = Bun.spawnSync({
       cmd: [bunExe(), join(import.meta.dir, "bundler-reloader-script.ts")],
@@ -257,7 +260,7 @@ describe("Bun.build", () => {
     expect(x.success).toBe(true);
     expect(x.logs).toHaveLength(1);
     expect(x.logs[0].message).toBe(
-      '"key" prop before a {...spread} is deprecated in JSX. Falling back to classic runtime.',
+      '"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.',
     );
     expect(x.logs[0].name).toBe("BuildMessage");
     expect(x.logs[0].position).toBeTruthy();
@@ -289,5 +292,28 @@ describe("Bun.build", () => {
     expect(content).not.toContain('import {WebSocket} from "ws"');
     // depends on the ws package in the test/node_modules.
     expect(content).toContain("var websocket = __toESM(require_websocket(), 1);");
+  });
+
+  test("module() throws error", async () => {
+    expect(() =>
+      Bun.build({
+        entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
+        plugins: [
+          {
+            name: "test",
+            setup: b => {
+              b.module("ad", () => {
+                return {
+                  exports: {
+                    hello: "world",
+                  },
+                  loader: "object",
+                };
+              });
+            },
+          },
+        ],
+      }),
+    ).toThrow();
   });
 });

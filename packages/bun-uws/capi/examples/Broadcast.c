@@ -14,7 +14,7 @@ void uws_timer_close(struct us_timer_t *timer)
     struct timer_handler_data *data;
     memcpy(&data, us_timer_ext(t), sizeof(struct timer_handler_data *));
     free(data);
-    us_timer_close(t);
+    us_timer_close(t, 0);
 }
 //Timer create helper
 struct us_timer_t *uws_create_timer(int ms, int repeat_ms, void (*handler)(void *data), void *data)
@@ -47,7 +47,7 @@ struct us_timer_t *uws_create_timer(int ms, int repeat_ms, void (*handler)(void 
             if (!data->repeat)
             {
                 free(data);
-                us_timer_close(t);
+                us_timer_close(t, 0);
             }
         },
         ms, repeat_ms);

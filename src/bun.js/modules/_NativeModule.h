@@ -1,8 +1,8 @@
 // clang-format off
 #pragma once
 #include "JSBuffer.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGlobalObject.h"
 
 // These modules are implemented in native code as a function which writes ESM
@@ -25,6 +25,7 @@
 
 #define BUN_FOREACH_NATIVE_MODULE(macro) \
     macro("bun"_s, BunObject) \
+    macro("bun:test"_s, BunTest) \
     macro("bun:jsc"_s, BunJSC) \
     macro("node:buffer"_s, NodeBuffer) \
     macro("node:constants"_s, NodeConstants) \
@@ -33,6 +34,7 @@
     macro("node:string_decoder"_s, NodeStringDecoder) \
     macro("node:util/types"_s, NodeUtilTypes)  \
     macro("utf-8-validate"_s, UTF8Validate) \
+    macro("abort-controller"_s, AbortControllerModule) \
 
 #if ASSERT_ENABLED
 
@@ -40,18 +42,19 @@
 // that what you passed to INIT_NATIVE_MODULE is indeed correct.
 #define RETURN_NATIVE_MODULE()                                                 \
   ASSERT_WITH_MESSAGE(numberOfActualExportNames == passedNumberOfExportNames,  \
-                      "NATIVE_MODULE_START() was given the incorrect value.");
+                      "NATIVE_MODULE_START() was should be given %d", numberOfActualExportNames);
 
-#define __NATIVE_MODULE_ASSERT_DECL                                            \
+#define __NATIVE_MODULE_ASSERT_DECL(numberOfExportNames)                       \
   int numberOfActualExportNames = 0;                                           \
   int passedNumberOfExportNames = numberOfExportNames;                         \
+  
 #define __NATIVE_MODULE_ASSERT_INCR numberOfActualExportNames++;
 
 #else
 
 #define RETURN_NATIVE_MODULE() ;
 #define __NATIVE_MODULE_ASSERT_INCR ;
-#define __NATIVE_MODULE_ASSERT_DECL ;
+#define __NATIVE_MODULE_ASSERT_DECL(numberOfExportNames) ;
 
 #endif
 
@@ -67,7 +70,7 @@
   JSC::VM &vm = globalObject->vm();                                            \
   JSC::JSObject *defaultObject = JSC::constructEmptyObject(                    \
       globalObject, globalObject->objectPrototype(), numberOfExportNames);     \
-  __NATIVE_MODULE_ASSERT_DECL                                                  \
+  __NATIVE_MODULE_ASSERT_DECL(numberOfExportNames);                            \
   auto put = [&](JSC::Identifier name, JSC::JSValue value) {                   \
     defaultObject->putDirect(vm, name, value);                                 \
     exportNames.append(name);                                                  \

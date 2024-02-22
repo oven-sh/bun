@@ -264,7 +264,7 @@ void uws_res_write_header(int ssl, uws_res_t *res, const char *key,
 
 void uws_res_write_header_int(int ssl, uws_res_t *res, const char *key,
                               size_t key_length, uint64_t value);
-void uws_res_end_without_body(int ssl, uws_res_t *res);
+void uws_res_end_without_body(int ssl, uws_res_t *res, bool close_connection);
 void uws_res_end_stream(int ssl, uws_res_t *res, bool close_connection);
 bool uws_res_write(int ssl, uws_res_t *res, const char *data, size_t length);
 uintmax_t uws_res_get_write_offset(int ssl, uws_res_t *res);
@@ -303,7 +303,6 @@ size_t uws_req_get_query(uws_req_t *res, const char *key, size_t key_length,
 size_t uws_req_get_parameter(uws_req_t *res, unsigned short index,
                              const char **dest);
 void uws_req_for_each_header(uws_req_t *res, uws_get_headers_server_handler handler, void *user_data);
-
 
 struct us_loop_t *uws_get_loop();
 struct us_loop_t *uws_get_loop_with_native(void* existing_native_loop);

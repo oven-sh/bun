@@ -1,6 +1,28 @@
 import { it, expect, describe } from "bun:test";
 import util from "util";
 
+it("prototype", () => {
+  const prototypes = [
+    Request.prototype,
+    Response.prototype,
+    Blob.prototype,
+    Headers.prototype,
+    URL.prototype,
+    URLSearchParams.prototype,
+    ReadableStream.prototype,
+    WritableStream.prototype,
+    TransformStream.prototype,
+    MessageEvent.prototype,
+    CloseEvent.prototype,
+    WebSocket.prototype,
+  ];
+
+  for (let prototype of prototypes) {
+    for (let i = 0; i < 10; i++) expect(Bun.inspect(prototype).length > 0).toBeTrue();
+  }
+  Bun.gc(true);
+});
+
 it("getters", () => {
   const obj = {
     get foo() {
@@ -8,7 +30,7 @@ it("getters", () => {
     },
   };
 
-  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Getter]" + "\n" + "}");
+  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Getter]," + "\n" + "}");
   var called = false;
   const objWithThrowingGetter = {
     get foo() {
@@ -21,8 +43,42 @@ it("getters", () => {
     },
   };
 
-  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter]" + "\n" + "}");
+  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter/Setter]," + "\n" + "}");
   expect(called).toBe(false);
+});
+
+it("setters", () => {
+  const obj = {
+    set foo(x) {},
+  };
+
+  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Setter]," + "\n" + "}");
+  var called = false;
+  const objWithThrowingGetter = {
+    get foo() {
+      called = true;
+      throw new Error("Test failed!");
+    },
+    set foo(v) {
+      called = true;
+      throw new Error("Test failed!");
+    },
+  };
+
+  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter/Setter]," + "\n" + "}");
+  expect(called).toBe(false);
+});
+
+it("getter/setters", () => {
+  const obj = {
+    get foo() {
+      return 42;
+    },
+
+    set foo(x) {},
+  };
+
+  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Getter/Setter]," + "\n" + "}");
 });
 
 it("Timeout", () => {
@@ -40,7 +96,7 @@ it("when prototype defines the same property, don't print the same property twic
   };
   var obj = Object.create(base);
   obj.foo = "456";
-  expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456"\n}'.trim());
+  expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456",\n}'.trim());
 });
 
 it("Blob inspect", () => {
@@ -55,21 +111,21 @@ it("Blob inspect", () => {
   expect(Bun.inspect(new Response(new Blob()))).toBe(`Response (0 KB) {
   ok: true,
   url: "",
-  headers: Headers {},
+  status: 200,
   statusText: "",
+  headers: Headers {},
   redirected: false,
   bodyUsed: false,
-  status: 200,
   [Blob detached]
 }`);
   expect(Bun.inspect(new Response("Hello"))).toBe(`Response (5 bytes) {
   ok: true,
   url: "",
-  headers: Headers {},
+  status: 200,
   statusText: "",
+  headers: Headers {},
   redirected: false,
   bodyUsed: false,
-  status: 200,
   Blob (5 bytes)
 }`);
 });
@@ -82,7 +138,7 @@ it("utf16 property name", () => {
   // latin1 escaping identifier issue
   expect(Object.keys({ 笑: "hey" })[0].codePointAt(0)).toBe(31505);
 
-  const output = JSON.stringify(
+  const output = Bun.inspect(
     [
       {
         笑: "😀",
@@ -221,10 +277,10 @@ it("inspect", () => {
   expect(Bun.inspect(-Infinity)).toBe("-Infinity");
   expect(Bun.inspect([])).toBe("[]");
   expect(Bun.inspect({})).toBe("{}");
-  expect(Bun.inspect({ hello: 1 })).toBe("{\n  hello: 1\n}");
-  expect(Bun.inspect({ hello: 1, there: 2 })).toBe("{\n  hello: 1,\n  there: 2\n}");
-  expect(Bun.inspect({ hello: "1", there: 2 })).toBe('{\n  hello: "1",\n  there: 2\n}');
-  expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe('{\n  "hello-\\"there": "1",\n  there: 2\n}');
+  expect(Bun.inspect({ hello: 1 })).toBe("{\n  hello: 1,\n}");
+  expect(Bun.inspect({ hello: 1, there: 2 })).toBe("{\n  hello: 1,\n  there: 2,\n}");
+  expect(Bun.inspect({ hello: "1", there: 2 })).toBe('{\n  hello: "1",\n  there: 2,\n}');
+  expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe('{\n  "hello-\\"there": "1",\n  there: 2,\n}');
   var str = "123";
   while (str.length < 4096) {
     str += "123";
@@ -261,6 +317,15 @@ it("inspect", () => {
 </div>`.trim(),
   );
   expect(Bun.inspect(BigInt(32))).toBe("32n");
+  expect(Bun.inspect({ call: 1, not_call: 2, prototype: 4 })).toBe(
+    `
+{
+  call: 1,
+  not_call: 2,
+  prototype: 4,
+}
+    `.trim(),
+  );
 });
 
 describe("latin1 supplemental", () => {
@@ -361,4 +426,47 @@ it("new Date(..)", () => {
 
 it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
+});
+
+describe("Functions with names", () => {
+  const closures = [
+    () => function f() {},
+    () => {
+      var f = function () {};
+      return f;
+    },
+    () => {
+      const f = function () {};
+      // workaround transpiler inlining losing the display name
+      // TODO: preserve the name on functions being inlined
+      f.length;
+      return f;
+    },
+    () => {
+      let f = function () {};
+      // workaround transpiler inlining losing the display name
+      // TODO: preserve the name on functions being inlined
+      f.length;
+      return f;
+    },
+    () => {
+      var f = function f() {};
+      return f;
+    },
+    () => {
+      var foo = function f() {};
+      return foo;
+    },
+    () => {
+      function f() {}
+      var foo = f;
+      return foo;
+    },
+  ];
+
+  for (let closure of closures) {
+    it(JSON.stringify(closure.toString()), () => {
+      expect(Bun.inspect(closure())).toBe("[Function: f]");
+    });
+  }
 });

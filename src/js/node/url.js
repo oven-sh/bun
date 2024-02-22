@@ -308,13 +308,13 @@ Url.prototype.parse = function (url, parseQueryString, slashesDenoteHost) {
       this.hostname = this.hostname.toLowerCase();
     }
 
-    if (!ipv6Hostname) {
-      /*
-       * IDNA Support: Returns a punycoded representation of "domain".
-       * It only converts parts of the domain name that
-       * have non-ASCII characters, i.e. it doesn't matter if
-       * you call it with a domain that already is ASCII-only.
-       */
+    /*
+     * IDNA Support: Returns a punycoded representation of "domain".
+     * It only converts parts of the domain name that
+     * have non-ASCII characters, i.e. it doesn't matter if
+     * you call it with a domain that already is ASCII-only.
+     */
+    if (this.hostname) {
       this.hostname = new URL("http://" + this.hostname).hostname;
     }
 
@@ -370,7 +370,8 @@ Url.prototype.parse = function (url, parseQueryString, slashesDenoteHost) {
     this.search = rest.substr(qm);
     this.query = rest.substr(qm + 1);
     if (parseQueryString) {
-      this.query = new URLSearchParams(this.query);
+      const query = this.query;
+      this.query = new URLSearchParams(query).toJSON();
     }
     rest = rest.slice(0, qm);
   } else if (parseQueryString) {
@@ -409,7 +410,7 @@ function urlFormat(obj) {
     obj = urlParse(obj);
   }
   if (!(obj instanceof Url)) {
-    return Url.prototype.format.call(obj);
+    return Url.prototype.format.$call(obj);
   }
   return obj.format();
 }

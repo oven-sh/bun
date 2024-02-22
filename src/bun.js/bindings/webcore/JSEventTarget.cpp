@@ -100,7 +100,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventTargetPrototype, JSEventTargetPrototy
 
 using JSEventTargetDOMConstructor = JSDOMConstructor<JSEventTarget>;
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventTargetDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventTargetDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -174,7 +174,9 @@ void JSEventTarget::finishCreation(VM& vm)
 
 JSObject* JSEventTarget::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSEventTargetPrototype::create(vm, &globalObject, JSEventTargetPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSEventTargetPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSEventTargetPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSEventTarget::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -193,7 +195,7 @@ void JSEventTarget::destroy(JSC::JSCell* cell)
     thisObject->JSEventTarget::~JSEventTarget();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsEventTargetConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsEventTargetConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

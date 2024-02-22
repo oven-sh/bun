@@ -27,13 +27,13 @@ var require_object_keys = __commonJS((exports, module) => {
         var prop;
         var i;
         for (prop in obj) {
-          if (hasOwnProperty.call(obj, prop)) {
+          if (hasOwnProperty.$call(obj, prop)) {
             result.push(prop);
           }
         }
         if (hasDontEnumBug) {
           for (i = 0; i < dontEnumsLength; i++) {
-            if (hasOwnProperty.call(obj, dontEnums[i])) {
+            if (hasOwnProperty.$call(obj, dontEnums[i])) {
               result.push(dontEnums[i]);
             }
           }
@@ -345,7 +345,7 @@ var require_src = __commonJS((exports, module) => {
     decode: parse,
   });
   var objectKeys = require_object_keys();
-  var isArray = arg => Object.prototype.toString.call(arg) === "[object Array]";
+  var isArray = arg => Object.prototype.toString.$call(arg) === "[object Array]";
   var indexOf = (arr, searchElement, fromIndex) => {
     var k;
     if (arr == null) {

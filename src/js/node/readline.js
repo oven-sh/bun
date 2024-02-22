@@ -74,12 +74,11 @@ var NumberMIN_SAFE_INTEGER = Number.MIN_SAFE_INTEGER;
 var MathCeil = Math.ceil;
 var MathFloor = Math.floor;
 var MathMax = Math.max;
-var MathMaxApply = Math.max.apply;
 var DateNow = Date.now;
 var FunctionPrototype = Function.prototype;
 var StringPrototype = String.prototype;
 var StringPrototypeSymbolIterator = StringPrototype[SymbolIterator];
-var StringIteratorPrototypeNext = StringPrototypeSymbolIterator.call("").next;
+var StringIteratorPrototypeNext = StringPrototypeSymbolIterator.$call("").next;
 var ObjectSetPrototypeOf = Object.setPrototypeOf;
 var ObjectDefineProperty = Object.defineProperty;
 var ObjectDefineProperties = Object.defineProperties;
@@ -93,10 +92,10 @@ var createSafeIterator = (factory, next) => {
   class SafeIterator {
     #iterator;
     constructor(iterable) {
-      this.#iterator = factory.call(iterable);
+      this.#iterator = factory.$call(iterable);
     }
     next() {
-      return next.call(this.#iterator);
+      return next.$call(this.#iterator);
     }
     [SymbolIterator]() {
       return this;
@@ -114,81 +113,14 @@ var SafeStringIterator = createSafeIterator(StringPrototypeSymbolIterator, Strin
 // Section: "Internal" modules
 // ----------------------------------------------------------------------------
 
-/**
- * Returns true if the character represented by a given
- * Unicode code point is full-width. Otherwise returns false.
- */
-var isFullWidthCodePoint = code => {
-  // Code points are partially derived from:
-  // https://www.unicode.org/Public/UNIDATA/EastAsianWidth.txt
-  return (
-    code >= 0x1100 &&
-    (code <= 0x115f || // Hangul Jamo
-      code === 0x2329 || // LEFT-POINTING ANGLE BRACKET
-      code === 0x232a || // RIGHT-POINTING ANGLE BRACKET
-      // CJK Radicals Supplement .. Enclosed CJK Letters and Months
-      (code >= 0x2e80 && code <= 0x3247 && code !== 0x303f) ||
-      // Enclosed CJK Letters and Months .. CJK Unified Ideographs Extension A
-      (code >= 0x3250 && code <= 0x4dbf) ||
-      // CJK Unified Ideographs .. Yi Radicals
-      (code >= 0x4e00 && code <= 0xa4c6) ||
-      // Hangul Jamo Extended-A
-      (code >= 0xa960 && code <= 0xa97c) ||
-      // Hangul Syllables
-      (code >= 0xac00 && code <= 0xd7a3) ||
-      // CJK Compatibility Ideographs
-      (code >= 0xf900 && code <= 0xfaff) ||
-      // Vertical Forms
-      (code >= 0xfe10 && code <= 0xfe19) ||
-      // CJK Compatibility Forms .. Small Form Variants
-      (code >= 0xfe30 && code <= 0xfe6b) ||
-      // Halfwidth and Fullwidth Forms
-      (code >= 0xff01 && code <= 0xff60) ||
-      (code >= 0xffe0 && code <= 0xffe6) ||
-      // Kana Supplement
-      (code >= 0x1b000 && code <= 0x1b001) ||
-      // Enclosed Ideographic Supplement
-      (code >= 0x1f200 && code <= 0x1f251) ||
-      // Miscellaneous Symbols and Pictographs 0x1f300 - 0x1f5ff
-      // Emoticons 0x1f600 - 0x1f64f
-      (code >= 0x1f300 && code <= 0x1f64f) ||
-      // CJK Unified Ideographs Extension B .. Tertiary Ideographic Plane
-      (code >= 0x20000 && code <= 0x3fffd))
-  );
-};
-
-var isZeroWidthCodePoint = code => {
-  return (
-    code <= 0x1f || // C0 control codes
-    (code >= 0x7f && code <= 0x9f) || // C1 control codes
-    (code >= 0x300 && code <= 0x36f) || // Combining Diacritical Marks
-    (code >= 0x200b && code <= 0x200f) || // Modifying Invisible Characters
-    // Combining Diacritical Marks for Symbols
-    (code >= 0x20d0 && code <= 0x20ff) ||
-    (code >= 0xfe00 && code <= 0xfe0f) || // Variation Selectors
-    (code >= 0xfe20 && code <= 0xfe2f) || // Combining Half Marks
-    (code >= 0xe0100 && code <= 0xe01ef)
-  ); // Variation Selectors
-};
-
+var internalGetStringWidth = $lazy("getStringWidth");
 /**
  * Returns the number of columns required to display the given string.
  */
 var getStringWidth = function getStringWidth(str, removeControlChars = true) {
-  var width = 0;
-
   if (removeControlChars) str = stripVTControlCharacters(str);
-  str = StringPrototypeNormalize.call(str, "NFC");
-  for (var char of new SafeStringIterator(str)) {
-    var code = StringPrototypeCodePointAt.call(char, 0);
-    if (isFullWidthCodePoint(code)) {
-      width += 2;
-    } else if (!isZeroWidthCodePoint(code)) {
-      width++;
-    }
-  }
-
-  return width;
+  str = StringPrototypeNormalize.$call(str, "NFC");
+  return internalGetStringWidth(str);
 };
 
 // Regex used for ansi escape code splitting
@@ -207,7 +139,7 @@ var ansi = new RegExp(ansiPattern, "g");
  */
 function stripVTControlCharacters(str) {
   validateString(str, "str");
-  return RegExpPrototypeSymbolReplace.call(ansi, str, "");
+  return RegExpPrototypeSymbolReplace.$call(ansi, str, "");
 }
 
 // Promisify
@@ -238,7 +170,7 @@ function promisify(original) {
 
   function fn(...args) {
     return new Promise((resolve, reject) => {
-      ArrayPrototypePush.call(args, (err, ...values) => {
+      ArrayPrototypePush.$call(args, (err, ...values) => {
         if (err) {
           return reject(err);
         }
@@ -449,7 +381,7 @@ function validateObject(value, name, options = null) {
   var nullable = options?.nullable ?? false;
   if (
     (!nullable && value === null) ||
-    (!allowArray && ArrayIsArray.call(value)) ||
+    (!allowArray && ArrayIsArray.$call(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
     throw new ERR_INVALID_ARG_TYPE(name, "object", value);
@@ -518,8 +450,8 @@ CSI.kClearToLineEnd = kClearToLineEnd = CSI`0K`;
 function charLengthLeft(str, i) {
   if (i <= 0) return 0;
   if (
-    (i > 1 && StringPrototypeCodePointAt.call(str, i - 2) >= kUTF16SurrogateThreshold) ||
-    StringPrototypeCodePointAt.call(str, i - 1) >= kUTF16SurrogateThreshold
+    (i > 1 && StringPrototypeCodePointAt.$call(str, i - 2) >= kUTF16SurrogateThreshold) ||
+    StringPrototypeCodePointAt.$call(str, i - 1) >= kUTF16SurrogateThreshold
   ) {
     return 2;
   }
@@ -532,7 +464,7 @@ function charLengthAt(str, i) {
     // moving to the right.
     return 1;
   }
-  return StringPrototypeCodePointAt.call(str, i) >= kUTF16SurrogateThreshold ? 2 : 1;
+  return StringPrototypeCodePointAt.$call(str, i) >= kUTF16SurrogateThreshold ? 2 : 1;
 }
 
 /*
@@ -670,13 +602,13 @@ function* emitKeys(stream) {
          * We buffered enough data, now trying to extract code
          * and modifier from it
          */
-        var cmd = StringPrototypeSlice.call(s, cmdStart);
+        var cmd = StringPrototypeSlice.$call(s, cmdStart);
         var match;
 
-        if ((match = RegExpPrototypeExec.call(/^(\d\d?)(;(\d))?([~^$])$/, cmd))) {
+        if ((match = RegExpPrototypeExec.$call(/^(\d\d?)(;(\d))?([~^$])$/, cmd))) {
           code += match[1] + match[4];
           modifier = (match[3] || 1) - 1;
-        } else if ((match = RegExpPrototypeExec.call(/^((\d;)?(\d))?([A-Za-z])$/, cmd))) {
+        } else if ((match = RegExpPrototypeExec.$call(/^((\d;)?(\d))?([A-Za-z])$/, cmd))) {
           code += match[4];
           modifier = (match[3] || 1) - 1;
         } else {
@@ -985,12 +917,12 @@ function* emitKeys(stream) {
       keyMeta = escaped;
     } else if (!escaped && ch <= "\x1a") {
       // ctrl+letter
-      keyName = StringFromCharCode(StringPrototypeCharCodeAt.call(ch) + StringPrototypeCharCodeAt.call("a") - 1);
+      keyName = StringFromCharCode(StringPrototypeCharCodeAt.$call(ch) + StringPrototypeCharCodeAt.$call("a") - 1);
       keyCtrl = true;
-    } else if (RegExpPrototypeExec.call(/^[0-9A-Za-z]$/, ch) !== null) {
+    } else if (RegExpPrototypeExec.$call(/^[0-9A-Za-z]$/, ch) !== null) {
       // Letter, number, shift+letter
-      keyName = StringPrototypeToLowerCase.call(ch);
-      keyShift = RegExpPrototypeExec.call(/^[A-Z]$/, ch) !== null;
+      keyName = StringPrototypeToLowerCase.$call(ch);
+      keyShift = RegExpPrototypeExec.$call(/^[A-Z]$/, ch) !== null;
       keyMeta = escaped;
     } else if (escaped) {
       // Escape sequence timeout
@@ -1034,12 +966,12 @@ function commonPrefix(strings) {
   if (strings.length === 1) {
     return strings[0];
   }
-  var sorted = ArrayPrototypeSort.call(ArrayPrototypeSlice.call(strings));
+  var sorted = ArrayPrototypeSort.$call(ArrayPrototypeSlice.$call(strings));
   var min = sorted[0];
   var max = sorted[sorted.length - 1];
   for (var i = 0; i < min.length; i++) {
     if (min[i] !== max[i]) {
-      return StringPrototypeSlice.call(min, 0, i);
+      return StringPrototypeSlice.$call(min, 0, i);
     }
   }
   return min;
@@ -1294,7 +1226,7 @@ var kYanking = Symbol("_yanking");
 var kYankPop = Symbol("_yankPop");
 
 // Event symbols
-var kFirstEventParam = Symbol("nodejs.kFirstEventParam");
+var kFirstEventParam = SymbolFor("nodejs.kFirstEventParam");
 
 // class InterfaceConstructor extends EventEmitter {
 // #onSelfCloseWithTerminal;
@@ -1402,7 +1334,7 @@ function onKeyPress(s, key) {
     // If the keySeq is half of a surrogate pair
     // (>= 0xd800 and <= 0xdfff), refresh the line so
     // the character is displayed appropriately.
-    var ch = StringPrototypeCodePointAt.call(key.sequence, 0);
+    var ch = StringPrototypeCodePointAt.$call(key.sequence, 0);
     if (ch >= 0xd800 && ch <= 0xdfff) this[kRefreshLine]();
   }
 }
@@ -1416,7 +1348,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
     return new InterfaceConstructor(input, output, completer, terminal);
   }
 
-  EventEmitter.call(this);
+  EventEmitter.$call(this);
 
   this[kOnSelfCloseWithoutTerminal] = onSelfCloseWithoutTerminal.bind(this);
   this[kOnSelfCloseWithTerminal] = onSelfCloseWithTerminal.bind(this);
@@ -1500,7 +1432,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
   // Backwards compat; check the isTTY prop of the output stream
   //  when `terminal` was not specified
-  if (terminal === undefined && !(output === null || output === undefined)) {
+  if (terminal === undefined && !(output == null)) {
     terminal = !!output.isTTY;
   }
 
@@ -1534,10 +1466,10 @@ function InterfaceConstructor(input, output, completer, terminal) {
   input.on("error", this[kOnError]);
 
   if (!this.terminal) {
+    this[kDecoder] = new StringDecoder("utf8");
     input.on("data", this[kOnData]);
     input.on("end", this[kOnEnd]);
     this.once("close", this[kOnSelfCloseWithoutTerminal]);
-    this[kDecoder] = new StringDecoder("utf8");
   } else {
     emitKeypressEvents(input, this);
 
@@ -1613,7 +1545,7 @@ var _Interface = class Interface extends InterfaceConstructor {
 
     var setRawMode = this.input.setRawMode;
     if (typeof setRawMode === "function") {
-      setRawMode.call(this.input, mode);
+      setRawMode.$call(this.input, mode);
     }
 
     return wasInRawMode;
@@ -1686,19 +1618,19 @@ var _Interface = class Interface extends InterfaceConstructor {
     if (this.historySize === 0) return this.line;
 
     // If the trimmed line is empty then return the line
-    if (StringPrototypeTrim.call(this.line).length === 0) return this.line;
+    if (StringPrototypeTrim.$call(this.line).length === 0) return this.line;
 
     if (this.history.length === 0 || this.history[0] !== this.line) {
       if (this.removeHistoryDuplicates) {
         // Remove older history line if identical to new one
-        var dupIndex = ArrayPrototypeIndexOf.call(this.history, this.line);
-        if (dupIndex !== -1) ArrayPrototypeSplice.call(this.history, dupIndex, 1);
+        var dupIndex = ArrayPrototypeIndexOf.$call(this.history, this.line);
+        if (dupIndex !== -1) ArrayPrototypeSplice.$call(this.history, dupIndex, 1);
       }
 
-      ArrayPrototypeUnshift.call(this.history, this.line);
+      ArrayPrototypeUnshift.$call(this.history, this.line);
 
       // Only store so many
-      if (this.history.length > this.historySize) ArrayPrototypePop.call(this.history);
+      if (this.history.length > this.historySize) ArrayPrototypePop.$call(this.history);
     }
 
     this.historyIndex = -1;
@@ -1819,30 +1751,30 @@ var _Interface = class Interface extends InterfaceConstructor {
     }
     var string = this[kDecoder].write(b);
     if (this[kSawReturnAt] && DateNow() - this[kSawReturnAt] <= this.crlfDelay) {
-      if (StringPrototypeCodePointAt.call(string) === 10) string = StringPrototypeSlice.call(string, 1);
+      if (StringPrototypeCodePointAt.$call(string) === 10) string = StringPrototypeSlice.$call(string, 1);
       this[kSawReturnAt] = 0;
     }
 
     // Run test() on the new string chunk, not on the entire line buffer.
-    var newPartContainsEnding = RegExpPrototypeExec.call(lineEnding, string);
+    var newPartContainsEnding = RegExpPrototypeExec.$call(lineEnding, string);
     if (newPartContainsEnding !== null) {
       if (this[kLine_buffer]) {
         string = this[kLine_buffer] + string;
         this[kLine_buffer] = null;
-        newPartContainsEnding = RegExpPrototypeExec.call(lineEnding, string);
+        newPartContainsEnding = RegExpPrototypeExec.$call(lineEnding, string);
       }
-      this[kSawReturnAt] = StringPrototypeEndsWith.call(string, "\r") ? DateNow() : 0;
+      this[kSawReturnAt] = StringPrototypeEndsWith.$call(string, "\r") ? DateNow() : 0;
 
       var indexes = [0, newPartContainsEnding.index, lineEnding.lastIndex];
       var nextMatch;
-      while ((nextMatch = RegExpPrototypeExec.call(lineEnding, string)) !== null) {
-        ArrayPrototypePush.call(indexes, nextMatch.index, lineEnding.lastIndex);
+      while ((nextMatch = RegExpPrototypeExec.$call(lineEnding, string)) !== null) {
+        ArrayPrototypePush.$call(indexes, nextMatch.index, lineEnding.lastIndex);
       }
       var lastIndex = indexes.length - 1;
       // Either '' or (conceivably) the unfinished portion of the next line
-      this[kLine_buffer] = StringPrototypeSlice.call(string, indexes[lastIndex]);
+      this[kLine_buffer] = StringPrototypeSlice.$call(string, indexes[lastIndex]);
       for (var i = 1; i < lastIndex; i += 2) {
-        this[kOnLine](StringPrototypeSlice.call(string, indexes[i - 1], indexes[i]));
+        this[kOnLine](StringPrototypeSlice.$call(string, indexes[i - 1], indexes[i]));
       }
     } else if (string) {
       // No newlines this time, save what we have for next time
@@ -1857,8 +1789,8 @@ var _Interface = class Interface extends InterfaceConstructor {
   [kInsertString](c) {
     this[kBeforeEdit](this.line, this.cursor);
     if (this.cursor < this.line.length) {
-      var beg = StringPrototypeSlice.call(this.line, 0, this.cursor);
-      var end = StringPrototypeSlice.call(this.line, this.cursor, this.line.length);
+      var beg = StringPrototypeSlice.$call(this.line, 0, this.cursor);
+      var end = StringPrototypeSlice.$call(this.line, this.cursor, this.line.length);
       this.line = beg + c + end;
       this.cursor += c.length;
       this[kRefreshLine]();
@@ -1878,7 +1810,7 @@ var _Interface = class Interface extends InterfaceConstructor {
 
   async [kTabComplete](lastKeypressWasTab) {
     this.pause();
-    var string = StringPrototypeSlice.call(this.line, 0, this.cursor);
+    var string = StringPrototypeSlice.$call(this.line, 0, this.cursor);
     var value;
     try {
       value = await this.completer(string);
@@ -1899,15 +1831,15 @@ var _Interface = class Interface extends InterfaceConstructor {
     }
 
     // If there is a common prefix to all matches, then apply that portion.
-    var prefix = commonPrefix(ArrayPrototypeFilter.call(completions, e => e !== ""));
-    if (StringPrototypeStartsWith.call(prefix, completeOn) && prefix.length > completeOn.length) {
-      this[kInsertString](StringPrototypeSlice.call(prefix, completeOn.length));
+    var prefix = commonPrefix(ArrayPrototypeFilter.$call(completions, e => e !== ""));
+    if (StringPrototypeStartsWith.$call(prefix, completeOn) && prefix.length > completeOn.length) {
+      this[kInsertString](StringPrototypeSlice.$call(prefix, completeOn.length));
       return;
-    } else if (!StringPrototypeStartsWith.call(completeOn, prefix)) {
+    } else if (!StringPrototypeStartsWith.$call(completeOn, prefix)) {
       this.line =
-        StringPrototypeSlice.call(this.line, 0, this.cursor - completeOn.length) +
+        StringPrototypeSlice.$call(this.line, 0, this.cursor - completeOn.length) +
         prefix +
-        StringPrototypeSlice.call(this.line, this.cursor, this.line.length);
+        StringPrototypeSlice.$call(this.line, this.cursor, this.line.length);
       this.cursor = this.cursor - completeOn.length + prefix.length;
       this._refreshLine();
       return;
@@ -1920,8 +1852,8 @@ var _Interface = class Interface extends InterfaceConstructor {
     this[kBeforeEdit](this.line, this.cursor);
 
     // Apply/show completions.
-    var completionsWidth = ArrayPrototypeMap.call(completions, e => getStringWidth(e));
-    var width = MathMaxApply(completionsWidth) + 2; // 2 space padding
+    var completionsWidth = ArrayPrototypeMap.$call(completions, e => getStringWidth(e));
+    var width = MathMax.$apply(completionsWidth) + 2; // 2 space padding
     var maxColumns = MathFloor(this.columns / width) || 1;
     if (maxColumns === Infinity) {
       maxColumns = 1;
@@ -1936,7 +1868,7 @@ var _Interface = class Interface extends InterfaceConstructor {
         lineIndex = 0;
         whitespace = 0;
       } else {
-        output += StringPrototypeRepeat.call(" ", whitespace);
+        output += StringPrototypeRepeat.$call(" ", whitespace);
       }
       if (completion !== "") {
         output += completion;
@@ -1957,17 +1889,17 @@ var _Interface = class Interface extends InterfaceConstructor {
     if (this.cursor > 0) {
       // Reverse the string and match a word near beginning
       // to avoid quadratic time complexity
-      var leading = StringPrototypeSlice.call(this.line, 0, this.cursor);
-      var reversed = ArrayPrototypeJoin.call(ArrayPrototypeReverse.call(ArrayFrom(leading)), "");
-      var match = RegExpPrototypeExec.call(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
+      var leading = StringPrototypeSlice.$call(this.line, 0, this.cursor);
+      var reversed = ArrayPrototypeJoin.$call(ArrayPrototypeReverse.$call(ArrayFrom(leading)), "");
+      var match = RegExpPrototypeExec.$call(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
       this[kMoveCursor](-match[0].length);
     }
   }
 
   [kWordRight]() {
     if (this.cursor < this.line.length) {
-      var trailing = StringPrototypeSlice.call(this.line, this.cursor);
-      var match = RegExpPrototypeExec.call(/^(?:\s+|[^\w\s]+|\w+)\s*/, trailing);
+      var trailing = StringPrototypeSlice.$call(this.line, this.cursor);
+      var match = RegExpPrototypeExec.$call(/^(?:\s+|[^\w\s]+|\w+)\s*/, trailing);
       this[kMoveCursor](match[0].length);
     }
   }
@@ -1978,8 +1910,8 @@ var _Interface = class Interface extends InterfaceConstructor {
       // The number of UTF-16 units comprising the character to the left
       var charSize = charLengthLeft(this.line, this.cursor);
       this.line =
-        StringPrototypeSlice.call(this.line, 0, this.cursor - charSize) +
-        StringPrototypeSlice.call(this.line, this.cursor, this.line.length);
+        StringPrototypeSlice.$call(this.line, 0, this.cursor - charSize) +
+        StringPrototypeSlice.$call(this.line, this.cursor, this.line.length);
 
       this.cursor -= charSize;
       this[kRefreshLine]();
@@ -1992,8 +1924,8 @@ var _Interface = class Interface extends InterfaceConstructor {
       // The number of UTF-16 units comprising the character to the left
       var charSize = charLengthAt(this.line, this.cursor);
       this.line =
-        StringPrototypeSlice.call(this.line, 0, this.cursor) +
-        StringPrototypeSlice.call(this.line, this.cursor + charSize, this.line.length);
+        StringPrototypeSlice.$call(this.line, 0, this.cursor) +
+        StringPrototypeSlice.$call(this.line, this.cursor + charSize, this.line.length);
       this[kRefreshLine]();
     }
   }
@@ -2003,11 +1935,11 @@ var _Interface = class Interface extends InterfaceConstructor {
       this[kBeforeEdit](this.line, this.cursor);
       // Reverse the string and match a word near beginning
       // to avoid quadratic time complexity
-      var leading = StringPrototypeSlice.call(this.line, 0, this.cursor);
-      var reversed = ArrayPrototypeJoin.call(ArrayPrototypeReverse.call(ArrayFrom(leading)), "");
-      var match = RegExpPrototypeExec.call(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
-      leading = StringPrototypeSlice.call(leading, 0, leading.length - match[0].length);
-      this.line = leading + StringPrototypeSlice.call(this.line, this.cursor, this.line.length);
+      var leading = StringPrototypeSlice.$call(this.line, 0, this.cursor);
+      var reversed = ArrayPrototypeJoin.$call(ArrayPrototypeReverse.$call(ArrayFrom(leading)), "");
+      var match = RegExpPrototypeExec.$call(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
+      leading = StringPrototypeSlice.$call(leading, 0, leading.length - match[0].length);
+      this.line = leading + StringPrototypeSlice.$call(this.line, this.cursor, this.line.length);
       this.cursor = leading.length;
       this[kRefreshLine]();
     }
@@ -2016,18 +1948,18 @@ var _Interface = class Interface extends InterfaceConstructor {
   [kDeleteWordRight]() {
     if (this.cursor < this.line.length) {
       this[kBeforeEdit](this.line, this.cursor);
-      var trailing = StringPrototypeSlice.call(this.line, this.cursor);
-      var match = RegExpPrototypeExec.call(/^(?:\s+|\W+|\w+)\s*/, trailing);
+      var trailing = StringPrototypeSlice.$call(this.line, this.cursor);
+      var match = RegExpPrototypeExec.$call(/^(?:\s+|\W+|\w+)\s*/, trailing);
       this.line =
-        StringPrototypeSlice.call(this.line, 0, this.cursor) + StringPrototypeSlice.call(trailing, match[0].length);
+        StringPrototypeSlice.$call(this.line, 0, this.cursor) + StringPrototypeSlice.$call(trailing, match[0].length);
       this[kRefreshLine]();
     }
   }
 
   [kDeleteLineLeft]() {
     this[kBeforeEdit](this.line, this.cursor);
-    var del = StringPrototypeSlice.call(this.line, 0, this.cursor);
-    this.line = StringPrototypeSlice.call(this.line, this.cursor);
+    var del = StringPrototypeSlice.$call(this.line, 0, this.cursor);
+    this.line = StringPrototypeSlice.$call(this.line, this.cursor);
     this.cursor = 0;
     this[kPushToKillRing](del);
     this[kRefreshLine]();
@@ -2035,17 +1967,17 @@ var _Interface = class Interface extends InterfaceConstructor {
 
   [kDeleteLineRight]() {
     this[kBeforeEdit](this.line, this.cursor);
-    var del = StringPrototypeSlice.call(this.line, this.cursor);
-    this.line = StringPrototypeSlice.call(this.line, 0, this.cursor);
+    var del = StringPrototypeSlice.$call(this.line, this.cursor);
+    this.line = StringPrototypeSlice.$call(this.line, 0, this.cursor);
     this[kPushToKillRing](del);
     this[kRefreshLine]();
   }
 
   [kPushToKillRing](del) {
     if (!del || del === this[kKillRing][0]) return;
-    ArrayPrototypeUnshift.call(this[kKillRing], del);
+    ArrayPrototypeUnshift.$call(this[kKillRing], del);
     this[kKillRingCursor] = 0;
-    while (this[kKillRing].length > kMaxLengthOfKillRing) ArrayPrototypePop.call(this[kKillRing]);
+    while (this[kKillRing].length > kMaxLengthOfKillRing) ArrayPrototypePop.$call(this[kKillRing]);
   }
 
   [kYank]() {
@@ -2066,8 +1998,8 @@ var _Interface = class Interface extends InterfaceConstructor {
         this[kKillRingCursor] = 0;
       }
       var currentYank = this[kKillRing][this[kKillRingCursor]];
-      var head = StringPrototypeSlice.call(this.line, 0, this.cursor - lastYank.length);
-      var tail = StringPrototypeSlice.call(this.line, this.cursor);
+      var head = StringPrototypeSlice.$call(this.line, 0, this.cursor - lastYank.length);
+      var tail = StringPrototypeSlice.$call(this.line, this.cursor);
       this.line = head + currentYank + tail;
       this.cursor = head.length + currentYank.length;
       this[kRefreshLine]();
@@ -2091,20 +2023,20 @@ var _Interface = class Interface extends InterfaceConstructor {
   }
 
   [kPushToUndoStack](text, cursor) {
-    if (ArrayPrototypePush.call(this[kUndoStack], { text, cursor }) > kMaxUndoRedoStackSize) {
-      ArrayPrototypeShift.call(this[kUndoStack]);
+    if (ArrayPrototypePush.$call(this[kUndoStack], { text, cursor }) > kMaxUndoRedoStackSize) {
+      ArrayPrototypeShift.$call(this[kUndoStack]);
     }
   }
 
   [kUndo]() {
     if (this[kUndoStack].length <= 0) return;
 
-    ArrayPrototypePush.call(this[kRedoStack], {
+    ArrayPrototypePush.$call(this[kRedoStack], {
       text: this.line,
       cursor: this.cursor,
     });
 
-    var entry = ArrayPrototypePop.call(this[kUndoStack]);
+    var entry = ArrayPrototypePop.$call(this[kUndoStack]);
     this.line = entry.text;
     this.cursor = entry.cursor;
 
@@ -2114,12 +2046,12 @@ var _Interface = class Interface extends InterfaceConstructor {
   [kRedo]() {
     if (this[kRedoStack].length <= 0) return;
 
-    ArrayPrototypePush.call(this[kUndoStack], {
+    ArrayPrototypePush.$call(this[kUndoStack], {
       text: this.line,
       cursor: this.cursor,
     });
 
-    var entry = ArrayPrototypePop.call(this[kRedoStack]);
+    var entry = ArrayPrototypePop.$call(this[kRedoStack]);
     this.line = entry.text;
     this.cursor = entry.cursor;
 
@@ -2133,7 +2065,7 @@ var _Interface = class Interface extends InterfaceConstructor {
       var index = this.historyIndex - 1;
       while (
         index >= 0 &&
-        (!StringPrototypeStartsWith.call(this.history[index], search) || this.line === this.history[index])
+        (!StringPrototypeStartsWith.$call(this.history[index], search) || this.line === this.history[index])
       ) {
         index--;
       }
@@ -2155,7 +2087,7 @@ var _Interface = class Interface extends InterfaceConstructor {
       var index = this.historyIndex + 1;
       while (
         index < this.history.length &&
-        (!StringPrototypeStartsWith.call(this.history[index], search) || this.line === this.history[index])
+        (!StringPrototypeStartsWith.$call(this.history[index], search) || this.line === this.history[index])
       ) {
         index++;
       }
@@ -2213,7 +2145,7 @@ var _Interface = class Interface extends InterfaceConstructor {
    * }}
    */
   getCursorPos() {
-    var strBeforeCursor = this[kPrompt] + StringPrototypeSlice.call(this.line, 0, this.cursor);
+    var strBeforeCursor = this[kPrompt] + StringPrototypeSlice.$call(this.line, 0, this.cursor);
     return this[kGetDisplayPos](strBeforeCursor);
   }
 
@@ -2259,7 +2191,7 @@ var _Interface = class Interface extends InterfaceConstructor {
     // Activate or deactivate substring search.
     if ((keyName === "up" || keyName === "down") && !keyCtrl && !keyMeta && !keyShift) {
       if (this[kSubstringSearch] === null) {
-        this[kSubstringSearch] = StringPrototypeSlice.call(this.line, 0, this.cursor);
+        this[kSubstringSearch] = StringPrototypeSlice.$call(this.line, 0, this.cursor);
       }
     } else if (this[kSubstringSearch] !== null) {
       this[kSubstringSearch] = null;
@@ -2271,7 +2203,7 @@ var _Interface = class Interface extends InterfaceConstructor {
 
     // Undo & Redo
     if (typeof keySeq === "string") {
-      switch (StringPrototypeCodePointAt.call(keySeq, 0)) {
+      switch (StringPrototypeCodePointAt.$call(keySeq, 0)) {
         case 0x1f:
           this[kUndo]();
           return;
@@ -2497,13 +2429,13 @@ var _Interface = class Interface extends InterfaceConstructor {
         // falls through
         default:
           if (typeof s === "string" && s) {
-            var nextMatch = RegExpPrototypeExec.call(lineEnding, s);
+            var nextMatch = RegExpPrototypeExec.$call(lineEnding, s);
             if (nextMatch !== null) {
-              this[kInsertString](StringPrototypeSlice.call(s, 0, nextMatch.index));
+              this[kInsertString](StringPrototypeSlice.$call(s, 0, nextMatch.index));
               var { lastIndex } = lineEnding;
-              while ((nextMatch = RegExpPrototypeExec.call(lineEnding, s)) !== null) {
+              while ((nextMatch = RegExpPrototypeExec.$call(lineEnding, s)) !== null) {
                 this[kLine]();
-                this[kInsertString](StringPrototypeSlice.call(s, lastIndex, nextMatch.index));
+                this[kInsertString](StringPrototypeSlice.$call(s, lastIndex, nextMatch.index));
                 ({ lastIndex } = lineEnding);
               }
               if (lastIndex === s.length) this[kLine]();
@@ -2549,7 +2481,7 @@ function Interface(input, output, completer, terminal) {
     completer = (v, cb) => cb(null, realCompleter(v));
   }
 
-  InterfaceConstructor.call(this, input, output, completer, terminal);
+  InterfaceConstructor.$call(this, input, output, completer, terminal);
 
   // TODO: Test this
   if (process.env.TERM === "dumb") {
@@ -2879,7 +2811,7 @@ Interface.prototype._tabComplete = function (lastKeypressWasTab) {
   // Overriding parent method because `this.completer` in the legacy
   // implementation takes a callback instead of being an async function.
   this.pause();
-  var string = StringPrototypeSlice.call(this.line, 0, this.cursor);
+  var string = StringPrototypeSlice.$call(this.line, 0, this.cursor);
   this.completer(string, (err, value) => {
     this.resume();
 
@@ -2980,7 +2912,7 @@ class Readline {
 
     var data = y == null ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
     if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
-    else ArrayPrototypePush.call(this.#todo, data);
+    else ArrayPrototypePush.$call(this.#todo, data);
 
     return this;
   }
@@ -3010,7 +2942,7 @@ class Readline {
         data += CSI`${dy}B`;
       }
       if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
-      else ArrayPrototypePush.call(this.#todo, data);
+      else ArrayPrototypePush.$call(this.#todo, data);
     }
     return this;
   }
@@ -3028,7 +2960,7 @@ class Readline {
 
     var data = dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
     if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
-    else ArrayPrototypePush.call(this.#todo, data);
+    else ArrayPrototypePush.$call(this.#todo, data);
     return this;
   }
 
@@ -3040,7 +2972,7 @@ class Readline {
     if (this.#autoCommit) {
       process.nextTick(() => this.#stream.write(kClearScreenDown));
     } else {
-      ArrayPrototypePush.call(this.#todo, kClearScreenDown);
+      ArrayPrototypePush.$call(this.#todo, kClearScreenDown);
     }
     return this;
   }
@@ -3053,7 +2985,7 @@ class Readline {
    */
   commit() {
     return new Promise(resolve => {
-      this.#stream.write(ArrayPrototypeJoin.call(this.#todo, ""), resolve);
+      this.#stream.write(ArrayPrototypeJoin.$call(this.#todo, ""), resolve);
       this.#todo = [];
     });
   }

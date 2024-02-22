@@ -47,7 +47,7 @@ Bun.serve<WebSocketData>({
     // use a library to parse cookies
     const cookies = parseCookies(req.headers.get("Cookie"));
     const token = cookies["X-Token"];
-    const user = await getUserFromToken(ws.data.authToken);
+    const user = await getUserFromToken(token);
 
     const upgraded = server.upgrade(req, {
       data: {

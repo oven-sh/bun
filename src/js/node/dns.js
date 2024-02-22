@@ -1,6 +1,7 @@
 // Hardcoded module "node:dns"
-// only resolve4, resolve, lookup, resolve6 and resolveSrv are implemented.
+// only resolve4, resolve, lookup, resolve6, resolveSrv, and reverse are implemented.
 const dns = Bun.dns;
+const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 
 function getServers() {
   return dns.getServers();
@@ -19,21 +20,26 @@ function lookup(domain, options, callback) {
     options = { family: options };
   }
 
-  dns.lookup(domain, options).then(
-    res => {
-      res.sort((a, b) => a.family - b.family);
+  if (domain !== domain || (typeof domain !== "number" && !domain)) {
+    console.warn(
+      `DeprecationWarning: The provided hostname "${String(
+        domain,
+      )}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
+    );
+    callback(null, null, 4);
+    return;
+  }
 
-      if (options?.all) {
-        callback(null, res.map(mapLookupAll));
-      } else {
-        const [{ address, family }] = res;
-        callback(null, address, family);
-      }
-    },
-    error => {
-      callback(error);
-    },
-  );
+  dns.lookup(domain, options).then(res => {
+    res.sort((a, b) => a.family - b.family);
+
+    if (options?.all) {
+      callback(null, res.map(mapLookupAll));
+    } else {
+      const [{ address, family }] = res;
+      callback(null, address, family);
+    }
+  }, callback);
 }
 
 function resolveSrv(hostname, callback) {
@@ -176,7 +182,14 @@ function lookupService(address, port, callback) {
     throw new TypeError("callback must be a function");
   }
 
-  callback(null, address, port);
+  dns.lookupService(address, port, callback).then(
+    results => {
+      callback(null, ...results);
+    },
+    error => {
+      callback(error);
+    },
+  );
 }
 
 function reverse(ip, callback) {
@@ -517,7 +530,7 @@ const promises = {
   },
 
   lookupService(address, port) {
-    return Promise.resolve([]);
+    return dns.lookupService(address, port);
   },
 
   resolve(hostname, rrtype) {
@@ -664,6 +677,28 @@ const promises = {
 };
 for (const key of ["resolveAny"]) {
   promises[key] = () => Promise.resolve(undefined);
+}
+
+// Compatibility with util.promisify(dns[method])
+for (const [method, pMethod] of [
+  [lookup, promises.lookup],
+  [lookupService, promises.lookupService],
+  [resolve, promises.resolve],
+  [reverse, promises.reverse],
+  [resolve4, promises.resolve4],
+  [resolve6, promises.resolve6],
+  [resolveAny, promises.resolveAny],
+  [resolveCname, promises.resolveCname],
+  [resolveCaa, promises.resolveCaa],
+  [resolveMx, promises.resolveMx],
+  [resolveNs, promises.resolveNs],
+  [resolvePtr, promises.resolvePtr],
+  [resolveSoa, promises.resolveSoa],
+  [resolveSrv, promises.resolveSrv],
+  [resolveTxt, promises.resolveTxt],
+  [resolveNaptr, promises.resolveNaptr],
+]) {
+  method[utilPromisifyCustomSymbol] = pMethod;
 }
 
 export default {

@@ -27,9 +27,9 @@
 
 #include "root.h"
 
-#include "wtf/URL.h"
+#include <wtf/URL.h>
 
-#include "wtf/Forward.h"
+#include <wtf/Forward.h>
 
 namespace WebCore {
 

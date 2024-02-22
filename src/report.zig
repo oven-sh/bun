@@ -13,7 +13,7 @@ const C = bun.C;
 const CLI = @import("./cli.zig").Cli;
 const Features = @import("./analytics/analytics_thread.zig").Features;
 const Platform = @import("./analytics/analytics_thread.zig").GenerateHeader.GeneratePlatform;
-const HTTP = @import("root").bun.HTTP.AsyncHTTP;
+const HTTP = @import("root").bun.http.AsyncHTTP;
 const CrashReporter = @import("./crash_reporter.zig");
 
 const Report = @This();
@@ -62,9 +62,9 @@ pub const CrashReportWriter = struct {
 
         var base_dir: []const u8 = ".";
         if (bun.getenvZ("BUN_INSTALL")) |install_dir| {
-            base_dir = std.mem.trimRight(u8, install_dir, std.fs.path.sep_str);
-        } else if (bun.getenvZ("HOME")) |home_dir| {
-            base_dir = std.mem.trimRight(u8, home_dir, std.fs.path.sep_str);
+            base_dir = strings.withoutTrailingSlash(install_dir);
+        } else if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+            base_dir = strings.withoutTrailingSlash(home_dir);
         }
         const file_path = std.fmt.bufPrintZ(
             &crash_reporter_path,
@@ -72,8 +72,12 @@ pub const CrashReportWriter = struct {
             .{ base_dir, Global.package_json_version, @as(u64, @intCast(@max(std.time.milliTimestamp(), 0))) },
         ) catch return;
 
-        std.fs.cwd().makeDir(std.fs.path.dirname(bun.asByteSlice(file_path)).?) catch {};
-        var file = std.fs.cwd().createFileZ(file_path, .{ .truncate = true }) catch return;
+        if (bun.path.nextDirname(file_path)) |dirname| {
+            _ = bun.sys.mkdirA(dirname, 0);
+        }
+
+        const call = bun.sys.open(file_path, std.os.O.TRUNC, 0).unwrap() catch return;
+        var file = call.asFile();
         this.file = std.io.bufferedWriter(
             file.writer(),
         );
@@ -85,7 +89,7 @@ pub const CrashReportWriter = struct {
 
         if (this.file_path.len > 0) {
             var tilda = false;
-            if (bun.getenvZ("HOME")) |home_dir| {
+            if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                 if (strings.hasPrefix(display_path, home_dir)) {
                     display_path = display_path[home_dir.len..];
                     tilda = true;
@@ -107,18 +111,20 @@ pub fn printMetadata() void {
 
     const cmd_label: string = if (CLI.cmd) |tag| @tagName(tag) else "Unknown";
 
-    const platform = if (Environment.isMac) "macOS" else "Linux";
-    const arch = if (Environment.isAarch64)
+    const platform = comptime Environment.os.displayString();
+    const arch = comptime if (Environment.isAarch64)
         if (Environment.isMac) "Silicon" else "arm64"
     else
         "x64";
 
-    var analytics_platform = Platform.forOS();
+    const analytics_platform = Platform.forOS();
+
+    const maybe_baseline = if (Environment.baseline) " (baseline)" else "";
 
     crash_report_writer.print(
         \\
         \\<r>----- bun meta -----
-    ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ " {s}\n" ++
+    ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ maybe_baseline ++ " {s}\n" ++
         \\{s}: {}
         \\
     , .{
@@ -127,7 +133,7 @@ pub fn printMetadata() void {
         Features.formatter(),
     });
 
-    const http_count = HTTP.active_requests_count.loadUnchecked();
+    const http_count = HTTP.active_requests_count.raw;
     if (http_count > 0)
         crash_report_writer.print(
             \\HTTP: {d}
@@ -228,29 +234,52 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 
         crash_report_writer.flush();
 
-        // It only is a real crash report if it's not coming from Zig
+        // TODO(@paperdave):
+        // Bun__crashReportDumpStackTrace does not work on Windows, even in a debug build
+        // It is fine to skip this because in release we ship with ReleaseSafe
+        // because zig's panic handler will also trigger right after
+        if (!Environment.isWindows) {
+            // It only is a real crash report if it's not coming from Zig
+            if (comptime !@import("root").bun.JSC.is_bindgen) {
+                std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+                Bun__crashReportDumpStackTrace(&crash_report_writer);
+            }
 
-        if (comptime !@import("root").bun.JSC.is_bindgen) {
-            std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
-            Bun__crashReportDumpStackTrace(&crash_report_writer);
+            crash_report_writer.flush();
         }
-
-        crash_report_writer.flush();
 
         crash_report_writer.printPath();
     }
 
     if (!had_printed_fatal) {
-        crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{});
+        if (Environment.isWindows) {
+            // TODO(@paperdave) change this to the original one once bun windows is stable
+            crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or join in #windows channel in https://bun.sh/discord\n\n", .{});
+        } else {
+            crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{});
+        }
         crash_report_writer.flush();
     }
 }
 
 var globalError_ranOnce = false;
+var error_return_trace: ?*std.builtin.StackTrace = null;
 
 export fn Bun__crashReportWrite(ctx: *CrashReportWriter, bytes_ptr: [*]const u8, len: usize) void {
-    if (len > 0)
+    if (!Environment.isWindows) {
+        if (error_return_trace) |trace| {
+            if (len > 0) {
+                ctx.print("{s}\n{}", .{ bytes_ptr[0..len], trace });
+            } else {
+                ctx.print("{}\n", .{trace});
+            }
+            return;
+        }
+    }
+
+    if (len > 0) {
         ctx.print("{s}\n", .{bytes_ptr[0..len]});
+    }
 }
 
 extern "C" fn Bun__crashReportDumpStackTrace(ctx: *anyopaque) void;
@@ -274,9 +303,15 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         .{ @errorName(name), bun.fmt.hexIntUpper(addr) },
     );
     printMetadata();
-    if (comptime !@import("root").bun.JSC.is_bindgen) {
-        std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
-        Bun__crashReportDumpStackTrace(&crash_report_writer);
+    if (comptime Environment.isDebug and !Environment.isWindows) {
+        error_return_trace = @errorReturnTrace();
+    }
+
+    if (!Environment.isWindows) {
+        if (comptime !@import("root").bun.JSC.is_bindgen) {
+            std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+            Bun__crashReportDumpStackTrace(&crash_report_writer);
+        }
     }
 
     if (!had_printed_fatal) {
@@ -290,23 +325,33 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     }
 
     crash_report_writer.file = null;
-    if (comptime Environment.isDebug) {
-        if (@errorReturnTrace()) |stack| {
-            std.debug.dumpStackTrace(stack.*);
+    if (!Environment.isWindows) {
+        if (error_return_trace) |trace| {
+            std.debug.dumpStackTrace(trace.*);
         }
     }
-
+    Global.runExitCallbacks();
     std.c._exit(128 + @as(u8, @truncate(@as(u8, @intCast(@max(signal, 0))))));
 }
 
 pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace())) noreturn {
     @setCold(true);
 
+    bun.maybeHandlePanicDuringProcessReload();
+
+    error_return_trace = trace_;
+
     if (@atomicRmw(bool, &globalError_ranOnce, .Xchg, true, .Monotonic)) {
         Global.exit(1);
     }
 
     switch (err) {
+        // error.BrokenPipe => {
+        //     if (comptime Environment.isNative) {
+        //         // if stdout/stderr was closed, we don't need to print anything
+        //         std.c._exit(bun.JSC.getGlobalExitCodeForPipeFailure());
+        //     }
+        // },
         error.SyntaxError => {
             Output.prettyError(
                 "\n<r><red>SyntaxError<r><d>:<r> An error occurred while parsing code",
@@ -325,13 +370,6 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
         error.CurrentWorkingDirectoryUnlinked => {
             Output.prettyError(
                 "\n<r><red>error: <r>The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
-                .{},
-            );
-            Global.exit(1);
-        },
-        error.BundleFailed => {
-            Output.prettyError(
-                "\n<r><red>BundleFailed<r>",
                 .{},
             );
             Global.exit(1);
@@ -480,18 +518,20 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
         },
         // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
         error.NotOpenForReading, error.Unexpected => {
-            if (trace_) |trace| {
-                print_stacktrace: {
-                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                    Output.disableBuffering();
-                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            if (!Environment.isWindows) {
+                if (trace_) |trace| {
+                    print_stacktrace: {
+                        const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                        Output.disableBuffering();
+                        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                    }
                 }
             }
 
             if (comptime Environment.isPosix) {
                 const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
 
-                if (limit.cur > 0 and limit.cur < (8096 * 2)) {
+                if (limit.cur > 0 and limit.cur < (8192 * 2)) {
                     Output.prettyError(
                         \\
                         \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
@@ -548,7 +588,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
                 Global.exit(1);
             }
         },
-        error.FileNotFound => {
+        error.ENOENT, error.FileNotFound => {
             Output.prettyError(
                 "\n<r><red>error<r><d>:<r> <b>FileNotFound<r>\nBun could not find a file, and the code that produces this error is missing a better error.\n",
                 .{},
@@ -559,11 +599,13 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
 
             Output.flush();
 
-            if (trace_) |trace| {
-                print_stacktrace: {
-                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                    Output.disableBuffering();
-                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            if (!Environment.isWindows) {
+                if (trace_) |trace| {
+                    print_stacktrace: {
+                        const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                        Output.disableBuffering();
+                        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                    }
                 }
             }
 
@@ -574,29 +616,29 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
                 "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nBun could not find a package.json file.\n",
                 .{},
             );
-
-            if (trace_) |trace| {
-                print_stacktrace: {
-                    var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                    Output.disableBuffering();
-                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            if (!Environment.isWindows) {
+                if (trace_) |trace| {
+                    print_stacktrace: {
+                        const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                        Output.disableBuffering();
+                        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                    }
                 }
             }
 
-            Global.exit(1);
-        },
-        error.MissingValue => {
             Global.exit(1);
         },
         else => {},
     }
 
     Report.fatal(err, null);
-    if (trace_) |trace| {
-        print_stacktrace: {
-            var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-            Output.disableBuffering();
-            std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+    if (!Environment.isWindows) {
+        if (trace_) |trace| {
+            print_stacktrace: {
+                const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                Output.disableBuffering();
+                std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            }
         }
     }
 

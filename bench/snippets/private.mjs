@@ -77,4 +77,24 @@ bench("ConventionalPrivates", () => {
   new Foo().run();
 });
 
+const _state = Symbol("state");
+const _inc = Symbol("inc");
+
+bench("SymbolPrivates", () => {
+  class Foo {
+    [_state] = 1;
+    [_inc] = 13;
+
+    run() {
+      let n = 1000000;
+      while (n-- > 0) {
+        this[_state] += this[_inc];
+      }
+      return n;
+    }
+  }
+
+  new Foo().run();
+});
+
 await run();

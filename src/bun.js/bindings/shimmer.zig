@@ -110,7 +110,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                     if (@typeInfo(Function) != .Fn) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
                     }
-                    var Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
+                    const Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
                     if (Fn.calling_convention != .C) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                     }
@@ -133,13 +133,13 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             return comptime brk: {
                 var functions: [std.meta.fieldNames(FunctionsType).len * 2]StaticExport = undefined;
                 var j: usize = 0;
-                inline for (Functions) |thenable| {
-                    inline for ([_][]const u8{ "resolve", "reject" }) |fn_name| {
+                for (Functions) |thenable| {
+                    for ([_][]const u8{ "resolve", "reject" }) |fn_name| {
                         const Function = @TypeOf(@field(thenable, fn_name));
                         if (@typeInfo(Function) != .Fn) {
                             @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
                         }
-                        var Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
+                        const Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
                         if (Fn.calling_convention != .C) {
                             @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                         }
@@ -192,7 +192,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                 return matchNullable(
                     comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
                     comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
-                    @call(.auto, Fn, .{}),
+                    Fn(),
                 );
             }
         }

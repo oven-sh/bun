@@ -91,7 +91,7 @@ pub const C_Generator = struct {
     };
 
     pub fn init(comptime src_file: []const u8, comptime Writer: type, _: Writer) Self {
-        var res = Self{ .filebase = src_file };
+        const res = Self{ .filebase = src_file };
 
         return res;
     }
@@ -185,16 +185,7 @@ pub const C_Generator = struct {
         }
 
         self.write(")");
-        const nonnull_slice = comptime nonnull.slice();
-        if (comptime nonnull_slice.len > 0) {
-            self.write(" __attribute__((nonnull (");
-            inline for (comptime nonnull_slice, 0..) |i, j| {
-                self.write(comptime std.fmt.comptimePrint("{d}", .{i}));
-                if (j != nonnull_slice.len - 1)
-                    self.write(", ");
-            }
-            self.write(")))");
-        }
+        // we don't handle nonnull due to MSVC not supporting it.
         defer self.write(";\n");
         // const ReturnTypeInfo: std.builtin.Type = comptime @typeInfo(func.return_type);
         // switch (comptime ReturnTypeInfo) {
@@ -353,7 +344,7 @@ pub const C_Generator = struct {
                     Type = OtherType;
                 }
             }
-            if (@typeInfo(Type) == .Pointer and !std.meta.trait.isManyItemPtr(Type)) {
+            if (@typeInfo(Type) == .Pointer and !std.meta.isManyItemPtr(Type)) {
                 Type = @typeInfo(Type).Pointer.child;
             }
 
@@ -483,7 +474,10 @@ const NamedStruct = struct {
 };
 
 pub fn getCStruct(comptime T: type) ?NamedStruct {
-    if (!std.meta.trait.isContainer(T) or (std.meta.trait.isSingleItemPtr(T) and !std.meta.trait.isContainer(std.meta.Child(T)))) {
+    if (!std.meta.isContainer(T) or
+        (std.meta.isSingleItemPtr(T) and
+        !std.meta.isContainer(std.meta.Child(T))))
+    {
         return null;
     }
 
@@ -520,7 +514,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             file: anytype,
             other: std.fs.File,
         ) void {
-            if (comptime std.meta.trait.hasDecls(Type, .{"include"})) {
+            if (@hasDecl(Type, "include")) {
                 comptime var new_name = std.mem.zeroes([Type.include.len]u8);
 
                 comptime {
@@ -640,7 +634,11 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 \\
                 \\#ifdef __cplusplus
                 \\  #define AUTO_EXTERN_C extern "C"
+                \\  #ifdef WIN32
+                \\  #define AUTO_EXTERN_C_ZIG extern "C"
+                \\  #else
                 \\  #define AUTO_EXTERN_C_ZIG extern "C" __attribute__((weak))
+                \\  #endif
                 \\#else
                 \\  #define AUTO_EXTERN_C
                 \\  #define AUTO_EXTERN_C_ZIG __attribute__((weak))
@@ -655,7 +653,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 \\
                 \\#ifdef __cplusplus
                 \\#include "root.h"
-                \\#include "JavaScriptCore/JSClassRef.h"
+                \\#include <JavaScriptCore/JSClassRef.h>
                 \\#endif
                 \\#include "headers-handwritten.h"
                 \\

@@ -12,21 +12,21 @@ const C = bun.C;
 
 const sync = @import("../sync.zig");
 const std = @import("std");
-const HTTP = @import("root").bun.HTTP;
-const NetworkThread = HTTP.NetworkThread;
+const HTTP = @import("root").bun.http;
+
 const URL = @import("../url.zig").URL;
 const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
-const Headers = @import("root").bun.HTTP.Headers;
+const Headers = @import("root").bun.http.Headers;
 const Futex = @import("../futex.zig");
 const Semver = @import("../install/semver.zig");
 
 fn NewUint64(val: u64) Analytics.Uint64 {
     const bytes = std.mem.asBytes(&val);
     return .{
-        .first = std.mem.readIntNative(u32, bytes[0..4]),
-        .second = std.mem.readIntNative(u32, bytes[4..]),
+        .first = std.mem.readInt(u32, bytes[0..4], .little),
+        .second = std.mem.readInt(u32, bytes[4..], .little),
     };
 }
 
@@ -53,6 +53,7 @@ pub const Features = struct {
     pub var fetch = false;
     pub var bunfig = false;
     pub var extracted_packages = false;
+    pub var transpiler_cache = false;
 
     pub fn formatter() Formatter {
         return Formatter{};
@@ -81,6 +82,7 @@ pub const Features = struct {
                 "fetch",
                 "bunfig",
                 "extracted_packages",
+                "transpiler_cache",
             };
             inline for (fields) |field| {
                 if (@field(Features, field)) {
@@ -303,7 +305,7 @@ pub const GenerateHeader = struct {
             const sliced_string = Semver.SlicedString.init(release, release);
             const result = Semver.Version.parse(sliced_string);
             // we only care about major, minor, patch so we don't care about the string
-            return result.version.fill();
+            return result.version.min();
         }
 
         pub fn forLinux() Analytics.Platform {
@@ -332,7 +334,7 @@ pub const GenerateHeader = struct {
                 "IOPlatformExpertDevice",
             };
 
-            const result = try std.ChildProcess.exec(.{
+            const result = try std.ChildProcess.run(.{
                 .allocator = default_allocator,
                 .cwd = Fs.FileSystem.instance.top_level_dir,
                 .argv = std.mem.span(&cmds),
@@ -350,8 +352,8 @@ pub const GenerateHeader = struct {
             const hash = bun.hash(std.mem.trim(u8, out, "\n\r "));
             var hash_bytes = std.mem.asBytes(&hash);
             return Analytics.Uint64{
-                .first = std.mem.readIntNative(u32, hash_bytes[0..4]),
-                .second = std.mem.readIntNative(u32, hash_bytes[4..8]),
+                .first = std.mem.readInt(u32, hash_bytes[0..4], .little),
+                .second = std.mem.readInt(u32, hash_bytes[4..8], .little),
             };
         }
 
@@ -362,13 +364,13 @@ pub const GenerateHeader = struct {
                 break :brk try std.fs.openFileAbsoluteZ("/etc/machine-id", .{ .mode = .read_only });
             };
             defer file.close();
-            var read_count = try file.read(&linux_machine_id);
+            const read_count = try file.read(&linux_machine_id);
 
             const hash = bun.hash(std.mem.trim(u8, linux_machine_id[0..read_count], "\n\r "));
             var hash_bytes = std.mem.asBytes(&hash);
             return Analytics.Uint64{
-                .first = std.mem.readIntNative(u32, hash_bytes[0..4]),
-                .second = std.mem.readIntNative(u32, hash_bytes[4..8]),
+                .first = std.mem.readInt(u32, hash_bytes[0..4], .little),
+                .second = std.mem.readInt(u32, hash_bytes[4..8], .little),
             };
         }
     };
@@ -379,7 +381,7 @@ pub var disabled = false;
 pub fn enqueue(comptime _: EventName) void {}
 
 pub var thread: std.Thread = undefined;
-var counter: std.atomic.Atomic(u32) = undefined;
+var counter: std.atomic.Value(u32) = undefined;
 
 fn start() bool {}
 
@@ -418,7 +420,6 @@ fn readloop() anyerror!void {
     ) catch return;
 
     event_list.async_http.client.verbose = FeatureFlags.verbose_analytics;
-    NetworkThread.init() catch unreachable;
     // everybody's random should be random
     while (true) {
         // Wait for the next event by blocking
@@ -496,8 +497,8 @@ pub const EventList = struct {
 
             const analytics_event = Analytics.EventHeader{
                 .timestamp = Analytics.Uint64{
-                    .first = std.mem.readIntNative(u32, time_bytes[0..4]),
-                    .second = std.mem.readIntNative(u32, time_bytes[4..8]),
+                    .first = std.mem.readInt(u32, time_bytes[0..4], .little),
+                    .second = std.mem.readInt(u32, time_bytes[4..8], .little),
                 },
                 .kind = event.data.toKind(),
             };

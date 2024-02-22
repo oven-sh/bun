@@ -1,0 +1,7 @@
+{
+  "name": "bun-types",
+  "version": "1.0.0",
+  "dependencies": {
+    "bun-types": "npm:bun-types@^1.0.0"
+  }
+}

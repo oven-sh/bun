@@ -11,7 +11,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const CLI = @import("./cli.zig").Cli;
 const Features = @import("./analytics/analytics_thread.zig").Features;
-const HTTP = @import("root").bun.HTTP.AsyncHTTP;
+const HTTP = @import("root").bun.http.AsyncHTTP;
 const Report = @import("./report.zig");
 
 pub fn NewPanicHandler(comptime panic_func: fn ([]const u8, ?*std.builtin.StackTrace, ?usize) noreturn) type {
@@ -32,6 +32,8 @@ pub fn NewPanicHandler(comptime panic_func: fn ([]const u8, ?*std.builtin.StackT
             // This exists to ensure we flush all buffered output before panicking.
             Output.flush();
 
+            bun.maybeHandlePanicDuringProcessReload();
+
             Report.fatal(null, msg);
 
             Output.disableBuffering();
@@ -46,7 +48,7 @@ pub fn NewPanicHandler(comptime panic_func: fn ([]const u8, ?*std.builtin.StackT
             }
 
             // // We want to always inline the panic handler so it doesn't show up in the stacktrace.
-            @call(.always_inline, panic_func, .{ msg, error_return_type, addr });
+            @call(bun.callmod_inline, panic_func, .{ msg, error_return_type, addr });
         }
     };
 }

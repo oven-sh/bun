@@ -36,7 +36,7 @@ export class BunLockfileEditorProvider implements vscode.CustomReadonlyEditorPro
 }
 
 function renderLockfile({ webview }: vscode.WebviewPanel, preview: string, extensionUri: vscode.Uri): void {
-  const styleVSCodeUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "vscode.css"));
+  const styleVSCodeUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "assets", "vscode.css"));
   const lockfileContent = styleLockfile(preview);
 
   const lineNumbers: string[] = [];
@@ -49,11 +49,8 @@ function renderLockfile({ webview }: vscode.WebviewPanel, preview: string, exten
 <html lang="en">
   <head>
     <meta charset="UTF-8">
-
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource};">    
-
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    
     <link href="${styleVSCodeUri}" rel="stylesheet" />
   </head>
   <body>
@@ -72,7 +69,7 @@ function previewLockfile(uri: vscode.Uri, token?: vscode.CancellationToken): Pro
     const process = spawn("bun", [uri.fsPath], {
       stdio: ["ignore", "pipe", "pipe"],
     });
-    token.onCancellationRequested(() => {
+    token?.onCancellationRequested(() => {
       process.kill();
     });
     let stdout = "";

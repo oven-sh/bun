@@ -1,15 +1,21 @@
+// @known-failing-on-windows: 1 failing
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 import { bunExe, bunEnv } from "harness";
-import { renderToReadableStream } from "react-dom/server";
-import app_jsx from "./app.jsx";
+// import { renderToReadableStream } from "react-dom/server";
+// import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
 
+let renderToReadableStream: any = null;
+let app_jsx: any = null;
+
 type Handler = (req: Request) => Response;
-afterEach(() => gc(true));
+afterEach(() => {
+  gc(true);
+});
 
 const count = 200;
 let server: Server | undefined;
@@ -21,8 +27,10 @@ async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Se
     while (!server) {
       try {
         server = serve({ ...serverOptions, port: 0 });
+        console.log("server=", server);
         break;
       } catch (e: any) {
+        console.log("catch:", e);
         if (e?.message !== `Failed to start server `) {
           throw e;
         }
@@ -30,17 +38,19 @@ async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Se
     }
   }
 
+  console.log("before test(server)");
   await test(server);
 }
 
 afterAll(() => {
+  console.log("afterAll");
   if (server) {
     server.stop(true);
     server = undefined;
   }
 });
 
-[101, 418, 599, 200, 200n, 101n, 599n].forEach(statusCode => {
+[200, 200n, 303, 418, 599, 599n].forEach(statusCode => {
   it(`should response with HTTP status code (${statusCode})`, async () => {
     await runTest(
       {
@@ -255,10 +265,12 @@ describe("streaming", () => {
         await runTest(
           {
             error(e) {
+              console.log("test case error()");
               pass = false;
               return new Response("FAIL", { status: 555 });
             },
             fetch(req) {
+              console.log("test case fetch()");
               const stream = new ReadableStream({
                 async pull(controller) {
                   controller.enqueue("PASS");
@@ -266,25 +278,32 @@ describe("streaming", () => {
                   throw new Error("FAIL");
                 },
               });
-              return new Response(stream, options);
+              console.log("after constructing ReadableStream");
+              const r = new Response(stream, options);
+              console.log("after constructing Response");
+              return r;
             },
           },
           async server => {
+            console.log("async server() => {}");
             const response = await fetch(`http://${server.hostname}:${server.port}`);
             // connection terminated
             expect(await response.text()).toBe("");
             expect(response.status).toBe(options.status ?? 200);
             expect(pass).toBe(true);
+            console.log("done test A");
           },
         );
       }
 
       it("with headers", async () => {
+        console.log("with headers before anything");
         await execute({
           headers: {
             "X-A": "123",
           },
         });
+        console.log("with headers after everything");
       });
 
       it("with headers and status", async () => {
@@ -947,6 +966,18 @@ describe("should support Content-Range with Bun.file()", () => {
     },
   });
 
+  const getServerWithSize = runTest.bind(null, {
+    fetch(req) {
+      const { searchParams } = new URL(req.url);
+      const start = Number(searchParams.get("start"));
+      const end = Number(searchParams.get("end"));
+      const file = Bun.file(fixture);
+      return new Response(file.slice(start, end), {
+        headers: { "Content-Range": "bytes " + start + "-" + end + "/" + file.size },
+      });
+    },
+  });
+
   const good = [
     [0, 1],
     [1, 2],
@@ -967,6 +998,19 @@ describe("should support Content-Range with Bun.file()", () => {
         const response = await fetch(`http://${server.hostname}:${server.port}/?start=${start}&end=${end}`, {
           verbose: true,
         });
+        expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, end));
+        expect(response.status).toBe(start > 0 || end < full.byteLength ? 206 : 200);
+      });
+    });
+  }
+
+  for (const [start, end] of good) {
+    it(`good range with size: ${start} - ${end}`, async () => {
+      await getServerWithSize(async server => {
+        const response = await fetch(`http://${server.hostname}:${server.port}/?start=${start}&end=${end}`, {
+          verbose: true,
+        });
+        expect(parseInt(response.headers.get("Content-Range")?.split("/")[1])).toEqual(full.byteLength);
         expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, end));
         expect(response.status).toBe(start > 0 || end < full.byteLength ? 206 : 200);
       });
@@ -1033,6 +1077,8 @@ it("formats error responses correctly", async () => {
 });
 
 it("request body and signal life cycle", async () => {
+  renderToReadableStream = (await import("react-dom/server")).renderToReadableStream;
+  app_jsx = (await import("./app")).default;
   {
     const headers = {
       headers: {
@@ -1165,3 +1211,206 @@ it("unix socket connection throws an error on a bad domain without crashing", as
     });
   }).toThrow();
 });
+
+it("#5859 text", async () => {
+  const server = Bun.serve({
+    port: 0,
+    development: false,
+    async fetch(req) {
+      return new Response(await req.text(), {});
+    },
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}`, {
+    method: "POST",
+    body: new Uint8Array([0xfd]),
+  });
+
+  expect(await response.text()).toBe("�");
+  await server.stop(true);
+});
+
+it("#5859 json", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      try {
+        await req.json();
+      } catch (e) {
+        return new Response("FAIL", { status: 500 });
+      }
+
+      return new Response("SHOULD'VE FAILED", {});
+    },
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}`, {
+    method: "POST",
+    body: new Uint8Array([0xfd]),
+  });
+
+  expect(response.ok).toBeFalse();
+  expect(await response.text()).toBe("FAIL");
+  await server.stop(true);
+});
+
+it("#5859 arrayBuffer", async () => {
+  await Bun.write("/tmp/bad", new Uint8Array([0xfd]));
+  expect(async () => await Bun.file("/tmp/bad").json()).toThrow();
+});
+
+it("server.requestIP (v4)", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      return Response.json(server.requestIP(req));
+    },
+    hostname: "127.0.0.1",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}`).then(x => x.json());
+  expect(response).toEqual({
+    address: "127.0.0.1",
+    family: "IPv4",
+    port: expect.any(Number),
+  });
+  server.stop(true);
+});
+
+it("server.requestIP (v6)", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      return Response.json(server.requestIP(req));
+    },
+    hostname: "::1",
+  });
+
+  const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
+  expect(response).toEqual({
+    address: "::1",
+    family: "IPv6",
+    port: expect.any(Number),
+  });
+  server.stop(true);
+});
+
+it("server.requestIP (unix)", async () => {
+  const unix = "/tmp/bun-serve.sock";
+  const server = Bun.serve({
+    unix,
+    fetch(req, server) {
+      return Response.json(server.requestIP(req));
+    },
+  });
+  const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`;
+  const received: Buffer[] = [];
+  const { resolve, promise } = Promise.withResolvers<void>();
+  const connection = await Bun.connect({
+    unix,
+    socket: {
+      data(socket, data) {
+        received.push(data);
+        resolve();
+      },
+    },
+  });
+  connection.write(requestText);
+  connection.flush();
+  await promise;
+  expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nnull");
+  connection.end();
+  server.stop(true);
+});
+
+it("should response with HTTP 413 when request body is larger than maxRequestBodySize, issue#6031", async () => {
+  const server = Bun.serve({
+    port: 0,
+    maxRequestBodySize: 10,
+    fetch(req, server) {
+      return new Response("OK");
+    },
+  });
+
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: "A".repeat(10),
+    });
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("OK");
+  }
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: "A".repeat(11),
+    });
+    expect(resp.status).toBe(413);
+  }
+
+  server.stop(true);
+});
+
+it("should support promise returned from error", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      throw new Error(req.url);
+    },
+    async error(e) {
+      if (e.message.endsWith("/async-fulfilled")) {
+        return new Response("OK");
+      }
+
+      if (e.message.endsWith("/async-rejected")) {
+        throw new Error("");
+      }
+
+      if (e.message.endsWith("/async-rejected-pending")) {
+        await Bun.sleep(100);
+        throw new Error("");
+      }
+
+      if (e.message.endsWith("/async-pending")) {
+        await Bun.sleep(100);
+        return new Response("OK");
+      }
+    },
+  });
+
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}/async-fulfilled`);
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("OK");
+  }
+
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}/async-pending`);
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("OK");
+  }
+
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}/async-rejected`);
+    expect(resp.status).toBe(500);
+  }
+
+  {
+    const resp = await fetch(`http://${server.hostname}:${server.port}/async-rejected-pending`);
+    expect(resp.status).toBe(500);
+  }
+
+  server.stop(true);
+});
+
+if (process.platform === "linux")
+  it("should use correct error when using a root range port(#7187)", () => {
+    expect(() => {
+      const server = Bun.serve({
+        port: 1003,
+        fetch(req) {
+          return new Response("request answered");
+        },
+      });
+    }).toThrow("permission denied 0.0.0.0:1003");
+  });

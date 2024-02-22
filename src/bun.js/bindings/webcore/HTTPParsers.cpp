@@ -36,7 +36,6 @@
 #include "CommonAtomStrings.h"
 #include "HTTPHeaderField.h"
 #include "HTTPHeaderNames.h"
-#include "ParsedContentType.h"
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/DateMath.h>
 #include <wtf/NeverDestroyed.h>

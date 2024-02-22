@@ -1,9 +1,8 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const MimeType = @import("../../bun_dev_http_server.zig").MimeType;
+const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.HTTP;
-const NetworkThread = HTTPClient.NetworkThread;
+const HTTPClient = @import("root").bun.http;
 
 const JSC = @import("root").bun.JSC;
 const js = JSC.C;
@@ -112,7 +111,7 @@ pub const TextEncoder = struct {
             @memcpy(array_buffer.slice()[0..result.written], buf[0..result.written]);
             return uint8array;
         } else {
-            var bytes = strings.toUTF8AllocWithType(
+            const bytes = strings.toUTF8AllocWithType(
                 default_allocator,
                 @TypeOf(slice),
                 slice,
@@ -217,7 +216,7 @@ pub const TextEncoder = struct {
         buf_ptr: [*]u8,
         buf_len: usize,
     ) u64 {
-        var output = buf_ptr[0..buf_len];
+        const output = buf_ptr[0..buf_len];
         const input = input_ptr[0..input_len];
         var result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, []const u16, input, false);
         if (output.len >= 3 and (result.read == 0 or result.written == 0)) {
@@ -236,7 +235,7 @@ pub const TextEncoder = struct {
         buf_ptr: [*]u8,
         buf_len: usize,
     ) u64 {
-        var output = buf_ptr[0..buf_len];
+        const output = buf_ptr[0..buf_len];
         const input = input_ptr[0..input_len];
         const result: strings.EncodeIntoResult =
             strings.copyLatin1IntoUTF8(output, []const u8, input);
@@ -559,6 +558,13 @@ pub const TextDecoder = struct {
                     remainder = remainder[1..];
                     continue;
                 },
+                // BOM handling
+                0xFEFF => {
+                    buffer.ensureTotalCapacity(allocator, 1) catch unreachable;
+                    buffer.items.ptr[buffer.items.len] = remainder[0];
+                    buffer.items.len += 1;
+                    remainder = remainder[1..];
+                },
 
                 // Is this an unpaired low surrogate or four-digit hex escape?
                 else => {
@@ -570,7 +576,7 @@ pub const TextDecoder = struct {
             }
         }
 
-        var full = buffer.toOwnedSlice(allocator) catch @panic("TODO");
+        const full = buffer.toOwnedSlice(allocator) catch @panic("TODO");
 
         var out = ZigString.init("");
         out._unsafe_ptr_do_not_use = @as([*]u8, @ptrCast(full.ptr));
@@ -619,7 +625,7 @@ pub const TextDecoder = struct {
                 //
                 // It's not clear why we couldn't jusst use Latin1 here, but tests failures proved it necessary.
                 const out_length = strings.elementLengthLatin1IntoUTF16([]const u8, buffer_slice);
-                var bytes = globalThis.allocator().alloc(u16, out_length) catch {
+                const bytes = globalThis.allocator().alloc(u16, out_length) catch {
                     globalThis.throwOutOfMemory();
                     return .zero;
                 };
@@ -629,8 +635,13 @@ pub const TextDecoder = struct {
             },
             EncodingLabel.@"UTF-8" => {
                 const toUTF16 = if (stream) strings.toUTF16Alloc else strings.toUTF16AllocNoTrim;
+                const moved_buffer_slice_8 = if (!this.ignore_bom and buffer_slice.len > 3 and std.mem.eql(u8, &[_]u8{ '\xEF', '\xBB', '\xBF' }, buffer_slice[0..3]))
+                    buffer_slice[3..]
+                else
+                    buffer_slice;
+
                 if (this.fatal) {
-                    if (toUTF16(default_allocator, buffer_slice, true)) |result_| {
+                    if (toUTF16(default_allocator, moved_buffer_slice_8, true, false)) |result_| {
                         if (result_) |result| {
                             return ZigString.toExternalU16(result.ptr, result.len, globalThis);
                         }
@@ -649,7 +660,7 @@ pub const TextDecoder = struct {
                         }
                     }
                 } else {
-                    if (toUTF16(default_allocator, buffer_slice, false)) |result_| {
+                    if (toUTF16(default_allocator, moved_buffer_slice_8, false, false)) |result_| {
                         if (result_) |result| {
                             return ZigString.toExternalU16(result.ptr, result.len, globalThis);
                         }
@@ -664,15 +675,20 @@ pub const TextDecoder = struct {
                 }
 
                 // Experiment: using mimalloc directly is slightly slower
-                return ZigString.init(buffer_slice).toValueGC(globalThis);
+                return ZigString.init(moved_buffer_slice_8).toValueGC(globalThis);
             },
 
             EncodingLabel.@"UTF-16LE" => {
-                if (std.mem.isAligned(@intFromPtr(buffer_slice.ptr), @alignOf([*]const u16))) {
-                    return this.decodeUTF16WithAlignment([]align(2) const u16, @as([]align(2) const u16, @alignCast(std.mem.bytesAsSlice(u16, buffer_slice))), globalThis);
+                const moved_buffer_slice_16 = if (!this.ignore_bom and buffer_slice.len > 2 and std.mem.eql(u8, &[_]u8{ '\xFF', '\xFE' }, buffer_slice[0..2]))
+                    buffer_slice[2..]
+                else
+                    buffer_slice;
+
+                if (std.mem.isAligned(@intFromPtr(moved_buffer_slice_16.ptr), @alignOf([*]const u16))) {
+                    return this.decodeUTF16WithAlignment([]align(2) const u16, @as([]align(2) const u16, @alignCast(std.mem.bytesAsSlice(u16, moved_buffer_slice_16))), globalThis);
                 }
 
-                return this.decodeUTF16WithAlignment([]align(1) const u16, std.mem.bytesAsSlice(u16, buffer_slice), globalThis);
+                return this.decodeUTF16WithAlignment([]align(1) const u16, std.mem.bytesAsSlice(u16, moved_buffer_slice_16), globalThis);
             },
             else => {
                 globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});
@@ -738,7 +754,7 @@ pub const TextDecoder = struct {
             }
         }
 
-        var result = getAllocator(globalThis).create(TextDecoder) catch unreachable;
+        const result = getAllocator(globalThis).create(TextDecoder) catch unreachable;
         result.* = decoder;
         return result;
     }
@@ -748,7 +764,7 @@ pub const Encoder = struct {
     export fn Bun__encoding__writeLatin1(input: [*]const u8, len: usize, to: [*]u8, to_len: usize, encoding: u8) usize {
         return switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
             .utf8 => writeU8(input, len, to, to_len, .utf8),
-            .latin1 => writeU8(input, len, to, to_len, .ascii),
+            .latin1 => writeU8(input, len, to, to_len, .latin1),
             .ascii => writeU8(input, len, to, to_len, .ascii),
             .ucs2 => writeU8(input, len, to, to_len, .utf16le),
             .utf16le => writeU8(input, len, to, to_len, .utf16le),
@@ -798,7 +814,7 @@ pub const Encoder = struct {
         };
     }
     export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, input: [*]const u8, len: usize, encoding: u8) JSValue {
-        var slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
+        const slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
             .hex => constructFromU8(input, len, .hex),
             .ascii => constructFromU8(input, len, .ascii),
             .base64url => constructFromU8(input, len, .base64url),
@@ -811,7 +827,7 @@ pub const Encoder = struct {
         return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize, encoding: u8) JSValue {
-        var slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
+        const slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
             .base64 => constructFromU16(input, len, .base64),
             .hex => constructFromU16(input, len, .hex),
             .base64url => constructFromU16(input, len, .base64url),
@@ -863,6 +879,82 @@ pub const Encoder = struct {
             else => toString(input, len, globalObject, .utf8),
         };
     }
+
+    pub fn toBunStringFromOwnedSlice(input: []u8, encoding: JSC.Node.Encoding) bun.String {
+        if (input.len == 0)
+            return bun.String.empty;
+
+        switch (encoding) {
+            .ascii => {
+                if (strings.isAllASCII(input)) {
+                    return bun.String.createExternalGloballyAllocated(.latin1, input);
+                }
+
+                defer bun.default_allocator.free(input);
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len);
+                strings.copyLatin1IntoASCII(chars, input);
+                return str;
+            },
+            .latin1 => {
+                return bun.String.createExternalGloballyAllocated(.latin1, input);
+            },
+            .buffer, .utf8 => {
+                const converted = strings.toUTF16Alloc(bun.default_allocator, input, false, false) catch return bun.String.dead;
+                if (converted) |utf16| {
+                    defer bun.default_allocator.free(input);
+                    return bun.String.createExternalGloballyAllocated(.utf16, utf16);
+                }
+
+                // If we get here, it means we can safely assume the string is 100% ASCII characters
+                return bun.String.createExternalGloballyAllocated(.latin1, input);
+            },
+            .ucs2, .utf16le => {
+                // Avoid incomplete characters
+                if (input.len / 2 == 0) {
+                    bun.default_allocator.free(input);
+                    return bun.String.empty;
+                }
+
+                const as_u16 = std.mem.bytesAsSlice(u16, input);
+
+                return bun.String.createExternalGloballyAllocated(.utf16, @alignCast(as_u16));
+            },
+
+            .hex => {
+                defer bun.default_allocator.free(input);
+                const str, const chars = bun.String.createUninitialized(.latin1, input.len * 2);
+
+                const wrote = strings.encodeBytesToHex(chars, input);
+
+                // Return an empty string in this case, just like node.
+                if (wrote < chars.len) {
+                    str.deref();
+                    return bun.String.empty;
+                }
+
+                return str;
+            },
+
+            // TODO: this is not right. There is an issue here. But it needs to
+            // be addressed separately because constructFromU8's base64url also
+            // appears inconsistent with Node.js.
+            .base64url => {
+                defer bun.default_allocator.free(input);
+                const out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
+                _ = bun.base64.encodeURLSafe(chars, input);
+                return out;
+            },
+
+            .base64 => {
+                defer bun.default_allocator.free(input);
+                const to_len = bun.base64.encodeLen(input);
+                var to = bun.default_allocator.alloc(u8, to_len) catch return bun.String.dead;
+                const wrote = bun.base64.encode(to, input);
+                return bun.String.createExternalGloballyAllocated(.latin1, to[0..wrote]);
+            },
+        }
+    }
+
     pub fn toString(input_ptr: [*]const u8, len: usize, global: *JSGlobalObject, comptime encoding: JSC.Node.Encoding) JSValue {
         if (len == 0)
             return ZigString.Empty.toValue(global);
@@ -872,25 +964,21 @@ pub const Encoder = struct {
 
         switch (comptime encoding) {
             .ascii => {
-                if (bun.simdutf.validate.ascii(input)) {
-                    return ZigString.init(input).toValueGC(global);
-                }
-
-                var str = bun.String.createUninitialized(.latin1, len) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                var str, const chars = bun.String.createUninitialized(.latin1, len);
                 defer str.deref();
 
-                strings.copyLatin1IntoASCII(@constCast(str.latin1()), input);
+                strings.copyLatin1IntoASCII(chars, input);
                 return str.toJS(global);
             },
             .latin1 => {
-                var str = bun.String.createUninitialized(.latin1, len) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                var str, const chars = bun.String.createUninitialized(.latin1, len);
                 defer str.deref();
-                @memcpy(@constCast(str.latin1()), input_ptr[0..len]);
 
+                @memcpy(chars, input);
                 return str.toJS(global);
             },
             .buffer, .utf8 => {
-                const converted = strings.toUTF16Alloc(allocator, input, false) catch return ZigString.init("Out of memory").toErrorInstance(global);
+                const converted = strings.toUTF16Alloc(allocator, input, false, false) catch return ZigString.init("Out of memory").toErrorInstance(global);
                 if (converted) |utf16| {
                     return ZigString.toExternalU16(utf16.ptr, utf16.len, global);
                 }
@@ -903,9 +991,9 @@ pub const Encoder = struct {
                 // Avoid incomplete characters
                 if (len / 2 == 0) return ZigString.Empty.toValue(global);
 
-                var output = bun.String.createUninitialized(.utf16, len / 2) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                var output, const chars = bun.String.createUninitialized(.utf16, len / 2);
                 defer output.deref();
-                var output_bytes = std.mem.sliceAsBytes(@constCast(output.utf16()));
+                var output_bytes = std.mem.sliceAsBytes(chars);
                 output_bytes[output_bytes.len - 1] = 0;
 
                 @memcpy(output_bytes, input_ptr[0..output_bytes.len]);
@@ -913,19 +1001,18 @@ pub const Encoder = struct {
             },
 
             .hex => {
-                var str = bun.String.createUninitialized(.latin1, len * 2) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                var str, const chars = bun.String.createUninitialized(.latin1, len * 2);
                 defer str.deref();
 
-                var output = @constCast(str.latin1());
-                const wrote = strings.encodeBytesToHex(output, input);
-                std.debug.assert(wrote == output.len);
+                const wrote = strings.encodeBytesToHex(chars, input);
+                std.debug.assert(wrote == chars.len);
                 return str.toJS(global);
             },
 
             .base64url => {
-                var out = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input)) orelse return ZigString.init("Out of memory").toErrorInstance(global);
+                var out, const chars = bun.String.createUninitialized(.latin1, bun.base64.urlSafeEncodeLen(input));
                 defer out.deref();
-                _ = bun.base64.encodeURLSafe(@constCast(out.latin1()), input);
+                _ = bun.base64.encodeURLSafe(chars, input);
                 return out.toJS(global);
             },
 
@@ -950,16 +1037,16 @@ pub const Encoder = struct {
         // if (comptime encoding.isBinaryToText()) {}
 
         switch (comptime encoding) {
-            .buffer => {
+            .buffer, .latin1 => {
                 const written = @min(len, to_len);
                 @memcpy(to_ptr[0..written], input[0..written]);
 
                 return written;
             },
-            .latin1, .ascii => {
+            .ascii => {
                 const written = @min(len, to_len);
 
-                var to = to_ptr[0..written];
+                const to = to_ptr[0..written];
                 var remain = input[0..written];
 
                 if (bun.simdutf.validate.ascii(remain)) {
@@ -980,16 +1067,16 @@ pub const Encoder = struct {
                     return 0;
 
                 if (std.mem.isAligned(@intFromPtr(to_ptr), @alignOf([*]u16))) {
-                    var buf = input[0..len];
+                    const buf = input[0..len];
 
-                    var output = @as([*]u16, @ptrCast(@alignCast(to_ptr)))[0 .. to_len / 2];
-                    var written = strings.copyLatin1IntoUTF16([]u16, output, []const u8, buf).written;
+                    const output = @as([*]u16, @ptrCast(@alignCast(to_ptr)))[0 .. to_len / 2];
+                    const written = strings.copyLatin1IntoUTF16([]u16, output, []const u8, buf).written;
                     return written * 2;
                 } else {
-                    var buf = input[0..len];
-                    var output = @as([*]align(1) u16, @ptrCast(to_ptr))[0 .. to_len / 2];
+                    const buf = input[0..len];
+                    const output = @as([*]align(1) u16, @ptrCast(to_ptr))[0 .. to_len / 2];
 
-                    var written = strings.copyLatin1IntoUTF16([]align(1) u16, output, []const u8, buf).written;
+                    const written = strings.copyLatin1IntoUTF16([]align(1) u16, output, []const u8, buf).written;
                     return written * 2;
                 }
             },
@@ -1083,7 +1170,7 @@ pub const Encoder = struct {
 
                 // very very slow case!
                 // shouldn't really happen though
-                var transcoded = strings.toUTF8Alloc(bun.default_allocator, input[0..len]) catch return 0;
+                const transcoded = strings.toUTF8Alloc(bun.default_allocator, input[0..len]) catch return 0;
                 defer bun.default_allocator.free(transcoded);
                 return writeU8(transcoded.ptr, transcoded.len, to, to_len, encoding);
             },
@@ -1128,7 +1215,7 @@ pub const Encoder = struct {
     pub fn constructFromU8(input: [*]const u8, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
         if (len == 0) return &[_]u8{};
 
-        const allocator = VirtualMachine.get().allocator;
+        const allocator = bun.default_allocator;
 
         switch (comptime encoding) {
             .buffer => {
@@ -1180,7 +1267,7 @@ pub const Encoder = struct {
     pub fn constructFromU16(input: [*]const u16, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
         if (len == 0) return &[_]u8{};
 
-        const allocator = VirtualMachine.get().allocator;
+        const allocator = bun.default_allocator;
 
         switch (comptime encoding) {
             .utf8 => {
@@ -1193,7 +1280,7 @@ pub const Encoder = struct {
             },
             // string is already encoded, just need to copy the data
             .ucs2, .utf16le => {
-                var to = std.mem.sliceAsBytes(allocator.alloc(u16, len * 2) catch return &[_]u8{});
+                var to = std.mem.sliceAsBytes(allocator.alloc(u16, len) catch return &[_]u8{});
                 const bytes = std.mem.sliceAsBytes(input[0..len]);
                 @memcpy(to[0..bytes.len], bytes);
                 return to;
@@ -1207,7 +1294,7 @@ pub const Encoder = struct {
             .base64, .base64url => {
                 // very very slow case!
                 // shouldn't really happen though
-                var transcoded = strings.toUTF8Alloc(allocator, input[0..len]) catch return &[_]u8{};
+                const transcoded = strings.toUTF8Alloc(allocator, input[0..len]) catch return &[_]u8{};
                 defer allocator.free(transcoded);
                 return constructFromU8(transcoded.ptr, transcoded.len, encoding);
             },
@@ -1236,5 +1323,3 @@ comptime {
         std.testing.refAllDecls(Encoder);
     }
 }
-
-test "Vec" {}

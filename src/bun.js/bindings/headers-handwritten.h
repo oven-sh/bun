@@ -1,9 +1,14 @@
 #pragma once
-
+#ifndef HEADERS_HANDWRITTEN
+#define HEADERS_HANDWRITTEN
 typedef uint16_t ZigErrorCode;
 typedef struct VirtualMachine VirtualMachine;
 // exists to make headers.h happy
 typedef struct CppWebSocket CppWebSocket;
+
+namespace WTF {
+class String;
+}
 
 typedef struct ZigString {
     const unsigned char* ptr;
@@ -17,11 +22,12 @@ typedef union BunStringImpl {
     void* wtf;
 } BunStringImpl;
 
-typedef struct BunString {
-    BunStringTag tag;
-    BunStringImpl impl;
-} BunString;
 #else
+namespace WTF {
+class StringImpl;
+class String;
+}
+
 typedef union BunStringImpl {
     ZigString zig;
     WTF::StringImpl* wtf;
@@ -34,13 +40,33 @@ enum class BunStringTag : uint8_t {
     StaticZigString = 3,
     Empty = 4,
 };
+#endif
 
 typedef struct BunString {
     BunStringTag tag;
     BunStringImpl impl;
-} BunString;
 
-#endif
+    enum ZeroCopyTag { ZeroCopy };
+
+    // If it's not a WTFStringImpl, this does nothing
+    inline void ref();
+
+    // If it's not a WTFStringImpl, this does nothing
+    inline void deref();
+
+    static size_t utf8ByteLength(const WTF::String&);
+
+    // Zero copy is kind of a lie.
+    // We clone it if it's non-ASCII UTF-8.
+    // We don't clone it if it was marked as static
+    // if it was a ZigString, it still allocates a WTF::StringImpl.
+    // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use ZigString)
+    WTF::String toWTFString(ZeroCopyTag) const;
+
+    // This one usually will clone the raw bytes.
+    WTF::String toWTFString() const;
+
+} BunString;
 
 typedef struct ZigErrorType {
     ZigErrorCode code;
@@ -65,12 +91,13 @@ typedef struct ErrorableString {
 typedef struct ResolvedSource {
     BunString specifier;
     BunString source_code;
-    ZigString source_url;
+    BunString source_url;
     ZigString* commonJSExports;
     uint32_t commonJSExportsLen;
     uint32_t hash;
     void* allocator;
     uint32_t tag;
+    bool needsDeref;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
@@ -235,13 +262,13 @@ typedef struct Uint8Array_alias Uint8Array_alias;
 extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl);
 extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl);
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
-extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, BunString*);
+extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
 extern "C" void BunString__toWTFString(BunString*);
 
 namespace Bun {
 JSC::JSValue toJS(JSC::JSGlobalObject*, BunString);
 BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
-WTF::String toWTFString(const BunString& bunString);
+BunString toString(const char* bytes, size_t length);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);
@@ -264,15 +291,13 @@ typedef struct {
     bool shared;
 } Bun__ArrayBuffer;
 
-#include "../../../js/out/SyntheticModuleType.h"
+#include "SyntheticModuleType.h"
 
 extern "C" const char* Bun__userAgent;
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
 extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);
-extern "C" void Microtask__run(void* ptr, void* global);
-extern "C" void Microtask__run_default(void* ptr, void* global);
 
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
@@ -291,6 +316,7 @@ extern "C" void* Bun__transpileFile(
     JSC::JSGlobalObject* global,
     const BunString* specifier,
     const BunString* referrer,
+    const BunString* typeAttribute,
     ErrorableResolvedSource* result, bool allowPromise);
 
 extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -334,10 +360,10 @@ extern "C" int64_t Bun__encoding__constructFromLatin1(void*, const unsigned char
 extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, size_t len, Encoding encoding);
 
 template<bool isStrict, bool enableAsymmetricMatchers>
-bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
+bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
 
 template<bool enableAsymmetricMatchers>
-bool Bun__deepMatch(JSC::JSValue object, JSC::JSValue subset, JSC::JSGlobalObject* globalObject, JSC::ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers);
+bool Bun__deepMatch(JSC::JSValue object, JSC::JSValue subset, JSC::JSGlobalObject* globalObject, JSC::ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers, bool isMatchingObjectContaining);
 
 extern "C" void Bun__remapStackFramePositions(JSC::JSGlobalObject*, ZigStackFrame*, size_t);
 
@@ -347,4 +373,18 @@ class ScriptArguments;
 
 using ScriptArguments = Inspector::ScriptArguments;
 
-#endif
+ALWAYS_INLINE void BunString::ref()
+{
+    if (this->tag == BunStringTag::WTFStringImpl) {
+        this->impl.wtf->ref();
+    }
+}
+ALWAYS_INLINE void BunString::deref()
+{
+    if (this->tag == BunStringTag::WTFStringImpl) {
+        this->impl.wtf->deref();
+    }
+}
+
+#endif // __cplusplus
+#endif // HEADERS_HANDWRITTEN

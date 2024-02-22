@@ -1,9 +1,7 @@
-#pragma once
-
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "AsyncContextFrame.h"
-#include "JavaScriptCore/InternalFieldTuple.h"
+#include <JavaScriptCore/InternalFieldTuple.h>
 
 using namespace JSC;
 using namespace WebCore;
@@ -22,7 +20,9 @@ AsyncContextFrame* AsyncContextFrame::create(VM& vm, JSC::Structure* structure, 
 AsyncContextFrame* AsyncContextFrame::create(JSGlobalObject* global, JSValue callback, JSValue context)
 {
     auto& vm = global->vm();
-    AsyncContextFrame* asyncContextData = new (NotNull, allocateCell<AsyncContextFrame>(vm)) AsyncContextFrame(vm, static_cast<Zig::GlobalObject*>(global)->AsyncContextFrameStructure());
+    ASSERT(callback.isCallable());
+    auto* structure = jsCast<Zig::GlobalObject*>(global)->AsyncContextFrameStructure();
+    AsyncContextFrame* asyncContextData = new (NotNull, allocateCell<AsyncContextFrame>(vm)) AsyncContextFrame(vm, structure);
     asyncContextData->finishCreation(vm);
     asyncContextData->callback.set(vm, asyncContextData, callback);
     asyncContextData->context.set(vm, asyncContextData, context);
@@ -47,7 +47,7 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
     auto& vm = globalObject->vm();
     return AsyncContextFrame::create(
         vm,
-        static_cast<Zig::GlobalObject*>(globalObject)->AsyncContextFrameStructure(),
+        jsCast<Zig::GlobalObject*>(globalObject)->AsyncContextFrameStructure(),
         callback,
         context);
 }
@@ -64,7 +64,7 @@ void AsyncContextFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(AsyncContextFrame);
 
-extern "C" EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlobalObject* globalObject, JSC::EncodedJSValue callback)
 {
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }

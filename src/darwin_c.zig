@@ -288,13 +288,14 @@ pub const SystemErrno = enum(u8) {
     pub const max = 107;
 
     pub fn init(code: anytype) ?SystemErrno {
-        if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
-            if (code < 0)
-                return init(-code);
+        if (code < 0) {
+            if (code <= -max) {
+                return null;
+            }
+            return @enumFromInt(-code);
         }
-
         if (code >= max) return null;
-        return @as(SystemErrno, @enumFromInt(code));
+        return @enumFromInt(code);
     }
 
     pub fn label(this: SystemErrno) ?[]const u8 {
@@ -616,11 +617,11 @@ const IO_CTL_RELATED = struct {
         return (x >> @as(c_int, 8)) & @as(c_int, 0xff);
     }
     pub const IOCPARM_MAX = IOCPARM_MASK + @as(c_int, 1);
-    pub const IOC_VOID = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hexadecimal));
-    pub const IOC_OUT = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000000, .hexadecimal));
-    pub const IOC_IN = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000000, .hexadecimal));
+    pub const IOC_VOID = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hex));
+    pub const IOC_OUT = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000000, .hex));
+    pub const IOC_IN = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000000, .hex));
     pub const IOC_INOUT = IOC_IN | IOC_OUT;
-    pub const IOC_DIRMASK = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xe0000000, .hexadecimal));
+    pub const IOC_DIRMASK = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xe0000000, .hex));
     pub inline fn _IOC(inout: anytype, group: anytype, num: anytype, len: anytype) @TypeOf(((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num) {
         return ((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num;
     }
@@ -728,29 +729,6 @@ const IO_CTL_RELATED = struct {
 
 pub usingnamespace IO_CTL_RELATED;
 
-pub const RemoveFileFlags = struct {
-    /// If path is a directory, recurse (depth first traversal)
-    pub const recursive: u32 = (1 << 0);
-    /// Remove contents but not directory itself
-    pub const keep_parent: u32 = (1 << 1);
-    /// 7 pass DoD algorithm
-    pub const secure_7_pass: u32 = (1 << 2);
-    /// 35-pass Gutmann algorithm (overrides REMOVEFILE_SECURE_7_PASS)
-    pub const secure_35_pass: u32 = (1 << 3);
-    /// 1 pass single overwrite),
-    pub const secure_1_pass: u32 = (1 << 4);
-    /// 3 pass overwrite
-    pub const secure_3_pass: u32 = (1 << 5);
-    /// Single-pass overwrite, with 0 instead of random data
-    pub const secure_1_pass_zero: u32 = (1 << 6);
-    /// Cross mountpoints when deleting recursively. << 6),
-    pub const cross_mount: u32 = (1 << 7);
-    /// Paths may be longer than PATH_MAX - requires temporarily changing cwd
-    pub const allow_long_paths: u32 = (1 << 8);
-};
-pub const removefile_state_t = opaque {};
-pub extern fn removefileat(fd: c_int, path: [*c]const u8, state: ?*removefile_state_t, flags: u32) c_int;
-
 // As of Zig v0.11.0-dev.1393+38eebf3c4, ifaddrs.h is not included in the headers
 pub const ifaddrs = extern struct {
     ifa_next: ?*ifaddrs,
@@ -797,6 +775,8 @@ pub const preallocate_length = std.math.maxInt(u51);
 pub const Mode = std.os.mode_t;
 
 pub const E = std.os.E;
+pub const S = std.os.S;
 pub fn getErrno(rc: anytype) E {
     return std.c.getErrno(rc);
 }
+pub extern "c" fn umask(Mode) Mode;

@@ -9,6 +9,7 @@ ok(!Object.getOwnPropertyNames(require.cache).includes("bad"));
 require("msgpackr-extract");
 
 strictEqual(require.cache["extract"], undefined);
+ok(!("extract" in require.cache)); // https://github.com/oven-sh/bun/issues/5898
 ok(!Object.hasOwnProperty.call(require.cache, "extract"));
 ok(!Object.getOwnPropertyNames(require.cache).includes("extract"));
 

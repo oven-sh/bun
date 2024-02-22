@@ -25,7 +25,7 @@ export async function providePackageJsonTasks(): Promise<BunTask[]> {
 
   return Object.entries(scripts).map(([name, script]) => {
     // Prefix script with bun if it doesn't already start with bun
-    const shellCommand = script.startsWith("bun") ? script : `bun ${script}`;
+    const shellCommand = script.startsWith("bun run ") ? script : `bun run ${script}`;
 
     const task = new BunTask({
       script,
@@ -55,10 +55,12 @@ function extractScriptsFromPackageJson(document: vscode.TextDocument) {
   const range = new vscode.Range(document.positionAt(startIndex), document.positionAt(endIndex));
 
   const scripts = matches[1].split(/,\s*/).map(script => {
-    const [name, command] = script.split(/s*:\s*/);
+    const elements = script.match(/"([^"\\]|\\.|\\\n)*"/g);
+    if (elements?.length != 2) return null;
+    const [name, command] = elements;
     return {
-      name: name.replace(/"/g, "").trim(),
-      command: command.replace(/"/g, "").trim(),
+      name: name.replace('"', "").trim(),
+      command: command.replace(/(?<!\\)"/g, "").trim(),
       range: new vscode.Range(
         document.positionAt(startIndex + matches[0].indexOf(name)),
         document.positionAt(startIndex + matches[0].indexOf(name) + name.length + command.length),
@@ -175,23 +177,25 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
       },
     }),
     vscode.commands.registerCommand("extension.bun.codelens.debug.task", async ({ script, name }: CommandArgs) => {
+      if (script.startsWith("bun run ")) script = script.slice(8);
       if (script.startsWith("bun ")) script = script.slice(4);
+
       debugCommand(script);
     }),
     vscode.commands.registerCommand("extension.bun.codelens.run.task", async ({ script, name }: CommandArgs) => {
-      if (script.startsWith("bun ")) script = script.slice(4);
+      if (script.startsWith("bun run ")) script = script.slice(8);
 
       name = `Bun Task: ${name}`;
       const terminals = getActiveTerminal(name);
       if (terminals.length > 0) {
         terminals[0].show();
-        terminals[0].sendText(`bun ${script}`);
+        terminals[0].sendText(`bun run ${script}`);
         return;
       }
 
       const terminal = vscode.window.createTerminal({ name });
       terminal.show();
-      terminal.sendText(`bun ${script}`);
+      terminal.sendText(`bun run ${script}`);
     }),
   );
 }

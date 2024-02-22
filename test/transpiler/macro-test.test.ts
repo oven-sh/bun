@@ -1,4 +1,10 @@
-import { identity, escape, addStringsUTF16, addStrings } from "./macro.ts" assert { type: "macro" };
+import { expect, test } from "bun:test";
+import { addStrings, addStringsUTF16, escape, identity } from "./macro.ts" assert { type: "macro" };
+import { escapeHTML } from "bun" assert { type: "macro" };
+
+test("bun builtins can be used in macros", async () => {
+  expect(escapeHTML("abc!")).toBe("abc!");
+});
 
 test("latin1 string", () => {
   expect(identity("©")).toBe("©");
@@ -19,11 +25,11 @@ test("escaping", () => {
   expect(identity("'")).toBe("'");
   expect(identity('"')).toBe('"');
   expect(identity("`")).toBe("`");
-  // prettier-ignore
+  // biome-ignore: format ignore
   expect(identity("\'")).toBe("\'");
-  // prettier-ignore
+  // biome-ignore: format ignoreormat ignore
   expect(identity('\"')).toBe('\"');
-  // prettier-ignore
+  // biome-ignore: format ignoreormat ignore
   expect(identity("\`")).toBe("\`");
   expect(identity("$")).toBe("$");
   expect(identity("\x00")).toBe("\x00");

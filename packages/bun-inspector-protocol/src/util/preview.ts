@@ -46,7 +46,10 @@ export function objectPreviewToString(objectPreview: JSC.Runtime.ObjectPreview):
     items = entries.map(entryPreviewToString).sort();
   } else if (properties) {
     if (isIndexed(subtype)) {
-      items = properties.map(indexedPropertyPreviewToString).sort();
+      items = properties.map(indexedPropertyPreviewToString);
+      if (subtype !== "array") {
+        items.sort();
+      }
     } else {
       items = properties.map(namedPropertyPreviewToString).sort();
     }

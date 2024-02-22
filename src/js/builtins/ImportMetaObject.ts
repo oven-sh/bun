@@ -1,5 +1,6 @@
 type ImportMetaObject = Partial<ImportMeta>;
 
+$visibility = "Private";
 export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
   var loader = Loader;
   var queue = $createFIFO();
@@ -92,6 +93,7 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
   return loader.registry.$get(resolvedSpecifier);
 }
 
+$visibility = "Private";
 export function requireESM(this: ImportMetaObject, resolved) {
   var entry = Loader.registry.$get(resolved);
 
@@ -107,6 +109,7 @@ export function requireESM(this: ImportMetaObject, resolved) {
   return exports;
 }
 
+$visibility = "Private";
 export function internalRequire(this: ImportMetaObject, id) {
   var cached = $requireMap.$get(id);
   const last5 = id.substring(id.length - 5);
@@ -118,17 +121,17 @@ export function internalRequire(this: ImportMetaObject, id) {
   if (last5 === ".json") {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
     var exports = JSON.parse(fs.readFileSync(id, "utf8"));
-    $requireMap.$set(id, $createCommonJSModule(id, exports, true));
+    $requireMap.$set(id, $createCommonJSModule(id, exports, true, undefined));
     return exports;
   } else if (last5 === ".node") {
-    const module = $createCommonJSModule(id, {}, true);
+    const module = $createCommonJSModule(id, {}, true, undefined);
     process.dlopen(module, id);
     $requireMap.$set(id, module);
     return module.exports;
   } else if (last5 === ".toml") {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
     var exports = Bun.TOML.parse(fs.readFileSync(id, "utf8"));
-    $requireMap.$set(id, $createCommonJSModule(id, exports, true));
+    $requireMap.$set(id, $createCommonJSModule(id, exports, true, undefined));
     return exports;
   } else {
     var exports = $requireESM(id);
@@ -136,11 +139,12 @@ export function internalRequire(this: ImportMetaObject, id) {
     if (cachedModule) {
       return cachedModule.exports;
     }
-    $requireMap.$set(id, $createCommonJSModule(id, exports, true));
+    $requireMap.$set(id, $createCommonJSModule(id, exports, true, undefined));
     return exports;
   }
 }
 
+$visibility = "Private";
 export function createRequireCache() {
   var moduleMap = new Map();
   var inner = {};
@@ -152,7 +156,7 @@ export function createRequireCache() {
       const esm = Loader.registry.$get(key);
       if (esm?.evaluated) {
         const namespace = Loader.getModuleNamespaceObject(esm.module);
-        const mod = $createCommonJSModule(key, namespace, true);
+        const mod = $createCommonJSModule(key, namespace, true, undefined);
         $requireMap.$set(key, mod);
         return mod;
       }
@@ -165,7 +169,7 @@ export function createRequireCache() {
     },
 
     has(target, key: string) {
-      return $requireMap.$has(key) || Loader.registry.$has(key);
+      return $requireMap.$has(key) || Boolean(Loader.registry.$get(key)?.evaluated);
     },
 
     deleteProperty(target, key: string) {

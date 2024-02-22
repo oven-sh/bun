@@ -61,9 +61,9 @@ private:
     JSC::BytecodeIndex m_bytecodeIndex;
 
     // Lazy-initialized
-    JSC::JSString* m_sourceURL;
-    JSC::JSString* m_functionName;
-    JSC::JSString* m_typeName;
+    WTF::String m_sourceURL;
+    WTF::String m_functionName;
+    WTF::String m_typeName;
 
     // m_wasmFunctionIndexOrName has meaning only when m_isWasmFrame is set
     JSC::Wasm::IndexOrName m_wasmFunctionIndexOrName;
@@ -105,7 +105,7 @@ public:
     bool isConstructor() const { return m_codeBlock && (JSC::CodeForConstruct == m_codeBlock->specializationKind()); }
 
 private:
-    ALWAYS_INLINE JSC::JSString* retrieveSourceURL();
+    ALWAYS_INLINE String retrieveSourceURL();
 
     /* Regarding real functions (not eval\module\global code), both v8 and JSC seem to follow
      * the same logic, which is to first try the function's "display name", and if it's not defined,
@@ -119,9 +119,9 @@ private:
      * and just try to use the "name" property when needed, so our lookup will be:
      * "display name" property -> "name" property -> JSFunction\InternalFunction "name" methods.
      */
-    ALWAYS_INLINE JSC::JSString* retrieveFunctionName();
+    ALWAYS_INLINE String retrieveFunctionName();
 
-    ALWAYS_INLINE JSC::JSString* retrieveTypeName();
+    ALWAYS_INLINE String retrieveTypeName();
 
     bool calculateSourcePositions();
 };

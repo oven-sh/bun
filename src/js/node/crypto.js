@@ -10,7 +10,40 @@ var Buffer = globalThis.Buffer;
 const EMPTY_BUFFER = Buffer.alloc(0);
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
+function exportIfKeyObject(key) {
+  if (key instanceof KeyObject) {
+    key = key.export();
+  } else if (key instanceof CryptoKey) {
+    key = KeyObject.from(key).export();
+  }
+  return key;
+}
+function getKeyFrom(key, type) {
+  if (key instanceof KeyObject) {
+    key = key.export();
+  } else if (key instanceof CryptoKey) {
+    key = KeyObject.from(key).export();
+  } else if (!Buffer.isBuffer(key) && typeof key === "object") {
+    if ((typeof key.format === "string" || typeof key.passphrase === "string") && typeof key.key !== "undefined") {
+      key = type === "public" ? _createPublicKey(key).export() : _createPrivateKey(key).export();
+    }
+  } else if (typeof key === "string" && type === "public") {
+    // make public key from non encrypted private PEM
+    key.indexOf("PRIVATE KEY-----") !== -1 && (key = _createPublicKey(key).export());
+  }
+  return key;
+}
 function getArrayBufferOrView(buffer, name, encoding) {
+  if (buffer instanceof KeyObject) {
+    if (buffer.type !== "secret") {
+      const error = new TypeError(
+        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`,
+      );
+      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+      throw error;
+    }
+    buffer = buffer.export();
+  }
   if (isAnyArrayBuffer(buffer)) return buffer;
   if (typeof buffer === "string") {
     if (encoding === "buffer") encoding = "utf8";
@@ -135,7 +168,7 @@ var require_hash_base = __commonJS({
         throw new TypeError(prefix + " must be a string or a buffer");
     }
     function HashBase(blockSize) {
-      StreamModule.Transform.call(this),
+      StreamModule.Transform.$call(this),
         (this._block = Buffer2.allocUnsafe(blockSize)),
         (this._blockSize = blockSize),
         (this._blockOffset = 0),
@@ -202,7 +235,7 @@ var require_md5 = __commonJS({
       Buffer2 = require_safe_buffer().Buffer,
       ARRAY16 = new Array(16);
     function MD5() {
-      HashBase.call(this, 64),
+      HashBase.$call(this, 64),
         (this._a = 1732584193),
         (this._b = 4023233417),
         (this._c = 2562383102),
@@ -350,7 +383,7 @@ var require_ripemd160 = __commonJS({
       hl = [0, 1518500249, 1859775393, 2400959708, 2840853838],
       hr = [1352829926, 1548603684, 1836072691, 2053994217, 0];
     function RIPEMD160() {
-      HashBase.call(this, 64),
+      HashBase.$call(this, 64),
         (this._a = 1732584193),
         (this._b = 4023233417),
         (this._c = 2562383102),
@@ -380,16 +413,16 @@ var require_ripemd160 = __commonJS({
           ? ((tl = fn1(al, bl, cl, dl, el, words[zl[i]], hl[0], sl[i])),
             (tr = fn5(ar, br, cr, dr, er, words[zr[i]], hr[0], sr[i])))
           : i < 32
-          ? ((tl = fn2(al, bl, cl, dl, el, words[zl[i]], hl[1], sl[i])),
-            (tr = fn4(ar, br, cr, dr, er, words[zr[i]], hr[1], sr[i])))
-          : i < 48
-          ? ((tl = fn3(al, bl, cl, dl, el, words[zl[i]], hl[2], sl[i])),
-            (tr = fn3(ar, br, cr, dr, er, words[zr[i]], hr[2], sr[i])))
-          : i < 64
-          ? ((tl = fn4(al, bl, cl, dl, el, words[zl[i]], hl[3], sl[i])),
-            (tr = fn2(ar, br, cr, dr, er, words[zr[i]], hr[3], sr[i])))
-          : ((tl = fn5(al, bl, cl, dl, el, words[zl[i]], hl[4], sl[i])),
-            (tr = fn1(ar, br, cr, dr, er, words[zr[i]], hr[4], sr[i]))),
+            ? ((tl = fn2(al, bl, cl, dl, el, words[zl[i]], hl[1], sl[i])),
+              (tr = fn4(ar, br, cr, dr, er, words[zr[i]], hr[1], sr[i])))
+            : i < 48
+              ? ((tl = fn3(al, bl, cl, dl, el, words[zl[i]], hl[2], sl[i])),
+                (tr = fn3(ar, br, cr, dr, er, words[zr[i]], hr[2], sr[i])))
+              : i < 64
+                ? ((tl = fn4(al, bl, cl, dl, el, words[zl[i]], hl[3], sl[i])),
+                  (tr = fn2(ar, br, cr, dr, er, words[zr[i]], hr[3], sr[i])))
+                : ((tl = fn5(al, bl, cl, dl, el, words[zl[i]], hl[4], sl[i])),
+                  (tr = fn1(ar, br, cr, dr, er, words[zr[i]], hr[4], sr[i]))),
           (al = el),
           (el = dl),
           (dl = rotl(cl, 10)),
@@ -463,7 +496,6 @@ var require_hash = __commonJS({
       for (
         var block = this._block, blockSize = this._blockSize, length = data.length, accum = this._len, offset = 0;
         offset < length;
-
       ) {
         for (
           var assigned = accum % blockSize, remainder = Math.min(length - offset, blockSize - assigned), i = 0;
@@ -508,7 +540,7 @@ var require_sha = __commonJS({
       K = [1518500249, 1859775393, -1894007588, -899497514],
       W = new Array(80);
     function Sha() {
-      this.init(), (this._w = W), Hash.call(this, 64, 56);
+      this.init(), (this._w = W), Hash.$call(this, 64, 56);
     }
     inherits(Sha, Hash);
     Sha.prototype.init = function () {
@@ -573,7 +605,7 @@ var require_sha1 = __commonJS({
       K = [1518500249, 1859775393, -1894007588, -899497514],
       W = new Array(80);
     function Sha1() {
-      this.init(), (this._w = W), Hash.call(this, 64, 56);
+      this.init(), (this._w = W), Hash.$call(this, 64, 56);
     }
     inherits(Sha1, Hash);
     Sha1.prototype.init = function () {
@@ -650,7 +682,7 @@ var require_sha256 = __commonJS({
       ],
       W = new Array(64);
     function Sha256() {
-      this.init(), (this._w = W), Hash.call(this, 64, 56);
+      this.init(), (this._w = W), Hash.$call(this, 64, 56);
     }
     inherits(Sha256, Hash);
     Sha256.prototype.init = function () {
@@ -742,7 +774,7 @@ var require_sha224 = __commonJS({
       Buffer2 = require_safe_buffer().Buffer,
       W = new Array(64);
     function Sha224() {
-      this.init(), (this._w = W), Hash.call(this, 64, 56);
+      this.init(), (this._w = W), Hash.$call(this, 64, 56);
     }
     inherits(Sha224, Sha256);
     Sha224.prototype.init = function () {
@@ -803,7 +835,7 @@ var require_sha512 = __commonJS({
       ],
       W = new Array(160);
     function Sha512() {
-      this.init(), (this._w = W), Hash.call(this, 128, 112);
+      this.init(), (this._w = W), Hash.$call(this, 128, 112);
     }
     inherits(Sha512, Hash);
     Sha512.prototype.init = function () {
@@ -985,7 +1017,7 @@ var require_sha384 = __commonJS({
       Buffer2 = require_safe_buffer().Buffer,
       W = new Array(160);
     function Sha384() {
-      this.init(), (this._w = W), Hash.call(this, 128, 112);
+      this.init(), (this._w = W), Hash.$call(this, 128, 112);
     }
     inherits(Sha384, SHA512);
     Sha384.prototype.init = function () {
@@ -1052,15 +1084,17 @@ var require_cipher_base = __commonJS({
     var Buffer2 = require_safe_buffer().Buffer,
       inherits = require_inherits_browser();
     function CipherBase(hashMode) {
-      StreamModule.Transform.call(this),
+      StreamModule.Transform.$call(this),
         (this.hashMode = typeof hashMode == "string"),
         this.hashMode ? (this[hashMode] = this._finalOrDigest) : (this.final = this._finalOrDigest),
         this._final && ((this.__final = this._final), (this._final = null)),
         (this._decoder = null),
         (this._encoding = null);
+      this._finalized = !1;
     }
     inherits(CipherBase, StreamModule.Transform);
     CipherBase.prototype.update = function (data, inputEnc, outputEnc) {
+      if (outputEnc === "buffer") outputEnc = undefined;
       typeof data == "string" && (data = Buffer2.from(data, inputEnc));
       var outData = this._update(data);
       return this.hashMode ? this : (outputEnc && (outData = this._toString(outData, outputEnc)), outData);
@@ -1095,6 +1129,13 @@ var require_cipher_base = __commonJS({
       done(err);
     };
     CipherBase.prototype._finalOrDigest = function (outputEnc) {
+      if (outputEnc === "buffer") outputEnc = undefined;
+      if (this._finalized) {
+        if (!this._encoding) return Buffer2.alloc(0);
+        return "";
+      }
+
+      this._finalized = !0;
       var outData = this.__final() || Buffer2.alloc(0);
       return outputEnc && (outData = this._toString(outData, outputEnc, !0)), outData;
     };
@@ -1247,7 +1288,7 @@ var require_browser2 = __commonJS({
       Object.defineProperty(LazyHash.prototype, method, {
         get() {
           Object.setPrototypeOf(this, lazyHashFullInitProto);
-          StreamModule.Transform.call(this, this._options);
+          StreamModule.Transform.$call(this, this._options);
           return this[method];
         },
         enumerable: false,
@@ -1274,7 +1315,9 @@ var require_legacy = __commonJS({
       ZEROS = Buffer2.alloc(128),
       blocksize = 64;
     function Hmac(alg, key) {
-      Base.call(this, "digest"),
+      key = exportIfKeyObject(key);
+
+      Base.$call(this, "digest"),
         typeof key == "string" && (key = Buffer2.from(key)),
         (this._alg = alg),
         (this._key = key),
@@ -1327,7 +1370,9 @@ var require_browser3 = __commonJS({
     var sha = require_sha2();
     var ZEROS = Buffer2.alloc(128);
     function Hmac(alg, key) {
-      Base.call(this, "digest"), typeof key == "string" && (key = Buffer2.from(key));
+      key = exportIfKeyObject(key);
+
+      Base.$call(this, "digest"), typeof key == "string" && (key = Buffer2.from(key));
       var blocksize = alg === "sha512" || alg === "sha384" ? 128 : 64;
       if (((this._alg = alg), (this._key = key), key.length > blocksize)) {
         var hash = alg === "rmd160" ? new RIPEMD160() : sha(alg);
@@ -1350,16 +1395,18 @@ var require_browser3 = __commonJS({
     Hmac.prototype._final = function () {
       var h = this._hash.digest(),
         hash = this._alg === "rmd160" ? new RIPEMD160() : sha(this._alg);
+
       return hash.update(this._opad).update(h).digest();
     };
     module.exports = function (alg, key) {
+      key = exportIfKeyObject(key);
       return (
         (alg = alg.toLowerCase()),
         alg === "rmd160" || alg === "ripemd160"
           ? new Hmac("rmd160", key)
           : alg === "md5"
-          ? new Legacy(md5, key)
-          : new Hmac(alg, key)
+            ? new Legacy(md5, key)
+            : new Hmac(alg, key)
       );
     };
   },
@@ -1419,23 +1466,28 @@ var require_algorithms = __commonJS({
         hash: "sha1",
         id: "",
       },
+      sha1: {
+        sign: "ecdsa/rsa",
+        hash: "sha1",
+        id: "",
+      },
       sha256: {
-        sign: "ecdsa",
+        sign: "ecdsa/rsa",
         hash: "sha256",
         id: "",
       },
       sha224: {
-        sign: "ecdsa",
+        sign: "ecdsa/rsa",
         hash: "sha224",
         id: "",
       },
       sha384: {
-        sign: "ecdsa",
+        sign: "ecdsa/rsa",
         hash: "sha384",
         id: "",
       },
       sha512: {
-        sign: "ecdsa",
+        sign: "ecdsa/rsa",
         hash: "sha512",
         id: "",
       },
@@ -1550,9 +1602,9 @@ var require_default_encoding = __commonJS({
     global.process && global.process.browser
       ? (defaultEncoding = "utf-8")
       : global.process && global.process.version
-      ? ((pVersionMajor = parseInt(process.version.split(".")[0].slice(1), 10)),
-        (defaultEncoding = pVersionMajor >= 6 ? "utf-8" : "binary"))
-      : (defaultEncoding = "utf-8");
+        ? ((pVersionMajor = parseInt(process.version.split(".")[0].slice(1), 10)),
+          (defaultEncoding = pVersionMajor >= 6 ? "utf-8" : "binary"))
+        : (defaultEncoding = "utf-8");
     var pVersionMajor;
     module.exports = defaultEncoding;
   },
@@ -1593,6 +1645,7 @@ var require_sync_browser = __commonJS({
         ripemd160: 20,
       };
     function Hmac(alg, key, saltLen) {
+      key = exportIfKeyObject(key);
       var hash = getDigest(alg),
         blocksize = alg === "sha512" || alg === "sha384" ? 128 : 64;
       key.length > blocksize
@@ -1697,10 +1750,10 @@ var require_async = __commonJS({
         (global.process && global.process.nextTick
           ? (nextTick = global.process.nextTick)
           : global.queueMicrotask
-          ? (nextTick = global.queueMicrotask)
-          : global.setImmediate
-          ? (nextTick = global.setImmediate)
-          : (nextTick = global.setTimeout),
+            ? (nextTick = global.queueMicrotask)
+            : global.setImmediate
+              ? (nextTick = global.setImmediate)
+              : (nextTick = global.setTimeout),
         nextTick)
       );
     }
@@ -2007,7 +2060,7 @@ var require_des = __commonJS({
       (this.tmp = new Array(2)), (this.keys = null);
     }
     function DES(options) {
-      Cipher.call(this, options);
+      Cipher.$call(this, options);
       var state = new DESState();
       (this._desState = state), this.deriveKeys(state, options.key);
     }
@@ -2089,7 +2142,7 @@ var require_cbc = __commonJS({
     }
     function instantiate(Base) {
       function CBC(options) {
-        Base.call(this, options), this._cbcInit();
+        Base.$call(this, options), this._cbcInit();
       }
       inherits(CBC, Base);
       for (var keys = Object.keys(proto), i = 0; i < keys.length; i++) {
@@ -2114,10 +2167,10 @@ var require_cbc = __commonJS({
         iv = state.iv;
       if (this.type === "encrypt") {
         for (var i = 0; i < this.blockSize; i++) iv[i] ^= inp[inOff + i];
-        superProto._update.call(this, iv, 0, out, outOff);
+        superProto._update.$call(this, iv, 0, out, outOff);
         for (var i = 0; i < this.blockSize; i++) iv[i] = out[outOff + i];
       } else {
-        superProto._update.call(this, inp, inOff, out, outOff);
+        superProto._update.$call(this, inp, inOff, out, outOff);
         for (var i = 0; i < this.blockSize; i++) out[outOff + i] ^= iv[i];
         for (var i = 0; i < this.blockSize; i++) iv[i] = inp[inOff + i];
       }
@@ -2151,7 +2204,7 @@ var require_ede = __commonJS({
           ]);
     }
     function EDE(options) {
-      Cipher.call(this, options);
+      Cipher.$call(this, options);
       var state = new EDEState(this.type, this.options.key);
       this._edeState = state;
     }
@@ -2203,7 +2256,7 @@ var require_browserify_des = __commonJS({
     module.exports = DES;
     inherits(DES, CipherBase);
     function DES(opts) {
-      CipherBase.call(this);
+      CipherBase.$call(this);
       var modeName = opts.mode.toLowerCase(),
         mode = modes[modeName],
         type;
@@ -2327,7 +2380,7 @@ var require_cfb1 = __commonJS({
         (pad = self2._cipher.encryptBlock(self2._prev)),
           (bit = byteParam & (1 << (7 - i)) ? 128 : 0),
           (value = pad[0] ^ bit),
-          (out += (value & 128) >> i % 8),
+          (out += (value & 128) >> (i % 8)),
           (self2._prev = shiftIn(self2._prev, decrypt ? bit : value));
       return out;
     }
@@ -2628,6 +2681,11 @@ var require_aes = __commonJS({
   "node_modules/browserify-aes/aes.js"(exports, module) {
     var Buffer2 = require_safe_buffer().Buffer;
     function asUInt32Array(buf) {
+      if (buf instanceof KeyObject) {
+        buf = buf.export();
+      } else if (buf instanceof CryptoKey) {
+        buf = KeyObject.from(buf).export();
+      }
       Buffer2.isBuffer(buf) || (buf = Buffer2.from(buf));
       for (var len = (buf.length / 4) | 0, out = new Array(len), i = 0; i < len; i++) out[i] = buf.readUInt32BE(i * 4);
       return out;
@@ -2914,12 +2972,12 @@ var require_authCipher = __commonJS({
         ghash.update(Buffer2.alloc(8, 0));
       var ivBits = len * 8,
         tail = Buffer2.alloc(8);
-      tail.writeUIntBE(ivBits, 0, 8), ghash.update(tail), (self2._finID = ghash.state);
+      tail.writeUIntBE(ivBits, 2, 6), ghash.update(tail), (self2._finID = ghash.state);
       var out = Buffer2.from(self2._finID);
       return incr32(out), out;
     }
     function StreamCipher(mode, key, iv, decrypt) {
-      Transform.call(this);
+      Transform.$call(this);
       var h = Buffer2.alloc(4, 0);
       this._cipher = new aes.AES(key);
       var ck = this._cipher.encryptBlock(h);
@@ -2977,7 +3035,7 @@ var require_streamCipher = __commonJS({
       Transform = require_cipher_base(),
       inherits = require_inherits_browser();
     function StreamCipher(mode, key, iv, decrypt) {
-      Transform.call(this),
+      Transform.$call(this),
         (this._cipher = new aes.AES(key)),
         (this._prev = Buffer2.from(iv)),
         (this._cache = Buffer2.allocUnsafe(0)),
@@ -3010,7 +3068,6 @@ var require_evp_bytestokey = __commonJS({
       for (
         var keyLen = keyBits / 8, key = Buffer2.alloc(keyLen), iv = Buffer2.alloc(ivLen || 0), tmp = Buffer2.alloc(0);
         keyLen > 0 || ivLen > 0;
-
       ) {
         var hash = new MD5();
         hash.update(tmp), hash.update(password), salt && hash.update(salt), (tmp = hash.digest());
@@ -3043,7 +3100,7 @@ var require_encrypter = __commonJS({
       ebtk = require_evp_bytestokey(),
       inherits = require_inherits_browser();
     function Cipher(mode, key, iv) {
-      Transform.call(this),
+      Transform.$call(this),
         (this._cache = new Splitter()),
         (this._cipher = new aes.AES(key)),
         (this._prev = Buffer2.from(iv)),
@@ -3107,8 +3164,8 @@ var require_encrypter = __commonJS({
       return config.type === "stream"
         ? new StreamCipher(config.module, password, iv)
         : config.type === "auth"
-        ? new AuthCipher(config.module, password, iv)
-        : new Cipher(config.module, password, iv);
+          ? new AuthCipher(config.module, password, iv)
+          : new Cipher(config.module, password, iv);
     }
     function createCipher(suite, password) {
       var config = MODES[suite.toLowerCase()];
@@ -3133,7 +3190,7 @@ var require_decrypter = __commonJS({
       ebtk = require_evp_bytestokey(),
       inherits = require_inherits_browser();
     function Decipher(mode, key, iv) {
-      Transform.call(this),
+      Transform.$call(this),
         (this._cache = new Splitter()),
         (this._last = void 0),
         (this._cipher = new aes.AES(key)),
@@ -3203,8 +3260,8 @@ var require_decrypter = __commonJS({
       return config.type === "stream"
         ? new StreamCipher(config.module, password, iv, !0)
         : config.type === "auth"
-        ? new AuthCipher(config.module, password, iv, !0)
-        : new Decipher(config.module, password, iv);
+          ? new AuthCipher(config.module, password, iv, !0)
+          : new Decipher(config.module, password, iv);
     }
     function createDecipher(suite, password) {
       var config = MODES[suite.toLowerCase()];
@@ -3372,10 +3429,10 @@ var require_bn = __commonJS({
             number < 67108864
               ? ((this.words = [number & 67108863]), (this.length = 1))
               : number < 4503599627370496
-              ? ((this.words = [number & 67108863, (number / 67108864) & 67108863]), (this.length = 2))
-              : (assert(number < 9007199254740992),
-                (this.words = [number & 67108863, (number / 67108864) & 67108863, 1]),
-                (this.length = 3)),
+                ? ((this.words = [number & 67108863, (number / 67108864) & 67108863]), (this.length = 2))
+                : (assert(number < 9007199254740992),
+                  (this.words = [number & 67108863, (number / 67108864) & 67108863, 1]),
+                  (this.length = 3)),
             endian === "le" && this._initArray(this.toArray(), base, endian);
         }),
         (BN.prototype._initArray = function (number, base, endian) {
@@ -3557,8 +3614,8 @@ var require_bn = __commonJS({
             this.length === 2
               ? (ret += this.words[1] * 67108864)
               : this.length === 3 && this.words[2] === 1
-              ? (ret += 4503599627370496 + this.words[1] * 67108864)
-              : this.length > 2 && assert(!1, "Number can only safely store up to 53 bits"),
+                ? (ret += 4503599627370496 + this.words[1] * 67108864)
+                : this.length > 2 && assert(!1, "Number can only safely store up to 53 bits"),
             this.negative !== 0 ? -ret : ret
           );
         }),
@@ -3747,10 +3804,10 @@ var require_bn = __commonJS({
           return num.negative !== 0 && this.negative === 0
             ? ((num.negative = 0), (res = this.sub(num)), (num.negative ^= 1), res)
             : num.negative === 0 && this.negative !== 0
-            ? ((this.negative = 0), (res = num.sub(this)), (this.negative = 1), res)
-            : this.length > num.length
-            ? this.clone().iadd(num)
-            : num.clone().iadd(this);
+              ? ((this.negative = 0), (res = num.sub(this)), (this.negative = 1), res)
+              : this.length > num.length
+                ? this.clone().iadd(num)
+                : num.clone().iadd(this);
         }),
         (BN.prototype.isub = function (num) {
           if (num.negative !== 0) {
@@ -4392,10 +4449,10 @@ var require_bn = __commonJS({
           this.length === 10 && num.length === 10
             ? (res = comb10MulTo(this, num, out))
             : len < 63
-            ? (res = smallMulTo(this, num, out))
-            : len < 1024
-            ? (res = bigMulTo(this, num, out))
-            : (res = jumboMulTo(this, num, out)),
+              ? (res = smallMulTo(this, num, out))
+              : len < 1024
+                ? (res = bigMulTo(this, num, out))
+                : (res = jumboMulTo(this, num, out)),
           res
         );
       };
@@ -4640,10 +4697,10 @@ var require_bn = __commonJS({
             num < 0
               ? this.isubn(-num)
               : this.negative !== 0
-              ? this.length === 1 && (this.words[0] | 0) < num
-                ? ((this.words[0] = num - (this.words[0] | 0)), (this.negative = 0), this)
-                : ((this.negative = 0), this.isubn(num), (this.negative = 1), this)
-              : this._iaddn(num)
+                ? this.length === 1 && (this.words[0] | 0) < num
+                  ? ((this.words[0] = num - (this.words[0] | 0)), (this.negative = 0), this)
+                  : ((this.negative = 0), this.isubn(num), (this.negative = 1), this)
+                : this._iaddn(num)
           );
         }),
         (BN.prototype._iaddn = function (num) {
@@ -4742,40 +4799,40 @@ var require_bn = __commonJS({
                 mod,
               })
             : this.negative === 0 && num.negative !== 0
-            ? ((res = this.divmod(num.neg(), mode)),
-              mode !== "mod" && (div = res.div.neg()),
-              {
-                div,
-                mod: res.mod,
-              })
-            : (this.negative & num.negative) !== 0
-            ? ((res = this.neg().divmod(num.neg(), mode)),
-              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.isub(num)),
-              {
-                div: res.div,
-                mod,
-              })
-            : num.length > this.length || this.cmp(num) < 0
-            ? {
-                div: new BN(0),
-                mod: this,
-              }
-            : num.length === 1
-            ? mode === "div"
-              ? {
-                  div: this.divn(num.words[0]),
-                  mod: null,
-                }
-              : mode === "mod"
-              ? {
-                  div: null,
-                  mod: new BN(this.modn(num.words[0])),
-                }
-              : {
-                  div: this.divn(num.words[0]),
-                  mod: new BN(this.modn(num.words[0])),
-                }
-            : this._wordDiv(num, mode);
+              ? ((res = this.divmod(num.neg(), mode)),
+                mode !== "mod" && (div = res.div.neg()),
+                {
+                  div,
+                  mod: res.mod,
+                })
+              : (this.negative & num.negative) !== 0
+                ? ((res = this.neg().divmod(num.neg(), mode)),
+                  mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.isub(num)),
+                  {
+                    div: res.div,
+                    mod,
+                  })
+                : num.length > this.length || this.cmp(num) < 0
+                  ? {
+                      div: new BN(0),
+                      mod: this,
+                    }
+                  : num.length === 1
+                    ? mode === "div"
+                      ? {
+                          div: this.divn(num.words[0]),
+                          mod: null,
+                        }
+                      : mode === "mod"
+                        ? {
+                            div: null,
+                            mod: new BN(this.modn(num.words[0])),
+                          }
+                        : {
+                            div: this.divn(num.words[0]),
+                            mod: new BN(this.modn(num.words[0])),
+                          }
+                    : this._wordDiv(num, mode);
         }),
         (BN.prototype.div = function (num) {
           return this.divmod(num, "div", !1).div;
@@ -4796,8 +4853,8 @@ var require_bn = __commonJS({
           return cmp < 0 || (r2 === 1 && cmp === 0)
             ? dm.div
             : dm.div.negative !== 0
-            ? dm.div.isubn(1)
-            : dm.div.iaddn(1);
+              ? dm.div.isubn(1)
+              : dm.div.iaddn(1);
         }),
         (BN.prototype.modn = function (num) {
           assert(num <= 67108863);
@@ -5058,10 +5115,10 @@ var require_bn = __commonJS({
             cmp === 0
               ? ((r.words[0] = 0), (r.length = 1))
               : cmp > 0
-              ? r.isub(this.p)
-              : r.strip !== void 0
-              ? r.strip()
-              : r._strip(),
+                ? r.isub(this.p)
+                : r.strip !== void 0
+                  ? r.strip()
+                  : r._strip(),
             r
           );
         }),
@@ -5072,7 +5129,7 @@ var require_bn = __commonJS({
           return num.imul(this.k);
         });
       function K256() {
-        MPrime.call(this, "k256", "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f");
+        MPrime.$call(this, "k256", "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f");
       }
       inherits(K256, MPrime),
         (K256.prototype.split = function (input, output) {
@@ -5102,15 +5159,15 @@ var require_bn = __commonJS({
           );
         });
       function P224() {
-        MPrime.call(this, "p224", "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001");
+        MPrime.$call(this, "p224", "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001");
       }
       inherits(P224, MPrime);
       function P192() {
-        MPrime.call(this, "p192", "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff");
+        MPrime.$call(this, "p192", "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff");
       }
       inherits(P192, MPrime);
       function P25519() {
-        MPrime.call(this, "25519", "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed");
+        MPrime.$call(this, "25519", "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed");
       }
       inherits(P25519, MPrime),
         (P25519.prototype.imulK = function (num) {
@@ -5203,7 +5260,6 @@ var require_bn = __commonJS({
           for (
             var c = this.pow(z, q), r = this.pow(a, q.addn(1).iushrn(1)), t = this.pow(a, q), m = s;
             t.cmp(one) !== 0;
-
           ) {
             for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++) tmp = tmp.redSqr();
             assert(i < m);
@@ -5256,7 +5312,7 @@ var require_bn = __commonJS({
           return new Mont(num);
         });
       function Mont(m) {
-        Red.call(this, m),
+        Red.$call(this, m),
           (this.shift = this.m.bitLength()),
           this.shift % 26 !== 0 && (this.shift += 26 - (this.shift % 26)),
           (this.r = new BN(1).iushln(this.shift)),
@@ -5849,11 +5905,16 @@ var require_utils3 = __commonJS({
     function cachedProperty(obj, name, computer) {
       var key = "_" + name;
       obj.prototype[name] = function () {
-        return this[key] !== void 0 ? this[key] : (this[key] = computer.call(this));
+        return this[key] !== void 0 ? this[key] : (this[key] = computer.$call(this));
       };
     }
     utils.cachedProperty = cachedProperty;
     function parseBytes(bytes) {
+      if (bytes instanceof KeyObject) {
+        bytes = bytes.export();
+      } else if (bytes instanceof CryptoKey) {
+        bytes = KeyObject.from(bytes).export();
+      }
       return typeof bytes == "string" ? utils.toArray(bytes, "hex") : bytes;
     }
     utils.parseBytes = parseBytes;
@@ -5943,8 +6004,8 @@ var require_base = __commonJS({
               ? (acc = acc.mixedAdd(wnd[(z - 1) >> 1]))
               : (acc = acc.mixedAdd(wnd[(-z - 1) >> 1].neg()))
             : z > 0
-            ? (acc = acc.add(wnd[(z - 1) >> 1]))
-            : (acc = acc.add(wnd[(-z - 1) >> 1].neg()));
+              ? (acc = acc.add(wnd[(z - 1) >> 1]))
+              : (acc = acc.add(wnd[(-z - 1) >> 1].neg()));
       }
       return p.type === "affine" ? acc.toP() : acc;
     };
@@ -5975,8 +6036,8 @@ var require_base = __commonJS({
         points[a].y.cmp(points[b].y) === 0
           ? ((comb[1] = points[a].add(points[b])), (comb[2] = points[a].toJ().mixedAdd(points[b].neg())))
           : points[a].y.cmp(points[b].y.redNeg()) === 0
-          ? ((comb[1] = points[a].toJ().mixedAdd(points[b])), (comb[2] = points[a].add(points[b].neg())))
-          : ((comb[1] = points[a].toJ().mixedAdd(points[b])), (comb[2] = points[a].toJ().mixedAdd(points[b].neg())));
+            ? ((comb[1] = points[a].toJ().mixedAdd(points[b])), (comb[2] = points[a].add(points[b].neg())))
+            : ((comb[1] = points[a].toJ().mixedAdd(points[b])), (comb[2] = points[a].toJ().mixedAdd(points[b].neg())));
         var index = [-3, -1, -5, -7, 0, 7, 5, 1, 3],
           jsf = getJSF(coeffs[a], coeffs[b]);
         for (
@@ -6104,7 +6165,7 @@ var require_short = __commonJS({
       Base = require_base(),
       assert = utils.assert;
     function ShortCurve(conf) {
-      Base.call(this, "short", conf),
+      Base.$call(this, "short", conf),
         (this.a = new BN(conf.a, 16).toRed(this.red)),
         (this.b = new BN(conf.b, 16).toRed(this.red)),
         (this.tinv = this.two.redInvm()),
@@ -6178,7 +6239,6 @@ var require_short = __commonJS({
           r,
           x;
         u.cmpn(0) !== 0;
-
       ) {
         var q = v.div(u);
         (r = v.sub(q.mul(u))), (x = x2.sub(q.mul(x1)));
@@ -6247,7 +6307,7 @@ var require_short = __commonJS({
       return res;
     };
     function Point(curve, x, y, isRed) {
-      Base.BasePoint.call(this, curve, "affine"),
+      Base.BasePoint.$call(this, curve, "affine"),
         x === null && y === null
           ? ((this.x = null), (this.y = null), (this.inf = !0))
           : ((this.x = new BN(x, 16)),
@@ -6375,10 +6435,10 @@ var require_short = __commonJS({
         this.isInfinity()
           ? this
           : this._hasDoubles(k)
-          ? this.curve._fixedNafMul(this, k)
-          : this.curve.endo
-          ? this.curve._endoWnafMulAdd([this], [k])
-          : this.curve._wnafMul(this, k)
+            ? this.curve._fixedNafMul(this, k)
+            : this.curve.endo
+              ? this.curve._endoWnafMulAdd([this], [k])
+              : this.curve._wnafMul(this, k)
       );
     };
     Point.prototype.mulAdd = function (k1, p2, k2) {
@@ -6425,7 +6485,7 @@ var require_short = __commonJS({
       return res;
     };
     function JPoint(curve, x, y, z) {
-      Base.BasePoint.call(this, curve, "jacobian"),
+      Base.BasePoint.$call(this, curve, "jacobian"),
         x === null && y === null && z === null
           ? ((this.x = this.curve.one), (this.y = this.curve.one), (this.z = new BN(0)))
           : ((this.x = new BN(x, 16)), (this.y = new BN(y, 16)), (this.z = new BN(z, 16))),
@@ -6524,10 +6584,10 @@ var require_short = __commonJS({
       return this.isInfinity()
         ? this
         : this.curve.zeroA
-        ? this._zeroDbl()
-        : this.curve.threeA
-        ? this._threeDbl()
-        : this._dbl();
+          ? this._zeroDbl()
+          : this.curve.threeA
+            ? this._threeDbl()
+            : this._dbl();
     };
     JPoint.prototype._zeroDbl = function () {
       var nx, ny, nz;
@@ -6688,7 +6748,7 @@ var require_mont = __commonJS({
       Base = require_base(),
       utils = require_utils3();
     function MontCurve(conf) {
-      Base.call(this, "mont", conf),
+      Base.$call(this, "mont", conf),
         (this.a = new BN(conf.a, 16).toRed(this.red)),
         (this.b = new BN(conf.b, 16).toRed(this.red)),
         (this.i4 = new BN(4).toRed(this.red).redInvm()),
@@ -6705,7 +6765,7 @@ var require_mont = __commonJS({
       return y.redSqr().cmp(rhs) === 0;
     };
     function Point(curve, x, z) {
-      Base.BasePoint.call(this, curve, "projective"),
+      Base.BasePoint.$call(this, curve, "projective"),
         x === null && z === null
           ? ((this.x = this.curve.one), (this.z = this.curve.zero))
           : ((this.x = new BN(x, 16)),
@@ -6804,7 +6864,7 @@ var require_edwards = __commonJS({
       (this.twisted = (conf.a | 0) !== 1),
         (this.mOneA = this.twisted && (conf.a | 0) === -1),
         (this.extended = this.mOneA),
-        Base.call(this, "edwards", conf),
+        Base.$call(this, "edwards", conf),
         (this.a = new BN(conf.a, 16).umod(this.red.m)),
         (this.a = this.a.toRed(this.red)),
         (this.c = new BN(conf.c, 16).toRed(this.red)),
@@ -6860,7 +6920,7 @@ var require_edwards = __commonJS({
       return lhs.cmp(rhs) === 0;
     };
     function Point(curve, x, y, z, t) {
-      Base.BasePoint.call(this, curve, "projective"),
+      Base.BasePoint.$call(this, curve, "projective"),
         x === null && y === null && z === null
           ? ((this.x = this.curve.zero),
             (this.y = this.curve.one),
@@ -7080,14 +7140,14 @@ var require_utils4 = __commonJS({
             c < 128
               ? (res[p++] = c)
               : c < 2048
-              ? ((res[p++] = (c >> 6) | 192), (res[p++] = (c & 63) | 128))
-              : isSurrogatePair(msg, i)
-              ? ((c = 65536 + ((c & 1023) << 10) + (msg.charCodeAt(++i) & 1023)),
-                (res[p++] = (c >> 18) | 240),
-                (res[p++] = ((c >> 12) & 63) | 128),
-                (res[p++] = ((c >> 6) & 63) | 128),
-                (res[p++] = (c & 63) | 128))
-              : ((res[p++] = (c >> 12) | 224), (res[p++] = ((c >> 6) & 63) | 128), (res[p++] = (c & 63) | 128));
+                ? ((res[p++] = (c >> 6) | 192), (res[p++] = (c & 63) | 128))
+                : isSurrogatePair(msg, i)
+                  ? ((c = 65536 + ((c & 1023) << 10) + (msg.charCodeAt(++i) & 1023)),
+                    (res[p++] = (c >> 18) | 240),
+                    (res[p++] = ((c >> 12) & 63) | 128),
+                    (res[p++] = ((c >> 6) & 63) | 128),
+                    (res[p++] = (c & 63) | 128))
+                  : ((res[p++] = (c >> 12) | 224), (res[p++] = ((c >> 6) & 63) | 128), (res[p++] = (c & 63) | 128));
           }
       else for (i = 0; i < msg.length; i++) res[i] = msg[i] | 0;
       return res;
@@ -7119,18 +7179,18 @@ var require_utils4 = __commonJS({
       return word.length === 7
         ? "0" + word
         : word.length === 6
-        ? "00" + word
-        : word.length === 5
-        ? "000" + word
-        : word.length === 4
-        ? "0000" + word
-        : word.length === 3
-        ? "00000" + word
-        : word.length === 2
-        ? "000000" + word
-        : word.length === 1
-        ? "0000000" + word
-        : word;
+          ? "00" + word
+          : word.length === 5
+            ? "000" + word
+            : word.length === 4
+              ? "0000" + word
+              : word.length === 3
+                ? "00000" + word
+                : word.length === 2
+                  ? "000000" + word
+                  : word.length === 1
+                    ? "0000000" + word
+                    : word;
     }
     exports.zero8 = zero8;
     function join32(msg, start, end, endian) {
@@ -7398,7 +7458,7 @@ var require__ = __commonJS({
       sha1_K = [1518500249, 1859775393, 2400959708, 3395469782];
     function SHA1() {
       if (!(this instanceof SHA1)) return new SHA1();
-      BlockHash.call(this),
+      BlockHash.$call(this),
         (this.h = [1732584193, 4023233417, 2562383102, 271733878, 3285377520]),
         (this.W = new Array(80));
     }
@@ -7463,7 +7523,7 @@ var require__2 = __commonJS({
       ];
     function SHA256() {
       if (!(this instanceof SHA256)) return new SHA256();
-      BlockHash.call(this),
+      BlockHash.$call(this),
         (this.h = [1779033703, 3144134277, 1013904242, 2773480762, 1359893119, 2600822924, 528734635, 1541459225]),
         (this.k = sha256_K),
         (this.W = new Array(64));
@@ -7513,7 +7573,7 @@ var require__3 = __commonJS({
       SHA256 = require__2();
     function SHA224() {
       if (!(this instanceof SHA224)) return new SHA224();
-      SHA256.call(this),
+      SHA256.$call(this),
         (this.h = [3238371032, 914150663, 812702999, 4144912697, 4290775857, 1750603025, 1694076839, 3204075428]);
     }
     utils.inherits(SHA224, SHA256);
@@ -7569,7 +7629,7 @@ var require__4 = __commonJS({
       ];
     function SHA512() {
       if (!(this instanceof SHA512)) return new SHA512();
-      BlockHash.call(this),
+      BlockHash.$call(this),
         (this.h = [
           1779033703, 4089235720, 3144134277, 2227873595, 1013904242, 4271175723, 2773480762, 1595750129, 1359893119,
           2917565137, 2600822924, 725511199, 528734635, 4215389547, 1541459225, 327033209,
@@ -7749,7 +7809,7 @@ var require__5 = __commonJS({
       SHA512 = require__4();
     function SHA384() {
       if (!(this instanceof SHA384)) return new SHA384();
-      SHA512.call(this),
+      SHA512.$call(this),
         (this.h = [
           3418070365, 3238371032, 1654270250, 914150663, 2438529370, 812702999, 355462360, 4144912697, 1731405415,
           4290775857, 2394180231, 1750603025, 3675008525, 1694076839, 1203062813, 3204075428,
@@ -7792,7 +7852,7 @@ var require_ripemd = __commonJS({
       BlockHash = common.BlockHash;
     function RIPEMD160() {
       if (!(this instanceof RIPEMD160)) return new RIPEMD160();
-      BlockHash.call(this),
+      BlockHash.$call(this),
         (this.h = [1732584193, 4023233417, 2562383102, 271733878, 3285377520]),
         (this.endian = "little");
     }
@@ -7845,12 +7905,12 @@ var require_ripemd = __commonJS({
       return j <= 15
         ? x ^ y ^ z
         : j <= 31
-        ? (x & y) | (~x & z)
-        : j <= 47
-        ? (x | ~y) ^ z
-        : j <= 63
-        ? (x & z) | (y & ~z)
-        : x ^ (y | ~z);
+          ? (x & y) | (~x & z)
+          : j <= 47
+            ? (x | ~y) ^ z
+            : j <= 63
+              ? (x & z) | (y & ~z)
+              : x ^ (y | ~z);
     }
     function K(j) {
       return j <= 15 ? 0 : j <= 31 ? 1518500249 : j <= 47 ? 1859775393 : j <= 63 ? 2400959708 : 2840853838;
@@ -7888,6 +7948,8 @@ var require_hmac = __commonJS({
     var utils = require_utils4(),
       assert = require_minimalistic_assert();
     function Hmac(hash, key, enc) {
+      key = exportIfKeyObject(key);
+
       if (!(this instanceof Hmac)) return new Hmac(hash, key, enc);
       (this.Hash = hash),
         (this.blockSize = hash.blockSize / 8),
@@ -8731,8 +8793,8 @@ var require_curves = __commonJS({
       options.type === "short"
         ? (this.curve = new curve.short(options))
         : options.type === "edwards"
-        ? (this.curve = new curve.edwards(options))
-        : (this.curve = new curve.mont(options)),
+          ? (this.curve = new curve.edwards(options))
+          : (this.curve = new curve.mont(options)),
         (this.g = this.curve.g),
         (this.n = this.curve.n),
         (this.hash = options.hash),
@@ -8991,10 +9053,10 @@ var require_key = __commonJS({
       return pub.isInfinity()
         ? { result: !1, reason: "Invalid public key" }
         : pub.validate()
-        ? pub.mul(this.ec.curve.n).isInfinity()
-          ? { result: !0, reason: null }
-          : { result: !1, reason: "Public key * N != O" }
-        : { result: !1, reason: "Public key is not a point" };
+          ? pub.mul(this.ec.curve.n).isInfinity()
+            ? { result: !0, reason: null }
+            : { result: !1, reason: "Public key * N != O" }
+          : { result: !1, reason: "Public key is not a point" };
     };
     KeyPair.prototype.getPublic = function (compact, enc) {
       return (
@@ -9105,7 +9167,6 @@ var require_signature = __commonJS({
       for (
         r[0] & 128 && (r = [0].concat(r)), s[0] & 128 && (s = [0].concat(s)), r = rmPadding(r), s = rmPadding(s);
         !s[0] && !(s[1] & 128);
-
       )
         s = s.slice(1);
       var arr = [2];
@@ -9132,7 +9193,7 @@ var require_ec = __commonJS({
     function EC(options) {
       if (!(this instanceof EC)) return new EC(options);
       typeof options == "string" &&
-        (assert(Object.prototype.hasOwnProperty.call(curves, options), "Unknown curve " + options),
+        (assert(Object.prototype.hasOwnProperty.$call(curves, options), "Unknown curve " + options),
         (options = curves[options])),
         options instanceof curves.PresetCurve && (options = { curve: options }),
         (this.curve = options.curve.curve),
@@ -9168,7 +9229,6 @@ var require_ec = __commonJS({
           bytes = this.n.byteLength(),
           ns2 = this.n.sub(new BN(2));
         ;
-
       ) {
         var priv = new BN(drbg.generate(bytes));
         if (!(priv.cmp(ns2) > 0)) return priv.iaddn(1), this.keyFromPrivate(priv);
@@ -9507,8 +9567,8 @@ var require_safer = __commonJS({
           !fill || fill.length === 0
             ? buf.fill(0)
             : typeof encoding == "string"
-            ? buf.fill(fill, encoding)
-            : buf.fill(fill),
+              ? buf.fill(fill, encoding)
+              : buf.fill(fill),
           buf
         );
       });
@@ -9633,7 +9693,7 @@ var require_buffer = __commonJS({
       Reporter = require_reporter().Reporter,
       Buffer2 = require_safer().Buffer;
     function DecoderBuffer(base, options) {
-      if ((Reporter.call(this, options), !Buffer2.isBuffer(base))) {
+      if ((Reporter.$call(this, options), !Buffer2.isBuffer(base))) {
         this.error("Input not Buffer");
         return;
       }
@@ -9659,7 +9719,7 @@ var require_buffer = __commonJS({
     DecoderBuffer.prototype.save = function () {
       return {
         offset: this.offset,
-        reporter: Reporter.prototype.save.call(this),
+        reporter: Reporter.prototype.save.$call(this),
       };
     };
     DecoderBuffer.prototype.restore = function (save) {
@@ -9668,7 +9728,7 @@ var require_buffer = __commonJS({
         (res.offset = save.offset),
         (res.length = this.offset),
         (this.offset = save.offset),
-        Reporter.prototype.restore.call(this, save.reporter),
+        Reporter.prototype.restore.$call(this, save.reporter),
         res
       );
     };
@@ -9733,8 +9793,8 @@ var require_buffer = __commonJS({
             : (typeof this.value == "number"
                 ? (out[offset] = this.value)
                 : typeof this.value == "string"
-                ? out.write(this.value, offset)
-                : Buffer2.isBuffer(this.value) && this.value.copy(out, offset),
+                  ? out.write(this.value, offset)
+                  : Buffer2.isBuffer(this.value) && this.value.copy(out, offset),
               (offset += this.length))),
         out
       );
@@ -9858,14 +9918,14 @@ var require_node = __commonJS({
       methods.forEach(function (method) {
         this[method] = function () {
           let clone = new this.constructor(this);
-          return state.children.push(clone), clone[method].apply(clone, arguments);
+          return state.children.push(clone), clone[method].$apply(clone, arguments);
         };
       }, this);
     };
     Node.prototype._init = function (body) {
       let state = this._baseState;
       assert(state.parent === null),
-        body.call(this),
+        body.$call(this),
         (state.children = state.children.filter(function (child) {
           return child._baseState.parent === this;
         }, this)),
@@ -9910,7 +9970,7 @@ var require_node = __commonJS({
     tags.forEach(function (tag) {
       Node.prototype[tag] = function () {
         let state = this._baseState,
-          args = Array.prototype.slice.call(arguments);
+          args = Array.prototype.slice.$call(arguments);
         return assert(state.tag === null), (state.tag = tag), this._useArgs(args), this;
       };
     });
@@ -9937,7 +9997,7 @@ var require_node = __commonJS({
     };
     Node.prototype.obj = function () {
       let state = this._baseState,
-        args = Array.prototype.slice.call(arguments);
+        args = Array.prototype.slice.$call(arguments);
       return (state.obj = !0), args.length !== 0 && this._useArgs(args), this;
     };
     Node.prototype.key = function (newKey) {
@@ -9977,8 +10037,8 @@ var require_node = __commonJS({
           (state.explicit !== null
             ? (tag = state.explicit)
             : state.implicit !== null
-            ? (tag = state.implicit)
-            : state.tag !== null && (tag = state.tag),
+              ? (tag = state.implicit)
+              : state.tag !== null && (tag = state.tag),
           tag === null && !state.any)
         ) {
           let save = input.save();
@@ -10045,26 +10105,26 @@ var require_node = __commonJS({
       return tag === "seq" || tag === "set"
         ? null
         : tag === "seqof" || tag === "setof"
-        ? this._decodeList(input, tag, state.args[0], options)
-        : /str$/.test(tag)
-        ? this._decodeStr(input, tag, options)
-        : tag === "objid" && state.args
-        ? this._decodeObjid(input, state.args[0], state.args[1], options)
-        : tag === "objid"
-        ? this._decodeObjid(input, null, null, options)
-        : tag === "gentime" || tag === "utctime"
-        ? this._decodeTime(input, tag, options)
-        : tag === "null_"
-        ? this._decodeNull(input, options)
-        : tag === "bool"
-        ? this._decodeBool(input, options)
-        : tag === "objDesc"
-        ? this._decodeStr(input, tag, options)
-        : tag === "int" || tag === "enum"
-        ? this._decodeInt(input, state.args && state.args[0], options)
-        : state.use !== null
-        ? this._getUse(state.use, input._reporterState.obj)._decode(input, options)
-        : input.error("unknown tag: " + tag);
+          ? this._decodeList(input, tag, state.args[0], options)
+          : /str$/.test(tag)
+            ? this._decodeStr(input, tag, options)
+            : tag === "objid" && state.args
+              ? this._decodeObjid(input, state.args[0], state.args[1], options)
+              : tag === "objid"
+                ? this._decodeObjid(input, null, null, options)
+                : tag === "gentime" || tag === "utctime"
+                  ? this._decodeTime(input, tag, options)
+                  : tag === "null_"
+                    ? this._decodeNull(input, options)
+                    : tag === "bool"
+                      ? this._decodeBool(input, options)
+                      : tag === "objDesc"
+                        ? this._decodeStr(input, tag, options)
+                        : tag === "int" || tag === "enum"
+                          ? this._decodeInt(input, state.args && state.args[0], options)
+                          : state.use !== null
+                            ? this._getUse(state.use, input._reporterState.obj)._decode(input, options)
+                            : input.error("unknown tag: " + tag);
     };
     Node.prototype._getUse = function (entity, obj) {
       let state = this._baseState;
@@ -10264,7 +10324,7 @@ var require_der2 = __commonJS({
       return this.tree._encode(data, reporter).join();
     };
     function DERNode(parent) {
-      Node.call(this, "der", parent);
+      Node.$call(this, "der", parent);
     }
     inherits(DERNode, Node);
     DERNode.prototype._encodeComposite = function (tag, primitive, cls, content) {
@@ -10292,16 +10352,16 @@ var require_der2 = __commonJS({
             ? this._createEncoderBuffer(str)
             : this.reporter.error("Encoding of string type: numstr supports only digits and space")
           : tag === "printstr"
-          ? this._isPrintstr(str)
-            ? this._createEncoderBuffer(str)
-            : this.reporter.error(
-                "Encoding of string type: printstr supports only latin upper and lower case letters, digits, space, apostrophe, left and rigth parenthesis, plus sign, comma, hyphen, dot, slash, colon, equal sign, question mark",
-              )
-          : /str$/.test(tag)
-          ? this._createEncoderBuffer(str)
-          : tag === "objDesc"
-          ? this._createEncoderBuffer(str)
-          : this.reporter.error("Encoding of string type: " + tag + " unsupported");
+            ? this._isPrintstr(str)
+              ? this._createEncoderBuffer(str)
+              : this.reporter.error(
+                  "Encoding of string type: printstr supports only latin upper and lower case letters, digits, space, apostrophe, left and rigth parenthesis, plus sign, comma, hyphen, dot, slash, colon, equal sign, question mark",
+                )
+            : /str$/.test(tag)
+              ? this._createEncoderBuffer(str)
+              : tag === "objDesc"
+                ? this._createEncoderBuffer(str)
+                : this.reporter.error("Encoding of string type: " + tag + " unsupported");
     };
     DERNode.prototype._encodeObjid = function (id, values, relative) {
       if (typeof id == "string") {
@@ -10350,16 +10410,16 @@ var require_der2 = __commonJS({
               "Z",
             ].join(""))
           : tag === "utctime"
-          ? (str = [
-              two(date.getUTCFullYear() % 100),
-              two(date.getUTCMonth() + 1),
-              two(date.getUTCDate()),
-              two(date.getUTCHours()),
-              two(date.getUTCMinutes()),
-              two(date.getUTCSeconds()),
-              "Z",
-            ].join(""))
-          : this.reporter.error("Encoding " + tag + " time is not supported yet"),
+            ? (str = [
+                two(date.getUTCFullYear() % 100),
+                two(date.getUTCMonth() + 1),
+                two(date.getUTCDate()),
+                two(date.getUTCHours()),
+                two(date.getUTCMinutes()),
+                two(date.getUTCSeconds()),
+                "Z",
+              ].join(""))
+            : this.reporter.error("Encoding " + tag + " time is not supported yet"),
         this._encodeStr(str, "octstr")
       );
     };
@@ -10431,12 +10491,12 @@ var require_pem = __commonJS({
     var inherits = require_inherits_browser(),
       DEREncoder = require_der2();
     function PEMEncoder(entity) {
-      DEREncoder.call(this, entity), (this.enc = "pem");
+      DEREncoder.$call(this, entity), (this.enc = "pem");
     }
     inherits(PEMEncoder, DEREncoder);
     module.exports = PEMEncoder;
     PEMEncoder.prototype.encode = function (data, options) {
-      let p = DEREncoder.prototype.encode.call(this, data).toString("base64"),
+      let p = DEREncoder.prototype.encode.$call(this, data).toString("base64"),
         out = ["-----BEGIN " + options.label + "-----"];
       for (let i = 0; i < p.length; i += 64) out.push(p.slice(i, i + 64));
       return (
@@ -10483,7 +10543,7 @@ var require_der3 = __commonJS({
       );
     };
     function DERNode(parent) {
-      Node.call(this, "der", parent);
+      Node.$call(this, "der", parent);
     }
     inherits(DERNode, Node);
     DERNode.prototype._peekTag = function (buffer, tag, any) {
@@ -10671,7 +10731,7 @@ var require_pem2 = __commonJS({
       Buffer2 = require_safer().Buffer,
       DERDecoder = require_der3();
     function PEMDecoder(entity) {
-      DERDecoder.call(this, entity), (this.enc = "pem");
+      DERDecoder.$call(this, entity), (this.enc = "pem");
     }
     inherits(PEMDecoder, DERDecoder);
     module.exports = PEMDecoder;
@@ -10697,7 +10757,7 @@ var require_pem2 = __commonJS({
       let base64 = lines.slice(start + 1, end).join("");
       base64.replace(/[^a-z0-9+/=]+/gi, "");
       let input = Buffer2.from(base64, "base64");
-      return DERDecoder.prototype.decode.call(this, input, options);
+      return DERDecoder.prototype.decode.$call(this, input, options);
     };
   },
 });
@@ -10735,7 +10795,7 @@ var require_api = __commonJS({
       return (
         inherits(Generated, Base),
         (Generated.prototype._initNamed = function (entity, name2) {
-          Base.call(this, entity, name2);
+          Base.$call(this, entity, name2);
         }),
         new Generated(this)
       );
@@ -11042,8 +11102,67 @@ var require_parse_asn1 = __commonJS({
     module.exports = parseKeys;
     function parseKeys(buffer) {
       var password;
-      typeof buffer == "object" && !Buffer2.isBuffer(buffer) && ((password = buffer.passphrase), (buffer = buffer.key)),
-        typeof buffer == "string" && (buffer = Buffer2.from(buffer));
+      if (buffer instanceof KeyObject) {
+        buffer = buffer.export();
+      } else if (buffer instanceof CryptoKey) {
+        buffer = KeyObject.from(buffer).export();
+      } else {
+        if (typeof buffer == "object" && !Buffer2.isBuffer(buffer)) {
+          password = buffer.passphrase;
+          buffer = buffer.key;
+
+          if (buffer instanceof KeyObject) {
+            var options;
+            switch (buffer.type) {
+              case "secret":
+                options = {
+                  format: "buffer",
+                };
+                break;
+              case "public":
+                options = {
+                  format: "pem",
+                  type: "spki",
+                  passphrase: password,
+                };
+                break;
+              case "private":
+                options = {
+                  format: "pem",
+                  type: "pkcs8",
+                  passphrase: password,
+                };
+                break;
+            }
+            buffer = buffer.export(options);
+          } else if (buffer instanceof CryptoKey) {
+            var options;
+            switch (buffer.type) {
+              case "secret":
+                options = {
+                  format: "buffer",
+                };
+                break;
+              case "public":
+                options = {
+                  format: "pem",
+                  type: "spki",
+                  passphrase: password,
+                };
+                break;
+              case "private":
+                options = {
+                  format: "pem",
+                  type: "pkcs8",
+                  passphrase: password,
+                };
+                break;
+            }
+            buffer = KeyObject.from(buffer).export(options);
+          }
+        }
+      }
+      typeof buffer == "string" && (buffer = Buffer2.from(buffer));
       var stripped = fixProc(buffer, password),
         type = stripped.tag,
         data = stripped.data,
@@ -11165,7 +11284,7 @@ var require_sign = __commonJS({
       parseKeys = require_parse_asn1(),
       curves = require_curves2();
     function sign(hash, key, hashType, signType, tag) {
-      var priv = parseKeys(key);
+      var priv = parseKeys(getKeyFrom(key, "private"));
       if (priv.curve) {
         if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong private key type");
         return ecSign(hash, priv);
@@ -11200,7 +11319,6 @@ var require_sign = __commonJS({
           s = !1,
           kv = getKey(x, q, hash, algo);
         s === !1;
-
       )
         (k = makeKey(q, kv, algo)),
           (r = makeR(g, k, p, q)),
@@ -11291,7 +11409,7 @@ var require_verify = __commonJS({
       parseKeys = require_parse_asn1(),
       curves = require_curves2();
     function verify(sig, hash, key, signType, tag) {
-      var pub = parseKeys(key);
+      var pub = parseKeys(getKeyFrom(key, "public"));
       if (pub.type === "ec") {
         if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong public key type");
         return ecVerify(sig, hash, pub);
@@ -11362,7 +11480,10 @@ var require_browser8 = __commonJS({
       (algorithms[key].id = Buffer2.from(algorithms[key].id, "hex")), (algorithms[key.toLowerCase()] = algorithms[key]);
     });
     function Sign(algorithm) {
-      StreamModule.Writable.call(this);
+      if (typeof algorithm === "string") {
+        algorithm = algorithm.toLowerCase();
+      }
+      StreamModule.Writable.$call(this);
       var data = algorithms[algorithm];
       if (!data) throw new Error("Unknown message digest");
       (this._hashType = data.hash),
@@ -11384,7 +11505,10 @@ var require_browser8 = __commonJS({
       return enc ? sig.toString(enc) : sig;
     };
     function Verify(algorithm) {
-      StreamModule.Writable.call(this);
+      StreamModule.Writable.$call(this);
+      if (typeof algorithm === "string") {
+        algorithm = algorithm.toLowerCase();
+      }
       var data = algorithms[algorithm];
       if (!data) throw new Error("Unknown message digest");
       (this._hash = createHash(data.hash)), (this._tag = data.id), (this._signType = data.sign);
@@ -11682,13 +11806,19 @@ var require_privateDecrypt = __commonJS({
 // node_modules/public-encrypt/browser.js
 var require_browser10 = __commonJS({
   "node_modules/public-encrypt/browser.js"(exports) {
-    exports.publicEncrypt = require_publicEncrypt();
-    exports.privateDecrypt = require_privateDecrypt();
+    var publicEncrypt = require_publicEncrypt();
+    exports.publicEncrypt = function (key, buf, options) {
+      return publicEncrypt(getKeyFrom(key, "public"), buf, options);
+    };
+    var privateDecrypt = require_privateDecrypt();
+    exports.privateDecrypt = function (key, buf, options) {
+      return privateDecrypt(getKeyFrom(key, "private"), buf, options);
+    };
     exports.privateEncrypt = function (key, buf) {
-      return exports.publicEncrypt(key, buf, !0);
+      return publicEncrypt(getKeyFrom(key, "private"), buf, !0);
     };
     exports.publicDecrypt = function (key, buf) {
-      return exports.privateDecrypt(key, buf, !0);
+      return privateDecrypt(getKeyFrom(key, "public"), buf, !0);
     };
   },
 });
@@ -11880,7 +12010,6 @@ const harcoded_curves = [
   "secp224r1",
   "prime256v1",
   "prime192v1",
-  "ed25519",
   "secp384r1",
   "secp521r1",
 ];
@@ -11888,8 +12017,364 @@ const harcoded_curves = [
 function getCurves() {
   return harcoded_curves;
 }
+const {
+  symmetricKeySize,
+  asymmetricKeyDetails,
+  asymmetricKeyType,
+  equals,
+  exports,
+  createSecretKey,
+  createPublicKey,
+  createPrivateKey,
+  generateKeySync,
+  generateKeyPairSync,
+  sign: nativeSign,
+  verify: nativeVerify,
+} = $lazy("internal/crypto");
 
+const kCryptoKey = Symbol.for("::bunKeyObjectCryptoKey::");
+class KeyObject {
+  [kCryptoKey];
+  constructor(key) {
+    // TODO: check why this is fails
+    // if(!(key instanceof CryptoKey)) {
+    //   throw new TypeError("The \"key\" argument must be an instance of CryptoKey.");
+    // }
+    if (typeof key !== "object") {
+      throw new TypeError('The "key" argument must be an instance of CryptoKey.');
+    }
+    this[kCryptoKey] = key;
+  }
+  toString() {
+    return "[object KeyObject]";
+  }
+
+  static from(key) {
+    if (key instanceof KeyObject) {
+      key = key[kCryptoKey];
+    }
+    return new KeyObject(key);
+  }
+
+  get asymmetricKeyDetails() {
+    return asymmetricKeyDetails(this[kCryptoKey]);
+  }
+
+  get symmetricKeySize() {
+    return symmetricKeySize(this[kCryptoKey]);
+  }
+
+  get asymmetricKeyType() {
+    return asymmetricKeyType(this[kCryptoKey]);
+  }
+
+  ["export"](options) {
+    switch (arguments.length) {
+      case 0:
+        switch (this.type) {
+          case "secret":
+            options = {
+              format: "buffer",
+            };
+            break;
+          case "public":
+            options = {
+              format: "pem",
+              type: "spki",
+            };
+            break;
+          case "private":
+            options = {
+              format: "pem",
+              type: "pkcs8",
+            };
+            break;
+        }
+        break;
+      case 1:
+        if (typeof options === "object" && !options.format) {
+          switch (this.type) {
+            case "secret":
+              options.format = "buffer";
+              break;
+            default:
+              options.format = "pem";
+              break;
+          }
+        }
+    }
+    return exports(this[kCryptoKey], options);
+  }
+
+  equals(otherKey) {
+    if (!(otherKey instanceof KeyObject)) {
+      throw new TypeError("otherKey must be a KeyObject");
+    }
+    return equals(this[kCryptoKey], otherKey[kCryptoKey]);
+  }
+
+  get type() {
+    return this[kCryptoKey].type;
+  }
+}
+
+crypto_exports.generateKeySync = function (algorithm, options) {
+  return KeyObject.from(generateKeySync(algorithm, options?.length));
+};
+
+crypto_exports.generateKey = function (algorithm, options, callback) {
+  try {
+    const key = KeyObject.from(generateKeySync(algorithm, options?.length));
+    typeof callback === "function" && callback(null, KeyObject.from(key));
+  } catch (err) {
+    typeof callback === "function" && callback(err);
+  }
+};
+
+function _generateKeyPairSync(algorithm, options) {
+  const result = generateKeyPairSync(algorithm, options);
+  if (result) {
+    const publicKeyEncoding = options?.publicKeyEncoding;
+    const privateKeyEncoding = options?.privateKeyEncoding;
+    result.publicKey = publicKeyEncoding
+      ? KeyObject.from(result.publicKey).export(publicKeyEncoding)
+      : KeyObject.from(result.publicKey);
+    result.privateKey = privateKeyEncoding
+      ? KeyObject.from(result.privateKey).export(privateKeyEncoding)
+      : KeyObject.from(result.privateKey);
+  }
+  return result;
+}
+crypto_exports.generateKeyPairSync = _generateKeyPairSync;
+
+crypto_exports.generateKeyPair = function (algorithm, options, callback) {
+  try {
+    const result = _generateKeyPairSync(algorithm, options);
+    typeof callback === "function" && callback(null, result.publicKey, result.privateKey);
+  } catch (err) {
+    typeof callback === "function" && callback(err);
+  }
+};
+
+crypto_exports.createSecretKey = function (key, encoding) {
+  if (key instanceof KeyObject || key instanceof CryptoKey) {
+    if (key.type !== "secret") {
+      const error = new TypeError(
+        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`,
+      );
+      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+      throw error;
+    }
+    return KeyObject.from(key);
+  }
+
+  const buffer = getArrayBufferOrView(key, encoding || "utf8");
+  return KeyObject.from(createSecretKey(buffer));
+};
+
+function _createPrivateKey(key) {
+  if (typeof key === "string") {
+    key = Buffer.from(key, "utf8");
+    return KeyObject.from(createPrivateKey({ key, format: "pem" }));
+  } else if (isAnyArrayBuffer(key) || isArrayBufferView(key)) {
+    return KeyObject.from(createPrivateKey({ key, format: "pem" }));
+  } else if (typeof key === "object") {
+    if (key instanceof KeyObject || key instanceof CryptoKey) {
+      const error = new TypeError(`ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}`);
+      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+      throw error;
+    } else {
+      let actual_key = key.key;
+      if (typeof actual_key === "string") {
+        actual_key = Buffer.from(actual_key, key.encoding || "utf8");
+        key.key = actual_key;
+      } else if (actual_key instanceof KeyObject || actual_key instanceof CryptoKey) {
+        const error = new TypeError(`ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}`);
+        error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+        throw error;
+      }
+      if (!isAnyArrayBuffer(actual_key) && !isArrayBufferView(actual_key) && typeof actual_key !== "object") {
+        var error = new TypeError(
+          `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
+            actual_key,
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (!key.format) {
+        key.format = "pem";
+      }
+      return KeyObject.from(createPrivateKey(key));
+    }
+  } else {
+    var error = new TypeError(
+      `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
+        key,
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+}
+crypto_exports.createPrivateKey = _createPrivateKey;
+
+function _createPublicKey(key) {
+  if (typeof key === "string") {
+    key = Buffer.from(key, "utf8");
+    return KeyObject.from(createPublicKey({ key, format: "pem" }));
+  } else if (isAnyArrayBuffer(key) || isArrayBufferView(key)) {
+    return KeyObject.from(createPublicKey({ key, format: "pem" }));
+  } else if (typeof key === "object") {
+    if (key instanceof KeyObject || key instanceof CryptoKey) {
+      if (key.type === "private") {
+        return KeyObject.from(createPublicKey({ key: key[kCryptoKey] || key, format: "" }));
+      }
+      const error = new TypeError(
+        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected private`,
+      );
+      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+      throw error;
+    } else {
+      // must be an encrypted private key (this option is not documented at all)
+      if (key.passphrase) {
+        //TODO: handle encrypted keys in one native call
+        let actual_key = key.key;
+        if (typeof actual_key === "string") {
+          actual_key = Buffer.from(actual_key, key.encoding || "utf8");
+        }
+        return KeyObject.from(
+          createPublicKey({
+            key: createPrivateKey({ key: actual_key, format: key.format, passphrase: key.passphrase }),
+            format: "",
+          }),
+        );
+      }
+      let actual_key = key.key;
+      if (typeof actual_key === "string") {
+        actual_key = Buffer.from(actual_key, key.encoding || "utf8");
+        key.key = actual_key;
+      } else if (actual_key instanceof KeyObject || actual_key instanceof CryptoKey) {
+        if (actual_key.type === "private") {
+          return KeyObject.from(createPublicKey({ key: actual_key[kCryptoKey] || actual_key, format: "" }));
+        }
+        const error = new TypeError(
+          `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${actual_key.type}, expected private`,
+        );
+        error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
+        throw error;
+      }
+      if (!isAnyArrayBuffer(actual_key) && !isArrayBufferView(actual_key) && typeof actual_key !== "object") {
+        var error = new TypeError(
+          `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
+            key,
+        );
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (!key.format) {
+        key.format = "pem";
+      }
+      return KeyObject.from(createPublicKey(key));
+    }
+  } else {
+    var error = new TypeError(
+      `ERR_INVALID_ARG_TYPE: The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView or object. Received ` +
+        key,
+    );
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+}
+crypto_exports.createPublicKey = _createPublicKey;
+crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
+var _subtle = webcrypto.subtle;
+const _createSign = crypto_exports.createSign;
+
+crypto_exports.sign = function (algorithm, data, key, callback) {
+  // TODO: move this to native
+  var dsaEncoding, padding, saltLength;
+  // key must be a KeyObject
+  if (!(key instanceof KeyObject)) {
+    if ($isObject(key) && key.key) {
+      padding = key.padding;
+      saltLength = key.saltLength;
+      dsaEncoding = key.dsaEncoding;
+    }
+    if (key.key instanceof KeyObject) {
+      key = key.key;
+    } else {
+      key = _createPrivateKey(key);
+    }
+  }
+  if (typeof callback === "function") {
+    try {
+      let result;
+      if (key.asymmetricKeyType === "rsa") {
+        // RSA-PSS is supported by native but other RSA algorithms are not
+        result = _createSign(algorithm || "sha256")
+          .update(data)
+          .sign(key);
+      } else {
+        result = nativeSign(key[kCryptoKey], data, algorithm, dsaEncoding, padding, saltLength);
+      }
+      callback(null, result);
+    } catch (err) {
+      callback(err);
+    }
+  } else {
+    if (key.asymmetricKeyType === "rsa") {
+      return _createSign(algorithm || "sha256")
+        .update(data)
+        .sign(key);
+    } else {
+      return nativeSign(key[kCryptoKey], data, algorithm, dsaEncoding, padding, saltLength);
+    }
+  }
+};
+const _createVerify = crypto_exports.createVerify;
+
+crypto_exports.verify = function (algorithm, data, key, signature, callback) {
+  // TODO: move this to native
+  var dsaEncoding, padding, saltLength;
+  // key must be a KeyObject
+  if (!(key instanceof KeyObject)) {
+    if ($isObject(key) && key.key) {
+      padding = key.padding;
+      saltLength = key.saltLength;
+      dsaEncoding = key.dsaEncoding;
+    }
+    if (key.key instanceof KeyObject && key.key.type === "public") {
+      key = key.key;
+    } else {
+      key = _createPublicKey(key);
+    }
+  }
+  if (typeof callback === "function") {
+    try {
+      let result;
+      if (key.asymmetricKeyType === "rsa") {
+        // RSA-PSS is supported by native but other RSA algorithms are not
+        result = _createVerify(algorithm || "sha256")
+          .update(data)
+          .verify(key, signature);
+      } else {
+        result = nativeVerify(key[kCryptoKey], data, signature, algorithm, dsaEncoding, padding, saltLength);
+      }
+      callback(null, result);
+    } catch (err) {
+      callback(err);
+    }
+  } else {
+    if (key.asymmetricKeyType === "rsa") {
+      return _createVerify(algorithm || "sha256")
+        .update(data)
+        .verify(key, signature);
+    } else {
+      return nativeVerify(key[kCryptoKey], data, signature, algorithm, dsaEncoding, padding, saltLength);
+    }
+  }
+};
+
 __export(crypto_exports, {
   DEFAULT_ENCODING: () => DEFAULT_ENCODING,
   getRandomValues: () => getRandomValues,
@@ -11900,7 +12385,7 @@ __export(crypto_exports, {
   scryptSync: () => scryptSync,
   timingSafeEqual: () => timingSafeEqual,
   webcrypto: () => webcrypto,
-  subtle: () => webcrypto.subtle,
+  subtle: () => _subtle,
 });
 
 export default crypto_exports;

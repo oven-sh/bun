@@ -4,21 +4,21 @@
 
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
-#include "JavaScriptCore/FastMallocAlignedMemoryAllocator.h"
-#include "JavaScriptCore/HeapInlines.h"
-#include "JavaScriptCore/IsoHeapCellType.h"
-#include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
-// #include "JavaScriptCore/MarkingConstraint.h"
-#include "JavaScriptCore/SubspaceInlines.h"
-#include "JavaScriptCore/VM.h"
-#include "wtf/MainThread.h"
+#include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
+#include <JavaScriptCore/HeapInlines.h>
+#include <JavaScriptCore/IsoHeapCellType.h>
+#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+// #include <JavaScriptCore/MarkingConstraint.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <JavaScriptCore/VM.h>
+#include <wtf/MainThread.h>
 
 #include "JSDOMConstructorBase.h"
 #include "JSDOMBuiltinConstructorBase.h"
 
 #include "BunGCOutputConstraint.h"
 #include "WebCoreTypedArrayController.h"
-#include "JavaScriptCore/JSCInlines.h"
+#include <JavaScriptCore/JSCInlines.h>
 
 #include "JSDOMWrapper.h"
 #include <JavaScriptCore/DeferredWorkTimer.h>

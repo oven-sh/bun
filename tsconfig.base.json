@@ -3,7 +3,7 @@
     "lib": ["ESNext"],
     "module": "esnext",
     "target": "esnext",
-    "moduleResolution": "nodenext",
+    "moduleResolution": "Bundler",
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "strict": true,
@@ -13,7 +13,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "jsx": "react-jsx",
-    "types": ["bun-types"],
+
     "typeRoots": ["./packages"]
   }
 }

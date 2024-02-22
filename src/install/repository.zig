@@ -15,6 +15,7 @@ const std = @import("std");
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const GitSHA = String;
+const Path = bun.path;
 
 threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -27,13 +28,11 @@ pub const Repository = extern struct {
     resolved: GitSHA = .{},
     package_name: String = .{},
 
-    pub fn verify(this: *const Repository) void {
-        this.owner.assertDefined();
-        this.repo.assertDefined();
-        this.committish.assertDefined();
-        this.resolved.assertDefined();
-        this.package_name.assertDefined();
-    }
+    pub const Hosts = bun.ComptimeStringMap(string, .{
+        .{ "bitbucket", ".org" },
+        .{ "github", ".com" },
+        .{ "gitlab", ".com" },
+    });
 
     pub fn order(lhs: *const Repository, rhs: *const Repository, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {
         const owner_order = lhs.owner.order(&rhs.owner, lhs_buf, rhs_buf);
@@ -105,14 +104,30 @@ pub const Repository = extern struct {
         }
     };
 
-    fn exec(allocator: std.mem.Allocator, env: *DotEnv.Loader, cwd_dir: std.fs.Dir, argv: []const string) !string {
-        const buf_map = try env.map.cloneToEnvMap(allocator);
-        const result = try std.ChildProcess.exec(.{
-            .allocator = allocator,
-            .argv = argv,
-            .cwd_dir = cwd_dir,
-            .env_map = &buf_map,
-        });
+    fn exec(
+        allocator: std.mem.Allocator,
+        env: *DotEnv.Loader,
+        cwd: if (Environment.isWindows) string else std.fs.Dir,
+        argv: []const string,
+    ) !string {
+        var buf_map = try env.map.cloneToEnvMap(allocator);
+
+        const result = if (comptime Environment.isWindows)
+            try std.ChildProcess.run(.{
+                .allocator = allocator,
+                .argv = argv,
+                // windows `std.ChildProcess.run` uses `cwd` instead of `cwd_dir`
+                .cwd = cwd,
+                .env_map = &buf_map,
+            })
+        else
+            try std.ChildProcess.run(.{
+                .allocator = allocator,
+                .argv = argv,
+                .cwd_dir = cwd,
+
+                .env_map = &buf_map,
+            });
 
         switch (result.term) {
             .Exited => |sig| if (sig == 0) return result.stdout,
@@ -125,15 +140,31 @@ pub const Repository = extern struct {
         if (strings.hasPrefixComptime(url, "ssh://")) {
             final_path_buf[0.."https".len].* = "https".*;
             bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
-            return final_path_buf[0..(url.len - "ssh".len + "https".len)];
+            return final_path_buf[0 .. url.len - "ssh".len + "https".len];
         }
+
         if (Dependency.isSCPLikePath(url)) {
             final_path_buf[0.."https://".len].* = "https://".*;
             var rest = final_path_buf["https://".len..];
+
+            const colon_index = strings.indexOfChar(url, ':');
+
+            if (colon_index) |colon| {
+                // make sure known hosts have `.com` or `.org`
+                if (Hosts.get(url[0..colon])) |tld| {
+                    bun.copy(u8, rest, url[0..colon]);
+                    bun.copy(u8, rest[colon..], tld);
+                    rest[colon + tld.len] = '/';
+                    bun.copy(u8, rest[colon + tld.len + 1 ..], url[colon + 1 ..]);
+                    return final_path_buf[0 .. url.len + "https://".len + tld.len];
+                }
+            }
+
             bun.copy(u8, rest, url);
-            if (strings.indexOfChar(rest, ':')) |colon| rest[colon] = '/';
-            return final_path_buf[0..(url.len + "https://".len)];
+            if (colon_index) |colon| rest[colon] = '/';
+            return final_path_buf[0 .. url.len + "https://".len];
         }
+
         return null;
     }
 
@@ -150,8 +181,18 @@ pub const Repository = extern struct {
             bun.fmt.hexIntLower(task_id),
         });
 
-        return if (cache_dir.openDirZ(folder_name, .{}, true)) |dir| fetch: {
-            _ = exec(allocator, env, dir, &[_]string{ "git", "fetch", "--quiet" }) catch |err| {
+        return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
+            const cwd = if (comptime Environment.isWindows)
+                Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .windows)
+            else
+                dir;
+
+            _ = exec(
+                allocator,
+                env,
+                cwd,
+                &[_]string{ "git", "fetch", "--quiet" },
+            ) catch |err| {
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
@@ -165,7 +206,12 @@ pub const Repository = extern struct {
         } else |not_found| clone: {
             if (not_found != error.FileNotFound) return not_found;
 
-            _ = exec(allocator, env, cache_dir, &[_]string{
+            const cwd = if (comptime Environment.isWindows)
+                PackageManager.instance.cache_directory_path
+            else
+                cache_dir;
+
+            _ = exec(allocator, env, cwd, &[_]string{
                 "git",
                 "clone",
                 "--quiet",
@@ -182,7 +228,7 @@ pub const Repository = extern struct {
                 ) catch unreachable;
                 return err;
             };
-            break :clone try cache_dir.openDirZ(folder_name, .{}, true);
+            break :clone try cache_dir.openDirZ(folder_name, .{});
         };
     }
 
@@ -193,11 +239,19 @@ pub const Repository = extern struct {
         repo_dir: std.fs.Dir,
         name: string,
         committish: string,
+        task_id: u64,
     ) !string {
+        const cwd = if (comptime Environment.isWindows)
+            Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
+                bun.fmt.hexIntLower(task_id),
+            })}, .windows)
+        else
+            repo_dir;
+
         return std.mem.trim(u8, exec(
             allocator,
             env,
-            repo_dir,
+            cwd,
             if (committish.len > 0)
                 &[_]string{ "git", "log", "--format=%H", "-1", committish }
             else
@@ -226,10 +280,15 @@ pub const Repository = extern struct {
     ) !ExtractData {
         const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved);
 
-        var package_dir = cache_dir.openDirZ(folder_name, .{}, true) catch |not_found| brk: {
+        var package_dir = cache_dir.openDirZ(folder_name, .{}) catch |not_found| brk: {
             if (not_found != error.FileNotFound) return not_found;
 
-            _ = exec(allocator, env, cache_dir, &[_]string{
+            var cwd = if (comptime Environment.isWindows)
+                PackageManager.instance.cache_directory_path
+            else
+                cache_dir;
+
+            _ = exec(allocator, env, cwd, &[_]string{
                 "git",
                 "clone",
                 "--quiet",
@@ -247,9 +306,14 @@ pub const Repository = extern struct {
                 return err;
             };
 
-            var dir = try cache_dir.openDirZ(folder_name, .{}, true);
+            var dir = try cache_dir.openDirZ(folder_name, .{});
 
-            _ = exec(allocator, env, dir, &[_]string{ "git", "checkout", "--quiet", resolved }) catch |err| {
+            cwd = if (comptime Environment.isWindows)
+                Path.joinAbsString(PackageManager.instance.cache_directory_path, &.{folder_name}, .windows)
+            else
+                dir;
+
+            _ = exec(allocator, env, cwd, &[_]string{ "git", "checkout", "--quiet", resolved }) catch |err| {
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
@@ -285,7 +349,7 @@ pub const Repository = extern struct {
         };
         defer json_file.close();
         const size = try json_file.getEndPos();
-        var json_buf = try allocator.alloc(u8, size + 64);
+        const json_buf = try allocator.alloc(u8, size + 64);
         const json_len = try json_file.preadAll(json_buf, 0);
 
         const json_path = bun.getFdPath(

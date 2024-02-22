@@ -28,7 +28,7 @@ const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
-const HTTP = @import("root").bun.HTTP;
+const HTTP = @import("root").bun.http;
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
@@ -37,9 +37,8 @@ const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const clap = @import("root").bun.clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("root").bun.HTTP.Headers;
+const Headers = @import("root").bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
-const NetworkThread = HTTP.NetworkThread;
 
 pub var initialized_store = false;
 pub fn initializeStore() void {
@@ -78,21 +77,34 @@ pub const Version = struct {
         return this.tag["bun-v".len..];
     }
 
-    pub const platform_label = if (Environment.isMac) "darwin" else "linux";
+    pub const platform_label = switch (Environment.os) {
+        .mac => "darwin",
+        .linux => "linux",
+        .windows => "windows",
+        else => @compileError("Unsupported OS for Bun Upgrade"),
+    };
+
     pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
     pub const triplet = platform_label ++ "-" ++ arch_label;
     const suffix = if (Environment.baseline) "-baseline" else "";
     pub const folder_name = "bun-" ++ triplet ++ suffix;
+    pub const baseline_folder_name = "bun-" ++ triplet ++ "-baseline";
     pub const zip_filename = folder_name ++ ".zip";
+    pub const baseline_zip_filename = baseline_folder_name ++ ".zip";
 
     pub const profile_folder_name = "bun-" ++ triplet ++ suffix ++ "-profile";
     pub const profile_zip_filename = profile_folder_name ++ ".zip";
 
     const current_version: string = "bun-v" ++ Global.package_json_version;
 
-    pub export const Bun__githubURL: [*:0]const u8 = std.fmt.comptimePrint("https://github.com/oven-sh/bun/release/bun-v{s}/{s}", .{
+    pub export const Bun__githubURL: [*:0]const u8 = std.fmt.comptimePrint("https://github.com/oven-sh/bun/releases/download/bun-v{s}/{s}", .{
         Global.package_json_version,
         zip_filename,
+    });
+
+    pub const Bun__githubBaselineURL: [:0]const u8 = std.fmt.comptimePrint("https://github.com/oven-sh/bun/releases/download/bun-v{s}/{s}", .{
+        Global.package_json_version,
+        baseline_zip_filename,
     });
 
     pub fn isCurrent(this: Version) bool {
@@ -131,7 +143,7 @@ pub const UpgradeCheckerThread = struct {
 
         if (!version.isCurrent()) {
             if (version.name()) |name| {
-                Output.prettyErrorln("\n<r><d>bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
+                Output.prettyErrorln("\n<r><d>Bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
                 Output.flush();
             }
         }
@@ -188,7 +200,7 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        var api_url = URL.parse(
+        const api_url = URL.parse(
             try std.fmt.bufPrint(
                 &github_repository_url_buf,
                 "https://{s}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
@@ -217,7 +229,7 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        var http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+        const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
 
         var metadata_body = try MutableString.init(allocator, 2048);
 
@@ -371,7 +383,7 @@ pub const UpgradeCommand = struct {
             progress.end();
             refresher.refresh();
             if (version.name()) |name| {
-                Output.prettyErrorln("bun v{s} is out, but not for this platform ({s}) yet.", .{
+                Output.prettyErrorln("Bun v{s} is out, but not for this platform ({s}) yet.", .{
                     name, Version.triplet,
                 });
             }
@@ -381,14 +393,30 @@ pub const UpgradeCommand = struct {
 
         return null;
     }
-    const exe_subpath = Version.folder_name ++ std.fs.path.sep_str ++ "bun";
-    const profile_exe_subpath = Version.profile_folder_name ++ std.fs.path.sep_str ++ "bun-profile";
+
+    const exe_suffix = if (Environment.isWindows) ".exe" else "";
+
+    const exe_subpath = Version.folder_name ++ std.fs.path.sep_str ++ "bun" ++ exe_suffix;
+    const profile_exe_subpath = Version.profile_folder_name ++ std.fs.path.sep_str ++ "bun-profile" ++ exe_suffix;
+
+    const manual_upgrade_command = switch (Environment.os) {
+        .linux, .mac => "curl -fsSL https://bun.sh/install | bash",
+        .windows => "powershell -c 'irm bun.sh/install.ps1|iex'",
+        else => "(TODO: Install script for " ++ Environment.os.displayString() ++ ")",
+    };
 
     pub fn exec(ctx: Command.Context) !void {
         @setCold(true);
 
         _exec(ctx) catch |err| {
-            Output.prettyErrorln("<r>bun upgrade failed with error: <red><b>{s}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>curl -fsSL https://bun.sh/install | bash<r>\n\n", .{@errorName(err)});
+            Output.prettyErrorln(
+                \\<r>Bun upgrade failed with error: <red><b>{s}<r>
+                \\
+                \\<cyan>Please upgrade manually<r>:
+                \\  <b>{s}<r>
+                \\
+                \\
+            , .{ @errorName(err), manual_upgrade_command });
             Global.exit(1);
         };
     }
@@ -398,7 +426,7 @@ pub const UpgradeCommand = struct {
 
         var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
-            var map = try ctx.allocator.create(DotEnv.Map);
+            const map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
 
             break :brk DotEnv.Loader.init(map, ctx.allocator);
@@ -410,14 +438,14 @@ pub const UpgradeCommand = struct {
         const use_canary = brk: {
             const default_use_canary = Environment.is_canary;
 
-            if (default_use_canary and strings.containsAny(bun.span(bun.argv()), "--stable"))
+            if (default_use_canary and strings.containsAny(bun.argv(), "--stable"))
                 break :brk false;
 
             break :brk strings.eqlComptime(env_loader.map.get("BUN_CANARY") orelse "0", "1") or
-                strings.containsAny(bun.span(bun.argv()), "--canary") or default_use_canary;
+                strings.containsAny(bun.argv(), "--canary") or default_use_canary;
         };
 
-        const use_profile = strings.containsAny(bun.span(bun.argv()), "--profile");
+        const use_profile = strings.containsAny(bun.argv(), "--profile");
 
         if (!use_canary) {
             var refresher = std.Progress{};
@@ -428,25 +456,31 @@ pub const UpgradeCommand = struct {
             progress.end();
             refresher.refresh();
 
-            if (version.name() != null and version.isCurrent()) {
-                Output.prettyErrorln(
-                    "<r><green>Congrats!<r> You're already on the latest version of bun <d>(which is v{s})<r>",
-                    .{
-                        version.name().?,
-                    },
-                );
-                Global.exit(0);
+            if (!Environment.is_canary) {
+                if (version.name() != null and version.isCurrent()) {
+                    Output.prettyErrorln(
+                        "<r><green>Congrats!<r> You're already on the latest version of Bun <d>(which is v{s})<r>",
+                        .{
+                            version.name().?,
+                        },
+                    );
+                    Global.exit(0);
+                }
             }
 
             if (version.name() == null) {
                 Output.prettyErrorln(
-                    "<r><red>error:<r> bun versions are currently unavailable (the latest version name didn't match the expeccted format)",
+                    "<r><red>error:<r> Bun versions are currently unavailable (the latest version name didn't match the expeccted format)",
                     .{},
                 );
                 Global.exit(1);
             }
 
-            Output.prettyErrorln("<r><b>bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
+            if (!Environment.is_canary) {
+                Output.prettyErrorln("<r><b>Bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
+            } else {
+                Output.prettyErrorln("<r><b>Downgrading from Bun <blue>{s}-canary<r> to Bun <cyan>v{s}<r><r>\n", .{ Global.package_json_version, version.name().? });
+            }
             Output.flush();
         } else {
             version = Version{
@@ -457,8 +491,8 @@ pub const UpgradeCommand = struct {
             };
         }
 
-        var zip_url = URL.parse(version.zip_url);
-        var http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
+        const zip_url = URL.parse(version.zip_url);
+        const http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
 
         {
             var refresher = std.Progress{};
@@ -517,25 +551,25 @@ pub const UpgradeCommand = struct {
             refresher.refresh();
 
             if (bytes.len == 0) {
-                Output.prettyErrorln("<r><red>error:<r> Failed to download the latest version of bun. Received empty content", .{});
+                Output.prettyErrorln("<r><red>error:<r> Failed to download the latest version of Bun. Received empty content", .{});
                 Global.exit(1);
             }
 
             const version_name = version.name().?;
 
             var save_dir_ = filesystem.tmpdir();
-            var save_dir_it = save_dir_.makeOpenPathIterable(version_name, .{}) catch {
+            const save_dir_it = save_dir_.makeOpenPath(version_name, .{}) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open temporary directory", .{});
                 Global.exit(1);
             };
-            const save_dir = save_dir_it.dir;
-            var tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
+            const save_dir = save_dir_it;
+            const tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
                 Global.exit(1);
             };
 
             tmpdir_path_buf[tmpdir_path.len] = 0;
-            var tmpdir_z = tmpdir_path_buf[0..tmpdir_path.len :0];
+            const tmpdir_z = tmpdir_path_buf[0..tmpdir_path.len :0];
             _ = bun.sys.chdir(tmpdir_z);
 
             const tmpname = "bun.zip";
@@ -561,39 +595,79 @@ pub const UpgradeCommand = struct {
                     save_dir.deleteFileZ(tmpname) catch {};
                 }
 
-                const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "unzip") orelse {
-                    save_dir.deleteFileZ(tmpname) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work.", .{});
-                    Global.exit(1);
-                };
+                if (comptime Environment.isPosix) {
+                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "unzip") orelse {
+                        save_dir.deleteFileZ(tmpname) catch {};
+                        Output.prettyErrorln("<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work.", .{});
+                        Global.exit(1);
+                    };
 
-                // We could just embed libz2
-                // however, we want to be sure that xattrs are preserved
-                // xattrs are used for codesigning
-                // it'd be easy to mess that up
-                var unzip_argv = [_]string{
-                    bun.asByteSlice(unzip_exe),
-                    "-q",
-                    "-o",
-                    tmpname,
-                };
+                    // We could just embed libz2
+                    // however, we want to be sure that xattrs are preserved
+                    // xattrs are used for codesigning
+                    // it'd be easy to mess that up
+                    var unzip_argv = [_]string{
+                        bun.asByteSlice(unzip_exe),
+                        "-q",
+                        "-o",
+                        tmpname,
+                    };
 
-                var unzip_process = std.ChildProcess.init(&unzip_argv, ctx.allocator);
-                unzip_process.cwd = tmpdir_path;
-                unzip_process.stdin_behavior = .Inherit;
-                unzip_process.stdout_behavior = .Inherit;
-                unzip_process.stderr_behavior = .Inherit;
+                    var unzip_process = std.ChildProcess.init(&unzip_argv, ctx.allocator);
+                    unzip_process.cwd = tmpdir_path;
+                    unzip_process.stdin_behavior = .Inherit;
+                    unzip_process.stdout_behavior = .Inherit;
+                    unzip_process.stderr_behavior = .Inherit;
 
-                const unzip_result = unzip_process.spawnAndWait() catch |err| {
-                    save_dir.deleteFileZ(tmpname) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {s}.", .{@errorName(err)});
-                    Global.exit(1);
-                };
+                    const unzip_result = unzip_process.spawnAndWait() catch |err| {
+                        save_dir.deleteFileZ(tmpname) catch {};
+                        Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {s}.", .{@errorName(err)});
+                        Global.exit(1);
+                    };
 
-                if (unzip_result.Exited != 0) {
-                    Output.prettyErrorln("<r><red>Unzip failed<r> (exit code: {d})", .{unzip_result.Exited});
-                    save_dir.deleteFileZ(tmpname) catch {};
-                    Global.exit(1);
+                    if (unzip_result.Exited != 0) {
+                        Output.prettyErrorln("<r><red>Unzip failed<r> (exit code: {d})", .{unzip_result.Exited});
+                        save_dir.deleteFileZ(tmpname) catch {};
+                        Global.exit(1);
+                    }
+                } else if (Environment.isWindows) {
+                    // Run a powershell script to unzip the file
+                    const unzip_script = try std.fmt.allocPrint(
+                        ctx.allocator,
+                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path {s} {s} -Force",
+                        .{
+                            tmpname,
+                            tmpdir_path,
+                        },
+                    );
+
+                    var unzip_argv = [_]string{
+                        "powershell.exe",
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        unzip_script,
+                    };
+
+                    var unzip_process = std.ChildProcess.init(&unzip_argv, ctx.allocator);
+
+                    unzip_process.cwd = tmpdir_path;
+                    unzip_process.stdin_behavior = .Inherit;
+                    unzip_process.stdout_behavior = .Inherit;
+                    unzip_process.stderr_behavior = .Inherit;
+
+                    const unzip_result = unzip_process.spawnAndWait() catch |err| {
+                        save_dir.deleteFileZ(tmpname) catch {};
+                        Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {s}.", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+
+                    if (unzip_result.Exited != 0) {
+                        Output.prettyErrorln("<r><red>Unzip failed<r> (exit code: {d})", .{unzip_result.Exited});
+                        save_dir.deleteFileZ(tmpname) catch {};
+                        Global.exit(1);
+                    }
                 }
             }
             {
@@ -602,20 +676,44 @@ pub const UpgradeCommand = struct {
                     "--version",
                 };
 
-                const result = std.ChildProcess.exec(.{
+                const result = std.ChildProcess.run(.{
                     .allocator = ctx.allocator,
                     .argv = &verify_argv,
                     .cwd = tmpdir_path,
                     .max_output_bytes = 512,
                 }) catch |err| {
-                    save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error<r> Failed to verify bun {s}<r>)", .{@errorName(err)});
+                    defer save_dir_.deleteTree(version_name) catch {};
+
+                    if (err == error.FileNotFound) {
+                        if (std.fs.cwd().access(exe, .{})) {
+                            // On systems like NixOS, the FileNotFound is actually the system-wide linker,
+                            // as they do not have one (most systems have it at a known path). This is how
+                            // ChildProcess returns FileNotFound despite the actual
+                            //
+                            // In these cases, prebuilt binaries from GitHub will never work without
+                            // extra patching, so we will print a message deferring them to their system
+                            // package manager.
+                            Output.prettyErrorln(
+                                \\<r><red>error<r><d>:<r> 'bun upgrade' is unsupported on systems without ld
+                                \\
+                                \\You are likely on an immutable system such as NixOS, where dynamic
+                                \\libraries are stored in a global cache.
+                                \\
+                                \\Please use your system's package manager to properly upgrade bun.
+                                \\
+                            , .{});
+                            Global.exit(1);
+                            return;
+                        } else |_| {}
+                    }
+
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> Failed to verify Bun (code: {s})<r>)", .{@errorName(err)});
                     Global.exit(1);
                 };
 
                 if (result.term.Exited != 0) {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error<r> failed to verify bun<r> (exit code: {d})", .{result.term.Exited});
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to verify Bun<r> (exit code: {d})", .{result.term.Exited});
                     Global.exit(1);
                 }
 
@@ -631,7 +729,7 @@ pub const UpgradeCommand = struct {
                         save_dir_.deleteTree(version_name) catch {};
 
                         Output.prettyErrorln(
-                            "<r><red>error<r>: The downloaded version of bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
+                            "<r><red>error<r>: The downloaded version of Bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
                             .{
                                 version_string[0..@min(version_string.len, 512)],
                                 version_name,
@@ -642,39 +740,39 @@ pub const UpgradeCommand = struct {
                 }
             }
 
-            var destination_executable_ = std.fs.selfExePath(&current_executable_buf) catch return error.UpgradeFailedMissingExecutable;
+            const destination_executable_ = std.fs.selfExePath(&current_executable_buf) catch return error.UpgradeFailedMissingExecutable;
             current_executable_buf[destination_executable_.len] = 0;
 
-            var target_filename_ = std.fs.path.basename(destination_executable_);
-            var target_filename = current_executable_buf[destination_executable_.len - target_filename_.len ..][0..target_filename_.len :0];
-            var target_dir_ = std.fs.path.dirname(destination_executable_) orelse return error.UpgradeFailedBecauseOfMissingExecutableDir;
+            const target_filename_ = std.fs.path.basename(destination_executable_);
+            const target_filename = current_executable_buf[destination_executable_.len - target_filename_.len ..][0..target_filename_.len :0];
+            const target_dir_ = std.fs.path.dirname(destination_executable_) orelse return error.UpgradeFailedBecauseOfMissingExecutableDir;
             // safe because the slash will no longer be in use
             current_executable_buf[target_dir_.len] = 0;
-            var target_dirname = current_executable_buf[0..target_dir_.len :0];
-            var target_dir_it = std.fs.openIterableDirAbsoluteZ(target_dirname, .{}) catch |err| {
+            const target_dirname = current_executable_buf[0..target_dir_.len :0];
+            const target_dir_it = std.fs.openDirAbsoluteZ(target_dirname, .{}) catch |err| {
                 save_dir_.deleteTree(version_name) catch {};
-                Output.prettyErrorln("<r><red>error:<r> Failed to open bun's install directory {s}", .{@errorName(err)});
+                Output.prettyErrorln("<r><red>error:<r> Failed to open Bun's install directory {s}", .{@errorName(err)});
                 Global.exit(1);
             };
-            var target_dir = target_dir_it.dir;
+            var target_dir = target_dir_it;
 
             if (use_canary) {
 
                 // Check if the versions are the same
                 const target_stat = target_dir.statFile(target_filename) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to stat target bun {s}", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> {s} while trying to stat target {s} ", .{ @errorName(err), target_filename });
                     Global.exit(1);
                 };
 
                 const dest_stat = save_dir.statFile(exe) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to stat source bun {s}", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> {s} while trying to stat source {s}", .{ @errorName(err), exe });
                     Global.exit(1);
                 };
 
                 if (target_stat.size == dest_stat.size and target_stat.size > 0) {
-                    var input_buf = try ctx.allocator.alloc(u8, target_stat.size);
+                    const input_buf = try ctx.allocator.alloc(u8, target_stat.size);
 
                     const target_hash = bun.hash(target_dir.readFile(target_filename, input_buf) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
@@ -691,7 +789,11 @@ pub const UpgradeCommand = struct {
                     if (target_hash == source_hash) {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln(
-                            "<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of bun",
+                            \\<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of Bun
+                            \\
+                            \\To downgrade to the latest stable release, run <b><cyan>bun upgrade --stable<r>
+                            \\
+                        ,
                             .{},
                         );
                         Global.exit(0);
@@ -699,10 +801,59 @@ pub const UpgradeCommand = struct {
                 }
             }
 
+            var outdated_filename: if (Environment.isWindows) ?stringZ else ?void = null;
+
             if (env_loader.map.get("BUN_DRY_RUN") == null) {
-                C.moveFileZ(save_dir.fd, exe, target_dir.fd, target_filename) catch |err| {
-                    save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
+                if (comptime Environment.isWindows) {
+                    // On Windows, we cannot replace the running executable directly.
+                    // we rename the old executable to a temporary name, and then move the new executable to the old name.
+                    // This is because Windows locks the executable while it's running.
+                    current_executable_buf[target_dir_.len] = '\\';
+                    outdated_filename = try std.fmt.allocPrintZ(ctx.allocator, "{s}\\{s}.outdated", .{
+                        target_dirname,
+                        target_filename,
+                    });
+                    std.os.rename(destination_executable_, outdated_filename.?) catch |err| {
+                        save_dir_.deleteTree(version_name) catch {};
+                        Output.prettyErrorln("<r><red>error:<r> Failed to rename current executable {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                    current_executable_buf[target_dir_.len] = 0;
+                }
+
+                C.moveFileZ(bun.toFD(save_dir.fd), exe, bun.toFD(target_dir.fd), target_filename) catch |err| {
+                    defer save_dir_.deleteTree(version_name) catch {};
+
+                    if (comptime Environment.isWindows) {
+                        // Attempt to restore the old executable. If this fails, the user will be left without a working copy of bun.
+                        std.os.rename(outdated_filename.?, destination_executable_) catch {
+                            Output.errGeneric(
+                                \\Failed to move new version of Bun due to {s}
+                            ,
+                                .{@errorName(err)},
+                            );
+                            Output.errGeneric(
+                                \\Failed to restore the working copy of Bun. The installation is now corrupt.
+                                \\
+                                \\Please reinstall Bun manually with the following command:
+                                \\   {s}
+                                \\
+                            ,
+                                .{manual_upgrade_command},
+                            );
+                            Global.exit(1);
+                        };
+                    }
+
+                    Output.errGeneric(
+                        \\Failed to move new version of Bun due to {s}
+                        \\
+                        \\Please reinstall Bun manually with the following command:
+                        \\   {s}
+                        \\
+                    ,
+                        .{ @errorName(err), manual_upgrade_command },
+                    );
                     Global.exit(1);
                 };
             }
@@ -716,7 +867,7 @@ pub const UpgradeCommand = struct {
 
                 env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch unreachable;
                 var buf_map = try env_loader.map.cloneToEnvMap(ctx.allocator);
-                _ = std.ChildProcess.exec(.{
+                _ = std.ChildProcess.run(.{
                     .allocator = ctx.allocator,
                     .argv = &completions_argv,
                     .cwd = target_dirname,
@@ -731,7 +882,7 @@ pub const UpgradeCommand = struct {
                 Output.prettyErrorln(
                     \\<r> Upgraded.
                     \\
-                    \\<b><green>Welcome to bun's latest canary build!<r>
+                    \\<b><green>Welcome to Bun's latest canary build!<r>
                     \\
                     \\Report any bugs:
                     \\
@@ -750,7 +901,7 @@ pub const UpgradeCommand = struct {
                 Output.prettyErrorln(
                     \\<r> Upgraded.
                     \\
-                    \\<b><green>Welcome to bun v{s}!<r>
+                    \\<b><green>Welcome to Bun v{s}!<r>
                     \\
                     \\Report any bugs:
                     \\
@@ -770,7 +921,51 @@ pub const UpgradeCommand = struct {
             }
 
             Output.flush();
-            return;
+
+            if (Environment.isWindows) {
+                if (outdated_filename) |to_remove| {
+                    current_executable_buf[target_dir_.len] = '\\';
+                    const delete_old_script = try std.fmt.allocPrint(
+                        ctx.allocator,
+                        // What is this?
+                        // 1. spawns powershell
+                        // 2. waits for all processes with the same path as the current executable to exit (including the current process)
+                        // 3. deletes the old executable
+                        //
+                        // probably possible to hit a race condition, but i think the worst case is simply the file not getting deleted.
+                        //
+                        // in that edge case, the next time you upgrade it will simply override itself, fixing the bug.
+                        //
+                        // -NoNewWindow doesnt work, will keep the parent alive it seems
+                        // -WindowStyle Hidden seems to just do nothing, not sure why.
+                        // Using -WindowStyle Minimized seems to work, but you can spot a powershell icon appear in your taskbar for about ~1 second
+                        //
+                        // Alternative: we could simply do nothing and leave the `.outdated` file.
+                        \\Start-Process powershell.exe -WindowStyle Minimized -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-Command",'&{{$ErrorActionPreference=''SilentlyContinue''; Get-Process|Where-Object{{ $_.Path -eq ''{s}'' }}|Wait-Process; Remove-Item -Path ''{s}'' -Force }};'; exit
+                    ,
+                        .{
+                            destination_executable_,
+                            to_remove,
+                        },
+                    );
+
+                    var delete_argv = [_]string{
+                        "powershell.exe",
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        delete_old_script,
+                    };
+
+                    _ = std.ChildProcess.run(.{
+                        .allocator = ctx.allocator,
+                        .argv = &delete_argv,
+                        .cwd = tmpdir_path,
+                        .max_output_bytes = 512,
+                    }) catch {};
+                }
+            }
         }
     }
 };

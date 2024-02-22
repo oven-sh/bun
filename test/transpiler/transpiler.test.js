@@ -1192,6 +1192,113 @@ export default <>hi</>
     expect(fragment.includes("var JSXFrag = foo.frag,")).toBe(true);
   });
 
+  it('logLevel: "error" throws', () => {
+    var bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("development"),
+      },
+      logLevel: "error",
+    });
+
+    expect(() => bun.transformSync("bad??!?!?!")).toThrow("Unexpected ?");
+  });
+
+  it("invalid logLevel throws", () => {
+    expect(
+      () =>
+        new Bun.Transpiler({
+          loader: "jsx",
+          define: {
+            "process.env.NODE_ENV": JSON.stringify("development"),
+          },
+          logLevel: "poop",
+        }),
+    ).toThrow();
+  });
+
+  it("JSX keys", () => {
+    var bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("development"),
+      },
+      logLevel: "error",
+    });
+
+    expect(bun.transformSync("console.log(<div key={() => {}} points={() => {}}></div>);")).toBe(
+      `console.log(jsxDEV("div", {
+  points: () => {
+  }
+}, () => {
+}, false, undefined, this));
+`,
+    );
+
+    expect(bun.transformSync("console.log(<div points={() => {}} key={() => {}}></div>);")).toBe(
+      `console.log(jsxDEV("div", {
+  points: () => {
+  }
+}, () => {
+}, false, undefined, this));
+`,
+    );
+
+    expect(bun.transformSync("console.log(<div key={() => {}} key={() => {}}></div>);")).toBe(
+      'console.log(jsxDEV("div", {\n  key: () => {\n  }\n}, () => {\n}, false, undefined, this));\n',
+    );
+
+    expect(bun.transformSync("console.log(<div key={() => {}}></div>, () => {});")).toBe(
+      'console.log(jsxDEV("div", {}, () => {\n}, false, undefined, this), () => {\n});\n',
+    );
+
+    expect(bun.transformSync("console.log(<div key={() => {}} a={() => {}} key={() => {}}></div>, () => {});")).toBe(
+      'console.log(jsxDEV("div", {\n  key: () => {\n  },\n  a: () => {\n  }\n}, () => {\n}, false, undefined, this), () => {\n});\n',
+    );
+
+    expect(bun.transformSync("console.log(<div key={() => {}} key={() => {}} a={() => {}}></div>, () => {});")).toBe(
+      'console.log(jsxDEV("div", {\n  key: () => {\n  },\n  a: () => {\n  }\n}, () => {\n}, false, undefined, this), () => {\n});\n',
+    );
+
+    expect(bun.transformSync("console.log(<div points={() => {}} key={() => {}}></div>);")).toBe(
+      `console.log(jsxDEV("div", {
+  points: () => {
+  }
+}, () => {
+}, false, undefined, this));
+`,
+    );
+
+    expect(bun.transformSync("console.log(<div key={() => {}}></div>);")).toBe(
+      `console.log(jsxDEV("div", {}, () => {
+}, false, undefined, this));
+`,
+    );
+
+    expect(bun.transformSync("console.log(<div></div>);")).toBe(
+      `console.log(jsxDEV("div", {}, undefined, false, undefined, this));
+`,
+    );
+
+    // key after spread props
+    // https://github.com/oven-sh/bun/issues/7328
+    expect(bun.transformSync(`console.log(<div {...obj} key="after" />, <div key="before" {...obj} />);`)).toBe(
+      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\"\n}), jsxDEV(\"div\", {\n  ...obj\n}, \"before\", false, undefined, this));
+`,
+    );
+    expect(bun.transformSync(`console.log(<div {...obj} key="after" {...obj2} />);`)).toBe(
+      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\",\n  ...obj2\n}));
+`,
+    );
+    expect(
+      bun.transformSync(`// @jsx foo;
+console.log(<div {...obj} key="after" />);`),
+    ).toBe(
+      `console.log(createElement(\"div\", {\n  ...obj,\n  key: \"after\"\n}));
+`,
+    );
+  });
+
   it.todo("JSX", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",
@@ -1306,9 +1413,19 @@ export default <>hi</>
       platform: "bun",
       jsxOptimizationInline: true,
       treeShaking: false,
+      inline: true,
+      deadCodeElimination: true,
+      allowBunRuntime: true,
+
+      target: "bun",
+      tsconfig: JSON.stringify({
+        compilerOptions: {
+          jsxImportSource: "react",
+        },
+      }),
     });
 
-    it.todo("inlines static JSX into object literals", () => {
+    it("inlines static JSX into object literals", () => {
       expect(
         inliner
           .transformSync(
@@ -1323,57 +1440,87 @@ export var ComponentThatHasSpreadCausesDeopt = <Hello {...spread} />
 
 `.trim(),
           )
+          .replaceAll("\n", "")
+          .replaceAll("  ", "")
           .trim(),
       ).toBe(
-        `var $$typeof = Symbol.for("react.element");
-export var hi = {
-  $$typeof,
-  type: "div",
-  key: null,
-  ref: null,
-  props: {
-    children: 123
-  },
-  _owner: null
-};
-export var hiWithKey = {
-  $$typeof,
-  type: "div",
-  key: "hey",
-  ref: null,
-  props: {
-    children: 123
-  },
-  _owner: null
-};
-export var hiWithRef = $jsx("div", {
-  ref: foo,
-  children: 123
-});
-export var ComponentThatChecksDefaultProps = {
-  $$typeof,
-  type: Hello,
-  key: null,
-  ref: null,
-  props: Hello.defaultProps || {},
-  _owner: null
-};
-export var ComponentThatChecksDefaultPropsAndHasChildren = {
-  $$typeof,
-  type: Hello,
-  key: null,
-  ref: null,
-  props: __merge({
-    children: "my child"
-  }, Hello.defaultProps),
-  _owner: null
-};
-export var ComponentThatHasSpreadCausesDeopt = $jsx(Hello, {
-  ...spread
-});
-`.trim(),
+        // TODO: figure out why its using jsxDEV() here. It doesn't do that with NODE_ENV=production at runtime.
+        `
+  import {
+    $$typeof as $$typeof_4ad651bb3f5de058,
+    __merge as __merge_e79ebbbc0cc1f55b
+    } from "bun:wrap";
+    export var hi = {
+      $$typeof: $$typeof_4ad651bb3f5de058,
+      type: "div",
+      key: null,
+      ref: null,
+      props: {
+        children: 123
+      },
+      _owner: null
+    }, hiWithKey = {
+      $$typeof: $$typeof_4ad651bb3f5de058,
+      type: "div",
+      key: "hey",
+      ref: null,
+      props: {
+        children: 123
+      },
+      _owner: null
+    }, hiWithRef = jsxDEV("div", {
+      ref: foo,
+      children: 123
+    }, void 0, !1, void 0, this), ComponentThatChecksDefaultProps = {
+      $$typeof: $$typeof_4ad651bb3f5de058,
+      type: Hello,
+      key: null,
+      ref: null,
+      props: Hello.defaultProps || {},
+      _owner: null
+    }, ComponentThatChecksDefaultPropsAndHasChildren = {
+      $$typeof: $$typeof_4ad651bb3f5de058,
+      type: Hello,
+      key: null,
+      ref: null,
+      props: __merge_e79ebbbc0cc1f55b({
+        children: "my child"
+      }, Hello.defaultProps),
+      _owner: null
+    }, ComponentThatHasSpreadCausesDeopt = jsxDEV(Hello, {
+      ...spread
+    }, void 0, !1, void 0, this);
+        `
+          .replaceAll("\n", "")
+          .replaceAll("  ", "")
+          .trim(),
       );
     });
+  });
+
+  it("JSX spread children", () => {
+    var bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("development"),
+      },
+    });
+    expect(bun.transformSync("export var foo = <div>{...a}b</div>")).toBe(
+      `export var foo = jsxDEV("div", {
+  children: [
+    ...a,
+    "b"
+  ]
+}, undefined, true, undefined, this);
+`,
+    );
+
+    expect(bun.transformSync("export var foo = <div>{...a}</div>")).toBe(
+      `export var foo = jsxDEV("div", {
+  children: [...a]
+}, undefined, true, undefined, this);
+`,
+    );
   });
 
   it("require with a dynamic non-string expression", () => {
@@ -1794,10 +1941,12 @@ console.log(resolve.length)
     });
 
     describe("Browsers", () => {
-      it('require.resolve("my-module") -> "/resolved/my-module"', () => {
-        // the module resolver & linker doesn't run with Bun.Transpiler
-        // so in this test, it becomes the same path string
-        expectPrinted_(`export const foo = require.resolve('my-module')`, `export const foo = "my-module"`);
+      it('require.resolve("my-module") is untouched', () => {
+        // we used to inline the string for this, but that is always incorrect as require.resolve builds an exact path.
+        expectPrinted_(
+          `export const foo = require.resolve('my-module')`,
+          `export const foo = require.resolve("my-module")`,
+        );
       });
     });
 
@@ -1983,6 +2132,30 @@ console.log(resolve.length)
 
       // expectParseError("\u200Ca", 'Unexpected "\\u200c"');
       // expectParseError("\u200Da", 'Unexpected "\\u200d"');
+    });
+
+    describe("dead code elimination", () => {
+      const transpilerNoDCE = new Bun.Transpiler({ deadCodeElimination: false });
+      it("should DCE with deadCodeElimination: true or by default", () => {
+        expect(parsed("123", true, false)).toBe("");
+        expect(parsed("[-1, 2n, null]", true, false)).toBe("");
+        expect(parsed("true", true, false)).toBe("");
+        expect(parsed("!0", true, false)).toBe("");
+        expect(parsed('if (!1) "dead";', true, false)).toBe("if (false)");
+        expect(parsed("if (!1) var x = 2;", true, false)).toBe("if (false)\n  var x");
+        expect(parsed("if (undefined) { let y = Math.random(); }", true, false)).toBe("if (undefined) {\n}");
+      });
+      it("should not DCE with deadCodeElimination: false", () => {
+        expect(parsed("123", true, false, transpilerNoDCE)).toBe("123");
+        expect(parsed("[1, 2n, null]", true, false, transpilerNoDCE)).toBe("[1, 2n, null]");
+        expect(parsed("true", true, false, transpilerNoDCE)).toBe("true");
+        expect(parsed("!0", true, false, transpilerNoDCE)).toBe("!0");
+        expect(parsed('if (!1) "dead";', true, false, transpilerNoDCE)).toBe('if (!1)\n  "dead"');
+        expect(parsed("if (!1) var x = 2;", true, false, transpilerNoDCE)).toBe("if (!1)\n  var x = 2");
+        expect(parsed("if (undefined) { let y = Math.random(); }", true, false, transpilerNoDCE)).toBe(
+          "if (undefined) {\n  let y = Math.random();\n}",
+        );
+      });
     });
   });
 
@@ -2785,6 +2958,12 @@ console.log(foo, array);
       expectPrinted("1 != 2", "!0");
       expectPrinted("1 != '1'", '1 != "1"');
 
+      expectPrinted('"" == 0', "!0");
+      expectPrinted("1n == 1n", "!0");
+      expectPrinted("1234n == 1234n", "!0");
+      expectPrinted("0x00n == 0n", "0x00n == 0n");
+      expectPrinted("1n == 2n", "1n == 2n");
+
       expectPrinted("'a' === '\\x61'", "!0");
       expectPrinted("'a' === '\\x62'", "!1");
       expectPrinted("'a' === 'abc'", "!1");
@@ -3120,5 +3299,174 @@ console.log(foo, array);
 
   it("scanImports on empty file does not segfault", () => {
     new Bun.Transpiler().scanImports("");
+  });
+
+  it("preserves exotic directives", () => {
+    expect(
+      new Bun.Transpiler().transformSync(`"use client";
+console.log("boop");
+`),
+    ).toBe(
+      `"use client";
+console.log("boop");
+`,
+    );
+  });
+  it("does not preserve use strict (for now)", () => {
+    expect(
+      new Bun.Transpiler().transformSync(`"use strict";
+  console.log("boop");
+  `),
+    ).toBe(
+      `console.log("boop");
+`,
+    );
+  });
+
+  it("can parse 'a<b>' as typescript", () => {
+    ts.expectPrinted("a<b>", "a");
+    expect(new Bun.Transpiler({ loader: "ts" }).transformSync(`a<b>`)).toBe(`a;\n`);
+  });
+
+  const prepareForSnapshot = code => {
+    return code.replace(/(__using|__callDispose)_([a-z0-9]+)/g, "$1");
+  };
+  const expectCapturePrintedSnapshot = code => {
+    const result = parsed(`(async() => {${code}})()`, false, false);
+    expect(result).toEndWith("})();\n");
+    const of_relevance = result
+      .slice(result.indexOf("() => {") + 9, result.lastIndexOf("})();") - 1)
+      .trim()
+      .split("\n")
+      .map(x => x.trim())
+      .filter(x => x.length > 0)
+      .join("\n");
+    expect(prepareForSnapshot(of_relevance)).toMatchSnapshot();
+  };
+  const expectPrintedSnapshot = code => {
+    expect(prepareForSnapshot(parsed(`${code}`, false, false))).toMatchSnapshot();
+  };
+
+  it("using statements work right", () => {
+    expectCapturePrintedSnapshot(`using x = a;`);
+    expectCapturePrintedSnapshot(`await using x = a;`);
+
+    expectCapturePrintedSnapshot(`for (using a of b) c(a)`);
+    expectCapturePrintedSnapshot(`for await (using a of b) c(a)`);
+    expectCapturePrintedSnapshot(`for (await using a of b) c(a)`);
+    expectCapturePrintedSnapshot(`for await (await using a of b) c(a)`);
+
+    expectCapturePrintedSnapshot(`for (using a of b) { c(a); a(c) }`);
+    expectCapturePrintedSnapshot(`for await (using a of b) { c(a); a(c) }`);
+    expectCapturePrintedSnapshot(`for (await using a of b) { c(a); a(c) }`);
+    expectCapturePrintedSnapshot(`for await (await using a of b) { c(a); a(c) }`);
+  });
+
+  it("using top level", () => {
+    expectPrintedSnapshot(`
+      using a = b;
+      export function c(e) {
+        using f = g(a);
+        return f.h;
+      }
+      await using j = c(i);
+      using k = l(m);
+      export { k };
+      import { using } from 'n';
+      using o = using;
+      await using p = await using;
+      export var q = r;
+    `);
+  });
+});
+
+describe("await can only be used inside an async function message", () => {
+  var transpiler = new Bun.Transpiler({
+    logLevel: "debug",
+  });
+
+  function assertError(code, hasNote = false) {
+    try {
+      transpiler.transformSync(code);
+      expect.unreachable();
+    } catch (e) {
+      function handle(error) {
+        expect(error.message).toBe('"await" can only be used inside an "async" function');
+
+        if (hasNote) {
+          expect(error.notes).toHaveLength(1);
+          expect(error.notes[0].message).toBe('Consider adding the "async" keyword here');
+          expect(error.notes[0].position.lineText).toContain("foo");
+        } else {
+          expect(error.notes).toHaveLength(0);
+        }
+      }
+      if (e instanceof AggregateError) {
+        handle(e.errors[0]);
+      } else {
+        expect.unreachable();
+      }
+    }
+  }
+  it("in object method", () => {
+    assertError(
+      `const x = {
+      foo() {
+       await bar();
+     }
+    }`,
+      true,
+    );
+  });
+
+  it("in class method", () => {
+    assertError(
+      `class X {
+      foo() {
+       await bar();
+     }
+    }`,
+      true,
+    );
+  });
+
+  it("in function statement", () => {
+    assertError(
+      `function foo() {
+      await bar();
+    }`,
+      true,
+    );
+  });
+
+  it("in function expression", () => {
+    assertError(
+      `const foo = function() {
+      await bar();
+    }`,
+      true,
+    );
+  });
+
+  it("in arrow function", () => {
+    assertError(
+      `const foo = () => {
+      await bar();
+    }`,
+      false,
+    );
+  });
+
+  it("in arrow function with block body", () => {
+    assertError(
+      `const foo = () => {
+      await bar();
+    }`,
+      false,
+    );
+  });
+
+  it("in arrow function with expression body", () => {
+    assertError(`const foo = () => await bar();`, false);
   });
 });

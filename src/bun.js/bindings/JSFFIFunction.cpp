@@ -26,8 +26,8 @@
 #include "root.h"
 #include "JSFFIFunction.h"
 
-#include "JavaScriptCore/JSCJSValueInlines.h"
-#include "JavaScriptCore/VM.h"
+#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/VM.h>
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>

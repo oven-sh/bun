@@ -107,7 +107,9 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
 
     // 6. Pause until the user responds either positively or negatively.
     var stdin = std.io.getStdIn();
-    var reader = stdin.reader();
+    const unbuffered_reader = stdin.reader();
+    var buffered = std.io.bufferedReader(unbuffered_reader);
+    var reader = buffered.reader();
 
     const first_byte = reader.readByte() catch {
         return .false;
@@ -122,13 +124,14 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
         'y', 'Y' => {
             const next_byte = reader.readByte() catch {
                 // They may have said yes, but the stdin is invalid.
+
                 return .false;
             };
 
             if (next_byte == '\n') {
                 // 8. If the user responded positively, return true;
                 //    otherwise, the user responded negatively: return false.
-                return .false;
+                return .true;
             }
         },
         else => {},
@@ -157,7 +160,7 @@ pub const Prompt = struct {
                 return error.StreamTooLong;
             }
 
-            var byte: u8 = try reader.readByte();
+            const byte: u8 = try reader.readByte();
 
             if (byte == delimiter) {
                 return;
@@ -175,7 +178,7 @@ pub const Prompt = struct {
         delimiter: u8,
     ) !void {
         while (true) {
-            var byte: u8 = try reader.readByte();
+            const byte: u8 = try reader.readByte();
 
             if (byte == delimiter) {
                 return;
@@ -241,8 +244,7 @@ pub const Prompt = struct {
         bun.Output.flush();
 
         // 7. Pause while waiting for the user's response.
-        var stdin = std.io.getStdIn();
-        var reader = stdin.reader();
+        const reader = bun.buffered_stdin.reader();
 
         const first_byte = reader.readByte() catch {
             // 8. Let result be null if the user aborts, or otherwise the string
@@ -580,7 +582,7 @@ pub const Crypto = struct {
             globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
             return JSC.JSValue.jsUndefined();
         };
-        var slice = array_buffer.byteSlice();
+        const slice = array_buffer.byteSlice();
 
         randomData(globalThis, slice.ptr, slice.len);
 
@@ -592,7 +594,7 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         array: *JSC.JSUint8Array,
     ) callconv(.C) JSC.JSValue {
-        var slice = array.slice();
+        const slice = array.slice();
         randomData(globalThis, slice.ptr, slice.len);
         return @as(JSC.JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))));
     }
@@ -602,7 +604,7 @@ pub const Crypto = struct {
         ptr: [*]u8,
         len: usize,
     ) void {
-        var slice = ptr[0..len];
+        const slice = ptr[0..len];
 
         switch (slice.len) {
             0 => {},
@@ -621,11 +623,13 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        var out: [36]u8 = undefined;
+        const str, var bytes = bun.String.createUninitialized(.latin1, 36);
+        defer str.deref();
+
         const uuid = globalThis.bunVM().rareData().nextUUID();
 
-        uuid.print(&out);
-        return JSC.ZigString.init(&out).toValueGC(globalThis);
+        uuid.print(bytes[0..36]);
+        return str.toJS(globalThis);
     }
 
     pub fn randomInt(_: *@This(), _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -653,11 +657,15 @@ pub const Crypto = struct {
         _: *Crypto,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        var out: [36]u8 = undefined;
-        const uuid = globalThis.bunVM().rareData().nextUUID();
+        const str, var bytes = bun.String.createUninitialized(.latin1, 36);
+        defer str.deref();
 
-        uuid.print(&out);
-        return JSC.ZigString.init(&out).toValueGC(globalThis);
+        // randomUUID must have been called already many times before this kicks
+        // in so we can skip the rare_data pointer check.
+        const uuid = globalThis.bunVM().rare_data.?.nextUUID();
+
+        uuid.print(bytes[0..36]);
+        return str.toJS(globalThis);
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Crypto {

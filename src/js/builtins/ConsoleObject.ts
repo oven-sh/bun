@@ -38,7 +38,12 @@ export function asyncIterator(this: Console) {
           // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
           i = indexOf(actualChunk, last);
           while (i !== -1) {
-            yield decoder.decode(actualChunk.subarray(last, i));
+            yield decoder.decode(
+              actualChunk.subarray(
+                last,
+                process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
+              ),
+            );
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -78,7 +83,12 @@ export function asyncIterator(this: Console) {
           while (i !== -1) {
             // This yield may end the function, in that case we need to be able to recover state
             // if the iterator was fired up again.
-            yield decoder.decode(actualChunk.subarray(last, i));
+            yield decoder.decode(
+              actualChunk.subarray(
+                last,
+                process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
+              ),
+            );
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -116,7 +126,7 @@ export function write(this: Console, input) {
 
   const count = $argumentCount();
   for (var i = 1; i < count; i++) {
-    wrote += writer.write($argument(i));
+    wrote += writer.write(arguments[i]);
   }
 
   writer.flush(true);
@@ -164,85 +174,20 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))";
   var ansi = new RegExp(ansiPattern, "g");
 
-  /**
-   * Returns true if the character represented by a given
-   * Unicode code point is full-width. Otherwise returns false.
-   */
-  var isFullWidthCodePoint = code => {
-    // Code points are partially derived from:
-    // https://www.unicode.org/Public/UNIDATA/EastAsianWidth.txt
-    return (
-      code >= 0x1100 &&
-      (code <= 0x115f || // Hangul Jamo
-        code === 0x2329 || // LEFT-POINTING ANGLE BRACKET
-        code === 0x232a || // RIGHT-POINTING ANGLE BRACKET
-        // CJK Radicals Supplement .. Enclosed CJK Letters and Months
-        (code >= 0x2e80 && code <= 0x3247 && code !== 0x303f) ||
-        // Enclosed CJK Letters and Months .. CJK Unified Ideographs Extension A
-        (code >= 0x3250 && code <= 0x4dbf) ||
-        // CJK Unified Ideographs .. Yi Radicals
-        (code >= 0x4e00 && code <= 0xa4c6) ||
-        // Hangul Jamo Extended-A
-        (code >= 0xa960 && code <= 0xa97c) ||
-        // Hangul Syllables
-        (code >= 0xac00 && code <= 0xd7a3) ||
-        // CJK Compatibility Ideographs
-        (code >= 0xf900 && code <= 0xfaff) ||
-        // Vertical Forms
-        (code >= 0xfe10 && code <= 0xfe19) ||
-        // CJK Compatibility Forms .. Small Form Variants
-        (code >= 0xfe30 && code <= 0xfe6b) ||
-        // Halfwidth and Fullwidth Forms
-        (code >= 0xff01 && code <= 0xff60) ||
-        (code >= 0xffe0 && code <= 0xffe6) ||
-        // Kana Supplement
-        (code >= 0x1b000 && code <= 0x1b001) ||
-        // Enclosed Ideographic Supplement
-        (code >= 0x1f200 && code <= 0x1f251) ||
-        // Miscellaneous Symbols and Pictographs 0x1f300 - 0x1f5ff
-        // Emoticons 0x1f600 - 0x1f64f
-        (code >= 0x1f300 && code <= 0x1f64f) ||
-        // CJK Unified Ideographs Extension B .. Tertiary Ideographic Plane
-        (code >= 0x20000 && code <= 0x3fffd))
-    );
-  };
-
-  var isZeroWidthCodePoint = code => {
-    return (
-      code <= 0x1f || // C0 control codes
-      (code >= 0x7f && code <= 0x9f) || // C1 control codes
-      (code >= 0x300 && code <= 0x36f) || // Combining Diacritical Marks
-      (code >= 0x200b && code <= 0x200f) || // Modifying Invisible Characters
-      // Combining Diacritical Marks for Symbols
-      (code >= 0x20d0 && code <= 0x20ff) ||
-      (code >= 0xfe00 && code <= 0xfe0f) || // Variation Selectors
-      (code >= 0xfe20 && code <= 0xfe2f) || // Combining Half Marks
-      (code >= 0xe0100 && code <= 0xe01ef)
-    ); // Variation Selectors
-  };
-
   function stripVTControlCharacters(str) {
     return (RegExpPrototypeSymbolReplace as any).$call(ansi, str, "");
   }
+
+  var internalGetStringWidth = $lazy("getStringWidth");
 
   /**
    * Returns the number of columns required to display the given string.
    */
   var getStringWidth = function getStringWidth(str, removeControlChars = true) {
-    var width = 0;
-
     if (removeControlChars) str = stripVTControlCharacters(str);
     str = StringPrototypeNormalize.$call(str, "NFC");
-    for (var char of str) {
-      var code = StringPrototypeCodePointAt.$call(char, 0);
-      if (isFullWidthCodePoint(code)) {
-        width += 2;
-      } else if (!isZeroWidthCodePoint(code)) {
-        width++;
-      }
-    }
 
-    return width;
+    return internalGetStringWidth(str);
   };
 
   const tableChars = {
@@ -278,7 +223,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   };
 
   const table = (head, columns) => {
-    const columnWidths = ArrayPrototypeMap.call(head, h => getStringWidth(h)) as number[];
+    const columnWidths = ArrayPrototypeMap.$call(head, h => getStringWidth(h)) as number[];
     const longestColumn = Math.max(...(ArrayPrototypeMap as any).$call(columns, a => a.length));
     const rows: any = $newArrayWithSize(longestColumn);
 
@@ -508,7 +453,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         const errorHandler = useStdout ? this._stdoutErrorHandler : this._stderrErrorHandler;
 
         if (groupIndent.length !== 0) {
-          if (StringPrototypeIncludes.call(string, "\n")) {
+          if (StringPrototypeIncludes.$call(string, "\n")) {
             // ?!
             string = (RegExpPrototypeSymbolReplace.$call as any)(/\n/g, string, `\n${groupIndent}`);
           }
@@ -657,7 +602,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       if (!expression) {
         args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
         // The arguments will be formatted in warn() again
-        Reflect.apply(this.warn, this, args);
+        this.warn.$apply(this, args);
       }
     },
 
@@ -698,7 +643,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
     group(...data) {
       if (data.length > 0) {
-        Reflect.apply(this.log, this, data);
+        this.log.$apply(this, data);
       }
       this[kGroupIndent] += StringPrototypeRepeat.$call(" ", this[kGroupIndentationWidth]);
     },

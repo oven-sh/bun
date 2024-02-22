@@ -104,11 +104,14 @@ it("process.nextTick 2 args", async () => {
 it("process.nextTick 5 args", async () => {
   await new Promise((resolve, reject) => {
     var args = [12345, "hello", "hello", "hello", 5];
-    process.nextTick((...receivedArgs) => {
-      if (!args.every((arg, index) => arg === receivedArgs[index]))
-        reject(new Error("process.nextTick called with wrong arguments"));
-      resolve(true);
-    }, ...args);
+    process.nextTick(
+      (...receivedArgs) => {
+        if (!args.every((arg, index) => arg === receivedArgs[index]))
+          reject(new Error("process.nextTick called with wrong arguments"));
+        resolve(true);
+      },
+      ...args,
+    );
   });
 });
 

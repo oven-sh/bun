@@ -33,11 +33,8 @@
 
 namespace WebCore {
 
-ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(const CryptoKeyRSA& key, const Vector<uint8_t>& data)
-{
-    const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
-    if (!md)
-        return Exception { NotSupportedError };
+
+static ExceptionOr<Vector<uint8_t>> signWithEVP_MD(const CryptoKeyRSA& key,  const EVP_MD* md, const Vector<uint8_t>& data) {
 
     std::optional<Vector<uint8_t>> digest = calculateDigest(md, data);
     if (!digest)
@@ -68,12 +65,25 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(cons
     return signature;
 }
 
-ExceptionOr<bool> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerify(const CryptoKeyRSA& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
+ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSignWithAlgorithm(const CryptoKeyRSA& key, CryptoAlgorithmIdentifier algorithm, const Vector<uint8_t>& data) {
+
+    const EVP_MD* md = digestAlgorithm(algorithm);
+    if (!md)
+        return Exception { NotSupportedError };
+
+    return signWithEVP_MD(key, md, data);
+}
+ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformSign(const CryptoKeyRSA& key, const Vector<uint8_t>& data)
 {
     const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
     if (!md)
         return Exception { NotSupportedError };
 
+    return signWithEVP_MD(key, md, data);
+}
+
+
+static ExceptionOr<bool> verifyWithEVP_MD(const CryptoKeyRSA& key,  const EVP_MD* md, const Vector<uint8_t>& signature, const Vector<uint8_t>& data) {
     std::optional<Vector<uint8_t>> digest = calculateDigest(md, data);
     if (!digest)
         return Exception { OperationError };
@@ -94,6 +104,24 @@ ExceptionOr<bool> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerify(const CryptoK
     int ret = EVP_PKEY_verify(ctx.get(), signature.data(), signature.size(), digest->data(), digest->size());
 
     return ret == 1;
+}
+
+ExceptionOr<bool> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerifyWithAlgorithm(const CryptoKeyRSA& key, CryptoAlgorithmIdentifier algorithm, const Vector<uint8_t>& signature, const Vector<uint8_t>& data) {
+    const EVP_MD* md = digestAlgorithm(algorithm);
+    if (!md)
+        return Exception { NotSupportedError };
+
+    return verifyWithEVP_MD(key, md, signature, data);
+}
+
+
+ExceptionOr<bool> CryptoAlgorithmRSASSA_PKCS1_v1_5::platformVerify(const CryptoKeyRSA& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
+{
+    const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
+    if (!md)
+        return Exception { NotSupportedError };
+
+    return verifyWithEVP_MD(key, md, signature, data);
 }
 
 } // namespace WebCore

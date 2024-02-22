@@ -4,11 +4,6 @@ concurrency:
   group: bun-linux-aarch64-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  TEST_TAG: bun-test'
-
 on:
   push:
     branches:
@@ -16,9 +11,26 @@ on:
     paths:
       - "src/**/*"
       - "test/**/*"
+      - "packages/bun-usockets/src/**/*"
+      - "packages/bun-uws/src/**/*"
+      - "CMakeLists.txt"
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
+      - ".github/workflows/bun-linux-aarch64.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src/**/*"
+      - "test/**/*"
+      - "packages/bun-usockets/src/**/*"
+      - "packages/bun-uws/src/**/*"
+      - "CMakeLists.txt"
+      - "build.zig"
+      - "Makefile"
+      - "Dockerfile"
+      - ".github/workflows/bun-linux-aarch64.yml"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -37,15 +49,16 @@ jobs:
             arch: aarch64
             build_arch: arm64
             runner: linux-arm64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/2023-sept15-1/bun-webkit-linux-arm64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-arm64-lto"
             build_machine_arch: aarch64
-
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
-          submodules: recursive
-      - uses: docker/setup-buildx-action@v2
+          submodules: false
+          ref: ${{github.sha}}
+          clean: true
+      - run: |
+          bash ./scripts/update-submodules.sh
+      - uses: docker/setup-buildx-action@v3
         id: buildx
         with:
           install: true
@@ -53,7 +66,7 @@ jobs:
         run: |
           rm -rf ${{runner.temp}}/release
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -61,7 +74,7 @@ jobs:
       - run: |
           mkdir -p /tmp/.buildx-cache-${{matrix.tag}}
       - name: Build and push
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: false
@@ -72,9 +85,7 @@ jobs:
             BUILDARCH=${{matrix.build_arch}}
             BUILD_MACHINE_ARCH=${{matrix.build_machine_arch}}
             CPU_TARGET=${{matrix.cpu}}
-            WEBKIT_URL=${{matrix.webkit_url}}
             GIT_SHA=${{github.sha}}
-            WEBKIT_BASENAME=${{matrix.webkit_basename}}
           platforms: linux/${{matrix.build_arch}}
           target: artifact
           outputs: type=local,dest=${{runner.temp}}/release
@@ -102,22 +113,14 @@ jobs:
 
           zip -r bun-${{matrix.tag}}-profile.zip bun-${{matrix.tag}}-profile
           zip -r bun-${{matrix.tag}}.zip bun-${{matrix.tag}}
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: bun-${{matrix.tag}}-profile
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-      - uses: actions/upload-artifact@v3
-        with:
-          name: bun-obj-${{matrix.tag}}
-          path: ${{runner.temp}}/release/bun-obj
-      - uses: actions/upload-artifact@v3
-        with:
-          name: ${{matrix.tag}}-dependencies
-          path: ${{runner.temp}}/release/bun-dependencies
       - name: Release
         id: release
         uses: ncipollo/release-action@v1

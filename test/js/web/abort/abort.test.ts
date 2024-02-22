@@ -18,4 +18,25 @@ describe("AbortSignal", () => {
 
     expect(stderr?.toString()).not.toContain("✗");
   });
+
+  test("AbortSignal.timeout(n) should not freeze the process", async () => {
+    const fileName = join(import.meta.dir, "abort.signal.ts");
+
+    const server = Bun.spawn({
+      cmd: [bunExe(), fileName],
+      env: bunEnv,
+      cwd: tmpdir(),
+    });
+
+    const exitCode = await Promise.race([
+      server.exited,
+      (async () => {
+        await Bun.sleep(5000);
+        server.kill();
+        return 2;
+      })(),
+    ]);
+
+    expect(exitCode).toBe(0);
+  });
 });

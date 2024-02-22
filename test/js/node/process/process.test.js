@@ -8,13 +8,14 @@ it("process", () => {
   // this property isn't implemented yet but it should at least return a string
   const isNode = !process.isBun;
 
-  if (!isNode && process.title !== "bun") throw new Error("process.title is not 'bun'");
+  if (!isNode && process.platform !== "win32" && process.title !== "bun") throw new Error("process.title is not 'bun'");
 
   if (typeof process.env.USER !== "string") throw new Error("process.env is not an object");
 
   if (process.env.USER.length === 0) throw new Error("process.env is missing a USER property");
 
-  if (process.platform !== "darwin" && process.platform !== "linux") throw new Error("process.platform is invalid");
+  if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32")
+    throw new Error("process.platform is invalid");
 
   if (isNode) throw new Error("process.isBun is invalid");
 
@@ -67,10 +68,10 @@ it("process.hrtime.bigint()", () => {
 
 it("process.release", () => {
   expect(process.release.name).toBe("node");
-  expect(process.release.sourceUrl).toContain(
-    `https://github.com/oven-sh/bun/release/bun-v${process.versions.bun}/bun-${process.platform}-${
-      { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch
-    }`,
+  const platform = process.platform == "win32" ? "windows" : process.platform;
+  const arch = { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch;
+  expect(process.release.sourceUrl).toEqual(
+    `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}.zip`,
   );
 });
 
@@ -103,7 +104,7 @@ it("process.env.TZ", () => {
   var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   // the default timezone is Etc/UTC
-  if (!"TZ" in process.env) {
+  if (!("TZ" in process.env)) {
     expect(origTimezone).toBe("Etc/UTC");
   }
 
@@ -154,11 +155,16 @@ it("process.umask()", () => {
     }).toThrow(RangeError);
   }
 
-  const orig = process.umask(0o777);
-  expect(orig).toBeGreaterThan(0);
-  expect(process.umask()).toBe(0o777);
-  expect(process.umask(undefined)).toBe(0o777);
-  expect(process.umask(Number(orig))).toBe(0o777);
+  const mask = process.platform == "win32" ? 0o600 : 0o777;
+  const orig = process.umask(mask);
+  if (process.platform == "win32") {
+    expect(orig).toBe(0);
+  } else {
+    expect(orig).toBeGreaterThan(0);
+  }
+  expect(process.umask()).toBe(mask);
+  expect(process.umask(undefined)).toBe(mask);
+  expect(process.umask(Number(orig))).toBe(mask);
   expect(process.umask()).toBe(orig);
 });
 
@@ -237,11 +243,11 @@ it("process.argv in testing", () => {
 
 describe("process.exitCode", () => {
   it("validates int", () => {
-    expect(() => (process.exitCode = "potato")).toThrow("exitCode must be a number");
-    expect(() => (process.exitCode = 1.2)).toThrow('The "code" argument must be an integer');
-    expect(() => (process.exitCode = NaN)).toThrow('The "code" argument must be an integer');
-    expect(() => (process.exitCode = Infinity)).toThrow('The "code" argument must be an integer');
-    expect(() => (process.exitCode = -Infinity)).toThrow('The "code" argument must be an integer');
+    expect(() => (process.exitCode = "potato")).toThrow(`exitCode must be an integer`);
+    expect(() => (process.exitCode = 1.2)).toThrow("exitCode must be an integer");
+    expect(() => (process.exitCode = NaN)).toThrow("exitCode must be an integer");
+    expect(() => (process.exitCode = Infinity)).toThrow("exitCode must be an integer");
+    expect(() => (process.exitCode = -Infinity)).toThrow("exitCode must be an integer");
   });
 
   it("works with implicit process.exit", () => {
@@ -261,6 +267,15 @@ describe("process.exitCode", () => {
     expect(exitCode).toBe(42);
     expect(stdout.toString().trim()).toBe("PASS");
   });
+});
+
+it("process exitCode range (#6284)", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), join(import.meta.dir, "process-exitCode-fixture.js"), "255"],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(255);
+  expect(stdout.toString().trim()).toBe("PASS");
 });
 
 it("process.exit", () => {
@@ -314,7 +329,8 @@ describe("process.cpuUsage", () => {
     });
   });
 
-  it("works with diff", () => {
+  // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
+  it.skipIf(process.platform === "win32")("works with diff", () => {
     const init = process.cpuUsage();
     init.system = 1;
     init.user = 1;
@@ -323,7 +339,7 @@ describe("process.cpuUsage", () => {
     expect(delta.system).toBeGreaterThan(0);
   });
 
-  it("works with diff of different structure", () => {
+  it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
     const init = {
       user: 0,
       system: 0,
@@ -349,8 +365,8 @@ describe("process.cpuUsage", () => {
     }
   });
 
-  // Skipped on Linux because it seems to not change as often as on macOS
-  it.skipIf(process.platform === "linux")("increases monotonically", () => {
+  // Skipped on Linux/Windows because it seems to not change as often as on macOS
+  it.skipIf(process.platform !== "darwin")("increases monotonically", () => {
     const init = process.cpuUsage();
     for (let i = 0; i < 10000; i++) {}
     const another = process.cpuUsage();
@@ -359,28 +375,38 @@ describe("process.cpuUsage", () => {
   });
 });
 
-it("process.getegid", () => {
-  expect(typeof process.getegid()).toBe("number");
-});
-it("process.geteuid", () => {
-  expect(typeof process.geteuid()).toBe("number");
-});
-it("process.getgid", () => {
-  expect(typeof process.getgid()).toBe("number");
-});
-it("process.getgroups", () => {
-  expect(process.getgroups()).toBeInstanceOf(Array);
-  expect(process.getgroups().length).toBeGreaterThan(0);
-});
-it("process.getuid", () => {
-  expect(typeof process.getuid()).toBe("number");
-});
+if (process.platform !== "win32") {
+  it("process.getegid", () => {
+    expect(typeof process.getegid()).toBe("number");
+  });
+  it("process.geteuid", () => {
+    expect(typeof process.geteuid()).toBe("number");
+  });
+  it("process.getgid", () => {
+    expect(typeof process.getgid()).toBe("number");
+  });
+  it("process.getgroups", () => {
+    expect(process.getgroups()).toBeInstanceOf(Array);
+    expect(process.getgroups().length).toBeGreaterThan(0);
+  });
+  it("process.getuid", () => {
+    expect(typeof process.getuid()).toBe("number");
+  });
+  it("process.getuid", () => {
+    expect(typeof process.getuid()).toBe("number");
+  });
+} else {
+  it("process.getegid, process.geteuid, process.getgid, process.getgroups, process.getuid, process.getuid are not implemented on Windows", () => {
+    expect(process.getegid).toBeUndefined();
+    expect(process.geteuid).toBeUndefined();
+    expect(process.getgid).toBeUndefined();
+    expect(process.getgroups).toBeUndefined();
+    expect(process.getuid).toBeUndefined();
+    expect(process.getuid).toBeUndefined();
+  });
+}
 
-it("process.getuid", () => {
-  expect(typeof process.getuid()).toBe("number");
-});
-
-describe("signal", () => {
+describe.skipIf(process.platform === "win32")("signal", () => {
   const fixture = join(import.meta.dir, "./process-signal-handler.fixture.js");
   it("simple case works", async () => {
     const child = Bun.spawn({
@@ -407,7 +433,8 @@ describe("signal", () => {
       stdout: "pipe",
     });
     const prom = child.exited;
-    process.kill(child.pid, "SIGTERM");
+    const ret = process.kill(child.pid, "SIGTERM");
+    expect(ret).toBe(true);
     await prom;
     expect(child.signalCode).toBe("SIGTERM");
   });
@@ -418,7 +445,8 @@ describe("signal", () => {
       stdout: "pipe",
     });
     const prom = child.exited;
-    process.kill(child.pid, 9);
+    const ret = process.kill(child.pid, "SIGKILL");
+    expect(ret).toBe(true);
     await prom;
     expect(child.signalCode).toBe("SIGKILL");
   });
@@ -486,4 +514,23 @@ it("dlopen args parsing", () => {
   expect(() => process.dlopen({ module: Symbol() }, "/tmp/not-found.so")).toThrow();
   expect(() => process.dlopen({ module: { exports: Symbol("123") } }, "/tmp/not-found.so")).toThrow();
   expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
+});
+
+it("process.constrainedMemory()", () => {
+  if (process.platform === "linux") {
+    // On Linux, it returns 0 if the kernel doesn't support it
+    expect(process.constrainedMemory() >= 0).toBe(true);
+  } else {
+    // On unsupported platforms, it returns undefined
+    expect(process.constrainedMemory()).toBeUndefined();
+  }
+});
+
+it("process.report", () => {
+  // TODO: write better tests
+  JSON.stringify(process.report.getReport(), null, 2);
+});
+
+it("process.exit with jsDoubleNumber that is an integer", () => {
+  expect([join(import.meta.dir, "./process-exit-decimal-fixture.js")]).toRun();
 });

@@ -1,9 +1,11 @@
+// @known-failing-on-windows: 1 failing
 import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { connect, isIP, isIPv4, isIPv6, Socket, createConnection } from "net";
 import { realpathSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { bunEnv, bunExe } from "harness";
 
 const socket_domain = mkdtempSync(join(realpathSync(tmpdir()), "node-net"));
 
@@ -32,7 +34,6 @@ it("should support net.isIPv6()", () => {
 });
 
 describe("net.Socket read", () => {
-  var port = 12345;
   var unix_servers = 0;
   for (let [message, label] of [
     // ["Hello World!".repeat(1024), "long message"],
@@ -259,7 +260,6 @@ describe("net.Socket read", () => {
 
 describe("net.Socket write", () => {
   const message = "Hello World!".repeat(1024);
-  let port = 53213;
 
   function runWithServer(cb: (..._: any[]) => void) {
     return (done: (_?: any) => void) => {
@@ -267,6 +267,7 @@ describe("net.Socket write", () => {
 
       function close(socket: _BunSocket<Buffer[]>) {
         expect(Buffer.concat(socket.data).toString("utf8")).toBe(message);
+        server.stop();
         done();
       }
 
@@ -314,7 +315,7 @@ describe("net.Socket write", () => {
     "should work with .end(data)",
     runWithServer((server, done) => {
       const socket = new Socket()
-        .connect(server.port)
+        .connect(server.port, server.hostname)
         .on("ready", () => {
           expect(socket).toBeDefined();
           expect(socket.connecting).toBe(false);
@@ -328,7 +329,7 @@ describe("net.Socket write", () => {
     "should work with .write(data).end()",
     runWithServer((server, done) => {
       const socket = new Socket()
-        .connect(server.port, () => {
+        .connect(server.port, server.hostname, () => {
           expect(socket).toBeDefined();
           expect(socket.connecting).toBe(false);
         })
@@ -410,4 +411,27 @@ it("should handle connection error (unix)", done => {
     expect(errored).toBe(true);
     done();
   });
+});
+
+it("Socket has a prototype", () => {
+  function Connection() {}
+  function Connection2() {}
+  require("util").inherits(Connection, Socket);
+  require("util").inherits(Connection2, require("tls").TLSSocket);
+});
+
+it("unref should exit when no more work pending", async () => {
+  const process = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-unref-fixture.js")],
+    env: bunEnv,
+  });
+  expect(await process.exited).toBe(0);
+});
+
+it("socket should keep process alive if unref is not called", async () => {
+  const process = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-ref-default-fixture.js")],
+    env: bunEnv,
+  });
+  expect(await process.exited).toBe(1);
 });

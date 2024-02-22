@@ -18,9 +18,9 @@ domain.createDomain = domain.create = function () {
   };
   d.bind = function (fn) {
     return function () {
-      var args = Array.prototype.slice.call(arguments);
+      var args = Array.prototype.slice.$call(arguments);
       try {
-        fn.apply(null, args);
+        fn.$apply(null, args);
       } catch (err) {
         emitError(err);
       }
@@ -31,9 +31,9 @@ domain.createDomain = domain.create = function () {
       if (err) {
         emitError(err);
       } else {
-        var args = Array.prototype.slice.call(arguments, 1);
+        var args = Array.prototype.slice.$call(arguments, 1);
         try {
-          fn.apply(null, args);
+          fn.$apply(null, args);
         } catch (err) {
           emitError(err);
         }

@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { bunEnv, bunExe, nodeExe } from "harness";
-import { WebSocket } from "ws";
+import { Server, WebSocket, WebSocketServer } from "ws";
+import path from "node:path";
 
 const strings = [
   {
@@ -20,7 +21,7 @@ const strings = [
     message: "utf8-😶",
     bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x98, 0xb6],
   },
-];
+] as const;
 
 const buffers = [
   {
@@ -38,9 +39,9 @@ const buffers = [
     message: Buffer.from("utf8-🤩"),
     bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0xa4, 0xa9],
   },
-];
+] as const;
 
-const messages = [...strings, ...buffers];
+const messages = [...strings, ...buffers] as const;
 
 const binaryTypes = [
   {
@@ -237,6 +238,104 @@ describe("WebSocket", () => {
       done();
     });
   });
+  test("prototype properties are set correctly", (ws, done) => {
+    expect(ws.CLOSED).toBeDefined();
+    expect(ws.CLOSING).toBeDefined();
+    expect(ws.CONNECTING).toBeDefined();
+    expect(ws.OPEN).toBeDefined();
+    done();
+  });
+  it("sets static properties correctly", () => {
+    expect(WebSocket.CLOSED).toBeDefined();
+    expect(WebSocket.CLOSING).toBeDefined();
+    expect(WebSocket.CONNECTING).toBeDefined();
+    expect(WebSocket.OPEN).toBeDefined();
+  });
+});
+
+describe("WebSocketServer", () => {
+  it("sets websocket prototype properties correctly", done => {
+    const wss = new WebSocketServer({ port: 0 });
+
+    wss.on("connection", ws => {
+      try {
+        expect(ws.CLOSED).toBeDefined();
+        expect(ws.CLOSING).toBeDefined();
+        expect(ws.CONNECTING).toBeDefined();
+        expect(ws.OPEN).toBeDefined();
+        return done();
+      } catch (err) {
+        done(err);
+      } finally {
+        wss.close();
+        ws.close();
+      }
+    });
+
+    new WebSocket("ws://localhost:" + wss.address().port);
+  });
+});
+
+describe("Server", () => {
+  it("sets websocket prototype properties correctly", done => {
+    const wss = new Server({ port: 0 });
+
+    wss.on("connection", ws => {
+      try {
+        expect(ws.CLOSED).toBeDefined();
+        expect(ws.CLOSING).toBeDefined();
+        expect(ws.CONNECTING).toBeDefined();
+        expect(ws.OPEN).toBeDefined();
+        return done();
+      } catch (err) {
+        done(err);
+      } finally {
+        wss.close();
+        ws.close();
+      }
+    });
+
+    new WebSocket("ws://localhost:" + wss.address().port);
+  });
+});
+
+it("isBinary", done => {
+  const wss = new WebSocketServer({ port: 0 });
+  let isDone = false;
+  wss.on("connection", ws => {
+    ws.on("message", (data, isBinary) => {
+      if (isDone) {
+        expect(isBinary).toBeTrue();
+        wss.close();
+        ws.close();
+        done();
+        return;
+      }
+      expect(isBinary).toBeFalse();
+      isDone = true;
+    });
+  });
+
+  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  ws.on("open", function open() {
+    ws.send("hello");
+    ws.send(Buffer.from([1, 2, 3]));
+  });
+});
+
+it("onmessage", done => {
+  const wss = new WebSocketServer({ port: 0 });
+  wss.on("connection", ws => {
+    ws.onmessage = e => {
+      expect(e.data).toEqual(Buffer.from("hello"));
+      done();
+    };
+  });
+
+  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  ws.onopen = () => {
+    ws.send("hello");
+  };
 });
 
 function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) => void, timeout?: number) {
@@ -263,7 +362,7 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
 }
 
 async function listen(): Promise<URL> {
-  const { pathname } = new URL("../../web/websocket/websocket-server-echo.mjs", import.meta.url);
+  const pathname = path.resolve(import.meta.dir, "../../web/websocket/websocket-server-echo.mjs");
   const server = spawn({
     cmd: [nodeExe() ?? bunExe(), pathname],
     cwd: import.meta.dir,

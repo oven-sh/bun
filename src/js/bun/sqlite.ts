@@ -307,6 +307,8 @@ class Database {
       throw new Error("SQL query cannot be empty.");
     }
 
+    const willCache = this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
+
     // this list should be pretty small
     var index = this.#cachedQueriesLengths.indexOf(query.length);
     while (index !== -1) {
@@ -325,8 +327,6 @@ class Database {
       }
       return stmt;
     }
-
-    const willCache = this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
 
     var stmt = this.prepare(query, undefined, willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0);
 
@@ -414,7 +414,7 @@ const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, 
     }
     try {
       before.run();
-      const result = fn.apply(this, args);
+      const result = fn.$apply(this, args);
       after.run();
       return result;
     } catch (ex) {
@@ -426,10 +426,24 @@ const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, 
     }
   };
 
+// This class is never actually thrown
+// so we implement instanceof so that it could theoretically be caught
+class SQLiteError extends Error {
+  static [Symbol.hasInstance](instance) {
+    return instance?.name === "SQLiteError";
+  }
+
+  constructor() {
+    super();
+    throw new Error("SQLiteError can only be constructed by bun:sqlite");
+  }
+}
+
 export default {
   __esModule: true,
   Database,
   Statement,
   constants,
   default: Database,
+  SQLiteError,
 };

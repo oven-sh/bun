@@ -13,8 +13,8 @@ using namespace std;
 
 #include "headers-cpp.h"
 
-#include "JavaScriptCore/CallFrame.h"
-#include "JavaScriptCore/JSArrayBufferViewInlines.h"
+#include <JavaScriptCore/CallFrame.h>
+#include <JavaScriptCore/JSArrayBufferViewInlines.h>
 
 int main() {
   time_t rawtime;

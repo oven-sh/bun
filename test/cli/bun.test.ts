@@ -52,12 +52,10 @@ describe("bun", () => {
       var revision = stdout.toString().trim();
 
       expect(exitCode).toBe(0);
-      expect(revision).toStartWith(version.replaceAll("_", "-"));
+      expect(revision).toStartWith(version);
       // https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
       expect(revision).toMatch(
-        new RegExp(
-          "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
-        ),
+        /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/,
       );
     });
   });

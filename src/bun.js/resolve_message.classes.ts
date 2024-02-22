@@ -1,4 +1,4 @@
-import { define } from "./scripts/class-definitions";
+import { define } from "../codegen/class-definitions";
 
 export default [
   define({
@@ -78,6 +78,12 @@ export default [
         getter: "getPosition",
         cache: true,
       },
+
+      notes: {
+        getter: "getNotes",
+        cache: true,
+      },
+
       ["@@toPrimitive"]: {
         fn: "toPrimitive",
         length: 1,

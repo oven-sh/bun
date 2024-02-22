@@ -28,6 +28,7 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 /* Cannot include this one on Windows */
 #include <unistd.h>
 #include <stdint.h>
+#include <errno.h>
 #endif
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs);
@@ -35,8 +36,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs);
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
 #define CLEAR_POINTER_TAG(p) ((void *) ((uintptr_t) (p) & UNSET_BITS_49_UNTIL_64))
-#define LIKELY(cond) __builtin_expect((uint64_t)(void*)(cond), 1)
-#define UNLIKELY(cond) __builtin_expect((uint64_t)(void*)(cond), 0)
+#define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
+#define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
 
 #ifdef LIBUS_USE_EPOLL
 #define GET_READY_POLL(loop, index) (struct us_poll_t *) loop->ready_polls[index].data.ptr
@@ -152,14 +153,14 @@ void us_loop_run(struct us_loop_t *loop) {
                 }
 #ifdef LIBUS_USE_EPOLL
                 int events = loop->ready_polls[loop->current_ready_poll].events;
-                int error = loop->ready_polls[loop->current_ready_poll].events & (EPOLLERR | EPOLLHUP);
+                const int error = events & (EPOLLERR | EPOLLHUP);
 #else
                 /* EVFILT_READ, EVFILT_TIME, EVFILT_USER are all mapped to LIBUS_SOCKET_READABLE */
                 int events = LIBUS_SOCKET_READABLE;
                 if (loop->ready_polls[loop->current_ready_poll].filter == EVFILT_WRITE) {
                     events = LIBUS_SOCKET_WRITABLE;
                 }
-                int error = loop->ready_polls[loop->current_ready_poll].flags & (EV_ERROR | EV_EOF);
+                const int error = loop->ready_polls[loop->current_ready_poll].flags & (EV_ERROR | EV_EOF);
 #endif
                 /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
                 events &= us_poll_events(poll);
@@ -174,12 +175,17 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-
 void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs) {
-    us_loop_integrate(loop);
-
     if (loop->num_polls == 0)
         return;
+
+    struct us_internal_callback_t *timer_callback = (struct us_internal_callback_t*)loop->data.sweep_timer;
+
+    // Only integrate the loop if we haven't already.
+    // Otherwise we will keep restarting the timer.
+    if(!timer_callback->cb) {
+        us_loop_integrate(loop);
+    }
 
     /* Emit pre callback */
     us_internal_loop_pre(loop);
@@ -187,6 +193,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs) {
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     if (timeoutMs > 0) {
+        if (timeoutMs == INT64_MAX) {
+            timeoutMs = 0;
+        }
         loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, (int)timeoutMs);
     } else {
         loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, -1);
@@ -194,8 +203,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs) {
 #else
     if (timeoutMs > 0) {
         struct timespec ts = {0, 0};
-        ts.tv_sec = timeoutMs / 1000;
-        ts.tv_nsec = (timeoutMs % 1000) * 1000000;
+        if (timeoutMs != INT64_MAX) {
+            ts.tv_sec = timeoutMs / 1000;
+            ts.tv_nsec = (timeoutMs % 1000) * 1000000;
+        }
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, &ts);
     } else {
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
@@ -379,6 +390,7 @@ struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough, unsi
     cb->loop = loop;
     cb->cb_expects_the_loop = 0;
     cb->leave_poll_ready = 0;
+    cb->has_added_timer_to_event_loop = 0;
 
     return (struct us_timer_t *) cb;
 }
@@ -403,14 +415,18 @@ struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough, unsi
 #endif
 
 #ifdef LIBUS_USE_EPOLL
-void us_timer_close(struct us_timer_t *timer) {
+void us_timer_close(struct us_timer_t *timer, int fallthrough) {
     struct us_internal_callback_t *cb = (struct us_internal_callback_t *) timer;
 
     us_poll_stop(&cb->p, cb->loop);
     close(us_poll_fd(&cb->p));
 
-    /* (regular) sockets are the only polls which are not freed immediately */
-    us_poll_free((struct us_poll_t *) timer, cb->loop);
+     /* (regular) sockets are the only polls which are not freed immediately */
+    if(fallthrough){
+        us_free(timer);
+    }else {
+        us_poll_free((struct us_poll_t *) timer, cb->loop);
+    }
 }
 
 void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms, int repeat_ms) {
@@ -424,10 +440,18 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms
     };
 
     timerfd_settime(us_poll_fd((struct us_poll_t *) t), 0, &timer_spec, NULL);
+
+    // Avoid the system call overhead of re-adding this timer to the event loop only to receive EEXIST
+    if (internal_cb->loop->data.sweep_timer == t) {
+        if (internal_cb->has_added_timer_to_event_loop) {
+            return;
+        }
+        internal_cb->has_added_timer_to_event_loop = 1;
+    }
     us_poll_start((struct us_poll_t *) t, internal_cb->loop, LIBUS_SOCKET_READABLE);
 }
 #else
-void us_timer_close(struct us_timer_t *timer) {
+void us_timer_close(struct us_timer_t *timer, int fallthrough) {
     struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) timer;
 
     struct kevent64_s event;
@@ -435,7 +459,11 @@ void us_timer_close(struct us_timer_t *timer) {
     kevent64(internal_cb->loop->fd, &event, 1, NULL, 0, 0, NULL);
 
     /* (regular) sockets are the only polls which are not freed immediately */
-    us_poll_free((struct us_poll_t *) timer, internal_cb->loop);
+    if(fallthrough){
+        us_free(timer);
+    }else {
+        us_poll_free((struct us_poll_t *) timer, internal_cb->loop);
+    }
 }
 
 void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms, int repeat_ms) {
@@ -577,5 +605,14 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
     }
 }
 #endif
+
+int us_socket_get_error(int ssl, struct us_socket_t *s) {
+    int error = 0;
+    socklen_t len = sizeof(error);
+    if (getsockopt(us_poll_fd((struct us_poll_t *) s), SOL_SOCKET, SO_ERROR, (char *) &error, &len) == -1) {
+        return errno;
+    }
+    return error;
+}
 
 #endif

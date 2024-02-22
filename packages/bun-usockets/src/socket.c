@@ -22,6 +22,10 @@
 #include <string.h>
 #include <stdint.h>
 
+#ifndef WIN32
+#include <fcntl.h>
+#endif
+
 /* Shared with SSL */
 
 int us_socket_local_port(int ssl, struct us_socket_t *s) {
@@ -41,6 +45,16 @@ void us_socket_shutdown_read(int ssl, struct us_socket_t *s) {
 void us_socket_remote_address(int ssl, struct us_socket_t *s, char *buf, int *length) {
     struct bsd_addr_t addr;
     if (bsd_remote_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
+        *length = 0;
+    } else {
+        *length = bsd_addr_get_ip_length(&addr);
+        memcpy(buf, bsd_addr_get_ip(&addr), *length);
+    }
+}
+
+void us_socket_local_address(int ssl, struct us_socket_t *s, char *buf, int *length) {
+    struct bsd_addr_t addr;
+    if (bsd_local_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
         *length = 0;
     } else {
         *length = bsd_addr_get_ip_length(&addr);
@@ -140,22 +154,90 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
     return s;
 }
 
+// This function is the same as us_socket_close but:
+// - does not emit on_close event
+// - does not close
+struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
+    if (!us_socket_is_closed(0, s)) {
+        if (s->low_prio_state == 1) {
+            /* Unlink this socket from the low-priority queue */
+            if (!s->prev) s->context->loop->data.low_prio_head = s->next;
+            else s->prev->next = s->next;
+
+            if (s->next) s->next->prev = s->prev;
+
+            s->prev = 0;
+            s->next = 0;
+            s->low_prio_state = 0;
+        } else {
+            us_internal_socket_context_unlink_socket(s->context, s);
+        }
+        us_poll_stop((struct us_poll_t *) s, s->context->loop);
+
+        /* Link this socket to the close-list and let it be deleted after this iteration */
+        s->next = s->context->loop->data.closed_head;
+        s->context->loop->data.closed_head = s;
+
+        /* Any socket with prev = context is marked as closed */
+        s->prev = (struct us_socket_t *) s->context;
+
+        return s;
+    }
+    return s;
+}
+
+// This function is used for moving a socket between two different event loops
+struct us_socket_t *us_socket_attach(int ssl, LIBUS_SOCKET_DESCRIPTOR client_fd, struct us_socket_context_t *ctx, int flags, int socket_ext_size) {
+    struct us_poll_t *accepted_p = us_create_poll(ctx->loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + socket_ext_size);
+    us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
+    us_poll_start(accepted_p, ctx->loop, flags);
+
+    struct us_socket_t *s = (struct us_socket_t *) accepted_p;
+
+    s->context = ctx;
+    s->timeout = 0;
+    s->low_prio_state = 0;
+
+    /* We always use nodelay */
+    bsd_socket_nodelay(client_fd, 1);
+    us_internal_socket_context_link_socket(ctx, s);
+
+    if (ctx->on_open) ctx->on_open(s, 0, 0, 0);
+
+    return s;
+}
+
 struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR* fds) {
-#ifdef LIBUS_USE_LIBUV
+#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     return 0;
-#endif 
+#else
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
         return 0;
     }
 
     return us_socket_from_fd(ctx, socket_ext_size, fds[0]);
+#endif
 }
 
+/* This is not available for SSL sockets as it makes no sense. */
+int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
+
+    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
+        return 0;
+    }
+
+    int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+    if (written != header_length + payload_length) {
+        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    }
+
+    return written < 0 ? 0 : written;
+}
 
 struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd) {
-#ifdef LIBUS_USE_LIBUV
+#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     return 0;
-#endif
+#else
     struct us_poll_t *p1 = us_create_poll(ctx->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
     us_poll_start(p1, ctx->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
@@ -169,13 +251,16 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);
 
-    us_internal_socket_context_link_socket(ctx, s);
-
-    if (ctx->on_open) {
-        ctx->on_open(s, 0, 0, 0);
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags != -1) {
+        flags |= O_NONBLOCK;
+        fcntl(fd, F_SETFL, flags);
     }
 
+    us_internal_socket_context_link_socket(ctx, s);
+
     return s;
+#endif
 }
 
 
@@ -279,4 +364,40 @@ int us_socket_raw_write(int ssl, struct us_socket_t *s, const char *data, int le
 #endif
  // non-TLS is always raw
  return us_socket_write(ssl, s, data, length, msg_more);
+}
+
+unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
+{
+    // This function is manual inlining + modification of
+    //      us_socket_remote_address
+    //      AsyncSocket::getRemoteAddress
+    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
+    struct bsd_addr_t addr;
+    if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
+        return 0;
+    }
+
+    int length = bsd_addr_get_ip_length(&addr);
+    if (!length) {
+        return 0;
+    }
+
+    memcpy(buf, bsd_addr_get_ip(&addr), length);
+    *port = bsd_addr_get_port(&addr);
+
+    return length;
+}
+
+void us_socket_ref(struct us_socket_t *s) {
+#ifdef LIBUS_USE_LIBUV
+    uv_ref((uv_handle_t*)s->p.uv_p);
+#endif
+    // do nothing if not using libuv
+}
+
+void us_socket_unref(struct us_socket_t *s) {
+#ifdef LIBUS_USE_LIBUV
+    uv_unref((uv_handle_t*)s->p.uv_p);
+#endif
+    // do nothing if not using libuv
 }

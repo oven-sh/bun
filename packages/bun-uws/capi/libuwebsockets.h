@@ -205,6 +205,7 @@ extern "C"
     DLL_EXPORT unsigned int uws_ws_get_buffered_amount(int ssl, uws_websocket_t *ws);
     DLL_EXPORT size_t uws_ws_get_remote_address(int ssl, uws_websocket_t *ws, const char **dest);
     DLL_EXPORT size_t uws_ws_get_remote_address_as_text(int ssl, uws_websocket_t *ws, const char **dest);
+    DLL_EXPORT void uws_res_get_remote_address_info(uws_res_t *res, const char **dest, size_t *length, unsigned int *port);
 
     //Response
     DLL_EXPORT void uws_res_end(int ssl, uws_res_t *res, const char *data, size_t length, bool close_connection);

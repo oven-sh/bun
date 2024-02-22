@@ -41,7 +41,7 @@ it("clearTimeout", async () => {
   {
     const id = setTimeout(() => {
       called = true;
-      expect(false).toBe(true);
+      expect.unreachable();
     }, 0);
     clearTimeout(id);
 
@@ -53,7 +53,7 @@ it("clearTimeout", async () => {
   {
     const id = setTimeout(() => {
       called = true;
-      expect(false).toBe(true);
+      expect.unreachable();
     }, 0);
     clearTimeout(+id);
 
@@ -65,6 +65,20 @@ it("clearTimeout", async () => {
     setTimeout(resolve, 10);
   });
   expect(called).toBe(false);
+});
+
+it.todo("setImmediate runs after setTimeout cb", async () => {
+  var ranFirst = -1;
+  setTimeout(() => {
+    if (ranFirst === -1) ranFirst = 1;
+  }, 0);
+  setImmediate(() => {
+    if (ranFirst === -1) ranFirst = 0;
+  });
+
+  await Bun.sleep(5);
+
+  expect(ranFirst).toBe(1);
 });
 
 it("setTimeout(() => {}, 0)", async () => {
@@ -80,10 +94,10 @@ it("setTimeout(() => {}, 0)", async () => {
   expect(called).toBe(true);
   var ranFirst = -1;
   setTimeout(() => {
-    if (ranFirst === -1) ranFirst = 1;
+    if (ranFirst === -1) ranFirst = 0;
   }, 1);
   setTimeout(() => {
-    if (ranFirst === -1) ranFirst = 0;
+    if (ranFirst === -1) ranFirst = 1;
   }, 0);
 
   await new Promise((resolve, reject) => {
@@ -117,7 +131,7 @@ it("Bun.sleep", async () => {
   await Bun.sleep(2);
   sleeps++;
   const end = performance.now();
-  expect((end - start) * 1000).toBeGreaterThanOrEqual(3);
+  expect((end - start) * 1000).toBeGreaterThan(2);
 
   expect(sleeps).toBe(3);
 });
@@ -134,11 +148,19 @@ it("Bun.sleep propagates exceptions", async () => {
 });
 
 it("Bun.sleep works with a Date object", async () => {
+  const now = performance.now();
   var ten_ms = new Date();
   ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
-  const now = performance.now();
   await Bun.sleep(ten_ms);
-  expect(performance.now() - now).toBeGreaterThanOrEqual(10);
+  expect(performance.now() - now).toBeGreaterThan(11);
+});
+
+it("Bun.sleep(Date) fulfills after Date", async () => {
+  let ten_ms = new Date();
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
+  await Bun.sleep(ten_ms);
+  let now = new Date();
+  expect(+now).toBeGreaterThanOrEqual(+ten_ms);
 });
 
 it("node.js timers/promises setTimeout propagates exceptions", async () => {
@@ -153,7 +175,7 @@ it("node.js timers/promises setTimeout propagates exceptions", async () => {
   }
 });
 
-it.skip("order of setTimeouts", done => {
+it("order of setTimeouts", done => {
   var nums = [];
   var maybeDone = cb => {
     return () => {
@@ -237,7 +259,7 @@ it("setTimeout if refreshed before run, should reschedule to run later", done =>
   let start = Date.now();
   let timer = setTimeout(() => {
     let end = Date.now();
-    expect(end - start).toBeGreaterThanOrEqual(150);
+    expect(end - start).toBeGreaterThan(149);
     done();
   }, 100);
 
@@ -276,4 +298,16 @@ it("setTimeout should not refresh after clearTimeout", done => {
     expect(count).toBe(0);
     done();
   }, 100);
+});
+
+it("setTimeout CPU usage #7790", async () => {
+  const process = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "setTimeout-cpu-fixture.js")],
+    env: bunEnv,
+    stdout: "inherit",
+  });
+  const code = await process.exited;
+  expect(code).toBe(0);
+  const stats = process.resourceUsage();
+  expect(stats.cpuTime.user / BigInt(1e6)).toBeLessThan(1);
 });

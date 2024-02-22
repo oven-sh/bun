@@ -70,13 +70,16 @@
 #include <wtf/text/StringBuilder.h>
 
 #include "JSBuffer.h"
+#include "ErrorEvent.h"
 
 // #if USE(WEB_THREAD)
 // #include "WebCoreThreadRun.h"
 // #endif
+
 namespace WebCore {
 WTF_MAKE_ISO_ALLOCATED_IMPL(WebSocket);
 
+extern "C" bool Bun__defaultRejectUnauthorized(JSGlobalObject* lexicalGlobalObject);
 static size_t getFramingOverhead(size_t payloadSize)
 {
     static const size_t hybiBaseFramingOverhead = 2; // Every frame has at least two-byte header.
@@ -161,7 +164,7 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
 {
     m_state = CONNECTING;
     m_hasPendingActivity.store(true);
-    ref();
+    m_rejectUnauthorized = Bun__defaultRejectUnauthorized(context.jsGlobalObject());
 }
 
 WebSocket::~WebSocket()
@@ -214,6 +217,23 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
         return Exception { SyntaxError };
 
     auto socket = adoptRef(*new WebSocket(context));
+    // socket->suspendIfNeeded();
+
+    auto result = socket->connect(url, protocols, WTFMove(headers));
+    // auto result = socket->connect(url, protocols);
+
+    if (result.hasException())
+        return result.releaseException();
+
+    return socket;
+}
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized)
+{
+    if (url.isNull())
+        return Exception { SyntaxError };
+
+    auto socket = adoptRef(*new WebSocket(context));
+    socket->setRejectUnauthorized(rejectUnauthorized);
     // socket->suspendIfNeeded();
 
     auto result = socket->connect(url, protocols, WTFMove(headers));
@@ -399,8 +419,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     headerValues.reserveInitialCapacity(headers.get().internalHeaders().size());
     auto iterator = headers.get().createIterator();
     while (auto value = iterator.next()) {
-        headerNames.uncheckedAppend(Zig::toZigString(value->key));
-        headerValues.uncheckedAppend(Zig::toZigString(value->value));
+        headerNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->key));
+        headerValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->value));
     }
 
     m_isSecure = is_secure;
@@ -422,8 +442,15 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (this->m_upgradeClient == nullptr) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-        this->decPendingActivityCount();
-        return Exception { SyntaxError, "WebSocket connection failed"_s };
+
+        context.postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            ASSERT(scriptExecutionContext());
+            protectedThis->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+            protectedThis->dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+            protectedThis->decPendingActivityCount();
+        });
+
+        return {};
     }
 
     m_state = CONNECTING;
@@ -476,6 +503,7 @@ ExceptionOr<void> WebSocket::send(ArrayBuffer& binaryData)
     }
     char* data = static_cast<char*>(binaryData.data());
     size_t length = binaryData.byteLength();
+
     this->sendWebSocketData(data, length, Opcode::Binary);
 
     return {};
@@ -650,7 +678,7 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
 
 ExceptionOr<void> WebSocket::terminate()
 {
-    LOG(Network, "WebSocket %p terminate()", this);
+    // LOG(Network, "WebSocket %p terminate()", this);
 
     if (m_state == CLOSING || m_state == CLOSED)
         return {};
@@ -692,7 +720,7 @@ ExceptionOr<void> WebSocket::terminate()
 ExceptionOr<void> WebSocket::ping()
 {
     auto message = WTF::String::number(WTF::jsCurrentTime());
-    LOG(Network, "WebSocket %p ping() Sending Timestamp '%s'", this, message.data());
+    // LOG(Network, "WebSocket %p ping() Sending Timestamp '%s'", this, message.data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -711,7 +739,7 @@ ExceptionOr<void> WebSocket::ping()
 
 ExceptionOr<void> WebSocket::ping(const String& message)
 {
-    LOG(Network, "WebSocket %p ping() Sending String '%s'", this, message.utf8().data());
+    // LOG(Network, "WebSocket %p ping() Sending String '%s'", this, message.utf8().data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -731,7 +759,7 @@ ExceptionOr<void> WebSocket::ping(const String& message)
 
 ExceptionOr<void> WebSocket::ping(ArrayBuffer& binaryData)
 {
-    LOG(Network, "WebSocket %p ping() Sending ArrayBuffer %p", this, &binaryData);
+    // LOG(Network, "WebSocket %p ping() Sending ArrayBuffer %p", this, &binaryData);
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -751,7 +779,7 @@ ExceptionOr<void> WebSocket::ping(ArrayBuffer& binaryData)
 
 ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
 {
-    LOG(Network, "WebSocket %p ping() Sending ArrayBufferView %p", this, &arrayBufferView);
+    // LOG(Network, "WebSocket %p ping() Sending ArrayBufferView %p", this, &arrayBufferView);
 
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
@@ -774,7 +802,7 @@ ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
 ExceptionOr<void> WebSocket::pong()
 {
     auto message = WTF::String::number(WTF::jsCurrentTime());
-    LOG(Network, "WebSocket %p pong() Sending Timestamp '%s'", this, message.data());
+    // LOG(Network, "WebSocket %p pong() Sending Timestamp '%s'", this, message.data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -793,7 +821,7 @@ ExceptionOr<void> WebSocket::pong()
 
 ExceptionOr<void> WebSocket::pong(const String& message)
 {
-    LOG(Network, "WebSocket %p pong() Sending String '%s'", this, message.utf8().data());
+    // LOG(Network, "WebSocket %p pong() Sending String '%s'", this, message.utf8().data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -813,7 +841,7 @@ ExceptionOr<void> WebSocket::pong(const String& message)
 
 ExceptionOr<void> WebSocket::pong(ArrayBuffer& binaryData)
 {
-    LOG(Network, "WebSocket %p pong() Sending ArrayBuffer %p", this, &binaryData);
+    // LOG(Network, "WebSocket %p pong() Sending ArrayBuffer %p", this, &binaryData);
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -833,7 +861,7 @@ ExceptionOr<void> WebSocket::pong(ArrayBuffer& binaryData)
 
 ExceptionOr<void> WebSocket::pong(ArrayBufferView& arrayBufferView)
 {
-    LOG(Network, "WebSocket %p pong() Sending ArrayBufferView %p", this, &arrayBufferView);
+    // LOG(Network, "WebSocket %p pong() Sending ArrayBufferView %p", this, &arrayBufferView);
 
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
@@ -881,13 +909,14 @@ String WebSocket::extensions() const
 String WebSocket::binaryType() const
 {
     switch (m_binaryType) {
-    // case BinaryType::Blob:
-    //     return "blob"_s;
-    case BinaryType::ArrayBuffer:
-        return "arraybuffer"_s;
     case BinaryType::NodeBuffer:
         return "nodebuffer"_s;
+    case BinaryType::ArrayBuffer:
+        return "arraybuffer"_s;
+    case BinaryType::Blob:
+        return "blob"_s;
     }
+
     ASSERT_NOT_REACHED();
     return String();
 }
@@ -1032,7 +1061,7 @@ void WebSocket::didReceiveMessage(String&& message)
     // });
 }
 
-void WebSocket::didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t>&& binaryData)
+void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData)
 {
     // LOG(Network, "WebSocket %p didReceiveBinaryData() %u byte binary message", this, static_cast<unsigned>(binaryData.size()));
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, binaryData = WTFMove(binaryData)]() mutable {
@@ -1060,7 +1089,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t
         if (auto* context = scriptExecutionContext()) {
             auto arrayBuffer = JSC::ArrayBuffer::create(binaryData.data(), binaryData.size());
             this->incPendingActivityCount();
-            context->postTask([this, name = WTFMove(eventName), buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            context->postTask([this, name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
                 protectedThis->dispatchEvent(MessageEvent::create(name, buffer, m_url.string()));
                 protectedThis->decPendingActivityCount();
@@ -1074,9 +1103,19 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t
         if (this->hasEventListeners(eventName)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
             this->incPendingActivityCount();
-            JSUint8Array* buffer = jsCast<JSUint8Array*>(JSValue::decode(JSBuffer__bufferFromLength(scriptExecutionContext()->jsGlobalObject(), binaryData.size())));
-            if (binaryData.size() > 0)
-                memcpy(buffer->vector(), binaryData.data(), binaryData.size());
+            auto scope = DECLARE_CATCH_SCOPE(scriptExecutionContext()->vm());
+            JSUint8Array* buffer = createBuffer(scriptExecutionContext()->jsGlobalObject(), binaryData);
+
+            if (UNLIKELY(!buffer || scope.exception())) {
+                scope.clearExceptionExceptTermination();
+
+                ErrorEvent::Init errorInit;
+                errorInit.message = "Failed to allocate memory for binary data"_s;
+                dispatchEvent(ErrorEvent::create(eventNames().errorEvent, errorInit));
+                this->decPendingActivityCount();
+                return;
+            }
+
             JSC::EnsureStillAliveScope ensureStillAlive(buffer);
             MessageEvent::Init init;
             init.data = buffer;
@@ -1092,13 +1131,13 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t
 
             this->incPendingActivityCount();
 
-            context->postTask([this, name = WTFMove(eventName), buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-                ASSERT(scriptExecutionContext());
+            context->postTask([this, name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 size_t length = buffer->byteLength();
+                auto* globalObject = context.jsGlobalObject();
                 JSUint8Array* uint8array = JSUint8Array::create(
-                    scriptExecutionContext()->jsGlobalObject(),
-                    reinterpret_cast<Zig::GlobalObject*>(scriptExecutionContext()->jsGlobalObject())->JSBufferSubclassStructure(),
-                    WTFMove(buffer.copyRef()),
+                    globalObject,
+                    reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure(),
+                    buffer.copyRef(),
                     0,
                     length);
                 JSC::EnsureStillAliveScope ensureStillAlive(uint8array);
@@ -1111,6 +1150,9 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t
         }
 
         break;
+    }
+    case BinaryType::Blob: {
+        // TODO: Blob is not supported currently.
     }
     }
     // });
@@ -1431,9 +1473,9 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, int32_t
 {
     webSocket->didFailWithErrorCode(errorCode);
 }
-extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, const BunString *reason)
+extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, const BunString* reason)
 {
-    WTF::String wtf_reason = Bun::toWTFString(*reason);
+    WTF::String wtf_reason = reason->toWTFString(BunString::ZeroCopy);
     webSocket->didClose(0, errorCode, WTFMove(wtf_reason));
 }
 
@@ -1442,7 +1484,7 @@ extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool cl
     WTF::String wtf_str = clone ? Zig::toStringCopy(*str) : Zig::toString(*str);
     webSocket->didReceiveMessage(WTFMove(wtf_str));
 }
-extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, uint8_t* bytes, size_t len, const uint8_t op)
+extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, const uint8_t* bytes, size_t len, const uint8_t op)
 {
     auto opcode = static_cast<WebCore::WebSocket::Opcode>(op);
     switch (opcode) {
@@ -1458,6 +1500,10 @@ extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, uint8_
     default:
         break;
     }
+}
+extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
+{
+    return webSocket->rejectUnauthorized();
 }
 
 extern "C" void WebSocket__incrementPendingActivity(WebCore::WebSocket* webSocket)

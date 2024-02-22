@@ -37,7 +37,7 @@ pub const MutableString = struct {
     }
 
     pub fn owns(this: *const MutableString, slice: []const u8) bool {
-        return @import("root").bun.isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
+        return bun.isSliceInBuffer(u8, slice, this.list.items.ptr[0..this.list.capacity]);
     }
 
     pub fn growIfNeeded(self: *MutableString, amount: usize) !void {
@@ -288,11 +288,10 @@ pub const MutableString = struct {
 
     pub fn toSocketBuffers(self: *MutableString, comptime count: usize, ranges: anytype) [count]std.os.iovec_const {
         var buffers: [count]std.os.iovec_const = undefined;
-        comptime var i: usize = 0;
-        inline while (i < count) : (i += 1) {
-            buffers[i] = .{
-                .iov_base = self.list.items[ranges[i][0]..ranges[i][1]].ptr,
-                .iov_len = self.list.items[ranges[i][0]..ranges[i][1]].len,
+        inline for (&buffers, ranges) |*b, r| {
+            b.* = .{
+                .iov_base = self.list.items[r[0]..r[1]].ptr,
+                .iov_len = self.list.items[r[0]..r[1]].len,
             };
         }
         return buffers;
@@ -317,7 +316,7 @@ pub const MutableString = struct {
         }
 
         pub fn writeAll(this: *BufferedWriter, bytes: []const u8) anyerror!usize {
-            var pending = bytes;
+            const pending = bytes;
 
             if (pending.len >= max) {
                 try this.flush();
@@ -353,7 +352,7 @@ pub const MutableString = struct {
         /// This automatically encodes UTF-16 into UTF-8 using
         /// the same code path as TextEncoder
         pub fn writeAll16(this: *BufferedWriter, bytes: []const u16) anyerror!usize {
-            var pending = bytes;
+            const pending = bytes;
 
             if (pending.len >= max) {
                 try this.flush();
@@ -443,7 +442,7 @@ pub const MutableString = struct {
         }
     };
 
-    pub fn writeAll(self: *MutableString, bytes: string) !usize {
+    pub fn writeAll(self: *MutableString, bytes: string) std.mem.Allocator.Error!usize {
         try self.list.appendSlice(self.allocator, bytes);
         return bytes.len;
     }

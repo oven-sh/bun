@@ -3,16 +3,80 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
-import dedent from "dedent";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { callerSourceOrigin } from "bun:jsc";
 import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
-import type { Expect } from "bun:test";
+import type { Matchers } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
 
+/** Dedent module does a bit too much with their stuff. we will be much simpler */
+function dedent(str: string | TemplateStringsArray, ...args: any[]) {
+  // https://github.com/tc39/proposal-string-cooked#motivation
+  let single_string = String.raw({ raw: str }, ...args);
+  single_string = single_string.trim();
+
+  let lines = single_string.split("\n");
+  let first_line = lines[0];
+  let smallest_indent = Infinity;
+  for (let line of lines.slice(1)) {
+    let match = line.match(/^\s+/);
+    if (match) {
+      smallest_indent = Math.min(smallest_indent, match[0].length);
+    } else {
+      return single_string;
+    }
+  }
+
+  if (smallest_indent === Infinity) {
+    return single_string;
+  }
+
+  return (
+    first_line +
+    "\n" +
+    lines
+      .slice(1)
+      .map(x => x.slice(smallest_indent))
+      .join("\n")
+  );
+}
+
 let currentFile: string | undefined;
+
+function errorOrWarnParser(isError = true) {
+  const prefix = isError ? "error: " : "warn: ";
+  return function (text: string) {
+    var i = 0;
+    var list = [];
+    while (i < text.length) {
+      let errorLineI = text.indexOf(prefix, i);
+      if (errorLineI === -1) {
+        return list;
+      }
+      const message = text.slice(errorLineI + prefix.length, text.indexOf("\n", errorLineI + 1));
+      i = errorLineI + 1;
+      const fileLineI = text.indexOf(" at ", errorLineI + message.length);
+
+      let fileLine = "";
+      if (fileLineI !== -1) {
+        const fileLineEnd = text.indexOf("\n", fileLineI + 1);
+        fileLine = text.slice(fileLineI + "\n    at ".length, fileLineEnd);
+        i = fileLineEnd;
+      }
+      list.push([message, fileLine]);
+
+      if (i === -1) {
+        break;
+      }
+    }
+    return list;
+  };
+}
+
+const errorParser = errorOrWarnParser(true);
+const warnParser = errorOrWarnParser(false);
 
 type BunTestExports = typeof import("bun:test");
 export function testForFile(file: string): BunTestExports {
@@ -40,9 +104,10 @@ const HIDE_SKIP = process.env.BUN_BUNDLER_TEST_HIDE_SKIP;
 const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? bunExe();
 export const RUN_UNCHECKED_TESTS = false;
 
-const outBaseTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
-if (!existsSync(path.dirname(outBaseTemplate))) mkdirSync(path.dirname(outBaseTemplate), { recursive: true });
-const outBase = mkdtempSync(outBaseTemplate);
+const tempDirectoryTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
+if (!existsSync(path.dirname(tempDirectoryTemplate)))
+  mkdirSync(path.dirname(tempDirectoryTemplate), { recursive: true });
+const tempDirectory = mkdtempSync(tempDirectoryTemplate);
 const testsRan = new Set();
 
 if (ESBUILD) {
@@ -56,9 +121,9 @@ export interface BundlerTestInput {
   todo?: boolean;
 
   // file options
-  files: Record<string, string>;
+  files: Record<string, string | Buffer>;
   /** Files to be written only after the bundle is done. */
-  runtimeFiles?: Record<string, string>;
+  runtimeFiles?: Record<string, string | Buffer>;
   /** Defaults to the first item in `files` */
   entryPoints?: string[];
   /** ??? */
@@ -204,7 +269,7 @@ export interface BundlerTestBundleAPI {
   writeFile(file: string, contents: string): void;
   prependFile(file: string, contents: string): void;
   appendFile(file: string, contents: string): void;
-  expectFile(file: string): Expect;
+  expectFile(file: string): Matchers<string>;
   assertFileExists(file: string): void;
   /**
    * Finds all `capture(...)` calls and returns the strings within each function call.
@@ -236,6 +301,8 @@ export interface BundlerTestRunOptions {
   errorLineMatch?: RegExp;
 
   runtime?: "bun" | "node";
+
+  setCwd?: boolean;
 }
 
 /** given when you do itBundled('id', (this object) => BundlerTestInput) */
@@ -341,7 +408,7 @@ function expectBundled(
 
   // TODO: Remove this check once all options have been implemented
   if (Object.keys(unknownProps).length > 0) {
-    throw new Error("expectBundled recieved unexpected options: " + Object.keys(unknownProps).join(", "));
+    throw new Error("expectBundled received unexpected options: " + Object.keys(unknownProps).join(", "));
   }
 
   // This is a sanity check that protects against bad copy pasting.
@@ -410,7 +477,7 @@ function expectBundled(
       backend = plugins !== undefined ? "api" : "cli";
     }
 
-    const root = path.join(outBase, id.replaceAll("/", path.sep));
+    const root = path.join(tempDirectory, id);
     if (DEBUG) console.log("root:", root);
 
     const entryPaths = entryPoints.map(file => path.join(root, file));
@@ -425,7 +492,7 @@ function expectBundled(
     outputPaths = (
       outputPaths
         ? outputPaths.map(file => path.join(root, file))
-        : entryPaths.map(file => path.join(outdir!, path.basename(file)))
+        : entryPaths.map(file => path.join(outdir || "", path.basename(file)))
     ).map(x => x.replace(/\.ts$/, ".js"));
 
     if (cjs2esm && !outfile && !minifySyntax && !minifyWhitespace) {
@@ -463,7 +530,9 @@ function expectBundled(
     for (const [file, contents] of Object.entries(files)) {
       const filename = path.join(root, file);
       mkdirSync(path.dirname(filename), { recursive: true });
-      writeFileSync(filename, dedent(contents).replace(/\{\{root\}\}/g, root));
+      const formattedContents =
+        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+      writeFileSync(filename, formattedContents);
     }
 
     if (useDefineForClassFields !== undefined) {
@@ -584,11 +653,18 @@ function expectBundled(
         .map(x => String(x)) as [string, ...string[]];
 
       if (DEBUG) {
-        writeFileSync(
-          path.join(root, "run.sh"),
-          "#!/bin/sh\n" +
+        if (process.platform !== "win32") {
+          writeFileSync(
+            path.join(root, "run.sh"),
+            "#!/bin/sh\n" +
+              cmd.map(x => (x.match(/^[a-z0-9_:=\./\\-]+$/i) ? x : `"${x.replace(/"/g, '\\"')}"`)).join(" "),
+          );
+        } else {
+          writeFileSync(
+            path.join(root, "run.ps1"),
             cmd.map(x => (x.match(/^[a-z0-9_:=\./\\-]+$/i) ? x : `"${x.replace(/"/g, '\\"')}"`)).join(" "),
-        );
+          );
+        }
         try {
           mkdirSync(path.join(root, ".vscode"), { recursive: true });
         } catch (e) {}
@@ -602,30 +678,22 @@ function expectBundled(
                 ...(compile
                   ? [
                       {
-                        "type": "lldb",
+                        "type": process.platform !== "win32" ? "lldb" : "cppvsdbg",
                         "request": "launch",
                         "name": "run compiled exe",
                         "program": outfile,
                         "args": [],
                         "cwd": root,
-                        "env": {
-                          "FORCE_COLOR": "1",
-                        },
-                        "console": "internalConsole",
                       },
                     ]
                   : []),
                 {
-                  "type": "lldb",
+                  "type": process.platform !== "win32" ? "lldb" : "cppvsdbg",
                   "request": "launch",
                   "name": "bun test",
                   "program": cmd[0],
                   "args": cmd.slice(1),
                   "cwd": root,
-                  "env": {
-                    "FORCE_COLOR": "1",
-                  },
-                  "console": "internalConsole",
                 },
               ],
             },
@@ -652,29 +720,32 @@ function expectBundled(
       // Check for errors
       if (!success) {
         if (!ESBUILD) {
-          const errorText = stderr.toString("utf-8");
-          const errorRegex = /^error: (.*?)\n(?:.*?\n\s*\^\s*\n(.*?)\n)?/gms;
+          const errorText = stderr.toUnixString();
+
           var skip = false;
           if (errorText.includes("----- bun meta -----")) {
             skip = true;
           }
+
           const allErrors = skip
             ? []
-            : ([...errorText.matchAll(errorRegex)]
-                .map(([_str1, error, source]) => {
+            : (errorParser(errorText)
+                .map(([error, source]) => {
                   if (!source) {
                     if (error === "FileNotFound") {
                       return null;
                     }
                     return { error, file: "<bun>" };
                   }
-                  const [_str2, fullFilename, line, col] = source?.match?.(/bun-build-tests\/(.*):(\d+):(\d+)/) ?? [];
-                  const file = fullFilename?.slice?.(id.length + path.basename(outBase).length + 1);
+                  const [_str2, fullFilename, line, col] =
+                    source?.match?.(/bun-build-tests[\/\\](.*):(\d+):(\d+)/) ?? [];
+                  const file = fullFilename
+                    ?.slice?.(id.length + path.basename(tempDirectory).length + 1)
+                    .replaceAll("\\", "/");
 
                   return { error, file, line, col };
                 })
                 .filter(Boolean) as any[]);
-
           if (allErrors.length === 0) {
             console.log(errorText);
           }
@@ -737,7 +808,7 @@ function expectBundled(
           }
           throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
         } else if (!expectedErrors) {
-          throw new Error("Bundle Failed\n" + stderr?.toString("utf-8"));
+          throw new Error("Bundle Failed\n" + stderr?.toUnixString());
         }
         return testRef(id, opts);
       } else if (expectedErrors) {
@@ -746,10 +817,10 @@ function expectBundled(
 
       // Check for warnings
       if (!ESBUILD) {
-        const warningRegex = /^warn: (.*?)\n.*?\n\s*\^\s*\n(.*?)\n/gms;
-        const allWarnings = [...stderr!.toString("utf-8").matchAll(warningRegex)].map(([_str1, error, source]) => {
-          const [_str2, fullFilename, line, col] = source.match(/bun-build-tests\/(.*):(\d+):(\d+)/)!;
-          const file = fullFilename.slice(id.length + path.basename(outBase).length + 1);
+        const warningText = stderr!.toUnixString();
+        const allWarnings = warnParser(warningText).map(([error, source]) => {
+          const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
+          const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
           return { error, file, line, col };
         });
         const expectedWarnings = bundleWarnings
@@ -953,7 +1024,7 @@ for (const [key, blob] of build.outputs) {
 
     const readCache: Record<string, string> = {};
     const readFile = (file: string) =>
-      readCache[file] || (readCache[file] = readFileSync(path.join(root, file), "utf-8"));
+      readCache[file] || (readCache[file] = readFileSync(path.join(root, file)).toUnixString());
     const writeFile = (file: string, contents: string) => {
       readCache[file] = contents;
       writeFileSync(path.join(root, file), contents);
@@ -1004,7 +1075,7 @@ for (const [key, blob] of build.outputs) {
           throw new Error("Bundle was not written to disk: " + outfile);
         } else {
           if (dce) {
-            const content = readFileSync(outfile).toString();
+            const content = readFileSync(outfile).toUnixString();
             const dceFails = [...content.matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
             if (dceFails.length) {
               throw new Error("DCE test did not remove all expected code in " + outfile + ".");
@@ -1104,8 +1175,8 @@ for (const [key, blob] of build.outputs) {
       if (cjs2esm) {
         const outfiletext = api.readFile(path.relative(root, outfile ?? outputPaths[0]));
         const regex = /\/\/\s+(.+?)\nvar\s+([a-zA-Z0-9_$]+)\s+=\s+__commonJS/g;
-        const matches = [...outfiletext.matchAll(regex)].map(match => "/" + match[1]);
-        const expectedMatches = cjs2esm === true ? [] : cjs2esm.unhandled ?? [];
+        const matches = [...outfiletext.matchAll(regex)].map(match => ("/" + match[1]).replaceAll("\\", "/"));
+        const expectedMatches = (cjs2esm === true ? [] : cjs2esm.unhandled ?? []).map(a => a.replaceAll("\\", "/"));
         try {
           expect(matches.sort()).toEqual(expectedMatches.sort());
         } catch (error) {
@@ -1124,7 +1195,9 @@ for (const [key, blob] of build.outputs) {
     // Write runtime files to disk as well as run the post bundle hook.
     for (const [file, contents] of Object.entries(runtimeFiles ?? {})) {
       mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-      writeFileSync(path.join(root, file), dedent(contents).replace(/\{\{root\}\}/g, root));
+      const formattedContents =
+        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+      writeFileSync(path.join(root, file), formattedContents);
     }
 
     if (onAfterBundle) {
@@ -1134,7 +1207,7 @@ for (const [key, blob] of build.outputs) {
     // check reference
     if (matchesReference) {
       const { ref } = matchesReference;
-      const theirRoot = path.join(outBase, ref.id.replaceAll("/", path.sep));
+      const theirRoot = path.join(tempDirectory, ref.id);
       if (!existsSync(theirRoot)) {
         expectBundled(ref.id, ref.options, false, true);
         if (!existsSync(theirRoot)) {
@@ -1148,7 +1221,7 @@ for (const [key, blob] of build.outputs) {
         if (!existsSync(theirs)) throw new Error(`Reference test "${ref.id}" did not write ${file}`);
         if (!existsSync(ours)) throw new Error(`Test did not write ${file}`);
         try {
-          expect(readFileSync(ours).toString()).toBe(readFileSync(theirs).toString());
+          expect(readFileSync(ours).toUnixString()).toBe(readFileSync(theirs).toUnixString());
         } catch (error) {
           console.log("Expected reference test " + ref.id + "'s " + file + " to match ours");
           throw error;
@@ -1185,6 +1258,7 @@ for (const [key, blob] of build.outputs) {
             IS_TEST_RUNNER: "1",
           },
           stdio: ["ignore", "pipe", "pipe"],
+          cwd: run.setCwd ? root : undefined,
         });
 
         if (run.error) {
@@ -1192,19 +1266,19 @@ for (const [key, blob] of build.outputs) {
             throw new Error(
               prefix +
                 "Bundle should have thrown at runtime\n" +
-                stdout!.toString("utf-8") +
+                stdout!.toUnixString() +
                 "\n" +
-                stderr!.toString("utf-8"),
+                stderr!.toUnixString(),
             );
           }
 
           if (run.errorLineMatch) {
             // in order to properly analyze the error, we have to look backwards on stderr. this approach
-            // most definetly can be improved but it works fine here.
+            // most definitely can be improved but it works fine here.
             const stack = [];
             let error;
             const lines = stderr!
-              .toString("utf-8")
+              .toUnixString()
               .split("\n")
               .filter(Boolean)
               .map(x => x.trim())
@@ -1236,23 +1310,26 @@ for (const [key, blob] of build.outputs) {
             }
           }
         } else if (!success) {
-          throw new Error(prefix + "Runtime failed\n" + stdout!.toString("utf-8") + "\n" + stderr!.toString("utf-8"));
+          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
         }
 
         if (run.stdout !== undefined) {
-          const result = stdout!.toString("utf-8").trim();
+          const result = stdout!.toUnixString().trim();
           if (typeof run.stdout === "string") {
             const expected = dedent(run.stdout).trim();
             if (expected !== result) {
-              console.log(`runtime failed file=${file}`);
+              console.log(`runtime failed file: ${file}`);
               console.log(`reference stdout:`);
               console.log(result);
+              console.log(`---`);
+              console.log(`expected stdout:`);
+              console.log(expected);
               console.log(`---`);
             }
             expect(result).toBe(expected);
           } else {
             if (!run.stdout.test(result)) {
-              console.log(`runtime failed file=${file}`);
+              console.log(`runtime failed file: ${file}`);
               console.log(`reference stdout:`);
               console.log(result);
               console.log(`---`);
@@ -1262,7 +1339,7 @@ for (const [key, blob] of build.outputs) {
         }
 
         if (run.partialStdout !== undefined) {
-          const result = stdout!.toString("utf-8").trim();
+          const result = stdout!.toUnixString().trim();
           const expected = dedent(run.partialStdout).trim();
           if (!result.includes(expected)) {
             console.log(`runtime failed file=${file}`);
@@ -1287,7 +1364,7 @@ export function itBundled(
 ): BundlerTestRef {
   if (typeof opts === "function") {
     const fn = opts;
-    opts = opts({ root: path.join(outBase, id.replaceAll("/", path.sep)), getConfigRef });
+    opts = opts({ root: path.join(tempDirectory, id), getConfigRef });
     // @ts-expect-error
     opts._referenceFn = fn;
   }

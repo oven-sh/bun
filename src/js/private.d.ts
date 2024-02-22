@@ -1,11 +1,6 @@
 // The types in this file are not publicly defined, but do exist.
 // Stuff like `Bun.fs()` and so on.
 
-/**
- * Works like the zig `@compileError` built-in, but only supports plain strings.
- */
-declare function $bundleError(error: string);
-
 type BunFSWatchOptions = { encoding?: BufferEncoding; persistent?: boolean; recursive?: boolean; signal?: AbortSignal };
 type BunWatchEventType = "rename" | "change" | "error" | "close";
 type BunWatchListener<T> = (event: WatchEventType, filename: T | undefined) => void;
@@ -193,17 +188,13 @@ interface BunLazyModules {
     cleanupLater: () => void;
     setAsyncHooksEnabled: (enabled: boolean) => void;
   };
-  "worker_threads": [
-    //
-    workerData: any,
-    threadId: number,
-    _receiveMessageOnPort: (port: MessagePort) => any,
-  ];
+  "worker_threads": [workerData: any, threadId: number, _receiveMessageOnPort: (port: MessagePort) => any];
   "tty": {
     ttySetMode: (fd: number, mode: number) => number;
     isatty: (fd: number) => boolean;
     getWindowSize: (fd: number, out: number[2]) => boolean;
   };
+  "getStringWidth": (str: string) => number;
 
   // ReadableStream related
   [1]: any;
@@ -213,3 +204,15 @@ interface BunLazyModules {
 
 /** Assign to this variable in src/js/{bun,node,thirdparty} to act as module.exports */
 declare var $exports: any;
+
+interface CommonJSModuleRecord {
+  $require(id: string, mod: any, args_count: number, args: Array): any;
+  children: CommonJSModuleRecord[];
+  exports: any;
+  id: string;
+  loaded: boolean;
+  parent: undefined;
+  path: string;
+  paths: string[];
+  require: typeof require;
+}

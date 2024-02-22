@@ -1,9 +1,12 @@
 Bun ships as a single executable that can be installed a few different ways.
 
-## macOS and Linux
+## Installing
+
+### macOS and Linux
 
 {% callout %}
-**Linux users** — The `unzip` package is required to install Bun. Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
+**Linux users** — The `unzip` package is required to install Bun. Use `sudo apt install unzip` to install `unzip` package.
+Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1. Use `uname -r` to check Kernel version.
 {% /callout %}
 
 {% codetabs %}
@@ -14,7 +17,7 @@ $ curl -fsSL https://bun.sh/install | bash # for macOS, Linux, and WSL
 $ curl -fsSL https://bun.sh/install | bash -s "bun-v1.0.0"
 ```
 
-```bash#NPM
+```bash#npm
 $ npm install -g bun # the last `npm` command you'll ever need
 ```
 
@@ -34,19 +37,103 @@ $ proto install bun
 
 {% /codetabs %}
 
-## Windows
+### Windows
 
-Bun provides a _limited, experimental_ native build for Windows. At the moment, only the Bun runtime is supported.
+{% callout %}
+Bun requires a minimum of Windows 10 version 1809
+{% /callout %}
 
-- `bun <file>`
-- `bun run <file>`
+Bun provides a _limited, experimental_ native build for Windows. It is recommended to use Bun within [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install) and follow the above instructions. To help catch bugs, the experimental build enables many debugging assertions, which will make the binary slower than what the stable version will be.
 
-The test runner, package manager, and bundler are still under development. The following commands have been disabled.
+To install, paste this into a terminal:
 
-- `bun test`
-- `bun install/add/remove`
-- `bun link/unlink`
-- `bun build`
+{% codetabs %}
+
+```powershell#PowerShell/cmd.exe
+# WARNING: No stability is guaranteed on the experimental Windows builds
+powershell -c "irm bun.sh/install.ps1|iex"
+```
+
+```powershell#Scoop
+# WARNING: No stability is guaranteed on the experimental Windows builds
+scoop bucket add versions
+scoop install bun-canary
+```
+
+{% /codetabs %}
+
+For support and discussion, please join the [#windows channel on our Discord](http://bun.sh/discord).
+
+## Docker
+
+Bun provides a [Docker image](https://hub.docker.com/r/oven/bun/tags) that supports both Linux x64 and arm64.
+
+```bash
+$ docker pull oven/bun
+$ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
+```
+
+There are also image variants for different operating systems.
+
+```bash
+$ docker pull oven/bun:debian
+$ docker pull oven/bun:slim
+$ docker pull oven/bun:alpine
+$ docker pull oven/bun:distroless
+```
+
+## Checking installation
+
+To check that Bun was installed successfully, open a new terminal window and run `bun --version`.
+
+```sh
+$ bun --version
+1.x.y
+```
+
+To see the precise commit of [oven-sh/bun](https://github.com/oven-sh/bun) that you're using, run `bun --revision`.
+
+```sh
+$ bun --revision
+1.x.y+b7982ac13189
+```
+
+If you've installed Bun but are seeing a `command not found` error, you may have to manually add the installation directory (`~/.bun/bin`) to your `PATH`.
+
+{% details summary="How to add to your `PATH`" %}
+First, determine what shell you're using:
+
+```sh
+$ echo $SHELL
+/bin/zsh # or /bin/bash or /bin/fish
+```
+
+Then add these lines below to bottom of your shell's configuration file.
+
+{% codetabs %}
+
+```bash#~/.zshrc
+# add to ~/.zshrc
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+```bash#~/.bashrc
+# add to ~/.bashrc
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+```sh#~/.config/fish/config.fish
+# add to ~/.config/fish/config.fish
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+{% /codetabs %}
+Save the file. You'll need to open a new shell/terminal window for the changes to take effect.
+
+{% /details %}
 
 ## Upgrading
 
@@ -69,6 +156,10 @@ $ bun upgrade --canary
 ```
 
 [View canary build](https://github.com/oven-sh/bun/releases/tag/canary)
+
+{% callout %}
+**Note** — To switch back to a stable release from canary, run `bun upgrade` again with no flags.
+{% /callout %}
 
 <!--
 ## Native
@@ -140,6 +231,10 @@ If you need to remove Bun from your system, use the following commands.
 
 ```bash#macOS/Linux_(curl)
 $ rm -rf ~/.bun # for macOS, Linux, and WSL
+```
+
+```bash#Windows
+$ Remove-Item ~\.bun -Recurse
 ```
 
 ```bash#NPM

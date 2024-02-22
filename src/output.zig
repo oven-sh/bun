@@ -59,7 +59,7 @@ pub const Source = struct {
 
     pub fn init(
         stream: StreamType,
-        err: StreamType,
+        err_stream: StreamType,
     ) Source {
         if (comptime Environment.isDebug) {
             if (comptime use_mimalloc) {
@@ -73,15 +73,15 @@ pub const Source = struct {
 
         return Source{
             .stream = stream,
-            .error_stream = err,
+            .error_stream = err_stream,
             .buffered_stream = if (Environment.isNative)
                 BufferedStream{ .unbuffered_writer = stream.writer() }
             else
                 stream,
             .buffered_error_stream = if (Environment.isNative)
-                BufferedStream{ .unbuffered_writer = err.writer() }
+                BufferedStream{ .unbuffered_writer = err_stream.writer() }
             else
-                err,
+                err_stream,
         };
     }
 
@@ -122,6 +122,13 @@ pub const Source = struct {
         }
         if (bun.getenvZ("TERM")) |term| {
             return !strings.eqlComptime(term, "dumb");
+        }
+        if (Environment.isWindows) {
+            // https://github.com/chalk/supports-color/blob/d4f413efaf8da045c5ab440ed418ef02dbb28bf1/index.js#L100C11-L112
+            // Windows 10 build 10586 is the first Windows release that supports 256 colors.
+            // Windows 10 build 14931 is the first release that supports 16m/TrueColor.
+            // Every other version supports 16 colors.
+            return true;
         }
         return false;
     }
@@ -172,13 +179,14 @@ pub var enable_ansi_colors = Environment.isNative;
 pub var enable_ansi_colors_stderr = Environment.isNative;
 pub var enable_ansi_colors_stdout = Environment.isNative;
 pub var enable_buffering = Environment.isNative;
+pub var is_verbose = false;
 pub var is_github_action = false;
 
 pub var stderr_descriptor_type = OutputStreamDescriptor.unknown;
 pub var stdout_descriptor_type = OutputStreamDescriptor.unknown;
 
 pub inline fn isEmojiEnabled() bool {
-    return enable_ansi_colors and !Environment.isWindows;
+    return enable_ansi_colors;
 }
 
 pub fn isGithubAction() bool {
@@ -188,13 +196,23 @@ pub fn isGithubAction() bool {
     return false;
 }
 
+pub fn isVerbose() bool {
+    // Set by Github Actions when a workflow is run using debug mode.
+    if (bun.getenvZ("RUNNER_DEBUG")) |value| {
+        if (strings.eqlComptime(value, "1")) {
+            return true;
+        }
+    }
+    return false;
+}
+
 var _source_for_test: if (Environment.isTest) Output.Source else void = undefined;
 var _source_for_test_set = false;
 pub fn initTest() void {
     if (_source_for_test_set) return;
     _source_for_test_set = true;
-    var in = std.io.getStdErr();
-    var out = std.io.getStdOut();
+    const in = std.io.getStdErr();
+    const out = std.io.getStdOut();
     _source_for_test = Output.Source.init(out, in);
     Output.Source.set(&_source_for_test);
 }
@@ -207,7 +225,9 @@ pub fn disableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = false;
 }
 
-pub fn panic(comptime fmt: string, args: anytype) noreturn {
+pub noinline fn panic(comptime fmt: string, args: anytype) noreturn {
+    @setCold(true);
+
     if (Output.isEmojiEnabled()) {
         std.debug.panic(comptime Output.prettyFmt(fmt, true), args);
     } else {
@@ -456,8 +476,8 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                     bun.getenvZ("BUN_DEBUG_" ++ @tagName(tag)) != null)
                 {
                     really_disable = false;
-                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS") != null) {
-                    really_disable = true;
+                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
+                    really_disable = !strings.eqlComptime(val, "0");
                 }
             }
 
@@ -466,7 +486,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
 
             if (!out_set) {
                 buffered_writer = .{
-                    .unbuffered_writer = writer(),
+                    .unbuffered_writer = scopedWriter(),
                 };
                 out = buffered_writer.writer();
                 out_set = true;
@@ -475,12 +495,24 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
             lock.lock();
             defer lock.unlock();
 
-            if (Output.enable_ansi_colors_stderr) {
-                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch unreachable;
-                buffered_writer.flush() catch unreachable;
+            if (Output.enable_ansi_colors_stdout and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
+                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch {
+                    really_disable = true;
+                    return;
+                };
+                buffered_writer.flush() catch {
+                    really_disable = true;
+                    return;
+                };
             } else {
-                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, false), args) catch unreachable;
-                buffered_writer.flush() catch unreachable;
+                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, false), args) catch {
+                    really_disable = true;
+                    return;
+                };
+                buffered_writer.flush() catch {
+                    really_disable = true;
+                    return;
+                };
             }
         }
     }.log;
@@ -559,7 +591,7 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
                 i += 1;
                 var is_reset = fmt[i] == '/';
                 if (is_reset) i += 1;
-                var start: usize = i;
+                const start: usize = i;
                 while (i < fmt.len and fmt[i] != '>') {
                     i += 1;
                 }
@@ -595,11 +627,7 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
     return comptime new_fmt[0..new_fmt_i];
 }
 
-pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Level) void {
-    if (comptime l == .Warn) {
-        if (level == .Error) return;
-    }
-
+pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Destination) void {
     if (if (comptime l == .stdout) enable_ansi_colors_stdout else enable_ansi_colors_stderr) {
         printer(comptime prettyFmt(fmt, true), args);
     } else {
@@ -637,30 +665,19 @@ pub noinline fn printErrorln(comptime fmt: string, args: anytype) void {
 }
 
 pub noinline fn prettyError(comptime fmt: string, args: anytype) void {
-    prettyWithPrinter(fmt, args, printError, .Error);
+    prettyWithPrinter(fmt, args, printError, .stderr);
 }
 
 /// Print to stderr with ansi color codes automatically stripped out if the
 /// terminal doesn't support them. Text is buffered
 pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
-    prettyWithPrinter(fmt, args, printErrorln, .Error);
+    prettyWithPrinter(fmt, args, printErrorln, .stderr);
 }
 
-pub const Level = enum(u8) {
-    Warn,
-    Error,
+pub const Destination = enum(u8) {
+    stderr,
     stdout,
 };
-
-pub var level = if (Environment.isDebug) Level.Warn else Level.Error;
-
-pub noinline fn prettyWarn(comptime fmt: string, args: anytype) void {
-    prettyWithPrinter(fmt, args, printError, .Warn);
-}
-
-pub fn prettyWarnln(comptime fmt: string, args: anytype) void {
-    prettyWithPrinter(fmt, args, printErrorln, .Warn);
-}
 
 pub noinline fn printError(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isWasm) {
@@ -701,7 +718,143 @@ pub const DebugTimer = struct {
                 _opts,
                 writer_,
             ) catch unreachable;
-            writer_.writeAll("ms") catch unreachable;
+            writer_.writeAll("ms") catch {};
         }
     }
 };
+
+/// Print a blue note message
+pub inline fn note(comptime fmt: []const u8, args: anytype) void {
+    prettyErrorln("<blue>note<r><d>:<r> " ++ fmt, args);
+}
+
+/// Print a yellow warning message
+pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
+    prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
+}
+
+/// Print a yellow warning message, only in debug mode
+pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
+    if (Environment.isDebug) {
+        prettyErrorln("<yellow>debug warn<r><d>:<r> " ++ fmt, args);
+        flush();
+    }
+}
+
+/// Print a red error message. The first argument takes an `error_name` value, which can be either
+/// be a Zig error, or a string or enum. The error name is converted to a string and displayed
+/// in place of "error:", making it useful to print things like "EACCES: Couldn't open package.json"
+pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) void {
+    const display_name, const is_comptime_name = display_name: {
+        const T = @TypeOf(error_name);
+        const info = @typeInfo(T);
+
+        // Zig string literals are of type *const [n:0]u8
+        // we assume that no one will pass this type from not using a string literal.
+        if (info == .Pointer and info.Pointer.size == .One and info.Pointer.is_const) {
+            const child_info = @typeInfo(info.Pointer.child);
+            if (child_info == .Array and child_info.Array.child == u8) {
+                if (child_info.Array.len == 0) @compileError("Output.err should not be passed an empty string (use errGeneric)");
+                break :display_name .{ error_name, true };
+            }
+        }
+
+        // other zig strings we shall treat as dynamic
+        if (comptime bun.trait.isZigString(T)) {
+            break :display_name .{ error_name, false };
+        }
+
+        // error unions
+        if (info == .ErrorSet) {
+            if (info.ErrorSet) |errors| {
+                if (errors.len == 0) {
+                    @compileError("Output.err was given an empty error set");
+                }
+
+                // TODO: convert zig errors to errno for better searchability?
+                if (errors.len == 1) break :display_name .{ comptime @errorName(errors[0]), true };
+            }
+
+            break :display_name .{ @errorName(error_name), false };
+        }
+
+        // enum literals
+        if (info == .EnumLiteral) {
+            const tag = @tagName(info);
+            comptime std.debug.assert(tag.len > 0); // how?
+            if (tag[0] != 'E') break :display_name .{ "E" ++ tag, true };
+            break :display_name .{ tag, true };
+        }
+
+        // enums
+        if (info == .Enum) {
+            const errno: bun.C.SystemErrno = @enumFromInt(@intFromEnum(info));
+            break :display_name .{ @tagName(errno), false };
+        }
+
+        @compileLog(error_name);
+        @compileError("err() was given unsupported type: " ++ @typeName(T) ++ " (." ++ @tagName(info) ++ ")");
+    };
+
+    // if the name is known at compile time, we can do better and use it at compile time
+    if (comptime is_comptime_name) {
+        prettyErrorln("<red>" ++ display_name ++ "<r><d>:<r> " ++ fmt, args);
+    } else {
+        prettyErrorln("<red>{s}<r><d>:<r> " ++ fmt, .{display_name} ++ args);
+    }
+}
+
+fn scopedWriter() std.fs.File.Writer {
+    if (comptime !Environment.isDebug) {
+        @compileError("scopedWriter() should only be called in debug mode");
+    }
+
+    const Scoped = struct {
+        pub var loaded_env: ?bool = null;
+        pub var scoped_file_writer: std.fs.File.Writer = undefined;
+        pub var scoped_file_writer_lock: bun.Lock = bun.Lock.init();
+    };
+    std.debug.assert(source_set);
+    Scoped.scoped_file_writer_lock.lock();
+    defer Scoped.scoped_file_writer_lock.unlock();
+    const use_env = Scoped.loaded_env orelse brk: {
+        if (bun.getenvZ("BUN_DEBUG")) |path| {
+            if (path.len > 0 and !strings.eql(path, "0") and !strings.eql(path, "false")) {
+                if (std.fs.path.dirname(path)) |dir| {
+                    std.fs.cwd().makePath(dir) catch {};
+                }
+
+                // do not use libuv through this code path, since it might not be initialized yet.
+                const fd = std.os.openat(
+                    std.fs.cwd().fd,
+                    path,
+                    std.os.O.TRUNC | std.os.O.CREAT | std.os.O.WRONLY,
+                    0o644,
+                ) catch |err_| {
+                    // Ensure we don't panic inside panic
+                    Scoped.loaded_env = false;
+                    Scoped.scoped_file_writer_lock.unlock();
+                    Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(err_), path });
+                };
+                Scoped.scoped_file_writer = bun.toFD(fd).asFile().writer();
+                Scoped.loaded_env = true;
+                break :brk true;
+            }
+        }
+
+        Scoped.loaded_env = false;
+
+        break :brk false;
+    };
+
+    if (use_env) {
+        return Scoped.scoped_file_writer;
+    }
+
+    return source.stream.writer();
+}
+
+/// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`
+pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
+    prettyErrorln("<red>error<r><d>:<r> " ++ fmt, args);
+}

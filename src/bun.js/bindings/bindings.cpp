@@ -76,6 +76,7 @@
 #include "JSDOMWrapperCache.h"
 
 #include "wtf/text/AtomString.h"
+#include "wtf/Scope.h"
 #include "HTTPHeaderNames.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JavaScriptCore/TestRunnerUtils.h"
@@ -97,6 +98,15 @@
 
 #include "AsyncContextFrame.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
+#include "wtf/text/StringToIntegerConversion.h"
+
+#include "JavaScriptCore/GetterSetter.h"
+#include "JavaScriptCore/CustomGetterSetter.h"
+
+static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
+{
+    return sv.substring(start, end - start);
+}
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -107,17 +117,18 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
         res->writeHeader(std::string_view("set-cookie", 10), std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
     }
 
-    for (auto& header : internalHeaders.commonHeaders()) {
+    for (const auto& header : internalHeaders.commonHeaders()) {
         const auto& name = WebCore::httpHeaderNameString(header.key);
-        auto& value = header.value;
+        const auto& value = header.value;
+
         res->writeHeader(
             std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
             std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
-        auto& name = header.key;
-        auto& value = header.value;
+        const auto& name = header.key;
+        const auto& value = header.value;
         res->writeHeader(
             std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
             std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
@@ -128,23 +139,50 @@ using namespace JSC;
 
 using namespace WebCore;
 
+typedef uint8_t ExpectFlags;
+
+// Note: keep this in sync with Expect.Flags implementation in zig (at expect.zig)
+static const int FLAG_PROMISE_RESOLVES = (1 << 0);
+static const int FLAG_PROMISE_REJECTS = (1 << 1);
+static const int FLAG_NOT = (1 << 2);
+
+extern "C" bool Expect_readFlagsAndProcessPromise(JSC__JSValue instanceValue, JSC__JSGlobalObject* globalObject, ExpectFlags* flags, JSC__JSValue* value);
+extern "C" bool ExpectCustomAsymmetricMatcher__execute(void* self, JSC__JSValue thisValue, JSC__JSGlobalObject* globalObject, JSC__JSValue leftValue);
+
 enum class AsymmetricMatcherResult : uint8_t {
     PASS,
     FAIL,
     NOT_MATCHER,
 };
 
-AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSCell* matcherPropCell, JSValue otherProp, ThrowScope* throwScope)
+bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGlobalObject* globalObject, JSValue& value)
+{
+    JSC::EncodedJSValue valueEncoded = JSValue::encode(value);
+    if (Expect_readFlagsAndProcessPromise(JSValue::encode(instanceValue), globalObject, &flags, &valueEncoded)) {
+        value = JSValue::decode(valueEncoded);
+        return true;
+    }
+    return false;
+}
+
+AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope* throwScope, ExpectFlags& flags)
 {
     VM& vm = globalObject->vm();
+    JSCell* matcherPropCell = matcherProp.asCell();
 
     if (auto* expectAnything = jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
         if (otherProp.isUndefinedOrNull()) {
             return AsymmetricMatcherResult::FAIL;
         }
 
         return AsymmetricMatcherResult::PASS;
     } else if (auto* expectAny = jsDynamicCast<JSExpectAny*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
         JSValue constructorValue = expectAny->m_constructorValue.get();
         JSObject* constructorObject = constructorValue.getObject();
 
@@ -190,6 +228,9 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectStringContaining = jsDynamicCast<JSExpectStringContaining*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
         JSValue expectedSubstring = expectStringContaining->m_stringValue.get();
 
         if (otherProp.isString()) {
@@ -206,6 +247,9 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectStringMatching = jsDynamicCast<JSExpectStringMatching*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
         JSValue expectedTestValue = expectStringMatching->m_testValue.get();
 
         if (otherProp.isString()) {
@@ -231,6 +275,9 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
 
         if (JSC::isArray(globalObject, otherProp)) {
@@ -255,7 +302,8 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
                         JSValue otherValue = otherArray->getIndex(globalObject, n);
                         ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
                         Vector<std::pair<JSValue, JSValue>, 16> stack;
-                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, stack, &scope, true)) {
+                        MarkedArgumentBuffer gcBuffer;
+                        if (Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, gcBuffer, stack, &scope, true)) {
                             found = true;
                             break;
                         }
@@ -271,9 +319,72 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSC
         }
 
         return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectObjectContaining = jsDynamicCast<JSExpectObjectContaining*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
+        JSValue patternObject = expectObjectContaining->m_objectValue.get();
+        if (patternObject.isObject()) {
+            if (otherProp.isObject()) {
+                ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                if (Bun__deepMatch<true>(otherProp, patternObject, globalObject, &scope, false, true)) {
+                    return AsymmetricMatcherResult::PASS;
+                }
+            }
+        }
+
+        return AsymmetricMatcherResult::FAIL;
+    } else if (auto* expectCloseTo = jsDynamicCast<JSExpectCloseTo*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
+        if (!otherProp.isNumber()) {
+            // disable the "not" flag here, because if not a number it should still return FAIL when negated
+            flags = flags & ~FLAG_NOT;
+            return AsymmetricMatcherResult::FAIL;
+        }
+
+        JSValue expectedValue = expectCloseTo->m_numberValue.get();
+        JSValue digitsValue = expectCloseTo->m_digitsValue.get();
+
+        double received = otherProp.toNumber(globalObject);
+        double expected = expectedValue.toNumber(globalObject);
+
+        constexpr double infinity = std::numeric_limits<double>::infinity();
+
+        // special handing because (Infinity - Infinity) or (-Infinity - -Infinity) is NaN
+        if ((received == infinity && expected == infinity) || (received == -infinity && expected == -infinity)) {
+            return AsymmetricMatcherResult::PASS;
+        } else {
+            int32_t digits = digitsValue.toInt32(globalObject);
+
+            double threshold = 0.5 * std::pow(10.0, -digits);
+            bool isClose = std::abs(expected - received) < threshold;
+            return isClose ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
+        }
+    } else if (auto* customMatcher = jsDynamicCast<JSExpectCustomAsymmetricMatcher*>(matcherPropCell)) {
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+            return AsymmetricMatcherResult::FAIL;
+
+        // ignore the "not" flag here, because the custom matchers handle it themselves (accessing this.isNot)
+        // and it would result in a double negation
+        flags = flags & ~FLAG_NOT;
+
+        bool passed = ExpectCustomAsymmetricMatcher__execute(customMatcher->wrapped(), JSValue::encode(matcherProp), globalObject, JSValue::encode(otherProp));
+        return passed ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
     }
 
     return AsymmetricMatcherResult::NOT_MATCHER;
+}
+
+AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope* throwScope)
+{
+    ExpectFlags flags = ExpectFlags();
+    AsymmetricMatcherResult result = matchAsymmetricMatcherAndGetFlags(globalObject, matcherProp, otherProp, throwScope, flags);
+    if (result != AsymmetricMatcherResult::NOT_MATCHER && (flags & FLAG_NOT)) {
+        result = (result == AsymmetricMatcherResult::PASS) ? AsymmetricMatcherResult::FAIL : AsymmetricMatcherResult::PASS;
+    }
+    return result;
 }
 
 template<typename PromiseType, bool isInternal>
@@ -341,17 +452,15 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
 }
 
 template<bool isStrict, bool enableAsymmetricMatchers>
-bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
+bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
 {
     VM& vm = globalObject->vm();
 
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.
     if constexpr (enableAsymmetricMatchers) {
-        JSCell* c1 = v1.asCell();
-        JSCell* c2 = v2.asCell();
-        if (v2.isCell() && !v2.isEmpty() && c2->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, c2, v1, scope)) {
+        if (v2.isCell() && !v2.isEmpty() && v2.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+            switch (matchAsymmetricMatcher(globalObject, v2, v1, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
             case AsymmetricMatcherResult::PASS:
@@ -360,8 +469,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 // continue comparison
                 break;
             }
-        } else if (v1.isCell() && !v1.isEmpty() && c1->type() == JSC::JSType(JSDOMWrapperType)) {
-            switch (matchAsymmetricMatcher(globalObject, c1, v2, scope)) {
+        } else if (v1.isCell() && !v1.isEmpty() && v1.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+            switch (matchAsymmetricMatcher(globalObject, v1, v2, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
             case AsymmetricMatcherResult::PASS:
@@ -386,8 +495,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     RELEASE_ASSERT(v1.isCell());
     RELEASE_ASSERT(v2.isCell());
 
-    size_t length = stack.size();
-    size_t originalLength = length;
+    const size_t length = stack.size();
+    const auto originalGCBufferSize = gcBuffer.size();
     for (size_t i = 0; i < length; i++) {
         auto values = stack.at(i);
         if (JSC::JSValue::strictEqual(globalObject, values.first, v1)) {
@@ -397,8 +506,17 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if (addToStack) {
+        gcBuffer.append(v1);
+        gcBuffer.append(v2);
         stack.append({ v1, v2 });
     }
+    auto removeFromStack = WTF::makeScopeExit([&] {
+        if (addToStack) {
+            stack.remove(length);
+            while (gcBuffer.size() > originalGCBufferSize)
+                gcBuffer.removeLast();
+        }
+    });
 
     JSCell* c1 = v1.asCell();
     JSCell* c2 = v2.asCell();
@@ -423,8 +541,59 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
+        bool canPerformFastSet = JSSet::isAddFastAndNonObservable(set1->structure()) && JSSet::isAddFastAndNonObservable(set2->structure());
+
+        // This code is loosely based on
+        // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
+        if (canPerformFastSet && set1->isIteratorProtocolFastAndNonObservable() && set2->isIteratorProtocolFastAndNonObservable()) {
+            auto* bucket = set1->head();
+            while (bucket) {
+                if (!bucket->deleted()) {
+                    auto key = bucket->key();
+                    RETURN_IF_EXCEPTION(*scope, false);
+                    auto** bucket2ptr = set2->findBucket(globalObject, key);
+
+                    if (bucket2ptr && (*bucket2ptr)->deleted()) {
+                        bucket2ptr = nullptr;
+                    }
+
+                    if (!bucket2ptr) {
+                        auto findDeepEqualKey = [&]() -> bool {
+                            auto* bucket = set2->head();
+                            while (bucket) {
+                                if (!bucket->deleted()) {
+                                    auto key2 = bucket->key();
+                                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
+                                        return true;
+                                    }
+                                }
+                                bucket = bucket->next();
+                            }
+
+                            return false;
+                        };
+
+                        if (!findDeepEqualKey()) {
+                            return false;
+                        }
+                    }
+                }
+                bucket = bucket->next();
+            }
+
+            return true;
+        }
+
+        // This code path can be triggered when it is a class that extends from Set.
+        //
+        //    class MySet extends Set {}
+        //
         IterationRecord iterationRecord1 = iteratorForIterable(globalObject, v1);
         bool isEqual = true;
+
+        // https://github.com/oven-sh/bun/issues/7736
+        DeferGC deferGC(vm);
+
         while (true) {
             JSValue next1 = iteratorStep(globalObject, iterationRecord1);
             if (next1.isFalse()) {
@@ -446,7 +615,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(*scope, false);
 
                 // set has unique values, no need to count
-                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, nextValue1, nextValue2, stack, scope, false)) {
+                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, nextValue1, nextValue2, gcBuffer, stack, scope, false)) {
                     found = true;
                     if (!nextValue1.isPrimitive()) {
                         stack.append({ nextValue1, nextValue2 });
@@ -480,8 +649,67 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
+        bool canPerformFastSet = JSMap::isSetFastAndNonObservable(map1->structure()) && JSMap::isSetFastAndNonObservable(map2->structure());
+
+        // This code is loosely based on
+        // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
+        if (canPerformFastSet && map1->isIteratorProtocolFastAndNonObservable() && map2->isIteratorProtocolFastAndNonObservable()) {
+            auto* bucket = map1->head();
+            while (bucket) {
+                if (!bucket->deleted()) {
+                    auto key = bucket->key();
+                    auto value = bucket->value();
+                    RETURN_IF_EXCEPTION(*scope, false);
+                    auto** bucket2ptr = map2->findBucket(globalObject, key);
+                    JSMap::BucketType* bucket2 = nullptr;
+
+                    if (bucket2ptr) {
+                        bucket2 = *bucket2ptr;
+
+                        if (bucket2->deleted()) {
+                            bucket2 = nullptr;
+                        }
+                    }
+
+                    if (!bucket2) {
+                        auto findDeepEqualKey = [&]() -> JSMap::BucketType* {
+                            auto* bucket = map2->head();
+                            while (bucket) {
+                                if (!bucket->deleted()) {
+                                    auto key2 = bucket->key();
+                                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
+                                        return bucket;
+                                    }
+                                }
+                                bucket = bucket->next();
+                            }
+
+                            return nullptr;
+                        };
+
+                        bucket2 = findDeepEqualKey();
+                    }
+
+                    if (!bucket2 || !Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value, bucket2->value(), gcBuffer, stack, scope, false)) {
+                        return false;
+                    }
+                }
+                bucket = bucket->next();
+            }
+
+            return true;
+        }
+
+        // This code path can be triggered when it is a class that extends from Map.
+        //
+        //    class MyMap extends Map {}
+        //
         IterationRecord iterationRecord1 = iteratorForIterable(globalObject, v1);
         bool isEqual = true;
+
+        // https://github.com/oven-sh/bun/issues/7736
+        DeferGC deferGC(vm);
+
         while (true) {
             JSValue next1 = iteratorStep(globalObject, iterationRecord1);
             if (next1.isFalse()) {
@@ -504,8 +732,11 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             RETURN_IF_EXCEPTION(*scope, false);
 
             bool found = false;
+
             IterationRecord iterationRecord2 = iteratorForIterable(globalObject, v2);
+
             while (true) {
+
                 JSValue next2 = iteratorStep(globalObject, iterationRecord2);
                 if (UNLIKELY(next2.isFalse())) {
                     break;
@@ -526,8 +757,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 JSValue value2 = nextValueObject2->getIndex(globalObject, static_cast<unsigned>(1));
                 RETURN_IF_EXCEPTION(*scope, false);
 
-                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, stack, scope, false)) {
-                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, nextValue1, nextValue2, stack, scope, false)) {
+                if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false)) {
+                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, nextValue1, nextValue2, gcBuffer, stack, scope, false)) {
                         found = true;
                         if (!nextValue1.isPrimitive()) {
                             stack.append({ nextValue1, nextValue2 });
@@ -607,6 +838,22 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         return false;
     }
+    case ErrorInstanceType: {
+        if (c2Type != ErrorInstanceType) {
+            return false;
+        }
+
+        if (JSC::ErrorInstance* left = jsDynamicCast<JSC::ErrorInstance*>(v1)) {
+            JSC::ErrorInstance* right = jsDynamicCast<JSC::ErrorInstance*>(v2);
+
+            if (UNLIKELY(!right)) {
+                return false;
+            }
+
+            return (
+                left->sanitizedNameString(globalObject) == right->sanitizedNameString(globalObject) && left->sanitizedMessageString(globalObject) == right->sanitizedMessageString(globalObject));
+        }
+    }
     case Int8ArrayType:
     case Uint8ArrayType:
     case Uint8ClampedArrayType:
@@ -618,7 +865,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case Float64ArrayType:
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
-        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type))) {
+        if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type)) || c1Type != c2Type) {
             return false;
         }
 
@@ -669,6 +916,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case JSDOMWrapperType: {
         if (c2Type == JSDOMWrapperType) {
             // https://github.com/oven-sh/bun/issues/4089
+            // https://github.com/oven-sh/bun/issues/6492
             auto* url2 = jsDynamicCast<JSDOMURL*>(v2);
             auto* url1 = jsDynamicCast<JSDOMURL*>(v1);
 
@@ -677,19 +925,15 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 if ((url2 == nullptr) != (url1 == nullptr)) {
                     return false;
                 }
+            }
 
-                if (url2 && url1) {
-                    return url1->wrapped().href() != url2->wrapped().href();
-                }
-            } else {
-                if (url2 && url1) {
-                    // toEqual should return false when the URLs' href is not equal
-                    // But you could have added additional properties onto the
-                    // url object itself, so we must check those as well
-                    // But it's definitely not equal if the href() is not the same
-                    if (url1->wrapped().href() != url2->wrapped().href()) {
-                        return false;
-                    }
+            if (url2 && url1) {
+                // toEqual or toStrictEqual should return false when the URLs' href is not equal
+                // But you could have added additional properties onto the
+                // url object itself, so we must check those as well
+                // But it's definitely not equal if the href() is not the same
+                if (url1->wrapped().href() != url2->wrapped().href()) {
+                    return false;
                 }
             }
         }
@@ -743,7 +987,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, stack, scope, true)) {
+            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, gcBuffer, stack, scope, true)) {
                 return false;
             }
 
@@ -798,15 +1042,11 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return false;
             }
 
-            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, stack, scope, true)) {
+            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
                 return false;
             }
 
             RETURN_IF_EXCEPTION(*scope, false);
-        }
-
-        if (addToStack) {
-            stack.remove(originalLength);
         }
 
         RETURN_IF_EXCEPTION(*scope, false);
@@ -825,23 +1065,13 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSC::Structure* o2Structure = o2->structure();
         if (!o2Structure->hasNonReifiedStaticProperties() && o2Structure->canPerformFastPropertyEnumeration()) {
 
-            size_t count1 = 0;
-
             bool result = true;
-            if constexpr (isStrict) {
-                if (o2Structure->inlineSize() + o2Structure->outOfLineSize() != o1Structure->inlineSize() + o1Structure->outOfLineSize()) {
-                    return false;
-                }
-            }
-
             bool sameStructure = o2Structure->id() == o1Structure->id();
-
             if (sameStructure) {
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
                     }
-                    count1++;
 
                     JSValue left = o1->getDirect(entry.offset());
                     JSValue right = o2->getDirect(entry.offset());
@@ -861,7 +1091,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return true;
                     }
 
-                    if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, stack, scope, true)) {
+                    if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, gcBuffer, stack, scope, true)) {
                         result = false;
                         return false;
                     }
@@ -869,11 +1099,12 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     return true;
                 });
             } else {
+                size_t count = 0;
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
                     }
-                    count1++;
+                    count++;
 
                     JSValue left = o1->getDirect(entry.offset());
                     JSValue right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
@@ -893,7 +1124,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return true;
                     }
 
-                    if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, stack, scope, true)) {
+                    if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, left, right, gcBuffer, stack, scope, true)) {
                         result = false;
                         return false;
                     }
@@ -902,7 +1133,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 });
 
                 if (result) {
-                    size_t remain = count1;
+                    size_t remain = count;
                     o2Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                         if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                             return true;
@@ -925,10 +1156,6 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            if (addToStack) {
-                stack.remove(originalLength);
-            }
-
             return result;
         }
     }
@@ -940,13 +1167,17 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     o2->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(*scope, false);
 
-    const size_t propertyArrayLength = a1.size();
-    if (propertyArrayLength != a2.size()) {
-        return false;
+    const size_t propertyArrayLength1 = a1.size();
+    const size_t propertyArrayLength2 = a2.size();
+    if constexpr (isStrict) {
+        if (propertyArrayLength1 != propertyArrayLength2) {
+            return false;
+        }
     }
 
     // take a property name from one, try to get it from both
-    for (size_t i = 0; i < propertyArrayLength; i++) {
+    size_t i;
+    for (i = 0; i < propertyArrayLength1; i++) {
         Identifier i1 = a1[i];
         PropertyName propertyName1 = PropertyName(i1);
 
@@ -970,22 +1201,31 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, stack, scope, true)) {
+        if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
             return false;
         }
 
         RETURN_IF_EXCEPTION(*scope, false);
     }
 
-    if (addToStack) {
-        stack.remove(originalLength);
+    // for the remaining properties in the other object, make sure they are undefined
+    for (; i < propertyArrayLength2; i++) {
+        Identifier i2 = a2[i];
+        PropertyName propertyName2 = PropertyName(i2);
+
+        JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName2);
+        RETURN_IF_EXCEPTION(*scope, false);
+
+        if (!prop2.isUndefined()) {
+            return false;
+        }
     }
 
     return true;
 }
 
 template<bool enableAsymmetricMatchers>
-bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers)
+bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope* throwScope, bool replacePropsWithAsymmetricMatchers, bool isMatchingObjectContaining)
 {
     VM& vm = globalObject->vm();
     JSObject* obj = objValue.getObject();
@@ -1011,41 +1251,41 @@ bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globa
         }
     }
 
-    for (size_t i = 0; i < subsetProps.size(); i++) {
-        JSValue prop = obj->getIfPropertyExists(globalObject, subsetProps[i]);
+    for (const auto& property : subsetProps) {
+        JSValue prop = obj->getIfPropertyExists(globalObject, property);
         RETURN_IF_EXCEPTION(*throwScope, false);
 
         if (prop.isEmpty()) {
             return false;
         }
 
-        JSValue subsetProp = subsetObj->get(globalObject, subsetProps[i]);
+        JSValue subsetProp = subsetObj->get(globalObject, property);
         RETURN_IF_EXCEPTION(*throwScope, false);
 
-        JSCell* subsetPropCell = subsetProp.asCell();
-        JSCell* propCell = prop.asCell();
+        JSCell* subsetPropCell = !subsetProp.isEmpty() && subsetProp.isCell() ? subsetProp.asCell() : nullptr;
+        JSCell* propCell = prop.isCell() ? prop.asCell() : nullptr;
 
         if constexpr (enableAsymmetricMatchers) {
-            if (subsetProp.isCell() && !subsetProp.isEmpty() && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, subsetPropCell, prop, throwScope)) {
+            if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
+                switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     if (replacePropsWithAsymmetricMatchers) {
-                        obj->putDirect(vm, subsetProps[i], subsetProp);
+                        obj->putDirectMayBeIndex(globalObject, property, subsetProp);
                     }
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
                     break;
                 }
-            } else if (prop.isCell() && !prop.isEmpty() && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, propCell, subsetProp, throwScope)) {
+            } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
+                switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     if (replacePropsWithAsymmetricMatchers) {
-                        subsetObj->putDirect(vm, subsetProps[i], prop);
+                        subsetObj->putDirectMayBeIndex(globalObject, property, prop);
                     }
                     // continue to next subset prop
                     continue;
@@ -1056,8 +1296,19 @@ bool Bun__deepMatch(JSValue objValue, JSValue subsetValue, JSGlobalObject* globa
         }
 
         if (subsetProp.isObject() and prop.isObject()) {
-            if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, replacePropsWithAsymmetricMatchers)) {
-                return false;
+            // if this is called from inside an objectContaining asymmetric matcher, it should behave slighlty differently:
+            // in such case, it expects exhaustive matching of any nested object properties, not just a subset,
+            // and the user would need to opt-in to subset matching by using another nested objectContaining matcher
+            if (enableAsymmetricMatchers && isMatchingObjectContaining) {
+                Vector<std::pair<JSValue, JSValue>, 16> stack;
+                MarkedArgumentBuffer gcBuffer;
+                if (!Bun__deepEquals<false, true>(globalObject, prop, subsetProp, gcBuffer, stack, throwScope, true)) {
+                    return false;
+                }
+            } else {
+                if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining)) {
+                    return false;
+                }
             }
         } else {
             if (!sameValue(globalObject, prop, subsetProp)) {
@@ -1087,7 +1338,9 @@ void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool is_s
 
 WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty()
 {
-    return new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
+    return headers;
 }
 void WebCore__FetchHeaders__append(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2,
     JSC__JSGlobalObject* lexicalGlobalObject)
@@ -1116,6 +1369,7 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
     RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement();
     if (init) {
         // `fill` doesn't set an exception on the VM if it fails, it returns an
         //  ExceptionOr<void>.  So we need to check for the exception and, if set,
@@ -1154,6 +1408,7 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* h
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    clone->relaxAdoptionRequirement();
     WebCore::propagateException(*lexicalGlobalObject, throwScope,
         clone->fill(*headers));
     return clone;
@@ -1194,10 +1449,13 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
 void WebCore__FetchHeaders__count(WebCore__FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
     auto iter = headers->createIterator();
-    uint32_t i = 0;
+    size_t i = 0;
     for (auto pair = iter.next(); pair; pair = iter.next()) {
-        i += pair->key.length();
-        i += pair->value.length();
+        // UTF8 byteLength is not strictly necessary here
+        // They should always be ASCII.
+        // However, we can still do this out of an abundance of caution
+        i += BunString::utf8ByteLength(pair->key);
+        i += BunString::utf8ByteLength(pair->value);
     }
 
     *count = headers->size();
@@ -1223,6 +1481,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
 
     if (pico_headers.len > 0) {
         HTTPHeaderMap map = HTTPHeaderMap();
@@ -1262,16 +1521,17 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, void* arg1)
 {
     uWS::HttpRequest req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
-    size_t i = 0;
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    headers->relaxAdoptionRequirement(); // This prevents an assertion later, but may not be the proper approach.
+
     HTTPHeaderMap map = HTTPHeaderMap();
 
     for (const auto& header : req) {
         StringView nameView = StringView(reinterpret_cast<const LChar*>(header.first.data()), header.first.length());
         size_t name_len = nameView.length();
-
         LChar* data = nullptr;
+
         auto value = String::createUninitialized(header.second.length(), data);
         memcpy(data, header.second.data(), header.second.length());
 
@@ -1282,13 +1542,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
         } else {
             map.setUncommonHeader(nameView.toString().isolatedCopy(), WTFMove(value));
         }
-
-        // seenHeaderSizes[name_len] = true;
-
-        if (i > 56)
-            __builtin_unreachable();
     }
-
     headers->setInternalHeaders(WTFMove(map));
     return headers;
 }
@@ -1306,7 +1560,7 @@ JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, Strin
     for (uint32_t i = 0; i < count; i++) {
         WTF::String name = Zig::toStringCopy(buf, arg1[i]);
         WTF::String value = Zig::toStringCopy(buf, arg2[i]);
-        pairs.uncheckedAppend(KeyValuePair<String, String>(name, value));
+        pairs.unsafeAppendWithoutCapacityCheck(KeyValuePair<String, String>(name, value));
     }
 
     Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
@@ -1342,7 +1596,7 @@ void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* headers, const ZigString
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
     WebCore::propagateException(*global, throwScope,
-        headers->set(Zig::toString(*arg1), Zig::toString(*arg2)));
+        headers->set(Zig::toString(*arg1), Zig::toStringCopy(*arg2)));
 }
 void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* headers, const ZigString* arg1, JSC__JSGlobalObject* global)
 {
@@ -1387,7 +1641,7 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
 {
     const WTF::URL& url = arg0->href();
     if (url.protocolIsFile()) {
-        return Bun::toString(url.fileSystemPath());
+        return Bun::toStringRef(url.fileSystemPath());
     }
 
     return BunStringEmpty;
@@ -1396,15 +1650,22 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
 extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
 {
     auto str = Zig::toString(*strPtr);
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
-    JSValue result = JSONParseWithException(globalObject, str);
-    if (auto* exception = scope.exception()) {
-        scope.clearException();
-        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(exception->value()));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    // JSONParseWithException does not propagate exceptions as expected. See #5859
+    JSValue result = JSONParse(globalObject, str);
+
+    if (!result && !scope.exception()) {
+        scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+        return JSC::JSValue::encode(exception);
+    }
+
+    return JSValue::encode(result);
 }
 
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
@@ -1473,18 +1734,24 @@ JSC__JSValue
 JSC__JSObject__create(JSC__JSGlobalObject* globalObject, size_t initialCapacity, void* arg2,
     void (*ArgFn3)(void* arg0, JSC__JSObject* arg1, JSC__JSGlobalObject* arg2))
 {
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity);
+    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned>(initialCapacity), JSFinalObject::maxInlineCapacity));
 
     ArgFn3(arg2, object, globalObject);
 
     return JSC::JSValue::encode(object);
 }
 
+JSC__JSValue JSC__JSValue__createEmptyObjectWithNullPrototype(JSC__JSGlobalObject* globalObject)
+{
+    return JSValue::encode(
+        JSC::constructEmptyObject(globalObject->vm(), globalObject->nullPrototypeObjectStructure()));
+}
+
 JSC__JSValue JSC__JSValue__createEmptyObject(JSC__JSGlobalObject* globalObject,
     size_t initialCapacity)
 {
     return JSC::JSValue::encode(
-        JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity));
+        JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity)));
 }
 
 extern "C" uint64_t Bun__Blob__getSizeForBindings(void* blob);
@@ -1534,7 +1801,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
         return 0;
     }
 
-    case WebCore::JSDOMWrapperType: {
+    case static_cast<JSC::JSType>(WebCore::JSDOMWrapperType): {
         if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
@@ -1673,6 +1940,21 @@ void JSC__JSFunction__optimizeSoon(JSC__JSValue JSValue0)
     JSC::optimizeNextInvocation(value);
 }
 
+bool JSC__JSFunction__getSourceCode(JSC__JSValue JSValue0, ZigString* outSourceCode)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (JSC::JSFunction* func = jsDynamicCast<JSC::JSFunction*>(value)) {
+        auto* sourceCode = func->sourceCode();
+        if (sourceCode != nullptr) { // native functions have no source code
+            *outSourceCode = Zig::toZigString(sourceCode->view());
+            return true;
+        }
+        return false;
+    }
+
+    return false;
+}
+
 void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2,
     BunString* arg3)
 {
@@ -1689,6 +1971,12 @@ unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0)
         return jsValue.asCell()->type();
 
     return 0;
+}
+
+CPP_DECL JSC__JSString* JSC__jsTypeStringForValue(JSC__JSGlobalObject* globalObject, JSC__JSValue value)
+{
+    JSC::JSValue jsValue = JSC::JSValue::decode(value);
+    return jsTypeStringForValue(globalObject, jsValue);
 }
 
 JSC__JSValue JSC__JSPromise__asValue(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1)
@@ -1759,6 +2047,7 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* global,
 
 void JSC__VM__collectAsync(JSC__VM* vm)
 {
+    JSC::JSLockHolder lock(*vm);
     vm->heap.collectAsync();
 }
 
@@ -1811,7 +2100,8 @@ bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC_
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Vector<std::pair<JSValue, JSValue>, 16> stack;
-    return Bun__deepEquals<false, false>(globalObject, v1, v2, stack, &scope, true);
+    MarkedArgumentBuffer args;
+    return Bun__deepEquals<false, false>(globalObject, v1, v2, args, stack, &scope, true);
 }
 
 bool JSC__JSValue__jestDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
@@ -1821,7 +2111,8 @@ bool JSC__JSValue__jestDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, 
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Vector<std::pair<JSValue, JSValue>, 16> stack;
-    return Bun__deepEquals<false, true>(globalObject, v1, v2, stack, &scope, true);
+    MarkedArgumentBuffer args;
+    return Bun__deepEquals<false, true>(globalObject, v1, v2, args, stack, &scope, true);
 }
 
 bool JSC__JSValue__strictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
@@ -1831,7 +2122,8 @@ bool JSC__JSValue__strictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Vector<std::pair<JSValue, JSValue>, 16> stack;
-    return Bun__deepEquals<true, false>(globalObject, v1, v2, stack, &scope, true);
+    MarkedArgumentBuffer args;
+    return Bun__deepEquals<true, false>(globalObject, v1, v2, args, stack, &scope, true);
 }
 
 bool JSC__JSValue__jestStrictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
@@ -1841,7 +2133,9 @@ bool JSC__JSValue__jestStrictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSVa
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Vector<std::pair<JSValue, JSValue>, 16> stack;
-    return Bun__deepEquals<true, true>(globalObject, v1, v2, stack, &scope, true);
+    MarkedArgumentBuffer args;
+
+    return Bun__deepEquals<true, true>(globalObject, v1, v2, args, stack, &scope, true);
 }
 
 bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
@@ -1851,7 +2145,7 @@ bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    return Bun__deepMatch<false>(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers);
+    return Bun__deepMatch<false>(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers, false);
 }
 
 bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
@@ -1861,7 +2155,7 @@ bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, J
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    return Bun__deepMatch<true>(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers);
+    return Bun__deepMatch<true>(obj, subset, globalObject, &scope, replacePropsWithAsymmetricMatchers, false);
 }
 
 // This is the same as the C API version, except it returns a JSValue which may be a *Exception
@@ -1977,6 +2271,12 @@ JSC__JSValue JSC__JSObject__getIndex(JSC__JSValue jsValue, JSC__JSGlobalObject* 
 {
     return JSC::JSValue::encode(JSC::JSValue::decode(jsValue).toObject(arg1)->getIndex(arg1, arg3));
 }
+JSC__JSValue JSC__JSValue__getDirectIndex(JSC__JSValue jsValue, JSC__JSGlobalObject* arg1,
+    uint32_t arg3)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(jsValue).getObject();
+    return JSC::JSValue::encode(object->getDirectIndex(arg1, arg3));
+}
 JSC__JSValue JSC__JSObject__getDirect(JSC__JSObject* arg0, JSC__JSGlobalObject* arg1,
     const ZigString* arg2)
 {
@@ -2023,77 +2323,15 @@ JSC__JSObject* JSC__JSString__toObject(JSC__JSString* arg0, JSC__JSGlobalObject*
 // JSC__JSGlobalObject* arg1, JSC__JSModuleRecord* arg2) {
 //     arg2->depen
 // }
-
-class JSMicrotaskCallbackDefaultGlobal final : public RefCounted<JSMicrotaskCallbackDefaultGlobal> {
-public:
-    static Ref<JSMicrotaskCallbackDefaultGlobal> create(Ref<JSC::Microtask>&& task)
-    {
-        return adoptRef(*new JSMicrotaskCallbackDefaultGlobal(WTFMove(task).leakRef()));
-    }
-
-    void call(JSC::JSGlobalObject* globalObject)
-    {
-
-        JSC::VM& vm = globalObject->vm();
-        auto task = &m_task.leakRef();
-        task->run(globalObject);
-
-        delete this;
-    }
-
-private:
-    JSMicrotaskCallbackDefaultGlobal(Ref<JSC::Microtask>&& task)
-        : m_task { WTFMove(task) }
-    {
-    }
-
-    Ref<JSC::Microtask> m_task;
-};
-
-class JSMicrotaskCallback final : public RefCounted<JSMicrotaskCallback> {
-public:
-    static Ref<JSMicrotaskCallback> create(JSC::JSGlobalObject& globalObject,
-        Ref<JSC::Microtask>&& task)
-    {
-        return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task).leakRef()));
-    }
-
-    void call()
-    {
-        auto* globalObject = m_globalObject.get();
-        if (UNLIKELY(!globalObject)) {
-            delete this;
-            return;
-        }
-
-        JSC::VM& vm = m_globalObject->vm();
-        auto task = &m_task.leakRef();
-        task->run(globalObject);
-
-        delete this;
-    }
-
-private:
-    JSMicrotaskCallback(JSC::JSGlobalObject& globalObject, Ref<JSC::Microtask>&& task)
-        : m_globalObject { &globalObject }
-        , m_task { WTFMove(task) }
-    {
-    }
-
-    JSC::Weak<JSC::JSGlobalObject> m_globalObject;
-    Ref<JSC::Microtask> m_task;
-};
-
-void Microtask__run(void* microtask, void* global)
+extern "C" JSC::JSInternalPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObject, const BunString* moduleNameStr)
 {
-    reinterpret_cast<JSMicrotaskCallback*>(microtask)->call();
-}
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(globalObject->vm(), moduleNameStr->toWTFString()), jsUndefined(), jsUndefined(), jsUndefined());
 
-void Microtask__run_default(void* microtask, void* global)
-{
-    reinterpret_cast<JSMicrotaskCallbackDefaultGlobal*>(microtask)->call(reinterpret_cast<Zig::GlobalObject*>(global));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return promise;
 }
-
 JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, const unsigned char* arg1,
     size_t arg2, const unsigned char* originUrlPtr, size_t originURLLen, const unsigned char* referrerUrlPtr, size_t referrerUrlLen,
     JSC__JSValue JSValue5, JSC__JSValue* arg6)
@@ -2158,6 +2396,14 @@ JSC__JSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
     return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
 }
 
+JSC__JSValue ReadableStream__used(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto clientData = WebCore::clientData(vm);
+    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createUsedReadableStreamPrivateName()).getObject();
+    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
+}
+
 JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,
     JSC__JSGlobalObject* globalObject)
 {
@@ -2216,7 +2462,7 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
     JSC::JSObject* object = nullptr;
     {
         JSC::ObjectInitializationScope initializationScope(vm);
-        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity);
+        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity));
 
         if (!clone) {
             for (size_t i = 0; i < initialCapacity; ++i) {
@@ -2233,6 +2479,26 @@ JSC__JSValue JSC__JSValue__fromEntries(JSC__JSGlobalObject* globalObject, ZigStr
     }
 
     return JSC::JSValue::encode(object);
+}
+
+JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue objectValue)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSObject* object = JSC::JSValue::decode(objectValue).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
+}
+
+bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSValue value = JSC::JSValue::decode(jsValue);
+    return value.toObject(globalObject)->hasOwnProperty(globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(key))));
 }
 
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
@@ -2308,6 +2574,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         }
         break;
     }
+    default: {
+        break;
+    }
     }
 
     return false;
@@ -2345,29 +2614,31 @@ JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, 
 
     JSC::JSArray* array = nullptr;
     {
+        JSC::GCDeferralContext deferralContext(vm);
         JSC::ObjectInitializationScope initializationScope(vm);
         if ((array = JSC::JSArray::tryCreateUninitializedRestricted(
-                 initializationScope, nullptr,
+                 initializationScope, &deferralContext,
                  globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
                  arg2))) {
 
             if (!clone) {
                 for (size_t i = 0; i < arg2; ++i) {
-                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toString(arg1[i])));
+                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toString(arg1[i]), &deferralContext));
                 }
             } else {
                 for (size_t i = 0; i < arg2; ++i) {
-                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toStringCopy(arg1[i])));
+                    array->putDirectIndex(globalObject, i, JSC::jsString(vm, Zig::toStringCopy(arg1[i]), &deferralContext));
                 }
             }
         }
-    }
-    if (!array) {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return JSC::JSValue::encode(JSC::JSValue());
-    }
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(array)));
+        if (!array) {
+            JSC::throwOutOfMemoryError(globalObject, scope);
+            return JSC::JSValue::encode(JSC::JSValue());
+        }
+
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue(array)));
+    }
 }
 
 JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* globalObject,
@@ -2569,25 +2840,19 @@ JSC__JSInternalPromise*
 JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
     const BunString* arg1)
 {
-    auto name = Bun::toWTFString(*arg1);
-    name.impl()->ref();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto name = makeAtomString(arg1->toWTFString());
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
     if (!promise) {
-        // usually this is a GC issue
-        return jsCast<JSC::JSInternalPromise*>(JSC::JSInternalPromise::rejectedPromise(globalObject, JSC::jsUndefined()));
+        return nullptr;
     }
 
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(), resolverFunctionCallback);
-    JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(),
-        [&arg1](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-            return JSC::JSValue::encode(
-                JSC::JSInternalPromise::rejectedPromise(globalObject, callFrame->argument(0)));
-        });
+        vm, globalObject, 1, String(), resolverFunctionCallback);
 
-    auto result = promise->then(globalObject, resolverFunction, rejecterFunction);
+    auto result = promise->then(globalObject, resolverFunction, nullptr);
 
     // if (promise->status(globalObject->vm()) ==
     // JSC::JSPromise::Status::Fulfilled) {
@@ -2603,10 +2868,19 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
 }
 #pragma mark - JSC::JSPromise
 
-void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
+void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* globalObject,
     JSC__JSValue JSValue2)
 {
-    arg0->reject(arg1, JSC::JSValue::decode(JSValue2));
+    JSValue value = JSC::JSValue::decode(JSValue2);
+    auto& vm = globalObject->vm();
+    JSC::Exception* exception = nullptr;
+    if (!value.inherits<JSC::Exception>()) {
+        exception = JSC::Exception::create(vm, value, JSC::Exception::StackCaptureAction::CaptureStack);
+    } else {
+        exception = jsCast<JSC::Exception*>(value);
+    }
+
+    arg0->reject(globalObject, exception);
 }
 void JSC__JSPromise__rejectAsHandled(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
@@ -2747,10 +3021,19 @@ JSC__JSInternalPromise* JSC__JSInternalPromise__create(JSC__JSGlobalObject* glob
     return JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
 }
 
-void JSC__JSInternalPromise__reject(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1,
+void JSC__JSInternalPromise__reject(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* globalObject,
     JSC__JSValue JSValue2)
 {
-    arg0->reject(arg1, JSC::JSValue::decode(JSValue2));
+    JSValue value = JSC::JSValue::decode(JSValue2);
+    auto& vm = globalObject->vm();
+    JSC::Exception* exception = nullptr;
+    if (!value.inherits<JSC::Exception>()) {
+        exception = JSC::Exception::create(vm, value, JSC::Exception::StackCaptureAction::CaptureStack);
+    } else {
+        exception = jsCast<JSC::Exception*>(value);
+    }
+
+    arg0->reject(globalObject, exception);
 }
 void JSC__JSInternalPromise__rejectAsHandled(JSC__JSInternalPromise* arg0,
     JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2)
@@ -2845,7 +3128,7 @@ JSC__VM* JSC__JSGlobalObject__vm(JSC__JSGlobalObject* arg0) { return &arg0->vm()
 
 void JSC__JSGlobalObject__handleRejectedPromises(JSC__JSGlobalObject* arg0)
 {
-    return static_cast<Zig::GlobalObject*>(arg0)->handleRejectedPromises();
+    return jsCast<Zig::GlobalObject*>(arg0)->handleRejectedPromises();
 }
 
 #pragma mark - JSC::JSValue
@@ -2914,6 +3197,19 @@ void JSC__JSValue__put(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, const Z
     object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3));
 }
 
+extern "C" void JSC__JSValue__putMayBeIndex(JSC__JSValue target, JSC__JSGlobalObject* globalObject, const BunString* key, JSC__JSValue value)
+{
+    JSC::VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
+    WTF::String keyStr = key->toWTFString();
+    JSC::Identifier identifier = JSC::Identifier::fromString(vm, keyStr);
+
+    JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
+    object->putDirectMayBeIndex(globalObject, JSC::PropertyName(identifier), JSC::JSValue::decode(value));
+    RETURN_IF_EXCEPTION(scope, void());
+}
+
 bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
     JSValue value = JSValue::decode(JSValue0);
@@ -2926,6 +3222,8 @@ bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
         if (callData.native.isBoundFunction)
             return false;
         return value.isConstructor();
+    default:
+        return false;
     }
     return false;
 }
@@ -3026,6 +3324,10 @@ JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
 }
+JSC__JSValue JSC__JSValue__jsEmptyString(JSC__JSGlobalObject* arg0)
+{
+    return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));
+};
 JSC__JSValue JSC__JSValue__jsNull() { return JSC::JSValue::encode(JSC::jsNull()); };
 JSC__JSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0)
 {
@@ -3054,20 +3356,16 @@ JSC__JSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0)
 
 int64_t JSC__JSValue__toInt64(JSC__JSValue val)
 {
-    JSC::JSValue _val = JSC::JSValue::decode(val);
-
-    int64_t result = JSC::tryConvertToInt52(_val.asDouble());
-    if (result != JSC::JSValue::notInt52) {
-        return result;
-    }
-
-    if (_val.isHeapBigInt()) {
-
-        if (auto* heapBigInt = _val.asHeapBigInt()) {
+    JSC::JSValue value = JSC::JSValue::decode(val);
+    ASSERT(value.isHeapBigInt() || value.isNumber());
+    if (value.isHeapBigInt()) {
+        if (auto* heapBigInt = value.asHeapBigInt()) {
             return heapBigInt->toBigInt64(heapBigInt);
         }
     }
-    return _val.asAnyInt();
+    if (value.isInt32())
+        return value.asInt32();
+    return static_cast<int64_t>(value.asDouble());
 }
 
 uint8_t JSC__JSValue__asBigIntCompare(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue JSValue1)
@@ -3121,6 +3419,33 @@ JSC__JSValue JSC__JSValue__fromInt64NoTruncate(JSC__JSGlobalObject* globalObject
     return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));
 }
 
+JSC__JSValue JSC__JSValue__fromTimevalNoTruncate(JSC__JSGlobalObject* globalObject, int64_t nsec, int64_t sec)
+{
+    auto big_nsec = JSC::JSBigInt::createFrom(globalObject, nsec);
+    auto big_sec = JSC::JSBigInt::createFrom(globalObject, sec);
+    auto big_1e6 = JSC::JSBigInt::createFrom(globalObject, 1e6);
+    auto sec_as_nsec = JSC::JSBigInt::multiply(globalObject, big_1e6, big_sec);
+    ASSERT(sec_as_nsec.isHeapBigInt());
+    auto* big_sec_as_nsec = sec_as_nsec.asHeapBigInt();
+    ASSERT(big_sec_as_nsec);
+    return JSC::JSValue::encode(JSC::JSBigInt::add(globalObject, big_sec_as_nsec, big_nsec));
+}
+
+JSC__JSValue JSC__JSValue__bigIntSum(JSC__JSGlobalObject* globalObject, JSC__JSValue a, JSC__JSValue b)
+{
+    JSC::JSValue a_value = JSC::JSValue::decode(a);
+    JSC::JSValue b_value = JSC::JSValue::decode(b);
+
+    ASSERT(a_value.isHeapBigInt());
+    auto* big_a = a_value.asHeapBigInt();
+    ASSERT(big_a);
+
+    ASSERT(b_value.isHeapBigInt());
+    auto* big_b = b_value.asHeapBigInt();
+    ASSERT(big_b);
+    return JSC::JSValue::encode(JSC::JSBigInt::add(globalObject, big_a, big_b));
+}
+
 JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* globalObject, uint64_t val)
 {
     return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));
@@ -3128,28 +3453,28 @@ JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* globalObjec
 
 uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSValue val)
 {
-    JSC::JSValue _val = JSC::JSValue::decode(val);
+    JSC::JSValue value = JSC::JSValue::decode(val);
+    ASSERT(value.isHeapBigInt() || value.isNumber());
 
-    int64_t result = JSC::tryConvertToInt52(_val.asDouble());
+    if (value.isHeapBigInt()) {
+        if (auto* heapBigInt = value.asHeapBigInt()) {
+            return heapBigInt->toBigUInt64(heapBigInt);
+        }
+    }
+
+    if (value.isInt32()) {
+        return static_cast<uint64_t>(value.asInt32());
+    }
+    ASSERT(value.isDouble());
+
+    int64_t result = JSC::tryConvertToInt52(value.asDouble());
     if (result != JSC::JSValue::notInt52) {
         if (result < 0)
             return 0;
 
         return static_cast<uint64_t>(result);
     }
-
-    if (_val.isHeapBigInt()) {
-
-        if (auto* heapBigInt = _val.asHeapBigInt()) {
-            return heapBigInt->toBigUInt64(heapBigInt);
-        }
-    }
-
-    if (!_val.isNumber()) {
-        return 0;
-    }
-
-    return static_cast<uint64_t>(_val.asAnyInt());
+    return 0;
 }
 
 JSC__JSValue JSC__JSValue__createObject2(JSC__JSGlobalObject* globalObject, const ZigString* arg1,
@@ -3196,6 +3521,33 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     auto property = JSC::PropertyName(identifier);
 
     return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, property));
+}
+
+extern "C" JSC__JSValue JSC__JSValue__getIfPropertyExistsImplString(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* propertyName)
+{
+    JSValue value = JSC::JSValue::decode(JSValue0);
+    if (UNLIKELY(!value.isObject()))
+        return JSValue::encode({});
+
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSObject* object = value.getObject();
+    auto identifier = JSC::Identifier::fromString(vm, propertyName->toWTFString(BunString::ZeroCopy));
+    auto property = JSC::PropertyName(identifier);
+
+    return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, property));
+}
+
+extern "C" JSC__JSValue JSC__JSValue__getOwn(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* propertyName)
+{
+    VM& vm = globalObject->vm();
+    JSValue value = JSC::JSValue::decode(JSValue0);
+    auto identifier = JSC::Identifier::fromString(vm, propertyName->toWTFString(BunString::ZeroCopy));
+    auto property = JSC::PropertyName(identifier);
+    PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);
+    if (value.getOwnPropertySlot(globalObject, property, slot)) {
+        return JSValue::encode(slot.getValue(globalObject, property));
+    }
+    return JSValue::encode({});
 }
 
 JSC__JSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue arg1)
@@ -3396,9 +3748,13 @@ int64_t JSC__JSValue__coerceToInt64(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
         return value.toBigInt64(arg1);
     }
 
-    int64_t result = tryConvertToInt52(value.asDouble());
-    if (result != JSValue::notInt52) {
-        return result;
+    if (value.isDouble()) {
+        int64_t result = tryConvertToInt52(value.asDouble());
+        if (result != JSValue::notInt52) {
+            return result;
+        }
+
+        return static_cast<int64_t>(value.asDouble());
     }
 
     return value.toInt32(arg1);
@@ -3507,6 +3863,18 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     if (!m_codeBlock)
         return;
 
+    // https://github.com/oven-sh/bun/issues/6951
+    auto* provider = m_codeBlock->source().provider();
+
+    if (UNLIKELY(!provider))
+        return;
+
+    // Make sure the range is valid
+    WTF::StringView sourceString = provider->source();
+
+    if (UNLIKELY(sourceString.isNull()))
+        return;
+
     JSC::BytecodeIndex bytecodeOffset = stackFrame->hasBytecodeIndex() ? stackFrame->bytecodeIndex() : JSC::BytecodeIndex();
 
     /* Get the "raw" position info.
@@ -3515,9 +3883,9 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
      * avoid the CodeBlock's expressionRangeForBytecodeOffset modifications to the line and column
      * numbers, (we don't need the column number from it, and we'll calculate the line "fixes"
      * ourselves). */
-    int startOffset = 0;
-    int endOffset = 0;
-    int divotPoint = 0;
+    unsigned startOffset = 0;
+    unsigned endOffset = 0;
+    unsigned divotPoint = 0;
     unsigned line = 0;
     unsigned unusedColumn = 0;
     m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeIndex(
@@ -3546,15 +3914,12 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     // Calculate the staring\ending offsets of the entire expression
     int expressionStart = divotPoint - startOffset;
     int expressionStop = divotPoint + endOffset;
-
-    // Make sure the range is valid
-    WTF::StringView sourceString = m_codeBlock->source().provider()->source();
     if (expressionStop < 1 || expressionStart > static_cast<int>(sourceString.length())) {
         return;
     }
 
     // Search for the beginning of the line
-    unsigned int lineStart = expressionStart;
+    unsigned int lineStart = expressionStart > 0 ? expressionStart : 0;
     while ((lineStart > 0) && ('\n' != sourceString[lineStart - 1])) {
         lineStart--;
     }
@@ -3570,12 +3935,20 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
         // Most of the time, when you look at a stack trace, you want a couple lines above
 
         source_lines[0] = Bun::toStringRef(sourceString.substring(lineStart, lineStop - lineStart).toStringWithoutCopying());
-        source_line_numbers[0] = line;
+        source_line_numbers[0] = line - 1;
 
         if (lineStart > 0) {
             auto byte_offset_in_source_string = lineStart - 1;
             uint8_t source_line_i = 1;
             auto remaining_lines_to_grab = source_lines_count - 1;
+
+            {
+                // This should probably be code points instead of newlines
+                while (byte_offset_in_source_string > 0 && chars[byte_offset_in_source_string] != '\n') {
+                    byte_offset_in_source_string--;
+                }
+                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
+            }
 
             while (byte_offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
                 unsigned int end_of_line_offset = byte_offset_in_source_string;
@@ -3588,7 +3961,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
                 // We are at the beginning of the line
                 source_lines[source_line_i] = Bun::toStringRef(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1).toStringWithoutCopying());
 
-                source_line_numbers[source_line_i] = line - source_line_i;
+                source_line_numbers[source_line_i] = line - source_line_i - 1;
                 source_line_i++;
 
                 remaining_lines_to_grab--;
@@ -3626,6 +3999,174 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace* trace, const JSC::Sta
         is_top ? trace->source_lines_numbers : nullptr,
         is_top ? trace->source_lines_to_collect : 0, &frame->position);
 }
+
+class V8StackTraceIterator {
+public:
+    class StackFrame {
+    public:
+        StringView functionName {};
+        StringView sourceURL {};
+        WTF::OrdinalNumber lineNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
+        WTF::OrdinalNumber columnNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
+
+        bool isConstructor = false;
+        bool isGlobalCode = false;
+    };
+
+    WTF::StringView stack;
+    unsigned int offset = 0;
+
+    V8StackTraceIterator(WTF::StringView stack_)
+        : stack(stack_)
+    {
+    }
+
+    bool parseFrame(StackFrame& frame)
+    {
+
+        if (offset >= stack.length())
+            return false;
+
+        auto start = stack.find("\n    at "_s, offset);
+
+        if (start == WTF::notFound) {
+            offset = stack.length();
+            return false;
+        }
+
+        start += 8;
+        auto end = stack.find("\n"_s, start);
+
+        if (end == WTF::notFound) {
+            offset = stack.length();
+            end = offset;
+        }
+
+        if (end == start || start == WTF::notFound) {
+            return false;
+        }
+
+        StringView line = stack.substring(start, end - start);
+        offset = end;
+
+        // the proper singular spelling is parenthesis
+        auto openingParenthese = line.reverseFind('(');
+        auto closingParenthese = line.reverseFind(')');
+
+        if (openingParenthese > closingParenthese)
+            openingParenthese = WTF::notFound;
+
+        if (closingParenthese == WTF::notFound || closingParenthese == WTF::notFound) {
+            offset = stack.length();
+            return false;
+        }
+
+        auto lineInner = StringView_slice(line, openingParenthese + 1, closingParenthese);
+
+        {
+            auto marker1 = 0;
+            auto marker2 = lineInner.find(':', marker1);
+
+            if (marker2 == WTF::notFound) {
+                frame.sourceURL = lineInner;
+                goto done_block;
+            }
+
+            auto marker3 = lineInner.find(':', marker2 + 1);
+            if (marker3 == WTF::notFound) {
+                // /path/to/file.js:
+                // /path/to/file.js:1
+                // node:child_process
+                // C:\Users\dave\bun\file.js
+
+                marker3 = lineInner.length();
+
+                auto segment1 = StringView_slice(lineInner, marker1, marker2);
+                auto segment2 = StringView_slice(lineInner, marker2 + 1, marker3);
+
+                if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
+                    frame.sourceURL = segment1;
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
+                } else {
+                    frame.sourceURL = StringView_slice(lineInner, marker1, marker3);
+                }
+                goto done_block;
+            }
+
+            // /path/to/file.js:1:
+            // /path/to/file.js:1:2
+            // node:child_process:1:2
+            // C:\Users\dave\bun\file.js:
+            // C:\Users\dave\bun\file.js:1
+            // C:\Users\dave\bun\file.js:1:2
+
+            while (true) {
+                auto newcolon = lineInner.find(':', marker3 + 1);
+                if (newcolon == WTF::notFound)
+                    break;
+                marker2 = marker3;
+                marker3 = newcolon;
+            }
+
+            auto marker4 = lineInner.length();
+
+            auto segment1 = StringView_slice(lineInner, marker1, marker2);
+            auto segment2 = StringView_slice(lineInner, marker2 + 1, marker3);
+            auto segment3 = StringView_slice(lineInner, marker3 + 1, marker4);
+
+            if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
+                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment3)) {
+                    frame.sourceURL = segment1;
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
+                    frame.columnNumber = WTF::OrdinalNumber::fromOneBasedInt(int2.value());
+                } else {
+                    frame.sourceURL = segment1;
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
+                }
+            } else {
+                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment3)) {
+                    frame.sourceURL = StringView_slice(lineInner, marker1, marker3);
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int2.value());
+                } else {
+                    frame.sourceURL = StringView_slice(lineInner, marker1, marker4);
+                }
+            }
+        }
+    done_block:
+
+        StringView functionName = line.substring(0, openingParenthese - 1);
+
+        if (functionName == "<anonymous>"_s) {
+            functionName = StringView();
+        }
+
+        if (functionName == "global code"_s) {
+            functionName = StringView();
+            frame.isGlobalCode = true;
+        }
+
+        if (functionName.startsWith("new "_s)) {
+            frame.isConstructor = true;
+            functionName = functionName.substring(4);
+        }
+
+        frame.functionName = functionName;
+
+        return true;
+    }
+
+    void forEachFrame(const WTF::Function<void(const V8StackTraceIterator::StackFrame&, bool&)> callback)
+    {
+        bool stop = false;
+        while (!stop) {
+            StackFrame frame;
+            if (!parseFrame(frame))
+                break;
+            callback(frame, stop);
+        }
+    }
+};
+
 static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace* trace)
 {
     uint8_t frame_i = 0;
@@ -3714,29 +4255,77 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     }
 
     if (getFromSourceURL) {
-        if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL)) {
-            except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
+        // we don't want to serialize JSC::StackFrame longer than we need to
+        // so in this case, we parse the stack trace as a string
+        if (JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack)) {
+            if (stackValue.isString()) {
+                WTF::String stack = stackValue.toWTFString(global);
 
-            if (JSC::JSValue column = obj->getIfPropertyExists(global, vm.propertyNames->column)) {
-                except->stack.frames_ptr[0].position.column_start = column.toInt32(global);
-            }
+                V8StackTraceIterator iterator(stack);
+                unsigned frameI = 0;
+                const uint8_t frame_count = except->stack.frames_len;
 
-            if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
-                except->stack.frames_ptr[0].position.line = line.toInt32(global);
+                except->stack.frames_len = 0;
 
-                if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "lineText"_s))) {
-                    if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
-                        auto str = jsStr->value(global);
-                        except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
-                        except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line;
-                        except->stack.source_lines_len = 1;
-                        except->remapped = true;
+                iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
+                    ASSERT(except->stack.frames_len < frame_count);
+                    auto& current = except->stack.frames_ptr[except->stack.frames_len];
+
+                    String functionName = frame.functionName.toString();
+                    String sourceURL = frame.sourceURL.toString();
+                    current.function_name = Bun::toStringRef(functionName);
+                    current.source_url = Bun::toStringRef(sourceURL);
+                    current.position.line = frame.lineNumber.zeroBasedInt();
+                    current.position.column_start = frame.columnNumber.zeroBasedInt();
+                    current.position.column_stop = frame.columnNumber.zeroBasedInt();
+
+                    current.remapped = true;
+
+                    if (frame.isConstructor) {
+                        current.code_type = ZigStackFrameCodeConstructor;
+                    } else if (frame.isGlobalCode) {
+                        current.code_type = ZigStackFrameCodeGlobal;
                     }
+
+                    except->stack.frames_len += 1;
+
+                    stop = except->stack.frames_len >= frame_count;
+                });
+
+                if (except->stack.frames_len > 0) {
+                    getFromSourceURL = false;
+                    except->remapped = true;
+                } else {
+                    except->stack.frames_len = frame_count;
                 }
             }
+        }
 
-            except->stack.frames_len = 1;
-            except->stack.frames_ptr[0].remapped = obj->hasProperty(global, JSC::Identifier::fromString(vm, "originalLine"_s));
+        if (getFromSourceURL) {
+            if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL)) {
+                except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
+
+                if (JSC::JSValue column = obj->getIfPropertyExists(global, vm.propertyNames->column)) {
+                    except->stack.frames_ptr[0].position.column_start = column.toInt32(global);
+                }
+
+                if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
+                    except->stack.frames_ptr[0].position.line = line.toInt32(global);
+
+                    if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "lineText"_s))) {
+                        if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
+                            auto str = jsStr->value(global);
+                            except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
+                            except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line;
+                            except->stack.source_lines_len = 1;
+                            except->remapped = true;
+                        }
+                    }
+                }
+
+                except->stack.frames_len = 1;
+                except->stack.frames_ptr[0].remapped = obj->hasProperty(global, JSC::Identifier::fromString(vm, "originalLine"_s));
+            }
         }
     }
 
@@ -3821,7 +4410,7 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
 {
     JSValue value = JSValue::decode(JSValue0);
     JSC::JSCell* cell = value.asCell();
-    if (cell == nullptr) {
+    if (cell == nullptr || !cell->isObject()) {
         arg2->len = 0;
         return;
     }
@@ -3836,7 +4425,8 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
     }
 
     JSObject* obj = value.toObject(arg1);
-    StringView calculated = StringView(JSObject::calculatedClassName(obj));
+
+    auto calculated = JSObject::calculatedClassName(obj);
     if (calculated.length() > 0) {
         *arg2 = Zig::toZigString(calculated);
         return;
@@ -3886,6 +4476,32 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
     }
 
     arg2->len = 0;
+}
+
+extern "C" void JSC__JSValue__getName(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* arg2)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (!value.isObject()) {
+        *arg2 = BunStringEmpty;
+        return;
+    }
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    JSObject* object = value.getObject();
+    auto displayName = JSC::getCalculatedDisplayName(vm, object);
+
+    // JSC doesn't include @@toStringTag in calculated display name
+    if (displayName.isEmpty()) {
+        if (auto toStringTagValue = object->getIfPropertyExists(globalObject, vm.propertyNames->toStringTagSymbol)) {
+            if (toStringTagValue.isString()) {
+                displayName = toStringTagValue.toWTFString(globalObject);
+            }
+        }
+    }
+    if (scope.exception())
+        scope.clearException();
+
+    *arg2 = Bun::toStringRef(displayName);
 }
 
 JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0)
@@ -3987,10 +4603,6 @@ bool JSC__JSValue__isTerminationException(JSC__JSValue JSValue0, JSC__VM* arg1)
 void JSC__VM__shrinkFootprint(JSC__VM* arg0) { arg0->shrinkFootprintWhenIdle(); };
 void JSC__VM__whenIdle(JSC__VM* arg0, void (*ArgFn1)()) { arg0->whenIdle(ArgFn1); };
 
-JSC__VM* JSC__VM__create(unsigned char HeapType0)
-{
-}
-
 void JSC__VM__holdAPILock(JSC__VM* arg0, void* ctx, void (*callback)(void* arg0))
 {
     JSC::JSLockHolder locker(arg0);
@@ -4039,7 +4651,16 @@ bool JSC__VM__isEntered(JSC__VM* arg0) { return (*arg0).isEntered(); }
 void JSC__VM__setExecutionForbidden(JSC__VM* arg0, bool arg1) { (*arg0).setExecutionForbidden(); }
 
 // These may be called concurrently from another thread.
-void JSC__VM__notifyNeedTermination(JSC__VM* arg0) { (*arg0).notifyNeedTermination(); }
+void JSC__VM__notifyNeedTermination(JSC__VM* arg0)
+{
+    JSC::VM& vm = *arg0;
+    bool didEnter = vm.currentThreadIsHoldingAPILock();
+    if (didEnter)
+        vm.apiLock().unlock();
+    vm.notifyNeedTermination();
+    if (didEnter)
+        vm.apiLock().lock();
+}
 void JSC__VM__notifyNeedDebuggerBreak(JSC__VM* arg0) { (*arg0).notifyNeedDebuggerBreak(); }
 void JSC__VM__notifyNeedShellTimeoutCheck(JSC__VM* arg0) { (*arg0).notifyNeedShellTimeoutCheck(); }
 void JSC__VM__notifyNeedWatchdogCheck(JSC__VM* arg0) { (*arg0).notifyNeedWatchdogCheck(); }
@@ -4088,12 +4709,14 @@ enum class BuiltinNamesMap : uint8_t {
     method,
     headers,
     status,
+    statusText,
     url,
     body,
     data,
     toString,
     redirect,
     inspectCustom,
+    asyncIterator,
 };
 
 static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -4106,6 +4729,9 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::headers: {
         return clientData->builtinNames().headersPublicName();
+    }
+    case BuiltinNamesMap::statusText: {
+        return clientData->builtinNames().statusTextPublicName();
     }
     case BuiltinNamesMap::status: {
         return clientData->builtinNames().statusPublicName();
@@ -4128,10 +4754,13 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     case BuiltinNamesMap::inspectCustom: {
         return Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
     }
+    case BuiltinNamesMap::asyncIterator: {
+        return vm.propertyNames->asyncIteratorSymbol;
+    }
     }
 }
 
-extern "C" EncodedJSValue JSC__JSValue__callCustomInspectFunction(
+extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSC::JSGlobalObject* lexicalGlobalObject,
     JSC__JSValue encodedFunctionValue,
     JSC__JSValue encodedThisValue,
@@ -4194,7 +4823,7 @@ bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* glo
     return JSValue::decode(JSValue0).toBoolean(globalObject);
 }
 
-void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol))
+void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -4237,7 +4866,6 @@ restart:
             auto* prop = entry.key();
 
             if (prop == vm.propertyNames->constructor
-                || prop == vm.propertyNames->length
                 || prop == vm.propertyNames->underscoreProto
                 || prop == vm.propertyNames->toStringTagSymbol)
                 return true;
@@ -4251,10 +4879,6 @@ restart:
             visitedProperties.append(Identifier::fromUid(vm, prop));
 
             ZigString key = toZigString(prop);
-
-            if (key.len == 0)
-                return true;
-
             JSC::JSValue propertyValue = JSValue();
 
             if (objectToUse == object) {
@@ -4277,7 +4901,13 @@ restart:
 
             anyHits = true;
             JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-            iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol());
+
+            bool isPrivate = prop->isSymbol() && Identifier::fromUid(vm, prop).isPrivateName();
+
+            if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
+                return true;
+
+            iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol(), isPrivate);
             return true;
         });
         if (scope.exception()) {
@@ -4325,8 +4955,7 @@ restart:
                     continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (property == vm.propertyNames->length
-                        || property == vm.propertyNames->underscoreProto
+                    if (property == vm.propertyNames->underscoreProto
                         || property == vm.propertyNames->toStringTagSymbol)
                         continue;
                 }
@@ -4366,7 +4995,13 @@ restart:
                 }
 
                 JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-                iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol());
+
+                bool isPrivate = property.isPrivateName();
+
+                if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
+                    continue;
+
+                iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), isPrivate);
             }
             // reuse memory
             properties.data()->propertyNameVector().shrink(0);
@@ -4386,7 +5021,7 @@ restart:
     }
 }
 
-void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol))
+void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -4461,7 +5096,7 @@ void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalOb
         ZigString key = toZigString(name);
 
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol());
+        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), property.isPrivateName());
     }
     properties.releaseData();
 }
@@ -4525,6 +5160,14 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
         globalObject->m_asyncContextData.get()->getInternalField(0),
         JSC::JSValue::decode(JSValue3),
         JSC::JSValue::decode(JSValue4));
+}
+
+extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC__JSGlobalObject* globalObject)
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    auto* context = thisObject->scriptExecutionContext();
+    RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
+    return abortSignal.leakRef();
 }
 
 extern "C" JSC__JSValue WebCore__AbortSignal__create(JSC__JSGlobalObject* globalObject)
@@ -4743,4 +5386,50 @@ CPP_DECL void JSC__VM__setControlFlowProfiler(JSC__VM* vm, bool isEnabled)
     } else {
         vm->disableControlFlowProfiler();
     }
+}
+
+extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, const BunString* str)
+{
+    return JSValue::encode(JSC::createError(globalObject, str->toWTFString()));
+}
+
+extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
+    return JSValue::encode(globalObject->m_testMatcherUtilsObject.getInitializedOnMainThread(globalObject));
+}
+
+extern "C" EncodedJSValue Expect__getPrototype(JSC::JSGlobalObject* globalObject)
+{
+    return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSExpectPrototype());
+}
+
+extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* globalObject)
+{
+    return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
+}
+
+extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
+{
+    return DECLARE_CATCH_SCOPE(globalObject->vm()).exception() != 0;
+}
+
+CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter* gettersetter)
+{
+    return gettersetter->isGetterNull();
+}
+
+CPP_DECL bool JSC__GetterSetter__isSetterNull(JSC__GetterSetter* gettersetter)
+{
+    return gettersetter->isSetterNull();
+}
+
+CPP_DECL bool JSC__CustomGetterSetter__isGetterNull(JSC__CustomGetterSetter* gettersetter)
+{
+    return gettersetter->getter() == nullptr;
+}
+
+CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter* gettersetter)
+{
+    return gettersetter->setter() == nullptr;
 }

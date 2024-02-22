@@ -2,13 +2,13 @@ declare module "bun:jsc" {
   /**
    * This used to be called "describe" but it could be confused with the test runner.
    */
-  export function jscDescribe(value: any): string;
-  export function jscDescribeArray(args: any[]): string;
-  export function gcAndSweep(): number;
-  export function fullGC(): number;
-  export function edenGC(): number;
-  export function heapSize(): number;
-  export function heapStats(): {
+  function jscDescribe(value: any): string;
+  function jscDescribeArray(args: any[]): string;
+  function gcAndSweep(): number;
+  function fullGC(): number;
+  function edenGC(): number;
+  function heapSize(): number;
+  function heapStats(): {
     heapSize: number;
     heapCapacity: number;
     extraMemorySize: number;
@@ -19,25 +19,25 @@ declare module "bun:jsc" {
     objectTypeCounts: Record<string, number>;
     protectedObjectTypeCounts: Record<string, number>;
   };
-  export function memoryUsage(): {
+  function memoryUsage(): {
     current: number;
     peak: number;
     currentCommit: number;
     peakCommit: number;
     pageFaults: number;
   };
-  export function getRandomSeed(): number;
-  export function setRandomSeed(value: number): void;
-  export function isRope(input: string): boolean;
-  export function callerSourceOrigin(): string;
-  export function noFTL(func: Function): Function;
-  export function noOSRExitFuzzing(func: Function): Function;
-  export function optimizeNextInvocation(func: Function): void;
-  export function numberOfDFGCompiles(func: Function): number;
-  export function releaseWeakRefs(): void;
-  export function totalCompileTime(func: Function): number;
-  export function reoptimizationRetryCount(func: Function): number;
-  export function drainMicrotasks(): void;
+  function getRandomSeed(): number;
+  function setRandomSeed(value: number): void;
+  function isRope(input: string): boolean;
+  function callerSourceOrigin(): string;
+  function noFTL(func: (...args: any[]) => any): (...args: any[]) => any;
+  function noOSRExitFuzzing(func: (...args: any[]) => any): (...args: any[]) => any;
+  function optimizeNextInvocation(func: (...args: any[]) => any): void;
+  function numberOfDFGCompiles(func: (...args: any[]) => any): number;
+  function releaseWeakRefs(): void;
+  function totalCompileTime(func: (...args: any[]) => any): number;
+  function reoptimizationRetryCount(func: (...args: any[]) => any): number;
+  function drainMicrotasks(): void;
 
   /**
    * Convert a JavaScript value to a binary representation that can be sent to another Bun instance.
@@ -46,12 +46,8 @@ declare module "bun:jsc" {
    *
    * @param value A JavaScript value, usually an object or array, to be converted.
    * @returns A SharedArrayBuffer that can be sent to another Bun instance.
-   *
    */
-  export function serialize(
-    value: any,
-    options?: { binaryType?: "arraybuffer" },
-  ): SharedArrayBuffer;
+  function serialize(value: any, options?: { binaryType?: "arraybuffer" }): SharedArrayBuffer;
 
   /**
    * Convert a JavaScript value to a binary representation that can be sent to another Bun instance.
@@ -61,19 +57,14 @@ declare module "bun:jsc" {
    * @param value A JavaScript value, usually an object or array, to be converted.
    * @returns A Buffer that can be sent to another Bun instance.
    */
-  export function serialize(
-    value: any,
-    options?: { binaryType: "nodebuffer" },
-  ): Buffer;
+  function serialize(value: any, options?: { binaryType: "nodebuffer" }): Buffer;
 
   /**
    * Convert an ArrayBuffer or Buffer to a JavaScript value compatible with the HTML Structured Clone Algorithm.
    *
    * @param value A serialized value, usually an ArrayBuffer or Buffer, to be converted.
    */
-  export function deserialize(
-    value: ArrayBufferLike | TypedArray | Buffer,
-  ): any;
+  function deserialize(value: ArrayBufferLike | NodeJS.TypedArray | Buffer): any;
 
   /**
    * Set the timezone used by Intl, Date, etc.
@@ -85,7 +76,7 @@ declare module "bun:jsc" {
    * You can also set process.env.TZ to the time zone you want to use.
    * You can also view the current timezone with `Intl.DateTimeFormat().resolvedOptions().timeZone`
    */
-  export function setTimeZone(timeZone: string): string;
+  function setTimeZone(timeZone: string): string;
 
   /**
    * Run JavaScriptCore's sampling profiler for a particular function
@@ -98,7 +89,7 @@ declare module "bun:jsc" {
    * - DFG means "Data Flow Graph", which is the second JIT compilation tier. It has some optimizations, but is slower to compile
    * - FTL means "Faster Than Light", which is the third JIT compilation tier. It has the most optimizations, but is the slowest to compile
    */
-  export function profile(
+  function profile(
     callback: CallableFunction,
     sampleInterval?: number,
   ): {
@@ -142,7 +133,6 @@ declare module "bun:jsc" {
      * RegExp:                   15  (0.218723%)
      * C/C++:                     0  (0.000000%)
      * Unknown Executable:      148  (2.158064%)
-     *
      *
      * Hottest bytecodes as <numSamples   'functionName#hash:JITType:bytecodeIndex'>
      * 273    'visit#<nil>:DFG:bc#63'
@@ -206,7 +196,7 @@ declare module "bun:jsc" {
    *
    * Warning: not all objects returned are supposed to be observable from JavaScript
    */
-  export function getProtectedObjects(): any[];
+  function getProtectedObjects(): any[];
 
   /**
    * Start a remote debugging socket server on the given port.
@@ -215,10 +205,10 @@ declare module "bun:jsc" {
    *
    * This is untested. May not be supported yet on macOS
    */
-  export function startRemoteDebugger(host?: string, port?: number): void;
+  function startRemoteDebugger(host?: string, port?: number): void;
 
   /**
    * Run JavaScriptCore's sampling profiler
    */
-  export function startSamplingProfiler(optionalDirectory?: string): void;
+  function startSamplingProfiler(optionalDirectory?: string): void;
 }

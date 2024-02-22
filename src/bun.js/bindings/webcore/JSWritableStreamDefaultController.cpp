@@ -134,7 +134,9 @@ void JSWritableStreamDefaultController::finishCreation(VM& vm)
 
 JSObject* JSWritableStreamDefaultController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSWritableStreamDefaultControllerPrototype::create(vm, &globalObject, JSWritableStreamDefaultControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSWritableStreamDefaultControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSWritableStreamDefaultControllerPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSWritableStreamDefaultController::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -153,7 +155,7 @@ void JSWritableStreamDefaultController::destroy(JSC::JSCell* cell)
     thisObject->JSWritableStreamDefaultController::~JSWritableStreamDefaultController();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

@@ -2,16 +2,12 @@ const env = @import("env.zig");
 pub const strong_etags_for_built_files = true;
 pub const keep_alive = false;
 
-// it just doesn't work well.
-pub const use_std_path_relative = false;
-pub const use_std_path_join = false;
-
 // Debug helpers
 pub const print_ast = false;
 pub const disable_printing_null = false;
 
 // This was a ~5% performance improvement
-pub const store_file_descriptors = !env.isWindows and !env.isBrowser;
+pub const store_file_descriptors = !env.isBrowser;
 
 pub const css_in_js_import_behavior = CSSInJSImportBehavior.facade;
 
@@ -73,22 +69,6 @@ pub const verbose_analytics = false;
 pub const disable_compression_in_http_client = false;
 
 pub const enable_keepalive = true;
-// Not sure why...
-// But this is slower!
-// ~/Build/throw
-// ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
-// Benchmark #1: bun create react3 app --force --no-install
-//   Time (mean ± σ):     974.6 ms ±   6.8 ms    [User: 170.5 ms, System: 798.3 ms]
-//   Range (min … max):   960.8 ms … 984.6 ms    10 runs
-
-// ❯ mv /usr/local/opt/libgit2/lib/libgit2.dylib /usr/local/opt/libgit2/lib/libgit2.dylib.1
-
-// ~/Build/throw
-// ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
-// Benchmark #1: bun create react3 app --force --no-install
-//   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
-//   Range (min … max):   299.5 ms … 318.8 ms    10 runs
-pub const use_libgit2 = true;
 
 pub const atomic_file_watcher = env.isLinux;
 
@@ -175,4 +155,10 @@ pub const export_star_redirect = false;
 
 pub const streaming_file_uploads_for_http_client = true;
 
-pub const concurrent_transpiler = true;
+// TODO: fix concurrent transpiler on Windows
+pub const concurrent_transpiler = !env.isWindows;
+
+// https://github.com/oven-sh/bun/issues/5426#issuecomment-1813865316
+pub const disable_auto_js_to_ts_in_node_modules = true;
+
+pub const runtime_transpiler_cache = true;

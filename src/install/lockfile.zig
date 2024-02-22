@@ -21,6 +21,7 @@ const json_parser = bun.JSON;
 const JSPrinter = bun.js_printer;
 
 const linker = @import("../linker.zig");
+const migration = @import("./migration.zig");
 
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
@@ -33,14 +34,13 @@ const bundler = bun.bundler;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-const HeaderBuilder = bun.HTTP.HeaderBuilder;
+const HeaderBuilder = bun.http.HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
 const URL = @import("../url.zig").URL;
-const AsyncHTTP = bun.HTTP.AsyncHTTP;
-const HTTPChannel = bun.HTTP.HTTPChannel;
-const NetworkThread = bun.HTTP.NetworkThread;
+const AsyncHTTP = bun.http.AsyncHTTP;
+const HTTPChannel = bun.http.HTTPChannel;
 
 const Integrity = @import("./integrity.zig").Integrity;
 const clap = bun.clap;
@@ -81,18 +81,19 @@ const PackageNameHash = Install.PackageNameHash;
 const Resolution = @import("./resolution.zig").Resolution;
 const Crypto = @import("../sha.zig").Hashers;
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
 
 const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
-const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false);
-const NameHashSet = std.ArrayHashMapUnmanaged(u32, void, ArrayIdentityContext, false);
-const VersionHashMap = std.ArrayHashMapUnmanaged(u32, Semver.Version, ArrayIdentityContext, false);
+pub const NameHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, String, ArrayIdentityContext.U64, false);
+pub const NameHashSet = std.ArrayHashMapUnmanaged(u32, void, ArrayIdentityContext, false);
+pub const VersionHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, Semver.Version, ArrayIdentityContext.U64, false);
 
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
-format: FormatVersion = .v1,
+format: FormatVersion = FormatVersion.current,
 
 meta_hash: MetaHash = zero_hash,
 
@@ -107,19 +108,37 @@ allocator: Allocator,
 scratch: Scratch = .{},
 
 scripts: Scripts = .{},
-trusted_dependencies: NameHashSet = .{},
 workspace_paths: NameHashMap = .{},
 workspace_versions: VersionHashMap = .{},
+
+trusted_dependencies: NameHashSet = .{},
+overrides: OverrideMap = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
 
+pub fn hasTrustedDependencies(this: *const Lockfile) bool {
+    return this.trusted_dependencies.count() > 0;
+}
+
 pub const Scripts = struct {
-    const Entry = struct {
+    const MAX_PARALLEL_PROCESSES = 10;
+    pub const Entry = struct {
         cwd: string,
         script: string,
+        package_name: string,
     };
-    const Entries = std.ArrayListUnmanaged(Entry);
+    pub const Entries = std.ArrayListUnmanaged(Entry);
+
+    pub const names = [_]string{
+        "preinstall",
+        "install",
+        "postinstall",
+        "preprepare",
+        "prepare",
+        "postprepare",
+    };
+
     const RunCommand = @import("../cli/run_command.zig").RunCommand;
 
     preinstall: Entries = .{},
@@ -130,21 +149,22 @@ pub const Scripts = struct {
     postprepare: Entries = .{},
 
     pub fn hasAny(this: *Scripts) bool {
-        inline for (Package.Scripts.Hooks) |hook| {
+        inline for (Scripts.names) |hook| {
             if (@field(this, hook).items.len > 0) return true;
         }
         return false;
     }
 
-    pub fn run(this: *Scripts, allocator: Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
-        for (@field(this, hook).items) |entry| {
-            if (comptime Environment.allow_assert) std.debug.assert(Fs.FileSystem.instance_loaded);
-            _ = try RunCommand.runPackageScript(allocator, entry.script, hook, entry.cwd, env, &.{}, silent);
+    pub fn count(this: *Scripts) usize {
+        var res: usize = 0;
+        inline for (Scripts.names) |hook| {
+            res += @field(this, hook).items.len;
         }
+        return res;
     }
 
     pub fn deinit(this: *Scripts, allocator: Allocator) void {
-        inline for (Package.Scripts.Hooks) |hook| {
+        inline for (Scripts.names) |hook| {
             const list = &@field(this, hook);
             for (list.items) |entry| {
                 allocator.free(entry.cwd);
@@ -159,37 +179,44 @@ pub fn isEmpty(this: *const Lockfile) bool {
     return this.packages.len == 0 or this.packages.len == 1 or this.packages.get(0).resolutions.len == 0;
 }
 
-pub const LoadFromDiskResult = union(Tag) {
+pub const LoadFromDiskResult = union(enum) {
     not_found: void,
     err: struct {
         step: Step,
         value: anyerror,
     },
-    ok: *Lockfile,
+    ok: struct {
+        lockfile: *Lockfile,
+        was_migrated: bool = false,
+    },
 
-    pub const Step = enum { open_file, read_file, parse_file };
-
-    pub const Tag = enum {
-        not_found,
-        err,
-        ok,
-    };
+    pub const Step = enum { open_file, read_file, parse_file, migrating };
 };
 
 pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
     if (comptime Environment.allow_assert) std.debug.assert(FileSystem.instance_loaded);
-    var file = std.io.getStdIn();
 
-    if (filename.len > 0)
-        file = std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
+    var file = if (filename.len > 0)
+        std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
             return switch (err) {
-                error.FileNotFound, error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
+                error.FileNotFound => {
+                    // Attempt to load from "package-lock.json", "yarn.lock", etc.
+                    return migration.detectAndLoadOtherLockfile(
+                        this,
+                        allocator,
+                        log,
+                        filename,
+                    );
+                },
+                error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
                 else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
             };
-        };
+        }
+    else
+        std.io.getStdIn();
 
     defer file.close();
-    var buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
+    const buf = file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
         return LoadFromDiskResult{ .err = .{ .step = .read_file, .value = err } };
     };
 
@@ -204,12 +231,17 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *log
     this.trusted_dependencies = .{};
     this.workspace_paths = .{};
     this.workspace_versions = .{};
+    this.overrides = .{};
 
     Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
         return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
     };
 
-    return LoadFromDiskResult{ .ok = this };
+    if (Environment.allow_assert) {
+        this.verifyData() catch @panic("lockfile data is corrupt");
+    }
+
+    return LoadFromDiskResult{ .ok = .{ .lockfile = this } };
 }
 
 pub const InstallResult = struct {
@@ -253,7 +285,7 @@ pub const Tree = struct {
     }
 
     pub const root_dep_id: DependencyID = invalid_package_id - 1;
-    const invalid_id: Id = std.math.maxInt(Id);
+    pub const invalid_id: Id = std.math.maxInt(Id);
     const dependency_loop = invalid_id - 1;
     const hoisted = invalid_id - 2;
     const error_id = hoisted;
@@ -263,6 +295,7 @@ pub const Tree = struct {
     pub const NodeModulesFolder = struct {
         relative_path: stringZ,
         dependencies: []const DependencyID,
+        tree_id: Tree.Id,
     };
 
     pub const Iterator = struct {
@@ -270,7 +303,7 @@ pub const Tree = struct {
         dependency_ids: []const DependencyID,
         dependencies: []const Dependency,
         resolutions: []const PackageID,
-        tree_id: Id = 0,
+        tree_id: Id,
         path_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
         path_buf_len: usize = 0,
         last_parent: Id = invalid_id,
@@ -282,6 +315,7 @@ pub const Tree = struct {
         pub fn init(lockfile: *const Lockfile) Iterator {
             return .{
                 .trees = lockfile.buffers.trees.items,
+                .tree_id = 0,
                 .dependency_ids = lockfile.buffers.hoisted_dependencies.items,
                 .dependencies = lockfile.buffers.dependencies.items,
                 .resolutions = lockfile.buffers.resolutions.items,
@@ -289,10 +323,21 @@ pub const Tree = struct {
             };
         }
 
-        pub fn nextNodeModulesFolder(this: *Iterator) ?NodeModulesFolder {
+        pub fn reload(this: *Iterator, lockfile: *const Lockfile) void {
+            this.trees = lockfile.buffers.trees.items;
+            this.dependency_ids = lockfile.buffers.hoisted_dependencies.items;
+            this.dependencies = lockfile.buffers.dependencies.items;
+            this.resolutions = lockfile.buffers.resolutions.items;
+            this.string_buf = lockfile.buffers.string_bytes.items;
+        }
+
+        pub fn nextNodeModulesFolder(this: *Iterator, completed_trees: ?*Bitset) ?NodeModulesFolder {
             if (this.tree_id >= this.trees.len) return null;
 
             while (this.trees[this.tree_id].dependencies.len == 0) {
+                if (completed_trees) |_completed_trees| {
+                    _completed_trees.set(this.tree_id);
+                }
                 this.tree_id += 1;
                 if (this.tree_id >= this.trees.len) return null;
             }
@@ -335,10 +380,11 @@ pub const Tree = struct {
             }
 
             this.tree_id += 1;
-            var relative_path: [:0]u8 = this.path_buf[0..this.path_buf_len :0];
+            const relative_path: [:0]u8 = this.path_buf[0..this.path_buf_len :0];
             return .{
                 .relative_path = relative_path,
                 .dependencies = tree.dependencies.get(this.dependency_ids),
+                .tree_id = tree.id,
             };
         }
     };
@@ -375,15 +421,15 @@ pub const Tree = struct {
             dependencies: Lockfile.DependencyIDList,
         };
 
-        pub const ArrayList = std.MultiArrayList(Entry);
+        pub const ArrayList = bun.MultiArrayList(Entry);
 
         /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
         pub fn clean(this: *Builder) !DependencyIDList {
             const end = @as(Id, @truncate(this.list.len));
             var i: Id = 0;
             var total: u32 = 0;
-            var trees = this.list.items(.tree);
-            var dependencies = this.list.items(.dependencies);
+            const trees = this.list.items(.tree);
+            const dependencies = this.list.items(.dependencies);
 
             while (i < end) : (i += 1) {
                 total += trees[i].dependencies.len;
@@ -480,9 +526,9 @@ pub const Tree = struct {
     }
 
     // This function does one of three things:
-    // - de-duplicate (skip) the package
-    // - move the package to the top directory
-    // - leave the package at the same (relative) directory
+    // 1 (return hoisted) - de-duplicate (skip) the package
+    // 2 (return id) - move the package to the top directory
+    // 3 (return dependency_loop) - leave the package at the same (relative) directory
     fn hoistDependency(
         this: *Tree,
         comptime as_defined: bool,
@@ -497,7 +543,7 @@ pub const Tree = struct {
         for (this_dependencies) |dep_id| {
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
-            if (builder.resolutions[dep_id] != package_id) {
+            if (builder.resolutions[dep_id] != package_id and !dependency.behavior.isPeer()) {
                 if (as_defined and !dep.behavior.isPeer()) {
                     builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
                         builder.packageName(package_id),
@@ -510,9 +556,9 @@ pub const Tree = struct {
                     return error.DependencyLoop;
                 }
                 // ignore versioning conflicts caused by peer dependencies
-                return dependency_loop;
+                return dependency_loop; // 3
             }
-            return hoisted;
+            return hoisted; // 1
         }
 
         if (this.parent < error_id) {
@@ -525,10 +571,10 @@ pub const Tree = struct {
                 trees,
                 builder,
             ) catch unreachable;
-            if (!as_defined or id != dependency_loop) return id;
+            if (!as_defined or id != dependency_loop) return id; // 1 or 2
         }
 
-        return this.id;
+        return this.id; // 2
     }
 };
 
@@ -545,10 +591,10 @@ pub fn maybeCloneFilteringRootPackages(
     features: Features,
     exact_versions: bool,
 ) !*Lockfile {
-    const old_root_dependenices_list = old.packages.items(.dependencies)[0];
+    const old_root_dependencies_list = old.packages.items(.dependencies)[0];
     var old_root_resolutions = old.packages.items(.resolutions)[0];
-    const root_dependencies = old_root_dependenices_list.get(old.buffers.dependencies.items);
-    var resolutions = old_root_resolutions.mut(old.buffers.resolutions.items);
+    const root_dependencies = old_root_dependencies_list.get(old.buffers.dependencies.items);
+    const resolutions = old_root_resolutions.mut(old.buffers.resolutions.items);
     var any_changes = false;
     const end = @as(PackageID, @truncate(old.packages.len));
 
@@ -600,7 +646,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
         {
             var temp_buf: [513]u8 = undefined;
 
-            var root_deps: []Dependency = root_deps_list.mut(old.buffers.dependencies.items);
+            const root_deps: []Dependency = root_deps_list.mut(old.buffers.dependencies.items);
             const old_resolutions_list_lists = old.packages.items(.resolutions);
             const old_resolutions_list = old_resolutions_list_lists[0];
             const old_resolutions: []const PackageID = old_resolutions_list.get(old.buffers.resolutions.items);
@@ -612,7 +658,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             if (old_resolution > old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
-                            var buf = switch (exact_versions) {
+                            const buf = switch (exact_versions) {
                                 false => std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break,
                                 true => std.fmt.bufPrint(&temp_buf, "{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break,
                             };
@@ -621,6 +667,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                             dep.version = Dependency.parse(
                                 old.allocator,
                                 dep.name,
+                                dep.name_hash,
                                 sliced.slice,
                                 &sliced,
                                 null,
@@ -703,7 +750,7 @@ pub fn cleanWithLogger(
     //     }
     // }
 
-    var new = try old.allocator.create(Lockfile);
+    var new: *Lockfile = try old.allocator.create(Lockfile);
     try new.initEmpty(
         old.allocator,
     );
@@ -714,15 +761,22 @@ pub fn cleanWithLogger(
 
     old.scratch.dependency_list_queue.head = 0;
 
+    {
+        var builder = new.stringBuilder();
+        old.overrides.count(old, &builder);
+        try builder.allocate();
+        new.overrides = try old.overrides.clone(old, new, &builder);
+    }
+
     // Step 1. Recreate the lockfile with only the packages that are still alive
     const root = old.rootPackage() orelse return error.NoPackage;
 
-    var package_id_mapping = try old.allocator.alloc(PackageID, old.packages.len);
+    const package_id_mapping = try old.allocator.alloc(PackageID, old.packages.len);
     @memset(
         package_id_mapping,
         invalid_package_id,
     );
-    var clone_queue_ = PendingResolutions.init(old.allocator);
+    const clone_queue_ = PendingResolutions.init(old.allocator);
     var cloner = Cloner{
         .old = old,
         .lockfile = new,
@@ -730,12 +784,73 @@ pub fn cleanWithLogger(
         .clone_queue = clone_queue_,
         .log = log,
     };
+
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
     _ = try root.clone(old, new, package_id_mapping, &cloner);
 
+    // Clone workspace_paths and workspace_versions at the end.
+    if (old.workspace_paths.count() > 0 or old.workspace_versions.count() > 0) {
+        try new.workspace_paths.ensureTotalCapacity(z_allocator, old.workspace_paths.count());
+        try new.workspace_versions.ensureTotalCapacity(z_allocator, old.workspace_versions.count());
+
+        var workspace_paths_builder = new.stringBuilder();
+
+        const WorkspacePathSorter = struct {
+            string_buf: []const u8,
+            entries: NameHashMap.DataList,
+
+            pub fn lessThan(sorter: @This(), a: usize, b: usize) bool {
+                const left = sorter.entries.items(.value)[a];
+                const right = sorter.entries.items(.value)[b];
+                return strings.order(left.slice(sorter.string_buf), right.slice(sorter.string_buf)) == .lt;
+            }
+        };
+
+        // Sort by name for determinism
+        old.workspace_paths.sort(WorkspacePathSorter{
+            .entries = old.workspace_paths.entries,
+            .string_buf = old.buffers.string_bytes.items,
+        });
+
+        for (old.workspace_paths.values()) |*path| {
+            workspace_paths_builder.count(old.str(path));
+        }
+        const versions: []const Semver.Version = old.workspace_versions.values();
+        for (versions) |version| {
+            version.count(old.buffers.string_bytes.items, @TypeOf(&workspace_paths_builder), &workspace_paths_builder);
+        }
+
+        try workspace_paths_builder.allocate();
+
+        new.workspace_paths.entries.len = old.workspace_paths.entries.len;
+
+        for (old.workspace_paths.values(), new.workspace_paths.values()) |*src, *dest| {
+            dest.* = workspace_paths_builder.append(String, old.str(src));
+        }
+        @memcpy(
+            new.workspace_paths.keys(),
+            old.workspace_paths.keys(),
+        );
+
+        try new.workspace_versions.ensureTotalCapacity(z_allocator, old.workspace_versions.count());
+        new.workspace_versions.entries.len = old.workspace_versions.entries.len;
+        for (versions, new.workspace_versions.values()) |src, *dest| {
+            dest.* = src.clone(old.buffers.string_bytes.items, @TypeOf(&workspace_paths_builder), &workspace_paths_builder);
+        }
+
+        @memcpy(
+            new.workspace_versions.keys(),
+            old.workspace_versions.keys(),
+        );
+
+        workspace_paths_builder.clamp();
+
+        try new.workspace_versions.reIndex(z_allocator);
+        try new.workspace_paths.reIndex(z_allocator);
+    }
+
     // When you run `"bun add react"
     // This is where we update it in the lockfile from "latest" to "^17.0.2"
-
     try cloner.flush();
 
     // Don't allow invalid memory to happen
@@ -765,6 +880,8 @@ pub fn cleanWithLogger(
     }
     new.trusted_dependencies = old_trusted_dependencies;
     new.scripts = old_scripts;
+    new.meta_hash = old.meta_hash;
+
     return new;
 }
 
@@ -841,7 +958,7 @@ const Cloner = struct {
     fn hoist(this: *Cloner) anyerror!void {
         if (this.lockfile.packages.len == 0) return;
 
-        var allocator = this.lockfile.allocator;
+        const allocator = this.lockfile.allocator;
         var slice = this.lockfile.packages.slice();
         var builder = Tree.Builder{
             .name_hashes = slice.items(.name_hash),
@@ -897,7 +1014,7 @@ pub const Printer = struct {
         @setCold(true);
 
         // We truncate longer than allowed paths. We should probably throw an error instead.
-        var path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
+        const path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
 
         var lockfile_path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
         var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -905,9 +1022,9 @@ pub const Printer = struct {
         var lockfile_path: stringZ = "";
 
         if (!std.fs.path.isAbsolute(path)) {
-            var cwd = try std.os.getcwd(&lockfile_path_buf1);
+            const cwd = try bun.getcwd(&lockfile_path_buf1);
             var parts = [_]string{path};
-            var lockfile_path__ = Path.joinAbsStringBuf(cwd, &lockfile_path_buf2, &parts, .auto);
+            const lockfile_path__ = Path.joinAbsStringBuf(cwd, &lockfile_path_buf2, &parts, .auto);
             lockfile_path_buf2[lockfile_path__.len] = 0;
             lockfile_path = lockfile_path_buf2[0..lockfile_path__.len :0];
         } else if (path.len > 0) {
@@ -936,6 +1053,9 @@ pub const Printer = struct {
                     .read_file => Output.prettyErrorln("<r><red>error<r> reading lockfile:<r> {s}", .{
                         @errorName(cause.value),
                     }),
+                    .migrating => Output.prettyErrorln("<r><red>error<r> while migrating lockfile:<r> {s}", .{
+                        @errorName(cause.value),
+                    }),
                 }
                 if (log.errors > 0) {
                     switch (Output.enable_ansi_colors) {
@@ -948,7 +1068,7 @@ pub const Printer = struct {
             },
             .not_found => {
                 Output.prettyErrorln("<r><red>lockfile not found:<r> {}", .{
-                    strings.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
+                    bun.fmt.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
                 });
                 Global.crash();
             },
@@ -956,7 +1076,7 @@ pub const Printer = struct {
             .ok => {},
         }
 
-        var writer = Output.writer();
+        const writer = Output.writer();
         try printWithLockfile(allocator, lockfile, format, @TypeOf(writer), writer);
         Output.flush();
     }
@@ -969,21 +1089,23 @@ pub const Printer = struct {
         writer: Writer,
     ) !void {
         var fs = &FileSystem.instance;
-        var options = PackageManager.Options{};
+        var options = PackageManager.Options{
+            .max_concurrent_lifecycle_scripts = 1,
+        };
 
-        var entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
+        const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
 
         var env_loader: *DotEnv.Loader = brk: {
-            var map = try allocator.create(DotEnv.Map);
+            const map = try allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(allocator);
 
-            var loader = try allocator.create(DotEnv.Loader);
+            const loader = try allocator.create(DotEnv.Loader);
             loader.* = DotEnv.Loader.init(map, allocator);
             break :brk loader;
         };
 
         env_loader.loadProcess();
-        try env_loader.load(entries_option.entries, .production);
+        try env_loader.load(entries_option.entries, &[_][]u8{}, .production);
         var log = logger.Log.init(allocator);
         try options.load(
             allocator,
@@ -991,6 +1113,7 @@ pub const Printer = struct {
             env_loader,
             null,
             null,
+            .install,
         );
 
         var printer = Printer{
@@ -1006,6 +1129,8 @@ pub const Printer = struct {
     }
 
     pub const Tree = struct {
+        /// - Prints an empty newline with no diffs
+        /// - Prints a leading and trailing blank newline with diffs
         pub fn print(
             this: *Printer,
             comptime Writer: type,
@@ -1025,13 +1150,16 @@ pub const Printer = struct {
             const resolutions_buffer: []const PackageID = this.lockfile.buffers.resolutions.items;
             const dependencies_buffer: []const Dependency = this.lockfile.buffers.dependencies.items;
             const string_buf = this.lockfile.buffers.string_bytes.items;
-            var id_map = try default_allocator.alloc(DependencyID, this.updates.len);
+            const id_map = try default_allocator.alloc(DependencyID, this.updates.len);
             @memset(id_map, invalid_package_id);
             defer if (id_map.len > 0) default_allocator.free(id_map);
 
             visited.set(0);
             const end = @as(PackageID, @truncate(resolved.len));
 
+            try writer.writeAll("\n");
+
+            var had_printed_new_install = false;
             if (this.successfully_installed) |installed| {
                 var dep_id = resolutions_list[0].off;
                 const dep_end = dep_id + resolutions_list[0].len;
@@ -1057,21 +1185,43 @@ pub const Printer = struct {
 
                     if (!installed.isSet(package_id)) continue;
 
-                    const fmt = comptime brk: {
-                        if (enable_ansi_colors) {
-                            break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
-                        } else {
-                            break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r>\n", enable_ansi_colors);
-                        }
-                    };
+                    if (!had_printed_new_install) {
+                        had_printed_new_install = true;
+                    }
 
-                    try writer.print(
-                        fmt,
-                        .{
-                            package_name,
-                            resolved[package_id].fmt(string_buf),
-                        },
-                    );
+                    if (PackageManager.instance.formatLaterVersionInCache(package_name, dependency.name_hash, resolved[package_id])) |later_version_fmt| {
+                        const fmt = comptime brk: {
+                            if (enable_ansi_colors) {
+                                break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
+                            } else {
+                                break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
+                            }
+                        };
+                        try writer.print(
+                            fmt,
+                            .{
+                                package_name,
+                                resolved[package_id].fmt(string_buf),
+                                later_version_fmt,
+                            },
+                        );
+                    } else {
+                        const fmt = comptime brk: {
+                            if (enable_ansi_colors) {
+                                break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                            } else {
+                                break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r>\n", enable_ansi_colors);
+                            }
+                        };
+
+                        try writer.print(
+                            fmt,
+                            .{
+                                package_name,
+                                resolved[package_id].fmt(string_buf),
+                            },
+                        );
+                    }
                 }
             } else {
                 outer: for (dependencies_buffer, resolutions_buffer, 0..) |dependency, package_id, dep_id| {
@@ -1102,12 +1252,16 @@ pub const Printer = struct {
                 }
             }
 
-            if (this.updates.len > 0) {
+            if (had_printed_new_install) {
                 try writer.writeAll("\n");
             }
 
+            if (bun.Environment.allow_assert) had_printed_new_install = false;
+
             for (id_map) |dependency_id| {
                 if (dependency_id == invalid_package_id) continue;
+                if (bun.Environment.allow_assert) had_printed_new_install = true;
+
                 const name = dependencies_buffer[dependency_id].name;
                 const package_id = resolutions_buffer[dependency_id];
                 const bin = bins[package_id];
@@ -1116,16 +1270,10 @@ pub const Printer = struct {
 
                 switch (bin.tag) {
                     .none, .dir => {
-                        const fmt = comptime brk: {
-                            if (enable_ansi_colors) {
-                                break :brk Output.prettyFmt("<r> <green>installed<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
-                            } else {
-                                break :brk Output.prettyFmt("<r> installed {s}<r><d>@{}<r>\n", enable_ansi_colors);
-                            }
-                        };
+                        const fmt = comptime Output.prettyFmt("<r> <green>installed<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
 
                         try writer.print(
-                            comptime Output.prettyFmt(fmt, enable_ansi_colors),
+                            fmt,
                             .{
                                 package_name,
                                 resolved[package_id].fmt(string_buf),
@@ -1140,16 +1288,10 @@ pub const Printer = struct {
                             .extern_string_buf = this.lockfile.buffers.extern_strings.items,
                         };
 
-                        const fmt = comptime brk: {
-                            if (enable_ansi_colors) {
-                                break :brk Output.prettyFmt("<r> <green>installed<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
-                            } else {
-                                break :brk Output.prettyFmt("<r> installed {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
-                            }
-                        };
+                        const fmt = comptime Output.prettyFmt("<r> <green>installed<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
 
                         try writer.print(
-                            comptime Output.prettyFmt(fmt, enable_ansi_colors),
+                            fmt,
                             .{
                                 package_name,
                                 resolved[package_id].fmt(string_buf),
@@ -1168,6 +1310,11 @@ pub const Printer = struct {
                 }
             }
 
+            // updates.len > 0 is a simpler check than to keep track of a boolean
+            // this assert ensures it is accurate.
+            if (bun.Environment.allow_assert)
+                std.debug.assert(had_printed_new_install == (this.updates.len > 0));
+
             if (this.updates.len > 0) {
                 try writer.writeAll("\n");
             }
@@ -1180,6 +1327,24 @@ pub const Printer = struct {
             comptime Writer: type,
             writer: Writer,
         ) !void {
+            // internal for debugging, print the lockfile as custom json
+            // limited to debug because we don't want people to rely on this format.
+            if (Environment.isDebug) {
+                if (std.process.hasEnvVarConstant("JSON")) {
+                    try std.json.stringify(
+                        this.lockfile,
+                        .{
+                            .whitespace = .indent_2,
+                            .emit_null_optional_fields = true,
+                            .emit_nonportable_numbers_as_strings = true,
+                        },
+                        writer,
+                    );
+                    try writer.writeAll("\n");
+                    return;
+                }
+            }
+
             try writer.writeAll(
                 \\# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
                 \\# yarn lockfile v1
@@ -1238,13 +1403,13 @@ pub const Printer = struct {
                         resolutions = resolutions[k + 1 ..];
                     }
 
-                    var dependency_versions = requested_version_start[0..j];
+                    const dependency_versions = requested_version_start[0..j];
                     if (dependency_versions.len > 1) std.sort.insertion(Dependency.Version, dependency_versions, string_buf, Dependency.Version.isLessThanWithTag);
                     try requested_versions.put(i, dependency_versions);
                 }
             }
 
-            std.sort.block(
+            std.sort.pdq(
                 PackageID,
                 alphabetized_names,
                 Lockfile.Package.Alphabetizer{
@@ -1270,12 +1435,7 @@ pub const Printer = struct {
                     const dependency_versions = requested_versions.get(i).?;
 
                     // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L9
-                    const always_needs_quote = switch (name[0]) {
-                        'A'...'Z', 'a'...'z' => strings.hasPrefixComptime(name, "true") or
-                            strings.hasPrefixComptime(name, "false") or
-                            std.mem.indexOfAnyPos(u8, name, 1, ": \t\r\n\x0B\x0C\\\",[]") != null,
-                        else => true,
-                    };
+                    const always_needs_quote = strings.mustEscapeYAMLString(name);
 
                     var prev_dependency_version: ?Dependency.Version = null;
                     var needs_comma = false;
@@ -1290,7 +1450,7 @@ pub const Printer = struct {
                             needs_comma = false;
                         }
                         const version_name = dependency_version.literal.slice(string_buf);
-                        const needs_quote = always_needs_quote or std.mem.indexOfAny(u8, version_name, " |\t-/!") != null;
+                        const needs_quote = always_needs_quote or std.mem.indexOfAny(u8, version_name, " |\t-/!") != null or strings.hasPrefixComptime(version_name, "npm:");
 
                         if (needs_quote) {
                             try writer.writeByte('"');
@@ -1336,7 +1496,7 @@ pub const Printer = struct {
                         var behavior = Behavior.uninitialized;
                         var dependency_behavior_change_count: u8 = 0;
                         for (dependencies) |dep| {
-                            if (dep.behavior != behavior) {
+                            if (!dep.behavior.eq(behavior)) {
                                 if (dep.behavior.isOptional()) {
                                     try writer.writeAll("  optionalDependencies:\n");
                                     if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
@@ -1357,7 +1517,9 @@ pub const Printer = struct {
 
                             try writer.writeAll("    ");
                             const dependency_name = dep.name.slice(string_buf);
-                            const needs_quote = dependency_name[0] == '@';
+
+                            const needs_quote = strings.mustEscapeYAMLString(dependency_name);
+
                             if (needs_quote) {
                                 try writer.writeByte('"');
                             }
@@ -1378,20 +1540,18 @@ pub const Printer = struct {
 
 pub fn verifyData(this: *Lockfile) !void {
     std.debug.assert(this.format == Lockfile.FormatVersion.current);
-    {
-        var i: usize = 0;
-        while (i < this.packages.len) : (i += 1) {
-            const package: Lockfile.Package = this.packages.get(i);
-            std.debug.assert(this.str(&package.name).len == @as(usize, package.name.len()));
-            std.debug.assert(String.Builder.stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
-            std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
-            std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
-            std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
-            const dependencies = package.dependencies.get(this.buffers.dependencies.items);
-            for (dependencies) |dependency| {
-                std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
-                std.debug.assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
-            }
+    var i: usize = 0;
+    while (i < this.packages.len) : (i += 1) {
+        const package: Lockfile.Package = this.packages.get(i);
+        std.debug.assert(this.str(&package.name).len == @as(usize, package.name.len()));
+        std.debug.assert(String.Builder.stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
+        std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
+        std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
+        std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
+        const dependencies = package.dependencies.get(this.buffers.dependencies.items);
+        for (dependencies) |dependency| {
+            std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
+            std.debug.assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
         }
     }
 }
@@ -1411,7 +1571,7 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
         for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
             if (package_id < end) continue;
             if (failed_dep.behavior.isPeer() or !failed_dep.behavior.isEnabled(
-                if (root_list.contains(@as(PackageID, @truncate(parent_id))))
+                if (root_list.contains(@truncate(parent_id)))
                     local_features
                 else
                     remote_features,
@@ -1451,42 +1611,70 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
         std.debug.assert(FileSystem.instance_loaded);
     }
     var tmpname_buf: [512]u8 = undefined;
-    tmpname_buf[0..8].* = "bunlock-".*;
+    tmpname_buf[0..9].* = ".bunlockb".*;
     var tmpfile = FileSystem.RealFS.Tmpfile{};
-    var secret: [32]u8 = undefined;
-    std.mem.writeIntNative(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())));
-    var base64_bytes: [64]u8 = undefined;
+    var base64_bytes: [16]u8 = undefined;
     std.crypto.random.bytes(&base64_bytes);
 
-    const tmpname__ = std.fmt.bufPrint(tmpname_buf[8..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
-    tmpname_buf[tmpname__.len + 8] = 0;
-    const tmpname = tmpname_buf[0 .. tmpname__.len + 8 :0];
+    const tmpname__ = std.fmt.bufPrint(tmpname_buf[9..], "{s}", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+    tmpname_buf[tmpname__.len + 9] = 0;
+    const tmpname = tmpname_buf[0 .. tmpname__.len + 9 :0];
 
     tmpfile.create(&FileSystem.instance.fs, tmpname) catch |err| {
         Output.prettyErrorln("<r><red>error:<r> failed to open lockfile: {s}", .{@errorName(err)});
         Global.crash();
     };
 
-    var file = tmpfile.file();
+    const file = tmpfile.fd.asFile();
+    {
+        var bytes = std.ArrayList(u8).init(bun.default_allocator);
+        defer bytes.deinit();
+        var total_size: usize = 0;
+        var end_pos: usize = 0;
+        Lockfile.Serializer.save(this, &bytes, &total_size, &end_pos) catch |err| {
+            tmpfile.dir().deleteFileZ(tmpname) catch {};
+            Output.prettyErrorln("<r><red>error:<r> failed to serialize lockfile: {s}", .{@errorName(err)});
+            Global.crash();
+        };
+        if (bytes.items.len >= end_pos)
+            bytes.items[end_pos..][0..@sizeOf(usize)].* = @bitCast(total_size);
 
-    Lockfile.Serializer.save(this, std.fs.File, file) catch |err| {
-        tmpfile.dir().deleteFileZ(tmpname) catch {};
-        Output.prettyErrorln("<r><red>error:<r> failed to serialize lockfile: {s}", .{@errorName(err)});
-        Global.crash();
-    };
-
-    if (comptime Environment.isWindows) {
-        // TODO: make this executable
-        bun.todo(@src(), {});
-    } else {
-        _ = C.fchmod(
-            tmpfile.fd,
-            // chmod 777
-            0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-        );
+        var node_fs: bun.JSC.Node.NodeFS = undefined;
+        switch (node_fs.writeFile(
+            .{
+                .file = .{
+                    .fd = bun.toFD(file.handle),
+                },
+                .dirfd = bun.invalid_fd,
+                .data = .{ .string = .{ .utf8 = bun.JSC.ZigString.Slice.init(bun.default_allocator, bytes.items) } },
+            },
+            .sync,
+        )) {
+            .err => |e| {
+                tmpfile.dir().deleteFileZ(tmpname) catch {};
+                Output.prettyErrorln("<r><red>error:<r> failed to write lockfile\n{}", .{e});
+                Global.crash();
+            },
+            .result => {},
+        }
     }
 
-    tmpfile.promote(tmpname, std.fs.cwd().fd, filename) catch |err| {
+    // chmod 777
+    switch (bun.sys.fchmod(tmpfile.fd, 0o777)) {
+        .err => |err| {
+            tmpfile.dir().deleteFileZ(tmpname) catch {};
+            Output.prettyErrorln("<r><red>error:<r> failed to change lockfile permissions: {s}", .{@tagName(err.getErrno())});
+            Global.crash();
+        },
+        .result => {},
+    }
+
+    tmpfile.promoteToCWD(tmpname, filename) catch |err| {
+        if (comptime Environment.allow_assert) {
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
+        }
         tmpfile.dir().deleteFileZ(tmpname) catch {};
         Output.prettyErrorln("<r><red>error:<r> failed to save lockfile: {s}", .{@errorName(err)});
         Global.crash();
@@ -1536,7 +1724,8 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
 pub fn getPackageID(
     this: *Lockfile,
     name_hash: u64,
-    // if it's a peer dependency, a folder, or a symlink
+    // If non-null, attempt to use an existing package
+    // that satisfies this version range.
     version: ?Dependency.Version,
     resolution: *const Resolution,
 ) ?PackageID {
@@ -1546,29 +1735,30 @@ pub fn getPackageID(
         .npm => v.value.npm.version,
         else => null,
     } else null;
+    const buf = this.buffers.string_bytes.items;
 
     switch (entry) {
         .PackageID => |id| {
             if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
 
-            if (resolutions[id].eql(resolution, this.buffers.string_bytes.items, this.buffers.string_bytes.items)) {
+            if (resolutions[id].eql(resolution, buf, buf)) {
                 return id;
             }
 
             if (npm_version) |range| {
-                if (range.satisfies(resolutions[id].value.npm.version)) return id;
+                if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
             }
         },
         .PackageIDMultiple => |ids| {
             for (ids.items) |id| {
                 if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
 
-                if (resolutions[id].eql(resolution, this.buffers.string_bytes.items, this.buffers.string_bytes.items)) {
+                if (resolutions[id].eql(resolution, buf, buf)) {
                     return id;
                 }
 
                 if (npm_version) |range| {
-                    if (range.satisfies(resolutions[id].value.npm.version)) return id;
+                    if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
                 }
             }
         },
@@ -1578,22 +1768,41 @@ pub fn getPackageID(
 }
 
 pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !void {
-    var gpe = try this.package_index.getOrPut(name_hash);
+    const gpe = try this.package_index.getOrPut(name_hash);
 
     if (gpe.found_existing) {
-        var index: *PackageIndex.Entry = gpe.value_ptr;
+        const index: *PackageIndex.Entry = gpe.value_ptr;
 
         switch (index.*) {
-            .PackageID => |single| {
+            .PackageID => |existing_id| {
                 var ids = try PackageIDList.initCapacity(this.allocator, 8);
-                ids.appendAssumeCapacity(single);
-                ids.appendAssumeCapacity(id);
+                ids.items.len = 2;
+
+                const resolutions = this.packages.items(.resolution);
+                const buf = this.buffers.string_bytes.items;
+
+                ids.items[0..2].* = if (resolutions[id].order(&resolutions[existing_id], buf, buf) == .gt)
+                    .{ id, existing_id }
+                else
+                    .{ existing_id, id };
+
                 index.* = .{
                     .PackageIDMultiple = ids,
                 };
             },
-            .PackageIDMultiple => {
-                try index.PackageIDMultiple.append(this.allocator, id);
+            .PackageIDMultiple => |*existing_ids| {
+                const resolutions = this.packages.items(.resolution);
+                const buf = this.buffers.string_bytes.items;
+
+                for (existing_ids.items, 0..) |existing_id, i| {
+                    if (resolutions[id].order(&resolutions[existing_id], buf, buf) == .gt) {
+                        try existing_ids.insert(this.allocator, i, id);
+                        return;
+                    }
+                }
+
+                // append to end because it's the smallest or equal to the smallest
+                try existing_ids.append(this.allocator, id);
             },
         }
     } else {
@@ -1608,7 +1817,7 @@ pub fn appendPackage(this: *Lockfile, package_: Lockfile.Package) !Lockfile.Pack
 
 fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageID) !Lockfile.Package {
     defer {
-        if (comptime Environment.isDebug) {
+        if (comptime Environment.allow_assert) {
             std.debug.assert(this.getPackageID(package_.name_hash, null, &package_.resolution) != null);
         }
     }
@@ -1690,7 +1899,7 @@ pub const StringBuilder = struct {
     }
 
     pub fn append(this: *StringBuilder, comptime Type: type, slice: string) Type {
-        return @call(.always_inline, appendWithHash, .{ this, Type, slice, String.Builder.stringHash(slice) });
+        return @call(bun.callmod_inline, appendWithHash, .{ this, Type, slice, String.Builder.stringHash(slice) });
     }
 
     // SlicedString is not supported due to inline strings.
@@ -1734,7 +1943,7 @@ pub const StringBuilder = struct {
             std.debug.assert(this.ptr != null); // must call allocate first
         }
 
-        var string_entry = this.lockfile.string_pool.getOrPut(hash) catch unreachable;
+        const string_entry = this.lockfile.string_pool.getOrPut(hash) catch unreachable;
         if (!string_entry.found_existing) {
             bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice.len];
@@ -1769,13 +1978,326 @@ pub const PackageIndex = struct {
     };
 };
 
+pub inline fn hasOverrides(this: *Lockfile) bool {
+    return this.overrides.map.count() > 0;
+}
+
+pub const OverrideMap = struct {
+    const debug = Output.scoped(.OverrideMap, false);
+
+    map: std.ArrayHashMapUnmanaged(PackageNameHash, Dependency, ArrayIdentityContext.U64, false) = .{},
+
+    /// In the future, this `get` function should handle multi-level resolutions. This is difficult right
+    /// now because given a Dependency ID, there is no fast way to trace it to it's package.
+    ///
+    /// A potential approach is to add another buffer to the lockfile that maps Dependency ID to Package ID,
+    /// and from there `OverrideMap.map` can have a union as the value, where the union is between "override all"
+    /// and "here is a list of overrides depending on the package that imported" similar to PackageIndex above.
+    pub fn get(this: *const OverrideMap, name_hash: PackageNameHash) ?Dependency.Version {
+        debug("looking up override for {x}", .{name_hash});
+        return if (this.map.get(name_hash)) |dep|
+            dep.version
+        else
+            null;
+    }
+
+    pub fn deinit(this: *OverrideMap, allocator: Allocator) void {
+        this.map.deinit(allocator);
+    }
+
+    pub fn count(this: *OverrideMap, lockfile: *Lockfile, builder: *Lockfile.StringBuilder) void {
+        for (this.map.values()) |dep| {
+            dep.count(lockfile.buffers.string_bytes.items, @TypeOf(builder), builder);
+        }
+    }
+
+    pub fn clone(this: *OverrideMap, old_lockfile: *Lockfile, new_lockfile: *Lockfile, new_builder: *Lockfile.StringBuilder) !OverrideMap {
+        var new = OverrideMap{};
+        try new.map.ensureTotalCapacity(new_lockfile.allocator, this.map.entries.len);
+
+        for (this.map.keys(), this.map.values()) |k, v| {
+            new.map.putAssumeCapacity(
+                k,
+                try v.clone(old_lockfile.buffers.string_bytes.items, @TypeOf(new_builder), new_builder),
+            );
+        }
+
+        return new;
+    }
+
+    // the rest of this struct is expression parsing code:
+
+    pub fn parseCount(
+        _: *OverrideMap,
+        lockfile: *Lockfile,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) void {
+        if (expr.asProperty("overrides")) |overrides| {
+            if (overrides.expr.data != .e_object)
+                return;
+
+            for (overrides.expr.data.e_object.properties.slice()) |entry| {
+                builder.count(entry.key.?.asString(lockfile.allocator).?);
+                switch (entry.value.?.data) {
+                    .e_string => |s| {
+                        builder.count(s.slice(lockfile.allocator));
+                    },
+                    .e_object => {
+                        if (entry.value.?.asProperty(".")) |dot| {
+                            if (dot.expr.asString(lockfile.allocator)) |s| {
+                                builder.count(s);
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+        } else if (expr.asProperty("resolutions")) |resolutions| {
+            if (resolutions.expr.data != .e_object)
+                return;
+
+            for (resolutions.expr.data.e_object.properties.slice()) |entry| {
+                builder.count(entry.key.?.asString(lockfile.allocator).?);
+                builder.count(entry.value.?.asString(lockfile.allocator) orelse continue);
+            }
+        }
+    }
+
+    /// Given a package json expression, detect and parse override configuration into the given override map.
+    /// It is assumed the input map is uninitialized (zero entries)
+    pub fn parseAppend(
+        this: *OverrideMap,
+        lockfile: *Lockfile,
+        root_package: *Lockfile.Package,
+        log: *logger.Log,
+        json_source: logger.Source,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) !void {
+        if (Environment.allow_assert) {
+            std.debug.assert(this.map.entries.len == 0); // only call parse once
+        }
+        if (expr.asProperty("overrides")) |overrides| {
+            try this.parseFromOverrides(lockfile, root_package, json_source, log, overrides.expr, builder);
+        } else if (expr.asProperty("resolutions")) |resolutions| {
+            try this.parseFromResolutions(lockfile, root_package, json_source, log, resolutions.expr, builder);
+        }
+        debug("parsed {d} overrides", .{this.map.entries.len});
+    }
+
+    /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
+    pub fn parseFromOverrides(
+        this: *OverrideMap,
+        lockfile: *Lockfile,
+        root_package: *Lockfile.Package,
+        source: logger.Source,
+        log: *logger.Log,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) !void {
+        if (expr.data != .e_object) {
+            try log.addWarningFmt(&source, expr.loc, lockfile.allocator, "\"overrides\" must be an object", .{});
+            return error.Invalid;
+        }
+
+        try this.map.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
+
+        for (expr.data.e_object.properties.slice()) |prop| {
+            const key = prop.key.?;
+            const k = key.asString(lockfile.allocator).?;
+            if (k.len == 0) {
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Missing overridden package name", .{});
+                continue;
+            }
+
+            const name_hash = String.Builder.stringHash(k);
+
+            const value = value: {
+                // for one level deep, we will only support a string and  { ".": value }
+                const value_expr = prop.value.?;
+                if (value_expr.data == .e_string) {
+                    break :value value_expr;
+                } else if (value_expr.data == .e_object) {
+                    if (value_expr.asProperty(".")) |dot| {
+                        if (dot.expr.data == .e_string) {
+                            if (value_expr.data.e_object.properties.len > 1) {
+                                try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
+                            }
+                            break :value dot.expr;
+                        } else {
+                            try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{k});
+                            continue;
+                        }
+                    } else {
+                        try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
+                        continue;
+                    }
+                }
+                try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Invalid override value for \"{s}\"", .{k});
+                continue;
+            };
+
+            const version_str = value.data.e_string.slice(lockfile.allocator);
+            if (strings.hasPrefixComptime(version_str, "patch:")) {
+                // TODO(dylan-conway): apply .patch files to packages
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
+                continue;
+            }
+
+            if (try parseOverrideValue(
+                "override",
+                lockfile,
+                root_package,
+                source,
+                value.loc,
+                log,
+                k,
+                version_str,
+                builder,
+            )) |version| {
+                this.map.putAssumeCapacity(name_hash, version);
+            }
+        }
+    }
+
+    /// yarn classic: https://classic.yarnpkg.com/lang/en/docs/selective-version-resolutions/
+    /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
+    pub fn parseFromResolutions(
+        this: *OverrideMap,
+        lockfile: *Lockfile,
+        root_package: *Lockfile.Package,
+        source: logger.Source,
+        log: *logger.Log,
+        expr: Expr,
+        builder: *Lockfile.StringBuilder,
+    ) !void {
+        if (expr.data != .e_object) {
+            try log.addWarningFmt(&source, expr.loc, lockfile.allocator, "\"resolutions\" must be an object with string values", .{});
+            return;
+        }
+        try this.map.ensureUnusedCapacity(lockfile.allocator, expr.data.e_object.properties.len);
+        for (expr.data.e_object.properties.slice()) |prop| {
+            const key = prop.key.?;
+            var k = key.asString(lockfile.allocator).?;
+            if (strings.hasPrefixComptime(k, "**/"))
+                k = k[3..];
+            if (k.len == 0) {
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Missing resolution package name", .{});
+                continue;
+            }
+            const value = prop.value.?;
+            if (value.data != .e_string) {
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Expected string value for resolution \"{s}\"", .{k});
+                continue;
+            }
+            // currently we only support one level deep, so we should error if there are more than one
+            // - "foo/bar":
+            // - "@namespace/hello/world"
+            if (k[0] == '@') {
+                const first_slash = strings.indexOfChar(k, '/') orelse {
+                    try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Invalid package name \"{s}\"", .{k});
+                    continue;
+                };
+                if (strings.indexOfChar(k[first_slash + 1 ..], '/') != null) {
+                    try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
+                    continue;
+                }
+            } else if (strings.indexOfChar(k, '/') != null) {
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support nested \"resolutions\"", .{});
+                continue;
+            }
+
+            const version_str = value.data.e_string.data;
+            if (strings.hasPrefixComptime(version_str, "patch:")) {
+                // TODO(dylan-conway): apply .patch files to packages
+                try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"resolutions\"", .{});
+                continue;
+            }
+
+            if (try parseOverrideValue(
+                "resolution",
+                lockfile,
+                root_package,
+                source,
+                value.loc,
+                log,
+                k,
+                version_str,
+                builder,
+            )) |version| {
+                const name_hash = String.Builder.stringHash(k);
+                this.map.putAssumeCapacity(name_hash, version);
+            }
+        }
+    }
+
+    pub fn parseOverrideValue(
+        comptime field: []const u8,
+        lockfile: *Lockfile,
+        root_package: *Lockfile.Package,
+        source: logger.Source,
+        loc: logger.Loc,
+        log: *logger.Log,
+        key: []const u8,
+        value: []const u8,
+        builder: *Lockfile.StringBuilder,
+    ) !?Dependency {
+        if (value.len == 0) {
+            try log.addWarningFmt(&source, loc, lockfile.allocator, "Missing " ++ field ++ " value", .{});
+            return null;
+        }
+
+        // "Overrides may also be defined as a reference to a spec for a direct dependency
+        // by prefixing the name of the package you wish the version to match with a `$`"
+        // https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
+        // This is why a `*Lockfile.Package` is needed here.
+        if (value[0] == '$') {
+            const ref_name = value[1..];
+            // This is fine for this string to not share the string pool, because it's only used for .eql()
+            const ref_name_str = String.init(ref_name, ref_name);
+            const pkg_deps: []const Dependency = root_package.dependencies.get(lockfile.buffers.dependencies.items);
+            for (pkg_deps) |dep| {
+                if (dep.name.eql(ref_name_str, lockfile.buffers.string_bytes.items, ref_name)) {
+                    return dep;
+                }
+            }
+            try log.addWarningFmt(&source, loc, lockfile.allocator, "Could not resolve " ++ field ++ " \"{s}\" (you need \"{s}\" in your dependencies)", .{ value, ref_name });
+            return null;
+        }
+
+        const literalString = builder.append(String, value);
+        const literalSliced = literalString.sliced(lockfile.buffers.string_bytes.items);
+
+        const name_hash = String.Builder.stringHash(key);
+        const name = builder.appendWithHash(String, key, name_hash);
+
+        return Dependency{
+            .name = name,
+            .name_hash = name_hash,
+            .version = Dependency.parse(
+                lockfile.allocator,
+                name,
+                name_hash,
+                literalSliced.slice,
+                &literalSliced,
+                log,
+            ) orelse {
+                try log.addWarningFmt(&source, loc, lockfile.allocator, "Invalid " ++ field ++ " value \"{s}\"", .{value});
+                return null;
+            },
+        };
+    }
+};
+
 pub const FormatVersion = enum(u32) {
-    v0,
+    v0 = 0,
     // bun v0.0.x - bun v0.1.6
-    v1,
+    v1 = 1,
     // bun v0.1.7+
     // This change added tarball URLs to npm-resolved packages
-    v2,
+    v2 = 2,
+
     _,
     pub const current = FormatVersion.v2;
 };
@@ -1795,7 +2317,7 @@ pub const Package = extern struct {
     name: String = .{},
     name_hash: PackageNameHash = 0,
 
-    /// How a package has been resolved
+    /// How this package has been resolved
     /// When .tag is uninitialized, that means the package is not resolved yet.
     resolution: Resolution = .{},
 
@@ -1804,8 +2326,18 @@ pub const Package = extern struct {
     /// if resolutions[i] is an invalid package ID, then dependencies[i] is not resolved
     dependencies: DependencySlice = .{},
 
-    /// The resolved package IDs for the dependencies
-    resolutions: DependencyIDSlice = .{},
+    /// The resolved package IDs for this package's dependencies. Instead of storing this
+    /// on the `Dependency` struct within `.dependencies`, it is stored on the package itself
+    /// so we can access it faster.
+    ///
+    /// Each index in this array corresponds to the same index in dependencies.
+    /// Each value in this array corresponds to the resolved package ID for that dependency.
+    ///
+    /// So this is how you say "what package ID for lodash does this package actually resolve to?"
+    ///
+    /// By default, the underlying buffer is filled with "invalid_id" to indicate this package ID
+    /// was not resolved
+    resolutions: PackageIDSlice = .{},
 
     meta: Meta = .{},
     bin: Bin = .{},
@@ -1820,13 +2352,17 @@ pub const Package = extern struct {
         postprepare: String = .{},
         filled: bool = false,
 
-        pub const Hooks = .{
-            "preinstall",
-            "install",
-            "postinstall",
-            "preprepare",
-            "prepare",
-            "postprepare",
+        pub const List = struct {
+            items: [Lockfile.Scripts.names.len]?Lockfile.Scripts.Entry,
+            first_index: u8,
+            total: u8,
+
+            pub fn first(this: Package.Scripts.List) Lockfile.Scripts.Entry {
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(this.items[this.first_index] != null);
+                }
+                return this.items[this.first_index].?;
+            }
         };
 
         pub fn clone(this: *const Package.Scripts, buf: []const u8, comptime Builder: type, builder: Builder) Package.Scripts {
@@ -1834,41 +2370,165 @@ pub const Package = extern struct {
             var scripts = Package.Scripts{
                 .filled = true,
             };
-            inline for (Package.Scripts.Hooks) |hook| {
+            inline for (Lockfile.Scripts.names) |hook| {
                 @field(scripts, hook) = builder.append(String, @field(this, hook).slice(buf));
             }
             return scripts;
         }
 
         pub fn count(this: *const Package.Scripts, buf: []const u8, comptime Builder: type, builder: Builder) void {
-            inline for (Package.Scripts.Hooks) |hook| {
+            inline for (Lockfile.Scripts.names) |hook| {
                 builder.count(@field(this, hook).slice(buf));
             }
         }
 
         pub fn hasAny(this: *const Package.Scripts) bool {
-            inline for (Package.Scripts.Hooks) |hook| {
+            inline for (Lockfile.Scripts.names) |hook| {
                 if (!@field(this, hook).isEmpty()) return true;
             }
             return false;
         }
 
-        pub fn enqueue(this: *const Package.Scripts, lockfile: *Lockfile, buf: []const u8, cwd: string) void {
-            inline for (Package.Scripts.Hooks) |hook| {
-                const script = @field(this, hook);
-                if (!script.isEmpty()) {
-                    @field(lockfile.scripts, hook).append(lockfile.allocator, .{
-                        .cwd = lockfile.allocator.dupe(u8, cwd) catch unreachable,
-                        .script = lockfile.allocator.dupe(u8, script.slice(buf)) catch unreachable,
-                    }) catch unreachable;
+        pub fn enqueue(
+            this: *const Package.Scripts,
+            lockfile: *Lockfile,
+            lockfile_buf: []const u8,
+            _cwd: string,
+            package_name: string,
+            resolution_tag: Resolution.Tag,
+            add_node_gyp_rebuild_script: bool,
+        ) ?Package.Scripts.List {
+            var cwd: ?string = null;
+            var script_index: u8 = 0;
+            var first_script_index: i8 = -1;
+            var scripts: [6]?Lockfile.Scripts.Entry = .{null} ** 6;
+            var counter: u8 = 0;
+
+            if (add_node_gyp_rebuild_script) {
+                // missing install and postinstall, only need to check preinstall
+                if (!this.preinstall.isEmpty()) {
+                    const entry: Lockfile.Scripts.Entry = .{
+                        .cwd = cwd orelse brk: {
+                            cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                            break :brk cwd.?;
+                        },
+                        .script = lockfile.allocator.dupe(u8, this.preinstall.slice(lockfile_buf)) catch unreachable,
+                        .package_name = package_name,
+                    };
+                    if (first_script_index == -1) first_script_index = @intCast(script_index);
+                    scripts[script_index] = entry;
+                    lockfile.scripts.preinstall.append(lockfile.allocator, entry) catch unreachable;
+                    counter += 1;
+                }
+                script_index += 1;
+
+                const entry: Lockfile.Scripts.Entry = .{
+                    .cwd = cwd orelse brk: {
+                        cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                        break :brk cwd.?;
+                    },
+                    .script = lockfile.allocator.dupe(u8, "node-gyp rebuild") catch unreachable,
+                    .package_name = package_name,
+                };
+                if (first_script_index == -1) first_script_index = @intCast(script_index);
+                scripts[script_index] = entry;
+                script_index += 2;
+                lockfile.scripts.install.append(lockfile.allocator, entry) catch unreachable;
+                counter += 1;
+            } else {
+                const install_scripts = .{
+                    "preinstall",
+                    "install",
+                    "postinstall",
+                };
+
+                inline for (install_scripts) |hook| {
+                    const script = @field(this, hook);
+                    if (!script.isEmpty()) {
+                        debug("enqueue({s}, {s}) in {s}", .{ hook, package_name, _cwd });
+                        const entry: Lockfile.Scripts.Entry = .{
+                            .cwd = cwd orelse brk: {
+                                cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                                break :brk cwd.?;
+                            },
+                            .script = lockfile.allocator.dupe(u8, script.slice(lockfile_buf)) catch unreachable,
+                            .package_name = package_name,
+                        };
+                        if (first_script_index == -1) first_script_index = @intCast(script_index);
+                        scripts[script_index] = entry;
+                        @field(lockfile.scripts, hook).append(lockfile.allocator, entry) catch unreachable;
+                        counter += 1;
+                    }
+                    script_index += 1;
                 }
             }
+
+            switch (resolution_tag) {
+                .git, .github, .gitlab, .root => {
+                    const prepare_scripts = .{
+                        "preprepare",
+                        "prepare",
+                        "postprepare",
+                    };
+
+                    inline for (prepare_scripts) |hook| {
+                        const script = @field(this, hook);
+                        if (!script.isEmpty()) {
+                            debug("enqueue({s}, {s}) in {s}", .{ hook, package_name, _cwd });
+                            const entry: Lockfile.Scripts.Entry = .{
+                                .cwd = cwd orelse brk: {
+                                    cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                                    break :brk cwd.?;
+                                },
+                                .script = lockfile.allocator.dupe(u8, script.slice(lockfile_buf)) catch unreachable,
+                                .package_name = package_name,
+                            };
+                            if (first_script_index == -1) first_script_index = @intCast(script_index);
+                            scripts[script_index] = entry;
+                            @field(lockfile.scripts, hook).append(lockfile.allocator, entry) catch unreachable;
+                            counter += 1;
+                        }
+                        script_index += 1;
+                    }
+                },
+                .workspace => {
+                    script_index += 1;
+                    if (!this.prepare.isEmpty()) {
+                        debug("enqueue({s}, {s}) in {s}", .{ "prepare", package_name, _cwd });
+
+                        const entry: Lockfile.Scripts.Entry = .{
+                            .cwd = cwd orelse brk: {
+                                cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                                break :brk cwd.?;
+                            },
+                            .script = lockfile.allocator.dupe(u8, this.prepare.slice(lockfile_buf)) catch unreachable,
+                            .package_name = package_name,
+                        };
+                        if (first_script_index == -1) first_script_index = @intCast(script_index);
+                        scripts[script_index] = entry;
+                        lockfile.scripts.prepare.append(lockfile.allocator, entry) catch unreachable;
+                        counter += 1;
+                    }
+                    script_index += 2;
+                },
+                else => {},
+            }
+
+            if (first_script_index != -1) {
+                return .{
+                    .items = scripts,
+                    .first_index = @intCast(first_script_index),
+                    .total = counter,
+                };
+            }
+
+            return null;
         }
 
         pub fn parseCount(allocator: Allocator, builder: *Lockfile.StringBuilder, json: Expr) void {
             if (json.asProperty("scripts")) |scripts_prop| {
                 if (scripts_prop.expr.data == .e_object) {
-                    inline for (Package.Scripts.Hooks) |script_name| {
+                    inline for (Lockfile.Scripts.names) |script_name| {
                         if (scripts_prop.expr.get(script_name)) |script| {
                             if (script.asString(allocator)) |input| {
                                 builder.count(input);
@@ -1882,7 +2542,7 @@ pub const Package = extern struct {
         pub fn parseAlloc(this: *Package.Scripts, allocator: Allocator, builder: *Lockfile.StringBuilder, json: Expr) void {
             if (json.asProperty("scripts")) |scripts_prop| {
                 if (scripts_prop.expr.data == .e_object) {
-                    inline for (Package.Scripts.Hooks) |script_name| {
+                    inline for (Lockfile.Scripts.names) |script_name| {
                         if (scripts_prop.expr.get(script_name)) |script| {
                             if (script.asString(allocator)) |input| {
                                 @field(this, script_name) = builder.append(String, input);
@@ -1898,23 +2558,45 @@ pub const Package = extern struct {
             log: *logger.Log,
             lockfile: *Lockfile,
             node_modules: std.fs.Dir,
+            node_modules_path: string,
             subpath: [:0]const u8,
-            cwd: string,
-        ) !void {
-            var pkg_dir = try bun.openDir(node_modules, subpath);
-            defer pkg_dir.close();
-            const json_file = try pkg_dir.dir.openFileZ("package.json", .{ .mode = .read_only });
-            defer json_file.close();
-            const json_stat_size = try json_file.getEndPos();
-            const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
-            const json_len = try json_file.preadAll(json_buf, 0);
-            const json_src = logger.Source.initPathString(cwd, json_buf[0..json_len]);
-            initializeStore();
-            const json = try json_parser.ParseJSONUTF8(
-                &json_src,
-                log,
-                lockfile.allocator,
+            folder_name: string,
+            resolution: *const Resolution,
+        ) !?Package.Scripts.List {
+            var path_buf: bun.PathBuffer = undefined;
+
+            const cwd = Path.joinAbsStringBufZTrailingSlash(
+                node_modules_path,
+                &path_buf,
+                &[_]string{folder_name},
+                .auto,
             );
+
+            const json = brk: {
+                const json_src = brk2: {
+                    const json_path = bun.path.joinZ([_]string{ subpath, "package.json" }, .auto);
+                    const json_file_fd = try bun.sys.openat(
+                        bun.toFD(node_modules.fd),
+                        json_path,
+                        std.os.O.RDONLY,
+                        0,
+                    ).unwrap();
+                    const json_file = json_file_fd.asFile();
+                    defer json_file.close();
+                    const json_stat_size = try json_file.getEndPos();
+                    const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
+                    errdefer lockfile.allocator.free(json_buf);
+                    const json_len = try json_file.preadAll(json_buf, 0);
+                    break :brk2 logger.Source.initPathString(json_path, json_buf[0..json_len]);
+                };
+
+                initializeStore();
+                break :brk try json_parser.ParseJSONUTF8(
+                    &json_src,
+                    log,
+                    lockfile.allocator,
+                );
+            };
 
             var tmp: Lockfile = undefined;
             try tmp.initEmpty(lockfile.allocator);
@@ -1924,30 +2606,40 @@ pub const Package = extern struct {
             try builder.allocate();
             this.parseAlloc(lockfile.allocator, &builder, json);
 
-            this.enqueue(lockfile, tmp.buffers.string_bytes.items, cwd);
+            const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name) and
+                this.install.isEmpty() and
+                this.postinstall.isEmpty())
+            brk: {
+                const binding_dot_gyp_path = Path.joinAbsStringZ(
+                    cwd,
+                    &[_]string{"binding.gyp"},
+                    .auto,
+                );
+
+                break :brk bun.sys.exists(binding_dot_gyp_path);
+            } else false;
+
+            return this.enqueue(
+                lockfile,
+                tmp.buffers.string_bytes.items,
+                cwd,
+                folder_name,
+                resolution.tag,
+                add_node_gyp_rebuild_script,
+            );
         }
     };
-
-    pub fn verify(this: *const Package, externs: []const ExternalString) void {
-        if (comptime !Environment.allow_assert)
-            return;
-
-        this.name.assertDefined();
-        this.resolution.verify();
-        this.meta.man_dir.assertDefined();
-        this.bin.verify(externs);
-    }
 
     pub const DependencyGroup = struct {
         prop: string,
         field: string,
         behavior: Behavior,
 
-        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.normal)) };
-        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.dev)) };
-        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.optional)) };
-        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = @as(Behavior, @enumFromInt(Behavior.peer)) };
-        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = @as(Behavior, @enumFromInt(Behavior.workspace)) };
+        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = Behavior.normal };
+        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = Behavior.dev };
+        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = Behavior.optional };
+        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = Behavior.peer };
+        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = Behavior.workspace };
     };
 
     pub inline fn isDisabled(this: *const Lockfile.Package) bool {
@@ -2010,10 +2702,10 @@ pub const Package = extern struct {
         new.buffers.resolutions.items = new.buffers.resolutions.items.ptr[0..end];
 
         new.buffers.extern_strings.items.len += new_extern_string_count;
-        var new_extern_strings = new.buffers.extern_strings.items[new.buffers.extern_strings.items.len - new_extern_string_count ..];
+        const new_extern_strings = new.buffers.extern_strings.items[new.buffers.extern_strings.items.len - new_extern_string_count ..];
 
-        var dependencies: []Dependency = new.buffers.dependencies.items[prev_len..end];
-        var resolutions: []PackageID = new.buffers.resolutions.items[prev_len..end];
+        const dependencies: []Dependency = new.buffers.dependencies.items[prev_len..end];
+        const resolutions: []PackageID = new.buffers.resolutions.items[prev_len..end];
 
         const id = @as(PackageID, @truncate(new.packages.len));
         const new_package = try new.appendPackageWithID(
@@ -2053,7 +2745,6 @@ pub const Package = extern struct {
             },
             id,
         );
-        defer new_package.verify(new.buffers.extern_strings.items);
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
 
@@ -2108,7 +2799,7 @@ pub const Package = extern struct {
         {
             string_builder.count(package_json.name);
             string_builder.count(package_json.version);
-            var dependencies = package_json.dependencies.map.values();
+            const dependencies = package_json.dependencies.map.values();
             for (dependencies) |dep| {
                 if (dep.behavior.isEnabled(features)) {
                     dep.count(package_json.dependencies.source_buf, @TypeOf(&string_builder), &string_builder);
@@ -2263,7 +2954,7 @@ pub const Package = extern struct {
         try resolutions_list.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
         try extern_strings_list.ensureUnusedCapacity(lockfile.allocator, bin_extern_strings_count);
         extern_strings_list.items.len += bin_extern_strings_count;
-        var extern_strings_slice = extern_strings_list.items[extern_strings_list.items.len - bin_extern_strings_count ..];
+        const extern_strings_slice = extern_strings_list.items[extern_strings_list.items.len - bin_extern_strings_count ..];
 
         // -- Cloning
         {
@@ -2316,12 +3007,13 @@ pub const Package = extern struct {
                         .name = name.value,
                         .name_hash = name.hash,
                         .behavior = if (comptime is_peer)
-                            group.behavior.setOptional(package_version.optional_peer_dependencies_len > i)
+                            group.behavior.setOptional(i < package_version.non_optional_peer_dependencies_start)
                         else
                             group.behavior,
                         .version = Dependency.parse(
                             allocator,
                             name.value,
+                            name.hash,
                             sliced.slice,
                             &sliced,
                             log,
@@ -2381,6 +3073,9 @@ pub const Package = extern struct {
             add: u32 = 0,
             remove: u32 = 0,
             update: u32 = 0,
+            overrides_changed: bool = false,
+
+            new_trusted_dependencies: NameHashSet = .{},
 
             pub inline fn sum(this: *Summary, that: Summary) void {
                 this.add += that.add;
@@ -2389,7 +3084,7 @@ pub const Package = extern struct {
             }
 
             pub inline fn hasDiffs(this: Summary) bool {
-                return this.add > 0 or this.remove > 0 or this.update > 0;
+                return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed;
             }
         };
 
@@ -2408,6 +3103,39 @@ pub const Package = extern struct {
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
             const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
             var to_i: usize = 0;
+            var skipped_workspaces: usize = 0;
+
+            if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
+                summary.overrides_changed = true;
+
+                if (PackageManager.verbose_install) {
+                    Output.prettyErrorln("Overrides changed since last install", .{});
+                }
+            } else {
+                for (
+                    from_lockfile.overrides.map.keys(),
+                    from_lockfile.overrides.map.values(),
+                    to_lockfile.overrides.map.keys(),
+                    to_lockfile.overrides.map.values(),
+                ) |from_k, *from_override, to_k, *to_override| {
+                    if ((from_k != to_k) or (!from_override.eql(to_override, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items))) {
+                        summary.overrides_changed = true;
+                        if (PackageManager.verbose_install) {
+                            Output.prettyErrorln("Overrides changed since last install", .{});
+                        }
+                        break;
+                    }
+                }
+            }
+
+            {
+                var to_lockfile_itr = to_lockfile.trusted_dependencies.iterator();
+                while (to_lockfile_itr.next()) |entry| {
+                    if (!from_lockfile.trusted_dependencies.contains(entry.key_ptr.*)) {
+                        try summary.new_trusted_dependencies.put(allocator, entry.key_ptr.*, {});
+                    }
+                }
+            }
 
             for (from_deps, 0..) |*from_dep, i| {
                 found: {
@@ -2424,6 +3152,11 @@ pub const Package = extern struct {
                     to_i = 0;
                     while (to_i < prev_i) : (to_i += 1) {
                         if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
+                    }
+
+                    if (PackageManager.instance.workspaces.contains(from_lockfile.str(&from_dep.name))) {
+                        skipped_workspaces += 1;
+                        continue;
                     }
 
                     // We found a removed dependency!
@@ -2451,12 +3184,16 @@ pub const Package = extern struct {
                     if (id_mapping) |mapping| {
                         const version = to_deps[to_i].version;
                         if (switch (version.tag) {
-                            .workspace => if (to_lockfile.workspace_paths.getPtr(@truncate(from_dep.name_hash))) |path_ptr| brk: {
+                            .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
                                 const path = to_lockfile.str(path_ptr);
-                                var file = std.fs.cwd().openFile(Path.join(
+                                var local_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                const package_json_path = Path.joinZBuf(
+                                    &local_buf,
                                     &[_]string{ path, "package.json" },
                                     .auto,
-                                ), .{ .mode = .read_only }) catch break :brk false;
+                                );
+                                var file = try bun.openFileZ(package_json_path, .{ .mode = .read_only });
+
                                 defer file.close();
                                 const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
                                 defer allocator.free(bytes);
@@ -2477,6 +3214,15 @@ pub const Package = extern struct {
                                     null,
                                 );
 
+                                if (PackageManager.verbose_install and (diff.add + diff.remove + diff.update) > 0) {
+                                    Output.prettyErrorln("Workspace package \"{s}\" has added <green>{d}<r> dependencies, removed <red>{d}<r> dependencies, and updated <cyan>{d}<r> dependencies", .{
+                                        path,
+                                        diff.add,
+                                        diff.remove,
+                                        diff.update,
+                                    });
+                                }
+
                                 break :brk !diff.hasDiffs();
                             } else false,
                             else => true,
@@ -2493,9 +3239,9 @@ pub const Package = extern struct {
                 summary.update += 1;
             }
 
-            summary.add = @truncate(to_deps.len - (from_deps.len - summary.remove));
+            summary.add = @truncate((to_deps.len + skipped_workspaces) - (from_deps.len - summary.remove));
 
-            inline for (Package.Scripts.Hooks) |hook| {
+            inline for (Lockfile.Scripts.names) |hook| {
                 if (!@field(to.scripts, hook).eql(
                     @field(from.scripts, hook),
                     to_lockfile.buffers.string_bytes.items,
@@ -2539,7 +3285,6 @@ pub const Package = extern struct {
         comptime features: Features,
     ) !void {
         initializeStore();
-
         const json = json_parser.ParseJSONUTF8(&source, log, allocator) catch |err| {
             switch (Output.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| {
@@ -2581,12 +3326,13 @@ pub const Package = extern struct {
         value_loc: logger.Loc,
     ) !?Dependency {
         const external_version = string_builder.append(String, version);
-        var buf = lockfile.buffers.string_bytes.items;
+        const buf = lockfile.buffers.string_bytes.items;
         const sliced = external_version.sliced(buf);
 
         var dependency_version = Dependency.parseWithOptionalTag(
             allocator,
             external_alias.value,
+            external_alias.hash,
             sliced.slice,
             tag,
             &sliced,
@@ -2609,8 +3355,20 @@ pub const Package = extern struct {
             } else external_alias.hash,
             else => external_alias.hash,
         };
-        const workspace_path = if (comptime tag == null) lockfile.workspace_paths.get(@truncate(name_hash)) else null;
-        const workspace_version = if (comptime tag == null) lockfile.workspace_versions.get(@truncate(name_hash)) else workspace_ver;
+
+        var workspace_path: ?String = null;
+        var workspace_version = workspace_ver;
+        if (comptime tag == null) {
+            workspace_path = lockfile.workspace_paths.get(name_hash);
+            workspace_version = lockfile.workspace_versions.get(name_hash);
+
+            if (workspace_path == null or workspace_version == null) {
+                if (PackageManager.instance.workspaces.get(lockfile.str(&external_alias.value))) |_workspace_version| {
+                    workspace_path = external_alias.value;
+                    workspace_version = _workspace_version;
+                }
+            }
+        }
 
         switch (dependency_version.tag) {
             .folder => {
@@ -2624,7 +3382,7 @@ pub const Package = extern struct {
                                 source.path.name.dir,
                                 dependency_version.value.folder.slice(buf),
                             },
-                            .posix,
+                            .auto,
                         ),
                     ),
                 );
@@ -2632,7 +3390,7 @@ pub const Package = extern struct {
             .npm => if (comptime tag != null)
                 unreachable
             else if (workspace_version) |ver| {
-                if (dependency_version.value.npm.version.satisfies(ver)) {
+                if (dependency_version.value.npm.version.satisfies(ver, buf, buf)) {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`
                         if (dep.version.tag == .workspace and dep.name_hash == name_hash) {
@@ -2644,6 +3402,7 @@ pub const Package = extern struct {
                     if (Dependency.parseWithTag(
                         allocator,
                         external_alias.value,
+                        external_alias.hash,
                         path.slice,
                         .workspace,
                         &path,
@@ -2656,7 +3415,7 @@ pub const Package = extern struct {
             .workspace => if (workspace_path) |path| {
                 if (workspace_range) |range| {
                     if (workspace_version) |ver| {
-                        if (range.satisfies(ver)) {
+                        if (range.satisfies(ver, buf, buf)) {
                             dependency_version.literal = path;
                             dependency_version.value.workspace = path;
                         }
@@ -2667,20 +3426,21 @@ pub const Package = extern struct {
                 }
             } else {
                 const workspace = dependency_version.value.workspace.slice(buf);
-                const path = string_builder.append(
-                    String,
-                    if (strings.eqlComptime(workspace, "*")) "*" else Path.relative(
+                const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
+                    var buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    break :brk Path.relative(
                         FileSystem.instance.top_level_dir,
-                        Path.joinAbsString(
+                        Path.joinAbsStringBuf(
                             FileSystem.instance.top_level_dir,
+                            &buf2,
                             &[_]string{
                                 source.path.name.dir,
                                 workspace,
                             },
-                            .posix,
+                            .auto,
                         ),
-                    ),
-                );
+                    );
+                });
                 if (comptime Environment.allow_assert) {
                     std.debug.assert(path.len() > 0);
                     std.debug.assert(!std.fs.path.isAbsolute(path.slice(buf)));
@@ -2688,36 +3448,23 @@ pub const Package = extern struct {
                 dependency_version.literal = path;
                 dependency_version.value.workspace = path;
 
-                var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(name_hash));
-                if (workspace_entry.found_existing) {
-                    if (strings.eqlComptime(workspace, "*")) return null;
-
-                    const old_path = workspace_entry.value_ptr.*.slice(buf);
-                    if (!strings.eqlComptime(old_path, "*")) {
-                        if (strings.eql(old_path, path.slice(buf))) return null;
-
-                        log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
-                            external_alias.slice(buf),
-                        }) catch {};
-                        return error.InstallFailed;
-                    }
-                }
-                workspace_entry.value_ptr.* = path;
+                const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
+                const found_matching_workspace = workspace_entry.found_existing or PackageManager.instance.workspaces.contains(lockfile.str(&external_alias.value));
 
                 if (workspace_version) |ver| {
-                    try lockfile.workspace_versions.put(allocator, @truncate(name_hash), ver);
-
+                    try lockfile.workspace_versions.put(allocator, name_hash, ver);
                     for (package_dependencies[0..dependencies_count]) |*package_dep| {
                         if (switch (package_dep.version.tag) {
                             // `dependencies` & `workspaces` defined within the same `package.json`
                             .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                package_dep.version.value.npm.version.satisfies(ver),
+                                package_dep.version.value.npm.version.satisfies(ver, buf, buf),
                             // `workspace:*`
-                            .workspace => workspace_entry.found_existing and
+                            .workspace => found_matching_workspace and
                                 String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
                             else => false,
                         }) {
                             package_dep.version = dependency_version;
+                            workspace_entry.value_ptr.* = path;
                             return null;
                         }
                     }
@@ -2732,6 +3479,8 @@ pub const Package = extern struct {
                     }
                     return error.InstallFailed;
                 }
+
+                workspace_entry.value_ptr.* = path;
             },
             else => {},
         }
@@ -2745,7 +3494,7 @@ pub const Package = extern struct {
 
         // `peerDependencies` may be specified on existing dependencies
         if (comptime features.check_for_duplicate_dependencies and !group.behavior.isPeer()) {
-            var entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
+            const entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
             if (entry.found_existing) {
                 // duplicate dependencies are allowed in optionalDependencies
                 if (comptime group.behavior.isOptional()) {
@@ -2761,10 +3510,10 @@ pub const Package = extern struct {
 
                     notes[0] = .{
                         .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{external_alias.slice(buf)}),
-                        .location = logger.Location.init_or_nil(&source, source.rangeOfString(entry.value_ptr.*)),
+                        .location = logger.Location.initOrNull(&source, source.rangeOfString(entry.value_ptr.*)),
                     };
 
-                    try log.addRangeErrorFmtWithNotes(
+                    try log.addRangeWarningFmtWithNotes(
                         &source,
                         source.rangeOfString(key_loc),
                         lockfile.allocator,
@@ -2787,7 +3536,8 @@ pub const Package = extern struct {
         const Map = bun.StringArrayHashMap(Entry);
         pub const Entry = struct {
             name: string,
-            version: ?Semver.Version,
+            version: ?string,
+            name_loc: logger.Loc,
         };
 
         pub fn init(allocator: std.mem.Allocator) WorkspaceMap {
@@ -2809,7 +3559,7 @@ pub const Package = extern struct {
         }
 
         pub fn insert(self: *WorkspaceMap, key: string, value: Entry) !void {
-            var entry = try self.map.getOrPut(key);
+            const entry = try self.map.getOrPut(key);
             if (!entry.found_existing) {
                 entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
             } else {
@@ -2819,6 +3569,7 @@ pub const Package = extern struct {
             entry.value_ptr.* = .{
                 .name = try self.map.allocator.dupe(u8, value.name),
                 .version = value.version,
+                .name_loc = value.name_loc,
             };
         }
 
@@ -2842,7 +3593,8 @@ pub const Package = extern struct {
     const WorkspaceEntry = struct {
         path: []const u8 = "",
         name: []const u8 = "",
-        version: ?Semver.Version = null,
+        name_loc: logger.Loc = logger.Loc.Empty,
+        version: ?[]const u8 = null,
     };
 
     fn processWorkspaceName(
@@ -2858,7 +3610,13 @@ pub const Package = extern struct {
             const paths = [_]string{ path, "package.json" };
             break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
         };
-        var workspace_file = try dir.openFile(path_to_use, .{ .mode = .read_only });
+
+        // TODO: windows
+        var workspace_file = dir.openFile(path_to_use, .{ .mode = .read_only }) catch |err| {
+            debug("processWorkspaceName({s}) = {} ", .{ path_to_use, err });
+            return err;
+        };
+
         defer workspace_file.close();
 
         const workspace_bytes = try workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize));
@@ -2871,17 +3629,15 @@ pub const Package = extern struct {
         if (!workspace_json.has_found_name) {
             return error.MissingPackageName;
         }
-        bun.copy(u8, name_to_copy[0..], workspace_json.found_name);
+        @memcpy(name_to_copy[0..workspace_json.found_name.len], workspace_json.found_name);
         var entry = WorkspaceEntry{
             .name = name_to_copy[0..workspace_json.found_name.len],
+            .name_loc = workspace_json.name_loc,
             .path = path_to_use,
         };
+        debug("processWorkspaceName({s}) = {s}", .{ path_to_use, entry.name });
         if (workspace_json.has_found_version) {
-            const version = SlicedString.init(workspace_json.found_version, workspace_json.found_version);
-            const result = Semver.Version.parse(version);
-            if (result.valid and result.wildcard == .none) {
-                entry.version = result.version.fill();
-            }
+            entry.version = try allocator.dupe(u8, workspace_json.found_version);
         }
         return entry;
     }
@@ -2898,15 +3654,15 @@ pub const Package = extern struct {
         if (arr.items.len == 0) return 0;
 
         var fallback = std.heap.stackFallback(1024, allocator);
-        var workspace_allocator = fallback.get();
-        var workspace_name_buf = allocator.create([1024]u8) catch unreachable;
+        const workspace_allocator = fallback.get();
+        const workspace_name_buf = allocator.create([1024]u8) catch unreachable;
         defer allocator.destroy(workspace_name_buf);
 
         const orig_msgs_len = log.msgs.items.len;
 
         var asterisked_workspace_paths = std.ArrayList(string).init(allocator);
         defer asterisked_workspace_paths.deinit();
-        var filepath_buf = allocator.create([bun.MAX_PATH_BYTES]u8) catch unreachable;
+        const filepath_buf = allocator.create([bun.MAX_PATH_BYTES]u8) catch unreachable;
         defer allocator.destroy(filepath_buf);
 
         for (arr.slice()) |item| {
@@ -2914,9 +3670,9 @@ pub const Package = extern struct {
             var input_path = item.asString(allocator) orelse {
                 log.addErrorFmt(source, item.loc, allocator,
                     \\Workspaces expects an array of strings, like:
-                    \\"workspaces": [
-                    \\  "path/to/package"
-                    \\]
+                    \\  <r><green>"workspaces"<r>: [
+                    \\    <green>"path/to/package"<r>
+                    \\  ]
                 , .{}) catch {};
                 return error.InvalidPackageJSON;
             };
@@ -2983,7 +3739,7 @@ pub const Package = extern struct {
                             item.loc,
                             allocator,
                             "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
-                            .{ @errorName(err), input_path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                            .{ @errorName(err), input_path, bun.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
                         ) catch {};
                     },
                 }
@@ -2996,17 +3752,21 @@ pub const Package = extern struct {
                 builder.count(workspace_entry.name);
                 builder.count(input_path);
                 builder.cap += bun.MAX_PATH_BYTES;
+                if (workspace_entry.version) |version_string| {
+                    builder.count(version_string);
+                }
             }
 
             try workspace_names.insert(input_path, .{
                 .name = workspace_entry.name,
+                .name_loc = workspace_entry.name_loc,
                 .version = workspace_entry.version,
             });
         }
 
         if (asterisked_workspace_paths.items.len > 0) {
             // max path bytes is not enough in real codebases
-            var second_buf = allocator.create([4096]u8) catch unreachable;
+            const second_buf = allocator.create([4096]u8) catch unreachable;
             var second_buf_fixed = std.heap.FixedBufferAllocator.init(second_buf);
             defer allocator.destroy(second_buf);
 
@@ -3019,9 +3779,12 @@ pub const Package = extern struct {
                 dir_prefix = dir_prefix[0 .. strings.indexOfChar(dir_prefix, '*') orelse continue];
                 if (dir_prefix.len == 0 or
                     strings.eqlComptime(dir_prefix, ".") or
-                    strings.eqlComptime(dir_prefix, "./"))
+                    strings.eqlComptime(dir_prefix, &.{ '.', std.fs.path.sep }))
                 {
-                    dir_prefix = ".";
+                    if (comptime Environment.isWindows)
+                        dir_prefix = Fs.FileSystem.instance.top_level_dir
+                    else
+                        dir_prefix = ".";
                 }
 
                 const entries_option = FileSystem.instance.fs.readDirectory(
@@ -3030,7 +3793,7 @@ pub const Package = extern struct {
                     0,
                     true,
                 ) catch |err| switch (err) {
-                    error.FileNotFound => {
+                    error.ENOENT => {
                         log.addWarningFmt(
                             source,
                             loc,
@@ -3040,7 +3803,7 @@ pub const Package = extern struct {
                         ) catch {};
                         continue;
                     },
-                    error.NotDir => {
+                    error.ENOTDIR => {
                         log.addWarningFmt(
                             source,
                             loc,
@@ -3064,32 +3827,29 @@ pub const Package = extern struct {
                     if (entry.kind(&Fs.FileSystem.instance.fs, true) != .dir) continue;
 
                     var parts = [2]string{ entry.dir, entry.base() };
-                    var entry_path = Path.joinAbsStringBufZ(
+                    const entry_path = Path.joinAbsStringBufZ(
                         Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
                         filepath_buf,
                         &parts,
                         .auto,
                     );
 
-                    if (entry.cache.fd == 0) {
-                        entry.cache.fd = bun.toFD(std.os.openatZ(
-                            std.fs.cwd().fd,
+                    if (entry.cache.fd == .zero) {
+                        entry.cache.fd = bun.toFD(bun.sys.open(
                             entry_path,
-                            std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY,
+                            std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.RDONLY,
                             0,
-                        ) catch continue);
+                        ).unwrap() catch continue);
                     }
 
                     const dir_fd = entry.cache.fd;
-                    std.debug.assert(dir_fd != 0); // kind() should've opened
+                    std.debug.assert(dir_fd != bun.invalid_fd); // kind() should've opened
                     defer fallback.fixed_buffer_allocator.reset();
 
                     const workspace_entry = processWorkspaceName(
                         allocator,
                         workspace_allocator,
-                        std.fs.Dir{
-                            .fd = bun.fdcast(dir_fd),
-                        },
+                        dir_fd.asDir(),
                         "",
                         filepath_buf,
                         workspace_name_buf,
@@ -3138,6 +3898,7 @@ pub const Package = extern struct {
                     try workspace_names.insert(workspace_path, .{
                         .name = workspace_entry.name,
                         .version = workspace_entry.version,
+                        .name_loc = workspace_entry.name_loc,
                     });
                 }
             }
@@ -3153,7 +3914,7 @@ pub const Package = extern struct {
                 a: usize,
                 b: usize,
             ) bool {
-                return std.mem.order(u8, self.values[a].name, self.values[b].name) == .lt;
+                return strings.order(self.values[a].name, self.values[b].name) == .lt;
             }
         }{
             .values = workspace_names.values(),
@@ -3270,6 +4031,28 @@ pub const Package = extern struct {
         var workspace_names = WorkspaceMap.init(allocator);
         defer workspace_names.deinit();
 
+        var optional_peer_dependencies = std.ArrayHashMap(PackageNameHash, void, ArrayIdentityContext.U64, false).init(allocator);
+        defer optional_peer_dependencies.deinit();
+
+        if (json.asProperty("peerDependenciesMeta")) |peer_dependencies_meta| {
+            if (peer_dependencies_meta.expr.data == .e_object) {
+                const props = peer_dependencies_meta.expr.data.e_object.properties.slice();
+                try optional_peer_dependencies.ensureUnusedCapacity(props.len);
+                for (props) |prop| {
+                    if (prop.value.?.asProperty("optional")) |optional| {
+                        if (optional.expr.data != .e_boolean or !optional.expr.data.e_boolean.value) {
+                            continue;
+                        }
+
+                        optional_peer_dependencies.putAssumeCapacity(
+                            String.Builder.stringHash(prop.key.?.asString(allocator) orelse unreachable),
+                            {},
+                        );
+                    }
+                }
+            }
+        }
+
         inline for (dependency_groups) |group| {
             if (json.asProperty(group.prop)) |dependencies_q| brk: {
                 switch (dependencies_q.expr.data) {
@@ -3277,9 +4060,9 @@ pub const Package = extern struct {
                         if (!group.behavior.isWorkspace()) {
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
                                 \\{0s} expects a map of specifiers, e.g.
-                                \\"{0s}": {{
-                                \\  "bun": "latest"
-                                \\}}
+                                \\  <r><green>"{0s}"<r>: {{
+                                \\    <green>"bun"<r>: <green>"latest"<r>
+                                \\  }}
                             , .{group.prop}) catch {};
                             return error.InvalidPackageJSON;
                         }
@@ -3320,29 +4103,23 @@ pub const Package = extern struct {
                             }
 
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
+                            // TODO: what if we could comptime call the syntax highlighter
                                 \\Workspaces expects an array of strings, e.g.
-                                \\"workspaces": [
-                                \\  "path/to/package"
-                                \\]
+                                \\  <r><green>"workspaces"<r>: [
+                                \\    <green>"path/to/package"<r>
+                                \\  ]
                             , .{}) catch {};
                             return error.InvalidPackageJSON;
                         }
                         for (obj.properties.slice()) |item| {
-                            const key = item.key.?.asString(allocator) orelse {
-                                log.addErrorFmt(&source, item.key.?.loc, allocator,
-                                    \\{0s} expects a map of specifiers, e.g.
-                                    \\"{0s}": {{
-                                    \\  "bun": "latest"
-                                    \\}}
-                                , .{group.prop}) catch {};
-                                return error.InvalidPackageJSON;
-                            };
+                            const key = item.key.?.asString(allocator).?;
                             const value = item.value.?.asString(allocator) orelse {
                                 log.addErrorFmt(&source, item.value.?.loc, allocator,
+                                // TODO: what if we could comptime call the syntax highlighter
                                     \\{0s} expects a map of specifiers, e.g.
-                                    \\"{0s}": {{
-                                    \\  "bun": "latest"
-                                    \\}}
+                                    \\  <r><green>"{0s}"<r>: {{
+                                    \\    <green>"bun"<r>: <green>"latest"<r>
+                                    \\  }}
                                 , .{group.prop}) catch {};
                                 return error.InvalidPackageJSON;
                             };
@@ -3361,17 +4138,18 @@ pub const Package = extern struct {
                     else => {
                         if (group.behavior.isWorkspace()) {
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
+                            // TODO: what if we could comptime call the syntax highlighter
                                 \\Workspaces expects an array of strings, e.g.
-                                \\"workspaces": [
-                                \\  "path/to/package"
-                                \\]
+                                \\  <r><green>"workspaces"<r>: [
+                                \\    <green>"path/to/package"<r>
+                                \\  ]
                             , .{}) catch {};
                         } else {
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
                                 \\{0s} expects a map of specifiers, e.g.
-                                \\"{0s}": {{
-                                \\  "bun": "latest"
-                                \\}}
+                                \\  <r><green>"{0s}"<r>: {{
+                                \\    <green>"bun"<r>: <green>"latest"<r>
+                                \\  }}
                             , .{group.prop}) catch {};
                         }
                         return error.InvalidPackageJSON;
@@ -3389,9 +4167,9 @@ pub const Package = extern struct {
                             const name = item.asString(allocator) orelse {
                                 log.addErrorFmt(&source, q.loc, allocator,
                                     \\trustedDependencies expects an array of strings, e.g.
-                                    \\"trustedDependencies": [
-                                    \\  "package_name"
-                                    \\]
+                                    \\  <r><green>"trustedDependencies"<r>: [
+                                    \\    <green>"package_name"<r>
+                                    \\  ]
                                 , .{}) catch {};
                                 return error.InvalidPackageJSON;
                             };
@@ -3401,14 +4179,18 @@ pub const Package = extern struct {
                     else => {
                         log.addErrorFmt(&source, q.loc, allocator,
                             \\trustedDependencies expects an array of strings, e.g.
-                            \\"trustedDependencies": [
-                            \\  "package_name"
-                            \\]
+                            \\  <r><green>"trustedDependencies"<r>: [
+                            \\    <green>"package_name"<r>
+                            \\  ]
                         , .{}) catch {};
                         return error.InvalidPackageJSON;
                     },
                 }
             }
+        }
+
+        if (comptime features.is_main) {
+            lockfile.overrides.parseCount(lockfile, json, &string_builder);
         }
 
         try string_builder.allocate();
@@ -3545,8 +4327,99 @@ pub const Package = extern struct {
 
         inline for (dependency_groups) |group| {
             if (group.behavior.isWorkspace()) {
+                var seen_workspace_names = NameHashSet{};
+                defer seen_workspace_names.deinit(allocator);
                 for (workspace_names.values(), workspace_names.keys()) |entry, path| {
+
+                    // workspace names from their package jsons. duplicates not allowed
+                    const gop = try seen_workspace_names.getOrPut(allocator, @truncate(String.Builder.stringHash(entry.name)));
+                    if (gop.found_existing) {
+                        // this path does alot of extra work to format the error message
+                        // but this is ok because the install is going to fail anyways, so this
+                        // has zero effect on the happy path.
+                        var cwd_buf: bun.PathBuffer = undefined;
+                        const cwd = try bun.getcwd(&cwd_buf);
+
+                        const num_notes = count: {
+                            var i: usize = 0;
+                            for (workspace_names.values()) |value| {
+                                if (strings.eql(value.name, entry.name))
+                                    i += 1;
+                            }
+                            break :count i;
+                        };
+                        const notes = notes: {
+                            var notes = try allocator.alloc(logger.Data, num_notes);
+                            var i: usize = 0;
+                            for (workspace_names.values(), workspace_names.keys()) |value, note_path| {
+                                if (note_path.ptr == path.ptr) continue;
+                                if (strings.eql(value.name, entry.name)) {
+                                    const note_abs_path = allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)) catch bun.outOfMemory();
+
+                                    const note_src = src: {
+                                        var workspace_file = std.fs.openFileAbsoluteZ(note_abs_path, .{ .mode = .read_only }) catch {
+                                            break :src logger.Source.initEmptyFile(note_abs_path);
+                                        };
+                                        defer workspace_file.close();
+
+                                        // TODO: when are these bytes supposed to be freed?
+                                        const workspace_bytes = try workspace_file.readToEndAlloc(allocator, std.math.maxInt(usize));
+                                        // defer allocator.free(workspace_bytes);
+                                        break :src logger.Source.initPathString(note_abs_path, workspace_bytes);
+                                    };
+
+                                    notes[i] = .{
+                                        .text = "Package name is also declared here",
+                                        .location = logger.Location.initOrNull(&note_src, note_src.rangeOfString(value.name_loc)),
+                                    };
+                                    i += 1;
+                                }
+                            }
+                            break :notes notes[0..i];
+                        };
+
+                        const abs_path = Path.joinAbsStringZ(cwd, &.{ path, "package.json" }, .auto);
+
+                        const src = src: {
+                            var workspace_file = std.fs.openFileAbsoluteZ(abs_path, .{ .mode = .read_only }) catch {
+                                break :src logger.Source.initEmptyFile(abs_path);
+                            };
+                            defer workspace_file.close();
+
+                            // TODO: when are these bytes supposed to be freed?
+                            const workspace_bytes = try workspace_file.readToEndAlloc(allocator, std.math.maxInt(usize));
+                            // defer allocator.free(workspace_bytes);
+                            break :src logger.Source.initPathString(abs_path, workspace_bytes);
+                        };
+
+                        log.addRangeErrorFmtWithNotes(
+                            &src,
+                            src.rangeOfString(entry.name_loc),
+                            allocator,
+                            notes,
+                            "Workspace name \"{s}\" already exists",
+                            .{
+                                entry.name,
+                            },
+                        ) catch {};
+                        return error.InstallFailed;
+                    }
+
                     const external_name = string_builder.append(ExternalString, entry.name);
+
+                    const workspace_version = brk: {
+                        if (entry.version) |version_string| {
+                            const external_version = string_builder.append(ExternalString, version_string);
+                            allocator.free(version_string);
+                            const sliced = external_version.value.sliced(lockfile.buffers.string_bytes.items);
+                            const result = Semver.Version.parse(sliced);
+                            if (result.valid and result.wildcard == .none) {
+                                break :brk result.version.min();
+                            }
+                        }
+
+                        break :brk null;
+                    };
 
                     if (try parseDependency(
                         lockfile,
@@ -3560,14 +4433,24 @@ pub const Package = extern struct {
                         total_dependencies_count,
                         in_workspace,
                         .workspace,
-                        entry.version,
+                        workspace_version,
                         external_name,
                         path,
                         logger.Loc.Empty,
                         logger.Loc.Empty,
-                    )) |dep| {
+                    )) |_dep| {
+                        var dep = _dep;
+                        if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {
+                            dep.behavior = dep.behavior.setOptional(true);
+                        }
+
                         package_dependencies[total_dependencies_count] = dep;
                         total_dependencies_count += 1;
+
+                        try lockfile.workspace_paths.put(allocator, external_name.hash, dep.version.value.workspace);
+                        if (workspace_version) |version| {
+                            try lockfile.workspace_versions.put(allocator, external_name.hash, version);
+                        }
                     }
                 }
             } else {
@@ -3597,7 +4480,12 @@ pub const Package = extern struct {
                                     version,
                                     key.loc,
                                     value.loc,
-                                )) |dep| {
+                                )) |_dep| {
+                                    var dep = _dep;
+                                    if (group.behavior.isPeer() and optional_peer_dependencies.contains(external_name.hash)) {
+                                        dep.behavior = dep.behavior.setOptional(true);
+                                    }
+
                                     package_dependencies[total_dependencies_count] = dep;
                                     total_dependencies_count += 1;
                                 }
@@ -3609,7 +4497,7 @@ pub const Package = extern struct {
             }
         }
 
-        std.sort.block(
+        std.sort.pdq(
             Dependency,
             package_dependencies[0..total_dependencies_count],
             lockfile.buffers.string_bytes.items,
@@ -3627,24 +4515,34 @@ pub const Package = extern struct {
         lockfile.buffers.dependencies.items = lockfile.buffers.dependencies.items.ptr[0..new_len];
         lockfile.buffers.resolutions.items = lockfile.buffers.resolutions.items.ptr[0..new_len];
 
+        // This function depends on package.dependencies being set, so it is done at the very end.
+        if (comptime features.is_main) {
+            try lockfile.overrides.parseAppend(lockfile, package, log, source, json, &string_builder);
+        }
+
         string_builder.clamp();
     }
 
-    pub const List = std.MultiArrayList(Lockfile.Package);
+    pub const List = bun.MultiArrayList(Lockfile.Package);
 
     pub const Meta = extern struct {
+        // TODO: when we bump the lockfile version, we should reorder this to:
+        // id(32), arch(16), os(16), id(8), man_dir(8), integrity(72 align 8)
+        // should allow us to remove padding bytes
+
+        // TODO: remove origin. it doesnt do anything and can be inferred from the resolution
         origin: Origin = Origin.npm,
         _padding_origin: u8 = 0,
 
         arch: Npm.Architecture = Npm.Architecture.all,
         os: Npm.OperatingSystem = Npm.OperatingSystem.all,
-
         _padding_os: u16 = 0,
 
         id: PackageID = invalid_package_id,
 
         man_dir: String = String{},
         integrity: Integrity = Integrity{},
+        _padding_integrity: [3]u8 = .{0} ** 3,
 
         /// Does the `cpu` arch and `os` match the requirements listed in the package?
         /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
@@ -3657,11 +4555,14 @@ pub const Package = extern struct {
         }
 
         pub fn clone(this: *const Meta, id: PackageID, buf: []const u8, comptime StringBuilderType: type, builder: StringBuilderType) Meta {
-            var new = this.*;
-            new.id = id;
-            new.man_dir = builder.append(String, this.man_dir.slice(buf));
-
-            return new;
+            return Meta{
+                .id = id,
+                .man_dir = builder.append(String, this.man_dir.slice(buf)),
+                .integrity = this.integrity,
+                .arch = this.arch,
+                .os = this.os,
+                .origin = this.origin,
+            };
         }
     };
 
@@ -3723,13 +4624,13 @@ pub const Package = extern struct {
         const AlignmentType = sizes.Types[sizes.fields[0]];
 
         pub fn save(list: Lockfile.Package.List, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
-            try writer.writeIntLittle(u64, list.len);
-            try writer.writeIntLittle(u64, @alignOf(@TypeOf(list.bytes)));
-            try writer.writeIntLittle(u64, sizes.Types.len);
+            try writer.writeInt(u64, list.len, .little);
+            try writer.writeInt(u64, @alignOf(@TypeOf(list.bytes)), .little);
+            try writer.writeInt(u64, sizes.Types.len, .little);
             const begin_at = try stream.getPos();
-            try writer.writeIntLittle(u64, 0);
+            try writer.writeInt(u64, 0, .little);
             const end_at = try stream.getPos();
-            try writer.writeIntLittle(u64, 0);
+            try writer.writeInt(u64, 0, .little);
 
             _ = try Aligner.write(@TypeOf(list.bytes), Writer, writer, try stream.getPos());
 
@@ -3738,6 +4639,8 @@ pub const Package = extern struct {
 
             inline for (FieldsEnum.fields) |field| {
                 const value = sliced.items(@field(Lockfile.Package.List.Field, field.name));
+                if (comptime Environment.allow_assert)
+                    debug("save(\"{s}\") = {d} bytes", .{ field.name, std.mem.sliceAsBytes(value).len });
 
                 comptime assertNoUninitializedPadding(@TypeOf(value));
                 try writer.writeAll(std.mem.sliceAsBytes(value));
@@ -3745,8 +4648,8 @@ pub const Package = extern struct {
 
             const really_end_at = try stream.getPos();
 
-            _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&really_begin_at), begin_at);
-            _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&really_end_at), end_at);
+            _ = stream.pwrite(std.mem.asBytes(&really_begin_at), begin_at);
+            _ = stream.pwrite(std.mem.asBytes(&really_end_at), end_at);
         }
 
         pub fn load(
@@ -3756,11 +4659,11 @@ pub const Package = extern struct {
         ) !Lockfile.Package.List {
             var reader = stream.reader();
 
-            const list_len = try reader.readIntLittle(u64);
+            const list_len = try reader.readInt(u64, .little);
             if (list_len > std.math.maxInt(u32) - 1)
                 return error.@"Lockfile validation failed: list is impossibly long";
 
-            const input_alignment = try reader.readIntLittle(u64);
+            const input_alignment = try reader.readInt(u64, .little);
 
             var list = Lockfile.Package.List{};
             const Alingee = @TypeOf(list.bytes);
@@ -3769,7 +4672,7 @@ pub const Package = extern struct {
                 return error.@"Lockfile validation failed: alignment mismatch";
             }
 
-            const field_count = try reader.readIntLittle(u64);
+            const field_count = try reader.readInt(u64, .little);
             switch (field_count) {
                 sizes.Types.len => {},
                 // "scripts" field is absent before v0.6.8
@@ -3780,8 +4683,8 @@ pub const Package = extern struct {
                 },
             }
 
-            const begin_at = try reader.readIntLittle(u64);
-            const end_at = try reader.readIntLittle(u64);
+            const begin_at = try reader.readInt(u64, .little);
+            const end_at = try reader.readInt(u64, .little);
             if (begin_at > end or end_at > end or begin_at > end_at) {
                 return error.@"Lockfile validation failed: invalid package list range";
             }
@@ -3794,7 +4697,7 @@ pub const Package = extern struct {
                 const value = sliced.items(@field(Lockfile.Package.List.Field, field.name));
 
                 comptime assertNoUninitializedPadding(@TypeOf(value));
-                var bytes = std.mem.sliceAsBytes(value);
+                const bytes = std.mem.sliceAsBytes(value);
                 const end_pos = stream.pos + bytes.len;
                 if (end_pos <= end_at) {
                     @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
@@ -3819,16 +4722,20 @@ pub fn deinit(this: *Lockfile) void {
     this.trusted_dependencies.deinit(this.allocator);
     this.workspace_paths.deinit(this.allocator);
     this.workspace_versions.deinit(this.allocator);
+    this.overrides.deinit(this.allocator);
 }
 
 const Buffers = struct {
     trees: Tree.List = .{},
     hoisted_dependencies: DependencyIDList = .{},
+    /// This is the underlying buffer used for the `resolutions` external slices inside of `Package`
+    /// Should be the same length as `dependencies`
     resolutions: PackageIDList = .{},
+    /// This is the underlying buffer used for the `dependencies` external slices inside of `Package`
     dependencies: DependencyList = .{},
+    /// This is the underlying buffer used for any `Semver.ExternalString` instance in the lockfile
     extern_strings: ExternalStringBuffer = .{},
-    // node_modules_folders: NodeModulesFolderList = NodeModulesFolderList{},
-    // node_modules_package_ids: PackageIDList = PackageIDList{},
+    /// This is where all non-inlinable `Semver.String`s are stored.
     string_bytes: StringBuffer = .{},
 
     pub fn deinit(this: *Buffers, allocator: Allocator) void {
@@ -3901,8 +4808,8 @@ const Buffers = struct {
         const PointerType = std.meta.Child(@TypeOf(arraylist.items.ptr));
 
         var reader = stream.reader();
-        const start_pos = try reader.readIntLittle(u64);
-        const end_pos = try reader.readIntLittle(u64);
+        const start_pos = try reader.readInt(u64, .little);
+        const end_pos = try reader.readInt(u64, .little);
 
         stream.pos = end_pos;
         const byte_len = end_pos - start_pos;
@@ -3929,8 +4836,8 @@ const Buffers = struct {
         const bytes = std.mem.sliceAsBytes(array);
 
         const start_pos = try stream.getPos();
-        try writer.writeIntLittle(u64, 0xDEADBEEF);
-        try writer.writeIntLittle(u64, 0xDEADBEEF);
+        try writer.writeInt(u64, 0xDEADBEEF, .little);
+        try writer.writeInt(u64, 0xDEADBEEF, .little);
 
         const prefix = comptime std.fmt.comptimePrint(
             "\n<{s}> {d} sizeof, {d} alignof\n",
@@ -3951,14 +4858,14 @@ const Buffers = struct {
             const positioned = [2]u64{ real_start_pos, real_end_pos };
             var written: usize = 0;
             while (written < 16) {
-                written += try std.os.pwrite(stream.handle, std.mem.asBytes(&positioned)[written..], start_pos + written);
+                written += stream.pwrite(std.mem.asBytes(&positioned)[written..], start_pos + written);
             }
         } else {
             const real_end_pos = try stream.getPos();
             const positioned = [2]u64{ real_end_pos, real_end_pos };
             var written: usize = 0;
             while (written < 16) {
-                written += try std.os.pwrite(stream.handle, std.mem.asBytes(&positioned)[written..], start_pos + written);
+                written += stream.pwrite(std.mem.asBytes(&positioned)[written..], start_pos + written);
             }
         }
     }
@@ -3972,7 +4879,7 @@ const Buffers = struct {
             // Dependencies have to be converted to .toExternal first
             // We store pointers in Version.Value, so we can't just write it directly
             if (comptime strings.eqlComptime(name, "dependencies")) {
-                var remaining = this.dependencies.items;
+                const remaining = this.dependencies.items;
 
                 // It would be faster to buffer these instead of one big allocation
                 var to_clone = try std.ArrayListUnmanaged(Dependency.External).initCapacity(allocator, remaining.len);
@@ -3984,7 +4891,7 @@ const Buffers = struct {
 
                 try writeArray(StreamType, stream, Writer, writer, []Dependency.External, to_clone.items);
             } else {
-                var list = @field(this, name);
+                const list = @field(this, name);
                 const items = list.items;
                 const Type = @TypeOf(items);
                 if (comptime Type == Tree) {
@@ -4068,7 +4975,7 @@ const Buffers = struct {
             // }
         }
 
-        var external_dependency_list = external_dependency_list_.items;
+        const external_dependency_list = external_dependency_list_.items;
         // Dependencies are serialized separately.
         // This is unfortunate. However, not using pointers for Semver Range's make the code a lot more complex.
         this.dependencies = try DependencyList.initCapacity(allocator, external_dependency_list.len);
@@ -4084,7 +4991,7 @@ const Buffers = struct {
 
         {
             var external_deps = external_dependency_list.ptr;
-            var dependencies = this.dependencies.items;
+            const dependencies = this.dependencies.items;
             if (comptime Environment.allow_assert) std.debug.assert(external_dependency_list.len == dependencies.len);
             for (dependencies) |*dep| {
                 dep.* = Dependency.toDependency(external_deps[0], extern_context);
@@ -4118,29 +5025,131 @@ pub const Serializer = struct {
     pub const version = "bun-lockfile-format-v0\n";
     const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
-    pub fn save(this: *Lockfile, comptime StreamType: type, stream: StreamType) !void {
+    const has_workspace_package_ids_tag: u64 = @bitCast([_]u8{ 'w', 'O', 'r', 'K', 's', 'P', 'a', 'C' });
+    const has_trusted_dependencies_tag: u64 = @bitCast([_]u8{ 't', 'R', 'u', 'S', 't', 'E', 'D', 'd' });
+    const has_overrides_tag: u64 = @bitCast([_]u8{ 'o', 'V', 'e', 'R', 'r', 'i', 'D', 's' });
+
+    pub fn save(this: *Lockfile, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
         var old_package_list = this.packages;
         this.packages = try this.packages.clone(z_allocator);
         old_package_list.deinit(this.allocator);
 
-        var writer = stream.writer();
+        var writer = bytes.writer();
         try writer.writeAll(header_bytes);
-        try writer.writeIntLittle(u32, @intFromEnum(this.format));
+        try writer.writeInt(u32, @intFromEnum(this.format), .little);
 
         try writer.writeAll(&this.meta_hash);
 
-        const pos = try stream.getPos();
-        try writer.writeIntLittle(u64, 0);
+        end_pos.* = bytes.items.len;
+        try writer.writeInt(u64, 0, .little);
 
-        try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(&writer), &writer);
-        try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(&writer), &writer);
-        try writer.writeIntLittle(u64, 0);
-        const end = try stream.getPos();
+        const StreamType = struct {
+            bytes: *std.ArrayList(u8),
+            pub inline fn getPos(s: @This()) anyerror!usize {
+                return s.bytes.items.len;
+            }
+
+            pub fn pwrite(
+                s: @This(),
+                data: []const u8,
+                index: usize,
+            ) usize {
+                @memcpy(s.bytes.items[index..][0..data.len], data);
+                return data.len;
+            }
+        };
+        const stream = StreamType{ .bytes = bytes };
+
+        try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(writer), writer);
+        try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(writer), writer);
+        try writer.writeInt(u64, 0, .little);
+
+        // < Bun v1.0.4 stopped right here when reading the lockfile
+        // So we add an extra 8 byte tag to say "hey, there's more data here"
+        if (this.workspace_versions.count() > 0) {
+            try writer.writeAll(std.mem.asBytes(&has_workspace_package_ids_tag));
+
+            // We need to track the "version" field in "package.json" of workspace member packages
+            // We do not necessarily have that in the Resolution struct. So we store it here.
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(writer),
+                writer,
+                []PackageNameHash,
+                this.workspace_versions.keys(),
+            );
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(writer),
+                writer,
+                []Semver.Version,
+                this.workspace_versions.values(),
+            );
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(writer),
+                writer,
+                []PackageNameHash,
+                this.workspace_paths.keys(),
+            );
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(writer),
+                writer,
+                []String,
+                this.workspace_paths.values(),
+            );
+        }
+
+        if (this.trusted_dependencies.count() > 0) {
+            try writer.writeAll(std.mem.asBytes(&has_trusted_dependencies_tag));
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(writer),
+                writer,
+                []u32,
+                this.trusted_dependencies.keys(),
+            );
+        }
+
+        if (this.overrides.map.count() > 0) {
+            try writer.writeAll(std.mem.asBytes(&has_overrides_tag));
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(writer),
+                writer,
+                []PackageNameHash,
+                this.overrides.map.keys(),
+            );
+            var external_overrides = try std.ArrayListUnmanaged(Dependency.External).initCapacity(z_allocator, this.overrides.map.count());
+            defer external_overrides.deinit(z_allocator);
+            external_overrides.items.len = this.overrides.map.count();
+            for (external_overrides.items, this.overrides.map.values()) |*dest, src| {
+                dest.* = src.toExternal();
+            }
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(writer),
+                writer,
+                []Dependency.External,
+                external_overrides.items,
+            );
+        }
+
+        total_size.* = try stream.getPos();
 
         try writer.writeAll(&alignment_bytes_to_repeat_buffer);
-
-        _ = try std.os.pwrite(stream.handle, std.mem.asBytes(&end), pos);
-        try std.os.ftruncate(stream.handle, try stream.getPos());
     }
     pub fn load(
         lockfile: *Lockfile,
@@ -4150,13 +5159,13 @@ pub const Serializer = struct {
     ) !void {
         var reader = stream.reader();
         var header_buf_: [header_bytes.len]u8 = undefined;
-        var header_buf = header_buf_[0..try reader.readAll(&header_buf_)];
+        const header_buf = header_buf_[0..try reader.readAll(&header_buf_)];
 
         if (!strings.eqlComptime(header_buf, header_bytes)) {
             return error.InvalidLockfile;
         }
 
-        var format = try reader.readIntLittle(u32);
+        const format = try reader.readInt(u32, .little);
         if (format != @intFromEnum(Lockfile.FormatVersion.current)) {
             return error.@"Outdated lockfile version";
         }
@@ -4166,7 +5175,7 @@ pub const Serializer = struct {
 
         _ = try reader.readAll(&lockfile.meta_hash);
 
-        const total_buffer_size = try reader.readIntLittle(u64);
+        const total_buffer_size = try reader.readInt(u64, .little);
         if (total_buffer_size > stream.buffer.len) {
             return error.@"Lockfile is missing data";
         }
@@ -4177,34 +5186,166 @@ pub const Serializer = struct {
             allocator,
         );
         lockfile.buffers = try Lockfile.Buffers.load(stream, allocator, log);
-        if ((try stream.reader().readIntLittle(u64)) != 0) {
+        if ((try stream.reader().readInt(u64, .little)) != 0) {
             return error.@"Lockfile is malformed (expected 0 at the end)";
         }
 
-        if (comptime Environment.allow_assert) std.debug.assert(stream.pos == total_buffer_size);
+        const has_workspace_name_hashes = false;
+        // < Bun v1.0.4 stopped right here when reading the lockfile
+        // So we add an extra 8 byte tag to say "hey, there's more data here"
+        {
+            const remaining_in_buffer = total_buffer_size -| stream.pos;
 
-        lockfile.scratch = Lockfile.Scratch.init(allocator);
+            if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+                const next_num = try reader.readInt(u64, .little);
+                if (next_num == has_workspace_package_ids_tag) {
+                    {
+                        var workspace_package_name_hashes = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(PackageNameHash),
+                        );
+                        defer workspace_package_name_hashes.deinit(allocator);
+
+                        var workspace_versions_list = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(Semver.Version),
+                        );
+                        comptime {
+                            if (PackageNameHash != @TypeOf((VersionHashMap.KV{ .key = undefined, .value = undefined }).key)) {
+                                @compileError("VersionHashMap must be in sync with serialization");
+                            }
+                            if (Semver.Version != @TypeOf((VersionHashMap.KV{ .key = undefined, .value = undefined }).value)) {
+                                @compileError("VersionHashMap must be in sync with serialization");
+                            }
+                        }
+                        defer workspace_versions_list.deinit(allocator);
+                        try lockfile.workspace_versions.ensureTotalCapacity(allocator, workspace_versions_list.items.len);
+                        lockfile.workspace_versions.entries.len = workspace_versions_list.items.len;
+                        @memcpy(lockfile.workspace_versions.keys(), workspace_package_name_hashes.items);
+                        @memcpy(lockfile.workspace_versions.values(), workspace_versions_list.items);
+                        try lockfile.workspace_versions.reIndex(allocator);
+                    }
+
+                    {
+                        var workspace_paths_hashes = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(PackageNameHash),
+                        );
+                        defer workspace_paths_hashes.deinit(allocator);
+                        var workspace_paths_strings = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(String),
+                        );
+                        defer workspace_paths_strings.deinit(allocator);
+
+                        try lockfile.workspace_paths.ensureTotalCapacity(allocator, workspace_paths_strings.items.len);
+
+                        lockfile.workspace_paths.entries.len = workspace_paths_strings.items.len;
+                        @memcpy(lockfile.workspace_paths.keys(), workspace_paths_hashes.items);
+                        @memcpy(lockfile.workspace_paths.values(), workspace_paths_strings.items);
+                        try lockfile.workspace_paths.reIndex(allocator);
+                    }
+                } else {
+                    stream.pos -= 8;
+                }
+            }
+        }
 
         {
-            lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
-            lockfile.string_pool = StringPool.initContext(allocator, .{});
-            try lockfile.package_index.ensureTotalCapacity(@as(u32, @truncate(lockfile.packages.len)));
+            const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+            if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+                const next_num = try reader.readInt(u64, .little);
+                if (next_num == has_trusted_dependencies_tag) {
+                    var trusted_dependencies_hashes = try Lockfile.Buffers.readArray(
+                        stream,
+                        allocator,
+                        std.ArrayListUnmanaged(u32),
+                    );
+                    defer trusted_dependencies_hashes.deinit(allocator);
+
+                    try lockfile.trusted_dependencies.ensureTotalCapacity(allocator, trusted_dependencies_hashes.items.len);
+
+                    lockfile.trusted_dependencies.entries.len = trusted_dependencies_hashes.items.len;
+                    @memcpy(lockfile.trusted_dependencies.keys(), trusted_dependencies_hashes.items);
+                    try lockfile.trusted_dependencies.reIndex(allocator);
+                } else {
+                    stream.pos -= 8;
+                }
+            }
+        }
+
+        {
+            const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+            if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+                const next_num = try reader.readInt(u64, .little);
+                if (next_num == has_overrides_tag) {
+                    var overrides_name_hashes = try Lockfile.Buffers.readArray(
+                        stream,
+                        allocator,
+                        std.ArrayListUnmanaged(PackageNameHash),
+                    );
+                    defer overrides_name_hashes.deinit(allocator);
+
+                    var map = lockfile.overrides.map;
+                    defer lockfile.overrides.map = map;
+
+                    try map.ensureTotalCapacity(allocator, overrides_name_hashes.items.len);
+                    const override_versions_external = try Lockfile.Buffers.readArray(
+                        stream,
+                        allocator,
+                        std.ArrayListUnmanaged(Dependency.External),
+                    );
+                    const context: Dependency.Context = .{
+                        .allocator = allocator,
+                        .log = log,
+                        .buffer = lockfile.buffers.string_bytes.items,
+                    };
+                    for (overrides_name_hashes.items, override_versions_external.items) |name, value| {
+                        map.putAssumeCapacity(name, Dependency.toDependency(value, context));
+                    }
+                } else {
+                    stream.pos -= 8;
+                }
+            }
+        }
+
+        lockfile.scratch = Lockfile.Scratch.init(allocator);
+        lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
+        lockfile.string_pool = StringPool.initContext(allocator, .{});
+        try lockfile.package_index.ensureTotalCapacity(@as(u32, @truncate(lockfile.packages.len)));
+
+        if (!has_workspace_name_hashes) {
             const slice = lockfile.packages.slice();
             const name_hashes = slice.items(.name_hash);
             const resolutions = slice.items(.resolution);
             for (name_hashes, resolutions, 0..) |name_hash, resolution, id| {
                 try lockfile.getOrPutID(@as(PackageID, @truncate(id)), name_hash);
 
+                // compatibility with < Bun v1.0.4
                 switch (resolution.tag) {
                     .workspace => {
-                        try lockfile.workspace_paths.put(allocator, @as(u32, @truncate(name_hash)), resolution.value.workspace);
+                        try lockfile.workspace_paths.put(allocator, name_hash, resolution.value.workspace);
                     },
                     else => {},
                 }
             }
+        } else {
+            const slice = lockfile.packages.slice();
+            const name_hashes = slice.items(.name_hash);
+            for (name_hashes, 0..) |name_hash, id| {
+                try lockfile.getOrPutID(@as(PackageID, @truncate(id)), name_hash);
+            }
         }
 
-        // const end = try reader.readIntLittle(u64);
+        if (comptime Environment.allow_assert) std.debug.assert(stream.pos == total_buffer_size);
+
+        // const end = try reader.readInt(u64, .little);
     }
 };
 
@@ -4213,7 +5354,7 @@ pub fn hasMetaHashChanged(this: *Lockfile, print_name_version_string: bool) !boo
     this.meta_hash = try this.generateMetaHash(print_name_version_string);
     return !strings.eqlLong(&previous_meta_hash, &this.meta_hash, false);
 }
-fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash {
+pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash {
     if (this.packages.len <= 1)
         return zero_hash;
 
@@ -4250,7 +5391,7 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
     var has_scripts = false;
 
     inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
-        var scripts = @field(this.scripts, field_name);
+        const scripts = @field(this.scripts, field_name);
         for (scripts.items) |script| {
             if (script.script.len > 0) {
                 string_builder.fmtCount("{s}@{s}: {s}\n", .{ field_name, script.cwd, script.script });
@@ -4264,7 +5405,7 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
         string_builder.count(scripts_end);
     }
 
-    std.sort.block(
+    std.sort.pdq(
         PackageID,
         alphabetized_names,
         Lockfile.Package.Alphabetizer{
@@ -4286,7 +5427,7 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
     if (has_scripts) {
         _ = string_builder.append(scripts_begin);
         inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
-            var scripts = @field(this.scripts, field_name);
+            const scripts = @field(this.scripts, field_name);
             for (scripts.items) |script| {
                 if (script.script.len > 0) {
                     _ = string_builder.fmt("{s}@{s}: {s}\n", .{ field_name, script.cwd, script.script });
@@ -4316,6 +5457,7 @@ fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash 
 pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Version) ?PackageID {
     const name_hash = String.Builder.stringHash(package_name);
     const entry = this.package_index.get(name_hash) orelse return null;
+    const buf = this.buffers.string_bytes.items;
 
     switch (version.tag) {
         .npm => switch (entry) {
@@ -4323,7 +5465,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
                 const resolutions = this.packages.items(.resolution);
 
                 if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
-                if (version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
+                if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
                     return id;
                 }
             },
@@ -4332,7 +5474,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
 
                 for (ids.items) |id| {
                     if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
-                    if (version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
+                    if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
                         return id;
                     }
                 }
@@ -4342,4 +5484,326 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
     }
 
     return null;
+}
+
+/// The default list of trusted dependencies is a static hashmap
+const default_trusted_dependencies = brk: {
+    const max_values = 512;
+
+    var map: StaticHashMap([]const u8, u0, std.hash_map.StringContext, max_values) = .{};
+
+    // This file contains a list of dependencies that Bun runs `postinstall` on by default.
+    const data = @embedFile("./default-trusted-dependencies.txt");
+    @setEvalBranchQuota(99999);
+
+    var iter = std.mem.tokenizeAny(u8, data, " \n\t");
+    while (iter.next()) |dep| {
+        if (map.len == max_values) {
+            @compileError("default-trusted-dependencies.txt is too large, please increase 'max_values' in lockfile.zig");
+        }
+        map.putAssumeCapacity(dep, 0);
+    }
+
+    break :brk &map;
+};
+
+pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
+    if (this.hasTrustedDependencies()) {
+        const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
+        return this.trusted_dependencies.contains(hash) or default_trusted_dependencies.has(name);
+    }
+
+    // always search through default trusted dependencies
+    return default_trusted_dependencies.has(name);
+}
+
+pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependency, res: ?PackageID) !void {
+    const sb = this.buffers.string_bytes.items;
+    var buf: [2048]u8 = undefined;
+
+    try w.beginObject();
+    defer w.endObject() catch {};
+
+    try w.objectField("literal");
+    try w.write(dep.version.literal.slice(sb));
+
+    try w.objectField(@tagName(dep.version.tag));
+    switch (dep.version.tag) {
+        .uninitialized => try w.write(null),
+        .npm => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Dependency.Version.NpmInfo = dep.version.value.npm;
+
+            try w.objectField("name");
+            try w.write(info.name.slice(sb));
+
+            try w.objectField("version");
+            try w.write(try std.fmt.bufPrint(&buf, "{}", .{info.version}));
+        },
+        .dist_tag => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Dependency.Version.TagInfo = dep.version.value.dist_tag;
+
+            try w.objectField("name");
+            try w.write(info.name.slice(sb));
+
+            try w.objectField("tag");
+            try w.write(info.name.slice(sb));
+        },
+        .tarball => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Dependency.Version.TarballInfo = dep.version.value.tarball;
+            try w.objectField(@tagName(info.uri));
+            try w.write(switch (info.uri) {
+                inline else => |s| s.slice(sb),
+            });
+
+            try w.objectField("package_name");
+            try w.write(info.package_name.slice(sb));
+        },
+        .folder => {
+            try w.write(dep.version.value.folder.slice(sb));
+        },
+        .symlink => {
+            try w.write(dep.version.value.symlink.slice(sb));
+        },
+        .workspace => {
+            try w.write(dep.version.value.workspace.slice(sb));
+        },
+        .git => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Repository = dep.version.value.git;
+
+            try w.objectField("owner");
+            try w.write(info.owner.slice(sb));
+            try w.objectField("repo");
+            try w.write(info.repo.slice(sb));
+            try w.objectField("committish");
+            try w.write(info.committish.slice(sb));
+            try w.objectField("resolved");
+            try w.write(info.resolved.slice(sb));
+            try w.objectField("package_name");
+            try w.write(info.package_name.slice(sb));
+        },
+        .github => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info: Repository = dep.version.value.github;
+
+            try w.objectField("owner");
+            try w.write(info.owner.slice(sb));
+            try w.objectField("repo");
+            try w.write(info.repo.slice(sb));
+            try w.objectField("committish");
+            try w.write(info.committish.slice(sb));
+            try w.objectField("resolved");
+            try w.write(info.resolved.slice(sb));
+            try w.objectField("package_name");
+            try w.write(info.package_name.slice(sb));
+        },
+    }
+
+    try w.objectField("resolved_id");
+    try w.write(if (res) |r| if (r == invalid_package_id) null else r else null);
+
+    const behavior = try std.fmt.bufPrint(&buf, "{}", .{dep.behavior});
+    try w.objectField("behavior");
+    try w.write(behavior);
+}
+
+pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
+    var buf: [2048]u8 = undefined;
+    const sb = this.buffers.string_bytes.items;
+    try w.beginObject();
+    defer w.endObject() catch {};
+
+    try w.objectField("format");
+    try w.write(@tagName(this.format));
+    try w.objectField("meta_hash");
+    try w.write(std.fmt.bytesToHex(this.meta_hash, .lower));
+
+    {
+        try w.objectField("package_index");
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        var iter = this.package_index.iterator();
+        while (iter.next()) |it| {
+            const entry: PackageIndex.Entry = it.value_ptr.*;
+            const first_id = switch (entry) {
+                .PackageID => |id| id,
+                .PackageIDMultiple => |ids| ids.items[0],
+            };
+            const name = this.packages.items(.name)[first_id].slice(sb);
+            try w.objectField(name);
+            switch (entry) {
+                .PackageID => |id| try w.write(id),
+                .PackageIDMultiple => |ids| {
+                    try w.beginArray();
+                    for (ids.items) |id| {
+                        try w.write(id);
+                    }
+                    try w.endArray();
+                },
+            }
+        }
+    }
+    {
+        try w.objectField("packages");
+        try w.beginArray();
+        defer w.endArray() catch {};
+
+        for (0..this.packages.len) |i| {
+            const pkg: Package = this.packages.get(i);
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            try w.objectField("id");
+            try w.write(i);
+
+            try w.objectField("name");
+            try w.write(pkg.name.slice(sb));
+
+            try w.objectField("name_hash");
+            try w.write(pkg.name_hash);
+
+            try w.objectField("resolution");
+            if (pkg.resolution.tag == .uninitialized) {
+                try w.write(null);
+            } else {
+                const b = try std.fmt.bufPrint(&buf, "{s} {s}", .{ @tagName(pkg.resolution.tag), pkg.resolution.fmt(sb) });
+                try w.write(b);
+            }
+
+            try w.objectField("dependencies");
+            {
+                try w.beginObject();
+                defer w.endObject() catch {};
+
+                for (pkg.dependencies.get(this.buffers.dependencies.items), pkg.resolutions.get(this.buffers.resolutions.items)) |dep_, res| {
+                    const dep: Dependency = dep_;
+                    try w.objectField(dep.name.slice(sb));
+                    try this.jsonStringifyDependency(w, dep, res);
+                }
+            }
+
+            if (@as(u16, @intFromEnum(pkg.meta.arch)) != Npm.Architecture.all_value) {
+                try w.objectField("arch");
+                try w.beginArray();
+                defer w.endArray() catch {};
+
+                for (Npm.Architecture.NameMap.kvs) |kv| {
+                    if (pkg.meta.arch.has(kv.value)) {
+                        try w.write(kv.key);
+                    }
+                }
+            }
+
+            if (@as(u16, @intFromEnum(pkg.meta.os)) != Npm.OperatingSystem.all_value) {
+                try w.objectField("os");
+                try w.beginArray();
+                defer w.endArray() catch {};
+
+                for (Npm.OperatingSystem.NameMap.kvs) |kv| {
+                    if (pkg.meta.os.has(kv.value)) {
+                        try w.write(kv.key);
+                    }
+                }
+            }
+
+            try w.objectField("integrity");
+            if (pkg.meta.integrity.tag != .unknown) {
+                try w.write(try std.fmt.bufPrint(&buf, "{}", .{pkg.meta.integrity}));
+            } else {
+                try w.write(null);
+            }
+
+            try w.objectField("man_dir");
+            try w.write(pkg.meta.man_dir.slice(sb));
+
+            try w.objectField("origin");
+            try w.write(@tagName(pkg.meta.origin));
+
+            try w.objectField("bin");
+            switch (pkg.bin.tag) {
+                .none => try w.write(null),
+                .file => {
+                    try w.beginObject();
+                    defer w.endObject() catch {};
+
+                    try w.objectField("file");
+                    try w.write(pkg.bin.value.file.slice(sb));
+                },
+                .named_file => {
+                    try w.beginObject();
+                    defer w.endObject() catch {};
+
+                    try w.objectField("name");
+                    try w.write(pkg.bin.value.named_file[0].slice(sb));
+
+                    try w.objectField("file");
+                    try w.write(pkg.bin.value.named_file[1].slice(sb));
+                },
+                .dir => {
+                    try w.objectField("dir");
+                    try w.write(pkg.bin.value.dir.slice(sb));
+                },
+                .map => {
+                    try w.beginObject();
+                    defer w.endObject() catch {};
+
+                    const data: []const ExternalString = pkg.bin.value.map.get(this.buffers.extern_strings.items);
+                    var bin_i: usize = 0;
+                    while (bin_i < data.len) : (bin_i += 2) {
+                        try w.objectField(data[bin_i].slice(sb));
+                        try w.write(data[bin_i + 1].slice(sb));
+                    }
+                },
+            }
+
+            {
+                try w.objectField("scripts");
+                try w.beginObject();
+                defer w.endObject() catch {};
+
+                inline for (comptime std.meta.fieldNames(Lockfile.Scripts)) |field_name| {
+                    const script = @field(pkg.scripts, field_name).slice(sb);
+                    if (script.len > 0) {
+                        try w.objectField(field_name);
+                        try w.write(script);
+                    }
+                }
+            }
+        }
+    }
+
+    try w.objectField("workspace_paths");
+    {
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        for (this.workspace_paths.keys(), this.workspace_paths.values()) |k, v| {
+            try w.objectField(try std.fmt.bufPrint(&buf, "{d}", .{k}));
+            try w.write(v.slice(sb));
+        }
+    }
+    try w.objectField("workspace_versions");
+    {
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        for (this.workspace_versions.keys(), this.workspace_versions.values()) |k, v| {
+            try w.objectField(try std.fmt.bufPrint(&buf, "{d}", .{k}));
+            try w.write(try std.fmt.bufPrint(&buf, "{}", .{v.fmt(sb)}));
+        }
+    }
 }

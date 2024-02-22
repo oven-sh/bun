@@ -25,7 +25,7 @@
 #include "URLSearchParams.h"
 
 #include "DOMURL.h"
-#include "wtf/URLParser.h"
+#include <wtf/URLParser.h>
 #include "helpers.h"
 #include "JSURLSearchParams.h"
 
@@ -141,7 +141,7 @@ Vector<String> URLSearchParams::getAll(const String& name) const
     values.reserveInitialCapacity(m_pairs.size());
     for (const auto& pair : m_pairs) {
         if (pair.key == name)
-            values.uncheckedAppend(pair.value);
+            values.unsafeAppendWithoutCapacityCheck(pair.value);
     }
     values.shrinkToFit();
     return values;

@@ -45,6 +45,7 @@ class AbortSignal final : public RefCounted<AbortSignal>, public EventTargetWith
 public:
     static Ref<AbortSignal> create(ScriptExecutionContext*);
     WEBCORE_EXPORT ~AbortSignal();
+    using NativeCallbackTuple = std::tuple<void*, void (*)(void*, JSC::EncodedJSValue)>;
 
     static Ref<AbortSignal> abort(JSDOMGlobalObject&, ScriptExecutionContext&, JSC::JSValue reason);
     static Ref<AbortSignal> timeout(ScriptExecutionContext&, uint64_t milliseconds);
@@ -66,7 +67,7 @@ public:
     using Algorithm = Function<void(JSValue)>;
     void addAlgorithm(Algorithm&& algorithm) { m_algorithms.append(WTFMove(algorithm)); }
     void cleanNativeBindings(void* ref);
-    void addNativeCallback(std::tuple<void*, void (*)(void*, JSC::EncodedJSValue)> callback) { m_native_callbacks.append(callback); }
+    void addNativeCallback(NativeCallbackTuple callback) { m_native_callbacks.append(callback); }
 
     bool isFollowingSignal() const { return !!m_followingSignal; }
 
@@ -87,8 +88,8 @@ private:
     void eventListenersDidChange() final;
 
     bool m_aborted { false };
-    Vector<Algorithm> m_algorithms;
-    Vector<std::tuple<void*, void (*)(void*, JSC::EncodedJSValue)>> m_native_callbacks;
+    Vector<Algorithm, 2> m_algorithms;
+    Vector<NativeCallbackTuple, 2> m_native_callbacks;
     WeakPtr<AbortSignal> m_followingSignal;
     JSC::Strong<JSC::Unknown> m_reason;
     bool m_hasActiveTimeoutTimer { false };

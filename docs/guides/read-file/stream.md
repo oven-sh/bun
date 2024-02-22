@@ -8,7 +8,7 @@ The `Bun.file()` function accepts a path and returns a `BunFile` instance. The `
 const path = "/path/to/package.json";
 const file = Bun.file(path);
 
-const stream = await file.stream();
+const stream = file.stream();
 ```
 
 ---

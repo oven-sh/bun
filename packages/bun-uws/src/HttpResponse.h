@@ -77,12 +77,12 @@ public:
         writeHeader("Date", std::string_view(((LoopData *) us_loop_ext(us_socket_context_loop(SSL, (us_socket_context(SSL, (us_socket_t *) this)))))->date, 29));
 
         /* You can disable this altogether */
-#ifndef UWS_HTTPRESPONSE_NO_WRITEMARK
-        if (!Super::getLoopData()->noMark) {
-            /* We only expose major version */
-            writeHeader("uWebSockets", "20");
-        }
-#endif
+// #ifndef UWS_HTTPRESPONSE_NO_WRITEMARK
+//         if (!Super::getLoopData()->noMark) {
+//             /* We only expose major version */
+//             writeHeader("uWebSockets", "20");
+//         }
+// #endif
     }
 
     /* Returns true on success, indicating that it might be feasible to write more data.
@@ -439,6 +439,24 @@ public:
         return {internalEnd(data, totalSize, true, true, closeConnection), hasResponded()};
     }
 
+    /* Write the end of chunked encoded stream */
+    bool sendTerminatingChunk(bool closeConnection = false) {
+        writeStatus(HTTP_200_OK);
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            /* Write mark on first call to write */
+            writeMark();
+
+            writeHeader("Transfer-Encoding", "chunked");
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED; 
+        }
+
+        /* This will be sent always when state is HTTP_WRITE_CALLED inside internalEnd, so no need to write the terminating 0 chunk here */
+        /* Super::write("\r\n0\r\n\r\n", 7); */
+
+        return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
+    }
+
     /* Write parts of the response in chunking fashion. Starts timeout if failed. */
     bool write(std::string_view data) {
         writeStatus(HTTP_200_OK);
@@ -496,13 +514,14 @@ public:
      /* Corks the response if possible. Leaves already corked socket be. */
     HttpResponse *cork(MoveOnlyFunction<void()> &&handler) {
         if (!Super::isCorked() && Super::canCork()) {
+            LoopData *loopData = Super::getLoopData();
             Super::cork();
             handler();
 
             /* The only way we could possibly have changed the corked socket during handler call, would be if 
              * the HTTP socket was upgraded to WebSocket and caused a realloc. Because of this we cannot use "this"
              * from here downwards. The corking is done with corkUnchecked() in upgrade. It steals cork. */
-            auto *newCorkedSocket = Super::corkedSocket();
+            auto *newCorkedSocket = loopData->corkedSocket;
 
             /* If nobody is corked, it means most probably that large amounts of data has
              * been written and the cork buffer has already been sent off and uncorked.

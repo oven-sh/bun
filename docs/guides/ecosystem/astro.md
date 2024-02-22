@@ -10,7 +10,7 @@ $ bun create astro
 │ ◠ ◡ ◠  We're glad to have you on board.
 ╰─────╯
 
- astro   v2.10.5 Launch sequence initiated.
+ astro   v3.1.4 Launch sequence initiated.
 
    dir   Where should we create your new project?
          ./fumbling-field
@@ -55,21 +55,17 @@ By default, Bun will run the dev server with Node.js. To use the Bun runtime ins
 
 ```sh
 $ bunx --bun astro dev
-  🚀  astro  v2.10.5 started in 200ms
+  🚀  astro  v3.1.4 started in 200ms
 
-  ┃ Local    http://localhost:3000/
+  ┃ Local    http://localhost:4321/
   ┃ Network  use --host to expose
-
-01:48:34 PM [content] Watching src/content/ for changes
-01:48:34 PM [content] Types generated
-01:48:34 PM [astro] update /.astro/types.d.ts
 ```
 
 ---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result. Astro will hot-reload your app as you edit your source files.
+Open [http://localhost:4321](http://localhost:4321) with your browser to see the result. Astro will hot-reload your app as you edit your source files.
 
-{% image src="https://github.com/vitejs/vite/assets/3084745/bb1d5063-32f4-4598-b33e-50b44a1c4e8a" caption="An Astro starter app running on Bun" %}
+{% image src="https://i.imgur.com/Dswiu6w.png" caption="An Astro v3 starter app running on Bun" %}
 
 ---
 

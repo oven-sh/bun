@@ -6,6 +6,8 @@ import { bunExe, bunEnv } from "harness";
 import { tmpdir } from "node:os";
 import { writeFileSync, mkdirSync } from "node:fs";
 
+const isWindows = process.platform === "win32";
+
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
     const readable = new Readable({
@@ -150,6 +152,40 @@ describe("Readable", () => {
   });
 });
 
+describe("createReadStream", () => {
+  it("should allow the options argument to be omitted", done => {
+    const testData = "Hello world";
+    const path = join(tmpdir(), `${Date.now()}-testNoOptions.txt`);
+    writeFileSync(path, testData);
+    const stream = createReadStream(path);
+
+    let data = "";
+    stream.on("data", chunk => {
+      data += chunk.toString();
+    });
+    stream.on("end", () => {
+      expect(data).toBe(testData);
+      done();
+    });
+  });
+
+  it("should interpret the option argument as encoding if it's a string", done => {
+    const testData = "Hello world";
+    const path = join(tmpdir(), `${Date.now()}-testEncodingArgument.txt`);
+    writeFileSync(path, testData);
+    const stream = createReadStream(path);
+
+    let data = "";
+    stream.on("data", chunk => {
+      data += chunk.toString("base64");
+    });
+    stream.on("end", () => {
+      expect(data).toBe(btoa(testData));
+      done();
+    });
+  });
+});
+
 describe("Duplex", () => {
   it("should allow subclasses to be derived via .call() on class", () => {
     function Subclass(opts) {
@@ -197,6 +233,7 @@ describe("PassThrough", () => {
 
 const ttyStreamsTest = `
 import tty from "tty";
+import fs from "fs";
 
 import { dlopen } from "bun:ffi";
 
@@ -278,10 +315,11 @@ describe("TTY", () => {
     close(child_fd);
   });
   it("process.stdio tty", () => {
-    expect(process.stdin instanceof tty.ReadStream).toBe(true);
+    // this isnt run in a tty, so stdin will not appear to be a tty
+    expect(process.stdin instanceof fs.ReadStream).toBe(true);
     expect(process.stdout instanceof tty.WriteStream).toBe(true);
     expect(process.stderr instanceof tty.WriteStream).toBe(true);
-    expect(process.stdin.isTTY).toBeDefined();
+    expect(process.stdin.isTTY).toBeUndefined();
     expect(process.stdout.isTTY).toBeDefined();
     expect(process.stderr.isTTY).toBeDefined();
   });
@@ -299,7 +337,7 @@ describe("TTY", () => {
 });
 `;
 
-it("TTY streams", () => {
+it.skipIf(isWindows)("TTY streams", () => {
   mkdirSync(join(tmpdir(), "tty-test"), { recursive: true });
   writeFileSync(join(tmpdir(), "tty-test/tty-streams.test.js"), ttyStreamsTest, {});
 
@@ -311,7 +349,11 @@ it("TTY streams", () => {
   });
 
   expect(stdout.toString()).toBe("");
-  expect(stderr.toString()).toContain("0 fail");
+  try {
+    expect(stderr.toString()).toContain("0 fail");
+  } catch (error) {
+    throw new Error(stderr.toString());
+  }
   expect(exitCode).toBe(0);
 });
 

@@ -1,0 +1,39 @@
+{
+	"name": "vulnerable-many",
+	"versions": {
+		"1.0.0": {
+			"name": "vulnerable-many",
+			"version": "1.0.0",
+			"_id": "vulnerable-many@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-nlAXxlECdGb+OeTDbeaZaIqoKNQUuzfkoo5n3b/LDy+C95ACl44nhLGsDhK15IyQea+fpukD1bv/maS36wouWQ==",
+				"shasum": "98aba306b9cfb55f8e19f815bb519acbd6c85a11",
+				"tarball": "http://localhost:4873/vulnerable-many/-/vulnerable-many-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:35.213Z",
+		"created": "2023-11-01T22:05:35.213Z",
+		"1.0.0": "2023-11-01T22:05:35.213Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"vulnerable-many-1.0.0.tgz": {
+			"shasum": "98aba306b9cfb55f8e19f815bb519acbd6c85a11",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-2717d96b686515bc",
+	"_id": "vulnerable-many",
+	"readme": "ERROR: No README data found!"
+}

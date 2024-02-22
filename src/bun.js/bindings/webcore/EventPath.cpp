@@ -18,13 +18,13 @@
 //  * Boston, MA 02110-1301, USA.
 //  */
 
-// #include "config.h"
-// #include "EventPath.h"
+#include "config.h"
+#include "EventPath.h"
 
 // // #include "DOMWindow.h"
-// #include "Event.h"
-// #include "EventContext.h"
-// #include "EventNames.h"
+#include "Event.h"
+#include "EventContext.h"
+#include "EventNames.h"
 // // #include "FullscreenManager.h"
 // // #include "HTMLSlotElement.h"
 // // #include "MouseEvent.h"
@@ -32,8 +32,9 @@
 // // #include "PseudoElement.h"
 // // #include "ShadowRoot.h"
 // // #include "TouchEvent.h"
+#include <wtf/Vector.h>
 
-// namespace WebCore {
+namespace WebCore {
 
 // static inline bool shouldEventCrossShadowBoundary(Event& event, ShadowRoot& shadowRoot, EventTarget& target)
 // {
@@ -80,8 +81,9 @@
 //     bool m_hasDifferentTreeRoot { false };
 // };
 
-// EventPath::EventPath(Node& originalTarget, Event& event)
-// {
+EventPath::EventPath(Node& originalTarget, Event& event)
+{
+}
 //     buildPath(originalTarget, event);
 
 //     if (auto* relatedTarget = event.relatedTarget(); is<Node>(relatedTarget) && !m_path.isEmpty())
@@ -260,7 +262,7 @@
 //         bool movedOutOfShadowTree = depth < currentDepthAllowed;
 //         if (movedOutOfShadowTree)
 //             currentDepthAllowed = depth;
-//         path.uncheckedAppend(currentContext.currentTarget());
+//         path.unsafeAppendWithoutCapacityCheck(currentContext.currentTarget());
 //     };
 
 //     auto currentDepthAllowed = currentTargetDepth;
@@ -277,14 +279,13 @@
 //     return path;
 // }
 
-// EventPath::EventPath(const Vector<EventTarget*>& targets)
-// {
-//     m_path = targets.map([&](auto* target) {
-//         ASSERT(target);
-//         ASSERT(!is<Node>(target));
-//         return EventContext { EventContext::Type::Normal, nullptr, target, *targets.begin(), 0 };
-//     });
-// }
+EventPath::EventPath(const WTF::Vector<EventTarget*>& targets)
+{
+    m_path = targets.map([&](auto* target) {
+        ASSERT(target);
+        return EventContext { EventContext::Type::Normal, nullptr, target, *targets.begin(), 0 };
+    });
+}
 
 // static Node* moveOutOfAllShadowRoots(Node& startingNode)
 // {
@@ -420,4 +421,4 @@
 // }
 
 // #endif // ASSERT_ENABLED
-// }
+}

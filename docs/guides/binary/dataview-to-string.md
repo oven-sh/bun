@@ -1,5 +1,5 @@
 ---
-name: Convert a Uint8Array to a string
+name: Convert a DataView to a string
 ---
 
 If a [`DataView`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView) contains ASCII-encoded text, you can convert it to a string using the [`TextDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder) class.

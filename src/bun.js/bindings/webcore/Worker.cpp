@@ -55,9 +55,9 @@
 #include <wtf/Scope.h>
 #include "SerializedScriptValue.h"
 #include "ScriptExecutionContext.h"
-#include "JavaScriptCore/JSMap.h"
-#include "JavaScriptCore/JSModuleLoader.h"
-#include "JavaScriptCore/DeferredWorkTimer.h"
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/DeferredWorkTimer.h>
 #include "MessageEvent.h"
 #include <JavaScriptCore/HashMapImplInlines.h>
 #include "BunWorkerGlobalScope.h"
@@ -115,7 +115,11 @@ extern "C" void* WebWorker__create(
     uint32_t parentContextId,
     uint32_t contextId,
     bool miniMode,
-    bool unrefByDefault);
+    bool unrefByDefault,
+    StringImpl* argvPtr,
+    uint32_t argvLen,
+    StringImpl* execArgvPtr,
+    uint32_t execArgvLen);
 extern "C" void WebWorker__setRef(
     void* worker,
     bool ref);
@@ -152,6 +156,9 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     bool miniMode = worker->m_options.bun.mini;
     bool unrefByDefault = worker->m_options.bun.unref;
 
+    Vector<String>* argv = worker->m_options.bun.argv.get();
+    Vector<String>* execArgv = worker->m_options.bun.execArgv.get();
+
     void* impl = WebWorker__create(
         worker.ptr(),
         jsCast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(),
@@ -159,10 +166,17 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         urlStr,
         &errorMessage,
         static_cast<uint32_t>(context.identifier()),
-        static_cast<uint32_t>(worker->m_clientIdentifier), miniMode, unrefByDefault);
+        static_cast<uint32_t>(worker->m_clientIdentifier),
+        miniMode,
+        unrefByDefault,
+        argv ? reinterpret_cast<StringImpl*>(argv->data()) : nullptr,
+        argv ? static_cast<uint32_t>(argv->size()) : 0,
+        execArgv ? reinterpret_cast<StringImpl*>(execArgv->data()) : nullptr,
+        execArgv ? static_cast<uint32_t>(execArgv->size()) : 0
+    );
 
     if (!impl) {
-        return Exception { TypeError, Bun::toWTFString(errorMessage) };
+        return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
     }
 
     worker->impl_ = impl;
@@ -380,30 +394,17 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
+
     worker->dispatchExit(exitCode);
 
     if (globalObject) {
-        auto* ctx = globalObject->scriptExecutionContext();
-        if (ctx) {
-            ctx->removeFromContextsMap();
-        }
+        JSC::VM& vm = globalObject->vm();
+        vm.setHasTerminationRequest();
 
-        auto& vm = globalObject->vm();
-        vm.notifyNeedTermination();
-        if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->moduleLoader())) {
-            auto id = JSC::Identifier::fromString(globalObject->vm(), "registry"_s);
-            auto registryValue = obj->getIfPropertyExists(globalObject, id);
-            if (registryValue) {
-                if (auto* registry = JSC::jsDynamicCast<JSC::JSMap*>(registryValue)) {
-                    registry->clear(vm);
-                }
-            }
-        }
-        gcUnprotect(globalObject);
-        vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
-        vm.heap.reportAbandonedObjectGraph();
-        WTF::releaseFastMallocFreeMemoryForThisThread();
-        vm.deferredWorkTimer->doWork(vm);
+        while (!vm.hasOneRef())
+            vm.deref();
+
+        vm.deref();
     }
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
@@ -411,17 +412,17 @@ extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* glo
     worker->dispatchOnline(globalObject);
 }
 
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, EncodedJSValue errorValue)
+extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     ErrorEvent::Init init;
-    init.message = Bun::toWTFString(message).isolatedCopy();
+    init.message = message.toWTFString(BunString::ZeroCopy).isolatedCopy();
     init.error = error;
     init.cancelable = false;
     init.bubbles = false;
 
     globalObject->globalEventScope.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    worker->dispatchError(Bun::toWTFString(message));
+    worker->dispatchError(message.toWTFString(BunString::ZeroCopy));
 }
 
 } // namespace WebCore

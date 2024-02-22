@@ -10,11 +10,14 @@ pub const LPCVOID = windows.LPCVOID;
 pub const LPWSTR = windows.LPWSTR;
 pub const LPCWSTR = windows.LPCWSTR;
 pub const LPSTR = windows.LPSTR;
+pub const WCHAR = windows.WCHAR;
 pub const LPCSTR = windows.LPCSTR;
+pub const PWSTR = windows.PWSTR;
 pub const FALSE = windows.FALSE;
 pub const TRUE = windows.TRUE;
 pub const INVALID_HANDLE_VALUE = windows.INVALID_HANDLE_VALUE;
 pub const FILE_BEGIN = windows.FILE_BEGIN;
+pub const FILE_END = windows.FILE_END;
 pub const FILE_CURRENT = windows.FILE_CURRENT;
 pub const ULONG = windows.ULONG;
 pub const LARGE_INTEGER = windows.LARGE_INTEGER;
@@ -22,10 +25,15 @@ pub const UNICODE_STRING = windows.UNICODE_STRING;
 pub const NTSTATUS = windows.NTSTATUS;
 pub const NT_SUCCESS = windows.NT_SUCCESS;
 pub const STATUS_SUCCESS = windows.STATUS_SUCCESS;
+pub const MOVEFILE_COPY_ALLOWED = 0x2;
+pub const MOVEFILE_REPLACE_EXISTING = 0x1;
+pub const MOVEFILE_WRITE_THROUGH = 0x8;
+
 pub const DUPLICATE_SAME_ACCESS = windows.DUPLICATE_SAME_ACCESS;
 pub const OBJECT_ATTRIBUTES = windows.OBJECT_ATTRIBUTES;
 pub const kernel32 = windows.kernel32;
 pub const IO_STATUS_BLOCK = windows.IO_STATUS_BLOCK;
+pub const FILE_INFO_BY_HANDLE_CLASS = windows.FILE_INFO_BY_HANDLE_CLASS;
 pub const FILE_SHARE_READ = windows.FILE_SHARE_READ;
 pub const FILE_SHARE_WRITE = windows.FILE_SHARE_WRITE;
 pub const FILE_SHARE_DELETE = windows.FILE_SHARE_DELETE;
@@ -53,8 +61,24 @@ pub usingnamespace ntdll;
 pub const user32 = windows.user32;
 pub const advapi32 = windows.advapi32;
 
+pub const INVALID_FILE_ATTRIBUTES: u32 = std.math.maxInt(u32);
+
+pub const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
+pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
+
 const std = @import("std");
+const Environment = bun.Environment;
+
+pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
+pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
+
 pub const HANDLE = win32.HANDLE;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
+pub extern "kernel32" fn GetFileInformationByHandle(
+    hFile: HANDLE,
+    lpFileInformation: *windows.BY_HANDLE_FILE_INFORMATION,
+) callconv(windows.WINAPI) BOOL;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilevaliddata
 pub extern "kernel32" fn SetFileValidData(
@@ -66,6 +90,17 @@ pub extern fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
 ) [*]win32.LPWSTR;
+
+pub extern fn GetFileType(
+    hFile: win32.HANDLE,
+) callconv(windows.WINAPI) win32.DWORD;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfiletype#return-value
+pub const FILE_TYPE_UNKNOWN = 0x0000;
+pub const FILE_TYPE_DISK = 0x0001;
+pub const FILE_TYPE_CHAR = 0x0002;
+pub const FILE_TYPE_PIPE = 0x0003;
+pub const FILE_TYPE_REMOTE = 0x8000;
 
 pub const LPDWORD = *win32.DWORD;
 
@@ -95,10 +130,10 @@ pub const SCS_POSIX_BINARY = 4;
 /// The current directory is shared by all threads of the process: If one thread changes the current directory, it affects all threads in the process. Multithreaded applications and shared library code should avoid calling the SetCurrentDirectory function due to the risk of affecting relative path calculations being performed by other threads. Conversely, multithreaded applications and shared library code should avoid using relative paths so that they are unaffected by changes to the current directory performed by other threads.
 ///
 /// Note that the current directory for a process is locked while the process is executing. This will prevent the directory from being deleted, moved, or renamed.
-pub extern "kernel32" fn SetCurrentDirectory(
+pub extern "kernel32" fn SetCurrentDirectoryW(
     lpPathName: win32.LPCWSTR,
 ) callconv(windows.WINAPI) win32.BOOL;
-
+pub const SetCurrentDirectory = SetCurrentDirectoryW;
 pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(windows.WINAPI) Win32Error;
 
 const SystemErrno = bun.C.SystemErrno;
@@ -2907,6 +2942,17 @@ pub const Win32Error = enum(u16) {
         return @enumFromInt(@intFromEnum(bun.windows.kernel32.GetLastError()));
     }
 
+    pub fn int(this: Win32Error) u16 {
+        return @intFromEnum(this);
+    }
+
+    pub fn unwrap(this: @This()) !void {
+        if (this == .SUCCESS) return;
+        if (this.toSystemErrno()) |err| {
+            return err.toError();
+        }
+    }
+
     pub fn toSystemErrno(this: Win32Error) ?SystemErrno {
         return SystemErrno.init(this);
     }
@@ -2915,3 +2961,128 @@ pub const Win32Error = enum(u16) {
         return RtlNtStatusToDosError(status);
     }
 };
+
+pub const libuv = @import("./deps/libuv.zig");
+
+pub extern fn GetProcAddress(
+    ptr: ?*anyopaque,
+    [*:0]const u16,
+) ?*anyopaque;
+
+pub fn GetProcAddressA(
+    ptr: ?*anyopaque,
+    utf8: [:0]const u8,
+) ?*anyopaque {
+    var wbuf: [2048]u16 = undefined;
+    return GetProcAddress(ptr, bun.strings.toWPath(&wbuf, utf8).ptr);
+}
+
+pub extern fn LoadLibraryA(
+    [*:0]const u8,
+) ?*anyopaque;
+
+pub extern "kernel32" fn CreateHardLinkW(
+    newFileName: LPCWSTR,
+    existingFileName: LPCWSTR,
+    securityAttributes: ?*win32.SECURITY_ATTRIBUTES,
+) BOOL;
+
+pub extern "kernel32" fn CopyFileW(
+    source: LPCWSTR,
+    dest: LPCWSTR,
+    bFailIfExists: BOOL,
+) BOOL;
+
+pub extern "kernel32" fn SetFileInformationByHandle(
+    file: HANDLE,
+    fileInformationClass: FILE_INFO_BY_HANDLE_CLASS,
+    fileInformation: LPVOID,
+    bufferSize: DWORD,
+) BOOL;
+
+pub fn getLastErrno() bun.C.E {
+    return (bun.C.SystemErrno.init(bun.windows.kernel32.GetLastError()) orelse SystemErrno.EUNKNOWN).toE();
+}
+
+pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
+    return switch (err) {
+        .SUCCESS => .SUCCESS,
+        .ACCESS_DENIED => .PERM,
+        .INVALID_HANDLE => .BADF,
+        .INVALID_PARAMETER => .INVAL,
+        .OBJECT_NAME_COLLISION => .EXIST,
+        .FILE_IS_A_DIRECTORY => .ISDIR,
+        .OBJECT_PATH_NOT_FOUND => .NOENT,
+        .OBJECT_NAME_NOT_FOUND => .NOENT,
+
+        else => |t| {
+            // if (bun.Environment.isDebug) {
+            bun.Output.warn("Called translateNTStatusToErrno with {s} which does not have a mapping to errno.", .{@tagName(t)});
+            // }
+            return .UNKNOWN;
+        },
+    };
+}
+
+pub extern "kernel32" fn GetHostNameW(
+    lpBuffer: PWSTR,
+    nSize: c_int,
+) callconv(windows.WINAPI) BOOL;
+
+/// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
+pub extern "kernel32" fn GetTempPathW(
+    nBufferLength: DWORD, // [in]
+    lpBuffer: LPCWSTR, // [out]
+) DWORD;
+
+pub extern "kernel32" fn CreateJobObjectA(
+    lpJobAttributes: ?*anyopaque, // [in, optional]
+    lpName: ?LPCSTR, // [in, optional]
+) callconv(windows.WINAPI) HANDLE;
+
+pub extern "kernel32" fn AssignProcessToJobObject(
+    hJob: HANDLE, // [in]
+    hProcess: HANDLE, // [in]
+) callconv(windows.WINAPI) BOOL;
+
+pub extern "kernel32" fn ResumeThread(
+    hJob: HANDLE, // [in]
+) callconv(windows.WINAPI) DWORD;
+
+pub const JOBOBJECT_ASSOCIATE_COMPLETION_PORT = extern struct {
+    CompletionKey: windows.PVOID,
+    CompletionPort: HANDLE,
+};
+
+pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
+
+pub extern "kernel32" fn SetInformationJobObject(
+    hJob: HANDLE,
+    JobObjectInformationClass: DWORD,
+    lpJobObjectInformation: LPVOID,
+    cbJobObjectInformationLength: DWORD,
+) callconv(windows.WINAPI) BOOL;
+
+// Found experimentally:
+// #include <stdio.h>
+// #include <windows.h>
+//
+// int main() {
+//         printf("%ld\n", JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO);
+//         printf("%ld\n", JOB_OBJECT_MSG_EXIT_PROCESS);
+// }
+//
+// Output:
+// 4
+// 7
+pub const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO = 4;
+pub const JOB_OBJECT_MSG_EXIT_PROCESS = 7;
+
+pub extern "kernel32" fn OpenProcess(
+    dwDesiredAccess: DWORD,
+    bInheritHandle: BOOL,
+    dwProcessId: DWORD,
+) callconv(windows.WINAPI) ?HANDLE;
+
+// https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
+pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;

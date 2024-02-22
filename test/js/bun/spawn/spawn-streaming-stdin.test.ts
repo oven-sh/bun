@@ -1,18 +1,20 @@
+// @known-failing-on-windows: 1 failing
 import { it, test, expect } from "bun:test";
 import { spawn } from "bun";
 import { bunExe, bunEnv, gcTick } from "harness";
 import { closeSync, openSync } from "fs";
-import { tmpdir } from "node:os";
+import { tmpdir, devNull } from "node:os";
 import { join } from "path";
 import { unlinkSync } from "node:fs";
 
 const N = 100;
 test("spawn can write to stdin multiple chunks", async () => {
-  const maxFD = openSync("/dev/null", "w");
+  const maxFD = openSync(devNull, "w");
   for (let i = 0; i < N; i++) {
-    const tmperr = join(tmpdir(), "stdin-repro-error.log." + i);
     var exited;
     await (async function () {
+      const tmperr = join(tmpdir(), "stdin-repro-error.log." + i);
+
       const proc = spawn({
         cmd: [bunExe(), import.meta.dir + "/stdin-repro.js"],
         stdout: "pipe",
@@ -43,7 +45,7 @@ test("spawn can write to stdin multiple chunks", async () => {
 
           if (inCounter === 4) break;
         }
-        proc.stdin!.end();
+        await proc.stdin!.end();
       })();
 
       await Promise.all([prom, prom2]);
@@ -57,7 +59,7 @@ test("spawn can write to stdin multiple chunks", async () => {
   }
 
   closeSync(maxFD);
-  const newMaxFD = openSync("/dev/null", "w");
+  const newMaxFD = openSync(devNull, "w");
   closeSync(newMaxFD);
 
   // assert we didn't leak any file descriptors

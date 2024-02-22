@@ -1,20 +1,23 @@
 // Reimplementation of https://nodejs.org/api/events.html
+
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
-const { throwNotImplemented } = require("$shared");
+const { throwNotImplemented } = require("internal/shared");
 
 const SymbolFor = Symbol.for;
+
 const kCapture = Symbol("kCapture");
 const kErrorMonitor = SymbolFor("events.errorMonitor");
 const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
 const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned");
 const kWatermarkData = SymbolFor("nodejs.watermarkData");
 const kRejection = SymbolFor("nodejs.rejection");
+const kFirstEventParam = SymbolFor("nodejs.kFirstEventParam");
 const captureRejectionSymbol = SymbolFor("nodejs.rejection");
 const ArrayPrototypeSlice = Array.prototype.slice;
 
 var defaultMaxListeners = 10;
 
-// EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.apply(this)`.
+// EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 const EventEmitter = function EventEmitter(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = { __proto__: null };
@@ -49,14 +52,14 @@ function emitError(emitter, args) {
   if (!events) throw args[0];
   var errorMonitor = events[kErrorMonitor];
   if (errorMonitor) {
-    for (var handler of ArrayPrototypeSlice.call(errorMonitor)) {
-      handler.apply(emitter, args);
+    for (var handler of ArrayPrototypeSlice.$call(errorMonitor)) {
+      handler.$apply(emitter, args);
     }
   }
   var handlers = events.error;
   if (!handlers) throw args[0];
-  for (var handler of ArrayPrototypeSlice.call(handlers)) {
-    handler.apply(emitter, args);
+  for (var handler of ArrayPrototypeSlice.$call(handlers)) {
+    handler.$apply(emitter, args);
   }
   return true;
 }
@@ -92,9 +95,30 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
   if (events === undefined) return false;
   var handlers = events[type];
   if (handlers === undefined) return false;
-
-  for (var handler of [...handlers]) {
-    handler.apply(this, args);
+  // Clone handlers array if necessary since handlers can be added/removed during the loop.
+  // Cloning is skipped for performance reasons in the case of exactly one attached handler
+  // since array length changes have no side-effects in a for-loop of length 1.
+  const maybeClonedHandlers = handlers.length > 1 ? handlers.slice() : handlers;
+  for (let i = 0, { length } = maybeClonedHandlers; i < length; i++) {
+    const handler = maybeClonedHandlers[i];
+    // For performance reasons Function.call(...) is used whenever possible.
+    switch (args.length) {
+      case 0:
+        handler.$call(this);
+        break;
+      case 1:
+        handler.$call(this, args[0]);
+        break;
+      case 2:
+        handler.$call(this, args[0], args[1]);
+        break;
+      case 3:
+        handler.$call(this, args[0], args[1], args[2]);
+        break;
+      default:
+        handler.$apply(this, args);
+        break;
+    }
   }
   return true;
 };
@@ -107,8 +131,31 @@ const emitWithRejectionCapture = function emit(type, ...args) {
   if (events === undefined) return false;
   var handlers = events[type];
   if (handlers === undefined) return false;
-  for (var handler of [...handlers]) {
-    var result = handler.apply(this, args);
+  // Clone handlers array if necessary since handlers can be added/removed during the loop.
+  // Cloning is skipped for performance reasons in the case of exactly one attached handler
+  // since array length changes have no side-effects in a for-loop of length 1.
+  const maybeClonedHandlers = handlers.length > 1 ? handlers.slice() : handlers;
+  for (let i = 0, { length } = maybeClonedHandlers; i < length; i++) {
+    const handler = maybeClonedHandlers[i];
+    let result;
+    // For performance reasons Function.call(...) is used whenever possible.
+    switch (args.length) {
+      case 0:
+        result = handler.$call(this);
+        break;
+      case 1:
+        result = handler.$call(this, args[0]);
+        break;
+      case 2:
+        result = handler.$call(this, args[0], args[1]);
+        break;
+      case 3:
+        result = handler.$call(this, args[0], args[1], args[2]);
+        break;
+      default:
+        result = handler.$apply(this, args);
+        break;
+    }
     if (result !== undefined && $isPromise(result)) {
       addCatch(this, result, type, args);
     }
@@ -181,7 +228,7 @@ function overflowWarning(emitter, type, handlers) {
 
 function onceWrapper(type, listener, ...args) {
   this.removeListener(type, listener);
-  listener.apply(this, args);
+  listener.$apply(this, args);
 }
 
 EventEmitterPrototype.once = function once(type, fn) {
@@ -310,9 +357,67 @@ function once(emitter, type, options) {
   });
 }
 
-function on(emitter, type, options) {
-  var { signal, close, highWatermark = Number.MAX_SAFE_INTEGER, lowWatermark = 1 } = options || {};
-  throwNotImplemented("events.on", 2679);
+function on(emitter, event, options = {}) {
+  const signal = options.signal;
+
+  const { FixedQueue } = require("internal/fixed_queue");
+  const unconsumedPromises = new FixedQueue();
+  const unconsumedEvents = new FixedQueue();
+  const unconsumedErrors = new FixedQueue();
+  let done = false;
+
+  const eventHandlerBody = ev => {
+    // If there is a pending Promise -> resolve with current event value.
+    if (!unconsumedPromises.isEmpty()) {
+      const { resolve } = unconsumedPromises.shift();
+      return resolve(ev);
+    }
+    // Else: Add event value to queue so it can be consumed by a future Promise.
+    unconsumedEvents.push(ev);
+  };
+  const eventHandler = options[kFirstEventParam] ? eventHandlerBody : (...args) => eventHandlerBody(args);
+  emitter.on(event, eventHandler);
+
+  const errorHandler = ex => {
+    if (!unconsumedPromises.isEmpty()) {
+      const { reject } = unconsumedPromises.shift();
+      return reject(ex);
+    }
+    unconsumedErrors.push(ex);
+  };
+  emitter.on("error", errorHandler);
+
+  signal?.addEventListener("abort", () => {
+    emitter.emit("error", new AbortError(undefined, { cause: signal?.reason }));
+  });
+
+  // If any of the close events is emitted -> remove listeners
+  // and yield only the remaining queued-up values in iterator.
+  for (const evName of options?.close || []) {
+    emitter.on(evName, () => {
+      emitter.removeListener(event, eventHandler);
+      emitter.removeListener("error", errorHandler);
+      done = true;
+    });
+  }
+
+  // Create AsyncGeneratorFunction which handles the Iterator logic
+  const iterator = async function* () {
+    while (!done || !unconsumedEvents.isEmpty() || !unconsumedErrors.isEmpty()) {
+      if (!unconsumedEvents.isEmpty()) {
+        yield Promise.$resolve(unconsumedEvents.shift());
+      } else if (!unconsumedErrors.isEmpty()) {
+        yield Promise.$reject(unconsumedErrors.shift());
+      } else {
+        const { promise, reject, resolve } = $newPromiseCapability(Promise);
+        unconsumedPromises.push({ reject, resolve });
+        yield promise;
+      }
+    }
+  };
+
+  // Return AsyncGenerator
+  return iterator();
 }
 
 function getEventListeners(emitter, type) {

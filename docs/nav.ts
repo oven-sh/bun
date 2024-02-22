@@ -38,12 +38,13 @@ export default {
     page("typescript", "TypeScript", {
       description: "Install and configure type declarations for Bun's APIs",
     }),
-    page("templates", "Templates", {
-      description: "Hit the ground running with one of Bun's official templates, or download a template from GitHub.",
+
+    divider("Templating"),
+    page("cli/init", "`bun init`", {
+      description: "Scaffold an empty Bun project.",
     }),
-    page("guides", "Guides", {
-      description: "A set of walkthrough guides and code snippets for performing common tasks with Bun",
-      href: "/guides",
+    page("cli/bun-create", "`bun create`", {
+      description: "Scaffold a new Bun project from an official template or GitHub repo.",
     }),
 
     // page("typescript", "TypeScript"),
@@ -81,7 +82,6 @@ export default {
     // page("bundev", "Dev server"),
     // page("benchmarks", "Benchmarks"),
 
-    // divider("Runtime"),
     divider("Runtime"),
     page("cli/run", "`bun run`", {
       description: "Use `bun run` to execute JavaScript/TypeScript files and package.json scripts.",
@@ -115,6 +115,9 @@ export default {
     }),
     page("runtime/nodejs-apis", "Node.js compatibility", {
       description: `Bun aims for full Node.js compatibility. This page tracks the current compatibility status.`,
+    }),
+    page("bundler/executables", "Single-file executable", {
+      description: "Compile a TypeScript or JavaScript file to a standalone executable",
     }),
     page("runtime/plugins", "Plugins", {
       description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
@@ -152,12 +155,30 @@ export default {
       description:
         "Install all dependencies with `bun install`, or manage dependencies with `bun add` and `bun remove`.",
     }),
+    page("cli/add", "`bun add`", {
+      description: "Add dependencies to your project.",
+    }),
+    page("cli/remove", "`bun remove`", {
+      description: "Remove dependencies from your project.",
+    }),
+    page("cli/update", "`bun update`", {
+      description: "Update your project's dependencies.",
+    }),
+    page("cli/link", "`bun link`", {
+      description: "Install local packages as dependencies in your project.",
+    }),
+    page("cli/pm", "`bun pm`", {
+      description: "Utilities relating to package management with Bun.",
+    }),
     page("install/cache", "Global cache", {
       description:
         "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
     }),
     page("install/workspaces", "Workspaces", {
       description: "Bun's package manager supports workspaces and mono-repo development workflows.",
+    }),
+    page("install/lifecycle", "Lifecycle scripts", {
+      description: "How Bun handles package lifecycle scripts with trustedDependencies",
     }),
     page("install/lockfile", "Lockfile", {
       description:
@@ -166,9 +187,12 @@ export default {
     page("install/registries", "Scopes and registries", {
       description: "How to configure private scopes and custom package registries.",
     }),
-    page("install/utilities", "Utilities", {
-      description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
+    page("install/overrides", "Overrides and resolutions", {
+      description: "Specify version ranges for nested dependencies",
     }),
+    // page("install/utilities", "Utilities", {
+    //   description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
+    // }),
 
     divider("Bundler"),
     page("bundler", "`Bun.build`", {
@@ -182,9 +206,6 @@ export default {
     }),
     page("bundler/plugins", "Plugins", {
       description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
-    }),
-    page("bundler/executables", "Executables", {
-      description: "Compile a TypeScript or JavaScript file to a standalone executable",
     }),
     page("bundler/macros", "Macros", {
       description: `Run JavaScript functions at bundle-time and inline the results into your bundle`,
@@ -288,6 +309,9 @@ export default {
     page("api/globals", "Globals", {
       description: `Bun implements a range of Web APIs, Node.js APIs, and Bun-native APIs that are available in the global scope.`,
     }), // "`Bun.write`"),
+    page("runtime/shell", "$ Shell", {
+      description: `Bun's cross-platform shell-scripting API makes shell scripting with JavaScript fun`,
+    }), // "`Bun.$`"),
     page("api/spawn", "Child processes", {
       description: `Spawn sync and async child processes with easily configurable input and output streams.`,
     }), // "`Bun.spawn`"),
@@ -319,6 +343,14 @@ export default {
       description: `Bun implements the Node-API spec for building native addons.`,
     }), // "`Node-API`"),
 
+    page("api/glob", "Glob", {
+      description: `Bun includes a fast native Glob implementation for matching file paths.`,
+    }), // "`Glob`"),
+
+    page("api/semver", "Semver", {
+      description: `Bun's native Semver implementation is 20x faster than the popular \`node-semver\` package.`,
+    }), // "`Semver`"),
+
     // divider("Dev Server"),
     // page("bun-dev", "Vanilla"),
     // page("dev/css", "CSS"),
@@ -334,8 +366,11 @@ export default {
     page("project/benchmarking", "Benchmarking", {
       description: `Bun is designed for performance. Learn how to benchmark Bun yourself.`,
     }),
-    page("project/development", "Development", {
+    page("project/contributing", "Contributing", {
       description: "Learn how to contribute to Bun and get your local development environment up and running.",
+    }),
+    page("project/building-windows", "Building Windows", {
+      description: "Learn how to setup a development environment for contributing to the Windows build of Bun.",
     }),
     page("project/licensing", "License", {
       description: `Bun is a MIT-licensed project with a large number of statically-linked dependencies with various licenses.`,

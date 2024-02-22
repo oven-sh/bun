@@ -17,7 +17,7 @@ function createTree(basedir: string, paths: string[]) {
 }
 var count = 0;
 function make(files: string[]) {
-  const dir = tempdir + `fs-router-test-${count++}`;
+  const dir = (tempdir + `fs-router-test-${count++}`).replace(/\\/g, "/");
   rmSync(dir, {
     recursive: true,
     force: true,
@@ -46,6 +46,10 @@ it("should find files", () => {
     `b.tsx`,
     `foo/[id].tsx`,
     `catch-all/[[...id]].tsx`,
+
+    // https://github.com/oven-sh/bun/issues/8276
+    // https://github.com/oven-sh/bun/issues/8278
+    ...Array.from({ length: 65 }, (_, i) => `files/a${i}.tsx`),
   ]);
 
   const router = new FileSystemRouter({
@@ -70,6 +74,10 @@ it("should find files", () => {
     "/b": `${dir}/b.tsx`,
     "/foo/[id]": `${dir}/foo/[id].tsx`,
     "/catch-all/[[...id]]": `${dir}/catch-all/[[...id]].tsx`,
+
+    // https://github.com/oven-sh/bun/issues/8276
+    // https://github.com/oven-sh/bun/issues/8278
+    ...Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`/files/a${i}`, `${dir}/files/a${i}.tsx`])),
   };
 
   for (const route in fixture) {
@@ -187,9 +195,7 @@ it("should support catch-all routes", () => {
   });
 
   for (let fixture of ["/posts/123", "/posts/hey", "/posts/zorp", "/posts", "/index", "/posts/"]) {
-    console.log(`matching ${fixture}`);
     const match = router.match(fixture);
-    console.log(match);
     expect(match?.name).not.toBe("/posts/[...id]");
   }
 

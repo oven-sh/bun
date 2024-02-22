@@ -1,7 +1,6 @@
 const bun = @import("root").bun;
 const string = bun.string;
 const Output = bun.Output;
-const toMutable = bun.constStrToU8;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
@@ -70,17 +69,10 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
         )];
 
         bun.copy(u8, possibly_encoded_pathname, possibly_encoded_pathname_[0..possibly_encoded_pathname.len]);
-        var clone = possibly_encoded_pathname[0..possibly_encoded_pathname.len];
+        const clone = possibly_encoded_pathname[0..possibly_encoded_pathname.len];
 
-        var fbs = std.io.fixedBufferStream(
-            // This is safe because:
-            // - this comes from a non-const buffer
-            // - percent *decoding* will always be <= length of the original string (no buffer overflow)
-            toMutable(
-                possibly_encoded_pathname,
-            ),
-        );
-        var writer = fbs.writer();
+        var fbs = std.io.fixedBufferStream(possibly_encoded_pathname);
+        const writer = fbs.writer();
 
         decoded_pathname = possibly_encoded_pathname[0..try PercentEncoding.decodeFaultTolerant(@TypeOf(writer), writer, clone, &needs_redirect, true)];
     }

@@ -314,12 +314,12 @@ JSReadableState_NULLABLE_BOOLEAN_GETTER_SETTER(paused)
 
 #undef JSReadableState_JSVALUE_GETTER_SETTER
 
-#define JSReadableState_GETTER_SETTER_HASH_TABLE_VALUE(NAME)                                                                                                                  \
-    {                                                                                                                                                                         \
-#NAME ""_s, static_cast < unsigned>(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, \
-        {                                                                                                                                                                     \
-            HashTableValue::GetterSetterType, jsReadableState_##NAME, setJSReadableState_##NAME                                                                               \
-        }                                                                                                                                                                     \
+#define JSReadableState_GETTER_SETTER_HASH_TABLE_VALUE(NAME)                                                                                                                \
+    {                                                                                                                                                                       \
+        #NAME ""_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, \
+        {                                                                                                                                                                   \
+            HashTableValue::GetterSetterType, jsReadableState_##NAME, setJSReadableState_##NAME                                                                             \
+        }                                                                                                                                                                   \
     }
 
     /* Hash table for prototype */

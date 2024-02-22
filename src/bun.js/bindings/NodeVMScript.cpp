@@ -20,9 +20,8 @@
 #include "JavaScriptCore/JSWeakMapInlines.h"
 #include "JavaScriptCore/JSWithScope.h"
 #include "JavaScriptCore/JSGlobalProxyInlines.h"
-#include "Buffer.h"
 #include "GCDefferalContext.h"
-#include "Buffer.h"
+#include "JSBuffer.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include "DOMJITIDLConvert.h"
@@ -111,11 +110,15 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     Structure* structure = zigGlobalObject->NodeVMScriptStructure();
     if (UNLIKELY(zigGlobalObject->NodeVMScript() != newTarget)) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSObject* targetObj = asObject(newTarget);
-        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(getFunctionRealm(globalObject, targetObj));
+        if (!newTarget) {
+            throwTypeError(globalObject, scope, "Class constructor Script cannot be invoked without 'new'"_s);
+            return {};
+        }
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
         structure = InternalFunction::createSubclassStructure(
-            globalObject, targetObj, functionGlobalObject->NodeVMScriptStructure());
+            globalObject, newTarget.getObject(), functionGlobalObject->NodeVMScriptStructure());
         scope.release();
     }
 
@@ -128,7 +131,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     return JSValue::encode(JSValue(script));
 }
 
-static EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScript* script, JSObject* globalThis, JSScope* scope, JSValue optionsArg)
+static JSC::EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScript* script, JSObject* globalThis, JSScope* scope, JSValue optionsArg)
 {
     auto& vm = globalObject->vm();
 
@@ -170,7 +173,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptConstructorConstruct, (JSGlobalObject * globalObj
     return constructScript(globalObject, callFrame, callFrame->newTarget());
 }
 
-JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = globalObject->vm();
     return JSValue::encode(jsBoolean(true)); // TODO
@@ -427,7 +430,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     return runInContext(globalObject, script, globalObject->globalThis(), contextScope, callFrame->argument(1));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, EncodedJSValue thisValueEncoded, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
 {
     auto& vm = globalObject->vm();
     JSValue thisValue = JSValue::decode(thisValueEncoded);
@@ -502,6 +505,7 @@ public:
     template<typename CellType, SubspaceAccess>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

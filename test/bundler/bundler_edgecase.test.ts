@@ -1,5 +1,6 @@
 import assert from "assert";
 import dedent from "dedent";
+import { sep, join } from "path";
 import { itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
@@ -36,7 +37,7 @@ describe("bundler", () => {
     },
     target: "bun",
     run: {
-      stdout: "a/b",
+      stdout: `a${sep}b`,
     },
   });
   itBundled("edgecase/ImportStarFunction", {
@@ -659,7 +660,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/AbsolutePathShouldNotResolveAsRelative", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log(1);
@@ -1038,4 +1038,14 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
+  const requireTranspilationListESM = [
+    // input, output:bun, output:node
+    ["require", "import.meta.require", "__require"],
+    ["typeof require", "import.meta.require", "typeof __require"],
+    ["typeof require", "import.meta.require", "typeof __require"],
+  ];
+
+  // itBundled('edgecase/RequireTranspilation')
 });

@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -15,6 +15,9 @@ export default [
       },
       fatal: {
         getter: "getFatal",
+      },
+      ignoreBOM: {
+        getter: "getIgnoreBOM",
       },
 
       decode: {

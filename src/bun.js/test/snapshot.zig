@@ -17,6 +17,7 @@ const Expect = @import("./expect.zig").Expect;
 
 pub const Snapshots = struct {
     const file_header = "// Bun Snapshot v1, https://goo.gl/fbAQLP\n";
+    const snapshots_dir_name = "__snapshots__" ++ [_]u8{std.fs.path.sep};
     pub const ValuesHashMap = std.HashMap(usize, string, bun.IdentityContext(usize), std.hash_map.default_max_load_percentage);
 
     allocator: std.mem.Allocator,
@@ -38,7 +39,7 @@ pub const Snapshots = struct {
     };
 
     pub fn getOrPut(this: *Snapshots, expect: *Expect, value: JSValue, hint: string, globalObject: *JSC.JSGlobalObject) !?string {
-        switch (try this.getSnapshotFile(expect.scope.file_id)) {
+        switch (try this.getSnapshotFile(expect.testScope().?.describe.file_id)) {
             .result => {},
             .err => |err| {
                 return switch (err.syscall) {
@@ -52,7 +53,7 @@ pub const Snapshots = struct {
         const snapshot_name = try expect.getSnapshotName(this.allocator, hint);
         this.total += 1;
 
-        var count_entry = try this.counts.getOrPut(snapshot_name);
+        const count_entry = try this.counts.getOrPut(snapshot_name);
         const counter = brk: {
             if (count_entry.found_existing) {
                 this.allocator.free(snapshot_name);
@@ -66,7 +67,7 @@ pub const Snapshots = struct {
         const name = count_entry.key_ptr.*;
 
         var counter_string_buf = [_]u8{0} ** 32;
-        var counter_string = try std.fmt.bufPrint(&counter_string_buf, "{d}", .{counter});
+        const counter_string = try std.fmt.bufPrint(&counter_string_buf, "{d}", .{counter});
 
         var name_with_counter = try this.allocator.alloc(u8, name.len + 1 + counter_string.len);
         defer this.allocator.free(name_with_counter);
@@ -100,7 +101,7 @@ pub const Snapshots = struct {
         if (this.file_buf.items.len == 0) return;
 
         const vm = VirtualMachine.get();
-        var opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
+        const opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
         var temp_log = logger.Log.init(this.allocator);
 
         const test_file = Jest.runner.?.files.get(this._current_file.?.id);
@@ -111,8 +112,8 @@ pub const Snapshots = struct {
         var remain: []u8 = snapshot_file_path_buf[0..bun.MAX_PATH_BYTES];
         bun.copy(u8, remain, dir_path);
         remain = remain[dir_path.len..];
-        bun.copy(u8, remain, "__snapshots__/");
-        remain = remain["__snapshots__/".len..];
+        bun.copy(u8, remain, snapshots_dir_name);
+        remain = remain[snapshots_dir_name.len..];
         bun.copy(u8, remain, test_filename);
         remain = remain[test_filename.len..];
         bun.copy(u8, remain, ".snap");
@@ -130,7 +131,7 @@ pub const Snapshots = struct {
             this.allocator,
         );
 
-        var parse_result = try parser.parse();
+        const parse_result = try parser.parse();
         var ast = if (parse_result == .ast) parse_result.ast else return error.ParseError;
         defer ast.deinit();
 
@@ -221,8 +222,8 @@ pub const Snapshots = struct {
             var remain: []u8 = snapshot_file_path_buf[0..bun.MAX_PATH_BYTES];
             bun.copy(u8, remain, dir_path);
             remain = remain[dir_path.len..];
-            bun.copy(u8, remain, "__snapshots__/");
-            remain = remain["__snapshots__/".len..];
+            bun.copy(u8, remain, snapshots_dir_name);
+            remain = remain[snapshots_dir_name.len..];
 
             if (this.snapshot_dir_path == null or !strings.eqlLong(dir_path, this.snapshot_dir_path.?, true)) {
                 remain[0] = 0;
@@ -258,7 +259,7 @@ pub const Snapshots = struct {
 
             var file: File = .{
                 .id = file_id,
-                .file = .{ .handle = bun.fdcast(fd) },
+                .file = fd.asFile(),
             };
 
             if (this.update_snapshots) {
@@ -270,6 +271,9 @@ pub const Snapshots = struct {
                 } else {
                     const buf = try this.allocator.alloc(u8, length);
                     _ = try file.file.preadAll(buf, 0);
+                    if (comptime bun.Environment.isWindows) {
+                        try file.file.seekTo(0);
+                    }
                     try this.file_buf.appendSlice(buf);
                     this.allocator.free(buf);
                 }

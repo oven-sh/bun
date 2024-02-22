@@ -2,8 +2,8 @@
 
 #include "root.h"
 
-#include "wtf/FastMalloc.h"
-#include "wtf/Noncopyable.h"
+#include <wtf/FastMalloc.h>
+#include <wtf/Noncopyable.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -16,8 +16,10 @@ public:
     DOMClientIsoSubspaces() = default;
 
     /* --- bun --- */
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunClassConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBufferList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFIFunction;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWrappingFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiClass;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiPrototype;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatement;
@@ -36,6 +38,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMScript;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCommonJSModuleRecord;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockImplementation;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSModuleMock;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAsyncContextFrame;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMockWithImplementationCleanupData;
@@ -43,6 +46,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalModuleRegistry;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunInspectorConnection;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNextTickQueue;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNAPIFunction;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTTYWrapObject;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 
@@ -675,18 +680,18 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForIntersectionObserverEntry;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForLocation;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNavigator;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformance;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceEntry;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceMark;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceMeasure;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformance;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceEntry;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceMark;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceMeasure;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceNavigation;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceNavigationTiming;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceObserver;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceObserverEntryList;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceObserver;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceObserverEntryList;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformancePaintTiming;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceResourceTiming;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceServerTiming;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceTiming;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceTiming;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRemoteDOMWindow;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResizeObserver;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResizeObserverEntry;

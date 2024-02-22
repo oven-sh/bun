@@ -1,21 +1,28 @@
 ---
-name: Get started using Prisma
+name: Use Prisma with Bun
+---
+
+{% callout %}
+**Note** — At the moment Prisma needs Node.js to be installed to run certain generation code. Make sure Node.js is installed in the environment where you're running `bunx prisma` commands.
+{% /callout %}
+
 ---
 
 Prisma works out of the box with Bun. First, create a directory and initialize it with `bun init`.
 
 ```bash
-mkdir prisma-app
-cd prisma-app
-bun init
+$ mkdir prisma-app
+$ cd prisma-app
+$ bun init
 ```
 
 ---
 
-Then add Prisma as a dependency.
+Then install the Prisma CLI (`prisma`) and Prisma Client (`@prisma/client`) as dependencies.
 
 ```bash
-bun add prisma
+$ bun add -d prisma
+$ bun add @prisma/client
 ```
 
 ---
@@ -23,7 +30,7 @@ bun add prisma
 We'll use the Prisma CLI with `bunx` to initialize our schema and migration directory. For simplicity we'll be using an in-memory SQLite database.
 
 ```bash
-bunx prisma init --datasource-provider sqlite
+$ bunx prisma init --datasource-provider sqlite
 ```
 
 ---
@@ -54,14 +61,37 @@ Then generate and run initial migration.
 This will generate a `.sql` migration file in `prisma/migrations`, create a new SQLite instance, and execute the migration against the new instance.
 
 ```bash
-bunx prisma migrate dev --name init
+$ bunx prisma migrate dev --name init
+Environment variables loaded from .env
+Prisma schema loaded from prisma/schema.prisma
+Datasource "db": SQLite database "dev.db" at "file:./dev.db"
+
+SQLite database dev.db created at file:./dev.db
+
+Applying migration `20230928182242_init`
+
+The following migration(s) have been created and applied from new schema changes:
+
+migrations/
+  └─ 20230928182242_init/
+    └─ migration.sql
+
+Your database is now in sync with your schema.
+
+✔ Generated Prisma Client (v5.3.1) to ./node_modules/@prisma/client in 41ms
 ```
 
 ---
 
-Prisma automatically generates our _Prisma client_ whenever we execute a new migration. The client provides a fully typed API for reading and writing from our database.
+As indicated in the output, Prisma re-generates our _Prisma client_ whenever we execute a new migration. The client provides a fully typed API for reading and writing from our database. You can manually re-generate the client with the Prisma CLI.
 
-It can be imported from `@prisma/client`.
+```sh
+$ bunx prisma generate
+```
+
+---
+
+We can import the generated client from `@prisma/client`.
 
 ```ts#src/index.ts
 import {PrismaClient} from "@prisma/client";

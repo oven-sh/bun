@@ -3,8 +3,8 @@
 
 #include "root.h"
 
-#include "wtf/FastMalloc.h"
-#include "wtf/Noncopyable.h"
+#include <wtf/FastMalloc.h>
+#include <wtf/Noncopyable.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -16,8 +16,10 @@ class DOMIsoSubspaces {
 public:
     DOMIsoSubspaces() = default;
     /*-- BUN --*/
+    std::unique_ptr<IsoSubspace> m_subspaceForBunClassConstructor;
     std::unique_ptr<IsoSubspace> m_subspaceForBufferList;
     std::unique_ptr<IsoSubspace> m_subspaceForFFIFunction;
+    std::unique_ptr<IsoSubspace> m_subspaceForWrappingFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiClass;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiPrototype;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatement;
@@ -36,6 +38,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMScript;
     std::unique_ptr<IsoSubspace> m_subspaceForCommonJSModuleRecord;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockImplementation;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSModuleMock;
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForAsyncContextFrame;
     std::unique_ptr<IsoSubspace> m_subspaceForMockWithImplementationCleanupData;
@@ -43,6 +46,9 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForInternalModuleRegistry;
     std::unique_ptr<IsoSubspace> m_subspaceForBunInspectorConnection;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNextTickQueue;
+    std::unique_ptr<IsoSubspace> m_subspaceForNAPIFunction;
+    std::unique_ptr<IsoSubspace> m_subspaceForTTYWrapObject;
+
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 
@@ -667,18 +673,18 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForIntersectionObserverEntry;
     // std::unique_ptr<IsoSubspace> m_subspaceForLocation;
     // std::unique_ptr<IsoSubspace> m_subspaceForNavigator;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformance;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceEntry;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceMark;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceMeasure;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformance;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceEntry;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceMark;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceMeasure;
     // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceNavigation;
     // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceNavigationTiming;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceObserver;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceObserverEntryList;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceObserver;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceObserverEntryList;
     // std::unique_ptr<IsoSubspace> m_subspaceForPerformancePaintTiming;
     // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceResourceTiming;
     // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceServerTiming;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPerformanceTiming;
+    std::unique_ptr<IsoSubspace> m_subspaceForPerformanceTiming;
     // std::unique_ptr<IsoSubspace> m_subspaceForRemoteDOMWindow;
     // std::unique_ptr<IsoSubspace> m_subspaceForResizeObserver;
     // std::unique_ptr<IsoSubspace> m_subspaceForResizeObserverEntry;

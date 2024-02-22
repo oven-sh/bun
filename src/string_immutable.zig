@@ -5889,47 +5889,78 @@ pub const visible = struct {
 
     fn visibleUTF16WidthFn(input_: []const u16, exclude_ansi_colors: bool) usize {
         var input = input_;
-        _ = &input;
         var len: usize = 0;
-
-        if (firstNonASCII16([]const u16, input)) |idx| {
-            for (0..idx) |i| {
-                len += visibleLatin1WidthScalar(@intCast(input[i]));
-            }
-            input = input[idx..];
-        }
-
-        var i: usize = 0;
-        var iter = std.unicode.Utf16LeIterator.init(input);
         var prev: ?u21 = 0;
         var break_state = grapheme.BreakState{};
         var break_start: u21 = 0;
+        var saw_1b = false;
+        var saw_bracket = false;
+        var stretch_len: usize = 0;
 
-        while (iter.nextCodepoint() catch return 0) |cp| : (i += 1) blk: {
-            if (!exclude_ansi_colors or cp != 0x1b) {
-                if (prev) |prev_| {
-                    const should_break = grapheme.graphemeBreak(prev_, cp, &break_state);
-                    if (should_break) {
-                        len += visibleCodepointWidth(break_start);
-                        break_start = cp;
+        while (true) {
+            {
+                const idx = firstNonASCII16IgnoreMin([]const u16, input) orelse input.len;
+                for (0..idx) |j| {
+                    const cp = input[j];
+                    defer prev = cp;
+
+                    if (saw_bracket) {
+                        if (cp == 'm') {
+                            saw_1b = false;
+                            saw_bracket = false;
+                            stretch_len = 0;
+                            continue;
+                        }
+                        stretch_len += visibleCodepointWidth(cp);
+                        continue;
                     }
-                } else {
-                    len += visibleCodepointWidth(cp);
-                    break_start = cp;
+                    if (saw_1b) {
+                        if (cp == '[') {
+                            saw_bracket = true;
+                            stretch_len = 0;
+                            continue;
+                        }
+                        len += visibleCodepointWidth(cp);
+                        continue;
+                    }
+                    if (!exclude_ansi_colors or cp != 0x1b) {
+                        if (prev) |prev_| {
+                            const should_break = grapheme.graphemeBreak(prev_, cp, &break_state);
+                            if (should_break) {
+                                len += visibleCodepointWidth(break_start);
+                                break_start = cp;
+                            } else {
+                                //
+                            }
+                        } else {
+                            len += visibleCodepointWidth(cp);
+                            break_start = cp;
+                        }
+                        continue;
+                    }
+                    saw_1b = true;
+                    continue;
                 }
-                prev = cp;
-                continue;
+                len += stretch_len;
+                input = input[idx..];
             }
-            if ((iter.nextCodepoint() catch return 0) != '[') {
+            if (input.len == 0) break;
+            const replacement = utf16CodepointWithFFFD([]const u16, input);
+            defer input = input[replacement.len..];
+            if (replacement.fail) continue;
+            const cp: u21 = @intCast(replacement.code_point);
+            defer prev = cp;
+
+            if (prev) |prev_| {
+                const should_break = grapheme.graphemeBreak(prev_, cp, &break_state);
+                if (should_break) {
+                    len += visibleCodepointWidth(break_start);
+                    break_start = cp;
+                } else {}
+            } else {
                 len += visibleCodepointWidth(cp);
-                continue;
+                break_start = cp;
             }
-            var stretch_len: usize = 0;
-            while (iter.nextCodepoint() catch return 0) |cp2| : (i += 1) {
-                if (cp2 == 'm') break :blk;
-                stretch_len += visibleCodepointWidth(cp2);
-            }
-            len += stretch_len;
         }
         if (break_start > 0) {
             len += visibleCodepointWidth(break_start);

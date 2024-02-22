@@ -5803,6 +5803,14 @@ pub fn visibleCodepointWidth(cp: u21) u3 {
     return visibleCodepointWidthType(u21, cp);
 }
 
+pub fn visibleCodepointWidthMaybeEmoji(cp: u21, maybe_emoji: bool) u3 {
+    // UCHAR_EMOJI=57,
+    if (maybe_emoji and icu_hasBinaryProperty(cp, 57)) {
+        return 2;
+    }
+    return visibleCodepointWidth(cp);
+}
+
 pub fn visibleCodepointWidthType(comptime T: type, cp: T) u3 {
     if (isZeroWidthCodepointType(T, cp)) {
         return 0;
@@ -5927,7 +5935,7 @@ pub const visible = struct {
                         if (prev) |prev_| {
                             const should_break = grapheme.graphemeBreak(prev_, cp, &break_state);
                             if (should_break) {
-                                len += visibleCodepointWidth(break_start);
+                                len += visibleCodepointWidthMaybeEmoji(break_start, cp == 0xFE0F);
                                 break_start = cp;
                             } else {
                                 //
@@ -5954,7 +5962,7 @@ pub const visible = struct {
             if (prev) |prev_| {
                 const should_break = grapheme.graphemeBreak(prev_, cp, &break_state);
                 if (should_break) {
-                    len += visibleCodepointWidth(break_start);
+                    len += visibleCodepointWidthMaybeEmoji(break_start, cp == 0xFE0F);
                     break_start = cp;
                 } else {}
             } else {
@@ -5963,7 +5971,7 @@ pub const visible = struct {
             }
         }
         if (break_start > 0) {
-            len += visibleCodepointWidth(break_start);
+            len += visibleCodepointWidthMaybeEmoji(break_start, (prev orelse 0) == 0xFE0F);
         }
         return len;
     }
@@ -6040,3 +6048,6 @@ pub fn withoutSuffixComptime(input: []const u8, comptime suffix: []const u8) []c
     }
     return input;
 }
+
+// extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
+extern fn icu_hasBinaryProperty(c: u32, which: c_uint) bool;

@@ -106,7 +106,7 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
     expect("\u001B[31m\u001B[39m")[matcher]();
     // expect("\u001B]8;;https://github.com\u0007Click\u001B]8;;\u0007")[matcher]();
     expect("\u{231A}")[matcher]();
-    // expect("\u{2194}\u{FE0F}")[matcher]();
+    expect("\u{2194}\u{FE0F}")[matcher]();
     expect("\u{1F469}")[matcher]();
     expect("\u{1F469}\u{1F3FF}")[matcher]();
     expect("\u{845B}\u{E0100}")[matcher]();

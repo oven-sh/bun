@@ -22,9 +22,9 @@ const bun = @import("root").bun;
 const os = std.os;
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
 const JSC = bun.JSC;
 const JSValue = bun.JSC.JSValue;
+const ArrayList = std.ArrayList;
 const JSPromise = bun.JSC.JSPromise;
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 const which = @import("../which.zig").which;
@@ -207,7 +207,7 @@ pub const EnvStr = packed struct {
     tag: Tag,
     len: usize = 0,
 
-    const print = bun.Output.scoped(.EnvStr, true);
+    const print = bun.Output.scoped(.EnvStr, false);
 
     const Tag = enum(u16) {
         /// Dealloced by reference counting
@@ -269,7 +269,11 @@ pub const RefCountedStr = struct {
     len: u32 = 0,
     ptr: [*]const u8 = undefined,
 
-    const print = bun.Output.scoped(.RefCountedEnvStr, true);
+    const print = if (!bun.Environment.isDebug and bun.Environment.allow_assert) struct {
+        pub fn log(comptime fmt: []const u8, args: anytype) void {
+            std.debug.print("[RefCountedEnvStr] " ++ fmt, args);
+        }
+    }.log else bun.Output.scoped(.RefCountedEnvStr, false);
 
     // /// Use bun.default_allocator
     // const DEFAULT_ALLOC_TAG: usize = 1 << 63;
@@ -291,10 +295,12 @@ pub const RefCountedStr = struct {
     }
 
     fn ref(this: *RefCountedStr) void {
+        print("ref({s}) = {d}", .{ this.byteSlice(), this.refcount + 1 });
         this.refcount += 1;
     }
 
     fn deref(this: *RefCountedStr) void {
+        print("deref({s}) = {d}", .{ this.byteSlice(), this.refcount - 1 });
         this.refcount -= 1;
         if (this.refcount == 0) {
             this.deinit();
@@ -721,18 +727,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             pub fn getHomedir(self: *ShellState) EnvStr {
-                if (comptime bun.Environment.isWindows) {
-                    if (self.export_env.get(EnvStr.initSlice("USERPROFILE"))) |env| {
-                        env.ref();
-                        return env;
-                    }
-                } else {
-                    if (self.export_env.get(EnvStr.initSlice("HOME"))) |env| {
-                        env.ref();
-                        return env;
-                    }
-                }
-                return EnvStr.initSlice("unknown");
+                const env_var: ?EnvStr = brk: {
+                    const static_str = if (comptime bun.Environment.isWindows) EnvStr.initSlice("USERPROFILE") else EnvStr.initSlice("HOME");
+                    break :brk self.shell_env.get(static_str) orelse self.export_env.get(static_str);
+                };
+                return env_var orelse EnvStr.initSlice("unknown");
             }
 
             pub fn writeFailingError(
@@ -1530,6 +1529,21 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             }
 
                             if (this.word_idx >= this.node.atomsLen()) {
+                                if (this.node.hasTildeExpansion() and this.node.atomsLen() > 1) {
+                                    const homedir = this.base.shell.getHomedir();
+                                    defer homedir.deref();
+                                    if (this.current_out.items.len > 0) {
+                                        switch (this.current_out.items[0]) {
+                                            '/', '\\' => {
+                                                this.current_out.insertSlice(0, homedir.slice()) catch bun.outOfMemory();
+                                            },
+                                            else => {
+                                                // TODO: Handle username
+                                                this.current_out.insert(0, '~') catch bun.outOfMemory();
+                                            },
+                                        }
+                                    }
+                                }
                                 // NOTE brace expansion + cmd subst has weird behaviour we don't support yet, ex:
                                 // echo $(echo a b c){1,2,3}
                                 // >> a b c1 a b c2 a b c3
@@ -1617,6 +1631,8 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 }
             }
 
+            // fn expandTilde(this: *Expansion, )
+
             fn transitionToGlobState(this: *Expansion) void {
                 var arena = Arena.init(this.base.interpreter.allocator);
                 this.child_state = .{ .glob = .{ .walker = .{} } };
@@ -1650,7 +1666,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) bool {
                 switch (this.node.*) {
                     .simple => |*simp| {
-                        const is_cmd_subst = this.expandSimpleNoIO(simp, &this.current_out);
+                        const is_cmd_subst = this.expandSimpleNoIO(simp, &this.current_out, true);
                         if (is_cmd_subst) {
                             var io: IO = .{};
                             io.stdout = .pipe;
@@ -1676,8 +1692,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         }
                     },
                     .compound => |cmp| {
-                        for (cmp.atoms[start_word_idx..]) |*simple_atom| {
-                            const is_cmd_subst = this.expandSimpleNoIO(simple_atom, &this.current_out);
+                        const starting_offset: usize = if (this.node.hasTildeExpansion()) brk: {
+                            this.word_idx += 1;
+                            break :brk 1;
+                        } else 0;
+                        for (cmp.atoms[start_word_idx + starting_offset ..]) |*simple_atom| {
+                            const is_cmd_subst = this.expandSimpleNoIO(simple_atom, &this.current_out, true);
                             if (is_cmd_subst) {
                                 var io: IO = .{};
                                 io.stdout = .pipe;
@@ -1876,13 +1896,18 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             }
 
             /// If the atom is actually a command substitution then does nothing and returns true
-            pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list: *std.ArrayList(u8)) bool {
+            pub fn expandSimpleNoIO(
+                this: *Expansion,
+                atom: *const ast.SimpleAtom,
+                str_list: *std.ArrayList(u8),
+                comptime expand_tilde: bool,
+            ) bool {
                 switch (atom.*) {
                     .Text => |txt| {
                         str_list.appendSlice(txt) catch bun.outOfMemory();
                     },
                     .Var => |label| {
-                        str_list.appendSlice(this.expandVar(label).slice()) catch bun.outOfMemory();
+                        str_list.appendSlice(this.expandVar(label)) catch bun.outOfMemory();
                     },
                     .asterisk => {
                         str_list.append('*') catch bun.outOfMemory();
@@ -1899,10 +1924,14 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     .comma => {
                         str_list.append(',') catch bun.outOfMemory();
                     },
+                    .tilde => {
+                        if (expand_tilde) {
+                            const homedir = this.base.shell.getHomedir();
+                            defer homedir.deref();
+                            str_list.appendSlice(homedir.slice()) catch bun.outOfMemory();
+                        } else str_list.append('`') catch bun.outOfMemory();
+                    },
                     .cmd_subst => {
-                        // TODO:
-                        // if the command substution is comprised of solely shell variable assignments then it should do nothing
-                        // if (atom.cmd_subst.* == .assigns) return false;
                         return true;
                     },
                 }
@@ -1949,11 +1978,12 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 // this.out.array_of_ptr.append(@as([*:0]const u8, @ptrCast(buf.items.ptr))) catch bun.outOfMemory();
             }
 
-            fn expandVar(this: *const Expansion, label: []const u8) EnvStr {
+            fn expandVar(this: *const Expansion, label: []const u8) []const u8 {
                 const value = this.base.shell.shell_env.get(EnvStr.initSlice(label)) orelse brk: {
-                    break :brk this.base.shell.export_env.get(EnvStr.initSlice(label)) orelse return EnvStr.initSlice("");
+                    break :brk this.base.shell.export_env.get(EnvStr.initSlice(label)) orelse return "";
                 };
-                return value;
+                defer value.deref();
+                return value.slice();
             }
 
             fn currentWord(this: *Expansion) *const ast.SimpleAtom {
@@ -1982,7 +2012,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 };
             }
 
-            fn expansionSizeHintSimple(this: *const Expansion, simple: *const ast.SimpleAtom, has_cmd_subst: *bool) usize {
+            fn expansionSizeHintSimple(this: *const Expansion, simple: *const ast.SimpleAtom, has_unknown: *bool) usize {
                 return switch (simple.*) {
                     .Text => |txt| txt.len,
                     .Var => |label| this.expandVar(label).len,
@@ -1995,7 +2025,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         // if (@as(ast.CmdOrAssigns.Tag, subst.*) == .assigns) {
                         //     return 0;
                         // }
-                        has_cmd_subst.* = true;
+                        has_unknown.* = true;
+                        return 0;
+                    },
+                    .tilde => {
+                        has_unknown.* = true;
                         return 0;
                     },
                 };

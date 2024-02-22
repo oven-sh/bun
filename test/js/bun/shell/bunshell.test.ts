@@ -335,6 +335,32 @@ describe("bunshell", () => {
     expect(stdout.toString()).toEqual(`noice\n`);
   });
 
+  describe("tilde expansion", () => {
+    test("with paths", async () => {
+      await TestBuilder.command`echo ~/Documents`.stdout(`${process.env.HOME}/Documents\n`).run();
+      await TestBuilder.command`echo ~/Do"cu"me"nts"`.stdout(`${process.env.HOME}/Documents\n`).run();
+      await TestBuilder.command`echo ~/LOL hi hello`.stdout(`${process.env.HOME}/LOL hi hello\n`).run();
+    });
+
+    test("normal", async () => {
+      await TestBuilder.command`echo ~`.stdout(`${process.env.HOME}\n`).run();
+      await TestBuilder.command`echo ~~`.stdout(`~~\n`).run();
+      await TestBuilder.command`echo ~ hi hello`.stdout(`${process.env.HOME} hi hello\n`).run();
+    });
+
+    test("empty $HOME or $USERPROFILE", async () => {
+      await TestBuilder.command`HOME="" USERPROFILE="" && echo ~ && echo ~/Documents`.stdout("\n/Documents\n").run();
+    });
+
+    test("modified $HOME or $USERPROFILE", async () => {
+      await TestBuilder.command`HOME=lmao USERPROFILE=lmao && echo ~`.stdout("lmao\n").run();
+
+      await TestBuilder.command`HOME=lmao USERPROFILE=lmao && echo ~ && echo ~/Documents`
+        .stdout("lmao\nlmao/Documents\n")
+        .run();
+    });
+  });
+
   describe("glob expansion", () => {
     test("No matches should fail", async () => {
       // Issue #8403: https://github.com/oven-sh/bun/issues/8403

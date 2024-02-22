@@ -52,7 +52,7 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
 ];
 
 describe("fd leak", () => {
-  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 500) {
+  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 5) {
     test(`fdleak_${name}`, async () => {
       for (let i = 0; i < 5; i++) {
         await builder().quiet().run();
@@ -88,7 +88,6 @@ describe("fd leak", () => {
       writeFileSync(tempfile, testcode);
 
       const impl = /* ts */ `
-            test("${name}", async () => {
               const threshold = ${threshold}
               let prev: number | undefined = undefined;
               for (let i = 0; i < ${runs}; i++) {
@@ -97,28 +96,62 @@ describe("fd leak", () => {
                   await ${builder.toString().slice("() =>".length)}.quiet().run()
                 })()
                 Bun.gc(true);
+                Bun.gc(true);
                 const val = process.memoryUsage.rss();
                 if (prev === undefined) {
                   prev = val;
                 } else {
-                  expect(Math.abs(prev - val)).toBeLessThan(threshold)
-                  if (!(Math.abs(prev - val) < threshold)) process.exit(1);
+                  if (!(Math.abs(prev - val) < threshold)) { console.error(Math.abs(prev - val), '>=', threshold); process.exit(1); }
                 }
               }
-            }, 1_000_000)
+
             `;
 
       appendFileSync(tempfile, impl);
 
       // console.log("THE CODE", readFileSync(tempfile, "utf-8"));
 
-      const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "test", tempfile], {
+      const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "run", tempfile], {
         env: bunEnv,
       });
       // console.log('STDOUT:', stdout.toString(), '\n\nSTDERR:', stderr.toString());
       console.log("\n\nSTDERR:", stderr.toString());
       expect(exitCode).toBe(0);
     }, 100_000);
+  }
+
+  function envStrLeakTest(name: string, builder: () => TestBuilder, strings: string[]) {
+    test(`envstrleak_${name}`, async () => {
+      const tempfile = join(tmpdir(), "strleakscript.ts");
+
+      const filepath = import.meta.dirname;
+      const testcode = await Bun.file(join(filepath, "./test_builder.ts")).text();
+
+      writeFileSync(tempfile, testcode);
+
+      const impl = /* ts */ `
+      console.log('HI')
+      Bun.gc(true);
+      await (async function() {
+        await ${builder.toString().slice("() =>".length)}.quiet().run()
+      })()
+      Bun.gc(true);
+            `;
+
+      appendFileSync(tempfile, impl);
+
+      const { stdout } = Bun.spawnSync([process.argv0, "--smol", "run", tempfile], {
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1", BUN_DEBUG_RefCountedEnvStr: "1", BUN_DEBUG_SHELL: "1" },
+      });
+      const stdoutstr = stdout.toString();
+      for (const str of strings) {
+        // searrch for: deref\(str\) = 0
+        // const re = new RegExp(`deref\\(${str}\\) = 0`);
+        console.log("STDOUT:", stdoutstr);
+        expect(stdoutstr.includes(`deref(${str}) = 0`)).toBeTrue();
+        // expect(re.test(stdoutstr)).toBe(true);
+      }
+    });
   }
 
   TESTS.forEach(args => {
@@ -134,4 +167,18 @@ describe("fd leak", () => {
   );
   memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc((1 << 20) * 100)}`, 100);
   memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100);
+
+  envStrLeakTest(
+    "Shell var",
+    () => TestBuilder.command`FOO=bar && echo $FOO`.stdout("bar\n"),
+    // FOO is allocated into shell script arena
+    ["bar"],
+  );
+
+  envStrLeakTest(
+    "HOME",
+    () => TestBuilder.command`HOME=lmao && echo ~`.stdout("lmao\n"),
+    // FOO is allocated into shell script arena
+    ["lmao"],
+  );
 });

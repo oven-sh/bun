@@ -1952,7 +1952,19 @@ pub const Crypto = struct {
                     return true;
                 },
                 .bcrypt => {
-                    pwhash.bcrypt.strVerify(previous_hash, password, .{ .allocator = allocator }) catch |err| {
+                    var password_to_use = password;
+                    var outbuf: [bun.sha.SHA512.digest]u8 = undefined;
+
+                    // bcrypt silently truncates passwords longer than 72 bytes
+                    // we use SHA512 to hash the password if it's longer than 72 bytes
+                    if (password.len > 72) {
+                        var sha_512 = bun.sha.SHA512.init();
+                        defer sha_512.deinit();
+                        sha_512.update(password);
+                        sha_512.final(&outbuf);
+                        password_to_use = &outbuf;
+                    }
+                    pwhash.bcrypt.strVerify(previous_hash, password_to_use, .{ .allocator = allocator }) catch |err| {
                         if (err == error.PasswordVerificationFailed) {
                             return false;
                         }

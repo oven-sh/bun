@@ -1952,7 +1952,19 @@ pub const Crypto = struct {
                     return true;
                 },
                 .bcrypt => {
-                    pwhash.bcrypt.strVerify(previous_hash, password, .{ .allocator = allocator }) catch |err| {
+                    var password_to_use = password;
+                    var outbuf: [bun.sha.SHA512.digest]u8 = undefined;
+
+                    // bcrypt silently truncates passwords longer than 72 bytes
+                    // we use SHA512 to hash the password if it's longer than 72 bytes
+                    if (password.len > 72) {
+                        var sha_512 = bun.sha.SHA512.init();
+                        defer sha_512.deinit();
+                        sha_512.update(password);
+                        sha_512.final(&outbuf);
+                        password_to_use = &outbuf;
+                    }
+                    pwhash.bcrypt.strVerify(previous_hash, password_to_use, .{ .allocator = allocator }) catch |err| {
                         if (err == error.PasswordVerificationFailed) {
                             return false;
                         }
@@ -5163,19 +5175,24 @@ fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) cal
     defer str.deref();
 
     var count_ansi_escapes = false;
+    var ambiguous_as_wide = false;
 
     if (options_object.isObject()) {
         if (options_object.getTruthy(globalObject, "countAnsiEscapeCodes")) |count_ansi_escapes_value| {
             if (count_ansi_escapes_value.isBoolean())
                 count_ansi_escapes = count_ansi_escapes_value.toBoolean();
         }
+        if (options_object.getTruthy(globalObject, "ambiguousIsNarrow")) |ambiguous_is_narrow| {
+            if (ambiguous_is_narrow.isBoolean())
+                ambiguous_as_wide = !ambiguous_is_narrow.toBoolean();
+        }
     }
 
     if (count_ansi_escapes) {
-        return JSC.jsNumber(str.visibleWidth());
+        return JSC.jsNumber(str.visibleWidth(ambiguous_as_wide));
     }
 
-    return JSC.jsNumber(str.visibleWidthExcludeANSIColors());
+    return JSC.jsNumber(str.visibleWidthExcludeANSIColors(ambiguous_as_wide));
 }
 
 /// EnvironmentVariables is runtime defined.

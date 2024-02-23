@@ -7470,7 +7470,9 @@ pub const Interpreter = struct {
             this.written += amount;
             if (done) return;
             if (this.written >= this.buffer.len) return this.writer.end();
-            this.writer.registerPoll();
+            if (comptime bun.Environment.isWindows) {
+                this.writer.write();
+            } else this.writer.registerPoll();
         }
 
         pub fn onError(this: *BufferedWriter, err: bun.sys.Error) void {

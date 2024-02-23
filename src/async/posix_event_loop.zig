@@ -154,6 +154,7 @@ pub const FilePoll = struct {
     // const FIFOMini = JSC.WebCore.FIFOMini;
 
     const ShellBufferedWriter = bun.shell.Interpreter.BufferedWriter.Poll;
+    const ShellSubprocessCapturedPipeWriter = bun.shell.subproc.PipeReader.CapturedWriter.Poll;
     // const ShellBufferedWriterMini = bun.shell.InterpreterMini.BufferedWriter;
     // const ShellBufferedInput = bun.shell.ShellSubprocess.BufferedInput;
     // const ShellBufferedInputMini = bun.shell.SubprocessMini.BufferedInput;
@@ -163,7 +164,6 @@ pub const FilePoll = struct {
     // const ShellBufferedOutputMini = bun.shell.SubprocessMini.BufferedOutput;
     const Process = bun.spawn.Process;
     const Subprocess = JSC.Subprocess;
-    const ProcessPipeReader = Subprocess.PipeReader.Poll;
     const StaticPipeWriter = Subprocess.StaticPipeWriter.Poll;
     const FileSink = JSC.WebCore.FileSink.Poll;
     const DNSResolver = JSC.DNS.DNSResolver;
@@ -187,11 +187,16 @@ pub const FilePoll = struct {
         // ShellBufferedOutputMini,
 
         StaticPipeWriter,
+
         ShellBufferedWriter,
+        ShellSubprocessCapturedPipeWriter,
+
+        BufferedReader,
+
         Deactivated,
         DNSResolver,
         GetAddrInfoRequest,
-        LifecycleScriptSubprocessOutputReader,
+        // LifecycleScriptSubprocessOutputReader,
         Process,
     });
 

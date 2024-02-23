@@ -154,7 +154,7 @@ pub const SocketIPCData = struct {
 const NamedPipeIPCData = struct {
     const uv = bun.windows.libuv;
     // we will use writer pipe as Duplex
-    writer: bun.io.StreamingWriter(NamedPipeIPCData, onWrite, onError, null, onClientClose, null) = .{},
+    writer: bun.io.StreamingWriter(NamedPipeIPCData, onWrite, onError, null, onClientClose) = .{},
 
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     connected: bool = false,

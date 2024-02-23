@@ -4376,8 +4376,7 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
                         // it does it element-wise for every single u8 on the vector
                         // instead of doing the SIMD instructions
                         // it removes a loop, but probably is slower in the end
-                        const cmp = @as(AsciiVectorU16U1, @bitCast(vec > max_u16_ascii)) |
-                            @as(AsciiVectorU16U1, @bitCast(vec < min_u16_ascii));
+                        const cmp = @as(AsciiVectorU16U1, @bitCast(vec > max_u16_ascii)) | @as(AsciiVectorU16U1, @bitCast(vec < min_u16_ascii));
                         const bitmask: u8 = @as(u8, @bitCast(cmp));
                         const first = @ctz(bitmask);
 
@@ -5799,11 +5798,11 @@ pub fn isFullWidthCodepointType(comptime T: type, cp: T) bool {
     };
 }
 
-pub fn visibleCodepointWidth(cp: u21) u3 {
-    return visibleCodepointWidthType(u21, cp);
+pub fn visibleCodepointWidth(cp: u32) u3 {
+    return visibleCodepointWidthType(u32, cp);
 }
 
-pub fn visibleCodepointWidthMaybeEmoji(cp: u21, maybe_emoji: bool) u3 {
+pub fn visibleCodepointWidthMaybeEmoji(cp: u32, maybe_emoji: bool) u3 {
     // UCHAR_EMOJI=57,
     if (maybe_emoji and icu_hasBinaryProperty(cp, 57)) {
         return 2;
@@ -5825,19 +5824,43 @@ pub fn visibleCodepointWidthType(comptime T: type, cp: T) u3 {
 
 pub const visible = struct {
     // Ref: https://cs.stanford.edu/people/miles/iso8859.html
-    fn visibleLatin1Width(input: []const u8) usize {
+    fn visibleLatin1Width(input_: []const u8) usize {
         var length: usize = 0;
-        for (input) |c| length += visibleLatin1WidthScalar(c);
+        var input = input_;
+        const input_end_ptr = input.ptr + input.len - (input.len % 16);
+        var input_ptr = input.ptr;
+        while (input_ptr != input_end_ptr) {
+            const input_chunk: [16]u8 = input_ptr[0..16].*;
+            const sums: @Vector(16, u8) = [16]u8{
+                visibleLatin1WidthScalar(input_chunk[0]),
+                visibleLatin1WidthScalar(input_chunk[1]),
+                visibleLatin1WidthScalar(input_chunk[2]),
+                visibleLatin1WidthScalar(input_chunk[3]),
+                visibleLatin1WidthScalar(input_chunk[4]),
+                visibleLatin1WidthScalar(input_chunk[5]),
+                visibleLatin1WidthScalar(input_chunk[6]),
+                visibleLatin1WidthScalar(input_chunk[7]),
+                visibleLatin1WidthScalar(input_chunk[8]),
+                visibleLatin1WidthScalar(input_chunk[9]),
+                visibleLatin1WidthScalar(input_chunk[10]),
+                visibleLatin1WidthScalar(input_chunk[11]),
+                visibleLatin1WidthScalar(input_chunk[12]),
+                visibleLatin1WidthScalar(input_chunk[13]),
+                visibleLatin1WidthScalar(input_chunk[14]),
+                visibleLatin1WidthScalar(input_chunk[15]),
+            };
+            length += @reduce(.Add, sums);
+            input_ptr += 16;
+        }
+        input.len %= 16;
+        input.ptr = input_ptr;
+
+        for (input) |byte| length += visibleLatin1WidthScalar(byte);
         return length;
     }
 
-    fn visibleLatin1WidthScalar(c: u8) u8 {
-        return switch (c) {
-            0...31 => 0,
-            32...126 => 1,
-            127...159 => 0,
-            160...255 => 1,
-        };
+    fn visibleLatin1WidthScalar(c: u8) u1 {
+        return if ((c >= 127 and c <= 159) or c < 32) 0 else 1;
     }
 
     fn visibleLatin1WidthExcludeANSIColors(input_: anytype) usize {
@@ -5885,7 +5908,7 @@ pub const visible = struct {
             };
 
             const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
-            len += visibleCodepointWidthType(u32, cp);
+            len += visibleCodepointWidth(cp);
 
             bytes = bytes[@min(i + skip, bytes.len)..];
         }

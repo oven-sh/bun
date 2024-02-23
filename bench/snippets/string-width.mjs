@@ -11,6 +11,7 @@ const format = n => {
 
 const inputs = [
   ["hello", "ascii"],
+  ["[31mhello", "ascii+ansi"],
   ["hello😀", "ascii+emoji"],
   ["[31m😀😀", "ansi+emoji"],
   ["😀hello😀[31m😀😀😀", "ansi+emoji+ascii"],

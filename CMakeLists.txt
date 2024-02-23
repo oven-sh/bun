@@ -285,9 +285,11 @@ endif()
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
 
 set(ARCH x86_64)
+set(HOMEBREW_PREFIX "/usr/local")
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
     set(ARCH aarch64)
+    set(HOMEBREW_PREFIX "/opt/homebrew")
 endif()
 
 if(NOT CPU_TARGET)
@@ -463,6 +465,11 @@ if(NOT WEBKIT_DIR)
     endif()
 
     set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include")
+    if(APPLE)
+        set(ICU_INCLUDE_DIR "${HOMEBREW_PREFIX}/opt/icu4c/include")
+    else()
+        set(ICU_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include/wtf/unicode")
+    endif()
     set(WEBKIT_LIB_DIR "${BUN_WORKDIR}/bun-webkit/lib")
 elseif(WEBKIT_DIR STREQUAL "omit")
     message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
@@ -877,6 +884,10 @@ if(NOT ASSERT_ENABLED)
     add_compile_definitions("NDEBUG=1")
 else()
     add_compile_definitions("ASSERT_ENABLED=1")
+endif()
+
+if (ICU_INCLUDE_DIR)
+include_directories(${ICU_INCLUDE_DIR})
 endif()
 
 include_directories(

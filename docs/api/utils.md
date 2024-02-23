@@ -392,7 +392,7 @@ namespace Bun {
       /**
        * When it's ambiugous and `true`, count emoji as 2 characters wide. If `false`, emoji are counted as 1 character wide.
        *
-       * @default false
+       * @default true
        */
       ambiguousIsNarrow?: boolean;
     },

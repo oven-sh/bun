@@ -231,7 +231,7 @@ describe("bunshell", () => {
         const { stdout } = await $`FOO=${whatsupbro}; echo $FOO`;
         expect(stdout.toString("utf-8")).toEqual(whatsupbro + "\n");
       });
-      expect(error).toBeDefined();
+      expect(error).toBeUndefined();
     });
 
     test("in compound word", async () => {

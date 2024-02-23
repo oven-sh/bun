@@ -3375,7 +3375,7 @@ pub const Interpreter = struct {
                 } else switch (redirect) {
                     .jsbuf => |val| {
                         // JS values in here is probably a bug
-                        if (this.base.eventLoop() == .js) @panic("JS values not allowed in this context");
+                        if (this.base.eventLoop() != .js) @panic("JS values not allowed in this context");
                         const global = this.base.eventLoop().js.global;
 
                         if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(global)) |buf| {

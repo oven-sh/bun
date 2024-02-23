@@ -38,6 +38,15 @@ afterAll(async () => {
 const BUN = process.argv0;
 
 describe("bunshell", () => {
+  describe.todo("concurrency", () => {
+    test("writing to stdout", async () => {
+      await Promise.all([
+        TestBuilder.command`echo 1`.stdout("1\n").run(),
+        TestBuilder.command`echo 2`.stdout("2\n").run(),
+        TestBuilder.command`echo 3`.stdout("2\n").run(),
+      ]);
+    });
+  });
   test("js_obj_test", async () => {
     function runTest(name: string, builder: TestBuilder) {
       test(`js_obj_test_name_${name}`, async () => {

@@ -282,7 +282,7 @@ pub const PackageManagerCommand = struct {
 
             const param = pm.options.positionals[1];
             const id = if (lockfile.package_index.get(String.Builder.stringHash(param))) |id| id.PackageID else {
-                Output.prettyErrorln("<r><red>error<r>: Could not find package {s}", .{param});
+                Output.errGeneric("Could not find package {s}", .{param});
                 Global.exit(1);
             };
 

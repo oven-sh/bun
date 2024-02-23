@@ -5175,19 +5175,24 @@ fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) cal
     defer str.deref();
 
     var count_ansi_escapes = false;
+    var ambiguous_as_wide = false;
 
     if (options_object.isObject()) {
         if (options_object.getTruthy(globalObject, "countAnsiEscapeCodes")) |count_ansi_escapes_value| {
             if (count_ansi_escapes_value.isBoolean())
                 count_ansi_escapes = count_ansi_escapes_value.toBoolean();
         }
+        if (options_object.getTruthy(globalObject, "ambiguousIsNarrow")) |ambiguous_is_narrow| {
+            if (ambiguous_is_narrow.isBoolean())
+                ambiguous_as_wide = !ambiguous_is_narrow.toBoolean();
+        }
     }
 
     if (count_ansi_escapes) {
-        return JSC.jsNumber(str.visibleWidth());
+        return JSC.jsNumber(str.visibleWidth(ambiguous_as_wide));
     }
 
-    return JSC.jsNumber(str.visibleWidthExcludeANSIColors());
+    return JSC.jsNumber(str.visibleWidthExcludeANSIColors(ambiguous_as_wide));
 }
 
 /// EnvironmentVariables is runtime defined.

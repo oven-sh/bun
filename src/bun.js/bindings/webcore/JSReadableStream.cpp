@@ -38,9 +38,12 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include "ZigGeneratedClasses.h"
 
 namespace WebCore {
 using namespace JSC;
+
+extern "C" void ReadableStream__incrementCount(void*, int32_t);
 
 // Functions
 
@@ -114,16 +117,86 @@ static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
     { "pipeTo"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeToCodeGenerator, 1 } },
     { "pipeThrough"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeThroughCodeGenerator, 2 } },
     { "tee"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamTeeCodeGenerator, 0 } },
+
 };
 
 const ClassInfo JSReadableStreamPrototype::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamPrototype) };
+
+static JSC_DECLARE_CUSTOM_SETTER(JSReadableStreamPrototype__nativePtrSetterWrap);
+static JSC_DEFINE_CUSTOM_SETTER(JSReadableStreamPrototype__nativePtrSetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedJSValue, JSC::PropertyName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    thisObject->setNativePtr(lexicalGlobalObject, JSValue::decode(encodedJSValue));
+    return true;
+}
+
+static JSC_DECLARE_CUSTOM_GETTER(JSReadableStreamPrototype__nativePtrGetterWrap);
+static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__nativePtrGetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::PropertyName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return JSValue::encode(thisObject->nativePtr());
+}
+
+static JSC_DECLARE_CUSTOM_SETTER(JSReadableStreamPrototype__nativeTypeSetterWrap);
+static JSC_DEFINE_CUSTOM_SETTER(JSReadableStreamPrototype__nativeTypeSetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedJSValue, JSC::PropertyName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    thisObject->setNativeType(lexicalGlobalObject, JSValue::decode(encodedJSValue));
+    return true;
+}
+
+static JSC_DECLARE_CUSTOM_GETTER(JSReadableStreamPrototype__nativeTypeGetterWrap);
+static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__nativeTypeGetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::PropertyName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return JSValue::encode(thisObject->nativeType());
+}
+
+static JSC_DECLARE_CUSTOM_SETTER(JSReadableStreamPrototype__disturbedSetterWrap);
+static JSC_DEFINE_CUSTOM_SETTER(JSReadableStreamPrototype__disturbedSetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedJSValue, JSC::PropertyName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    thisObject->setDisturbed(lexicalGlobalObject, JSValue::decode(encodedJSValue));
+    return true;
+}
+
+static JSC_DECLARE_CUSTOM_GETTER(JSReadableStreamPrototype__disturbedGetterWrap);
+static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__disturbedGetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::PropertyName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return JSValue::encode(thisObject->disturbed());
+}
 
 void JSReadableStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     auto clientData = WebCore::clientData(vm);
-    this->putDirect(vm, clientData->builtinNames().bunNativePtrPrivateName(), jsNumber(0), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-    this->putDirect(vm, clientData->builtinNames().bunNativeTypePrivateName(), jsNumber(0), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+
+    this->putDirectCustomAccessor(vm, clientData->builtinNames().bunNativePtrPrivateName(), DOMAttributeGetterSetter::create(vm, JSReadableStreamPrototype__nativePtrGetterWrap, JSReadableStreamPrototype__nativePtrSetterWrap, DOMAttributeAnnotation { JSReadableStream::info(), nullptr }), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete);
+    this->putDirectCustomAccessor(vm, clientData->builtinNames().bunNativeTypePrivateName(), DOMAttributeGetterSetter::create(vm, JSReadableStreamPrototype__nativeTypeGetterWrap, JSReadableStreamPrototype__nativeTypeSetterWrap, DOMAttributeAnnotation { JSReadableStream::info(), nullptr }), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete);
+    this->putDirectCustomAccessor(vm, clientData->builtinNames().disturbedPrivateName(), DOMAttributeGetterSetter::create(vm, JSReadableStreamPrototype__disturbedGetterWrap, JSReadableStreamPrototype__disturbedSetterWrap, DOMAttributeAnnotation { JSReadableStream::info(), nullptr }), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete);
+
     reifyStaticProperties(vm, JSReadableStream::info(), JSReadableStreamPrototypeTableValues, *this);
     this->putDirectBuiltinFunction(vm, globalObject(), vm.propertyNames->asyncIteratorSymbol, readableStreamLazyAsyncIteratorCodeGenerator(vm), JSC::PropertyAttribute::DontDelete | 0);
     this->putDirectBuiltinFunction(vm, globalObject(), JSC::Identifier::fromString(vm, "values"_s), readableStreamValuesCodeGenerator(vm), JSC::PropertyAttribute::DontDelete | 0);
@@ -141,6 +214,37 @@ void JSReadableStream::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+}
+
+void JSReadableStream::setNativePtr(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value)
+{
+
+    this->m_nativePtr.set(JSC::getVM(lexicalGlobalObject), this, value);
+
+    // know we check if we can increase the ref count of the native object
+    if (value.isEmpty() || !value.isCell()) {
+        return;
+    }
+
+    JSCell* cell = value.asCell();
+
+    if (auto* casted = jsDynamicCast<JSBlobInternalReadableStreamSource*>(cell)) {
+        auto ptr = casted->wrapped();
+        ReadableStream__incrementCount(ptr, 1);
+        return;
+    }
+
+    if (auto* casted = jsDynamicCast<JSFileInternalReadableStreamSource*>(cell)) {
+        auto ptr = casted->wrapped();
+        ReadableStream__incrementCount(ptr, 2);
+        return;
+    }
+
+    if (auto* casted = jsDynamicCast<JSBytesInternalReadableStreamSource*>(cell)) {
+        auto ptr = casted->wrapped();
+        ReadableStream__incrementCount(ptr, 4);
+        return;
+    }
 }
 
 JSObject* JSReadableStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

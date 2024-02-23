@@ -915,7 +915,7 @@ pub const Fetch = struct {
                 if (response_js.as(Response)) |response| {
                     const body = response.body;
                     if (body.value == .Locked) {
-                        if (body.value.Locked.readable) |readable| {
+                        if (body.value.Locked.readable.get()) |readable| {
                             if (readable.ptr == .Bytes) {
                                 readable.ptr.Bytes.size_hint = this.getSizeHint();
 
@@ -1922,7 +1922,7 @@ pub const Fetch = struct {
                     method = request.method;
 
                     if (request.body.value == .Locked) {
-                        if (request.body.value.Locked.readable) |stream| {
+                        if (request.body.value.Locked.readable.get()) |stream| {
                             if (stream.isDisturbed(globalThis)) {
                                 globalThis.throw("ReadableStream has already been consumed", .{});
                                 if (hostname) |host| {

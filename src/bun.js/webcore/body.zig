@@ -87,7 +87,7 @@ pub const Body = struct {
             try formatter.writeIndent(Writer, writer);
             try Blob.writeFormatForSize(this.value.size(), writer, enable_ansi_colors);
         } else if (this.value == .Locked) {
-            if (this.value.Locked.readable) |stream| {
+            if (this.value.Locked.readable.get()) |stream| {
                 try formatter.printComma(Writer, writer, enable_ansi_colors);
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
@@ -102,7 +102,7 @@ pub const Body = struct {
 
     pub const PendingValue = struct {
         promise: ?JSValue = null,
-        readable: ?JSC.WebCore.ReadableStream = null,
+        readable: JSC.WebCore.ReadableStream.Strong = .{},
         // writable: JSC.WebCore.Sink
 
         global: *JSGlobalObject,
@@ -126,7 +126,7 @@ pub const Body = struct {
         /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
         /// If the size is unknown will be 0
         fn sizeHint(this: *const PendingValue) Blob.SizeType {
-            if (this.readable) |readable| {
+            if (this.readable.get()) |readable| {
                 if (readable.ptr == .Bytes) {
                     return readable.ptr.Bytes.size_hint;
                 }
@@ -142,10 +142,10 @@ pub const Body = struct {
         }
 
         pub fn toAnyBlobAllowPromise(this: *PendingValue) ?AnyBlob {
-            var stream = if (this.readable != null) &this.readable.? else return null;
+            var stream = if (this.readable.get()) |readable| readable else return null;
 
             if (stream.toAnyBlob(this.global)) |blob| {
-                this.readable = null;
+                this.readable.deinit();
                 return blob;
             }
 
@@ -154,8 +154,7 @@ pub const Body = struct {
 
         pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
             value.action = action;
-
-            if (value.readable) |readable| handle_stream: {
+            if (value.readable.get()) |readable| handle_stream: {
                 switch (action) {
                     .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer => {
                         value.promise = switch (action) {
@@ -167,13 +166,11 @@ pub const Body = struct {
                                 if (value.onStartBuffering != null) {
                                     if (readable.isDisturbed(globalThis)) {
                                         form_data.?.deinit();
-                                        readable.value.unprotect();
-                                        value.readable = null;
+                                        value.readable.deinit();
                                         value.action = .{ .none = {} };
                                         return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("ReadableStream is already used", .{}));
                                     } else {
-                                        readable.value.unprotect();
-                                        value.readable = null;
+                                        value.readable.deinit();
                                     }
 
                                     break :handle_stream;
@@ -191,10 +188,10 @@ pub const Body = struct {
                             else => unreachable,
                         };
                         value.promise.?.ensureStillAlive();
-                        readable.value.unprotect();
 
+                        readable.detachIfPossible(globalThis);
                         // js now owns the memory
-                        value.readable = null;
+                        value.readable.deinit();
 
                         return value.promise.?;
                     },
@@ -389,18 +386,15 @@ pub const Body = struct {
 
                     this.* = .{
                         .Locked = .{
-                            .readable = JSC.WebCore.ReadableStream.fromJS(value, globalThis).?,
+                            .readable = JSC.WebCore.ReadableStream.Strong.init(JSC.WebCore.ReadableStream.fromJS(value, globalThis).?, globalThis),
                             .global = globalThis,
                         },
                     };
-
-                    this.Locked.readable.?.value.protect();
-
                     return value;
                 },
                 .Locked => {
                     var locked = &this.Locked;
-                    if (locked.readable) |readable| {
+                    if (locked.readable.get()) |readable| {
                         return readable.value;
                     }
                     if (locked.promise != null) {
@@ -423,10 +417,6 @@ pub const Body = struct {
                     var reader = JSC.WebCore.ByteStream.Source.new(.{
                         .context = undefined,
                         .globalThis = globalThis,
-
-                        // 1 for the ReadableStreamSource
-                        // 1 for this Body.Value
-                        .ref_count = 2,
                     });
 
                     reader.context.setup();
@@ -439,17 +429,16 @@ pub const Body = struct {
                         reader.context.size_hint = @as(Blob.SizeType, @truncate(drain_result.owned.size_hint));
                     }
 
-                    locked.readable = .{
+                    locked.readable = JSC.WebCore.ReadableStream.Strong.init(.{
                         .ptr = .{ .Bytes = &reader.context },
                         .value = reader.toReadableStream(globalThis),
-                    };
-                    locked.readable.?.value.protect();
+                    }, globalThis);
 
                     if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
-                        onReadableStreamAvailable(locked.task.?, locked.readable.?);
+                        onReadableStreamAvailable(locked.task.?, locked.readable.get().?);
                     }
 
-                    return locked.readable.?.value;
+                    return locked.readable.get().?.value;
                 },
                 .Error => {
                     // TODO: handle error properly
@@ -581,10 +570,9 @@ pub const Body = struct {
         }
 
         pub fn fromReadableStreamWithoutLockCheck(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
-            readable.value.protect();
             return .{
                 .Locked = .{
-                    .readable = readable,
+                    .readable = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis),
                     .global = globalThis,
                 },
             };
@@ -594,9 +582,10 @@ pub const Body = struct {
             log("resolve", .{});
             if (to_resolve.* == .Locked) {
                 var locked = &to_resolve.Locked;
-                if (locked.readable) |readable| {
-                    readable.done();
-                    locked.readable = null;
+
+                if (locked.readable.get()) |readable| {
+                    readable.done(global);
+                    locked.readable.deinit();
                 }
 
                 if (locked.onReceiveValue) |callback| {
@@ -813,9 +802,9 @@ pub const Body = struct {
                     locked.promise = null;
                 }
 
-                if (locked.readable) |readable| {
-                    readable.done();
-                    locked.readable = null;
+                if (locked.readable.get()) |readable| {
+                    readable.done(global);
+                    locked.readable.deinit();
                 }
                 // will be unprotected by body value deinit
                 error_instance.protect();
@@ -854,9 +843,10 @@ pub const Body = struct {
                 if (!this.Locked.deinit) {
                     this.Locked.deinit = true;
 
-                    if (this.Locked.readable) |*readable| {
-                        readable.done();
+                    if (this.Locked.readable.get()) |*readable| {
+                        readable.done(this.Locked.global);
                     }
+                    this.Locked.readable.deinit();
                 }
 
                 return;
@@ -974,7 +964,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 switch (this.getBodyValue().*) {
                     .Used => true,
                     .Locked => |*pending| brk: {
-                        if (pending.readable) |*stream| {
+                        if (pending.readable.get()) |*stream| {
                             break :brk stream.isDisturbed(globalObject);
                         }
 
@@ -1381,10 +1371,9 @@ pub const BodyValueBufferer = struct {
     fn bufferLockedBodyValue(sink: *@This(), value: *JSC.WebCore.Body.Value) !void {
         std.debug.assert(value.* == .Locked);
         const locked = &value.Locked;
-        if (locked.readable) |stream_| {
-            const stream: JSC.WebCore.ReadableStream = stream_;
-            stream.value.ensureStillAlive();
-
+        if (locked.readable.get()) |stream| {
+            // keep the stream alive until we're done with it
+            sink.readable_stream_ref = locked.readable;
             value.* = .{ .Used = {} };
 
             if (stream.isLocked(sink.global)) {
@@ -1413,13 +1402,9 @@ pub const BodyValueBufferer = struct {
                         log("byte stream has_received_last_chunk {}", .{bytes.len});
                         sink.onFinishedBuffering(sink.ctx, bytes, null, false);
                         // is safe to detach here because we're not going to receive any more data
-                        stream.detachIfPossible(sink.global);
+                        stream.done(sink.global);
                         return;
                     }
-                    // keep the stream alive until we're done with it
-                    sink.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, sink.global);
-                    // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
-                    stream.detachIfPossible(sink.global);
 
                     byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);
                     sink.byte_stream = byte_stream;

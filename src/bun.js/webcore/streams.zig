@@ -115,7 +115,7 @@ pub const ReadableStream = struct {
                 blob.offset = blobby.offset;
                 blob.size = blobby.remain;
                 blob.store.?.ref();
-                stream.detachIfPossible(globalThis);
+                stream.done(globalThis);
 
                 return AnyBlob{ .Blob = blob };
             },
@@ -125,7 +125,7 @@ pub const ReadableStream = struct {
                     blob.store.?.ref();
                     // it should be lazy, file shouldn't have opened yet.
                     std.debug.assert(!blobby.started);
-                    stream.detachIfPossible(globalThis);
+                    stream.done(globalThis);
                     return AnyBlob{ .Blob = blob };
                 }
             },
@@ -138,7 +138,7 @@ pub const ReadableStream = struct {
                     blob.from(bytes.buffer);
                     bytes.buffer.items = &.{};
                     bytes.buffer.capacity = 0;
-                    stream.detachIfPossible(globalThis);
+                    stream.done(globalThis);
                     return blob;
                 }
 
@@ -372,7 +372,6 @@ pub const ReadableStream = struct {
             .context = .{
                 .event_loop = JSC.EventLoopHandle.init(globalThis.bunVM().eventLoop()),
             },
-            .ref_count = 2,
         });
         source.context.reader.from(buffered_reader, &source.context);
 

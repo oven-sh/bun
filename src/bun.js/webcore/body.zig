@@ -418,10 +418,6 @@ pub const Body = struct {
                     var reader = JSC.WebCore.ByteStream.Source.new(.{
                         .context = undefined,
                         .globalThis = globalThis,
-
-                        // 1 for the ReadableStreamSource
-                        // Body.Value now uses ReadableStream.Strong
-                        .ref_count = 1,
                     });
 
                     reader.context.setup();
@@ -1376,10 +1372,9 @@ pub const BodyValueBufferer = struct {
     fn bufferLockedBodyValue(sink: *@This(), value: *JSC.WebCore.Body.Value) !void {
         std.debug.assert(value.* == .Locked);
         const locked = &value.Locked;
-        if (locked.readable.get()) |stream_| {
-            const stream: JSC.WebCore.ReadableStream = stream_;
-            stream.value.ensureStillAlive();
-            locked.readable.deinit();
+        if (locked.readable.get()) |stream| {
+            // keep the stream alive until we're done with it
+            sink.readable_stream_ref = locked.readable;
             value.* = .{ .Used = {} };
 
             if (stream.isLocked(sink.global)) {
@@ -1408,13 +1403,9 @@ pub const BodyValueBufferer = struct {
                         log("byte stream has_received_last_chunk {}", .{bytes.len});
                         sink.onFinishedBuffering(sink.ctx, bytes, null, false);
                         // is safe to detach here because we're not going to receive any more data
-                        stream.detachIfPossible(sink.global);
+                        stream.done(sink.global);
                         return;
                     }
-                    // keep the stream alive until we're done with it
-                    sink.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, sink.global);
-                    // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
-                    stream.detachIfPossible(sink.global);
 
                     byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);
                     sink.byte_stream = byte_stream;

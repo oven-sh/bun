@@ -101,6 +101,7 @@ pub const ShellCompletions = @import("./cli/shell_completions.zig");
 pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
 pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
+pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -1245,6 +1246,8 @@ pub const Command = struct {
             RootCommandMatcher.case("run") => .RunCommand,
             RootCommandMatcher.case("help") => .HelpCommand,
 
+            RootCommandMatcher.case("why") => .WhyCommand,
+
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
             // when we add our actual command
@@ -1261,7 +1264,6 @@ pub const Command = struct {
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("outdated") => .ReservedCommand,
             RootCommandMatcher.case("list") => .ReservedCommand,
-            RootCommandMatcher.case("why") => .ReservedCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -1406,6 +1408,13 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .PackageManagerCommand);
 
                 try PackageManagerCommand.exec(ctx);
+                return;
+            },
+            .WhyCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .WhyCommand) unreachable;
+                const ctx = try Command.Context.create(allocator, log, .WhyCommand);
+
+                try WhyCommand.exec(ctx);
                 return;
             },
             .TestCommand => {
@@ -1904,6 +1913,7 @@ pub const Command = struct {
         UpgradeCommand,
         ReplCommand,
         ReservedCommand,
+        WhyCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return comptime &switch (cmd) {
@@ -1932,6 +1942,7 @@ pub const Command = struct {
                 // Command.Tag.PackageManagerCommand => {},
                 // Command.Tag.LinkCommand => {},
                 // Command.Tag.UnlinkCommand => {},
+                // Command.Tag.WhyCommand => {},
 
                 // fall back to HelpCommand.printWithReason
                 Command.Tag.AutoCommand => {
@@ -2112,7 +2123,7 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
+                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand, .WhyCommand => true,
                 else => false,
             };
         }
@@ -2132,6 +2143,7 @@ pub const Command = struct {
             .RemoveCommand = true,
             .UpdateCommand = true,
             .PackageManagerCommand = true,
+            .WhyCommand = true,
             .BunxCommand = true,
             .AutoCommand = true,
             .RunCommand = true,
@@ -2146,6 +2158,7 @@ pub const Command = struct {
             .RemoveCommand = true,
             .UpdateCommand = true,
             .PackageManagerCommand = true,
+            .WhyCommand = true,
             .BunxCommand = true,
         });
 
@@ -2156,6 +2169,7 @@ pub const Command = struct {
             .RemoveCommand = false,
             .UpdateCommand = false,
             .PackageManagerCommand = false,
+            .WhyCommand = false,
             .LinkCommand = false,
             .UnlinkCommand = false,
             .BunxCommand = false,

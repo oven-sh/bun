@@ -6128,6 +6128,7 @@ pub const PackageManager = struct {
         remove,
         link,
         unlink,
+        why,
     };
 
     pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
@@ -6950,6 +6951,10 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         \"name\" uninstall package as a link") catch unreachable,
     };
 
+    pub const why_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("<POS> ...                         \"name\" show why package is referecned") catch unreachable,
+    };
+
     pub const CommandLineArguments = struct {
         registry: string = "",
         cache_dir: string = "",
@@ -7148,6 +7153,27 @@ pub const PackageManager = struct {
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
+                Subcommand.why => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> [\<package\>]
+                    ;
+
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Show why the given package(s) are installed.<r>
+                        \\  <b><green>bun why<r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>
+                    ;
+
+                    Output.pretty("\n" ++ intro_text ++ "\n", .{});
+                    Output.flush();
+                    Output.pretty("\n<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(&PackageManager.why_params);
+                    Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
             }
         }
 
@@ -7162,6 +7188,7 @@ pub const PackageManager = struct {
                 .remove => remove_params,
                 .link => link_params,
                 .unlink => unlink_params,
+                .why => why_params,
             };
 
             var diag = clap.Diagnostic{};

@@ -4205,14 +4205,6 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     return "";
 }
 
-pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
-    return firstNonASCII16CheckMin(Slice, slice, true);
-}
-
-pub fn firstNonASCII16IgnoreMin(comptime Slice: type, slice: Slice) ?u32 {
-    return firstNonASCII16CheckMin(Slice, slice, false);
-}
-
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number
 /// The final element is the end index of the desired line
 const LineRange = struct {
@@ -4354,7 +4346,7 @@ pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: us
     return results;
 }
 
-pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime check_min: bool) ?u32 {
+pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
     var remaining = slice;
     const remaining_start = remaining.ptr;
 
@@ -4365,56 +4357,44 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
                 const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
                 const max_value = @reduce(.Max, vec);
 
-                if (comptime check_min) {
-                    // by using @reduce here, we make it only do one comparison
-                    // @reduce doesn't tell us the index though
-                    const min_value = @reduce(.Min, vec);
-                    if (min_value < 0x20 or max_value > 127) {
-                        remaining.len -= (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
+                if (max_value > 127) {
+                    const cmp = vec > max_u16_ascii;
+                    const bitmask: u8 = @as(u8, @bitCast(cmp));
+                    const index_of_first_nonascii_in_vector = @ctz(bitmask);
 
-                        // this is really slow
-                        // it does it element-wise for every single u8 on the vector
-                        // instead of doing the SIMD instructions
-                        // it removes a loop, but probably is slower in the end
-                        const cmp = @as(AsciiVectorU16U1, @bitCast(vec > max_u16_ascii)) | @as(AsciiVectorU16U1, @bitCast(vec < min_u16_ascii));
-                        const bitmask: u8 = @as(u8, @bitCast(cmp));
-                        const first = @ctz(bitmask);
+                    const offset_of_vector_in_input = (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
+                    const out: u32 = @intCast(offset_of_vector_in_input + index_of_first_nonascii_in_vector);
 
-                        return @as(u32, @intCast(@as(u32, first) + @as(u32, @intCast(slice.len - remaining.len))));
+                    if (comptime Environment.isDebug) {
+                        for (0..index_of_first_nonascii_in_vector) |i| {
+                            if (vec[i] > 127) {
+                                bun.Output.panic("firstNonASCII16: found non-ASCII character in ASCII vector before the first non-ASCII character", .{});
+                            }
+                        }
+
+                        if (remaining[out] <= 127) {
+                            bun.Output.panic("firstNonASCII16: Expected non-ascii character", .{});
+                        }
                     }
-                } else {
-                    if (max_value > 127) {
-                        const cmp = vec > max_u16_ascii;
-                        const bitmask: u8 = @as(u8, @bitCast(cmp));
-                        const index_of_first_nonascii_in_vector = @ctz(bitmask);
 
-                        const offset_of_vector_in_input = (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
-
-                        return @intCast(offset_of_vector_in_input + index_of_first_nonascii_in_vector);
-                    }
+                    return out;
                 }
 
                 remaining.ptr += ascii_u16_vector_size;
             }
             remaining.len -= (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
         }
+
+        std.debug.assert(remaining.len < ascii_u16_vector_size);
     }
 
     var i: usize = (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
-    if (comptime check_min) {
-        for (remaining) |char| {
-            if (char > 127 or char < 0x20) {
-                return @as(u32, @truncate(i));
-            }
-            i += 1;
+
+    for (remaining) |char| {
+        if (char > 127) {
+            return @truncate(i);
         }
-    } else {
-        for (remaining) |char| {
-            if (char > 127) {
-                return @as(u32, @truncate(i));
-            }
-            i += 1;
-        }
+        i += 1;
     }
 
     return null;
@@ -6155,7 +6135,7 @@ pub const visible = struct {
 
         while (true) {
             {
-                const idx = firstNonASCII16IgnoreMin([]const u16, input) orelse input.len;
+                const idx = firstNonASCII16([]const u16, input) orelse input.len;
                 for (0..idx) |j| {
                     const cp = input[j];
                     defer prev = cp;

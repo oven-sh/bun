@@ -4372,7 +4372,7 @@ pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
                             }
                         }
 
-                        if (remaining[out] <= 127) {
+                        if (slice[out] <= 127) {
                             bun.Output.panic("firstNonASCII16: Expected non-ascii character", .{});
                         }
                     }

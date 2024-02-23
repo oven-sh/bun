@@ -282,7 +282,7 @@ This is useful for:
 This API is designed to match the popular "string-width" package, so that
 existing code can be easily ported to Bun and vice versa.
 
-[In this benchmark](https://github.com/oven-sh/bun/blob/a146856d119336cea0e294ffe1549b78e646c70b/bench/snippets/string-width.mjs#L1-L40), `Bun.stringWidth` is 1,000x faster than the `string-width` npm package for input larger than about 500 characters. Big thanks to [sindresorhus](https://github.com/sindresorhus) for their work on `string-width`!
+[In this benchmark](https://github.com/oven-sh/bun/blob/5147c0ba7379d85d4d1ed0714b84d6544af917eb/bench/snippets/string-width.mjs#L13), `Bun.stringWidth` is 1,000x faster than the `string-width` npm package for input larger than about 500 characters. Big thanks to [sindresorhus](https://github.com/sindresorhus) for their work on `string-width`!
 
 ```ts
 ❯ bun string-width.mjs

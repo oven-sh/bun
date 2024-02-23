@@ -1408,6 +1408,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     ctx.flags.has_written_status = true;
                     ctx.end("", ctx.shouldCloseConnection());
                 } else {
+                    // avoid writing the status again and missmatching the content-length
+                    if (ctx.flags.has_written_status) {
+                        ctx.end("", ctx.shouldCloseConnection());
+                        return;
+                    }
+
                     if (ctx.flags.is_web_browser_navigation) {
                         resp.writeStatus("200 OK");
                         ctx.flags.has_written_status = true;
@@ -1418,11 +1424,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         ctx.end(welcome_page_html_gz, ctx.shouldCloseConnection());
                         return;
                     }
-
-                    if (!ctx.flags.has_written_status)
-                        resp.writeStatus("200 OK");
+                    const missing_content = "Welcome to Bun! To get started, return a Response object.";
+                    resp.writeStatus("200 OK");
+                    resp.writeHeader("content-type", MimeType.text.value);
+                    resp.writeHeaderInt("content-length", missing_content.len);
                     ctx.flags.has_written_status = true;
-                    ctx.end("Welcome to Bun! To get started, return a Response object.", ctx.shouldCloseConnection());
+                    ctx.end(missing_content, ctx.shouldCloseConnection());
                 }
             }
         }

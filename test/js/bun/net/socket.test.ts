@@ -3,6 +3,35 @@ import { expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount } from "harness";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 
+it("should coerce '0' to 0", async () => {
+  const listener = Bun.listen({
+    // @ts-expect-error
+    port: "0",
+    hostname: "localhost",
+    socket: {
+      open() {},
+      close() {},
+      data() {},
+    },
+  });
+  listener.stop(true);
+});
+
+it("should NOT coerce '-1234' to 1234", async () => {
+  expect(() =>
+    Bun.listen({
+      // @ts-expect-error
+      port: "-1234",
+      hostname: "localhost",
+      socket: {
+        open() {},
+        close() {},
+        data() {},
+      },
+    }),
+  ).toThrow(`Expected \"port\" to be a number between 0 and 65535`);
+});
+
 it("should keep process alive only when active", async () => {
   const { exited, stdout, stderr } = spawn({
     cmd: [bunExe(), "echo.js"],

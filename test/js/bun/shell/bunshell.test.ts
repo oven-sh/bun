@@ -226,7 +226,7 @@ describe("bunshell", () => {
     });
 
     test("var value", async () => {
-      const error = runWithErrorPromise(async () => {
+      const error = await runWithErrorPromise(async () => {
         const whatsupbro = "元気かい、兄弟";
         const { stdout } = await $`FOO=${whatsupbro}; echo $FOO`;
         expect(stdout.toString("utf-8")).toEqual(whatsupbro + "\n");

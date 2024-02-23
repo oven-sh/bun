@@ -214,7 +214,7 @@ pub const FilePoll = struct {
     }
 
     pub fn format(poll: *const FilePoll, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("FilePoll({}) = {}", .{ poll.fd, Flags.Formatter{ .data = poll.flags } });
+        try writer.print("FilePoll(fd={}, generation_number={d}) = {}", .{ poll.fd, poll.generation_number, Flags.Formatter{ .data = poll.flags } });
     }
 
     pub fn fileType(poll: *const FilePoll) bun.io.FileType {
@@ -232,6 +232,7 @@ pub const FilePoll = struct {
     }
 
     pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.os.system.kevent64_s) void {
+        log("onKqueueEvent(0x{x}, generation_number={d}, ext={d}, fd={})", .{ @intFromPtr(poll), poll.generation_number, kqueue_event.ext[0], poll.fd });
         if (KQueueGenerationNumber != u0)
             std.debug.assert(poll.generation_number == kqueue_event.ext[0]);
 
@@ -694,7 +695,7 @@ pub const FilePoll = struct {
                 max_generation_number +%= 1;
                 poll.generation_number = max_generation_number;
             }
-
+            log("FilePoll.init(0x{x}, generation_number={d}, fd={})", .{ @intFromPtr(poll), poll.generation_number, fd });
             return poll;
         }
 
@@ -714,6 +715,8 @@ pub const FilePoll = struct {
             max_generation_number +%= 1;
             poll.generation_number = max_generation_number;
         }
+
+        log("FilePoll.initWithOwner(0x{x}, generation_number={d}, fd={})", .{ @intFromPtr(poll), poll.generation_number, fd });
         return poll;
     }
 
@@ -791,7 +794,7 @@ pub const FilePoll = struct {
     pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: OneShotFlag, fd: bun.FileDescriptor) JSC.Maybe(void) {
         const watcher_fd = loop.fd;
 
-        log("register: {s} ({})", .{ @tagName(flag), fd });
+        log("register: FilePoll(0x{x}, generation_number={d}) {s} ({})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
 
         std.debug.assert(fd != invalid_fd);
 
@@ -982,7 +985,7 @@ pub const FilePoll = struct {
             return JSC.Maybe(void).success;
         }
 
-        log("unregister: {s} ({})", .{ @tagName(flag), fd });
+        log("unregister: FilePoll(0x{x}, generation_number={d}) {s} ({})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
 
         if (comptime Environment.isLinux) {
             const ctl = linux.epoll_ctl(

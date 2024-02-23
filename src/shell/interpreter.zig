@@ -7426,9 +7426,29 @@ pub const Interpreter = struct {
             if (comptime bun.Environment.isPosix) {
                 this.writer.parent = this;
                 // if (bun.Environment.allow_assert) std.debug.assert(@intFromPtr(this) == @intFromPtr(this.writer.parent));
-                if (this.writer.start(this.fd, true).asErr()) |_| {
-                    @panic("TODO handle file poll register faill");
+                // if (this.writer.start(this.fd, true).asErr()) |_| {
+                //     @panic("TODO handle file poll register faill");
+                // }
+                switch (this.writer.start(this.fd, true)) {
+                    .err => {
+                        @panic("TODO handle file poll register faill");
+                    },
+                    .result => {
+                        if (comptime bun.Environment.isPosix) {
+                            // if (this.nonblocking) {
+                            this.writer.getPoll().?.flags.insert(.nonblocking);
+                            // }
+
+                            // TODO be able to configure this
+                            // if (this.is_socket) {
+                            //     this.writer.getPoll().?.flags.insert(.socket);
+                            // } else if (this.pollable) {
+                            this.writer.getPoll().?.flags.insert(.fifo);
+                            // }
+                        }
+                    },
                 }
+
                 return;
             }
             @panic("TODO SHELL WINDOWS!");
@@ -7469,6 +7489,7 @@ pub const Interpreter = struct {
                 bytelist.append(bun.default_allocator, this.buffer[this.written .. this.written + amount]) catch bun.outOfMemory();
             }
             this.written += amount;
+            log("BufferedWriter(0x{x}).onWrite({d}, {any}, total={d}, buffer={d})", .{ @intFromPtr(this), amount, done, this.written, this.buffer.len });
             if (done) return;
             if (this.written >= this.buffer.len) return this.writer.end();
             if (comptime bun.Environment.isWindows) {

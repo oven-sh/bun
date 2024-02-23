@@ -234,14 +234,13 @@ bool ReadableStream::isDisturbed(JSGlobalObject* globalObject, JSReadableStream*
 {
     auto clientData = WebCore::clientData(globalObject->vm());
     auto& privateName = clientData->builtinNames().disturbedPrivateName();
-    return readableStream->getDirect(globalObject->vm(), privateName).isTrue();
+    return readableStream->disturbed().isTrue();
 }
 
 bool ReadableStream::isDisturbed() const
 {
     auto clientData = WebCore::clientData(globalObject()->vm());
-    auto& privateName = clientData->builtinNames().disturbedPrivateName();
-    return readableStream()->getDirect(globalObject()->vm(), privateName).isTrue();
+    return readableStream()->disturbed().isTrue();
 }
 
 }

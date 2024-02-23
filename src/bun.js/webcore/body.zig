@@ -154,7 +154,6 @@ pub const Body = struct {
 
         pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
             value.action = action;
-
             if (value.readable.get()) |readable| handle_stream: {
                 switch (action) {
                     .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer => {

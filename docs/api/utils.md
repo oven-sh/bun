@@ -261,7 +261,7 @@ This function is optimized for large input. On an M1X, it processes 480 MB/s -
 20 GB/s, depending on how much data is being escaped and whether there is non-ascii
 text. Non-string types will be converted to a string before escaping.
 
-## `Bun.stringWidth()` a ~6,756x faster `string-width` alternative
+## `Bun.stringWidth()` ~6,756x faster `string-width` alternative
 
 Get the column count of a string as it would be displayed in a terminal.
 Supports ANSI escape codes, emoji, and wide characters.

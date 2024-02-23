@@ -113,11 +113,17 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
     expect("ปฏัก")[matcher]();
     expect("_\u0E34")[matcher]();
     expect("\u001B[31m\u001B[39m")[matcher]();
-    //   expect(stringWidth("⛣", { ambiguousIsNarrow: false }), 2);
-    //   expect(stringWidth("あいう★", { ambiguousIsNarrow: false }), 8);
-    //   expect(stringWidth("“", { ambiguousIsNarrow: false }), 2);
   });
 }
+
+test("ambiguousIsNarrow=false", () => {
+  for (let countAnsiEscapeCodes of [false, true]) {
+    for (let string of ["⛣", "あいう★", "“"]) {
+      const actual = Bun.stringWidth(string, { countAnsiEscapeCodes, ambiguousIsNarrow: false });
+      expect(actual).toBe(npmStringWidth(string, { countAnsiEscapeCodes, ambiguousIsNarrow: false }));
+    }
+  }
+});
 
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
   test.skipIf(!bun_has_stringwidth)("ignores control characters", () => {

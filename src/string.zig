@@ -938,21 +938,21 @@ pub const String = extern struct {
         };
     }
 
-    pub fn visibleWidth(this: *const String) usize {
+    pub fn visibleWidth(this: *const String, ambiguousAsWide: bool) usize {
         if (this.isUTF8()) {
             return bun.strings.visible.width.utf8(this.utf8());
         } else if (this.isUTF16()) {
-            return bun.strings.visible.width.utf16(this.utf16());
+            return bun.strings.visible.width.utf16(this.utf16(), ambiguousAsWide);
         } else {
             return bun.strings.visible.width.latin1(this.latin1());
         }
     }
 
-    pub fn visibleWidthExcludeANSIColors(this: *const String) usize {
+    pub fn visibleWidthExcludeANSIColors(this: *const String, ambiguousAsWide: bool) usize {
         if (this.isUTF8()) {
             return bun.strings.visible.width.exclude_ansi_colors.utf8(this.utf8());
         } else if (this.isUTF16()) {
-            return bun.strings.visible.width.exclude_ansi_colors.utf16(this.utf16());
+            return bun.strings.visible.width.exclude_ansi_colors.utf16(this.utf16(), ambiguousAsWide);
         } else {
             return bun.strings.visible.width.exclude_ansi_colors.latin1(this.latin1());
         }
@@ -1166,7 +1166,7 @@ pub const String = extern struct {
             return JSC.jsNumber(@as(i32, 0));
         }
 
-        const width = str.visibleWidth();
+        const width = str.visibleWidth(false);
         return JSC.jsNumber(width);
     }
 };

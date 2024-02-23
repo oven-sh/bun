@@ -58,6 +58,7 @@ pub const ReadableStream = struct {
         }
 
         pub fn init(this: ReadableStream, global: *JSGlobalObject) Strong {
+            // std.debug.print("[ReadableStream.Strong] incrementCount({d})\n", .{this.getParentId()});
             switch (this.ptr) {
                 .Blob => |blob| blob.parent().incrementCount(),
                 .File => |file| file.parent().incrementCount(),
@@ -78,6 +79,7 @@ pub const ReadableStream = struct {
 
         pub fn deinit(this: *Strong) void {
             if (this.get()) |readable| {
+                // std.debug.print("[ReadableStream.Strong] detachIfPossible({d})\n", .{readable.getParentId()});
                 // decrement the ref count and if it's zero we auto detach
                 readable.detachIfPossible(this.globalThis().?);
             }
@@ -148,18 +150,33 @@ pub const ReadableStream = struct {
         return null;
     }
 
+    pub fn getParentId(this: *const ReadableStream) u64 {
+        return switch (this.ptr) {
+            .Blob => |blob| @intFromPtr(blob.parent()),
+            .File => |file| @intFromPtr(file.parent()),
+            .Bytes => |bytes| @intFromPtr(bytes.parent()),
+            else => 0,
+        };
+    }
+
     pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
+        // std.debug.print("[ReadableStream] done({d})\n", .{this.getParentId()});
         this.detachIfPossible(globalThis);
+        // ReadableStream__detach(this.value, globalThis);
     }
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
+        // std.debug.print("[ReadableStream] cancel({d})\n", .{this.getParentId()});
+
         ReadableStream__cancel(this.value, globalThis);
         this.detachIfPossible(globalThis);
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
+        // std.debug.print("[ReadableStream] abort({d})\n", .{this.getParentId()});
+
         ReadableStream__cancel(this.value, globalThis);
         this.detachIfPossible(globalThis);
     }
@@ -180,7 +197,7 @@ pub const ReadableStream = struct {
             .Bytes => |bytes| bytes.parent().decrementCount(),
             else => 0,
         };
-
+        // std.debug.print("[ReadableStream] detachIfPossible({d}) ref_count = {d}\n", .{ this.getParentId(), ref_count });
         if (ref_count == 0) {
             ReadableStream__detach(this.value, globalThis);
         }
@@ -399,6 +416,18 @@ pub const ReadableStream = struct {
     };
 };
 
+pub export fn ReadableStream__incrementCount(this: *anyopaque, tag: ReadableStream.Tag) callconv(.C) void {
+    // std.debug.print("[ReadableStream__incrementCount] incrementCount({d})\n", .{@intFromPtr(this)});
+    switch (tag) {
+        .Blob => ByteBlobLoader.Source.incrementCount(@ptrCast(@alignCast(this))),
+        .File => FileReader.Source.incrementCount(@ptrCast(@alignCast(this))),
+        .Bytes => ByteStream.Source.incrementCount(@ptrCast(@alignCast(this))),
+        else => {},
+    }
+}
+comptime {
+    _ = ReadableStream__incrementCount;
+}
 pub const StreamStart = union(Tag) {
     empty: void,
     err: Syscall.Error,
@@ -2639,10 +2668,11 @@ pub fn ReadableStreamSource(
 
         pub fn incrementCount(this: *This) void {
             this.ref_count += 1;
+            // std.debug.print("[ReadableStreamSource] incrementCount({d}) ref_count = {d}\n", .{ @intFromPtr(this), this.ref_count });
         }
 
         pub fn decrementCount(this: *This) u32 {
-            // std.debug.print("[ReadableStreamSource] this.ref_count = {d}\n", .{this.ref_count});
+            // std.debug.print("[ReadableStreamSource] ({d}).ref_count = {d}\n", .{ @intFromPtr(this), this.ref_count });
             if (comptime Environment.isDebug) {
                 if (this.ref_count == 0) {
                     @panic("Attempted to decrement ref count below zero");
@@ -2704,7 +2734,6 @@ pub fn ReadableStreamSource(
         pub const finalize = JSReadableStreamSource.finalize;
         pub const construct = JSReadableStreamSource.construct;
         pub const getIsClosedFromJS = JSReadableStreamSource.isClosed;
-
         pub const JSReadableStreamSource = struct {
             pub fn construct(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) ?*ReadableStreamSourceType {
                 _ = callFrame; // autofix
@@ -2860,6 +2889,8 @@ pub fn ReadableStreamSource(
 
             pub fn finalize(this: *ReadableStreamSourceType) callconv(.C) void {
                 this.this_jsvalue = .zero;
+
+                // std.debug.print("[ReadableStreamSource] finalize({d}) ref_count = {d} has_value? = {} \n", .{ @intFromPtr(this), this.ref_count, this.this_jsvalue == .zero });
                 _ = this.decrementCount();
             }
 
@@ -4388,7 +4419,6 @@ pub fn NewReadyWatcher(
         }
     };
 }
-
 // pub const HTTPRequest = RequestBodyStreamer(false);
 // pub const HTTPSRequest = RequestBodyStreamer(true);
 // pub fn ResponseBodyStreamer(comptime is_ssl: bool) type {

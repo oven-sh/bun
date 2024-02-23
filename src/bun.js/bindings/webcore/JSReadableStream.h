@@ -75,10 +75,7 @@ public:
         return JSC::jsNumber(-1);
     }
 
-    void setNativePtr(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value)
-    {
-        this->m_nativePtr.set(JSC::getVM(lexicalGlobalObject), this, value);
-    }
+    void setNativePtr(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value);
 
     void setNativeType(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value)
     {

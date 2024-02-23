@@ -167,12 +167,10 @@ pub const Body = struct {
                                 if (value.onStartBuffering != null) {
                                     if (readable.isDisturbed(globalThis)) {
                                         form_data.?.deinit();
-                                        // readable.detachIfPossible(globalThis);
                                         value.readable.deinit();
                                         value.action = .{ .none = {} };
                                         return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("ReadableStream is already used", .{}));
                                     } else {
-                                        // readable.detachIfPossible(globalThis);
                                         value.readable.deinit();
                                     }
 
@@ -191,12 +189,8 @@ pub const Body = struct {
                             else => unreachable,
                         };
                         value.promise.?.ensureStillAlive();
-<<<<<<< HEAD
-                        readable.value.unprotect();
-=======
-                        // readable.detachIfPossible(globalThis);
->>>>>>> aa24aa9ba (WIP)
 
+                        readable.detachIfPossible(globalThis);
                         // js now owns the memory
                         value.readable.deinit();
 
@@ -581,10 +575,6 @@ pub const Body = struct {
         }
 
         pub fn fromReadableStreamWithoutLockCheck(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
-<<<<<<< HEAD
-            readable.value.protect();
-=======
->>>>>>> aa24aa9ba (WIP)
             return .{
                 .Locked = .{
                     .readable = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis),
@@ -597,15 +587,10 @@ pub const Body = struct {
             log("resolve", .{});
             if (to_resolve.* == .Locked) {
                 var locked = &to_resolve.Locked;
-<<<<<<< HEAD
-                if (locked.readable) |readable| {
-                    readable.done();
-                    locked.readable = null;
-=======
+
                 if (locked.readable.get()) |readable| {
                     readable.done(global);
                     locked.readable.deinit();
->>>>>>> aa24aa9ba (WIP)
                 }
 
                 if (locked.onReceiveValue) |callback| {
@@ -822,15 +807,9 @@ pub const Body = struct {
                     locked.promise = null;
                 }
 
-<<<<<<< HEAD
-                if (locked.readable) |readable| {
-                    readable.done();
-                    locked.readable = null;
-=======
                 if (locked.readable.get()) |readable| {
                     readable.done(global);
                     locked.readable.deinit();
->>>>>>> aa24aa9ba (WIP)
                 }
                 // will be unprotected by body value deinit
                 error_instance.protect();
@@ -869,13 +848,8 @@ pub const Body = struct {
                 if (!this.Locked.deinit) {
                     this.Locked.deinit = true;
 
-<<<<<<< HEAD
-                    if (this.Locked.readable) |*readable| {
-                        readable.done();
-=======
                     if (this.Locked.readable.get()) |*readable| {
                         readable.done(this.Locked.global);
->>>>>>> aa24aa9ba (WIP)
                     }
                     this.Locked.readable.deinit();
                 }

@@ -38,9 +38,12 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include "ZigGeneratedClasses.h"
 
 namespace WebCore {
 using namespace JSC;
+
+extern "C" void ReadableStream__incrementCount(void*, int32_t);
 
 // Functions
 
@@ -211,6 +214,37 @@ void JSReadableStream::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+}
+
+void JSReadableStream::setNativePtr(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value)
+{
+
+    this->m_nativePtr.set(JSC::getVM(lexicalGlobalObject), this, value);
+
+    // know we check if we can increase the ref count of the native object
+    if (value.isEmpty() || !value.isCell()) {
+        return;
+    }
+
+    JSCell* cell = value.asCell();
+
+    if (auto* casted = jsDynamicCast<JSBlobInternalReadableStreamSource*>(cell)) {
+        auto ptr = casted->wrapped();
+        ReadableStream__incrementCount(ptr, 1);
+        return;
+    }
+
+    if (auto* casted = jsDynamicCast<JSFileInternalReadableStreamSource*>(cell)) {
+        auto ptr = casted->wrapped();
+        ReadableStream__incrementCount(ptr, 2);
+        return;
+    }
+
+    if (auto* casted = jsDynamicCast<JSBytesInternalReadableStreamSource*>(cell)) {
+        auto ptr = casted->wrapped();
+        ReadableStream__incrementCount(ptr, 4);
+        return;
+    }
 }
 
 JSObject* JSReadableStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

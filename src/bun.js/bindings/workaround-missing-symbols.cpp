@@ -1,7 +1,6 @@
 
 #if defined(WIN32)
 
-
 #include <cstdint>
 #include <algorithm>
 #include <sys/stat.h>
@@ -14,7 +13,7 @@
 #undef _environ
 #undef environ
 
-// Some libraries need these symbols. Windows makes it 
+// Some libraries need these symbols. Windows makes it
 extern "C" char** environ = nullptr;
 extern "C" char** _environ = nullptr;
 
@@ -76,7 +75,7 @@ extern "C" char* mkdtemp(char* template_name)
 {
     uv_fs_t req;
     int status_code = uv_fs_mkdtemp(uv_default_loop(), &req, template_name, nullptr);
-    
+
     if (status_code < 0)
         return nullptr;
     size_t outlen = std::min(strlen(req.path), strlen(template_name));
@@ -369,3 +368,10 @@ extern "C" int __ulock_wait2(uint32_t operation, void* addr, uint64_t value,
 }
 
 #endif
+
+#include <unicode/uchar.h>
+
+extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
+{
+    return u_hasBinaryProperty(cp, static_cast<UProperty>(prop));
+}

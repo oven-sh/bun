@@ -261,7 +261,7 @@ This function is optimized for large input. On an M1X, it processes 480 MB/s -
 20 GB/s, depending on how much data is being escaped and whether there is non-ascii
 text. Non-string types will be converted to a string before escaping.
 
-## `Bun.stringWidth() - 1,000x faster alternative to the `string-width` package
+## `Bun.stringWidth() a ~6,756x faster `string-width` alternative
 
 Get the column count of a string as it would be displayed in a terminal.
 Supports ANSI escape codes, emoji, and wide characters.
@@ -282,7 +282,7 @@ This is useful for:
 This API is designed to match the popular "string-width" package, so that
 existing code can be easily ported to Bun and vice versa.
 
-[In this benchmark](https://github.com/oven-sh/bun/blob/5147c0ba7379d85d4d1ed0714b84d6544af917eb/bench/snippets/string-width.mjs#L13), `Bun.stringWidth` is 1,000x faster than the `string-width` npm package for input larger than about 500 characters. Big thanks to [sindresorhus](https://github.com/sindresorhus) for their work on `string-width`!
+[In this benchmark](https://github.com/oven-sh/bun/blob/5147c0ba7379d85d4d1ed0714b84d6544af917eb/bench/snippets/string-width.mjs#L13), `Bun.stringWidth` is a ~6,756x faster than the `string-width` npm package for input larger than about 500 characters. Big thanks to [sindresorhus](https://github.com/sindresorhus) for their work on `string-width`!
 
 ```ts
 ❯ bun string-width.mjs

@@ -370,7 +370,7 @@ pub const String = extern struct {
 
     pub fn createUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
-        if (bun.strings.firstNonASCII16IgnoreMin([]const u16, bytes) == null) {
+        if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {
             return BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len);
         }
         return BunString__fromUTF16(bytes.ptr, bytes.len);

@@ -683,6 +683,7 @@ pub const PipeReader = struct {
     stdio_result: StdioResult,
     captured_writer: CapturedWriter = .{},
     out_type: bun.shell.subproc.ShellSubprocess.OutKind,
+    buffered: bun.ByteList = .{},
     ref_count: u32 = 1,
 
     pub usingnamespace bun.NewRefCounted(PipeReader, deinit);
@@ -819,6 +820,7 @@ pub const PipeReader = struct {
 
     pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
         var this: *PipeReader = @ptrCast(@alignCast(ptr));
+        this.buffered.append(bun.default_allocator, chunk) catch bun.outOfMemory();
         log("PipeReader onReadChunk({x}, ...)", .{@intFromPtr(this)});
         if (this.captured_writer.writer.getPoll() == null) {
             this.captured_writer.writer.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), if (this.out_type == .stdout) bun.STDOUT_FD else bun.STDERR_FD, .{}, @TypeOf(this.captured_writer.writer), &this.captured_writer.writer) };
@@ -881,7 +883,7 @@ pub const PipeReader = struct {
     }
 
     pub fn slice(this: *PipeReader) []const u8 {
-        return this.reader.buffer().items[0..];
+        return this.buffered.slice();
     }
 
     pub fn toOwnedSlice(this: *PipeReader) []u8 {
@@ -979,6 +981,8 @@ pub const PipeReader = struct {
         if (this.state == .done) {
             bun.default_allocator.free(this.state.done);
         }
+
+        this.buffered.deinitWithAllocator(bun.default_allocator);
 
         this.reader.deinit();
         this.destroy();

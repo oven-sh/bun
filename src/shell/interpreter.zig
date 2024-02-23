@@ -3625,7 +3625,8 @@ pub const Interpreter = struct {
             log("cmd ({x}) close buffered stdout", .{@intFromPtr(this)});
             if (this.io.stdout == .std and this.io.stdout.std.captured != null and !this.node.redirect.stdout) {
                 var buf = this.io.stdout.std.captured.?;
-                buf.append(bun.default_allocator, this.exec.subproc.child.stdout.pipe.slice()) catch bun.outOfMemory();
+                const the_slice = this.exec.subproc.child.stdout.pipe.slice();
+                buf.append(bun.default_allocator, the_slice) catch bun.outOfMemory();
             }
             this.exec.subproc.buffered_closed.close(this, .{ .stdout = &this.exec.subproc.child.stdout });
             this.exec.subproc.child.closeIO(.stdout);

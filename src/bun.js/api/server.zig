@@ -1795,6 +1795,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn deinit(this: *RequestContext) void {
+            if (!this.isDeadRequest()) {
+                ctxLog("deinit<d> ({*})<r> waiting request", .{this});
+                return;
+            }
             if (this.defer_deinit_until_callback_completes) |defer_deinit| {
                 defer_deinit.* = true;
                 ctxLog("deferred deinit <d> ({*})<r>", .{this});

@@ -1795,29 +1795,29 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn deinit(this: *RequestContext) void {
-            // if (this.defer_deinit_until_callback_completes) |defer_deinit| {
-            //     defer_deinit.* = true;
-            //     ctxLog("deferred deinit <d> ({*})<r>", .{this});
-            //     return;
-            // }
+            if (this.defer_deinit_until_callback_completes) |defer_deinit| {
+                defer_deinit.* = true;
+                ctxLog("deferred deinit <d> ({*})<r>", .{this});
+                return;
+            }
 
             ctxLog("deinit<d> ({*})<r>", .{this});
-            // if (comptime Environment.allow_assert)
-            //     std.debug.assert(this.flags.has_finalized);
+            if (comptime Environment.allow_assert)
+                std.debug.assert(this.flags.has_finalized);
 
-            // if (comptime Environment.allow_assert)
-            //     std.debug.assert(this.flags.has_marked_complete);
+            if (comptime Environment.allow_assert)
+                std.debug.assert(this.flags.has_marked_complete);
 
-            // var server = this.server;
-            // this.request_body_buf.clearAndFree(this.allocator);
-            // this.response_buf_owned.clearAndFree(this.allocator);
+            var server = this.server;
+            this.request_body_buf.clearAndFree(this.allocator);
+            this.response_buf_owned.clearAndFree(this.allocator);
 
-            // if (this.request_body) |body| {
-            //     _ = body.unref();
-            //     this.request_body = null;
-            // }
+            if (this.request_body) |body| {
+                _ = body.unref();
+                this.request_body = null;
+            }
 
-            // server.request_pool_allocator.put(this);
+            server.request_pool_allocator.put(this);
         }
 
         fn writeHeaders(

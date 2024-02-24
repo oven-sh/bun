@@ -32,9 +32,8 @@ using namespace JSC;
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsExternal,
                          (JSC::JSGlobalObject * globalObject,
                           JSC::CallFrame *callframe)) {
-  GET_FIRST_VALUE
-  return JSValue::encode(jsBoolean(
-      value.isCell() && jsDynamicCast<Bun::NapiExternal *>(value) != nullptr));
+  GET_FIRST_CELL
+  return JSValue::encode(jsBoolean(value.inherits<Bun::NapiExternal>()));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDate, (JSC::JSGlobalObject * globalObject,
                                             JSC::CallFrame *callframe)) {

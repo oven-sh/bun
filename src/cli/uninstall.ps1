@@ -45,7 +45,7 @@ if (-not (Test-Path "${PSScriptRoot}\bin\bun.exe")) {
 
 function Stop-Bun {
   try {
-    Get-Process -Name bun | Where-Object { $_.Path -eq "C:\Users\dave\.bun\bin\bun.exe" } | Stop-Process -Force
+    Get-Process -Name bun | Where-Object { $_.Path -eq "${PSScriptRoot}\bin\bun.exe" } | Stop-Process -Force
   } catch [Microsoft.PowerShell.Commands.ProcessCommandException] {
     # ignore
   } catch {

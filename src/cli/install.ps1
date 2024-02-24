@@ -119,7 +119,7 @@ function Install-Bun {
   } catch [System.Management.Automation.ItemNotFoundException] {
     # ignore
   } catch [System.UnauthorizedAccessException] {
-    $openProcesses = Get-Process -Name bun | Where-Object { $_.Path -eq "C:\Users\dave\.bun\bin\bun.exe" }
+    $openProcesses = Get-Process -Name bun | Where-Object { $_.Path -eq "${BunBin}\bun.exe" }
     if ($openProcesses.Count -gt 0) {
       Write-Output "Install Failed - An older installation exists and is open. Please close open Bun processes and try again."
       exit 1

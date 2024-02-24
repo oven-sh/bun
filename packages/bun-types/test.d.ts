@@ -92,6 +92,7 @@ declare module "bun:test" {
   interface Jest {
     restoreAllMocks(): void;
     fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
+    setSystemTime(now?: number | Date): void;
   }
   export const jest: Jest;
   export namespace jest {
@@ -872,6 +873,19 @@ declare module "bun:test" {
      * @param expected the expected value
      */
     toStrictEqual(expected: T): void;
+    /**
+     * Asserts that the value is deep equal to an element in the expected array.
+     *
+     * The value must be an array or iterable, which includes strings.
+     *
+     * @example
+     * expect(1).toBeOneOf([1,2,3]);
+     * expect("foo").toBeOneOf(["foo", "bar"]);
+     * expect(true).toBeOneOf(new Set([true]));
+     *
+     * @param expected the expected value
+     */
+    toBeOneOf(expected: Array<unknown> | Iterable<unknown>): void;
     /**
      * Asserts that a value contains what is expected.
      *

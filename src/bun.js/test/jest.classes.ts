@@ -470,6 +470,10 @@ export default [
         fn: "toThrowErrorMatchingInlineSnapshot",
         length: 1,
       },
+      toBeOneOf: {
+        fn: "toBeOneOf",
+        length: 1,
+      },
       not: {
         getter: "getNot",
         this: true,

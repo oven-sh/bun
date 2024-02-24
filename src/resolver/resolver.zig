@@ -50,7 +50,7 @@ pub fn isPackagePath(path: string) bool {
     // Always check for posix absolute paths (starts with "/")
     // But don't check window's style on posix
     // For a more in depth explanation, look above where `isPackagePathNotAbsolute` is used.
-    return !std.fs.path.isAbsolute(path) and @call(.always_inline, isPackagePathNotAbsolute, .{path});
+    return !std.fs.path.isAbsolute(path) and @call(bun.callmod_inline, isPackagePathNotAbsolute, .{path});
 }
 
 pub fn isPackagePathNotAbsolute(non_absolute_path: string) bool {
@@ -1494,7 +1494,7 @@ pub const Resolver = struct {
         r: *ThisResolver,
         result: *const Result,
     ) ?*const PackageJSON {
-        return @call(.always_inline, packageJSONForResolvedNodeModuleWithIgnoreMissingName, .{ r, result, true });
+        return @call(bun.callmod_inline, packageJSONForResolvedNodeModuleWithIgnoreMissingName, .{ r, result, true });
     }
 
     // This is a fallback, hopefully not called often. It should be relatively quick because everything should be in the cache.
@@ -2118,7 +2118,7 @@ pub const Resolver = struct {
                 dir_entries_ptr.fd = bun.toFD(open_dir.fd);
             }
 
-            bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
+            bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2781,7 +2781,7 @@ pub const Resolver = struct {
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = dir_entries_ptr,
                 });
-                bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
+                bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.

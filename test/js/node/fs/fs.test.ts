@@ -37,6 +37,7 @@ import fs, {
   writevSync,
   readvSync,
   fstatSync,
+  fdatasyncSync,
 } from "node:fs";
 
 import _promises from "node:fs/promises";
@@ -45,7 +46,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
-import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
+import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_, fdatasync } from "./export-star-from.js";
 import { spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
@@ -58,6 +59,22 @@ if (!import.meta.dir) {
 function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
+
+it("fdatasyncSync", () => {
+  const path = join(tmpdir(), "fdatasync-" + Date.now().toString(16));
+  const fd = openSync(path, "w", 0o666);
+
+  writeSync(fd, "hello");
+  fdatasyncSync(fd);
+  closeSync(fd);
+  unlinkSync(path);
+});
+
+it("fdatasync", done => {
+  fdatasync(0, function () {
+    done(...arguments);
+  });
+});
 
 it("Dirent.name setter", () => {
   const dirent = Object.create(Dirent.prototype);

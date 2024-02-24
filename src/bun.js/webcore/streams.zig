@@ -50,17 +50,6 @@ const AnyBlob = JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {
     value: JSValue,
     ptr: Source,
-
-    pub fn incrementCount(this: *const ReadableStream) void {
-        this.value.protect();
-        switch (this.ptr) {
-            .Blob => |blob| blob.parent().incrementCount(),
-            .File => |file| file.parent().incrementCount(),
-            .Bytes => |bytes| bytes.parent().incrementCount(),
-            else => {},
-        }
-    }
-
     pub const Strong = struct {
         held: JSC.Strong = .{},
 
@@ -69,13 +58,18 @@ pub const ReadableStream = struct {
         }
 
         pub fn init(this: ReadableStream, global: *JSGlobalObject) Strong {
-            this.incrementCount();
+            switch (this.ptr) {
+                .Blob => |blob| blob.parent().incrementCount(),
+                .File => |file| file.parent().incrementCount(),
+                .Bytes => |bytes| bytes.parent().incrementCount(),
+                else => {},
+            }
             return .{
                 .held = JSC.Strong.create(this.value, global),
             };
         }
 
-        pub fn get(this: *Strong) ?ReadableStream {
+        pub fn get(this: *const Strong) ?ReadableStream {
             if (this.held.get()) |value| {
                 return ReadableStream.fromJS(value, this.held.globalThis.?);
             }
@@ -99,7 +93,6 @@ pub const ReadableStream = struct {
         if (ReadableStream.fromJS(this.value, globalThis)) |stream| {
             this.* = stream;
         } else {
-            this.value.unprotect();
             this.* = .{ .ptr = .{ .Invalid = {} }, .value = .zero };
         }
     }
@@ -120,7 +113,7 @@ pub const ReadableStream = struct {
                 blob.offset = blobby.offset;
                 blob.size = blobby.remain;
                 blob.store.?.ref();
-                stream.detachIfPossible(globalThis);
+                stream.done(globalThis);
 
                 return AnyBlob{ .Blob = blob };
             },
@@ -130,7 +123,7 @@ pub const ReadableStream = struct {
                     blob.store.?.ref();
                     // it should be lazy, file shouldn't have opened yet.
                     std.debug.assert(!blobby.started);
-                    stream.detachIfPossible(globalThis);
+                    stream.done(globalThis);
                     return AnyBlob{ .Blob = blob };
                 }
             },
@@ -143,7 +136,7 @@ pub const ReadableStream = struct {
                     blob.from(bytes.buffer);
                     bytes.buffer.items = &.{};
                     bytes.buffer.capacity = 0;
-                    stream.detachIfPossible(globalThis);
+                    stream.done(globalThis);
                     return blob;
                 }
 
@@ -155,25 +148,35 @@ pub const ReadableStream = struct {
         return null;
     }
 
-    pub fn done(this: *const ReadableStream) void {
-        this.value.unprotect();
+    pub fn getParentId(this: *const ReadableStream) u64 {
+        return switch (this.ptr) {
+            .Blob => |blob| @intFromPtr(blob.parent()),
+            .File => |file| @intFromPtr(file.parent()),
+            .Bytes => |bytes| @intFromPtr(bytes.parent()),
+            else => 0,
+        };
+    }
+
+    pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
+        this.detachIfPossible(globalThis);
     }
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
+
         ReadableStream__cancel(this.value, globalThis);
-        this.value.unprotect();
+        this.detachIfPossible(globalThis);
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
+
         ReadableStream__cancel(this.value, globalThis);
-        this.value.unprotect();
+        this.detachIfPossible(globalThis);
     }
 
     pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) void {
         ReadableStream__detach(this.value, globalObject);
-        this.value.unprotect();
     }
 
     /// Decrement Source ref count and detach the underlying stream if ref count is zero
@@ -188,10 +191,8 @@ pub const ReadableStream = struct {
             .Bytes => |bytes| bytes.parent().decrementCount(),
             else => 0,
         };
-
         if (ref_count == 0) {
             ReadableStream__detach(this.value, globalThis);
-            this.value.unprotect();
         }
     }
 
@@ -265,7 +266,9 @@ pub const ReadableStream = struct {
 
     pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
         JSC.markBinding(@src());
+        value.ensureStillAlive();
         var out = value;
+
         var ptr: ?*anyopaque = null;
         return switch (ReadableStreamTag__tagged(globalThis, &out, &ptr)) {
             .JavaScript => ReadableStream{
@@ -362,7 +365,6 @@ pub const ReadableStream = struct {
             .context = .{
                 .event_loop = JSC.EventLoopHandle.init(globalThis.bunVM().eventLoop()),
             },
-            .ref_count = 2,
         });
         source.context.reader.from(buffered_reader, &source.context);
 
@@ -406,6 +408,17 @@ pub const ReadableStream = struct {
     };
 };
 
+pub export fn ReadableStream__incrementCount(this: *anyopaque, tag: ReadableStream.Tag) callconv(.C) void {
+    switch (tag) {
+        .Blob => ByteBlobLoader.Source.incrementCount(@ptrCast(@alignCast(this))),
+        .File => FileReader.Source.incrementCount(@ptrCast(@alignCast(this))),
+        .Bytes => ByteStream.Source.incrementCount(@ptrCast(@alignCast(this))),
+        else => {},
+    }
+}
+comptime {
+    _ = ReadableStream__incrementCount;
+}
 pub const StreamStart = union(Tag) {
     empty: void,
     err: Syscall.Error,
@@ -2710,7 +2723,6 @@ pub fn ReadableStreamSource(
         pub const finalize = JSReadableStreamSource.finalize;
         pub const construct = JSReadableStreamSource.construct;
         pub const getIsClosedFromJS = JSReadableStreamSource.isClosed;
-
         pub const JSReadableStreamSource = struct {
             pub fn construct(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) ?*ReadableStreamSourceType {
                 _ = callFrame; // autofix
@@ -2866,6 +2878,7 @@ pub fn ReadableStreamSource(
 
             pub fn finalize(this: *ReadableStreamSourceType) callconv(.C) void {
                 this.this_jsvalue = .zero;
+
                 _ = this.decrementCount();
             }
 
@@ -4394,7 +4407,6 @@ pub fn NewReadyWatcher(
         }
     };
 }
-
 // pub const HTTPRequest = RequestBodyStreamer(false);
 // pub const HTTPSRequest = RequestBodyStreamer(true);
 // pub fn ResponseBodyStreamer(comptime is_ssl: bool) type {

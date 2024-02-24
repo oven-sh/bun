@@ -51,7 +51,7 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
   if (!stream) throw new TypeError("readMany() called on a reader owned by no readable stream");
 
   const state = $getByIdDirectPrivate(stream, "state");
-  $putByIdDirectPrivate(stream, "disturbed", true);
+  stream.$disturbed = true;
   if (state === $streamClosed) return { value: [], size: 0, done: true };
   else if (state === $streamErrored) {
     throw $getByIdDirectPrivate(stream, "storedError");

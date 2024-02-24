@@ -232,11 +232,7 @@ export function readableByteStreamControllerShouldCallPull(controller) {
   if (!($getByIdDirectPrivate(controller, "started") > 0)) return false;
   const reader = $getByIdDirectPrivate(stream, "reader");
 
-  if (
-    reader &&
-    ($getByIdDirectPrivate(reader, "readRequests")?.isNotEmpty() || !!$getByIdDirectPrivate(reader, "bunNativePtr"))
-  )
-    return true;
+  if (reader && ($getByIdDirectPrivate(reader, "readRequests")?.isNotEmpty() || !!reader.$bunNativePtr)) return true;
   if (
     $readableStreamHasBYOBReader(stream) &&
     $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readIntoRequests")?.isNotEmpty()
@@ -283,7 +279,7 @@ export function transferBufferToCurrentRealm(buffer) {
 }
 
 export function readableStreamReaderKind(reader) {
-  if (!!$getByIdDirectPrivate(reader, "readRequests")) return $getByIdDirectPrivate(reader, "bunNativePtr") ? 3 : 1;
+  if (!!$getByIdDirectPrivate(reader, "readRequests")) return reader.$bunNativePtr ? 3 : 1;
 
   if (!!$getByIdDirectPrivate(reader, "readIntoRequests")) return 2;
 

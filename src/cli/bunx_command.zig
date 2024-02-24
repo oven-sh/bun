@@ -370,29 +370,18 @@ pub const BunxCommand = struct {
         //   across users, you run into permission conflicts
         //   - If you set permission to 777, you run into a potential attack vector
         //     where a user can replace the directory with malicious code.
-        const uid = if (bun.Environment.isPosix) bun.C.getuid();
+        const uid = if (bun.Environment.isPosix) bun.C.getuid() else windowsUserUniqueId();
         PATH = switch (PATH.len > 0) {
             inline else => |path_is_nonzero| try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.pathLiteral(if (Environment.isPosix)
-                    "{s}/bunx-{d}-{s}/node_modules/.bin{s}{s}"
-                else
-                    "{s}/bunx--{s}/node_modules/.bin{s}{s}"),
-                if (Environment.isPosix)
-                    .{
-                        temp_dir,
-                        uid,
-                        package_fmt,
-                        if (path_is_nonzero) ":" else "",
-                        PATH,
-                    }
-                else
-                    .{
-                        temp_dir,
-                        package_fmt,
-                        if (path_is_nonzero) ";" else "",
-                        PATH,
-                    },
+                bun.pathLiteral("{s}/bunx-{d}-{s}/node_modules/.bin{s}{s}"),
+                .{
+                    temp_dir,
+                    uid,
+                    package_fmt,
+                    if (path_is_nonzero) ":" else "",
+                    PATH,
+                },
             ),
         };
 
@@ -442,7 +431,7 @@ pub const BunxCommand = struct {
 
                 // If this directory was installed by bunx, we want to perform cache invalidation on it
                 // this way running `bunx hello` will update hello automatically to the latest version
-                if (std.mem.startsWith(u8, out, bunx_cache_dir)) {
+                if (bun.strings.hasPrefix(out, bunx_cache_dir)) {
                     const is_stale = is_stale: {
                         if (Environment.isWindows) {
                             const fd = bun.sys.openat(bun.invalid_fd, destination, std.os.O.RDONLY, 0).unwrap() catch {
@@ -654,3 +643,25 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 };
+
+extern fn GetUserNameW(
+    lpBuffer: bun.windows.LPWSTR,
+    pcbBuffer: bun.windows.LPDWORD,
+) bun.windows.BOOL;
+
+/// Is not the actual UID of the user, but just a hash of username.
+fn windowsUserUniqueId() u32 {
+    // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/165836c1-89d7-4abb-840d-80cf2510aa3e
+    // UNLEN + 1
+    var buf: [257]u16 = undefined;
+    var size: u32 = buf.len;
+    if (GetUserNameW(@ptrCast(&buf), &size) == 0) {
+        if (Environment.isDebug) std.debug.panic("GetUserNameW failed: {}", .{bun.windows.GetLastError()});
+        return 0;
+    }
+    const name = buf[0..size];
+    if (Environment.isWindows) {
+        Output.scoped(.windowsUserUniqueId, false)("username: {}", .{std.unicode.fmtUtf16le(name)});
+    }
+    return bun.hash32(std.mem.sliceAsBytes(name));
+}

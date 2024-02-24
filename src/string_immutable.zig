@@ -4348,7 +4348,7 @@ pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
 
     if (Environment.enableSIMD and Environment.isNative) {
         const end_ptr = remaining.ptr + remaining.len - (remaining.len % ascii_u16_vector_size);
-        if (remaining.len > ascii_u16_vector_size) {
+        if (remaining.len >= ascii_u16_vector_size) {
             while (remaining.ptr != end_ptr) {
                 const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
                 const max_value = @reduce(.Max, vec);
@@ -4368,7 +4368,7 @@ pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
                             }
                         }
 
-                        if (remaining[out] <= 127) {
+                        if (slice[out] <= 127) {
                             bun.Output.panic("firstNonASCII16: Expected non-ascii character", .{});
                         }
                     }

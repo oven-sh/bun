@@ -16,6 +16,7 @@ pub const Stdio = union(enum) {
     capture: *bun.ByteList,
     ignore: void,
     fd: bun.FileDescriptor,
+    dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
     path: JSC.Node.PathLike,
     blob: JSC.WebCore.AnyBlob,
     array_buffer: JSC.ArrayBuffer.Strong,
@@ -131,6 +132,7 @@ pub const Stdio = union(enum) {
         stdio: *@This(),
     ) bun.spawn.SpawnOptions.Stdio {
         return switch (stdio.*) {
+            .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
             .capture, .pipe, .array_buffer, .blob => .{ .buffer = {} },
             .fd => |fd| .{ .pipe = fd },
             .memfd => |fd| .{ .pipe = fd },

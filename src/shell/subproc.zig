@@ -123,7 +123,7 @@ pub const ShellSubprocess = struct {
             if (Environment.isWindows) {
                 return switch (stdio) {
                     .inherit => Readable{ .inherit = {} },
-                    .ignore => Readable{ .ignore = {} },
+                    .dup2, .ignore => Readable{ .ignore = {} },
                     .path => Readable{ .ignore = {} },
                     .fd => |fd| Readable{ .fd = fd },
                     .memfd => Readable{ .ignore = {} },
@@ -135,7 +135,7 @@ pub const ShellSubprocess = struct {
 
             return switch (stdio) {
                 .inherit => Readable{ .inherit = {} },
-                .ignore => Readable{ .ignore = {} },
+                .dup2, .ignore => Readable{ .ignore = {} },
                 .path => Readable{ .ignore = {} },
                 .fd => Readable{ .fd = result.? },
                 .memfd => Readable{ .memfd = stdio.memfd },

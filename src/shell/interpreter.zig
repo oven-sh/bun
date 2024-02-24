@@ -2978,8 +2978,9 @@ pub const Interpreter = struct {
                             const readable = io.stdout;
 
                             // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
-                            if (cmd.base.shell.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.node.redirect.stdout) {
-                                cmd.base.shell.buffered_stdout().append(bun.default_allocator, readable.pipe.slice()) catch bun.outOfMemory();
+                            if (cmd.base.shell.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.node.redirect.redirectsElsewhere(.stdout)) {
+                                const the_slice = readable.pipe.slice();
+                                cmd.base.shell.buffered_stdout().append(bun.default_allocator, the_slice) catch bun.outOfMemory();
                             }
 
                             stdout.state = .{ .closed = bun.ByteList.fromList(readable.pipe.takeBuffer()) };
@@ -2990,8 +2991,9 @@ pub const Interpreter = struct {
                             const readable = io.stderr;
 
                             // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
-                            if (cmd.base.shell.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.node.redirect.stdout) {
-                                cmd.base.shell.buffered_stderr().append(bun.default_allocator, readable.pipe.slice()) catch bun.outOfMemory();
+                            if (cmd.base.shell.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.node.redirect.redirectsElsewhere(.stderr)) {
+                                const the_slice = readable.pipe.slice();
+                                cmd.base.shell.buffered_stderr().append(bun.default_allocator, the_slice) catch bun.outOfMemory();
                             }
 
                             stderr.state = .{ .closed = bun.ByteList.fromList(readable.pipe.takeBuffer()) };
@@ -3462,6 +3464,14 @@ pub const Interpreter = struct {
                         setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, .{ .fd = redirfd });
                     },
                 }
+            } else if (this.node.redirect.duplicate_out) {
+                if (this.node.redirect.stdout) {
+                    spawn_args.stdio[stderr_no] = .{ .dup2 = .{ .out = .stderr, .to = .stdout } };
+                }
+
+                if (this.node.redirect.stderr) {
+                    spawn_args.stdio[stdout_no] = .{ .dup2 = .{ .out = .stdout, .to = .stderr } };
+                }
             }
 
             const buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
@@ -3492,12 +3502,17 @@ pub const Interpreter = struct {
                 stdio.*[stdin_no] = val;
             }
 
-            if (flags.stdout) {
+            if (flags.duplicate_out) {
                 stdio.*[stdout_no] = val;
-            }
-
-            if (flags.stderr) {
                 stdio.*[stderr_no] = val;
+            } else {
+                if (flags.stdout) {
+                    stdio.*[stdout_no] = val;
+                }
+
+                if (flags.stderr) {
+                    stdio.*[stderr_no] = val;
+                }
             }
         }
 
@@ -3623,7 +3638,7 @@ pub const Interpreter = struct {
                 std.debug.assert(this.exec == .subproc);
             }
             log("cmd ({x}) close buffered stdout", .{@intFromPtr(this)});
-            if (this.io.stdout == .std and this.io.stdout.std.captured != null and !this.node.redirect.stdout) {
+            if (this.io.stdout == .std and this.io.stdout.std.captured != null and !this.node.redirect.redirectsElsewhere(.stdout)) {
                 var buf = this.io.stdout.std.captured.?;
                 const the_slice = this.exec.subproc.child.stdout.pipe.slice();
                 buf.append(bun.default_allocator, the_slice) catch bun.outOfMemory();
@@ -3637,7 +3652,7 @@ pub const Interpreter = struct {
                 std.debug.assert(this.exec == .subproc);
             }
             log("cmd ({x}) close buffered stderr", .{@intFromPtr(this)});
-            if (this.io.stderr == .std and this.io.stderr.std.captured != null and !this.node.redirect.stderr) {
+            if (this.io.stderr == .std and this.io.stderr.std.captured != null and !this.node.redirect.redirectsElsewhere(.stderr)) {
                 var buf = this.io.stderr.std.captured.?;
                 buf.append(bun.default_allocator, this.exec.subproc.child.stderr.pipe.slice()) catch bun.outOfMemory();
             }

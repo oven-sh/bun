@@ -135,6 +135,14 @@ pub const Subprocess = struct {
         stdin,
         stdout,
         stderr,
+
+        pub fn toFd(this: @This()) bun.FileDescriptor {
+            return switch (this) {
+                .stdin => bun.STDIN_FD,
+                .stdout => bun.STDOUT_FD,
+                .stderr => bun.STDERR_FD,
+            };
+        }
     };
     process: *Process = undefined,
     stdin: Writable,
@@ -398,6 +406,7 @@ pub const Subprocess = struct {
                 .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result) },
                 .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
                 .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
+                .dup2 => Output.panic("TODO: implement dup2 support in Stdio readable", .{}),
             };
         }
 
@@ -1118,6 +1127,7 @@ pub const Subprocess = struct {
                 }
             }
             switch (stdio) {
+                .dup2 => @panic("TODO dup2 stdio"),
                 .pipe => {
                     const pipe = JSC.WebCore.FileSink.create(event_loop, result.?);
 

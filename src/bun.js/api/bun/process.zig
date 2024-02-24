@@ -859,6 +859,7 @@ pub const PosixSpawnOptions = struct {
         ignore: void,
         buffer: void,
         pipe: bun.FileDescriptor,
+        dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
     };
 
     pub fn deinit(_: *const PosixSpawnOptions) void {
@@ -1106,15 +1107,29 @@ pub fn spawnProcessPosix(
     attr.set(@intCast(flags)) catch {};
     attr.resetSignals() catch {};
 
-    const stdio_options = .{ options.stdin, options.stdout, options.stderr };
-    const stdios = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
+    const stdio_options: [3]PosixSpawnOptions.Stdio = .{ options.stdin, options.stdout, options.stderr };
+    const stdios: [3]*?bun.FileDescriptor = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
 
-    inline for (0..3) |i| {
+    var dup_stdout_to_stderr: bool = false;
+    var stderr_write_end: ?bun.FileDescriptor = null;
+    for (0..3) |i| {
         const stdio = stdios[i];
         const fileno = bun.toFD(i);
-        const flag = comptime if (i == 0) @as(u32, std.os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
+        const flag = if (i == 0) @as(u32, std.os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
 
         switch (stdio_options[i]) {
+            .dup2 => |dup2| {
+                // This is a hack to get around the ordering of the spawn actions.
+                // If stdout is set so that it redirects to stderr, the order of actions will be like this:
+                // 0. dup2(stderr, stdout) - this makes stdout point to stderr
+                // 1. setup stderr (will make stderr point to write end of `stderr_pipe_fds`)
+                // This is actually wrong, 0 will execute before 1 so stdout ends up writing to stderr instead of the pipe
+                // So we have to instead do `dup2(stderr_pipe_fd[1], stdout)`
+                // Right now we only allow one output redirection so it's okay.
+                if (i == 1 and dup2.to == .stderr) {
+                    dup_stdout_to_stderr = true;
+                } else try actions.dup2(dup2.to.toFd(), dup2.out.toFd());
+            },
             .inherit => {
                 try actions.inherit(fileno);
             },
@@ -1145,6 +1160,9 @@ pub fn spawnProcessPosix(
                 try actions.close(fds[1]);
 
                 stdio.* = fds[0];
+                if (i == 2) {
+                    stderr_write_end = fds[1];
+                }
             },
             .pipe => |fd| {
                 try actions.dup2(fd, fileno);
@@ -1153,10 +1171,16 @@ pub fn spawnProcessPosix(
         }
     }
 
+    if (dup_stdout_to_stderr) {
+        // try actions.dup2(stderr_write_end.?, stdio_options[1].dup2.out.toFd());
+        try actions.dup2(stdio_options[1].dup2.to.toFd(), stdio_options[1].dup2.out.toFd());
+    }
+
     for (options.extra_fds, 0..) |ipc, i| {
         const fileno = bun.toFD(3 + i);
 
         switch (ipc) {
+            .dup2 => @panic("TODO dup2 extra fd"),
             .inherit => {
                 try actions.inherit(fileno);
             },

@@ -725,13 +725,13 @@ describe("spyOn", () => {
       // verify that the spy's history is cleared, but the spy is still intact
       expect(fn).not.toHaveBeenCalled();
       expect(fn.mock.calls).toHaveLength(0);
-      expect(obj.original()).toBe(42);
+      expect(obj.original).toBe(42);
       expect(fn).toHaveBeenCalled();
       expect(fn).toHaveBeenCalledTimes(1);
       jest.restoreAllMocks();
       expect(() => expect(obj.original).toHaveBeenCalled()).toThrow();
       expect(fn).not.toHaveBeenCalled();
-      expect(obj.original()).toBe(42);
+      expect(obj.original).toBe(42);
       expect(fn).not.toHaveBeenCalled();
     });
 
@@ -765,7 +765,7 @@ describe("spyOn", () => {
       // verify that the spy's history is cleared, but the spy is still intact
       expect(fn).not.toHaveBeenCalled();
       expect(fn.mock.calls).toHaveLength(0);
-      expect(obj.original()).toBe(42);
+      expect(obj.original).toBe(42);
       expect(fn).toHaveBeenCalled();
       expect(fn).toHaveBeenCalledTimes(1);
       jest.restoreAllMocks();

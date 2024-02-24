@@ -49,8 +49,8 @@ const PathOrBlob = union(enum) {
     path: JSC.Node.PathOrFileDescriptor,
     blob: Blob,
 
-    pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice, exception: js.ExceptionRef) ?PathOrBlob {
-        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator, exception)) |path| {
+    pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice) ?PathOrBlob {
+        if (try JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator)) |path| {
             return PathOrBlob{
                 .path = path,
             };
@@ -3630,7 +3630,7 @@ pub const Blob = struct {
         return this.store != null and this.store.?.data == .file;
     }
 
-    pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) JSValue {
+    pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) !JSValue {
         const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
 
         if (buf.len == 0) {
@@ -3651,8 +3651,7 @@ pub const Blob = struct {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             // instead of erroring, invalid characters will become a U+FFFD replacement character
             if (strings.toUTF16Alloc(bun.default_allocator, buf, false, false) catch {
-                global.throwOutOfMemory();
-                return .zero;
+                return global.throwOutOfMemory();
             }) |external| {
                 if (lifetime != .temporary)
                     this.setIsASCIIFlag(false);
@@ -3711,21 +3710,20 @@ pub const Blob = struct {
         }
     }
 
-    pub fn toString(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
+    pub fn toString(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) !JSValue {
         if (this.needsToReadFile()) {
             return this.doReadFile(toStringWithBytes, global);
         }
 
-        const view_: []u8 =
-            @constCast(this.sharedView());
+        const view: []u8 = @constCast(this.sharedView());
 
-        if (view_.len == 0)
+        if (view.len == 0)
             return ZigString.Empty.toValue(global);
 
-        return toStringWithBytes(this, global, view_, lifetime);
+        return toStringWithBytes(this, global, view, lifetime);
     }
 
-    pub fn toJSON(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
+    pub fn toJSON(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) !JSValue {
         if (this.needsToReadFile()) {
             return this.doReadFile(toJSONWithBytes, global);
         }
@@ -3735,15 +3733,16 @@ pub const Blob = struct {
         return toJSONWithBytes(this, global, view_, lifetime);
     }
 
-    pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) JSValue {
+    pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) !JSValue {
         const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
-        if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
+        if (buf.len == 0) return global.throwValue(global.createSyntaxErrorInstance("Unexpected end of JSON input", .{}));
 
         if (bom == .utf16_le) {
             var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
             defer out.deref();
             return out.toJSByParseJSON(global);
         }
+
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
@@ -3907,7 +3906,7 @@ pub const Blob = struct {
         arg: JSValue,
         comptime move: bool,
         comptime require_array: bool,
-    ) anyerror!Blob {
+    ) !Blob {
         var current = arg;
         if (current.isUndefinedOrNull()) {
             return Blob{ .globalThis = global };
@@ -3992,7 +3991,8 @@ pub const Blob = struct {
                         } else {
                             return build.blob.dupe();
                         }
-                    } else if (current.toSliceClone(global)) |sliced| {
+                    } else {
+                        const sliced = try current.toSliceClone(global);
                         if (sliced.allocator.get()) |allocator| {
                             return Blob.initWithAllASCII(@constCast(sliced.slice()), allocator, global, false);
                         }
@@ -4088,7 +4088,8 @@ pub const Blob = struct {
                                         could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
                                         joiner.append(blob.sharedView(), 0, null);
                                         continue;
-                                    } else if (current.toSliceClone(global)) |sliced| {
+                                    } else {
+                                        const sliced = try current.toSliceClone(global);
                                         const allocator = sliced.allocator.get();
                                         could_have_non_ascii = could_have_non_ascii or allocator != null;
                                         joiner.append(
@@ -4110,7 +4111,8 @@ pub const Blob = struct {
                     if (current.as(Blob)) |blob| {
                         could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
                         joiner.append(blob.sharedView(), 0, null);
-                    } else if (current.toSliceClone(global)) |sliced| {
+                    } else {
+                        const sliced = try current.toSliceClone(global);
                         const allocator = sliced.allocator.get();
                         could_have_non_ascii = could_have_non_ascii or allocator != null;
                         joiner.append(
@@ -4263,7 +4265,7 @@ pub const AnyBlob = union(enum) {
         }
     }
 
-    pub fn toArrayBuffer(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {
+    pub fn toArrayBuffer(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) !JSValue {
         switch (this.*) {
             .Blob => return this.Blob.toArrayBuffer(global, lifetime),
             // .InlineBlob => {
@@ -4290,7 +4292,8 @@ pub const AnyBlob = union(enum) {
                     bytes,
                     .ArrayBuffer,
                 );
-                return value.toJS(global, null);
+                // TODO(@paperdave): errdefer?
+                return value.toJS(global);
             },
             .WTFStringImpl => {
                 const str = bun.String.init(this.WTFStringImpl);

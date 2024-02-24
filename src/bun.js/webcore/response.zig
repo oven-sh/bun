@@ -1671,19 +1671,11 @@ pub const Fetch = struct {
         const globalThis = ctx.ptr();
         const arguments = callframe.arguments(2);
 
-        var exception_val = [_]JSC.C.JSValueRef{null};
-        const exception: JSC.C.ExceptionRef = &exception_val;
-        var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch @panic("out of memory");
+        var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch bun.outOfMemory();
         var free_memory_reporter = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);
         defer {
-            if (exception.* != null) {
-                free_memory_reporter = true;
-                ctx.throwValue(JSC.JSValue.c(exception.*));
-            }
-
             memory_reporter.report(globalThis.vm());
-
             if (free_memory_reporter) bun.default_allocator.destroy(memory_reporter);
         }
 
@@ -1707,7 +1699,6 @@ pub const Fetch = struct {
         //
         // which is important for FormData.
         // https://github.com/oven-sh/bun/issues/2264
-        //
         var body: AnyBlob = AnyBlob{
             .Blob = .{},
         };
@@ -1728,7 +1719,7 @@ pub const Fetch = struct {
         // TODO: move this into a DRYer implementation
         // The status quo is very repetitive and very bug prone
         if (first_arg.as(Request)) |request| {
-            request.ensureURL() catch unreachable;
+            request.ensureURL();
 
             if (request.url.isEmpty()) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
@@ -2130,9 +2121,7 @@ pub const Fetch = struct {
             }
         } else {
             const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, first_arg.asRef()));
-            const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
-            exception.* = err.asObjectRef();
-            return .zero;
+            return ctx.exceptionToCPP(ctx.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx)));
         }
 
         if (url.isEmpty()) {

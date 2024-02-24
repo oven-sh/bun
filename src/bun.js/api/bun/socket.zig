@@ -243,15 +243,14 @@ const Handlers = struct {
         return true;
     }
 
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Handlers {
+    pub fn fromJS(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue) !Handlers {
         var handlers = Handlers{
             .vm = globalObject.bunVM(),
             .globalObject = globalObject,
         };
 
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            exception.* = JSC.toInvalidArguments("Expected \"socket\" to be an object", .{}, globalObject).asObjectRef();
-            return null;
+            return globalObject.throwInvalidArguments("Expected \"socket\" to be an object", .{});
         }
 
         const pairs = .{
@@ -268,8 +267,7 @@ const Handlers = struct {
         inline for (pairs) |pair| {
             if (opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
                 if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
-                    exception.* = JSC.toInvalidArguments(comptime std.fmt.comptimePrint("Expected \"{s}\" callback to be a function", .{pair.@"1"}), .{}, globalObject).asObjectRef();
-                    return null;
+                    return globalObject.throwInvalidArguments(comptime std.fmt.comptimePrint("Expected \"{s}\" callback to be a function", .{pair.@"1"}), .{}, globalObject);
                 }
 
                 @field(handlers, pair.@"0") = callback_value;
@@ -277,19 +275,16 @@ const Handlers = struct {
         }
 
         if (handlers.onData == .zero and handlers.onWritable == .zero) {
-            exception.* = JSC.toInvalidArguments("Expected at least \"data\" or \"drain\" callback", .{}, globalObject).asObjectRef();
-            return null;
+            return globalObject.throwInvalidArguments("Expected at least \"data\" or \"drain\" callback", .{}, globalObject);
         }
 
         if (opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
             if (!binary_type_value.isString()) {
-                exception.* = JSC.toInvalidArguments("Expected \"binaryType\" to be a string", .{}, globalObject).asObjectRef();
-                return null;
+                return globalObject.throwInvalidArguments("Expected \"binaryType\" to be a string", .{}, globalObject);
             }
 
             handlers.binary_type = BinaryType.fromJSValue(globalObject, binary_type_value) orelse {
-                exception.* = JSC.toInvalidArguments("Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'", .{}, globalObject).asObjectRef();
-                return null;
+                return globalObject.throwInvalidArguments("Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'", .{}, globalObject);
             };
         }
 
@@ -339,8 +334,7 @@ pub const SocketConfig = struct {
     pub fn fromJS(
         opts: JSC.JSValue,
         globalObject: *JSC.JSGlobalObject,
-        exception: JSC.C.ExceptionRef,
-    ) ?SocketConfig {
+    ) !SocketConfig {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         var port: ?u16 = null;
         var exclusive = false;
@@ -354,11 +348,7 @@ pub const SocketConfig = struct {
                     ssl = JSC.API.ServerConfig.SSLConfig.zero;
                 }
             } else {
-                if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, exception)) |ssl_config| {
-                    ssl = ssl_config;
-                } else if (exception.* != null) {
-                    return null;
-                }
+                ssl = try JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls);
             }
         }
 
@@ -371,8 +361,7 @@ pub const SocketConfig = struct {
 
             if (opts.getTruthy(globalObject, "unix")) |unix_socket| {
                 if (!unix_socket.isString()) {
-                    exception.* = JSC.toInvalidArguments("Expected \"unix\" to be a string", .{}, globalObject).asObjectRef();
-                    return null;
+                    return globalObject.throwInvalidArguments("Expected \"unix\" to be a string", .{}, globalObject);
                 }
 
                 hostname_or_unix = unix_socket.getZigString(globalObject).toSlice(bun.default_allocator);
@@ -393,8 +382,7 @@ pub const SocketConfig = struct {
 
             if (opts.getTruthy(globalObject, "hostname") orelse opts.getTruthy(globalObject, "host")) |hostname| {
                 if (!hostname.isString()) {
-                    exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a string", .{}, globalObject).asObjectRef();
-                    return null;
+                    return globalObject.throwInvalidArguments("Expected \"hostname\" to be a string", .{}, globalObject);
                 }
 
                 var port_value = opts.get(globalObject, "port") orelse JSValue.zero;
@@ -410,25 +398,22 @@ pub const SocketConfig = struct {
                 }
 
                 if (port_value.isEmptyOrUndefinedOrNull()) {
-                    exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
-                    return null;
+                    return globalObject.throwInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject);
                 }
 
                 const porti32 = port_value.coerceToInt32(globalObject);
                 if (globalObject.hasException()) {
-                    return null;
+                    return error.JSException;
                 }
 
                 if (porti32 < 0 or porti32 > 65535) {
-                    exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
-                    return null;
+                    return globalObject.throwInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject);
                 }
 
                 port = @intCast(porti32);
 
                 if (hostname_or_unix.len == 0) {
-                    exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
-                    return null;
+                    return globalObject.throwInvalidArguments("Expected \"hostname\" to be a non-empty string", .{}, globalObject);
                 }
 
                 if (hostname_or_unix.len > 0) {
@@ -437,18 +422,16 @@ pub const SocketConfig = struct {
             }
 
             if (hostname_or_unix.len == 0) {
-                exception.* = JSC.toInvalidArguments("Expected \"unix\" or \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
-                return null;
+                return globalObject.throwInvalidArguments("Expected \"unix\" or \"hostname\" to be a non-empty string", .{}, globalObject);
             }
 
-            exception.* = JSC.toInvalidArguments("Expected either \"hostname\" or \"unix\"", .{}, globalObject).asObjectRef();
-            return null;
+            return globalObject.throwInvalidArguments("Expected either \"hostname\" or \"unix\"", .{}, globalObject);
         }
+        errdefer hostname_or_unix.deinit();
 
-        var handlers = Handlers.fromJS(globalObject, opts.get(globalObject, "socket") orelse JSValue.zero, exception) orelse {
-            hostname_or_unix.deinit();
-            return null;
-        };
+        var handlers = try Handlers.fromJS(globalObject, opts.get(globalObject, "socket") orelse {
+            return globalObject.throwInvalidArguments("Expected \"socket\" object with socket handlers.", .{}, globalObject);
+        });
 
         if (opts.getTruthy(globalObject, "data")) |default_data_value| {
             default_data = default_data_value;
@@ -575,23 +558,13 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
-    pub fn listen(globalObject: *JSC.JSGlobalObject, opts: JSValue) JSValue {
+    pub fn listen(globalObject: *JSC.JSGlobalObject, opts: JSValue) !JSValue {
         log("listen", .{});
-        var exception_ = [1]JSC.JSValueRef{null};
-        const exception: JSC.C.ExceptionRef = &exception_;
-        defer {
-            if (exception_[0] != null) {
-                globalObject.throwValue(exception_[0].?.value());
-            }
-        }
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            exception.* = JSC.toInvalidArguments("Expected object", .{}, globalObject).asObjectRef();
-            return .zero;
+            return globalObject.throwInvalidArguments("Expected object", .{});
         }
 
-        var socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
-            return .zero;
-        };
+        var socket_config = try SocketConfig.fromJS(opts, globalObject);
 
         var hostname_or_unix = socket_config.hostname_or_unix;
         const port = socket_config.port;
@@ -630,8 +603,7 @@ pub const Listener = struct {
                 }
             }
 
-            exception.* = err.asObjectRef();
-            return .zero;
+            return globalObject.throwValue(err);
         };
 
         if (ssl_enabled) {
@@ -729,9 +701,7 @@ pub const Listener = struct {
                     err.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toValueGC(globalObject));
                 }
             }
-            exception.* = err.asObjectRef();
-
-            return .zero;
+            return globalObject.throwValue(err);
         };
 
         var socket = Listener{
@@ -917,22 +887,12 @@ pub const Listener = struct {
     pub fn connect(
         globalObject: *JSC.JSGlobalObject,
         opts: JSValue,
-    ) JSValue {
-        var exception_ = [1]JSC.JSValueRef{null};
-        const exception: JSC.C.ExceptionRef = &exception_;
-        defer {
-            if (exception_[0] != null) {
-                globalObject.throwValue(exception_[0].?.value());
-            }
-        }
+    ) !JSValue {
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            exception.* = JSC.toInvalidArguments("Expected options object", .{}, globalObject).asObjectRef();
-            return .zero;
+            return globalObject.throwInvalidArguments("Expected options object", .{}, globalObject);
         }
 
-        const socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
-            return .zero;
-        };
+        const socket_config = try SocketConfig.fromJS(opts, globalObject);
 
         var hostname_or_unix = socket_config.hostname_or_unix;
         const port = socket_config.port;
@@ -955,9 +915,8 @@ pub const Listener = struct {
                 .syscall = bun.String.static("connect"),
                 .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
             };
-            exception.* = err.toErrorInstance(globalObject).asObjectRef();
             handlers.unprotect();
-            return .zero;
+            return globalObject.throwValue(err.toErrorInstance(globalObject));
         };
 
         const connection: Listener.UnixOrHost = blk: {
@@ -1048,8 +1007,7 @@ pub const Listener = struct {
                     .syscall = bun.String.static("connect"),
                     .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
                 };
-                exception.* = err.toErrorInstance(globalObject).asObjectRef();
-                return .zero;
+                return globalObject.throwValue(err.toErrorInstance(globalObject));
             };
             tls.poll_ref.ref(handlers.vm);
 
@@ -1079,8 +1037,7 @@ pub const Listener = struct {
                     .syscall = bun.String.static("connect"),
                     .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
                 };
-                exception.* = err.toErrorInstance(globalObject).asObjectRef();
-                return .zero;
+                return globalObject.throwValue(err.toErrorInstance(globalObject));
             };
             tcp.poll_ref.ref(handlers.vm);
 
@@ -2113,8 +2070,6 @@ fn NewSocket(comptime ssl: bool) type {
             var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
 
-            var exception_ref = [_]JSC.C.JSValueRef{null};
-            const exception: JSC.C.ExceptionRef = &exception_ref;
             if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg)) |sb| {
                 defer sb.deinit();
                 const session_slice = sb.slice();
@@ -2122,16 +2077,15 @@ fn NewSocket(comptime ssl: bool) type {
                 var tmp = @as([*c]const u8, @ptrCast(session_slice.ptr));
                 const session = BoringSSL.d2i_SSL_SESSION(null, &tmp, @as(c_long, @intCast(session_slice.len))) orelse return JSValue.jsUndefined();
                 if (BoringSSL.SSL_set_session(ssl_ptr, session) != 1) {
-                    globalObject.throwValue(getSSLException(globalObject, "SSL_set_session error"));
-                    return .zero;
+                    return globalObject.exceptionToCPP(
+                        globalObject.throwValue(getSSLException(globalObject, "SSL_set_session error")),
+                    );
                 }
                 return JSValue.jsUndefined();
-            } else if (exception.* != null) {
-                globalObject.throwValue(JSC.JSValue.c(exception.*));
-                return .zero;
             } else {
-                globalObject.throw("Expected session to be a string, Buffer or TypedArray", .{});
-                return .zero;
+                return globalObject.exceptionToCPP(
+                    globalObject.throw("Expected session to be a string, Buffer or TypedArray", .{}),
+                );
             }
         }
 
@@ -2246,8 +2200,6 @@ fn NewSocket(comptime ssl: bool) type {
                 var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
                 defer arena.deinit();
 
-                var exception_ref = [_]JSC.C.JSValueRef{null};
-                const exception: JSC.C.ExceptionRef = &exception_ref;
                 if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg)) |sb| {
                     defer sb.deinit();
                     const context_slice = sb.slice();
@@ -2258,16 +2210,15 @@ fn NewSocket(comptime ssl: bool) type {
 
                     const result = BoringSSL.SSL_export_keying_material(ssl_ptr, buffer_ptr, buffer_size, @as([*c]const u8, @ptrCast(label_slice.ptr)), label_slice.len, @as([*c]const u8, @ptrCast(context_slice.ptr)), context_slice.len, 1);
                     if (result != 1) {
-                        globalObject.throwValue(getSSLException(globalObject, "Failed to export keying material"));
-                        return .zero;
+                        globalObject.exceptionToCPP(
+                            globalObject.throwValue(getSSLException(globalObject, "Failed to export keying material")),
+                        );
                     }
                     return buffer;
-                } else if (exception.* != null) {
-                    globalObject.throwValue(JSC.JSValue.c(exception.*));
-                    return .zero;
                 } else {
-                    globalObject.throw("Expected context to be a string, Buffer or TypedArray", .{});
-                    return .zero;
+                    globalObject.exceptionToCPP(
+                        globalObject.throw("Expected context to be a string, Buffer or TypedArray", .{}),
+                    );
                 }
             } else {
                 const buffer_size = @as(usize, @intCast(length));

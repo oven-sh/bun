@@ -633,13 +633,12 @@ pub const Body = struct {
                         },
                         .getJSON => {
                             var blob = new.useAsAnyBlobAllowNonUTF8String();
-                            const json_value = blob.toJSON(global, .share);
-                            blob.detach();
+                            defer blob.detach();
 
-                            if (json_value.isAnyError()) {
-                                promise.reject(global, json_value);
-                            } else {
+                            if (blob.toJSON(global, .share)) |json_value| {
                                 promise.resolve(global, json_value);
+                            } else |e| {
+                                promise.reject(global, global.getAndClearException(e));
                             }
                         },
                         .getArrayBuffer => {

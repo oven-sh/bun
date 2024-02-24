@@ -73,10 +73,9 @@ pub const ResolveMessage = struct {
         }
     }
 
-    pub fn toStringFn(this: *ResolveMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toStringFn(this: *ResolveMessage, globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         const text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemory();
         };
         var str = ZigString.init(text);
         str.setOutputEncoding();

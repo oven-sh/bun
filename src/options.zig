@@ -394,11 +394,9 @@ pub const Target = enum {
         },
     );
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Target {
+    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue) !Target {
         if (!value.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("target must be a string", .{}, global, exception);
-
-            return null;
+            return JSC.throwInvalidArguments("target must be a string", .{}, global);
         }
         return Map.fromJS(global, value);
     }
@@ -617,17 +615,15 @@ pub const Format = enum {
         },
     );
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
+    pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue) !?Format {
         if (format.isUndefinedOrNull()) return null;
 
         if (!format.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("format must be a string", .{}, global, exception);
-            return null;
+            return global.throwInvalidArguments("format must be a string", .{});
         }
 
         return Map.fromJS(global, format) orelse {
-            JSC.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{}, global, exception);
-            return null;
+            return global.throwInvalidArguments("Invalid format - must be esm, cjs, or iife", .{});
         };
     }
 
@@ -722,12 +718,11 @@ pub const Loader = enum(u8) {
         return stdin_name.get(this);
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, loader: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Loader {
+    pub fn fromJS(global: *JSC.JSGlobalObject, loader: JSC.JSValue) !?Loader {
         if (loader.isUndefinedOrNull()) return null;
 
         if (!loader.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("loader must be a string", .{}, global, exception);
-            return null;
+            return global.throwInvalidArguments("loader must be a string", .{});
         }
 
         var zig_str = JSC.ZigString.init("");
@@ -735,7 +730,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            JSC.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{}, global, exception);
+            global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{});
             return null;
         };
     }

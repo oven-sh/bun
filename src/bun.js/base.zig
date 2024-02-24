@@ -24,7 +24,8 @@ const Body = WebCore.Body;
 const TaggedPointerTypes = @import("../tagged_pointer.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
 
-pub const ExceptionValueRef = [*c]js.JSValueRef;
+const JSException = error{JSException};
+
 pub const JSValueRef = js.JSValueRef;
 
 pub const Lifetime = enum {
@@ -149,18 +150,6 @@ const ZigString = JSC.ZigString;
 
 pub const PathString = bun.PathString;
 
-pub fn JSError(
-    _: std.mem.Allocator,
-    comptime fmt: string,
-    args: anytype,
-    ctx: js.JSContextRef,
-    exception: ExceptionValueRef,
-) void {
-    @setCold(true);
-
-    exception.* = createError(ctx, fmt, args).asObjectRef();
-}
-
 pub fn createError(
     globalThis: *JSC.JSGlobalObject,
     comptime fmt: string,
@@ -185,16 +174,6 @@ pub fn createError(
         allocator.free(buf);
         return res;
     }
-}
-
-pub fn throwTypeError(
-    code: JSC.Node.ErrorCode,
-    comptime fmt: string,
-    args: anytype,
-    ctx: js.JSContextRef,
-    exception: ExceptionValueRef,
-) void {
-    exception.* = toTypeError(code, fmt, args, ctx).asObjectRef();
 }
 
 pub fn toTypeErrorWithCode(
@@ -225,16 +204,6 @@ pub fn toTypeError(
     ctx: js.JSContextRef,
 ) JSC.JSValue {
     return toTypeErrorWithCode(@tagName(code), fmt, args, ctx);
-}
-
-pub fn throwInvalidArguments(
-    comptime fmt: string,
-    args: anytype,
-    ctx: js.JSContextRef,
-    exception: ExceptionValueRef,
-) void {
-    @setCold(true);
-    return throwTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, fmt, args, ctx, exception);
 }
 
 pub fn toInvalidArguments(
@@ -423,7 +392,7 @@ pub const ArrayBuffer = extern struct {
         return ArrayBuffer{ .offset = 0, .len = @as(u32, @intCast(bytes.len)), .byte_len = @as(u32, @intCast(bytes.len)), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
     }
 
-    pub fn toJSUnchecked(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+    pub fn toJSUnchecked(this: ArrayBuffer, ctx: JSC.C.JSContextRef) !JSC.JSValue {
 
         // The reason for this is
         // JSC C API returns a detached arraybuffer
@@ -449,7 +418,6 @@ pub const ArrayBuffer = extern struct {
                 this.byte_len,
                 MarkedArrayBuffer_deallocator,
                 @as(*anyopaque, @ptrFromInt(@intFromPtr(&bun.default_allocator))),
-                exception,
             ));
         }
 
@@ -460,13 +428,12 @@ pub const ArrayBuffer = extern struct {
             this.byte_len,
             MarkedArrayBuffer_deallocator,
             @as(*anyopaque, @ptrFromInt(@intFromPtr(&bun.default_allocator))),
-            exception,
         ));
     }
 
     const log = Output.scoped(.ArrayBuffer, false);
 
-    pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+    pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef) !JSC.JSValue {
         if (!this.value.isEmpty()) {
             return this.value;
         }
@@ -482,7 +449,6 @@ pub const ArrayBuffer = extern struct {
                     this.byte_len,
                     null,
                     null,
-                    exception,
                 ));
             }
 
@@ -493,11 +459,10 @@ pub const ArrayBuffer = extern struct {
                 this.byte_len,
                 null,
                 null,
-                exception,
             ));
         }
 
-        return this.toJSUnchecked(ctx, exception);
+        return this.toJSUnchecked(ctx);
     }
 
     pub fn toJSWithContext(
@@ -505,7 +470,6 @@ pub const ArrayBuffer = extern struct {
         ctx: JSC.C.JSContextRef,
         deallocator: ?*anyopaque,
         callback: JSC.C.JSTypedArrayBytesDeallocator,
-        exception: JSC.C.ExceptionRef,
     ) JSC.JSValue {
         if (!this.value.isEmpty()) {
             return this.value;
@@ -518,7 +482,6 @@ pub const ArrayBuffer = extern struct {
                 this.byte_len,
                 callback,
                 deallocator,
-                exception,
             ));
         }
 
@@ -529,7 +492,6 @@ pub const ArrayBuffer = extern struct {
             this.byte_len,
             callback,
             deallocator,
-            exception,
         ));
     }
 
@@ -592,7 +554,7 @@ pub const MarkedArrayBuffer = struct {
         return MarkedArrayBuffer.fromBytes(buf, allocator, JSC.JSValue.JSType.Uint8Array);
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, _: JSC.C.ExceptionRef) ?MarkedArrayBuffer {
+    pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue) ?MarkedArrayBuffer {
         const array_buffer = value.asArrayBuffer(global) orelse return null;
         return MarkedArrayBuffer{ .buffer = array_buffer, .allocator = null };
     }
@@ -633,7 +595,7 @@ pub const MarkedArrayBuffer = struct {
         return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
     }
 
-    pub fn toJSObjectRef(this: MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
+    pub fn toJSObjectRef(this: MarkedArrayBuffer, ctx: js.JSContextRef) js.JSObjectRef {
         if (!this.buffer.value.isEmptyOrUndefinedOrNull()) {
             return this.buffer.value.asObjectRef();
         }
@@ -642,7 +604,6 @@ pub const MarkedArrayBuffer = struct {
                 ctx,
                 this.buffer.typed_array_type.toC(),
                 0,
-                exception,
             );
         }
 
@@ -654,7 +615,6 @@ pub const MarkedArrayBuffer = struct {
             this.buffer.byte_len,
             MarkedArrayBuffer_deallocator,
             this.buffer.ptr,
-            exception,
         );
     }
 
@@ -1195,18 +1155,6 @@ pub fn wrapInstanceMethod(
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 
-            const has_exception_ref: bool = comptime brk: {
-                for (FunctionTypeInfo.params) |param| {
-                    if (param.type.? == JSC.C.ExceptionRef) {
-                        break :brk true;
-                    }
-                }
-
-                break :brk false;
-            };
-            var exception_value = [_]JSC.C.JSValueRef{null};
-            const exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
-
             inline for (FunctionTypeInfo.params, 0..) |param, i| {
                 const ArgType = param.type.?;
                 switch (ArgType) {
@@ -1221,23 +1169,20 @@ pub fn wrapInstanceMethod(
                     },
                     JSC.Node.StringOrBuffer => {
                         const arg = iter.nextEat() orelse {
-                            globalThis.throwInvalidArguments("expected string or buffer", .{});
                             iter.deinit();
-                            return JSC.JSValue.zero;
+                            return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("expected string or buffer", .{}));
                         };
                         args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
-                            globalThis.throwInvalidArguments("expected string or buffer", .{});
                             iter.deinit();
-                            return JSC.JSValue.zero;
+                            return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("expected string or buffer", .{}));
                         };
                     },
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
                             if (!arg.isEmptyOrUndefinedOrNull()) {
                                 args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
-                                    globalThis.throwInvalidArguments("expected string or buffer", .{});
                                     iter.deinit();
-                                    return JSC.JSValue.zero;
+                                    return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("expected string or buffer", .{}));
                                 };
                             } else {
                                 args[i] = null;
@@ -1249,22 +1194,19 @@ pub fn wrapInstanceMethod(
                     JSC.ArrayBuffer => {
                         if (iter.nextEat()) |arg| {
                             args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {
-                                globalThis.throwInvalidArguments("expected TypedArray", .{});
                                 iter.deinit();
-                                return JSC.JSValue.zero;
+                                return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("expected TypedArray", .{}));
                             };
                         } else {
-                            globalThis.throwInvalidArguments("expected TypedArray", .{});
                             iter.deinit();
-                            return JSC.JSValue.zero;
+                            return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("expected TypedArray", .{}));
                         }
                     },
                     ?JSC.ArrayBuffer => {
                         if (iter.nextEat()) |arg| {
                             args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {
-                                globalThis.throwInvalidArguments("expected TypedArray", .{});
                                 iter.deinit();
-                                return JSC.JSValue.zero;
+                                return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("expected TypedArray", .{}));
                             };
                         } else {
                             args[i] = null;
@@ -1272,15 +1214,13 @@ pub fn wrapInstanceMethod(
                     },
                     ZigString => {
                         var string_value = eater(&iter) orelse {
-                            globalThis.throwInvalidArguments("Missing argument", .{});
                             iter.deinit();
-                            return JSC.JSValue.zero;
+                            return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("Missing argument", .{}));
                         };
 
                         if (string_value.isUndefinedOrNull()) {
-                            globalThis.throwInvalidArguments("Expected string", .{});
                             iter.deinit();
-                            return JSC.JSValue.zero;
+                            return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("Expected string", .{}));
                         }
 
                         args[i] = string_value.getZigString(globalThis.ptr());
@@ -1296,39 +1236,30 @@ pub fn wrapInstanceMethod(
                     },
                     *Response => {
                         args[i] = (eater(&iter) orelse {
-                            globalThis.throwInvalidArguments("Missing Response object", .{});
                             iter.deinit();
-                            return JSC.JSValue.zero;
+                            return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("Missing Response object", .{}));
                         }).as(Response) orelse {
-                            globalThis.throwInvalidArguments("Expected Response object", .{});
                             iter.deinit();
-                            return JSC.JSValue.zero;
+                            return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("Expected Response object", .{}));
                         };
                     },
                     *Request => {
                         args[i] = (eater(&iter) orelse {
-                            globalThis.throwInvalidArguments("Missing Request object", .{});
                             iter.deinit();
-                            return JSC.JSValue.zero;
+                            return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("Missing Request object", .{}));
                         }).as(Request) orelse {
-                            globalThis.throwInvalidArguments("Expected Request object", .{});
                             iter.deinit();
-                            return JSC.JSValue.zero;
+                            return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("Expected Request object", .{}));
                         };
                     },
                     JSValue => {
-                        const val = eater(&iter) orelse {
-                            globalThis.throwInvalidArguments("Missing argument", .{});
+                        args[i] = eater(&iter) orelse {
                             iter.deinit();
-                            return JSC.JSValue.zero;
+                            return globalThis.exceptionToCPP(globalThis.throwInvalidArguments("Missing argument", .{}));
                         };
-                        args[i] = val;
                     },
                     ?JSValue => {
                         args[i] = eater(&iter);
-                    },
-                    JSC.C.ExceptionRef => {
-                        args[i] = exception;
                     },
                     else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
                 }
@@ -1336,15 +1267,15 @@ pub fn wrapInstanceMethod(
 
             defer iter.deinit();
 
-            defer {
-                if (comptime has_exception_ref) {
-                    if (exception_value[0] != null) {
-                        globalThis.throwValue(exception_value[0].?.value());
-                    }
-                }
-            }
-
-            return @call(.auto, @field(Container, name), args);
+            const result = @call(.auto, @field(Container, name), args);
+            return switch (@TypeOf(result)) {
+                JSValue => result,
+                else => result catch |err| switch (err) {
+                    // The only error this is allowed to return is JSException
+                    // If you have a compilation error here, make sure your return error set is correct
+                    error.JSException => globalThis.exceptionToCPP(err),
+                },
+            };
         }
     }.method;
 }

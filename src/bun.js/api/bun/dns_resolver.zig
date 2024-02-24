@@ -2112,7 +2112,7 @@ pub const DNSResolver = struct {
         });
     };
 
-    pub fn resolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) !JSC.JSValue {
         const arguments = callframe.arguments(3);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolve", 2, arguments.len);
@@ -2127,9 +2127,8 @@ pub const DNSResolver = struct {
                 break :brk RecordType.default;
             }
 
-            const record_type_str = record_type_value.toStringOrNull(globalThis) orelse {
-                return .zero;
-            };
+            const record_type_str = record_type_value.toStringOrNull(globalThis) catch |e|
+                return globalThis.exceptionToCPP(e);
 
             if (record_type_str.length() == 0) {
                 break :brk RecordType.default;

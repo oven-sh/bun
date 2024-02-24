@@ -45,10 +45,9 @@ pub const BuildMessage = struct {
         return array;
     }
 
-    pub fn toStringFn(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toStringFn(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         const text = std.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemory();
         };
         var str = ZigString.init(text);
         str.setOutputEncoding();

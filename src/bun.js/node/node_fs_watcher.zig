@@ -194,21 +194,12 @@ pub const FSWatcher = struct {
         recursive: bool,
         encoding: JSC.Node.Encoding,
         verbose: bool,
-        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Arguments {
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) !Arguments {
             const vm = ctx.vm();
-            const path = PathLike.fromJS(ctx, arguments, exception) orelse {
-                if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "filename must be a string or TypedArray",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                }
-                return null;
+            const path = try PathLike.fromJS(ctx, arguments) orelse {
+                return ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
             };
 
-            if (exception.* != null) return null;
             var listener: JSC.JSValue = .zero;
             var signal: ?*JSC.AbortSignal = null;
             var persistent: bool = true;
@@ -216,108 +207,81 @@ pub const FSWatcher = struct {
             var encoding: JSC.Node.Encoding = .utf8;
             var verbose = false;
             if (arguments.nextEat()) |options_or_callable| {
-
                 // options
                 if (options_or_callable.isObject()) {
-                    if (options_or_callable.get(ctx, "persistent")) |persistent_| {
-                        if (!persistent_.isBoolean()) {
-                            JSC.throwInvalidArguments(
+                    if (options_or_callable.get(ctx, "persistent")) |persistent_js| {
+                        if (!persistent_js.isBoolean()) {
+                            return ctx.throwInvalidArguments(
                                 "persistent must be a boolean.",
                                 .{},
-                                ctx,
-                                exception,
                             );
-                            return null;
                         }
-                        persistent = persistent_.toBoolean();
+                        persistent = persistent_js.toBoolean();
                     }
 
-                    if (options_or_callable.get(ctx, "verbose")) |verbose_| {
-                        if (!verbose_.isBoolean()) {
-                            JSC.throwInvalidArguments(
+                    if (options_or_callable.get(ctx, "verbose")) |verbose_js| {
+                        if (!verbose_js.isBoolean()) {
+                            return ctx.throwInvalidArguments(
                                 "verbose must be a boolean.",
                                 .{},
-                                ctx,
-                                exception,
                             );
-                            return null;
                         }
-                        verbose = verbose_.toBoolean();
+                        verbose = verbose_js.toBoolean();
                     }
 
-                    if (options_or_callable.get(ctx, "encoding")) |encoding_| {
-                        if (!encoding_.isString()) {
-                            JSC.throwInvalidArguments(
+                    if (options_or_callable.get(ctx, "encoding")) |encoding_js| {
+                        if (!encoding_js.isString()) {
+                            return ctx.throwInvalidArguments(
                                 "encoding must be a string.",
                                 .{},
-                                ctx,
-                                exception,
                             );
-                            return null;
                         }
-                        if (JSC.Node.Encoding.fromJS(encoding_, ctx.ptr())) |node_encoding| {
-                            encoding = node_encoding;
-                        } else {
-                            JSC.throwInvalidArguments(
+                        encoding = JSC.Node.Encoding.fromJS(encoding_js, ctx.ptr()) orelse {
+                            return ctx.throwInvalidArguments(
                                 "invalid encoding.",
                                 .{},
-                                ctx,
-                                exception,
                             );
-                            return null;
-                        }
+                        };
                     }
 
-                    if (options_or_callable.get(ctx, "recursive")) |recursive_| {
-                        if (!recursive_.isBoolean()) {
-                            JSC.throwInvalidArguments(
+                    if (options_or_callable.get(ctx, "recursive")) |recursive_js| {
+                        if (!recursive_js.isBoolean()) {
+                            return ctx.throwInvalidArguments(
                                 "recursive must be a boolean.",
                                 .{},
-                                ctx,
-                                exception,
                             );
-                            return null;
                         }
-                        recursive = recursive_.toBoolean();
+                        recursive = recursive_js.toBoolean();
                     }
 
                     // abort signal
-                    if (options_or_callable.get(ctx, "signal")) |signal_| {
-                        if (JSC.AbortSignal.fromJS(signal_)) |signal_obj| {
-                            //Keep it alive
-                            signal_.ensureStillAlive();
-                            signal = signal_obj;
-                        } else {
-                            JSC.throwInvalidArguments(
+                    if (options_or_callable.get(ctx, "signal")) |signal_js| {
+                        signal = JSC.AbortSignal.fromJS(signal_js) orelse {
+                            return ctx.throwInvalidArguments(
                                 "signal is not of type AbortSignal.",
                                 .{},
-                                ctx,
-                                exception,
                             );
-
-                            return null;
-                        }
+                        };
+                        // Ensure signal cell is still alive after assignment
+                        signal_js.ensureStillAlive();
                     }
 
                     // listener
                     if (arguments.nextEat()) |callable| {
                         if (!callable.isCell() or !callable.isCallable(vm)) {
-                            exception.* = JSC.toInvalidArguments("Expected \"listener\" callback to be a function", .{}, ctx).asObjectRef();
-                            return null;
+                            return ctx.throwInvalidArguments("Expected \"listener\" callback to be a function", .{});
                         }
                         listener = callable;
                     }
                 } else {
                     if (!options_or_callable.isCell() or !options_or_callable.isCallable(vm)) {
-                        exception.* = JSC.toInvalidArguments("Expected \"listener\" callback to be a function", .{}, ctx).asObjectRef();
-                        return null;
+                        return ctx.throwInvalidArguments("Expected \"listener\" callback to be a function", .{});
                     }
                     listener = options_or_callable;
                 }
             }
             if (listener == .zero) {
-                exception.* = JSC.toInvalidArguments("Expected \"listener\" callback", .{}, ctx).asObjectRef();
-                return null;
+                return ctx.throwInvalidArguments("Expected \"listener\" callback", .{});
             }
 
             return Arguments{

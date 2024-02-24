@@ -196,21 +196,14 @@ pub const StatWatcher = struct {
 
         global_this: JSC.C.JSContextRef,
 
-        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Arguments {
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) !?Arguments {
             const vm = ctx.vm();
-            const path = PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception) orelse {
-                if (exception.* == null) {
-                    JSC.throwInvalidArguments(
-                        "filename must be a string or TypedArray",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                }
-                return null;
+            const path = try PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator) orelse {
+                return ctx.throwInvalidArguments(
+                    "filename must be a string or TypedArray",
+                    .{},
+                );
             };
-
-            if (exception.* != null) return null;
 
             var listener: JSC.JSValue = .zero;
             var persistent: bool = true;
@@ -226,30 +219,23 @@ pub const StatWatcher = struct {
                     // default false
                     bigint = (options_or_callable.getOptional(ctx, "bigint", bool) catch return null) orelse false;
 
-                    if (options_or_callable.get(ctx, "interval")) |interval_| {
-                        if (!interval_.isNumber()) {
-                            JSC.throwInvalidArguments(
-                                "bigint must be a boolean.",
-                                .{},
-                                ctx,
-                                exception,
-                            );
-                            return null;
+                    if (options_or_callable.get(ctx, "interval")) |interval_js| {
+                        if (!interval_js.isNumber()) {
+                            return ctx.throwInvalidArguments("interval must be a boolean.", .{});
                         }
-                        interval = interval_.toInt32(); //*
+                        interval = interval_js.toInt32(); //*
                     }
                 }
             }
 
-            if (arguments.nextEat()) |listener_| {
-                if (listener_.isCallable(vm)) {
-                    listener = listener_.withAsyncContextIfNeeded(ctx);
+            if (arguments.nextEat()) |listener_js| {
+                if (listener_js.isCallable(vm)) {
+                    listener = listener_js.withAsyncContextIfNeeded(ctx);
                 }
             }
 
             if (listener == .zero) {
-                exception.* = JSC.toInvalidArguments("Expected \"listener\" callback", .{}, ctx).asObjectRef();
-                return null;
+                return ctx.throwInvalidArguments("Expected \"listener\" callback", .{});
             }
 
             return Arguments{

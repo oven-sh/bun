@@ -553,31 +553,31 @@ pub const TestScope = struct {
     };
 
     pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createScope(globalThis, callframe, "test()", true, .pass);
+        return globalThis.exceptionToCPP(createScope(globalThis, callframe, "test()", true, .pass));
     }
 
     pub fn only(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createScope(globalThis, callframe, "test.only()", true, .only);
+        return globalThis.exceptionToCPP(createScope(globalThis, callframe, "test.only()", true, .only));
     }
 
     pub fn skip(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createScope(globalThis, callframe, "test.skip()", true, .skip);
+        return globalThis.exceptionToCPP(createScope(globalThis, callframe, "test.skip()", true, .skip));
     }
 
     pub fn todo(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createScope(globalThis, callframe, "test.todo()", true, .todo);
+        return globalThis.exceptionToCPP(createScope(globalThis, callframe, "test.todo()", true, .todo));
     }
 
     pub fn each(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createEach(globalThis, callframe, "test.each()", "each", true);
+        return globalThis.exceptionToCPP(createEach(globalThis, callframe, "test.each()", "each", true));
     }
 
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "test.if()", "if", TestScope, false);
+        return globalThis.exceptionToCPP(createIfScope(globalThis, callframe, "test.if()", "if", TestScope, false));
     }
 
     pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, true);
+        return globalThis.exceptionToCPP(createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, true));
     }
 
     pub fn onReject(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -1019,31 +1019,31 @@ pub const DescribeScope = struct {
     }
 
     pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createScope(globalThis, callframe, "describe()", false, .pass);
+        return globalThis.exceptionToCPP(createScope(globalThis, callframe, "describe()", false, .pass));
     }
 
     pub fn only(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createScope(globalThis, callframe, "describe.only()", false, .only);
+        return globalThis.exceptionToCPP(createScope(globalThis, callframe, "describe.only()", false, .only));
     }
 
     pub fn skip(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createScope(globalThis, callframe, "describe.skip()", false, .skip);
+        return globalThis.exceptionToCPP(createScope(globalThis, callframe, "describe.skip()", false, .skip));
     }
 
     pub fn todo(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createScope(globalThis, callframe, "describe.todo()", false, .todo);
+        return globalThis.exceptionToCPP(createScope(globalThis, callframe, "describe.todo()", false, .todo));
     }
 
     pub fn each(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createEach(globalThis, callframe, "describe.each()", "each", false);
+        return globalThis.exceptionToCPP(createEach(globalThis, callframe, "describe.each()", "each", false));
     }
 
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, false);
+        return globalThis.exceptionToCPP(createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, false));
     }
 
     pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, true);
+        return globalThis.exceptionToCPP(createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, true));
     }
 
     pub fn run(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
@@ -1167,22 +1167,6 @@ pub const DescribeScope = struct {
     }
 
     const ScopeStack = ObjectPool(std.ArrayListUnmanaged(*DescribeScope), null, true, 16);
-
-    // pub fn runBeforeAll(this: *DescribeScope, ctx: js.JSContextRef, exception: js.ExceptionRef) bool {
-    //     var scopes = ScopeStack.get(default_allocator);
-    //     defer scopes.release();
-    //     scopes.data.clearRetainingCapacity();
-    //     var cur: ?*DescribeScope = this;
-    //     while (cur) |scope| {
-    //         scopes.data.append(default_allocator, this) catch unreachable;
-    //         cur = scope.parent;
-    //     }
-
-    //     // while (scopes.data.popOrNull()) |scope| {
-    //     //     scope.
-    //     // }
-    // }
-
 };
 
 pub fn wrapTestFunction(comptime name: []const u8, comptime func: DescribeScope.CallbackFn) DescribeScope.CallbackFn {
@@ -1490,14 +1474,13 @@ inline fn createScope(
     comptime signature: string,
     comptime is_test: bool,
     comptime tag: Tag,
-) JSValue {
+) !JSValue {
     const this = callframe.this();
     const arguments = callframe.arguments(3);
     const args = arguments.slice();
 
     if (args.len == 0) {
-        globalThis.throwPretty("{s} expects a description or function", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects a description or function", .{signature});
     }
 
     var description = args[0];
@@ -1511,8 +1494,7 @@ inline fn createScope(
 
     if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
         if (tag != .todo) {
-            globalThis.throwPretty("{s} expects a function", .{signature});
-            return .zero;
+            return globalThis.throwPretty("{s} expects a function", .{signature});
         }
     }
 
@@ -1522,28 +1504,24 @@ inline fn createScope(
     } else if (options.isObject()) {
         if (options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
-                globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects timeout to be a number", .{signature});
             }
             timeout_ms = @as(u32, @intCast(@max(timeout.coerce(i32, globalThis), 0)));
         }
         if (options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
-                globalThis.throwPretty("{s} expects retry to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects retry to be a number", .{signature});
             }
             // TODO: retry_count = @intCast(u32, @max(retries.coerce(i32, globalThis), 0));
         }
         if (options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
-                globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
-                return .zero;
+                return globalThis.throwPretty("{s} expects repeats to be a number", .{signature});
             }
             // TODO: repeat_count = @intCast(u32, @max(repeats.coerce(i32, globalThis), 0));
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
-        globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
     }
 
     const parent = DescribeScope.active.?;
@@ -1634,13 +1612,12 @@ inline fn createIfScope(
     comptime signature: string,
     comptime Scope: type,
     comptime is_skip: bool,
-) JSValue {
+) !JSValue {
     const arguments = callframe.arguments(1);
     const args = arguments.slice();
 
     if (args.len == 0) {
-        globalThis.throwPretty("{s} expects a condition", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects a condition", .{signature});
     }
 
     const name = ZigString.static(property);
@@ -1928,19 +1905,17 @@ inline fn createEach(
     comptime property: string,
     comptime signature: string,
     comptime is_test: bool,
-) JSValue {
+) !JSValue {
     const arguments = callframe.arguments(1);
     const args = arguments.slice();
 
     if (args.len == 0) {
-        globalThis.throwPretty("{s} expects an array", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects an array", .{signature});
     }
 
     var array = args[0];
     if (array.isEmpty() or !array.jsType().isArray()) {
-        globalThis.throwPretty("{s} expects an array", .{signature});
-        return .zero;
+        return globalThis.throwPretty("{s} expects an array", .{signature});
     }
 
     const allocator = getAllocator(globalThis);

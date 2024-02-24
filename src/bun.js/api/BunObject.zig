@@ -1164,28 +1164,23 @@ pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C)
 fn doResolve(
     globalThis: *JSC.JSGlobalObject,
     arguments: []const JSValue,
-    exception: js.ExceptionRef,
-) ?JSC.JSValue {
+) !JSC.JSValue {
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
     defer args.deinit();
     const specifier = args.protectEatNext() orelse {
-        JSC.throwInvalidArguments("Expected a specifier and a from path", .{}, globalThis, exception);
-        return null;
+        return globalThis.throwInvalidArguments("Expected a specifier and a from path", .{});
     };
 
     if (specifier.isUndefinedOrNull()) {
-        JSC.throwInvalidArguments("specifier must be a string", .{}, globalThis, exception);
-        return null;
+        return globalThis.throwInvalidArguments("specifier must be a string", .{});
     }
 
     const from = args.protectEatNext() orelse {
-        JSC.throwInvalidArguments("Expected a from path", .{}, globalThis, exception);
-        return null;
+        return globalThis.throwInvalidArguments("Expected a from path", .{});
     };
 
     if (from.isUndefinedOrNull()) {
-        JSC.throwInvalidArguments("from must be a string", .{}, globalThis, exception);
-        return null;
+        return globalThis.throwInvalidArguments("from must be a string", .{});
     }
 
     var is_esm = true;
@@ -1193,8 +1188,7 @@ fn doResolve(
         if (next.isBoolean()) {
             is_esm = next.toBoolean();
         } else {
-            JSC.throwInvalidArguments("esm must be a boolean", .{}, globalThis, exception);
-            return null;
+            return globalThis.throwInvalidArguments("esm must be a boolean", .{});
         }
     }
 
@@ -1202,11 +1196,11 @@ fn doResolve(
     defer specifier_str.deref();
     const from_str = from.toBunString(globalThis);
     defer from_str.deref();
+
     return doResolveWithArgs(
         globalThis,
         specifier_str,
         from_str,
-        exception,
         is_esm,
         false,
     );
@@ -1216,10 +1210,9 @@ fn doResolveWithArgs(
     ctx: js.JSContextRef,
     specifier: bun.String,
     from: bun.String,
-    exception: js.ExceptionRef,
     is_esm: bool,
     comptime is_file_path: bool,
-) ?JSC.JSValue {
+) !JSC.JSValue {
     var errorable: ErrorableString = undefined;
     var query_string = ZigString.Empty;
 
@@ -1250,8 +1243,7 @@ fn doResolveWithArgs(
     }
 
     if (!errorable.success) {
-        exception.* = bun.cast(JSC.JSValueRef, errorable.result.err.ptr.?);
-        return null;
+        return ctx.throwValue(bun.cast(JSC.JSValue, errorable.result.err.ptr.?));
     }
 
     if (query_string.len > 0) {
@@ -1262,10 +1254,7 @@ fn doResolveWithArgs(
         arraylist.writer().print("{any}{any}", .{
             errorable.result.value,
             query_string,
-        }) catch {
-            JSC.JSError(allocator, "Failed to allocate memory", .{}, ctx, exception);
-            return null;
-        };
+        }) catch bun.outOfMemory();
 
         return ZigString.initUTF8(arraylist.items).toValueGC(ctx);
     }
@@ -1280,7 +1269,7 @@ pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame)
     const result = doResolve(globalObject, arguments.slice(), exception);
 
     if (exception_[0] != null) {
-        globalObject.throwValue(exception_[0].?.value());
+        return globalObject.throwValue(exception_[0].?.value());
     }
 
     return result orelse .zero;
@@ -1290,8 +1279,13 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) cal
     var exception_ = [1]JSC.JSValueRef{null};
     const exception = &exception_;
     const arguments = callframe.arguments(3);
-    const value = doResolve(globalObject, arguments.slice(), exception) orelse {
-        return JSC.JSPromise.rejectedPromiseValue(globalObject, exception_[0].?.value());
+    const value = doResolve(globalObject, arguments.slice(), exception) catch |e| switch (e) {
+        error.JSException => {
+            return JSC.JSPromise.rejectedPromiseValue(
+                globalObject,
+                globalObject.getException(e),
+            );
+        },
     };
     return JSC.JSPromise.resolvedPromiseValue(globalObject, value);
 }

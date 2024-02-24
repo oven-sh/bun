@@ -433,17 +433,6 @@ pub const TextDecoder = struct {
     //     return true;
     // }
 
-    // pub fn setFatal(
-    //     this: *TextDecoder,
-    //     _: js.JSContextRef,
-    //     _: js.JSValueRef,
-    //     _: js.JSStringRef,
-    //     value: JSC.C.JSValueRef,
-    //     _: js.ExceptionRef,
-    // ) bool {
-    //     this.fatal = JSValue.fromRef(value).toBoolean();
-    //     return true;
-    // }
     pub fn getFatal(
         this: *TextDecoder,
         _: *JSC.JSGlobalObject,
@@ -617,7 +606,7 @@ pub const TextDecoder = struct {
         return this.decodeSlice(globalThis, uint8array.slice(), false);
     }
 
-    fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8, comptime stream: bool) JSValue {
+    fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8, comptime stream: bool) !JSValue {
         switch (this.encoding) {
             EncodingLabel.latin1 => {
                 if (strings.isAllASCII(buffer_slice)) {
@@ -627,11 +616,10 @@ pub const TextDecoder = struct {
                 // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
                 // However, this is also what WebKit seems to do.
                 //
-                // It's not clear why we couldn't jusst use Latin1 here, but tests failures proved it necessary.
+                // It's not clear why we couldn't just use Latin1 here, but tests failures proved it necessary.
                 const out_length = strings.elementLengthLatin1IntoUTF16([]const u8, buffer_slice);
                 const bytes = globalThis.allocator().alloc(u16, out_length) catch {
-                    globalThis.throwOutOfMemory();
-                    return .zero;
+                    return globalThis.throwOutOfMemory();
                 };
 
                 const out = strings.copyLatin1IntoUTF16([]u16, bytes, []const u8, buffer_slice);
@@ -652,14 +640,12 @@ pub const TextDecoder = struct {
                     } else |err| {
                         switch (err) {
                             error.InvalidByteSequence => {
-                                globalThis.throwValue(
+                                return globalThis.throwValue(
                                     globalThis.createTypeErrorInstance("Invalid byte sequence", .{}),
                                 );
-                                return JSValue.zero;
                             },
                             error.OutOfMemory => {
-                                globalThis.throwOutOfMemory();
-                                return JSValue.zero;
+                                return globalThis.throwOutOfMemory();
                             },
                         }
                     }
@@ -671,8 +657,7 @@ pub const TextDecoder = struct {
                     } else |err| {
                         switch (err) {
                             error.OutOfMemory => {
-                                globalThis.throwOutOfMemory();
-                                return JSValue.zero;
+                                return globalThis.throwOutOfMemory();
                             },
                         }
                     }
@@ -695,8 +680,7 @@ pub const TextDecoder = struct {
                 return this.decodeUTF16WithAlignment([]align(1) const u16, std.mem.bytesAsSlice(u16, moved_buffer_slice_16), globalThis);
             },
             else => {
-                globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});
-                return JSValue.zero;
+                return globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});
             },
         }
     }

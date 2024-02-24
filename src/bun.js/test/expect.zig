@@ -131,12 +131,12 @@ pub const Expect = struct {
         }
     }
 
-    pub fn getNot(this: *Expect, thisValue: JSValue, _: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getNot(this: *Expect, thisValue: JSValue, _: *JSGlobalObject) !JSValue {
         this.flags.not = !this.flags.not;
         return thisValue;
     }
 
-    pub fn getResolves(this: *Expect, thisValue: JSValue, globalThis: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getResolves(this: *Expect, thisValue: JSValue, globalThis: *JSGlobalObject) !JSValue {
         this.flags.promise = switch (this.flags.promise) {
             .resolves, .none => .resolves,
             .rejects => {
@@ -148,22 +148,20 @@ pub const Expect = struct {
         return thisValue;
     }
 
-    pub fn getRejects(this: *Expect, thisValue: JSValue, globalThis: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getRejects(this: *Expect, thisValue: JSValue, globalThis: *JSGlobalObject) !JSValue {
         this.flags.promise = switch (this.flags.promise) {
             .none, .rejects => .rejects,
             .resolves => {
-                globalThis.throw("Cannot chain .rejects() after .resolves()", .{});
-                return .zero;
+                return globalThis.exceptionToCPP(globalThis.throw("Cannot chain .rejects() after .resolves()", .{}));
             },
         };
 
         return thisValue;
     }
 
-    pub fn getValue(this: *Expect, globalThis: *JSGlobalObject, thisValue: JSValue, matcher_name: string, comptime matcher_params_fmt: string) ?JSValue {
+    pub fn getValue(this: *Expect, globalThis: *JSGlobalObject, thisValue: JSValue, matcher_name: string, comptime matcher_params_fmt: string) !JSValue {
         const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalThis.throw("Internal error: the expect(value) was garbage collected but it should not have been!", .{});
-            return null;
+            return globalThis.throw("Internal error: the expect(value) was garbage collected but it should not have been!", .{});
         };
         value.ensureStillAlive();
 
@@ -1484,7 +1482,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeGreaterThan(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn toBeGreaterThan(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         defer this.postMatch(globalObject);
 
         const thisValue = callFrame.this();
@@ -1550,7 +1548,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeGreaterThanOrEqual(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn toBeGreaterThanOrEqual(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         defer this.postMatch(globalObject);
 
         const thisValue = callFrame.this();
@@ -1613,7 +1611,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeLessThan(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn toBeLessThan(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         defer this.postMatch(globalObject);
 
         const thisValue = callFrame.this();
@@ -1676,7 +1674,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeLessThanOrEqual(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn toBeLessThanOrEqual(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         defer this.postMatch(globalObject);
 
         const thisValue = callFrame.this();
@@ -1739,7 +1737,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeCloseTo(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn toBeCloseTo(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         defer this.postMatch(globalObject);
 
         const thisValue = callFrame.this();
@@ -1875,7 +1873,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toThrow(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn toThrow(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         defer this.postMatch(globalObject);
 
         const thisValue = callFrame.this();
@@ -2217,7 +2215,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toMatchSnapshot(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn toMatchSnapshot(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
         const _arguments = callFrame.arguments(2);
@@ -2414,7 +2412,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeEmptyObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeEmptyObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2442,7 +2440,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeNil(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeNil(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2469,7 +2467,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeArray(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeArray(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2496,7 +2494,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeArrayOfSize(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeArrayOfSize(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2540,7 +2538,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeBoolean(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeBoolean(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2567,7 +2565,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeTypeOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeTypeOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2644,7 +2642,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeTrue(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeTrue(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2671,7 +2669,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeFalse(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeFalse(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2698,7 +2696,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeNumber(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeNumber(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2725,7 +2723,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeInteger(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeInteger(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2752,7 +2750,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2779,7 +2777,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeFinite(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeFinite(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2812,7 +2810,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBePositive(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBePositive(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2845,7 +2843,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeNegative(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeNegative(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2878,7 +2876,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeWithin(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeWithin(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -2941,7 +2939,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toEqualIgnoringWhitespace(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toEqualIgnoringWhitespace(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -3023,7 +3021,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeSymbol(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeSymbol(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -3050,7 +3048,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeFunction(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeFunction(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -3077,7 +3075,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeDate(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeDate(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -3104,7 +3102,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeValidDate(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeValidDate(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -3132,7 +3130,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeString(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toBeString(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -3159,7 +3157,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toInclude(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toInclude(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -3216,7 +3214,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toIncludeRepeated(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toIncludeRepeated(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -3327,7 +3325,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toSatisfy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toSatisfy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -3394,7 +3392,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toStartWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toStartWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -3451,7 +3449,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toEndWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(.C) JSValue {
+    pub fn toEndWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame) !JSValue {
         defer this.postMatch(globalThis);
 
         const thisValue = callFrame.this();
@@ -3508,7 +3506,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toBeInstanceOf(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn toBeInstanceOf(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         defer this.postMatch(globalObject);
 
         const thisValue = callFrame.this();
@@ -3555,7 +3553,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toMatch(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn toMatch(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         JSC.markBinding(@src());
 
         defer this.postMatch(globalObject);
@@ -3699,7 +3697,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn toMatchObject(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn toMatchObject(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         JSC.markBinding(@src());
 
         defer this.postMatch(globalObject);
@@ -3976,48 +3974,48 @@ pub const Expect = struct {
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;
 
-    pub fn getStaticNot(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
+    pub fn getStaticNot(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) !JSValue {
         return ExpectStatic.create(globalObject, .{ .not = true });
     }
 
-    pub fn getStaticResolvesTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
+    pub fn getStaticResolvesTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) !JSValue {
         return ExpectStatic.create(globalObject, .{ .promise = .resolves });
     }
 
-    pub fn getStaticRejectsTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) callconv(.C) JSValue {
+    pub fn getStaticRejectsTo(globalObject: *JSGlobalObject, _: JSValue, _: JSValue) !JSValue {
         return ExpectStatic.create(globalObject, .{ .promise = .rejects });
     }
 
-    pub fn any(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn any(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return ExpectAny.call(globalObject, callFrame);
     }
 
-    pub fn anything(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn anything(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return ExpectAnything.call(globalObject, callFrame);
     }
 
-    pub fn closeTo(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn closeTo(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return ExpectCloseTo.call(globalObject, callFrame);
     }
 
-    pub fn objectContaining(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn objectContaining(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return ExpectObjectContaining.call(globalObject, callFrame);
     }
 
-    pub fn stringContaining(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn stringContaining(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return ExpectStringContaining.call(globalObject, callFrame);
     }
 
-    pub fn stringMatching(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn stringMatching(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return ExpectStringMatching.call(globalObject, callFrame);
     }
 
-    pub fn arrayContaining(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn arrayContaining(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return ExpectArrayContaining.call(globalObject, callFrame);
     }
 
     /// Implements `expect.extend({ ... })`
-    pub fn extend(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn extend(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args[0].isObject()) {
@@ -4256,7 +4254,7 @@ pub const Expect = struct {
 
     /// Function that is run for either `expect.myMatcher()` call or `expect().myMatcher` call,
     /// and we can known which case it is based on if the `callFrame.this()` value is an instance of Expect
-    pub fn applyCustomMatcher(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn applyCustomMatcher(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         defer globalObject.bunVM().autoGarbageCollect();
 
         // retrieve the user-provided matcher function (matcher_fn)
@@ -4390,20 +4388,20 @@ pub const ExpectStatic = struct {
         return value;
     }
 
-    pub fn getNot(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getNot(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) !JSValue {
         var flags = this.flags;
         flags.not = !this.flags.not;
         return create(globalObject, flags);
     }
 
-    pub fn getResolvesTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getResolvesTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) !JSValue {
         var flags = this.flags;
         if (flags.promise != .none) return asyncChainingError(globalObject, flags, "resolvesTo");
         flags.promise = .resolves;
         return create(globalObject, flags);
     }
 
-    pub fn getRejectsTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getRejectsTo(this: *ExpectStatic, _: JSValue, globalObject: *JSGlobalObject) !JSValue {
         var flags = this.flags;
         if (flags.promise != .none) return asyncChainingError(globalObject, flags, "rejectsTo");
         flags.promise = .rejects;
@@ -4426,39 +4424,38 @@ pub const ExpectStatic = struct {
         const instance_jsvalue = T.call(globalObject, callFrame);
         if (!instance_jsvalue.isEmpty() and !instance_jsvalue.isAnyError()) {
             var instance = T.fromJS(instance_jsvalue) orelse {
-                globalObject.throwOutOfMemory();
-                return .zero;
+                return globalObject.exceptionToCPP(globalObject.throwOutOfMemory());
             };
             instance.flags = this.flags;
         }
         return instance_jsvalue;
     }
 
-    pub fn anything(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn anything(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return createAsymmetricMatcherWithFlags(ExpectAnything, this, globalObject, callFrame);
     }
 
-    pub fn any(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn any(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return createAsymmetricMatcherWithFlags(ExpectAny, this, globalObject, callFrame);
     }
 
-    pub fn arrayContaining(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn arrayContaining(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return createAsymmetricMatcherWithFlags(ExpectArrayContaining, this, globalObject, callFrame);
     }
 
-    pub fn closeTo(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn closeTo(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return createAsymmetricMatcherWithFlags(ExpectCloseTo, this, globalObject, callFrame);
     }
 
-    pub fn objectContaining(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn objectContaining(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return createAsymmetricMatcherWithFlags(ExpectObjectContaining, this, globalObject, callFrame);
     }
 
-    pub fn stringContaining(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn stringContaining(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return createAsymmetricMatcherWithFlags(ExpectStringContaining, this, globalObject, callFrame);
     }
 
-    pub fn stringMatching(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn stringMatching(this: *ExpectStatic, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         return createAsymmetricMatcherWithFlags(ExpectStringMatching, this, globalObject, callFrame);
     }
 };
@@ -4474,7 +4471,7 @@ pub const ExpectAnything = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) !JSValue {
         const anything = globalObject.bunVM().allocator.create(ExpectAnything) catch {
             globalObject.throwOutOfMemory();
             return .zero;
@@ -4502,7 +4499,7 @@ pub const ExpectStringMatching = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or (!args[0].isString() and !args[0].isRegExp())) {
@@ -4539,7 +4536,7 @@ pub const ExpectCloseTo = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         const args = callFrame.arguments(2).slice();
 
         if (args.len == 0 or !args[0].isNumber()) {
@@ -4586,7 +4583,7 @@ pub const ExpectObjectContaining = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args[0].isObject()) {
@@ -4623,20 +4620,20 @@ pub const ExpectStringContaining = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args[0].isString()) {
-            const fmt = "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n";
-            globalObject.throwPretty(fmt, .{});
-            return .zero;
+            return globalObject.exceptionToCPP(globalObject.throwPretty(
+                "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n",
+                .{},
+            ));
         }
 
         const string_value = args[0];
 
         const string_containing = globalObject.bunVM().allocator.create(ExpectStringContaining) catch {
-            globalObject.throwOutOfMemory();
-            return .zero;
+            return globalObject.exceptionToCPP(globalObject.throwOutOfMemory());
         };
         string_containing.* = .{};
 
@@ -4706,7 +4703,7 @@ pub const ExpectArrayContaining = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) !JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args[0].jsType().isArray()) {
@@ -4750,7 +4747,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
     /// Implements the static call of the custom matcher (`expect.myCustomMatcher(<args>)`),
     /// which creates an asymmetric matcher instance (`ExpectCustomAsymmetricMatcher`).
     /// This will not run the matcher, but just capture the args etc.
-    pub fn create(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, matcher_fn: JSValue) callconv(.C) JSValue {
+    pub fn create(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, matcher_fn: JSValue) !JSValue {
         var flags: Expect.Flags = undefined;
 
         // try to retrieve the ExpectStatic instance (to get the flags)
@@ -4934,7 +4931,7 @@ pub const ExpectMatcherContext = struct {
 pub const ExpectMatcherUtils = struct {
     pub usingnamespace JSC.Codegen.JSExpectMatcherUtils;
 
-    fn createSingleton(globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    fn createSingleton(globalObject: *JSC.JSGlobalObject) !JSValue {
         var instance = globalObject.bunVM().allocator.create(ExpectMatcherUtils) catch {
             globalObject.throwOutOfMemory();
             return .zero;
@@ -4986,25 +4983,25 @@ pub const ExpectMatcherUtils = struct {
         };
     }
 
-    pub fn stringify(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn stringify(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
         const arguments = callframe.arguments(1).slice();
         const value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments[0];
         return printValueCatched(globalObject, value, null);
     }
 
-    pub fn printExpected(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn printExpected(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
         const arguments = callframe.arguments(1).slice();
         const value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments[0];
         return printValueCatched(globalObject, value, "<green>");
     }
 
-    pub fn printReceived(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn printReceived(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
         const arguments = callframe.arguments(1).slice();
         const value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments[0];
         return printValueCatched(globalObject, value, "<red>");
     }
 
-    pub fn matcherHint(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn matcherHint(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
         const arguments = callframe.arguments(4).slice();
 
         if (arguments.len == 0 or !arguments[0].isString()) {

@@ -1,4 +1,3 @@
-
 #if defined(WIN32)
 
 #include <cstdint>

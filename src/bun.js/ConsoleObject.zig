@@ -78,12 +78,12 @@ threadlocal var stdout_lock_count: u16 = 0;
 /// https://console.spec.whatwg.org/#formatter
 pub fn messageWithTypeAndLevel(
     //console_: ConsoleObject.Type,
-    _: ConsoleObject.Type,
+    _: ?ConsoleObject.Type,
     message_type: MessageType,
     //message_level: u32,
     level: MessageLevel,
     global: *JSGlobalObject,
-    vals: [*]JSValue,
+    vals: [*]const JSValue,
     len: usize,
 ) callconv(.C) void {
     if (comptime is_bindgen) {
@@ -889,6 +889,7 @@ pub const Formatter = struct {
         StringPossiblyFormatted,
         String,
         Undefined,
+        Zero,
         Double,
         Integer,
         Null,
@@ -950,6 +951,7 @@ pub const Formatter = struct {
                 StringPossiblyFormatted: void,
                 String: void,
                 Undefined: void,
+                Zero: void,
                 Double: void,
                 Integer: void,
                 Null: void,
@@ -1001,7 +1003,10 @@ pub const Formatter = struct {
 
         pub fn getAdvanced(value: JSValue, globalThis: *JSGlobalObject, opts: Options) Result {
             switch (@intFromEnum(value)) {
-                0, 0xa => return Result{
+                0 => return Result{
+                    .tag = .{ .Zero = {} },
+                },
+                0xa => return Result{
                     .tag = .{ .Undefined = {} },
                 },
                 0x2 => return Result{
@@ -1839,6 +1844,10 @@ pub const Formatter = struct {
             .Undefined => {
                 this.addForNewLine(9);
                 writer.print(comptime Output.prettyFmt("<r><d>undefined<r>", enable_ansi_colors), .{});
+            },
+            .Zero => {
+                this.addForNewLine(16);
+                writer.print(comptime Output.prettyFmt("<r><red><b>[Invalid JSCell]<r>", enable_ansi_colors), .{});
             },
             .Null => {
                 this.addForNewLine(4);

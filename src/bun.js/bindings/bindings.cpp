@@ -2595,6 +2595,13 @@ CPP_DECL void JSC__JSValue__putIndex(JSC__JSValue JSValue0, JSC__JSGlobalObject*
     JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(value);
     array->putDirectIndex(arg1, arg2, value2);
 }
+CPP_DECL void JSC__JSValue__putByIndex(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2, JSC__JSValue JSValue3)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    JSC::JSValue value2 = JSC::JSValue::decode(JSValue3);
+    value.putByIndex(arg1, arg2, JSValue::decode(JSValue3), false);
+    // TODO(@paperdave): handle exception
+}
 
 CPP_DECL void JSC__JSValue__push(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue3)
 {
@@ -4666,7 +4673,7 @@ void JSC__VM__notifyNeedDebuggerBreak(JSC__VM* arg0) { (*arg0).notifyNeedDebugge
 void JSC__VM__notifyNeedShellTimeoutCheck(JSC__VM* arg0) { (*arg0).notifyNeedShellTimeoutCheck(); }
 void JSC__VM__notifyNeedWatchdogCheck(JSC__VM* arg0) { (*arg0).notifyNeedWatchdogCheck(); }
 
-void JSC__VM__throwError(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue value)
+void JSC__VM__throwException(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue value)
 {
     JSC::VM& vm = *reinterpret_cast<JSC::VM*>(vm_);
 
@@ -5410,9 +5417,26 @@ extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* global
     return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
 }
 
-extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
+extern "C" bool JSC__VM__hasException(JSC::VM& vm)
 {
-    return DECLARE_CATCH_SCOPE(globalObject->vm()).exception() != 0;
+    return DECLARE_CATCH_SCOPE(vm).exception() != 0;
+}
+
+// JSValue::Zero for "no exception"
+extern "C" EncodedJSValue JSC__VM__getException(JSC::VM& vm)
+{
+    return JSValue::encode(DECLARE_CATCH_SCOPE(vm).exception());
+}
+
+// JSValue::Zero for "no exception"
+extern "C" EncodedJSValue JSC__VM__getAndClearException(JSC::VM& vm)
+{
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    if (auto exception = scope.exception()) {
+        scope.clearException();
+        return JSValue::encode(exception);
+    }
+    return JSValue::encode({});
 }
 
 CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter* gettersetter)

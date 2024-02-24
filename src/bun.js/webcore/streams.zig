@@ -873,7 +873,7 @@ pub const StreamResult = union(Tag) {
         switch (result) {
             .err => |err| {
                 if (err == .Error) {
-                    promise.reject(globalThis, err.Error.toJSC(globalThis));
+                    promise.reject(globalThis, err.Error.toJS(globalThis));
                 } else {
                     const js_err = err.JSValue;
                     js_err.ensureStillAlive();
@@ -2581,12 +2581,11 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
-                    globalThis.vm().throwError(globalThis, err);
-                    return JSC.JSValue.jsUndefined();
+                    return globalThis.exceptionToCPP(globalThis.throwValue(err));
                 }
             }
 
-            return this.sink.end(null).toJS(globalThis);
+            return globalThis.exceptionToCPP(this.sink.end(null).toJS(globalThis));
         }
 
         pub fn flush(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -2596,14 +2595,13 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
-                    globalThis.vm().throwError(globalThis, err);
-                    return JSC.JSValue.jsUndefined();
+                    return globalThis.exceptionToCPP(globalThis.vm().throwError(globalThis, err));
                 }
             }
 
             defer {
                 if ((comptime @hasField(SinkType, "done")) and this.sink.done) {
-                    callframe.this().unprotect();
+                    callframe.this().unprotect(); // TODO(@paperdave): where is this value protected
                 }
             }
 
@@ -2611,13 +2609,10 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 const wait = callframe.argumentsCount() > 0 and
                     callframe.argument(0).isBoolean() and
                     callframe.argument(0).asBoolean();
-                const maybe_value: JSC.Maybe(JSValue) = this.sink.flushFromJS(globalThis, wait);
-                return switch (maybe_value) {
+
+                return switch (this.sink.flushFromJS(globalThis, wait)) {
                     .result => |value| value,
-                    .err => |err| blk: {
-                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
-                        break :blk JSC.JSValue.jsUndefined();
-                    },
+                    .err => |err| globalThis.exceptionToCPP(globalThis.throwValue(err.toJS(globalThis))),
                 };
             }
 
@@ -2637,7 +2632,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             }
 
             if (comptime @hasField(StreamStart, name_)) {
-                return this.sink.start(
+                return globalThis.exceptionToCPP(this.sink.start(
                     if (callframe.argumentsCount() > 0)
                         StreamStart.fromJSWithTag(
                             globalThis,
@@ -2646,7 +2641,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                         )
                     else
                         StreamStart{ .empty = {} },
-                ).toJS(globalThis);
+                ).toJS(globalThis));
             }
 
             return this.sink.start(
@@ -2677,7 +2672,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 }
             }
 
-            return this.sink.endFromJS(globalThis).toJS(globalThis);
+            return globalThis.exceptionToCPP(this.sink.endFromJS(globalThis).toJS(globalThis));
         }
 
         pub fn endWithSink(ptr: *anyopaque, globalThis: *JSGlobalObject) callconv(.C) JSValue {
@@ -2692,7 +2687,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 }
             }
 
-            return this.sink.endFromJS(globalThis).toJS(globalThis);
+            return globalThis.exceptionToCPP(this.sink.endFromJS(globalThis).toJS(globalThis));
         }
 
         pub fn assignToStream(globalThis: *JSGlobalObject, stream: JSValue, ptr: *anyopaque, jsvalue_ptr: **anyopaque) JSValue {

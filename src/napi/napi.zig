@@ -5,7 +5,6 @@ const bun = @import("root").bun;
 const Lock = @import("../lock.zig").Lock;
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
-const TODO_EXCEPTION: JSC.C.ExceptionRef = null;
 
 const Channel = @import("../sync.zig").Channel;
 
@@ -514,12 +513,12 @@ pub export fn napi_coerce_to_bool(env: napi_env, value: napi_value, result: *nap
 }
 pub export fn napi_coerce_to_number(env: napi_env, value: napi_value, result: *napi_value) napi_status {
     log("napi_coerce_to_number", .{});
-    result.* = JSC.JSValue.jsNumber(JSC.C.JSValueToNumber(env.ref(), value.asObjectRef(), TODO_EXCEPTION));
+    result.* = JSC.JSValue.jsNumber(value.coerce(f64, env));
     return .ok;
 }
 pub export fn napi_coerce_to_object(env: napi_env, value: napi_value, result: *napi_value) napi_status {
     log("napi_coerce_to_object", .{});
-    result.* = JSValue.c(JSC.C.JSValueToObject(env.ref(), value.asObjectRef(), TODO_EXCEPTION));
+    result.* = value.toObject(env).toJS();
     return .ok;
 }
 pub export fn napi_get_prototype(env: napi_env, object: napi_value, result: *napi_value) napi_status {
@@ -547,7 +546,7 @@ pub export fn napi_set_element(env: napi_env, object: napi_value, index: c_uint,
     }
     if (value.isEmpty())
         return invalidArg();
-    JSC.C.JSObjectSetPropertyAtIndex(env.ref(), object.asObjectRef(), index, value.asObjectRef(), TODO_EXCEPTION);
+    value.putByIndex(env, index, value);
     return .ok;
 }
 pub export fn napi_has_element(env: napi_env, object: napi_value, index: c_uint, result: *bool) napi_status {
@@ -794,7 +793,7 @@ pub export fn napi_create_typedarray(env: napi_env, @"type": napi_typedarray_typ
             arraybuffer.asObjectRef(),
             byte_offset,
             length,
-            TODO_EXCEPTION,
+            null,
         ),
     );
     return .ok;
@@ -877,50 +876,44 @@ pub export fn napi_reject_deferred(env: napi_env, deferred: napi_deferred, rejec
 }
 pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise: *bool) napi_status {
     log("napi_is_promise", .{});
-    if (value.isEmptyOrUndefinedOrNull()) {
+    if (value.isemptyorundefinedornull()) {
         is_promise.* = false;
         return .ok;
     }
 
-    is_promise.* = value.asAnyPromise() != null;
+    is_promise.* = value.asanypromise() != null;
     return .ok;
 }
-pub export fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status {
-    log("napi_run_script", .{});
-    // TODO: don't copy
-    const ref = JSC.C.JSValueToStringCopy(env.ref(), script.asObjectRef(), TODO_EXCEPTION);
-    defer JSC.C.JSStringRelease(ref);
+// todo(@paperdave): move this to c++ because this will be easier there.
+// pub export fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status {
+//     log("napi_run_script", .{});
+//     // todo: don't copy
+//     const ref = jsc.c.jsvaluetostringcopy(env.ref(), script.asobjectref(), todo_exception);
+//     defer jsc.c.jsstringrelease(ref);
 
-    var exception = [_]JSC.C.JSValueRef{null};
-    const val = JSC.C.JSEvaluateScript(env.ref(), ref, env.ref(), null, 0, &exception);
-    if (exception[0] != null) {
-        return genericFailure();
-    }
+//     var exception = [_]jsc.c.jsvalueref{null};
+//     const val = jsc.c.jsevaluatescript(env.ref(), ref, env.ref(), null, 0, &exception);
+//     if (exception[0] != null) {
+//         return genericfailure();
+//     }
 
-    result.* = JSValue.c(val);
-    return .ok;
-}
+//     result.* = jsvalue.c(val);
+//     return .ok;
+// }
 pub extern fn napi_adjust_external_memory(env: napi_env, change_in_bytes: i64, adjusted_value: [*c]i64) napi_status;
 pub export fn napi_create_date(env: napi_env, time: f64, result: *napi_value) napi_status {
     log("napi_create_date", .{});
-    var args = [_]JSC.C.JSValueRef{JSC.JSValue.jsNumber(time).asObjectRef()};
-    result.* = JSValue.c(JSC.C.JSObjectMakeDate(env.ref(), 1, &args, TODO_EXCEPTION));
+    result.* = JSC.DateInstance.create(env, time).toJS();
     return .ok;
 }
 pub export fn napi_is_date(_: napi_env, value: napi_value, is_date: *bool) napi_status {
     log("napi_is_date", .{});
-    is_date.* = value.jsTypeLoose() == .JSDate;
+    is_date.* = value.jsType() == .JSDate;
     return .ok;
 }
-pub export fn napi_get_date_value(env: napi_env, value: napi_value, result: *f64) napi_status {
+pub export fn napi_get_date_value(_: napi_env, value: napi_value, result: *f64) napi_status {
     log("napi_get_date_value", .{});
-    const getTimeFunction = value.get(env, "getTime") orelse {
-        return .date_expected;
-    };
-
-    result.* = JSValue.c(
-        JSC.C.JSObjectCallAsFunction(env.ref(), getTimeFunction.asObjectRef(), value.asObjectRef(), 0, null, TODO_EXCEPTION),
-    ).asNumber();
+    result.* = value.to(JSC.DateInstance).getTime();
     return .ok;
 }
 pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *Ref) napi_status;

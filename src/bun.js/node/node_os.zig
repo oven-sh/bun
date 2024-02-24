@@ -87,8 +87,7 @@ pub const Os = struct {
                 .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
             };
 
-            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
+            return globalThis.throwValue(err.toErrorInstance(globalThis));
         };
     }
 
@@ -432,8 +431,7 @@ pub const Os = struct {
                 .syscall = bun.String.static("getifaddrs"),
             };
 
-            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
+            return globalThis.throwValue(globalThis, err.toErrorInstance(globalThis));
         }
         defer C.freeifaddrs(interface_start);
 

@@ -170,7 +170,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             return .{ .result = result };
         }
 
-        pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) !JSC.JSValue {
             return switch (this) {
                 .result => |r| switch (ReturnType) {
                     JSC.JSValue => r,
@@ -192,7 +192,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                         },
                     },
                 },
-                .err => |e| e.toJSC(globalObject),
+                .err => |e| e.toJS(globalObject),
             };
         }
 
@@ -792,18 +792,19 @@ pub const PathLike = union(enum) {
         };
     }
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?PathLike {
-        return fromJSWithAllocator(ctx, arguments, bun.default_allocator, exception);
+    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) !?PathLike {
+        return fromJSWithAllocator(ctx, arguments, bun.default_allocator);
     }
-    pub fn fromJSWithAllocator(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?PathLike {
+
+    pub fn fromJSWithAllocator(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator) !?PathLike {
         const arg = arguments.next() orelse return null;
         switch (arg.jsType()) {
             JSC.JSValue.JSType.Uint8Array,
             JSC.JSValue.JSType.DataView,
             => {
                 const buffer = Buffer.fromTypedArray(ctx, arg);
-                if (exception.* != null) return null;
-                if (!Valid.pathBuffer(buffer, ctx, exception)) return null;
+                // if (exception.* != null) return null; TODO: why did we check exception
+                try Valid.pathBuffer(buffer, ctx);
 
                 arguments.protectEat();
                 return PathLike{ .buffer = buffer };
@@ -811,8 +812,8 @@ pub const PathLike = union(enum) {
 
             JSC.JSValue.JSType.ArrayBuffer => {
                 const buffer = Buffer.fromArrayBuffer(ctx, arg);
-                if (exception.* != null) return null;
-                if (!Valid.pathBuffer(buffer, ctx, exception)) return null;
+                // if (exception.* != null) return null; TODO: why did we check exception
+                try Valid.pathBuffer(buffer, ctx);
 
                 arguments.protectEat();
 
@@ -828,9 +829,7 @@ pub const PathLike = union(enum) {
 
                 arguments.eat();
 
-                if (!Valid.pathStringLength(str.length(), ctx, exception)) {
-                    return null;
-                }
+                try Valid.pathStringLength(str.length(), ctx);
 
                 if (arguments.will_be_async) {
                     var sliced = str.toThreadSafeSlice(allocator);
@@ -861,14 +860,11 @@ pub const PathLike = union(enum) {
                     var str: bun.String = domurl.fileSystemPath();
                     defer str.deref();
                     if (str.isEmpty()) {
-                        JSC.throwInvalidArguments("URL must be a non-empty \"file:\" path", .{}, ctx, exception);
-                        return null;
+                        return ctx.throwInvalidArguments("URL must be a non-empty \"file:\" path", .{});
                     }
                     arguments.eat();
 
-                    if (!Valid.pathStringLength(str.length(), ctx, exception)) {
-                        return null;
-                    }
+                    try Valid.pathStringLength(str.length(), ctx);
 
                     if (arguments.will_be_async) {
                         var sliced = str.toThreadSafeSlice(allocator);
@@ -902,78 +898,58 @@ pub const PathLike = union(enum) {
 };
 
 pub const Valid = struct {
-    pub fn fileDescriptor(fd: i64, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+    pub fn fileDescriptor(fd: i64, global: JSC.C.JSContextRef) !void {
         if (fd < 0) {
-            JSC.throwInvalidArguments("Invalid file descriptor, must not be negative number", .{}, ctx, exception);
-            return false;
+            return global.throwInvalidArguments("Invalid file descriptor, must not be negative number", .{});
         }
-
-        return true;
     }
 
-    pub fn pathSlice(zig_str: JSC.ZigString.Slice, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+    pub fn pathSlice(zig_str: JSC.ZigString.Slice, global: *JSC.JSGlobalObject) !void {
         switch (zig_str.len) {
-            0...bun.MAX_PATH_BYTES => return true,
+            0...bun.MAX_PATH_BYTES => {},
             else => {
                 // TODO: should this be an EINVAL?
-                JSC.throwInvalidArguments(
+                return global.throwInvalidArguments(
                     comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
                     .{},
-                    ctx,
-                    exception,
                 );
-                return false;
             },
         }
-
-        unreachable;
     }
 
-    pub fn pathStringLength(len: usize, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
-        switch (len) {
-            0...bun.MAX_PATH_BYTES => return true,
+    pub fn pathStringLength(len: usize, ctx: JSC.C.JSContextRef) !void {
+        return switch (len) {
+            0...bun.MAX_PATH_BYTES => {},
             else => {
                 // TODO: should this be an EINVAL?
-                JSC.throwInvalidArguments(
+                return ctx.throwInvalidArguments(
                     comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
                     .{},
-                    ctx,
-                    exception,
                 );
-                return false;
             },
-        }
-
-        unreachable;
+        };
     }
 
-    pub fn pathString(zig_str: JSC.ZigString, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
-        return pathStringLength(zig_str.len, ctx, exception);
+    pub fn pathString(zig_str: JSC.ZigString, ctx: JSC.C.JSContextRef) !void {
+        return pathStringLength(zig_str.len, ctx);
     }
 
-    pub fn pathBuffer(buffer: Buffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+    pub fn pathBuffer(buffer: Buffer, ctx: JSC.C.JSContextRef) !void {
         const slice = buffer.slice();
         switch (slice.len) {
             0 => {
-                JSC.throwInvalidArguments("Invalid path buffer: can't be empty", .{}, ctx, exception);
-                return false;
+                return ctx.throwInvalidArguments("Invalid path buffer: can't be empty", .{});
             },
 
             else => {
-
                 // TODO: should this be an EINVAL?
-                JSC.throwInvalidArguments(
+                return ctx.throwInvalidArguments(
                     comptime std.fmt.comptimePrint("Invalid path buffer: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
                     .{},
-                    ctx,
-                    exception,
                 );
-                return false;
             },
-            1...bun.MAX_PATH_BYTES => return true,
+            1...bun.MAX_PATH_BYTES => {},
         }
-
-        unreachable;
     }
 };
 
@@ -985,10 +961,9 @@ pub const VectorArrayBuffer = struct {
         return this.value;
     }
 
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, val: JSC.JSValue, exception: JSC.C.ExceptionRef, allocator: std.mem.Allocator) ?VectorArrayBuffer {
+    pub fn fromJS(globalObject: *JSC.JSGlobalObject, val: JSC.JSValue, allocator: std.mem.Allocator) ?VectorArrayBuffer {
         if (!val.jsType().isArrayLike()) {
-            JSC.throwInvalidArguments("Expected ArrayBufferView[]", .{}, globalObject, exception);
-            return null;
+            return globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});
         }
 
         var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
@@ -1000,13 +975,11 @@ pub const VectorArrayBuffer = struct {
             const element = val.getIndex(globalObject, @as(u32, @truncate(i)));
 
             if (!element.isCell()) {
-                JSC.throwInvalidArguments("Expected ArrayBufferView[]", .{}, globalObject, exception);
-                return null;
+                return globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});
             }
 
             const array_buffer = element.asArrayBuffer(globalObject) orelse {
-                JSC.throwInvalidArguments("Expected ArrayBufferView[]", .{}, globalObject, exception);
-                return null;
+                return globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});
             };
 
             const buf = array_buffer.byteSlice();
@@ -1103,8 +1076,8 @@ pub const ArgumentsSlice = struct {
     }
 };
 
-pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?bun.FileDescriptor {
-    return if (bun.FDImpl.fromJSValidated(value, ctx, exception) catch null) |fd|
+pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) !?bun.FileDescriptor {
+    return if (try bun.FDImpl.fromJSValidated(value, ctx)) |fd|
         fd.encode()
     else
         null;
@@ -1113,7 +1086,7 @@ pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, excepti
 // Node.js docs:
 // > Values can be either numbers representing Unix epoch time in seconds, Dates, or a numeric string like '123456789.0'.
 // > If the value can not be converted to a number, or is NaN, Infinity, or -Infinity, an Error will be thrown.
-pub fn timeLikeFromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, _: JSC.C.ExceptionRef) ?TimeLike {
+pub fn timeLikeFromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) ?TimeLike {
     if (value.jsType() == .JSDate) {
         const milliseconds = value.getUnixTimestamp();
         if (!std.math.isFinite(milliseconds)) {
@@ -1149,17 +1122,17 @@ pub fn timeLikeFromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, _: 
     };
 }
 
-pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
+pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) !?Mode {
     const mode_int = if (value.isNumber())
         @as(Mode, @truncate(value.to(Mode)))
     else brk: {
         if (value.isUndefinedOrNull()) return null;
 
-        //        An easier method of constructing the mode is to use a sequence of
-        //        three octal digits (e.g. 765). The left-most digit (7 in the example),
-        //        specifies the permissions for the file owner. The middle digit (6 in
-        //        the example), specifies permissions for the group. The right-most
-        //        digit (5 in the example), specifies the permissions for others.
+        // An easier method of constructing the mode is to use a sequence of
+        // three octal digits (e.g. 765). The left-most digit (7 in the example),
+        // specifies the permissions for the file owner. The middle digit (6 in
+        // the example), specifies permissions for the group. The right-most
+        // digit (5 in the example), specifies the permissions for others.
 
         var zig_str = JSC.ZigString.Empty;
         value.toZigString(&zig_str, ctx.ptr());
@@ -1169,14 +1142,12 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
         }
 
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
-            JSC.throwInvalidArguments("Invalid mode string: must be an octal number", .{}, ctx, exception);
-            return null;
+            return ctx.throwInvalidArguments("Invalid mode string: must be an octal number", .{});
         };
     };
 
     if (mode_int < 0) {
-        JSC.throwInvalidArguments("Invalid mode: must be greater than or equal to 0.", .{}, ctx, exception);
-        return null;
+        return ctx.throwInvalidArguments("Invalid mode: must be greater than or equal to 0.", .{}, ctx);
     }
 
     return mode_int & 0o777;
@@ -1233,22 +1204,24 @@ pub const PathOrFileDescriptor = union(Tag) {
         }
     }
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?JSC.Node.PathOrFileDescriptor {
+    /// Throws an exception if an invalid number is given, null for incorrect data type.
+    /// TODO: re-think this structure, because null | error is weird.
+    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator) !?JSC.Node.PathOrFileDescriptor {
         const first = arguments.next() orelse return null;
 
-        if (bun.FDImpl.fromJSValidated(first, ctx, exception) catch return null) |fd| {
+        if (try bun.FDImpl.fromJSValidated(first, ctx)) |fd| {
             arguments.eat();
             return JSC.Node.PathOrFileDescriptor{ .fd = fd.encode() };
         }
 
         return JSC.Node.PathOrFileDescriptor{
-            .path = PathLike.fromJSWithAllocator(ctx, arguments, allocator, exception) orelse return null,
+            .path = try PathLike.fromJSWithAllocator(ctx, arguments, allocator) orelse return null,
         };
     }
 
-    pub fn toJS(this: JSC.Node.PathOrFileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+    pub fn toJS(this: JSC.Node.PathOrFileDescriptor, ctx: JSC.C.JSContextRef) JSC.JSValue {
         return switch (this) {
-            .path => |path| path.toJS(ctx, exception),
+            .path => |path| path.toJS(ctx),
             .fd => |fd| bun.FDImpl.decode(fd).toJS(),
         };
     }
@@ -1351,7 +1324,7 @@ pub const FileSystemFlags = enum(Mode) {
         .{ "SA+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
     });
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
+    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue) !?FileSystemFlags {
         if (val.isNumber()) {
             const number = val.coerce(i32, ctx);
             return @as(FileSystemFlags, @enumFromInt(@as(Mode, @intCast(@max(number, 0)))));
@@ -1361,23 +1334,18 @@ pub const FileSystemFlags = enum(Mode) {
         if (jsType.isStringLike()) {
             const str = val.getZigString(ctx);
             if (str.isEmpty()) {
-                JSC.throwInvalidArguments(
+                return ctx.throwInvalidArguments(
                     "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
                     .{},
-                    ctx,
-                    exception,
                 );
-                return null;
             }
+
             // it's definitely wrong when the string is super long
             else if (str.len > 12) {
-                JSC.throwInvalidArguments(
-                    "Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                return ctx.throwInvalidArguments(
+                    "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
                     .{str},
-                    ctx,
-                    exception,
                 );
-                return null;
             }
 
             const flags = brk: {
@@ -1401,13 +1369,10 @@ pub const FileSystemFlags = enum(Mode) {
 
                 break :brk map.getWithEql(str, JSC.ZigString.eqlComptime);
             } orelse {
-                JSC.throwInvalidArguments(
-                    "Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                return ctx.throwInvalidArguments(
+                    "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
                     .{str},
-                    ctx,
-                    exception,
                 );
-                return null;
             };
 
             return @as(FileSystemFlags, @enumFromInt(@as(Mode, @intCast(flags))));
@@ -1422,15 +1387,6 @@ pub fn StatType(comptime Big: bool) type {
     const Int = if (Big) i64 else i32;
     const Float = if (Big) i64 else f64;
     const Timestamp = if (Big) u64 else u0;
-
-    const Date = packed struct {
-        value: Float,
-        pub inline fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-            const milliseconds = JSC.JSValue.jsNumber(this.value);
-            const array: [1]JSC.C.JSValueRef = .{milliseconds.asObjectRef()};
-            return JSC.JSValue.c(JSC.C.JSObjectMakeDate(globalObject, 1, &array, null));
-        }
-    };
 
     return extern struct {
         pub usingnamespace if (Big) JSC.Codegen.JSBigIntStats else JSC.Codegen.JSStats;
@@ -1500,9 +1456,7 @@ pub fn StatType(comptime Big: bool) type {
             return struct {
                 pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                     const value = @field(this, @tagName(field));
-                    // Doing `Date{ ... }` here shouldn't actually change the memory layout of `value`
-                    // but it will tell comptime code how to convert the i64/f64 to a JS Date.
-                    return globalObject.toJS(Date{ .value = value }, .temporary);
+                    return JSC.DateInstance.create(globalObject, value).toJS();
                 }
             }.callback;
         }

@@ -157,7 +157,7 @@ pub const Request = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> ", enable_ansi_colors));
-            try this.ensureURL();
+            this.ensureURL();
             try writer.print(comptime Output.prettyFmt("\"<b>{}<r>\"", enable_ansi_colors), .{this.url});
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
@@ -318,11 +318,7 @@ pub const Request = struct {
         this: *Request,
         globalObject: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        this.ensureURL() catch {
-            globalObject.throw("Failed to join URL", .{});
-            return .zero;
-        };
-
+        this.ensureURL();
         return this.url.toJS(globalObject);
     }
 
@@ -354,7 +350,7 @@ pub const Request = struct {
         return "http://";
     }
 
-    pub fn ensureURL(this: *Request) !void {
+    pub fn ensureURL(this: *Request) void {
         if (!this.url.isEmpty()) return;
 
         if (this.request_context.getRequest()) |req| {

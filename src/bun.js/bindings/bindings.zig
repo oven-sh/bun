@@ -20,6 +20,9 @@ const MutableString = bun.MutableString;
 const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
 const String = bun.String;
 const ErrorableString = JSC.ErrorableString;
+
+pub const JSException = error{JSException};
+
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
     bytes: shim.Bytes,
@@ -27,6 +30,11 @@ pub const JSObject = extern struct {
     pub const include = "JavaScriptCore/JSObject.h";
     pub const name = "JSC::JSObject";
     pub const namespace = "JSC";
+
+    /// Reinterpret this Object as a generic JSValue
+    pub fn toJS(this: *JSObject) JSValue {
+        return JSValue.cast(this);
+    }
 
     pub fn getArrayLength(this: *JSObject) usize {
         return cppFn("getArrayLength", .{
@@ -2598,14 +2606,31 @@ pub const JSGlobalObject = extern struct {
         return this.bunVM().allocator;
     }
 
-    pub fn throwOutOfMemory(this: *JSGlobalObject) void {
-        this.throwValue(this.createErrorInstance("Out of memory", .{}));
+    pub fn throwOutOfMemory(this: *JSGlobalObject) JSException {
+        return this.throwValue(this.createErrorInstance("Out of memory", .{}));
     }
 
-    pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) void {
+    pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) JSException {
         const err = this.createErrorInstance("{s}", .{msg});
         err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJS(this));
-        this.throwValue(err);
+        return this.throwValue(err);
+    }
+
+    /// This is a wrapper around just returning JSException
+    ///
+    /// The intent is for writing C++ bindings where null or some other value is returned
+    /// in the exception case. In a debug build, this asserts that such exception is actually
+    /// present, or else this will leak a .zero into JS-land.
+    pub fn jsException(this: *JSGlobalObject) JSException {
+        if (bun.Environment.allow_assert) {
+            std.debug.assert(this.vm().hasException()); // Exception was cleared, yet returned.
+        }
+        return error.JSException;
+    }
+
+    pub fn getAndClearException(this: *JSGlobalObject, proof: JSException) JSValue {
+        _ = proof;
+        return this.vm().getAndClearException().?;
     }
 
     extern fn JSGlobalObject__clearTerminationException(this: *JSGlobalObject) void;
@@ -2622,13 +2647,46 @@ pub const JSGlobalObject = extern struct {
         return @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(globalThis))));
     }
 
+    /// Pass a JSException through the C ABI boundary
+    ///
+    /// In C++, WebKit represents a thrown JavaScript expression as JSValue.zero, and stores
+    /// the actual exception on the global. In Zig, we represent this zero as a distinct Zig
+    /// error type 'error.JSException'. Instead of using JSValue.zero directly, we pass the
+    /// Zig error to this function as "proof" there is an error. In debug, this will also
+    /// assert that an error is actually present.
+    ///
+    /// If .zero is exposed to JS, it will be considered a JSCell but with a null pointer
+    /// and will segfault via null-pointer dereference.
+    ///
+    /// Ideally, we can use this function as little as possible, and instead have auto-generated
+    /// wrappers that do this conversion. It is ugly to use on purpose.
+    pub fn exceptionToCPP(global: *JSGlobalObject, err: anytype) JSC.JSValue {
+        return switch (@TypeOf(err)) {
+            JSException => {
+                if (bun.Environment.allow_assert) {
+                    std.debug.assert(global.vm().hasException()); // Exception was cleared, yet returned.
+                }
+                return .zero;
+            },
+            else => err catch |e| switch (e) {
+                error.JSException => {
+                    if (bun.Environment.allow_assert) {
+                        std.debug.assert(global.vm().hasException()); // Exception was cleared, yet returned.
+                    }
+                    return .zero;
+                },
+            },
+        };
+    }
+
     pub fn throwInvalidArguments(
         this: *JSGlobalObject,
         comptime fmt: string,
         args: anytype,
-    ) void {
+    ) error.JSException {
         const err = JSC.toInvalidArguments(fmt, args, this);
         this.vm().throwError(this, err);
+        return error.JSException;
     }
 
     pub fn createInvalidArgumentType(
@@ -2655,8 +2713,8 @@ pub const JSGlobalObject = extern struct {
         comptime name_: []const u8,
         comptime field: []const u8,
         comptime typename: []const u8,
-    ) void {
-        this.throwValue(this.createInvalidArgumentType(name_, field, typename));
+    ) error.JSException {
+        return this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
 
     pub fn createNotEnoughArguments(
@@ -2839,24 +2897,26 @@ pub const JSGlobalObject = extern struct {
         this: *JSGlobalObject,
         comptime fmt: string,
         args: anytype,
-    ) void {
+    ) error.JSException {
         const instance = this.createErrorInstance(fmt, args);
         if (instance != .zero)
             this.vm().throwError(this, instance);
+
+        return error.JSException;
     }
 
     pub fn throwPretty(
         this: *JSGlobalObject,
         comptime fmt: string,
         args: anytype,
-    ) void {
+    ) JSException {
         const instance = switch (Output.enable_ansi_colors) {
             inline else => |enabled| this.createErrorInstance(Output.prettyFmt(fmt, enabled), args),
         };
 
-        if (instance != .zero)
-            this.vm().throwError(this, instance);
+        return this.vm().throwError(this, instance);
     }
+
     extern fn JSC__JSGlobalObject__queueMicrotaskCallback(*JSGlobalObject, *anyopaque, Function: *const (fn (*anyopaque) callconv(.C) void)) void;
     pub fn queueMicrotaskCallback(
         this: *JSGlobalObject,
@@ -2904,8 +2964,8 @@ pub const JSGlobalObject = extern struct {
     pub fn throwValue(
         this: *JSGlobalObject,
         value: JSC.JSValue,
-    ) void {
-        this.vm().throwError(this, value);
+    ) error.JSException {
+        return this.vm().throwError(this, value);
     }
 
     pub fn throwError(
@@ -2968,11 +3028,6 @@ pub const JSGlobalObject = extern struct {
 
     pub fn getCachedObject(this: *JSGlobalObject, key: *const ZigString) JSValue {
         return cppFn("getCachedObject", .{ this, key });
-    }
-
-    extern fn JSGlobalObject__hasException(*JSGlobalObject) bool;
-    pub fn hasException(this: *JSGlobalObject) bool {
-        return JSGlobalObject__hasException(this);
     }
 
     pub fn vm(this: *JSGlobalObject) *VM {
@@ -3512,7 +3567,7 @@ pub const JSValue = enum(JSValueReprInt) {
     };
 
     pub inline fn cast(ptr: anytype) JSValue {
-        return @as(JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(ptr)))));
+        return @enumFromInt(@intFromPtr(ptr));
     }
 
     pub fn coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) i32 {
@@ -3676,12 +3731,11 @@ pub const JSValue = enum(JSValueReprInt) {
         if (comptime bun.Environment.allow_assert) {
             std.debug.assert(!this.isEmpty());
         }
-        return cppFn("jsType", .{this});
+        return cppFn("jsType", .{this}); // TODO(@paperdave): handle non-cell. right now all will return 0, which corresponds to JSType.Cell
     }
 
-    pub fn jsTypeLoose(
-        this: JSValue,
-    ) JSType {
+    // TODO(@paperdave): audit usages of this function. most of them don't need the number distinction.
+    pub fn jsTypeLoose(this: JSValue) JSType {
         if (this.isNumber()) {
             return JSType.NumberObject;
         }
@@ -3727,8 +3781,15 @@ pub const JSValue = enum(JSValueReprInt) {
         JSC__JSValue__putMayBeIndex(this, globalObject, key, value);
     }
 
-    pub fn putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void {
-        cppFn("putIndex", .{ value, globalObject, i, out });
+    /// Must be an array
+    /// TODO: rename this to putDirectIndex as that is what it actually does
+    pub fn putIndex(target: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void {
+        cppFn("putIndex", .{ target, globalObject, i, out });
+    }
+
+    extern fn JSC__JSValue__putByIndex(JSValue, *JSGlobalObject, u32, JSValue) void;
+    pub fn putByIndex(target: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void {
+        JSC__JSValue__putByIndex(target, globalObject, i, out);
     }
 
     pub fn push(value: JSValue, globalObject: *JSGlobalObject, out: JSValue) void {
@@ -4477,46 +4538,58 @@ pub const JSValue = enum(JSValueReprInt) {
         return getZigString(this, global).toSliceZ(allocator);
     }
 
-    // On exception, this returns the empty string.
-    pub fn toString(this: JSValue, globalThis: *JSGlobalObject) *JSString {
-        return cppFn("toString", .{ this, globalThis });
-    }
-
     pub fn jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *bun.String) void {
         return cppFn("jsonStringify", .{ this, globalThis, indent, out });
     }
 
-    /// On exception, this returns null, to make exception checks clearer.
-    pub fn toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString {
-        return cppFn("toStringOrNull", .{ this, globalThis });
+    /// TODO(@paperdave): remove every usage of this or rename to toStringOrEmpty()
+    ///
+    /// On exception, this returns the empty string.
+    /// Remember that `Symbol` throws an exception - this will return empty.
+    pub fn toString(this: JSValue, globalThis: *JSGlobalObject) *JSString {
+        return cppFn("toString", .{ this, globalThis });
+    }
+
+    extern fn JSC__JSValue__toStringOrNull(JSC.JSValue, *JSC.JSGlobalObject) ?*JSString;
+    /// TODO(@paperdave): rename this to `toString()`
+    ///
+    /// Call `toString()` on the JSValue and returns a *JSString
+    /// Remember that `Symbol` throws an exception when you call `toString()`.
+    pub fn toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) !*JSString {
+        // `null` always indicates an exception
+        return JSC__JSValue__toStringOrNull(this, globalThis) orelse globalThis.jsException();
     }
 
     /// Call `toString()` on the JSValue and clone the result.
     /// On exception, this returns null.
-    pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) ?ZigString.Slice {
-        const str = bun.String.tryFromJS(this, globalThis) orelse return null;
+    pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) !ZigString.Slice {
+        const str = bun.String.tryFromJS(this, globalThis) orelse
+            return globalThis.jsException(); // TODO(@paperdave): is this assumption right
+
         defer str.deref();
         return str.toUTF8(bun.default_allocator);
     }
 
     /// Call `toString()` on the JSValue and clone the result.
-    /// On exception or out of memory, this returns null.
+    /// Throws an exception on out of memory.
     ///
     /// Remember that `Symbol` throws an exception when you call `toString()`.
-    pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) ?ZigString.Slice {
+    pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) !ZigString.Slice {
         return this.toSliceCloneWithAllocator(globalThis, bun.default_allocator);
     }
 
-    /// On exception or out of memory, this returns null, to make exception checks clearer.
+    /// Call `toString()` on the JSValue and clone the result.
+    /// Throws an exception on out of memory.
+    ///
+    /// Remember that `Symbol` throws an exception when you call `toString()`.
     pub fn toSliceCloneWithAllocator(
         this: JSValue,
         globalThis: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) ?ZigString.Slice {
-        var str = this.toStringOrNull(globalThis) orelse return null;
-        return str.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch {
-            globalThis.throwOutOfMemory();
-            return null;
+    ) !ZigString.Slice {
+        const str = try this.toStringOrNull(globalThis);
+        return str.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch |e| switch (e) {
+            error.OutOfMemory => globalThis.throwOutOfMemory(),
         };
     }
 
@@ -4553,7 +4626,7 @@ pub const JSValue = enum(JSValueReprInt) {
     // intended to be more lightweight than ZigString
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
         const result = fastGet_(this, global, @intFromEnum(builtin_name));
-        if (result == .zero or
+        if (result == .zero or // TODO(@paperdave): this .zero should be JSException
             // JS APIs treat {}.a as mostly the same as though it was not defined
             result == .undefined)
         {
@@ -4566,7 +4639,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn fastGetDirect(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
         const result = fastGetDirect_(this, global, @intFromEnum(builtin_name));
         if (result == .zero) {
-            return null;
+            return null; // TODO(@paperdave): this .zero should be JSException
         }
 
         return result;
@@ -5326,6 +5399,33 @@ pub const JSValue = enum(JSValueReprInt) {
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 
+pub const DateInstance = opaque {
+    pub fn toJS(date: *DateInstance) JSValue {
+        return @enumFromInt(@intFromPtr(date));
+    }
+
+    extern fn DateInstance__getInternalNumber(*DateInstance) void;
+    pub fn getTime(date: *DateInstance) f64 {
+        return DateInstance__getInternalNumber(date);
+    }
+
+    extern fn DateInstance__setInternalNumber(*DateInstance, f64) void;
+    pub fn setTime(date: *DateInstance, milliseconds: f64) void {
+        DateInstance__getInternalNumber(date, milliseconds);
+    }
+
+    extern fn DateInstance__create(*JSGlobalObject, f64) *DateInstance;
+
+    pub fn create(global: *JSGlobalObject, milliseconds: f64) *DateInstance {
+        return DateInstance__create(global, milliseconds);
+    }
+
+    extern fn DateInstance__now() *DateInstance;
+    pub fn now() *DateInstance {
+        return DateInstance__now();
+    }
+};
+
 pub const Exception = extern struct {
     pub const shim = Shimmer("JSC", "Exception", @This());
     bytes: shim.Bytes,
@@ -5494,12 +5594,56 @@ pub const VM = extern struct {
         });
     }
 
-    pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) void {
-        return cppFn("throwError", .{
-            vm,
-            global_object,
-            value,
-        });
+    extern fn JSC__VM__throwException(*VM, *JSGlobalObject, JSValue) void;
+    pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) JSException {
+        if (bun.Environment.allow_assert) {
+            if (global_object.vm().getAndClearException()) |first| {
+                // the exception will be cleared by getAndClearException, which is required for printing
+                Output.printErrorln("\nFirst Error:\n", .{});
+                bun.JSC.ConsoleObject.messageWithTypeAndLevel(
+                    null,
+                    .Log,
+                    .Error,
+                    global_object,
+                    &[_]JSValue{first},
+                    1,
+                );
+                Output.printErrorln("Second Error:\n", .{});
+                bun.JSC.ConsoleObject.messageWithTypeAndLevel(
+                    null,
+                    .Log,
+                    .Error,
+                    global_object,
+                    &[_]JSValue{value},
+                    1,
+                );
+                @panic("An exception was thrown while another was already active");
+            }
+            if (value == .zero) {
+                @panic("throwError called with .zero");
+            }
+        }
+        JSC__VM__throwException(vm, global_object, value);
+        return error.JSException;
+    }
+
+    extern fn JSC__VM__hasException(*VM) bool;
+    pub fn hasException(this: *VM) bool {
+        return JSC__VM__hasException(this);
+    }
+
+    extern fn JSC__VM__getAndClearException(*VM) JSValue;
+    pub fn getAndClearException(this: *VM) ?JSValue {
+        const value = JSC__VM__getAndClearException(this);
+        if (value == .zero) return null;
+        return value;
+    }
+
+    extern fn JSC__VM__getException(*VM) JSValue;
+    pub fn getException(this: *VM) ?JSValue {
+        const value = JSC__VM__getException(this);
+        if (value == .zero) return null;
+        return value;
     }
 
     pub fn releaseWeakRefs(vm: *VM) void {
@@ -5543,7 +5687,6 @@ pub const VM = extern struct {
         "setExecutionForbidden",
         "executionForbidden",
         "isEntered",
-        "throwError",
         "drainMicrotasks",
         "whenIdle",
         "shrinkFootprint",

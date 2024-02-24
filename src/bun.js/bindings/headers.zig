@@ -305,7 +305,7 @@ pub extern fn JSC__JSValue__toInt64(JSValue0: JSC__JSValue) i64;
 pub extern fn JSC__JSValue__toMatch(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__toObject(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) [*c]bindings.JSObject;
 pub extern fn JSC__JSValue__toString(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) [*c]bindings.JSString;
-pub extern fn JSC__JSValue__toStringOrNull(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) [*c]bindings.JSString;
+pub extern fn JSC__JSValue__toStringOrNull(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) ?*bindings.JSString;
 pub extern fn JSC__JSValue__toUInt64NoTruncate(JSValue0: JSC__JSValue) u64;
 pub extern fn JSC__JSValue__toZigException(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigException) void;
 pub extern fn JSC__JSValue__toZigString(JSValue0: JSC__JSValue, arg1: [*c]ZigString, arg2: *bindings.JSGlobalObject) void;

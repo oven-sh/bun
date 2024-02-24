@@ -81,8 +81,8 @@
   // Markdown
   "[markdown]": {
     "editor.defaultFormatter": "biomejs.biome",
-    "editor.unicodeHighlight.ambiguousCharacters": false,
-    "editor.unicodeHighlight.invisibleCharacters": false,
+    "editor.unicodeHighlight.ambiguousCharacters": true,
+    "editor.unicodeHighlight.invisibleCharacters": true,
     "diffEditor.ignoreTrimWhitespace": false,
     "editor.wordWrap": "on",
     "editor.quickSuggestions": {

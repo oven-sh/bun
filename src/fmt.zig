@@ -145,8 +145,12 @@ pub const FormatUTF8 = struct {
 };
 
 pub const PathFormatOptions = struct {
-    escape_backslashes: bool = false,
+    // The path separator used when formatting the path.
     path_sep: Sep = .any,
+
+    /// Any backslashes are escaped, including backslashes
+    /// added through `path_sep`.
+    escape_backslashes: bool = false,
 
     pub const Sep = enum {
         /// Keep paths separators as is.

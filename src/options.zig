@@ -932,6 +932,14 @@ pub const ESMConditions = struct {
             .require = require_condition_map,
         };
     }
+
+    pub fn append(self: *ESMConditions, customConditions: []const string) !void {
+        for (customConditions) |condition| {
+            self.default.putAssumeCapacityNoClobber(condition, {});
+            self.import.putAssumeCapacityNoClobber(condition, {});
+            self.require.putAssumeCapacityNoClobber(condition, {});
+        }
+    }
 };
 
 pub const JSX = struct {

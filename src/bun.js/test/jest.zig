@@ -437,6 +437,7 @@ pub const Jest = struct {
         const mockFn = JSC.NewFunction(globalObject, ZigString.static("fn"), 1, JSMock__jsMockFn, false);
         const spyOn = JSC.NewFunction(globalObject, ZigString.static("spyOn"), 2, JSMock__jsSpyOn, false);
         const restoreAllMocks = JSC.NewFunction(globalObject, ZigString.static("restoreAllMocks"), 2, JSMock__jsRestoreAllMocks, false);
+        const clearAllMocks = JSC.NewFunction(globalObject, ZigString.static("clearAllMocks"), 2, JSMock__jsClearAllMocks, false);
         const mockModuleFn = JSC.NewFunction(globalObject, ZigString.static("module"), 2, JSMock__jsModuleMock, false);
         module.put(globalObject, ZigString.static("mock"), mockFn);
         mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
@@ -446,6 +447,7 @@ pub const Jest = struct {
         jest.put(globalObject, ZigString.static("fn"), mockFn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
+        jest.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
         jest.put(
             globalObject,
             ZigString.static("setSystemTime"),
@@ -476,6 +478,7 @@ pub const Jest = struct {
         vi.put(globalObject, ZigString.static("spyOn"), spyOn);
         vi.put(globalObject, ZigString.static("module"), mockModuleFn);
         vi.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
+        vi.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
         module.put(globalObject, ZigString.static("vi"), vi);
     }
 
@@ -486,6 +489,7 @@ pub const Jest = struct {
     extern fn JSMock__jsNow(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsSetSystemTime(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsRestoreAllMocks(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
+    extern fn JSMock__jsClearAllMocks(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsSpyOn(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsUseFakeTimers(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsUseRealTimers(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;

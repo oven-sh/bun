@@ -370,23 +370,40 @@ pub const BunxCommand = struct {
         //   across users, you run into permission conflicts
         //   - If you set permission to 777, you run into a potential attack vector
         //     where a user can replace the directory with malicious code.
-        const uid = bun.C.getuid();
-        if (PATH.len > 0) {
-            PATH = try std.fmt.allocPrint(
+        const uid = if (bun.Environment.isPosix) bun.C.getuid();
+        PATH = switch (PATH.len > 0) {
+            inline else => |path_is_nonzero| try std.fmt.allocPrint(
                 ctx.allocator,
-                bun.pathLiteral("{s}/bunx-{d}-{s}/node_modules/.bin:{s}"),
-                .{ temp_dir, uid, package_fmt, PATH },
-            );
-        } else {
-            PATH = try std.fmt.allocPrint(
-                ctx.allocator,
-                bun.pathLiteral("{s}/bunx-{d}-{s}/node_modules/.bin"),
-                .{ temp_dir, uid, package_fmt },
-            );
-        }
+                bun.pathLiteral(if (Environment.isPosix)
+                    "{s}/bunx-{d}-{s}/node_modules/.bin{s}{s}"
+                else
+                    "{s}/bunx--{s}/node_modules/.bin{s}{s}"),
+                if (Environment.isPosix)
+                    .{
+                        temp_dir,
+                        uid,
+                        package_fmt,
+                        if (path_is_nonzero) ":" else "",
+                        PATH,
+                    }
+                else
+                    .{
+                        temp_dir,
+                        package_fmt,
+                        if (path_is_nonzero) ";" else "",
+                        PATH,
+                    },
+            ),
+        };
 
         try this_bundler.env.map.put("PATH", PATH);
-        const bunx_cache_dir = PATH[0 .. temp_dir.len + "/bunx--".len + package_fmt.len + std.fmt.count("{d}", .{uid})];
+        const bunx_cache_dir = PATH[0 .. temp_dir.len +
+            "/bunx--".len +
+            package_fmt.len +
+            if (Environment.isPosix)
+            std.fmt.count("{d}", .{uid})
+        else
+            0];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(
@@ -552,11 +569,7 @@ pub const BunxCommand = struct {
         child_process.cwd_dir = bunx_install_dir;
         // https://github.com/ziglang/zig/issues/5190
         if (Environment.isWindows) {
-            const bunx_install_dir_path = try std.fmt.allocPrint(
-                ctx.allocator,
-                bun.pathLiteral("{s}/node_modules/.bin/{s}"),
-            );
-            child_process.cwd = bunx_install_dir_path;
+            child_process.cwd = bunx_cache_dir;
         }
         const env_map = try this_bundler.env.map.cloneToEnvMap(ctx.allocator);
         child_process.env_map = &env_map;

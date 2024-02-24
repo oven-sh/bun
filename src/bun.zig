@@ -487,7 +487,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         };
         const rc = std.os.windows.ws2_32.WSAPoll(&polls, 1, 0);
         const result = (if (rc != std.os.windows.ws2_32.SOCKET_ERROR) @as(usize, @intCast(rc)) else 0) != 0;
-        global_scope_log("poll({d}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
+        global_scope_log("poll({}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
         if (result and polls[0].revents & std.os.POLL.WRNORM != 0) {
             return .hup;
         } else if (result) {

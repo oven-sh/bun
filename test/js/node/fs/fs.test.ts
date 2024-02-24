@@ -61,18 +61,16 @@ function mkdirForce(path: string) {
 }
 
 it("fdatasyncSync", () => {
-  const path = join(tmpdir(), "fdatasync-" + Date.now().toString(16));
-  const fd = openSync(path, "w", 0o666);
-
-  writeSync(fd, "hello");
+  const fd = openSync(import.meta.path, "w", 0o664);
   fdatasyncSync(fd);
   closeSync(fd);
-  unlinkSync(path);
 });
 
 it("fdatasync", done => {
-  fdatasync(0, function () {
+  const fd = openSync(import.meta.path, "w", 0o664);
+  fdatasync(fd, function () {
     done(...arguments);
+    closeSync(fd);
   });
 });
 

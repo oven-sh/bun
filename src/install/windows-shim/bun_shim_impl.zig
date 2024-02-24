@@ -38,6 +38,7 @@
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
 const std = @import("std");
 const builtin = @import("builtin");
+const bun = @import("root").bun;
 
 pub inline fn wliteral(comptime str: []const u8) []const u16 {
     if (!@inComptime()) @compileError("strings.w() must be called in a comptime context");
@@ -54,7 +55,7 @@ pub inline fn wliteral(comptime str: []const u8) []const u16 {
 }
 
 const is_standalone = !@hasDecl(@import("root"), "bun");
-const bunDebugMessage = @import("root").bun.Output.scoped(.bun_shim_impl, true);
+const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, true);
 
 const dbg = builtin.mode == .Debug;
 
@@ -211,7 +212,7 @@ const NtWriter = std.io.Writer(w.HANDLE, error{}, writeToHandle);
 inline fn printError(comptime fmt: []const u8, args: anytype) void {
     std.fmt.format(
         NtWriter{
-            .context = @call(.always_inline, w.teb, .{})
+            .context = @call(bun.callmod_inline, w.teb, .{})
                 .ProcessEnvironmentBlock
                 .ProcessParameters
                 .hStdError,
@@ -255,7 +256,7 @@ const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
 
 fn launcher(bun_ctx: anytype) noreturn {
     // peb! w.teb is a couple instructions of inline asm
-    const teb: *w.TEB = @call(.always_inline, w.teb, .{});
+    const teb: *w.TEB = @call(bun.callmod_inline, w.teb, .{});
     const peb = teb.ProcessEnvironmentBlock;
     const ProcessParameters = peb.ProcessParameters;
     const CommandLine = ProcessParameters.CommandLine;
@@ -722,7 +723,7 @@ fn launcher(bun_ctx: anytype) noreturn {
 }
 
 pub const FromBunRunContext = struct {
-    const CommandContext = @import("root").bun.CLI.Command.Context;
+    const CommandContext = bun.CLI.Command.Context;
 
     /// Path like 'C:\Users\dave\project\node_modules\.bin\foo.bunx'
     base_path: []u16,

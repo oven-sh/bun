@@ -241,7 +241,7 @@ pub const ReadableStream = struct {
         Bytes: *ByteStream,
     };
 
-    extern fn ReadableStreamTag__tagged(globalObject: *JSGlobalObject, possibleReadableStream: JSValue, ptr: *JSValue) Tag;
+    extern fn ReadableStreamTag__tagged(globalObject: *JSGlobalObject, possibleReadableStream: *JSValue, ptr: *JSValue) Tag;
     extern fn ReadableStream__isDisturbed(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__isLocked(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__empty(*JSGlobalObject) JSC.JSValue;
@@ -269,41 +269,42 @@ pub const ReadableStream = struct {
     pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
         JSC.markBinding(@src());
         var ptr = JSValue.zero;
-        return switch (ReadableStreamTag__tagged(globalThis, value, &ptr)) {
+        var out = value;
+        return switch (ReadableStreamTag__tagged(globalThis, &out, &ptr)) {
             .JavaScript => ReadableStream{
-                .value = value,
+                .value = out,
                 .ptr = .{
                     .JavaScript = {},
                 },
             },
             .Blob => ReadableStream{
-                .value = value,
+                .value = out,
                 .ptr = .{
                     .Blob = ptr.asPtr(ByteBlobLoader),
                 },
             },
             .File => ReadableStream{
-                .value = value,
+                .value = out,
                 .ptr = .{
                     .File = ptr.asPtr(FileReader),
                 },
             },
 
             .Bytes => ReadableStream{
-                .value = value,
+                .value = out,
                 .ptr = .{
                     .Bytes = ptr.asPtr(ByteStream),
                 },
             },
 
             // .HTTPRequest => ReadableStream{
-            //     .value = value,
+            //     .value = out,
             //     .ptr = .{
             //         .HTTPRequest = ptr.asPtr(HTTPRequest),
             //     },
             // },
             // .HTTPSRequest => ReadableStream{
-            //     .value = value,
+            //     .value = out,
             //     .ptr = .{
             //         .HTTPSRequest = ptr.asPtr(HTTPSRequest),
             //     },
@@ -707,7 +708,7 @@ pub const StreamResult = union(Tag) {
                     this.handler = struct {
                         const handler = handler_fn;
                         pub fn onHandle(ctx_: *anyopaque, result: StreamResult.Writable) void {
-                            @call(.always_inline, handler, .{ bun.cast(*Context, ctx_), result });
+                            @call(bun.callmod_inline, handler, .{ bun.cast(*Context, ctx_), result });
                         }
                     }.onHandle;
                 }
@@ -830,7 +831,7 @@ pub const StreamResult = union(Tag) {
                 this.handler = struct {
                     const handler = handler_fn;
                     pub fn onHandle(ctx_: *anyopaque, result: StreamResult) void {
-                        @call(.always_inline, handler, .{ bun.cast(*Context, ctx_), result });
+                        @call(bun.callmod_inline, handler, .{ bun.cast(*Context, ctx_), result });
                     }
                 }.onHandle;
             }

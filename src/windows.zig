@@ -68,6 +68,7 @@ pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
 
 const std = @import("std");
 const Environment = bun.Environment;
+
 pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
 pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
 
@@ -2939,6 +2940,10 @@ pub const Win32Error = enum(u16) {
 
     pub fn get() Win32Error {
         return @enumFromInt(@intFromEnum(bun.windows.kernel32.GetLastError()));
+    }
+
+    pub fn int(this: Win32Error) u16 {
+        return @intFromEnum(this);
     }
 
     pub fn unwrap(this: @This()) !void {

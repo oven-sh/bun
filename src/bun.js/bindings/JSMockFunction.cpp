@@ -579,6 +579,34 @@ extern "C" JSC::EncodedJSValue JSMock__jsRestoreAllMocks(JSC::JSGlobalObject* gl
     return JSValue::encode(jsUndefined());
 }
 
+extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject) {
+    if (!globalObject->mockModule.activeSpies) {
+        return;
+    }
+    auto spiesValue = globalObject->mockModule.activeSpies.get();
+
+    ActiveSpySet* activeSpies = jsCast<ActiveSpySet*>(spiesValue);
+    MarkedArgumentBuffer active;
+    activeSpies->takeSnapshot(active);
+    size_t size = active.size();
+
+    for (size_t i = 0; i < size; ++i) {
+        JSValue spy = active.at(i);
+        if (!spy.isObject())
+            continue;
+
+        auto* spyObject = jsCast<JSMockFunction*>(spy);
+        // seems similar to what we do in JSMock__resetSpies,
+        // but we actually only clear calls, context, instances and results 
+        spyObject->clear(); 
+    }
+}
+
+extern "C" JSC::EncodedJSValue JSMock__jsClearAllMocks(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe) {
+    JSMock__clearAllMocks(jsCast<Zig::GlobalObject*>(globalObject));
+    return JSValue::encode(jsUndefined());
+}
+
 extern "C" JSC::EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe)
 {
     auto& vm = lexicalGlobalObject->vm();

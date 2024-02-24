@@ -15,6 +15,7 @@ pub const Shell = enum {
     bash,
     zsh,
     fish,
+    pwsh,
 
     const bash_completions = @import("root").completions.bash;
     const zsh_completions = @import("root").completions.zsh;
@@ -36,6 +37,8 @@ pub const Shell = enum {
         } else if (strings.eqlComptime(basename, "zsh")) {
             return Shell.zsh;
         } else if (strings.eqlComptime(basename, "fish")) {
+            return Shell.fish;
+        } else if (strings.eqlComptime(basename, "pwsh") or strings.eqlComptime(basename, "powershell")) {
             return Shell.fish;
         } else {
             return Shell.unknown;

@@ -69,7 +69,7 @@ pub const Version = struct {
                             ),
                         ),
                     },
-                ) catch unreachable;
+                ) catch bun.outOfMemory();
             }
             return this.tag;
         }
@@ -873,7 +873,7 @@ pub const UpgradeCommand = struct {
                     .cwd = target_dirname,
                     .max_output_bytes = 4096,
                     .env_map = &buf_map,
-                }) catch undefined;
+                }) catch {};
             }
 
             Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());

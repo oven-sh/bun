@@ -3,7 +3,7 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(Bun_VERSION "1.0.29")
-set(WEBKIT_TAG c3712c13dcdc091cfe4c7cb8f2c1fd16472e6f92)
+set(WEBKIT_TAG 089023cc9078b3aa173869fd6685f3e7bed2a994)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -465,11 +465,13 @@ if(NOT WEBKIT_DIR)
     endif()
 
     set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include")
+
     if(APPLE)
         set(ICU_INCLUDE_DIR "${HOMEBREW_PREFIX}/opt/icu4c/include")
     else()
         set(ICU_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include/wtf/unicode")
     endif()
+
     set(WEBKIT_LIB_DIR "${BUN_WORKDIR}/bun-webkit/lib")
 elseif(WEBKIT_DIR STREQUAL "omit")
     message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
@@ -886,8 +888,8 @@ else()
     add_compile_definitions("ASSERT_ENABLED=1")
 endif()
 
-if (ICU_INCLUDE_DIR)
-include_directories(${ICU_INCLUDE_DIR})
+if(ICU_INCLUDE_DIR)
+    include_directories(${ICU_INCLUDE_DIR})
 endif()
 
 include_directories(

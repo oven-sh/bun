@@ -1693,6 +1693,10 @@ pub const BundleOptions = struct {
 
         opts.conditions = try ESMConditions.init(allocator, Target.DefaultConditions.get(opts.target));
 
+        if (transform.conditions.len > 0) {
+            opts.conditions.append(transform.conditions) catch unreachable;
+        }
+
         switch (opts.target) {
             .node => {
                 opts.import_path_format = .relative;

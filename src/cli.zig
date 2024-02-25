@@ -182,6 +182,7 @@ pub const Arguments = struct {
         clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
         clap.parseParam("-p, --port <STR>                  Set the default port for Bun.serve") catch unreachable,
         clap.parseParam("-u, --origin <STR>") catch unreachable,
+        clap.parseParam("-c, --conditions <STR>...            Allow pass custom conditions to resolve.") catch unreachable,
     };
 
     const auto_only_params = [_]ParamType{
@@ -229,6 +230,7 @@ pub const Arguments = struct {
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
+        clap.parseParam("--conditions <STR>...               Allow pass custom conditions to resolve.") catch unreachable,
     };
     pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_;
 
@@ -525,6 +527,14 @@ pub const Arguments = struct {
             } else if (args.flag("--watch")) {
                 ctx.debug.hot_reload = .watch;
                 bun.auto_reload_on_crash = true;
+            }
+
+            if (args.options("--conditions").len > 0) {
+                var conditions = try allocator.alloc([]u8, args.options("--conditions").len);
+                for (args.options("--conditions"), 0..) |condition, i| {
+                    conditions[i] = @constCast(condition);
+                }
+                opts.conditions = conditions;
             }
 
             if (args.option("--origin")) |origin| {

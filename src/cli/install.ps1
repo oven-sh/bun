@@ -20,9 +20,10 @@ if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
 # This corresponds to .win10_rs5 in build.zig
 $MinBuild = 17763;
 $MinBuildName = "Windows 10 1809"
+
 $WinVer = [System.Environment]::OSVersion.Version
 if ($WinVer.Major -lt 10 -or ($WinVer.Major -eq 10 -and $WinVer.Build -lt $MinBuild)) {
-  Write-Warning "Bun requires at $($MinBuildName) or newer.`n`nThe install will still continue but it may not work.`n"
+  Write-Warning "Bun requires at ${MinBuildName} or newer.`n`nThe install will still continue but it may not work.`n"
   exit 1
 }
 
@@ -218,11 +219,11 @@ function Install-Bun {
 
   $env:IS_BUN_AUTO_UPDATE = "1"
   $null = "$(& "${BunBin}\bun.exe" completions)"
-  if ($LASTEXITCODE -ne 0) {
-    Write-Output "Install Failed - could not finalize installation"
-    Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
-    exit 1
-  }
+  # if ($LASTEXITCODE -ne 0) {
+  #   Write-Output "Install Failed - could not finalize installation"
+  #   Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
+  #   exit 1
+  # }
   $env:IS_BUN_AUTO_UPDATE = $null
 
   $DisplayVersion = if ($BunRevision -like "*-canary.*") {
@@ -254,7 +255,7 @@ function Install-Bun {
       $RegistryKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Bun"  
       $rootKey = New-Item -Path $RegistryKey -Force
       New-ItemProperty -Path $RegistryKey -Name "DisplayName" -Value "Bun" -PropertyType String -Force | Out-Null
-      New-ItemProperty -Path $RegistryKey -Name "InstallLocation" -Value $BunRoot -PropertyType String -Force | Out-Null
+      New-ItemProperty -Path $RegistryKey -Name "InstallLocation" -Value "${BunRoot}" -PropertyType String -Force | Out-Null
       New-ItemProperty -Path $RegistryKey -Name "DisplayIcon" -Value $BunBin\bun.exe -PropertyType String -Force | Out-Null
       New-ItemProperty -Path $RegistryKey -Name "UninstallString" -Value "powershell -c `"& `'$BunRoot\uninstall.ps1`' -PauseOnError`"" -PropertyType String -Force | Out-Null
     } catch {

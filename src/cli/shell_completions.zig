@@ -33,15 +33,17 @@ pub const Shell = enum {
     pub fn fromEnv(comptime Type: type, SHELL: Type) Shell {
         const basename = std.fs.path.basename(SHELL);
         if (strings.eqlComptime(basename, "bash")) {
-            return Shell.bash;
+            return .bash;
         } else if (strings.eqlComptime(basename, "zsh")) {
-            return Shell.zsh;
+            return .zsh;
         } else if (strings.eqlComptime(basename, "fish")) {
-            return Shell.fish;
-        } else if (strings.eqlComptime(basename, "pwsh") or strings.eqlComptime(basename, "powershell")) {
-            return Shell.fish;
+            return .fish;
+        } else if (strings.eqlComptime(basename, "pwsh") or
+            strings.eqlComptime(basename, "powershell"))
+        {
+            return .pwsh;
         } else {
-            return Shell.unknown;
+            return .unknown;
         }
     }
 };

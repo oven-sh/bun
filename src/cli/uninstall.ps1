@@ -2,7 +2,7 @@
 # script, removing it from %PATH%, deleting caches, and removing it from
 # the list of installed programs.
 param(
-  [switch]$PauseAtEnd = $false
+  [switch]$PauseOnError = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,9 +12,7 @@ $ErrorActionPreference = "Stop"
 function Write-Env {
   param([String]$Key, [String]$Value)
 
-  $RegisterKey = Get-Item -Path 'HKCU:'
-
-  $EnvRegisterKey = $RegisterKey.OpenSubKey('Environment', $true)
+  $EnvRegisterKey = Get-Item -Path 'HKCU:Environment'
   if ($null -eq $Value) {
     $EnvRegisterKey.DeleteValue($Key)
   } else {
@@ -32,14 +30,13 @@ function Write-Env {
 function Get-Env {
   param([String] $Key)
 
-  $RegisterKey = Get-Item -Path 'HKCU:'
-  $EnvRegisterKey = $RegisterKey.OpenSubKey('Environment')
+  $RegisterKey = Get-Item -Path 'HKCU:Environment'
   $EnvRegisterKey.GetValue($Key, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
 }
 
 if (-not (Test-Path "${PSScriptRoot}\bin\bun.exe")) {
-  Write-Host "bun.exe not found in ${PSScriptRoot}\bin`nDeletion will not continue to prevent accidental deletion of unrelated files."
-  if ($PauseAtEnd) { pause }
+  Write-Host "bun.exe not found in ${PSScriptRoot}\bin`n`nRefusing to delete this directory as it may.`n`nIf this uninstallation is still intentional, please just manually delete this folder."
+  if ($PauseOnError) { pause }
   exit 1
 }
 
@@ -50,7 +47,7 @@ function Stop-Bun {
     # ignore
   } catch {
     Write-Host "There are open instances of bun.exe that could not be automatically closed."
-    if ($PauseAtEnd) { pause }
+    if ($PauseOnError) { pause }
     exit 1
   }
 }
@@ -69,7 +66,7 @@ try {
     Write-Host $_
     Write-Host "`n`nCould not delete ${PSScriptRoot}\bin\bun.exe."
     Write-Host "Please close all instances of bun.exe and try again."
-    if ($PauseAtEnd) { pause }
+    if ($PauseOnError) { pause }
     exit 1
   }
 }
@@ -79,7 +76,7 @@ try {
   Remove-Item "${PSScriptRoot}" -Recurse -Force
 } catch {
   Write-Host "Could not delete ${PSScriptRoot}."
-  if ($PauseAtEnd) { pause }
+  if ($PauseOnError) { pause }
   exit 1
 }
 
@@ -99,13 +96,17 @@ try {
   Write-Env -Key 'Path' -Value ($Path -join ';')
 } catch {
   Write-Host "Could not remove ${PSScriptRoot}\bin from PATH."
-  if ($PauseAtEnd) { pause }
+  if ($PauseOnError) { pause }
   exit 1
 }
 
-# Remove Entry from Windows Installer, if added.
+# Remove Entry from Windows Installer, if it is owned by this installation.
 try {
-  Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Bun" -Recurse
+  $item = Get-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Bun";
+  $location = $item.GetValue("InstallLocation");
+  if ($location -eq "${PSScriptRoot}") {
+    Remove-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Bun" -Recurse
+  }
 } catch {
   # unlucky tbh
 }

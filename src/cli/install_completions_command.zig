@@ -152,7 +152,7 @@ pub const InstallCompletionsCommand = struct {
         var bunx_path_buf: bun.WPathBuffer = undefined;
         const uninstaller_path = try bun.strings.concatBufT(u16, &bunx_path_buf, .{
             &bun.windows.nt_object_prefix,
-            image_dirname[0 .. image_dirname.len - 3 :0],
+            image_dirname[0 .. image_dirname.len - 3],
             comptime bun.strings.literal(u16, "uninstall.ps1"),
         });
 

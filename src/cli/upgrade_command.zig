@@ -269,7 +269,7 @@ pub const UpgradeCommand = struct {
         var expr = ParseJSON(&source, &log, allocator) catch |err| {
             if (!silent) {
                 progress.?.end();
-                refresher.refresh();
+                refresher.?.refresh();
 
                 if (log.errors > 0) {
                     if (Output.enable_ansi_colors) {
@@ -308,7 +308,7 @@ pub const UpgradeCommand = struct {
 
         if (expr.data != .e_object) {
             if (!silent) {
-                progress.end();
+                progress.?.end();
                 refresher.?.refresh();
 
                 const json_type: js_ast.Expr.Tag = @as(js_ast.Expr.Tag, expr.data);

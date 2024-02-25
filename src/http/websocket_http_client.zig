@@ -936,7 +936,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         globalThis: *JSC.JSGlobalObject,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
 
-        buffered_data: []u8 = &.{},
+        buffered_data: []u8 = "",
         required_data_len: usize = 0,
 
         event_loop: *JSC.EventLoop = undefined,
@@ -983,7 +983,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.poll_ref.unref(this.globalThis.bunVM());
             if (this.buffered_data.len > 0) {
                 bun.default_allocator.free(this.buffered_data);
-                this.buffered_data = this.buffered_data[0..0];
+                this.buffered_data = "";
             }
             this.clearReceiveBuffers(true);
             this.clearSendBuffers(true);
@@ -1165,18 +1165,20 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             while (this.buffered_data.len > 0) {
                 const data_len = @min(data.len, this.required_data_len - this.buffered_data.len);
                 const fragment = this.buffered_data;
-                this.buffered_data = fragment[0..0];
-                // allocated separately so we can use @memcpy, which requires non-overlapping memory regions.
-                const new_data = bun.default_allocator.alloc(u8, fragment.len + data_len) catch {
-                    this.fail(ErrorCode.failed_to_allocate_memory);
-                    return;
-                };
-                @memcpy(new_data[0..fragment.len], fragment);
-                bun.default_allocator.free(fragment);
-                @memcpy(new_data[fragment.len..][0..data_len], data[0..data_len]);
+                this.buffered_data = "";
+                defer bun.default_allocator.free(fragment);
+                var new_data_buf: [128]u8 = undefined;
+                var new_data = fragment;
+                if (data_len > 0) {
+                    // the longest frame we need to reassemble is 128 bytes.
+                    // For initial data, data_len is 0 so we never get here.
+                    std.debug.assert(data_len + fragment.len <= new_data_buf.len);
+                    new_data = new_data_buf[0 .. data_len + fragment.len];
+                    @memcpy(new_data[0..fragment.len], fragment);
+                    @memcpy(new_data[fragment.len..], data[0..data_len]);
+                }
                 // the recursive call may change this.buffered_data, this.close_received, or this.required_data_len
                 handleData(this, socket, new_data);
-                bun.default_allocator.free(new_data);
                 data = data[data_len..];
                 if (data.len == 0 or this.close_received) {
                     return;
@@ -1189,7 +1191,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     this.buffered_data = bun.default_allocator.dupe(u8, data) catch blk: {
                         // not much we can do in this case.
                         this.fail(ErrorCode.failed_to_allocate_memory);
-                        break :blk &.{};
+                        break :blk "";
                     };
                 }
             }

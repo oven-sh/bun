@@ -632,6 +632,22 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return null;
         }
 
+        pub fn connectSocket(this: *@This(), client: *HTTPClient, socket_path: []const u8) !HTTPSocket {
+            client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
+
+            if (HTTPSocket.connectUnixAnon(
+                socket_path,
+                this.us_socket_context,
+                undefined,
+            )) |socket| {
+                client.allow_retry = false;
+                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
+                return socket;
+            }
+
+            return error.FailedToOpenSocket;
+        }
+
         pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !HTTPSocket {
             const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(hostname_, "localhost"))
                 "127.0.0.1"
@@ -747,6 +763,10 @@ pub const HTTPThread = struct {
     }
 
     pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewHTTPContext(is_ssl).HTTPSocket {
+        if (client.unix_socket_path.len > 0) {
+            return try this.context(is_ssl).connectSocket(client, client.unix_socket_path);
+        }
+
         if (client.http_proxy) |url| {
             return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
         }
@@ -1509,6 +1529,9 @@ async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
 reject_unauthorized: bool = true,
 
+/// if empty, that means we are not using a unix socket
+unix_socket_path: []const u8 = "",
+
 pub fn init(
     allocator: std.mem.Allocator,
     method: Method,
@@ -1546,6 +1569,10 @@ pub fn deinit(this: *HTTPClient) void {
 
 pub fn isKeepAlivePossible(this: *HTTPClient) bool {
     if (comptime FeatureFlags.enable_keepalive) {
+        if (this.unix_socket_path.len > 0)
+            // TODO:
+            return false;
+
         // is not possible to reuse Proxy with TSL, so disable keepalive if url is tunneling HTTPS
         if (this.http_proxy != null and this.url.isHTTPS()) {
             return false;

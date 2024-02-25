@@ -798,6 +798,7 @@ pub const Fetch = struct {
             this.request_headers = Headers{ .allocator = undefined };
 
             if (this.http != null) {
+                allocator.free(this.http.?.client.unix_socket_path);
                 this.http.?.clearData();
             }
 
@@ -1513,6 +1514,7 @@ pub const Fetch = struct {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
             }
 
+            fetch_tasklet.http.?.client.unix_socket_path = fetch_options.unix_socket_path;
             fetch_tasklet.http.?.client.disable_timeout = fetch_options.disable_timeout;
             fetch_tasklet.http.?.client.verbose = fetch_options.verbose;
             fetch_tasklet.http.?.client.disable_keepalive = fetch_options.disable_keepalive;
@@ -1567,6 +1569,7 @@ pub const Fetch = struct {
             hostname: ?[]u8 = null,
             memory_reporter: *JSC.MemoryReportingAllocator,
             check_server_identity: JSC.Strong = .{},
+            unix_socket_path: []const u8 = "",
         };
 
         pub fn queue(
@@ -1720,11 +1723,19 @@ pub const Fetch = struct {
         var signal: ?*JSC.WebCore.AbortSignal = null;
         // Custom Hostname
         var hostname: ?[]u8 = null;
+        var unix_socket_path: ZigString.Slice = ZigString.Slice.empty;
 
-        var url_proxy_buffer: []const u8 = undefined;
+        var url_proxy_buffer: []const u8 = "";
         var is_file_url = false;
         var reject_unauthorized = script_ctx.bundler.env.getTLSRejectUnauthorized();
         var check_server_identity: JSValue = .zero;
+
+        defer {
+            if (free_memory_reporter) {
+                unix_socket_path.deinit();
+            }
+        }
+
         // TODO: move this into a DRYer implementation
         // The status quo is very repetitive and very bug prone
         if (first_arg.as(Request)) |request| {
@@ -1915,6 +1926,14 @@ pub const Fetch = struct {
                                 proxy = ZigURL.parse(buffer[url.href.len..]);
                                 allocator.free(url_proxy_buffer);
                                 url_proxy_buffer = buffer;
+                            }
+                        }
+
+                        if (options.get(globalThis, "socket")) |socket_path| {
+                            if (socket_path.isString() and socket_path.getLength(ctx) > 0) {
+                                if (socket_path.toSliceCloneWithAllocator(globalThis, allocator)) |slice| {
+                                    unix_socket_path = slice;
+                                }
                             }
                         }
                     }
@@ -2125,6 +2144,14 @@ pub const Fetch = struct {
                                 url_proxy_buffer = buffer;
                             }
                         }
+
+                        if (options.get(globalThis, "socket")) |socket_path| {
+                            if (socket_path.isString() and socket_path.getLength(ctx) > 0) {
+                                if (socket_path.toSliceCloneWithAllocator(globalThis, allocator)) |slice| {
+                                    unix_socket_path = slice;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2146,6 +2173,7 @@ pub const Fetch = struct {
         // But it's better than status quo.
         if (is_file_url) {
             defer allocator.free(url_proxy_buffer);
+            defer unix_socket_path.deinit();
             var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             const PercentEncoding = @import("../../url.zig").PercentEncoding;
             var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -2395,6 +2423,7 @@ pub const Fetch = struct {
                 .hostname = hostname,
                 .memory_reporter = memory_reporter,
                 .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .{} else JSC.Strong.create(check_server_identity, globalThis),
+                .unix_socket_path = unix_socket_path.slice(),
             },
             // Pass the Strong value instead of creating a new one, or else we
             // will leak it

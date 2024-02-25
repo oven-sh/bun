@@ -2629,11 +2629,14 @@ var require_readable = __commonJS({
     }
     function onEofChunk(stream, state) {
       if (state.ended) return;
-      if (state.decoder) {
-        const chunk = state.decoder.end();
-        if (chunk && chunk.length) {
+
+      const decoder = state.decoder;
+      if (decoder) {
+        const chunk = decoder.end();
+        const chunkLength = chunk?.length;
+        if (chunkLength) {
           state.buffer.push(chunk);
-          state.length += state.objectMode ? 1 : chunk.length;
+          state.length += state.objectMode ? 1 : chunkLength;
         }
       }
       state.ended = true;

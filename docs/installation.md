@@ -22,8 +22,7 @@ $ npm install -g bun # the last `npm` command you'll ever need
 ```
 
 ```bash#Homebrew
-$ brew tap oven-sh/bun # for macOS and Linux
-$ brew install bun
+$ brew install oven-sh/bun/bun # for macOS and Linux
 ```
 
 ```bash#Docker

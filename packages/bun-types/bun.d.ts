@@ -87,9 +87,9 @@ declare module "bun" {
        */
       countAnsiEscapeCodes?: boolean;
       /**
-       * When it's ambiugous and `true`, count emoji as 2 characters wide. If `false`, emoji are counted as 1 character wide.
+       * When it's ambiugous and `true`, count emoji as 1 characters wide. If `false`, emoji are counted as 2 character wide.
        *
-       * @default false
+       * @default true
        */
       ambiguousIsNarrow?: boolean;
     },
@@ -825,7 +825,7 @@ declare module "bun" {
    * console.log(path); // "/foo/bar.txt"
    * ```
    */
-  function fileURLToPath(url: URL): string;
+  function fileURLToPath(url: URL | string): string;
 
   /**
    * Fast incremental writer that becomes an `ArrayBuffer` on end().

@@ -1314,6 +1314,8 @@ const Decompressor = union(enum) {
     }
 };
 
+// TODO: reduce the size of this struct
+// Many of these fields can be moved to a packed struct and use less space
 pub const InternalState = struct {
     response_message_buffer: MutableString = undefined,
     /// pending response is the temporary storage for the response headers, url and status code
@@ -1470,6 +1472,8 @@ pub const InternalState = struct {
 
 const default_redirect_count = 127;
 
+// TODO: reduce the size of this struct
+// Many of these fields can be moved to a packed struct and use less space
 method: Method,
 header_entries: Headers.Entries,
 header_buf: string,

@@ -1708,15 +1708,21 @@ pub const VirtualMachine = struct {
                         const buster_name = name: {
                             if (std.fs.path.isAbsolute(normalized_specifier)) {
                                 if (std.fs.path.dirname(normalized_specifier)) |dir| {
-                                    // With trailing slash
-                                    break :name if (dir.len == 1) dir else normalized_specifier[0 .. dir.len + 1];
+                                    // Normalized with trailing slash
+                                    break :name bun.path.normalizeStringBuf(
+                                        if (dir.len == 1) dir else normalized_specifier[0 .. dir.len + 1],
+                                        &specifier_cache_resolver_buf,
+                                        false,
+                                        .auto,
+                                        true,
+                                    );
                                 }
                             }
 
                             var parts = [_]string{
                                 source_to_use,
                                 normalized_specifier,
-                                "../",
+                                bun.pathLiteral("../"),
                             };
 
                             break :name bun.path.joinAbsStringBufZTrailingSlash(

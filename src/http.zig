@@ -1647,7 +1647,7 @@ const connection_closing_header = picohttp.Header{ .name = "Connection", .value 
 const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 
 const accept_encoding_no_compression = "identity";
-const accept_encoding_compression = "gzip, deflate, ztd, br";
+const accept_encoding_compression = "gzip, deflate, zstd, br";
 const accept_encoding_compression_no_brotli = "gzip, deflate, zstd";
 const accept_encoding_header_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression };
 const accept_encoding_header_compression_no_brotli = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression_no_brotli };

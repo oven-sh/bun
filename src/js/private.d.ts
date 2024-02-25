@@ -163,7 +163,6 @@ interface BunLazyModules {
     maybeReadMore: Function;
     resume: Function;
     emitReadable: Function;
-    onEofChunk: Function;
     ReadableState: Function;
   };
   sqlite: any;

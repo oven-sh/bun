@@ -55,13 +55,13 @@ dep() {
 dep base64 libbase64.a
 dep boringssl libcrypto.a libssl.a libdecrepit.a
 dep cares libcares.a
-dep libarchive libarchive.a
 dep lolhtml liblolhtml.a
 dep mimalloc-debug libmimalloc-debug.a libmimalloc-debug.o
 dep mimalloc libmimalloc.a libmimalloc.o
 dep tinycc libtcc.a
 dep zlib libz.a
 dep zstd libzstd.a
+dep libarchive libarchive.a
 dep lshpack liblshpack.a
 
 if [ "$BUILT_ANY" -eq 0 ]; then

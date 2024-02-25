@@ -825,7 +825,7 @@ declare module "bun" {
    * console.log(path); // "/foo/bar.txt"
    * ```
    */
-  function fileURLToPath(url: URL): string;
+  function fileURLToPath(url: URL | string): string;
 
   /**
    * Fast incremental writer that becomes an `ArrayBuffer` on end().

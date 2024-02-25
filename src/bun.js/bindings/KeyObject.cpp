@@ -2748,8 +2748,6 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Invalid length"_s));
             return JSValue::encode(JSC::jsUndefined());
         }
-        // TODO(@paperdave 2023-10-19): i removed WTFMove from result.releaseNonNull() as per MSVC compiler error.
-        // We need to evaluate if that is the proper fix here.
         return JSC::JSValue::encode(JSCryptoKey::create(structure, zigGlobalObject, WTFMove(result.releaseNonNull())));
     } else {
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "algorithm should be 'aes' or 'hmac'"_s));

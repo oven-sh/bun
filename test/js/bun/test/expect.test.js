@@ -2427,7 +2427,7 @@ describe("expect()", () => {
     }).toThrow();
     expect(() => {
       expect(null).toContainKeys(["id"]);
-    });
+    }).toThrow();
   });
 
   test("toBeTruthy()", () => {

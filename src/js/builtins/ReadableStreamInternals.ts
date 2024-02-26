@@ -1609,6 +1609,7 @@ export function readableStreamFromAsyncIterator(target, fn) {
 export function lazyLoadStream(stream, autoAllocateChunkSize) {
   $debug("lazyLoadStream", stream, autoAllocateChunkSize);
   var handle = stream.$bunNativePtr;
+  if (handle === -1) return;
   var Prototype = $lazyStreamPrototypeMap.$get($getPrototypeOf(handle));
   if (Prototype === undefined) {
     var closer = [false];
@@ -1973,7 +1974,7 @@ export function readableStreamDefineLazyIterators(prototype) {
     } finally {
       reader.releaseLock();
 
-      if (!preventCancel) {
+      if (!preventCancel && !$isReadableStreamLocked(stream)) {
         stream.cancel(deferredError);
       }
 

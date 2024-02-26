@@ -50,7 +50,7 @@ bun build --compile --minify --sourcemap ./path/to/my/app.ts --outfile myapp
 
 The `--minify` argument optimizes the size of the transpiled output code. If you have a large application, this can save megabytes of space. For smaller applications, it might still improve start time a little.
 
-The `--sourcemap` argument generates a sourcemap, so that errors & stacktraces point to their original locations instead of the transpiled location. Sourcemaps tend to be large, but we store them compressed with zstd and defer decompressing it until the first time an error occurs.
+The `--sourcemap` argument embeds a sourcemap compressed with zstd, so that errors & stacktraces point to their original locations instead of the transpiled location. Bun will automatically decompress & resolve the sourcemap when an error occurs.
 
 ## SQLite
 

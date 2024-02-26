@@ -238,8 +238,8 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
 }
 
 extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
+extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 
-JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -291,19 +291,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     RETURN_IF_EXCEPTION(scope, {});
 #if OS(WINDOWS)
-    HMODULE handle;
-    printf("Trying to load %s\n", filename.utf8().data());
-    if (filename.is8Bit()) {
-        if (charactersAreAllASCII(filename.characters8(), filename.length())) {
-            CString utf8 = filename.utf8();
-            handle = LoadLibraryExA(utf8.data(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
-        } else {
-            filename.convertTo16Bit();
-            handle = LoadLibraryExW((LPCWSTR)filename.characters16(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
-        }
-    } else {
-        handle = LoadLibraryExW((LPCWSTR)filename.characters16(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
-    }
+    BunString filename_str = Bun::toString(filename);
+    HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
 #else
     CString utf8 = filename.utf8();
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
@@ -315,7 +304,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         LPSTR messageBuffer = nullptr;
         size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
             NULL, errorId, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
-        WTF::String msg = makeString("LoadLibrary failed: ", WTF::String(messageBuffer, size));
+        WTF::String msg = makeString("LoadLibrary failed: ", WTF::StringView(messageBuffer, size));
         LocalFree(messageBuffer);
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());

@@ -403,12 +403,10 @@ pub const Bundler = struct {
                 if (std.fs.path.isAbsolute(entry_point)) {
                     if (std.fs.path.dirname(entry_point)) |dir| {
                         // Normalized with trailing slash
-                        break :name bun.path.normalizeStringBuf(
-                            if (dir.len == 1) dir else entry_point[0 .. dir.len + 1],
+                        break :name bun.strings.normalizeSlashesOnly(
                             &cache_bust_buf,
-                            false,
-                            .auto,
-                            true,
+                            if (dir.len == 1) dir else entry_point[0 .. dir.len + 1],
+                            '/',
                         );
                     }
                 }

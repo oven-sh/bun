@@ -338,10 +338,8 @@ it("should remove all cache", async () => {
 import { tmpdir } from "os";
 it("bun pm migrate", async () => {
   const test_dir = join(tmpdir(), "contoso-test" + Math.random().toString(36).slice(2));
-  console.log("test_dir", test_dir);
 
   cpSync(join(import.meta.dir, "migration/contoso-test"), test_dir, { recursive: true });
-  throw new Error("stop");
 
   const { stdout, stderr, exitCode } = Bun.spawnSync({
     cmd: [bunExe(), "pm", "migrate", "--force"],

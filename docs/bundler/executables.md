@@ -38,7 +38,7 @@ Compiled executables reduce memory usage and improve Bun's start time.
 
 Normally, Bun reads and transpiles JavaScript and TypeScript files on `import` and `require`. This is part of what makes so much of Bun "just work", but it's not free. It costs time and memory to read files from disk, resolve file paths, parse, transpile, and print source code. 
 
-You can do all that work ahead of time with compiled executables, and move that cost from runtime to build-time.
+With compiled executables, you can move that cost from runtime to build-time.
 
 When deploying to production, we recommend the following:
 

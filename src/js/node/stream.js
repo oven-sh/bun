@@ -5472,7 +5472,7 @@ function getNativeReadableStreamPrototype(nativeType, Readable) {
 
 function getNativeReadableStream(Readable, stream, options) {
   const ptr = stream.$bunNativePtr;
-  if (!ptr) {
+  if (!ptr || ptr === -1) {
     $debug("no native readable stream");
     return undefined;
   }
@@ -5481,6 +5481,9 @@ function getNativeReadableStream(Readable, stream, options) {
   $assert(typeof ptr === "object", "Invalid native ptr");
 
   const NativeReadable = getNativeReadableStreamPrototype(type, Readable);
+  stream.$bunNativePtr = -1;
+  stream.$bunNativeType = 0;
+  stream.$disturbed = true;
   return new NativeReadable(ptr, options);
 }
 /** --- Bun native stream wrapper ---  */

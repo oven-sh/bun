@@ -69,11 +69,6 @@ pub const Flags = packed struct(u16) {
 
 pub const embedded_executable_data = @embedFile("./bun_shim_impl.exe");
 
-fn wU8(comptime s: []const u8) []const u8 {
-    const str = std.unicode.utf8ToUtf16LeStringLiteral(s);
-    return @alignCast(std.mem.sliceAsBytes(str));
-}
-
 pub const Shebang = struct {
     launcher: []const u8,
     utf16_len: u32,
@@ -94,19 +89,20 @@ pub const Shebang = struct {
         run_with_powershell,
     };
 
-    const BunExtensions = std.ComptimeStringMap(ExtensionType, .{
-        .{ wU8(".js"), .run_with_bun },
-        .{ wU8(".mjs"), .run_with_bun },
-        .{ wU8(".cjs"), .run_with_bun },
-        .{ wU8(".jsx"), .run_with_bun },
-        .{ wU8(".ts"), .run_with_bun },
-        .{ wU8(".cts"), .run_with_bun },
-        .{ wU8(".mts"), .run_with_bun },
-        .{ wU8(".tsx"), .run_with_bun },
-        .{ wU8(".sh"), .run_with_bun },
-        .{ wU8(".cmd"), .run_with_cmd },
-        .{ wU8(".bat"), .run_with_cmd },
-        .{ wU8(".ps1"), .run_with_powershell },
+    const literal = bun.strings.literal;
+    const BunExtensions = bun.ComptimeStringMap16(ExtensionType, .{
+        .{ literal(u16, ".js"), .run_with_bun },
+        .{ literal(u16, ".mjs"), .run_with_bun },
+        .{ literal(u16, ".cjs"), .run_with_bun },
+        .{ literal(u16, ".jsx"), .run_with_bun },
+        .{ literal(u16, ".ts"), .run_with_bun },
+        .{ literal(u16, ".cts"), .run_with_bun },
+        .{ literal(u16, ".mts"), .run_with_bun },
+        .{ literal(u16, ".tsx"), .run_with_bun },
+        .{ literal(u16, ".sh"), .run_with_bun },
+        .{ literal(u16, ".cmd"), .run_with_cmd },
+        .{ literal(u16, ".bat"), .run_with_cmd },
+        .{ literal(u16, ".ps1"), .run_with_powershell },
     });
 
     /// std.fs.path.basename but utf16
@@ -151,7 +147,7 @@ pub const Shebang = struct {
     }
 
     pub fn parseFromBinPath(bin_path: []const u16) ?Shebang {
-        if (BunExtensions.get(@alignCast(std.mem.sliceAsBytes(extensionW(bin_path))))) |i| {
+        if (BunExtensions.get(extensionW(bin_path))) |i| {
             return switch (i) {
                 .run_with_bun => comptime Shebang.init("bun run", true) catch unreachable,
                 .run_with_cmd => comptime Shebang.init("cmd /c", false) catch unreachable,

@@ -33,6 +33,7 @@ inline fn nqlAtIndexCaseInsensitive(comptime string_count: comptime_int, index: 
     return false;
 }
 
+// some of these are anytype because of https://github.com/ziglang/zig/issues/15409
 const IsSeparatorFunc = fn (char: u8) bool;
 const IsSeparatorFuncT = fn (comptime T: type, char: anytype) bool;
 const LastSeparatorFunction = fn (slice: []const u8) ?usize;
@@ -554,9 +555,8 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                     }
                 }
             }
-        } else {
-            // TODO(dylan-conway): use strings.indexOfAny instead of std
-            if (std.mem.indexOfAny(T, path[3..], comptime strings.literal(T, "/\\"))) |idx| {
+        } else if (T == u16) {
+            if (strings.indexOfAny16(path[3..], comptime strings.literal(T, "/\\"))) |idx| {
                 // TODO: handle input "//abc//def" should be picked up as a unc path
                 if (path.len > idx + 4 and !Platform.windows.isSeparatorT(T, path[idx + 4])) {
                     if (std.mem.indexOfAny(T, path[idx + 4 ..], comptime strings.literal(T, "/\\"))) |idx2| {
@@ -566,6 +566,8 @@ fn windowsVolumeNameLenT(comptime T: type, path: []const T) struct { usize, usiz
                     }
                 }
             }
+        } else {
+            @compileError("unreachable: " ++ @typeName(T));
         }
     }
     return .{ 0, 0 };
@@ -1481,8 +1483,7 @@ pub fn isSepWin32(char: u8) bool {
     return isSepWin32T(u8, char);
 }
 
-pub fn isSepWin32T(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepWin32T");
+pub fn isSepWin32T(comptime T: type, char: T) bool {
     return char == std.fs.path.sep_windows;
 }
 
@@ -1490,8 +1491,7 @@ pub fn isSepAny(char: u8) bool {
     return isSepAnyT(u8, char);
 }
 
-pub fn isSepAnyT(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepAnyT");
+pub fn isSepAnyT(comptime T: type, char: T) bool {
     return @call(bun.callmod_inline, isSepPosixT, .{ T, char }) or @call(bun.callmod_inline, isSepWin32T, .{ T, char });
 }
 
@@ -1499,8 +1499,7 @@ pub fn lastIndexOfSeparatorWindows(slice: []const u8) ?usize {
     return lastIndexOfSeparatorWindowsT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorWindowsT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorWindowsT");
+pub fn lastIndexOfSeparatorWindowsT(comptime T: type, slice: []const T) ?usize {
     return std.mem.lastIndexOfAny(T, slice, comptime strings.literal(T, "\\/"));
 }
 
@@ -1508,8 +1507,7 @@ pub fn lastIndexOfSeparatorPosix(slice: []const u8) ?usize {
     return lastIndexOfSeparatorPosixT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorPosixT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorPosixT");
+pub fn lastIndexOfSeparatorPosixT(comptime T: type, slice: []const T) ?usize {
     return std.mem.lastIndexOfScalar(T, slice, std.fs.path.sep_posix);
 }
 
@@ -2011,7 +2009,7 @@ pub fn lastIndexOfSep(path: []const u8) ?usize {
 
 pub fn lastIndexOfSepT(comptime T: type, path: []const T) ?usize {
     if (comptime !bun.Environment.isWindows) {
-        return strings.lastIndexOfCharT(T, path, '/');
+        return std.mem.lastIndexOfScalar(T, path, '/');
     }
 
     return std.mem.lastIndexOfAny(T, path, "/\\");

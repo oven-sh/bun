@@ -2503,7 +2503,7 @@ bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* glo
     JSObject* obj = value.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    return obj->hasOwnProperty(globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(key))));
+    RELEASE_AND_RETURN(scope, obj->hasOwnProperty(globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(key)))));
 }
 
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,

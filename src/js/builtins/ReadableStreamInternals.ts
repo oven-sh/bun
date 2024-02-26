@@ -1325,7 +1325,7 @@ export function readableStreamDefaultControllerCallPullIfNeeded(controller) {
 
 export function isReadableStreamLocked(stream) {
   $assert($isReadableStream(stream));
-  return !!$getByIdDirectPrivate(stream, "reader") || $getByIdDirectPrivate(stream, "bunNativePtr") === -1;
+  return !!$getByIdDirectPrivate(stream, "reader") || stream.$bunNativePtr === -1;
 }
 
 export function readableStreamDefaultControllerGetDesiredSize(controller) {

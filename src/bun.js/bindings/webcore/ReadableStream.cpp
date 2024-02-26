@@ -232,15 +232,12 @@ bool ReadableStream::isLocked(JSGlobalObject* globalObject, JSReadableStream* re
 
 bool ReadableStream::isDisturbed(JSGlobalObject* globalObject, JSReadableStream* readableStream)
 {
-    auto clientData = WebCore::clientData(globalObject->vm());
-    auto& privateName = clientData->builtinNames().disturbedPrivateName();
-    return readableStream->disturbed().isTrue();
+    return readableStream->disturbed();
 }
 
 bool ReadableStream::isDisturbed() const
 {
-    auto clientData = WebCore::clientData(globalObject()->vm());
-    return readableStream()->disturbed().isTrue();
+    return readableStream()->disturbed();
 }
 
 }

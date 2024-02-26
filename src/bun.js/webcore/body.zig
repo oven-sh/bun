@@ -842,11 +842,8 @@ pub const Body = struct {
             if (tag == .Locked) {
                 if (!this.Locked.deinit) {
                     this.Locked.deinit = true;
-
-                    if (this.Locked.readable.get()) |*readable| {
-                        readable.done(this.Locked.global);
-                    }
                     this.Locked.readable.deinit();
+                    this.Locked.readable = .{};
                 }
 
                 return;

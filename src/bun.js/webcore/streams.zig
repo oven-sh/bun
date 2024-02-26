@@ -58,12 +58,6 @@ pub const ReadableStream = struct {
         }
 
         pub fn init(this: ReadableStream, global: *JSGlobalObject) Strong {
-            switch (this.ptr) {
-                .Blob => |blob| blob.parent().incrementCount(),
-                .File => |file| file.parent().incrementCount(),
-                .Bytes => |bytes| bytes.parent().incrementCount(),
-                else => {},
-            }
             return .{
                 .held = JSC.Strong.create(this.value, global),
             };
@@ -77,9 +71,8 @@ pub const ReadableStream = struct {
         }
 
         pub fn deinit(this: *Strong) void {
-            if (this.get()) |readable| {
-                // decrement the ref count and if it's zero we auto detach
-                readable.detachIfPossible(this.globalThis().?);
+            if (this.held.get()) |val| {
+                ReadableStream__detach(val, this.held.globalThis.?);
             }
             this.held.deinit();
         }
@@ -148,15 +141,6 @@ pub const ReadableStream = struct {
         return null;
     }
 
-    pub fn getParentId(this: *const ReadableStream) u64 {
-        return switch (this.ptr) {
-            .Blob => |blob| @intFromPtr(blob.parent()),
-            .File => |file| @intFromPtr(file.parent()),
-            .Bytes => |bytes| @intFromPtr(bytes.parent()),
-            else => 0,
-        };
-    }
-
     pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         this.detachIfPossible(globalThis);
     }
@@ -182,18 +166,8 @@ pub const ReadableStream = struct {
     /// Decrement Source ref count and detach the underlying stream if ref count is zero
     /// be careful, this can invalidate the stream do not call this multiple times
     /// this is meant to be called only once when we are done consuming the stream or from the ReadableStream.Strong.deinit
-    pub fn detachIfPossible(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
+    pub fn detachIfPossible(_: *const ReadableStream, _: *JSGlobalObject) void {
         JSC.markBinding(@src());
-
-        const ref_count = switch (this.ptr) {
-            .Blob => |blob| blob.parent().decrementCount(),
-            .File => |file| file.parent().decrementCount(),
-            .Bytes => |bytes| bytes.parent().decrementCount(),
-            else => 0,
-        };
-        if (ref_count == 0) {
-            ReadableStream__detach(this.value, globalThis);
-        }
     }
 
     pub const Tag = enum(i32) {
@@ -408,17 +382,6 @@ pub const ReadableStream = struct {
     };
 };
 
-pub export fn ReadableStream__incrementCount(this: *anyopaque, tag: ReadableStream.Tag) callconv(.C) void {
-    switch (tag) {
-        .Blob => ByteBlobLoader.Source.incrementCount(@ptrCast(@alignCast(this))),
-        .File => FileReader.Source.incrementCount(@ptrCast(@alignCast(this))),
-        .Bytes => ByteStream.Source.incrementCount(@ptrCast(@alignCast(this))),
-        else => {},
-    }
-}
-comptime {
-    _ = ReadableStream__incrementCount;
-}
 pub const StreamStart = union(Tag) {
     empty: void,
     err: Syscall.Error,

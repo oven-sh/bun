@@ -1798,8 +1798,8 @@ function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {}, noCo
                    noConstructor
                      ? ""
                      : `init.setConstructor(WebCore::${className(
-                          typeName,
-                        )}::createConstructor(init.vm, init.global, init.prototype));`
+                         typeName,
+                       )}::createConstructor(init.vm, init.global, init.prototype));`
                  }
               });
 

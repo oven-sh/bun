@@ -456,10 +456,10 @@ describe("decorator metadata", () => {
         p3: readonly ["hello", "world"],
         p4: typeof c,
         p5: readonly [number, string],
-        // biome-ignore: format ignore
+        // prettier-ignore
         p6: (string | string),
-        // biome-ignore: format ignoreormat ignore
-        p7: (string & string),
+        // prettier-ignoreormat ignore
+        p7: string & string,
         p8: boolean extends true ? "a" : "b",
         // @ts-ignore
         p9: Loser extends Loser ? string : Foo,

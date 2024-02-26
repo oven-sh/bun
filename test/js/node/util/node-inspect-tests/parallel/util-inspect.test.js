@@ -592,9 +592,7 @@ test("no assertion failures 2", () => {
     [new Error(), new Error("FAIL"), new TypeError("FAIL"), new SyntaxError("FAIL")].forEach(err => {
       assert(
         //! temp bug workaround with replace()'s
-        util
-          .inspect(err)
-          .startsWith(err.stack.replace(/^Error: /, err.message ? "$&" : "Error")),
+        util.inspect(err).startsWith(err.stack.replace(/^Error: /, err.message ? "$&" : "Error")),
         `Expected "${util.inspect(err)}" to start with "${err.stack.replace(
           /^Error: /,
           err.message ? "$&" : "Error",

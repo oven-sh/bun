@@ -1,15 +1,15 @@
 {
-  arrowParens: "avoid",
-  printWidth: 120,
-  trailingComma: "all",
-  useTabs: false,
-  quoteProps: "preserve",
-  overrides: [
+  "arrowParens": "avoid",
+  "printWidth": 120,
+  "trailingComma": "all",
+  "useTabs": false,
+  "quoteProps": "preserve",
+  "overrides": [
     {
-      files: ["*.md"],
-      options: {
-        printWidth: 80,
-      },
-    },
-  ],
+      "files": ["*.md"],
+      "options": {
+        "printWidth": 80
+      }
+    }
+  ]
 }

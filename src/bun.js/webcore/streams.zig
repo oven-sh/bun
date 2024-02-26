@@ -3262,6 +3262,7 @@ pub const FileReader = struct {
     pending_view: []u8 = &.{},
     fd: bun.FileDescriptor = bun.invalid_fd,
     started: bool = false,
+    started_from_js: bool = false,
     event_loop: JSC.EventLoopHandle,
     lazy: Lazy = .{ .none = {} },
     buffered: std.ArrayListUnmanaged(u8) = .{},
@@ -3421,6 +3422,7 @@ pub const FileReader = struct {
 
         if (was_lazy) {
             _ = this.parent().incrementCount();
+            this.started_from_js = true;
             switch (this.reader.start(this.fd, pollable)) {
                 .result => {},
                 .err => |e| {
@@ -3759,7 +3761,10 @@ pub const FileReader = struct {
         }
 
         this.parent().onClose();
-        _ = this.parent().decrementCount();
+        if (this.started_from_js) {
+            this.started_from_js = false;
+            _ = this.parent().decrementCount();
+        }
     }
 
     pub fn onReaderError(this: *FileReader, err: bun.sys.Error) void {

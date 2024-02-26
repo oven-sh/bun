@@ -1,2 +1,4 @@
 src/bun.js/WebKit
 src/deps
+test/snapshots
+test/js/deno

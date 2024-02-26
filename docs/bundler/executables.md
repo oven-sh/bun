@@ -46,7 +46,7 @@ When deploying to production, we recommend the following:
 bun build --compile --minify --sourcemap ./path/to/my/app.ts --outfile myapp
 ```
 
-##### What's happening here?
+**What do these flags do?**
 
 The `--minify` argument optimizes the size of the transpiled output code. If you have a large application, this can save megabytes of space. For smaller applications, it might still improve start time a little.
 

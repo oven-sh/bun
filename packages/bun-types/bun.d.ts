@@ -47,6 +47,14 @@ declare module "bun" {
    */
   function which(command: string, options?: { PATH?: string; cwd?: string }): string | null;
 
+  function stringWidth(
+    input: string,
+    options?: {
+      countAnsiEscapeCodes?: boolean;
+      ambiguousIsNarrow?: boolean;
+    },
+  ): number;
+
   export type ShellFunction = (input: Uint8Array) => Uint8Array;
 
   export type ShellExpression =

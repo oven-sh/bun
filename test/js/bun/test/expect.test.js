@@ -2421,6 +2421,13 @@ describe("expect()", () => {
     expect({ a: "foo", 1: "test" }).toContainKeys(["a", 1]);
     expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["a", "b", "e"]);
     expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["z"]);
+
+    expect(() => {
+      expect(undefined).toContainKeys(["id"]);
+    }).toThrow();
+    expect(() => {
+      expect(null).toContainKeys(["id"]);
+    });
   });
 
   test("toBeTruthy()", () => {

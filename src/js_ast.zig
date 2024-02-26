@@ -6819,7 +6819,7 @@ pub const Macro = struct {
                                 source,
                                 import_range,
                                 log.msgs.allocator,
-                                "Macro \"{any}\" not found",
+                                "Macro \"{s}\" not found",
                                 .{import_record_path},
                                 .stmt,
                                 err,
@@ -7049,8 +7049,8 @@ pub const Macro = struct {
                             this.source,
                             this.caller.loc,
                             this.allocator,
-                            "cannot coerce {s} to Bun's AST. Please return a simpler type",
-                            .{@tagName(value.jsType())},
+                            "cannot coerce {s} ({s}) to Bun's AST. Please return a simpler type",
+                            .{ value.getClassInfoName() orelse "unknown", @tagName(value.jsType()) },
                         ) catch unreachable;
                         break :brk error.MacroFailed;
                     },

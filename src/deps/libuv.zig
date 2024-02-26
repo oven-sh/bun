@@ -2203,7 +2203,7 @@ pub extern fn uv_fs_poll_init(loop: *uv_loop_t, handle: *uv_fs_poll_t) c_int;
 pub extern fn uv_fs_poll_start(handle: *uv_fs_poll_t, poll_cb: uv_fs_poll_cb, path: [*:0]const u8, interval: c_uint) c_int;
 pub extern fn uv_fs_poll_stop(handle: *uv_fs_poll_t) c_int;
 pub extern fn uv_fs_poll_getpath(handle: *uv_fs_poll_t, buffer: [*]u8, size: [*c]usize) c_int;
-pub extern fn uv_signal_init(loop: *uv_loop_t, handle: *uv_signal_t) c_int;
+pub extern fn uv_signal_init(loop: *uv_loop_t, handle: *uv_signal_t) ReturnCode;
 pub extern fn uv_signal_start(handle: *uv_signal_t, signal_cb: uv_signal_cb, signum: c_int) c_int;
 pub extern fn uv_signal_start_oneshot(handle: *uv_signal_t, signal_cb: uv_signal_cb, signum: c_int) c_int;
 pub extern fn uv_signal_stop(handle: *uv_signal_t) c_int;

@@ -926,3 +926,24 @@ comptime {
         BodyValueBuffererContext.shim.ref();
     }
 }
+
+const libuv = bun.windows.libuv;
+
+pub export fn Bun__UVSignalHandle__init(
+    loop: *libuv.Loop,
+    signal_num: i32,
+    callback: *fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.C) void,
+) ?*libuv.uv_signal_t {
+    const signal = bun.new(libuv.uv_signal_t, undefined);
+    const rc = libuv.uv_signal_init(loop, &signal);
+    if (rc.errno()) |_| {
+        return null;
+    }
+
+    rc = libuv.uv_signal_start(signal, callback, signal_num);
+    if (rc.errno()) |_| {
+        return null;
+    }
+
+    return &signal;
+}

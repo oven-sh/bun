@@ -1,5 +1,6 @@
 let completed = 0;
 const server = Bun.serve({
+  port: 0,
   async fetch(req, res) {
     return new Response(
       new ReadableStream({

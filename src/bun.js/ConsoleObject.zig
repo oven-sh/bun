@@ -320,7 +320,7 @@ const TablePrinter = struct {
     fn updateColumnsForRow(this: *TablePrinter, columns: *std.ArrayList(Column), row_key: RowKey, row_value: JSValue) !void {
         // update size of "(index)" column
         const row_key_len: u32 = switch (row_key) {
-            .str => |value| @intCast(value.visibleWidthExcludeANSIColors()),
+            .str => |value| @intCast(value.visibleWidthExcludeANSIColors(false)),
             .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
         };
         columns.items[0].width = @max(columns.items[0].width, row_key_len);
@@ -400,7 +400,7 @@ const TablePrinter = struct {
         try writer.writeAll("│");
         {
             const len: u32 = switch (row_key) {
-                .str => |value| @truncate(value.visibleWidthExcludeANSIColors()),
+                .str => |value| @truncate(value.visibleWidthExcludeANSIColors(false)),
                 .num => |value| @truncate(bun.fmt.fastDigitCount(value)),
             };
             const needed = columns.items[0].width -| len;
@@ -544,7 +544,7 @@ const TablePrinter = struct {
         {
             for (columns.items) |*col| {
                 // also update the col width with the length of the column name itself
-                col.width = @max(col.width, @as(u32, @intCast(col.name.visibleWidthExcludeANSIColors())));
+                col.width = @max(col.width, @as(u32, @intCast(col.name.visibleWidthExcludeANSIColors(false))));
             }
 
             try writer.writeAll("┌");
@@ -557,7 +557,7 @@ const TablePrinter = struct {
 
             for (columns.items, 0..) |col, i| {
                 if (i > 0) try writer.writeAll("│");
-                const len = col.name.visibleWidthExcludeANSIColors();
+                const len = col.name.visibleWidthExcludeANSIColors(false);
                 const needed = col.width -| len;
                 try writer.writeByteNTimes(' ', 1);
                 if (comptime enable_ansi_colors) {

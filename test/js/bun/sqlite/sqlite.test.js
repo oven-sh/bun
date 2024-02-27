@@ -484,7 +484,7 @@ it("db.defineFunction()", () => {
   const db = Database.open(":memory:");
   db.defineFunction("catNameLength", name => name.length);
 
-  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
   const insert = db.prepare("INSERT INTO cats (name, age) VALUES (@name, @age)");
   const cats = [
     { "@name": "Joey", "@age": 2 },
@@ -503,7 +503,7 @@ it("db.defineFunction()", () => {
 it("db.defineFunction() with varargs", () => {
   const db = Database.open(":memory:");
   db.defineFunction("joinStrings", { varargs: true }, (...args) => args.join(","));
-  const res = db.query("SELECT joinStrings('a','b','c') AS joined FROM cats").get().joined;
+  const res = db.query("SELECT joinStrings('a','b','c') AS joined").get().joined;
   expect(res).toBe("a,b,c");
 });
 

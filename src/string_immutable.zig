@@ -1033,8 +1033,8 @@ pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) 
     return buf;
 }
 
-pub inline fn joinAlloc(allocator: std.mem.Allocator, strs: anytype) ![]u8 {
-    const buf = try allocator.alloc(u8, len: {
+pub inline fn concatAllocT(comptime T: type, allocator: std.mem.Allocator, strs: anytype) ![]T {
+    const buf = try allocator.alloc(T, len: {
         var len: usize = 0;
         inline for (strs) |s| {
             len += s.len;
@@ -1042,28 +1042,24 @@ pub inline fn joinAlloc(allocator: std.mem.Allocator, strs: anytype) ![]u8 {
         break :len len;
     });
 
-    var remain = buf;
-    inline for (strs) |s| {
-        if (s.len > 0) {
-            @memcpy(remain, s);
-            remain = remain[s.len..];
-        }
-    }
-
-    return buf;
+    return concatBufT(T, buf, strs) catch |e| switch (e) {
+        error.NoSpaceLeft => unreachable, // exact size calculated
+    };
 }
 
-pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8 {
+pub inline fn concatBufT(comptime T: type, out: []T, strs: anytype) ![]T {
     var remain = out;
-    var count: usize = 0;
-    inline for (0..parts_len) |i| {
-        const part = parts[i];
-        bun.copy(u8, remain, part);
-        remain = remain[part.len..];
-        count += part.len;
+    var n: usize = 0;
+    inline for (strs) |s| {
+        if (s.len > remain.len) {
+            return error.NoSpaceLeft;
+        }
+        @memcpy(remain.ptr, s);
+        remain = remain[s.len..];
+        n += s.len;
     }
 
-    return out[0..count];
+    return out[0..n];
 }
 
 pub fn index(self: string, str: string) i32 {
@@ -1829,12 +1825,12 @@ pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
             isWindowsAbsolutePathMissingDriveLetter(T, path))
         {
             std.debug.panic("Internal Error: Do not pass posix paths to Windows APIs, was given '{s}'" ++ if (Environment.isDebug) " (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)" else ". Please open an issue on GitHub with a reproduction.", .{
-                if (T == u8) path else std.unicode.fmtUtf16le(path),
+                if (T == u8) path else bun.fmt.utf16(path),
             });
         }
         if (hasPrefixComptimeType(T, path, ":/") and Environment.isDebug) {
             std.debug.panic("Path passed to windows API '{s}' is almost certainly invalid. Where did the drive letter go?", .{
-                if (T == u8) path else std.unicode.fmtUtf16le(path),
+                if (T == u8) path else bun.fmt.utf16(path),
             });
         }
     }
@@ -4508,13 +4504,6 @@ test "firstNonASCII16" {
         const no = std.mem.bytesAsSlice(u16, toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3"));
         try std.testing.expectEqual(@as(u32, 366), firstNonASCII16(@TypeOf(no), no).?);
     }
-}
-
-test "print UTF16" {
-    var err = std.io.getStdErr();
-    const utf16 = comptime toUTF16Literal("❌ ✅ opkay ");
-    try bun.fmt.str.formatUTF16(utf16, err.writer());
-    // std.unicode.fmtUtf16le(utf16le: []const u16)
 }
 
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.

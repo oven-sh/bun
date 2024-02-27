@@ -401,7 +401,7 @@ db.defineFunction(
   (name, age) => "Me" + "o".repeat(name.length) + "w".repeat(age),
 );
 
-db.prepare("SELECT getMeow(name, age) AS sound FROM cats");
+db.query("SELECT getMeow(name, age) AS sound FROM cats");
 ```
 
 If the function is deterministic (which means that the function always returns the same result on the same inputs), you can tell SQLite about that. This enables SQLite to perform additional optimizations in some cases:
@@ -423,9 +423,9 @@ db.defineFunction(
   },
   (...args) => args.join(","),
 );
-db.prepare("SELECT joinWithComma(name) AS sound FROM cats");
-db.prepare("SELECT joinWithComma(name, age) AS sound FROM cats");
-db.prepare("SELECT joinWithComma(id, name, age) AS sound FROM cats");
+db.query("SELECT joinWithComma(name) AS sound FROM cats");
+db.query("SELECT joinWithComma(name, age) AS sound FROM cats");
+db.query("SELECT joinWithComma(id, name, age) AS sound FROM cats");
 ```
 
 ## Reference

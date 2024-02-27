@@ -3132,3 +3132,35 @@ pub const INPUT_RECORD = extern struct {
         FocusEvent: FOCUS_EVENT_RECORD,
     },
 };
+
+pub export fn Bun__UVSignalHandle__init(
+    global: *bun.JSC.JSGlobalObject,
+    signal_num: i32,
+    callback: *const fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.C) void,
+) callconv(.C) ?*libuv.uv_signal_t {
+    const signal = bun.new(libuv.uv_signal_t, undefined);
+    var rc = libuv.uv_signal_init(global.bunVM().uvLoop(), signal);
+    if (rc.errno()) |_| {
+        bun.destroy(signal);
+        return null;
+    }
+
+    rc = libuv.uv_signal_start(signal, callback, signal_num);
+    if (rc.errno()) |_| {
+        libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
+        return null;
+    }
+
+    libuv.uv_unref(@ptrCast(signal));
+
+    return signal;
+}
+
+fn freeWithDefaultAllocator(signal: *anyopaque) callconv(.C) void {
+    bun.destroy(@as(*libuv.uv_signal_t, @alignCast(@ptrCast(signal))));
+}
+
+pub export fn Bun__UVSignalHandle__close(signal: *libuv.uv_signal_t) callconv(.C) void {
+    _ = libuv.uv_signal_stop(signal);
+    libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
+}

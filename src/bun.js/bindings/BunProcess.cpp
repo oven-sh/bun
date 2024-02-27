@@ -674,8 +674,10 @@ static void loadSignalNumberMap()
     });
 }
 
+#if OS(WINDOWS)
 extern "C" uv_signal_t* Bun__UVSignalHandle__init(JSC::JSGlobalObject* lexicalGlobalObject, int signalNumber, void (*callback)(uv_signal_t*, int));
 extern "C" uv_signal_t* Bun__UVSignalHandle__close(uv_signal_t*);
+#endif
 
 #if !OS(WINDOWS)
 void signalHandler(int signalNumber)
@@ -819,7 +821,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
             if (isAdded) {
                 if (!signalToContextIdsMap->contains(signalNumber)) {
                     SignalHandleValue signal_handle = {
+#if OS(WINDOWS)
                         .handle = nullptr,
+#endif
                         .contextIds = {},
                     };
                     signal_handle.contextIds.add(contextId);

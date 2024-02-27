@@ -176,7 +176,7 @@ pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
-pub const WPathBuffer = [windows.PATH_MAX_WIDE]u16;
+pub const WPathBuffer = [std.os.windows.PATH_MAX_WIDE]u16;
 pub const OSPathChar = if (Environment.isWindows) u16 else u8;
 pub const OSPathSliceZ = [:0]const OSPathChar;
 pub const OSPathSlice = []const OSPathChar;
@@ -2089,7 +2089,7 @@ pub const sys = @import("./sys.zig");
 
 pub const Mode = C.Mode;
 
-pub const windows = @import("./windows.zig");
+pub const windows = if (Environment.isWindows) @import("./windows.zig") else struct {};
 
 pub const FDTag = enum {
     none,

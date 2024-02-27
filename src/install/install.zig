@@ -1378,8 +1378,8 @@ pub const PackageInstall = struct {
 
         defer subdir.close();
 
-        var buf: bun.windows.WPathBuffer = undefined;
-        var buf2: bun.windows.WPathBuffer = undefined;
+        var buf: bun.WPathBuffer = undefined;
+        var buf2: bun.WPathBuffer = undefined;
         var to_copy_buf: []u16 = undefined;
         var to_copy_buf2: []u16 = undefined;
         if (comptime Environment.isWindows) {

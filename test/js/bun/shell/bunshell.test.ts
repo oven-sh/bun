@@ -269,6 +269,15 @@ describe("bunshell", () => {
     // });
   });
 
+  describe("latin-1", async () => {
+    test("basic", async () => {
+      await TestBuilder.command`echo ${"à"}`.stdout("à\n").run();
+      await TestBuilder.command`echo ${" à"}`.stdout(" à\n").run();
+      await TestBuilder.command`echo ${"à¿"}`.stdout("à¿\n").run();
+      await TestBuilder.command`echo ${'"à¿"'}`.stdout('"à¿"\n').run();
+    });
+  });
+
   test("redirect Uint8Array", async () => {
     const buffer = new Uint8Array(1 << 20);
     const result = await $`cat ${import.meta.path} > ${buffer}`;
@@ -680,6 +689,24 @@ describe("deno_task", () => {
     await TestBuilder.command`echo 1 > $EMPTY`.stderr("bun: ambiguous redirect: at `echo`\n").exitCode(1).run();
 
     await TestBuilder.command`echo foo bar > file.txt; cat < file.txt`.ensureTempDir().stdout("foo bar\n").run();
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 2>&1`
+      .stdout("Stdout\nStderr\n")
+      .run();
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 1>&2`
+      .stderr("Stdout\nStderr\n")
+      .run();
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 2>&1`
+      .stdout("Stdout\nStderr\n")
+      .quiet()
+      .run();
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 1>&2`
+      .stderr("Stdout\nStderr\n")
+      .quiet()
+      .run();
   });
 
   test("pwd", async () => {

@@ -632,6 +632,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     stdin                                          BunObject_getter_wrap_stdin                                         DontDelete|PropertyCallback
     stdout                                         BunObject_getter_wrap_stdout                                        DontDelete|PropertyCallback
     stringHashCode                                 functionHashCode                                                    DontDelete|Function 1
+    stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 2
     unsafe                                         BunObject_getter_wrap_unsafe                                        DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1

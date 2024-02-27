@@ -47,6 +47,54 @@ declare module "bun" {
    */
   function which(command: string, options?: { PATH?: string; cwd?: string }): string | null;
 
+  /**
+   * Get the column count of a string as it would be displayed in a terminal.
+   * Supports ANSI escape codes, emoji, and wide characters.
+   *
+   * This is useful for:
+   * - Aligning text in a terminal
+   * - Quickly checking if a string contains ANSI escape codes
+   * - Measuring the width of a string in a terminal
+   *
+   * This API is designed to match the popular "string-width" package, so that
+   * existing code can be easily ported to Bun and vice versa.
+   *
+   * @returns The width of the string in columns
+   *
+   * ## Examples
+   * @example
+   * ```ts
+   * import { stringWidth } from "bun";
+   *
+   * console.log(stringWidth("abc")); // 3
+   * console.log(stringWidth("👩‍👩‍👧‍👦")); // 1
+   * console.log(stringWidth("\u001b[31mhello\u001b[39m")); // 5
+   * console.log(stringWidth("\u001b[31mhello\u001b[39m", { countAnsiEscapeCodes: false })); // 5
+   * console.log(stringWidth("\u001b[31mhello\u001b[39m", { countAnsiEscapeCodes: true })); // 13
+   * ```
+   *
+   */
+  function stringWidth(
+    /**
+     * The string to measure
+     */
+    input: string,
+    options?: {
+      /**
+       * If `true`, count ANSI escape codes as part of the string width. If `false`, ANSI escape codes are ignored when calculating the string width.
+       *
+       * @default false
+       */
+      countAnsiEscapeCodes?: boolean;
+      /**
+       * When it's ambiugous and `true`, count emoji as 1 characters wide. If `false`, emoji are counted as 2 character wide.
+       *
+       * @default true
+       */
+      ambiguousIsNarrow?: boolean;
+    },
+  ): number;
+
   export type ShellFunction = (input: Uint8Array) => Uint8Array;
 
   export type ShellExpression =
@@ -777,7 +825,7 @@ declare module "bun" {
    * console.log(path); // "/foo/bar.txt"
    * ```
    */
-  function fileURLToPath(url: URL): string;
+  function fileURLToPath(url: URL | string): string;
 
   /**
    * Fast incremental writer that becomes an `ArrayBuffer` on end().
@@ -4079,19 +4127,21 @@ declare module "bun" {
       // windowsHide?: boolean;
     }
 
-    type OptionsToSubprocess<Opts extends OptionsObject> = Opts extends OptionsObject<infer In, infer Out, infer Err>
-      ? Subprocess<
-          // "Writable extends In" means "if In === Writable",
-          // aka if true that means the user didn't specify anything
-          Writable extends In ? "ignore" : In,
-          Readable extends Out ? "pipe" : Out,
-          Readable extends Err ? "inherit" : Err
-        >
-      : Subprocess<Writable, Readable, Readable>;
+    type OptionsToSubprocess<Opts extends OptionsObject> =
+      Opts extends OptionsObject<infer In, infer Out, infer Err>
+        ? Subprocess<
+            // "Writable extends In" means "if In === Writable",
+            // aka if true that means the user didn't specify anything
+            Writable extends In ? "ignore" : In,
+            Readable extends Out ? "pipe" : Out,
+            Readable extends Err ? "inherit" : Err
+          >
+        : Subprocess<Writable, Readable, Readable>;
 
-    type OptionsToSyncSubprocess<Opts extends OptionsObject> = Opts extends OptionsObject<any, infer Out, infer Err>
-      ? SyncSubprocess<Readable extends Out ? "pipe" : Out, Readable extends Err ? "pipe" : Err>
-      : SyncSubprocess<Readable, Readable>;
+    type OptionsToSyncSubprocess<Opts extends OptionsObject> =
+      Opts extends OptionsObject<any, infer Out, infer Err>
+        ? SyncSubprocess<Readable extends Out ? "pipe" : Out, Readable extends Err ? "pipe" : Err>
+        : SyncSubprocess<Readable, Readable>;
 
     type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
 

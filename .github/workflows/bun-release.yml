@@ -51,7 +51,7 @@ jobs:
         working-directory: packages/bun-release
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup GPG
         uses: crazy-max/ghaction-import-gpg@v5
         with:
@@ -81,7 +81,7 @@ jobs:
         working-directory: packages/bun-release
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
@@ -105,7 +105,7 @@ jobs:
         working-directory: packages/bun-types
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
@@ -170,12 +170,12 @@ jobs:
             suffix: -distroless
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup Docker emulator
         uses: docker/setup-qemu-action@v2
       - id: buildx
         name: Setup Docker buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
         with:
           platforms: linux/amd64,linux/arm64
       - id: metadata
@@ -192,12 +192,12 @@ jobs:
             type=match,pattern=(bun-v)?(canary|\d+.\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
             type=match,pattern=(bun-v)?(canary|\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
       - name: Login to Docker
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Push to Docker
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v5
         with:
           context: ./dockerhub/${{ matrix.dir || matrix.variant }}
           platforms: linux/amd64,linux/arm64
@@ -216,7 +216,7 @@ jobs:
     if: ${{ github.event_name == 'release' || github.event.inputs.use-homebrew == 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: oven-sh/homebrew-bun
           token: ${{ secrets.ROBOBUN_TOKEN }}
@@ -252,7 +252,7 @@ jobs:
         working-directory: packages/bun-release
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:

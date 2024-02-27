@@ -211,7 +211,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 
                         return Writable{ .pipe = sink };
                     },
-                    .array_buffer, .blob => {
+                    .dup2, .array_buffer, .blob => {
                         var buffered_input: BufferedInput = .{ .fd = fd, .source = undefined, .subproc = subproc };
                         switch (stdio) {
                             .array_buffer => |array_buffer| {
@@ -383,7 +383,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
                         return Readable{ .inherit = {} };
                     },
                     .path => Readable{ .ignore = {} },
-                    .blob, .fd => Readable{ .fd = fd },
+                    .dup2, .blob, .fd => Readable{ .fd = fd },
                     .array_buffer => {
                         var subproc_readable_ptr = subproc.getIO(kind);
                         subproc_readable_ptr.* = Readable{
@@ -1447,6 +1447,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             spawn_args.stdio[0].setUpChildIoPosixSpawn(
                 &actions,
                 stdin_pipe,
+                stderr_pipe,
                 bun.STDIN_FD,
             ) catch |err| {
                 return .{ .err = globalThis.handleError(err, "in configuring child stdin") };
@@ -1455,6 +1456,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
             spawn_args.stdio[1].setUpChildIoPosixSpawn(
                 &actions,
                 stdout_pipe,
+                stderr_pipe,
                 bun.STDOUT_FD,
             ) catch |err| {
                 return .{ .err = globalThis.handleError(err, "in configuring child stdout") };
@@ -1462,6 +1464,7 @@ pub fn NewShellSubprocess(comptime EventLoopKind: JSC.EventLoopKind, comptime Sh
 
             spawn_args.stdio[2].setUpChildIoPosixSpawn(
                 &actions,
+                stderr_pipe,
                 stderr_pipe,
                 bun.STDERR_FD,
             ) catch |err| {

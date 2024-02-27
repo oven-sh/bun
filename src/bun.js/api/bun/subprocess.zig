@@ -1267,15 +1267,20 @@ pub const Subprocess = struct {
             this.stdin.buffer.close();
         }
 
-        defer {
-            this.updateHasPendingActivity();
-        }
+        var did_update_has_pending_activity = false;
+        defer if (!did_update_has_pending_activity) this.updateHasPendingActivity();
+
         const loop = globalThis.bunVM().eventLoop();
 
         if (!is_sync) {
             if (this.exit_promise.trySwap()) |promise| {
                 loop.enter();
                 defer loop.exit();
+
+                if (!did_update_has_pending_activity) {
+                    this.updateHasPendingActivity();
+                    did_update_has_pending_activity = true;
+                }
 
                 switch (status) {
                     .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
@@ -1305,6 +1310,11 @@ pub const Subprocess = struct {
                     this.getSignalCode(globalThis),
                     waitpid_value,
                 };
+
+                if (!did_update_has_pending_activity) {
+                    this.updateHasPendingActivity();
+                    did_update_has_pending_activity = true;
+                }
 
                 loop.runCallback(
                     callback,

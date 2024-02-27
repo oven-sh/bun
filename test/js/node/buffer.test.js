@@ -6,7 +6,7 @@ const BufferModule = await import("buffer");
 beforeEach(() => gc());
 afterEach(() => gc());
 
-it("#9160 fill", () => {
+it("#9120 fill", () => {
   let abBuf = Buffer.alloc(2, "ab");
   let x = Buffer.alloc(1);
   x.fill(abBuf);
@@ -20,7 +20,7 @@ it("#9160 fill", () => {
   }
 });
 
-it("#9160 alloc", () => {
+it("#9120 alloc", () => {
   let abBuf = Buffer.alloc(2, "ab");
   let x = Buffer.alloc(1, abBuf);
   expect(x.toString()).toBe("a");

@@ -1033,8 +1033,8 @@ pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) 
     return buf;
 }
 
-pub inline fn joinAlloc(allocator: std.mem.Allocator, strs: anytype) ![]u8 {
-    const buf = try allocator.alloc(u8, len: {
+pub inline fn concatAllocT(comptime T: type, allocator: std.mem.Allocator, strs: anytype) ![]T {
+    const buf = try allocator.alloc(T, len: {
         var len: usize = 0;
         inline for (strs) |s| {
             len += s.len;
@@ -1042,28 +1042,24 @@ pub inline fn joinAlloc(allocator: std.mem.Allocator, strs: anytype) ![]u8 {
         break :len len;
     });
 
-    var remain = buf;
-    inline for (strs) |s| {
-        if (s.len > 0) {
-            @memcpy(remain, s);
-            remain = remain[s.len..];
-        }
-    }
-
-    return buf;
+    return concatBufT(T, buf, strs) catch |e| switch (e) {
+        error.NoSpaceLeft => unreachable, // exact size calculated
+    };
 }
 
-pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8 {
+pub inline fn concatBufT(comptime T: type, out: []T, strs: anytype) ![]T {
     var remain = out;
-    var count: usize = 0;
-    inline for (0..parts_len) |i| {
-        const part = parts[i];
-        bun.copy(u8, remain, part);
-        remain = remain[part.len..];
-        count += part.len;
+    var n: usize = 0;
+    inline for (strs) |s| {
+        if (s.len > remain.len) {
+            return error.NoSpaceLeft;
+        }
+        @memcpy(remain.ptr, s);
+        remain = remain[s.len..];
+        n += s.len;
     }
 
-    return out[0..count];
+    return out[0..n];
 }
 
 pub fn index(self: string, str: string) i32 {

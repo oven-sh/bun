@@ -853,20 +853,25 @@ pub const Expect = struct {
         }
 
         const not = this.flags.not;
-        var pass = true;
+        var pass = brk: {
+            const count = expected.getLength(globalObject);
 
-        const count = expected.getLength(globalObject);
+            // jest-extended checks for truthiness before calling hasOwnProperty
+            // https://github.com/jest-community/jest-extended/blob/711fdcc54d68c2b2c1992c7cfbdf0d0bd6be0f4d/src/matchers/toContainKeys.js#L1-L6
+            if (!value.coerce(bool, globalObject)) break :brk count == 0;
 
-        var i: u32 = 0;
+            var i: u32 = 0;
 
-        while (i < count) : (i += 1) {
-            const key = expected.getIndex(globalObject, i);
+            while (i < count) : (i += 1) {
+                const key = expected.getIndex(globalObject, i);
 
-            if (!value.hasOwnPropertyValue(globalObject, key)) {
-                pass = false;
-                break;
+                if (!value.hasOwnPropertyValue(globalObject, key)) {
+                    break :brk false;
+                }
             }
-        }
+
+            break :brk true;
+        };
 
         if (not) pass = !pass;
         if (pass) return thisValue;

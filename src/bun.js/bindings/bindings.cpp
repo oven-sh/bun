@@ -2497,9 +2497,13 @@ JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue 
 bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key)
 {
     JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue value = JSC::JSValue::decode(jsValue);
-    return value.toObject(globalObject)->hasOwnProperty(globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(key))));
+    JSObject* obj = value.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    RELEASE_AND_RETURN(scope, JSC::objectPrototypeHasOwnProperty(globalObject, obj, JSC::Identifier::fromString(vm, Zig::toString(key))));
 }
 
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,

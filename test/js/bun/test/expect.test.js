@@ -2404,6 +2404,9 @@ describe("expect()", () => {
     expect(o).toContainKey("c");
     expect(o).not.toContainKey("z");
     expect(o).not.toContainKey({ a: "foo" });
+    expect(() => {
+      expect(undefined).not.toContainKey(["id"]);
+    }).toThrow("undefined is not an object");
   });
 
   test("toContainAnyKeys", () => {
@@ -2421,6 +2424,19 @@ describe("expect()", () => {
     expect({ a: "foo", 1: "test" }).toContainKeys(["a", 1]);
     expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["a", "b", "e"]);
     expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["z"]);
+
+    expect(undefined).not.toContainKeys(["id"]);
+    expect("").toContainKeys([]);
+    expect("").not.toContainKeys(["id"]);
+    expect(false).toContainKeys([]);
+    expect(false).not.toContainKeys(["id"]);
+
+    expect(() => {
+      expect(undefined).toContainKeys(["id"]);
+    }).toThrow(/(Received:)(.*undefined)/);
+    expect(() => {
+      expect(null).toContainKeys(["id"]);
+    }).toThrow(/(Received:)(.*null)/);
   });
 
   test("toBeTruthy()", () => {

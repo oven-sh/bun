@@ -31,7 +31,7 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <errno.h>
 #endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void*);
+void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs);
 
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
@@ -175,11 +175,7 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-void bun_on_tick_before(void* ctx);
-void bun_on_tick_after(void* ctx);
-
-
-void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickCallbackContext) {
+void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs) {
     if (loop->num_polls == 0)
         return;
 
@@ -189,10 +185,6 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickC
     // Otherwise we will keep restarting the timer.
     if(!timer_callback->cb) {
         us_loop_integrate(loop);
-    }
-
-    if (tickCallbackContext) {
-        bun_on_tick_before(tickCallbackContext);
     }
 
     /* Emit pre callback */
@@ -220,10 +212,6 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs, void* tickC
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
     }
 #endif
-
-    if (tickCallbackContext) {
-        bun_on_tick_after(tickCallbackContext);
-    }
 
     /* Iterate ready polls, dispatching them by type */
     for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {

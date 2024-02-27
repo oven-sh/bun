@@ -50,7 +50,7 @@ pub fn isPackagePath(path: string) bool {
     // Always check for posix absolute paths (starts with "/")
     // But don't check window's style on posix
     // For a more in depth explanation, look above where `isPackagePathNotAbsolute` is used.
-    return !std.fs.path.isAbsolute(path) and @call(.always_inline, isPackagePathNotAbsolute, .{path});
+    return !std.fs.path.isAbsolute(path) and @call(bun.callmod_inline, isPackagePathNotAbsolute, .{path});
 }
 
 pub fn isPackagePathNotAbsolute(non_absolute_path: string) bool {
@@ -1494,7 +1494,7 @@ pub const Resolver = struct {
         r: *ThisResolver,
         result: *const Result,
     ) ?*const PackageJSON {
-        return @call(.always_inline, packageJSONForResolvedNodeModuleWithIgnoreMissingName, .{ r, result, true });
+        return @call(bun.callmod_inline, packageJSONForResolvedNodeModuleWithIgnoreMissingName, .{ r, result, true });
     }
 
     // This is a fallback, hopefully not called often. It should be relatively quick because everything should be in the cache.
@@ -1582,11 +1582,18 @@ pub const Resolver = struct {
 
     const dev = Output.scoped(.Resolver, false);
 
-    pub fn bustDirCache(r: *ThisResolver, path: string) void {
+    /// Bust the directory cache for the given path.
+    /// Returns `true` if something was deleted, otherwise `false`.
+    pub fn bustDirCache(r: *ThisResolver, path: string) bool {
         dev("Bust {s}", .{path});
-        std.debug.assert(path[path.len - 1] == std.fs.path.sep);
-        r.fs.fs.bustEntriesCache(path);
-        r.dir_cache.remove(path);
+        if (Environment.allow_assert) {
+            if (path[path.len - 1] != std.fs.path.sep) {
+                std.debug.panic("Expected a trailing slash on {s}", .{path});
+            }
+        }
+        const first_bust = r.fs.fs.bustEntriesCache(path);
+        const second_bust = r.dir_cache.remove(path);
+        return first_bust or second_bust;
     }
 
     pub fn loadNodeModules(
@@ -2111,7 +2118,7 @@ pub const Resolver = struct {
                 dir_entries_ptr.fd = bun.toFD(open_dir.fd);
             }
 
-            bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
+            bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2772,7 +2779,7 @@ pub const Resolver = struct {
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = dir_entries_ptr,
                 });
-                bun.fs.debug("readdir({d}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
+                bun.fs.debug("readdir({}, {s}) = {d}", .{ bun.toFD(open_dir.fd), dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.
@@ -2877,8 +2884,8 @@ pub const Resolver = struct {
                 // because we want the output to always be deterministic
                 if (strings.startsWith(path, prefix) and
                     strings.endsWith(path, suffix) and
-                    (prefix.len >= longest_match_prefix_length and
-                    suffix.len > longest_match_suffix_length))
+                    (prefix.len > longest_match_prefix_length or
+                    (prefix.len == longest_match_prefix_length and suffix.len > longest_match_suffix_length)))
                 {
                     longest_match_prefix_length = @as(i32, @intCast(prefix.len));
                     longest_match_suffix_length = @as(i32, @intCast(suffix.len));

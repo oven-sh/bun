@@ -56,6 +56,20 @@ async function hashAllFiles(dir: string) {
   return hashes;
 }
 
+function normalizeOutput(stdout: string) {
+  return (
+    stdout
+      // remove timestamps from output
+      .replace(/\(\d+(?:\.\d+)? m?s\)/gi, "")
+      // TODO: this should not be necessary. it indicates a subtle bug in bun.
+      // normalize displayed bytes (round down to 0)
+      .replace(/\d(?:\.\d+)?(?= k?B)/g, "0")
+      // TODO: this should not be necessary. it indicates a subtle bug in bun.
+      // normalize multiple spaces to single spaces (must perform last)
+      .replace(/\s{2,}/g, " ")
+  );
+}
+
 test("next build works", async () => {
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
@@ -105,20 +119,8 @@ test("next build works", async () => {
   expect(nodeBuild.exitCode).toBe(0);
   expect(bunBuild.exitCode).toBe(0);
 
-  const bunCliOutput = (await new Response(bunBuild.stdout).text())
-    // remove timestamps from output
-    .replace(/\(\d+(?:\.\d+)? m?s\)/gi, "");
-  // normalize displayed bytes (round down to 0)
-  // .replace(/\d(?:\.\d+)?(?= k?B)/g, "0")
-  // normalize multiple spaces to single spaces (must perform last)
-  // .replace(/\s{2,}/g, " ");
-  const nodeCliOutput = (await new Response(nodeBuild.stdout).text())
-    // remove timestamps from output
-    .replace(/\(\d+(?:\.\d+)? m?s\)/gi, "");
-  // normalize displayed bytes (round down to 0)
-  // .replace(/\d(?:\.\d+)?(?= k?B)/g, "0")
-  // normalize multiple spaces to single spaces (must perform last)
-  // .replace(/\s{2,}/g, " ");
+  const bunCliOutput = normalizeOutput(await new Response(bunBuild.stdout).text());
+  const nodeCliOutput = normalizeOutput(await new Response(nodeBuild.stdout).text());
 
   expect(bunCliOutput).toBe(nodeCliOutput);
 

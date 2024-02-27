@@ -486,7 +486,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
 
             if (!out_set) {
                 buffered_writer = .{
-                    .unbuffered_writer = writer(),
+                    .unbuffered_writer = scopedWriter(),
                 };
                 out = buffered_writer.writer();
                 out_set = true;
@@ -495,7 +495,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
             lock.lock();
             defer lock.unlock();
 
-            if (Output.enable_ansi_colors_stderr) {
+            if (Output.enable_ansi_colors_stdout and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
                 out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch {
                     really_disable = true;
                     return;
@@ -802,6 +802,56 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     } else {
         prettyErrorln("<red>{s}<r><d>:<r> " ++ fmt, .{display_name} ++ args);
     }
+}
+
+fn scopedWriter() std.fs.File.Writer {
+    if (comptime !Environment.isDebug) {
+        @compileError("scopedWriter() should only be called in debug mode");
+    }
+
+    const Scoped = struct {
+        pub var loaded_env: ?bool = null;
+        pub var scoped_file_writer: std.fs.File.Writer = undefined;
+        pub var scoped_file_writer_lock: bun.Lock = bun.Lock.init();
+    };
+    std.debug.assert(source_set);
+    Scoped.scoped_file_writer_lock.lock();
+    defer Scoped.scoped_file_writer_lock.unlock();
+    const use_env = Scoped.loaded_env orelse brk: {
+        if (bun.getenvZ("BUN_DEBUG")) |path| {
+            if (path.len > 0 and !strings.eql(path, "0") and !strings.eql(path, "false")) {
+                if (std.fs.path.dirname(path)) |dir| {
+                    std.fs.cwd().makePath(dir) catch {};
+                }
+
+                // do not use libuv through this code path, since it might not be initialized yet.
+                const fd = std.os.openat(
+                    std.fs.cwd().fd,
+                    path,
+                    std.os.O.TRUNC | std.os.O.CREAT | std.os.O.WRONLY,
+                    0o644,
+                ) catch |err_| {
+                    // Ensure we don't panic inside panic
+                    Scoped.loaded_env = false;
+                    Scoped.scoped_file_writer_lock.unlock();
+                    Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(err_), path });
+                };
+                Scoped.scoped_file_writer = bun.toFD(fd).asFile().writer();
+                Scoped.loaded_env = true;
+                break :brk true;
+            }
+        }
+
+        Scoped.loaded_env = false;
+
+        break :brk false;
+    };
+
+    if (use_env) {
+        return Scoped.scoped_file_writer;
+    }
+
+    return source.stream.writer();
 }
 
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`

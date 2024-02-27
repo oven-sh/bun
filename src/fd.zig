@@ -302,7 +302,21 @@ pub const FDImpl = packed struct {
         return JSValue.jsNumberFromInt32(value.makeLibUVOwned().uv());
     }
 
-    pub fn format(this: FDImpl, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: FDImpl, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (fmt.len != 0) {
+            // The reason for this error is because formatting FD as an integer on windows is
+            // ambiguous and almost certainly a mistake. You probably meant to format fd.cast().
+            //
+            // Remember this formatter will
+            // - on posix, print the numebr
+            // - on windows, print if it is a handle or a libuv file descriptor
+            // - in debug on all platforms, print the path of the file descriptor
+            //
+            // Not having this error caused a linux+debug only crash in bun.sys.getFdPath because
+            // we forgot to change the thing being printed to "fd.cast()" when FDImpl was introduced.
+            @compileError("invalid format string for FDImpl.format. must be empty like '{}'");
+        }
+
         if (!this.isValid()) {
             try writer.writeAll("[invalid_fd]");
             return;
@@ -336,7 +350,7 @@ pub const FDImpl = packed struct {
                                 const path = std.os.windows.GetFinalPathNameByHandle(handle, .{ .volume_name = .Dos }, &fd_path) catch break :print_with_path;
                                 return try writer.print("{d}[{}]", .{
                                     this.value.as_system,
-                                    std.unicode.fmtUtf16le(path),
+                                    bun.fmt.utf16(path),
                                 });
                             }
                         }

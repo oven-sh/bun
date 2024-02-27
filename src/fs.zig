@@ -427,15 +427,15 @@ pub const FileSystem = struct {
 
     // }
     pub fn normalize(_: *@This(), str: string) string {
-        return @call(.always_inline, path_handler.normalizeString, .{ str, true, .auto });
+        return @call(bun.callmod_inline, path_handler.normalizeString, .{ str, true, .auto });
     }
 
     pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
-        return @call(.always_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
+        return @call(bun.callmod_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
     }
 
     pub fn join(_: *@This(), parts: anytype) string {
-        return @call(.always_inline, path_handler.joinStringBuf, .{
+        return @call(bun.callmod_inline, path_handler.joinStringBuf, .{
             &join_buf,
             parts,
             .loose,
@@ -443,7 +443,7 @@ pub const FileSystem = struct {
     }
 
     pub fn joinBuf(_: *@This(), parts: anytype, buf: []u8) string {
-        return @call(.always_inline, path_handler.joinStringBuf, .{
+        return @call(bun.callmod_inline, path_handler.joinStringBuf, .{
             buf,
             parts,
             .loose,
@@ -451,14 +451,14 @@ pub const FileSystem = struct {
     }
 
     pub fn relative(_: *@This(), from: string, to: string) string {
-        return @call(.always_inline, path_handler.relative, .{
+        return @call(bun.callmod_inline, path_handler.relative, .{
             from,
             to,
         });
     }
 
     pub fn relativePlatform(_: *@This(), from: string, to: string, comptime platform: path_handler.Platform) string {
-        return @call(.always_inline, path_handler.relativePlatform, .{
+        return @call(bun.callmod_inline, path_handler.relativePlatform, .{
             from,
             to,
             platform,
@@ -467,14 +467,14 @@ pub const FileSystem = struct {
     }
 
     pub fn relativeTo(f: *@This(), to: string) string {
-        return @call(.always_inline, path_handler.relative, .{
+        return @call(bun.callmod_inline, path_handler.relative, .{
             f.top_level_dir,
             to,
         });
     }
 
     pub fn relativeFrom(f: *@This(), from: string) string {
-        return @call(.always_inline, path_handler.relative, .{
+        return @call(bun.callmod_inline, path_handler.relative, .{
             from,
             f.top_level_dir,
         });
@@ -735,7 +735,7 @@ pub const FileSystem = struct {
                 else
                     bun.strings.toWPathNormalized(&existing_buf, name);
                 if (comptime Environment.allow_assert) {
-                    debug("moveFileExW({s}, {s})", .{ bun.fmt.fmtUTF16(existing), bun.fmt.fmtUTF16(new) });
+                    debug("moveFileExW({s}, {s})", .{ bun.fmt.utf16(existing), bun.fmt.utf16(new) });
                 }
 
                 if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
@@ -758,8 +758,9 @@ pub const FileSystem = struct {
             return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd.int() + 1) * 2);
         }
 
-        pub fn bustEntriesCache(rfs: *RealFS, file_path: string) void {
-            rfs.entries.remove(file_path);
+        /// Returns `true` if an entry was removed
+        pub fn bustEntriesCache(rfs: *RealFS, file_path: string) bool {
+            return rfs.entries.remove(file_path);
         }
 
         pub const Limit = struct {

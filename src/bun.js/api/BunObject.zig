@@ -318,6 +318,17 @@ pub fn shellLex(
     defer arena.deinit();
 
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+    var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
+        globalThis.throwOutOfMemory();
+        return .undefined;
+    };
+    defer {
+        for (jsstrings.items[0..]) |bunstr| {
+            bunstr.deref();
+        }
+        jsstrings.deinit();
+    }
     var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
     defer {
         for (jsobjs.items) |jsval| {
@@ -326,7 +337,7 @@ pub fn shellLex(
     }
 
     var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
+    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     })) {
@@ -335,14 +346,14 @@ pub fn shellLex(
 
     const lex_result = brk: {
         if (bun.strings.isAllASCII(script.items[0..])) {
-            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..]);
+            var lexer = Shell.LexerAscii.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
             lexer.lex() catch |err| {
                 globalThis.throwError(err, "failed to lex shell");
                 return JSValue.undefined;
             };
             break :brk lexer.get_result();
         }
-        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..]);
+        var lexer = Shell.LexerUnicode.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
         lexer.lex() catch |err| {
             globalThis.throwError(err, "failed to lex shell");
             return JSValue.undefined;
@@ -393,6 +404,17 @@ pub fn shellParse(
     defer arena.deinit();
 
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+    var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
+        globalThis.throwOutOfMemory();
+        return .undefined;
+    };
+    defer {
+        for (jsstrings.items[0..]) |bunstr| {
+            bunstr.deref();
+        }
+        jsstrings.deinit();
+    }
     var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
     defer {
         for (jsobjs.items) |jsval| {
@@ -400,7 +422,7 @@ pub fn shellParse(
         }
     }
     var script = std.ArrayList(u8).init(arena.allocator());
-    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
+    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
         globalThis.throwOutOfMemory();
         return JSValue.undefined;
     })) {
@@ -410,7 +432,7 @@ pub fn shellParse(
     var out_parser: ?bun.shell.Parser = null;
     var out_lex_result: ?bun.shell.LexResult = null;
 
-    const script_ast = bun.shell.Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], &out_parser, &out_lex_result) catch |err| {
+    const script_ast = bun.shell.Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], jsstrings.items[0..], &out_parser, &out_lex_result) catch |err| {
         if (err == bun.shell.ParseError.Lex) {
             std.debug.assert(out_lex_result != null);
             const str = out_lex_result.?.combineErrors(arena.allocator());
@@ -545,17 +567,21 @@ pub fn shellEscape(
 
     if (bunstr.isUTF16()) {
         if (bun.shell.needsEscapeUTF16(bunstr.utf16())) {
-            bun.shell.escapeUnicode(bunstr.byteSlice(), &outbuf) catch {
+            const has_invalid_utf16 = bun.shell.escapeUtf16(bunstr.utf16(), &outbuf, true) catch {
                 globalThis.throwOutOfMemory();
                 return .undefined;
             };
+            if (has_invalid_utf16) {
+                globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
+                return .undefined;
+            }
             return bun.String.createUTF8(outbuf.items[0..]).toJS(globalThis);
         }
         return jsval;
     }
 
-    if (bun.shell.needsEscape(bunstr.latin1())) {
-        bun.shell.escape(bunstr.byteSlice(), &outbuf) catch {
+    if (bun.shell.needsEscapeUtf8AsciiLatin1(bunstr.latin1())) {
+        bun.shell.escape8Bit(bunstr.byteSlice(), &outbuf, true) catch {
             globalThis.throwOutOfMemory();
             return .undefined;
         };
@@ -913,6 +939,7 @@ pub fn getStdin(
     store.ref();
     var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
     blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -925,6 +952,7 @@ pub fn getStderr(
     store.ref();
     var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
     blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -937,6 +965,7 @@ pub fn getStdout(
     store.ref();
     var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
     blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
@@ -951,7 +980,52 @@ pub fn getMain(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
-    return ZigString.init(globalThis.bunVM().main).toValueGC(globalThis);
+    const vm = globalThis.bunVM();
+
+    // Attempt to use the resolved filesystem path
+    // This makes `eval('require.main === module')` work when the main module is a symlink.
+    // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
+    use_resolved_path: {
+        if (vm.main_resolved_path.isEmpty()) {
+            // If it's from eval, don't try to resolve it.
+            if (strings.hasSuffixComptime(vm.main, "[eval]")) {
+                break :use_resolved_path;
+            }
+
+            const fd = bun.sys.openat(
+                // avoid going thorugh libuv for this one.
+                bun.toFD(std.fs.cwd().fd),
+
+                &(std.os.toPosixPath(vm.main) catch break :use_resolved_path),
+
+                // Open with the minimum permissions necessary for resolving the file path.
+                if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY,
+
+                0,
+            ).unwrap() catch break :use_resolved_path;
+
+            defer _ = bun.sys.close(fd);
+            if (comptime Environment.isWindows) {
+                var wpath: bun.WPathBuffer = undefined;
+                const fdpath = bun.getFdPathW(fd, &wpath) catch break :use_resolved_path;
+                vm.main_resolved_path = bun.String.createUTF16(fdpath);
+            } else {
+                var path: bun.PathBuffer = undefined;
+                const fdpath = bun.getFdPath(fd, &path) catch break :use_resolved_path;
+
+                // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
+                if (bun.String.tryCreateAtom(fdpath)) |atom| {
+                    vm.main_resolved_path = atom;
+                } else {
+                    vm.main_resolved_path = bun.String.createUTF8(fdpath);
+                }
+            }
+        }
+
+        return vm.main_resolved_path.toJS(globalThis);
+    }
+
+    return ZigString.init(vm.main).toValueGC(globalThis);
 }
 
 pub fn getAssetPrefix(
@@ -1923,7 +1997,19 @@ pub const Crypto = struct {
                     return true;
                 },
                 .bcrypt => {
-                    pwhash.bcrypt.strVerify(previous_hash, password, .{ .allocator = allocator }) catch |err| {
+                    var password_to_use = password;
+                    var outbuf: [bun.sha.SHA512.digest]u8 = undefined;
+
+                    // bcrypt silently truncates passwords longer than 72 bytes
+                    // we use SHA512 to hash the password if it's longer than 72 bytes
+                    if (password.len > 72) {
+                        var sha_512 = bun.sha.SHA512.init();
+                        defer sha_512.deinit();
+                        sha_512.update(password);
+                        sha_512.final(&outbuf);
+                        password_to_use = &outbuf;
+                    }
+                    pwhash.bcrypt.strVerify(previous_hash, password_to_use, .{ .allocator = allocator }) catch |err| {
                         if (err == error.PasswordVerificationFailed) {
                             return false;
                         }
@@ -2079,6 +2165,7 @@ pub const Crypto = struct {
                     .err => {
                         const error_instance = value.toErrorInstance(globalObject);
                         globalObject.throwValue(error_instance);
+                        return .zero;
                     },
                     .hash => |h| {
                         return JSC.ZigString.init(h).toValueGC(globalObject);
@@ -5133,19 +5220,24 @@ fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) cal
     defer str.deref();
 
     var count_ansi_escapes = false;
+    var ambiguous_as_wide = false;
 
     if (options_object.isObject()) {
         if (options_object.getTruthy(globalObject, "countAnsiEscapeCodes")) |count_ansi_escapes_value| {
             if (count_ansi_escapes_value.isBoolean())
                 count_ansi_escapes = count_ansi_escapes_value.toBoolean();
         }
+        if (options_object.getTruthy(globalObject, "ambiguousIsNarrow")) |ambiguous_is_narrow| {
+            if (ambiguous_is_narrow.isBoolean())
+                ambiguous_as_wide = !ambiguous_is_narrow.toBoolean();
+        }
     }
 
     if (count_ansi_escapes) {
-        return JSC.jsNumber(str.visibleWidth());
+        return JSC.jsNumber(str.visibleWidth(ambiguous_as_wide));
     }
 
-    return JSC.jsNumber(str.visibleWidthExcludeANSIColors());
+    return JSC.jsNumber(str.visibleWidthExcludeANSIColors(ambiguous_as_wide));
 }
 
 /// EnvironmentVariables is runtime defined.
@@ -5274,10 +5366,8 @@ pub const JSZlib = struct {
 
         reader.readAll() catch {
             defer reader.deinit();
-            if (reader.errorMessage()) |msg| {
-                return ZigString.init(msg).toErrorInstance(globalThis);
-            }
-            return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
+            globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+            return .zero;
         };
         reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
         reader.list.capacity = reader.list.items.len;
@@ -5306,10 +5396,8 @@ pub const JSZlib = struct {
 
         reader.readAll() catch {
             defer reader.deinit();
-            if (reader.errorMessage()) |msg| {
-                return ZigString.init(msg).toErrorInstance(globalThis);
-            }
-            return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
+            globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+            return .zero;
         };
         reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
         reader.list.capacity = reader.list.items.len;
@@ -5336,10 +5424,8 @@ pub const JSZlib = struct {
 
         reader.readAll() catch {
             defer reader.deinit();
-            if (reader.errorMessage()) |msg| {
-                return ZigString.init(msg).toErrorInstance(globalThis);
-            }
-            return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
+            globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+            return .zero;
         };
         reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
         reader.list.capacity = reader.list.items.len;

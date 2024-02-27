@@ -1226,7 +1226,7 @@ var kYanking = Symbol("_yanking");
 var kYankPop = Symbol("_yankPop");
 
 // Event symbols
-var kFirstEventParam = Symbol("nodejs.kFirstEventParam");
+var kFirstEventParam = SymbolFor("nodejs.kFirstEventParam");
 
 // class InterfaceConstructor extends EventEmitter {
 // #onSelfCloseWithTerminal;

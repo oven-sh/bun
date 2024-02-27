@@ -86,6 +86,8 @@ pub const Blob = struct {
         closing,
     };
 
+    reported_estimated_size: usize = 0,
+
     size: SizeType = 0,
     offset: SizeType = 0,
     /// When set, the blob will be freed on finalization callbacks
@@ -1424,32 +1426,29 @@ pub const Blob = struct {
         return blob_;
     }
 
-    fn estimatedByteSize(this: *Blob) usize {
+    fn calculateEstimatedByteSize(this: *Blob) void {
         // in-memory size. not the size on disk.
-        if (this.size != Blob.max_size) {
-            return this.size;
-        }
-
-        const store = this.store orelse return 0;
-        if (store.data == .bytes) {
-            return store.data.bytes.len;
-        }
-
-        return 0;
-    }
-
-    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
-        var size = this.estimatedByteSize() + @sizeOf(Blob);
+        var size: usize = @sizeOf(Blob);
 
         if (this.store) |store| {
             size += @sizeOf(Blob.Store);
-            size += switch (store.data) {
-                .bytes => store.data.bytes.stored_name.estimatedSize(),
-                .file => store.data.file.pathlike.estimatedSize(),
-            };
+            switch (store.data) {
+                .bytes => {
+                    size += store.data.bytes.stored_name.estimatedSize();
+                    size += if (this.size != Blob.max_size)
+                        this.size
+                    else
+                        store.data.bytes.len;
+                },
+                .file => size += store.data.file.pathlike.estimatedSize(),
+            }
         }
 
-        return size + (this.content_type.len * @as(usize, @intFromBool(this.content_type_allocated)));
+        this.reported_estimated_size = size + (this.content_type.len * @intFromBool(this.content_type_allocated));
+    }
+
+    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
+        return this.reported_estimated_size;
     }
 
     comptime {
@@ -3415,6 +3414,8 @@ pub const Blob = struct {
             },
         }
 
+        blob.calculateEstimatedByteSize();
+
         var blob_ = bun.new(Blob, blob);
         blob_.allocator = allocator;
         return blob_;
@@ -3583,6 +3584,15 @@ pub const Blob = struct {
 
         duped.allocator = null;
         return duped;
+    }
+
+    pub fn toJS(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(this.allocator != null);
+        }
+
+        this.calculateEstimatedByteSize();
+        return Blob.toJSUnchecked(globalObject, this);
     }
 
     pub fn deinit(this: *Blob) void {

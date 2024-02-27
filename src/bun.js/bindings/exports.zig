@@ -63,26 +63,26 @@ pub const ZigGlobalObject = extern struct {
     pub fn import(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String) callconv(.C) ErrorableString {
         JSC.markBinding(@src());
 
-        return @call(.always_inline, Interface.import, .{ global, specifier, source });
+        return @call(bun.callmod_inline, Interface.import, .{ global, specifier, source });
     }
     pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
         JSC.markBinding(@src());
-        @call(.always_inline, Interface.resolve, .{ res, global, specifier, source, query });
+        @call(bun.callmod_inline, Interface.resolve, .{ res, global, specifier, source, query });
     }
 
     pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        return @call(.always_inline, Interface.promiseRejectionTracker, .{ global, promise, rejection });
+        return @call(bun.callmod_inline, Interface.promiseRejectionTracker, .{ global, promise, rejection });
     }
 
     pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        return @call(.always_inline, Interface.reportUncaughtException, .{ global, exception });
+        return @call(bun.callmod_inline, Interface.reportUncaughtException, .{ global, exception });
     }
 
     pub fn onCrash() callconv(.C) void {
         JSC.markBinding(@src());
-        return @call(.always_inline, Interface.onCrash, .{});
+        return @call(bun.callmod_inline, Interface.onCrash, .{});
     }
 
     pub const Export = shim.exportFunctions(

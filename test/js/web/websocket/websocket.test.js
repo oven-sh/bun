@@ -1,10 +1,11 @@
-// @known-failing-on-windows: 1 failing
 import { describe, it, expect } from "bun:test";
 import { bunExe, bunEnv, gc } from "harness";
 import { readFileSync } from "fs";
 import { join } from "path";
+import process from "process";
 
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
+const isWindows = process.platform === "win32";
 
 describe("WebSocket", () => {
   it("should connect", async () => {
@@ -507,7 +508,11 @@ describe("websocket in subprocess", () => {
 
     subprocess.kill();
 
-    expect(await subprocess.exited).toBe(129);
+    if (isWindows) {
+      expect(await subprocess.exited).toBe(1);
+    } else {
+      expect(await subprocess.exited).toBe(129);
+    }
   });
 
   it("should exit with invalid url", async () => {

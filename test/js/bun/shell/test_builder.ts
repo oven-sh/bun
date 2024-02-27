@@ -1,5 +1,5 @@
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
-import { ShellOutput } from "bun";
+import { ShellError, ShellOutput } from "bun";
 import { ShellPromise } from "bun";
 // import { tempDirWithFiles } from "harness";
 import { join } from "node:path";
@@ -11,12 +11,13 @@ export class TestBuilder {
   private _testName: string | undefined = undefined;
 
   private expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
-  private expected_stderr: string = "";
+  private expected_stderr: string | ((stderr: string, tempdir: string) => void) = "";
   private expected_exit_code: number = 0;
-  private expected_error: string | boolean | undefined = undefined;
+  private expected_error: ShellError | string | boolean | undefined = undefined;
   private file_equals: { [filename: string]: string } = {};
 
   private tempdir: string | undefined = undefined;
+  private _env: { [key: string]: string } | undefined = undefined;
 
   static UNEXPECTED_SUBSHELL_ERROR_OPEN =
     "Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.";
@@ -52,6 +53,11 @@ export class TestBuilder {
     return this;
   }
 
+  env(env: { [key: string]: string }): this {
+    this._env = env;
+    return this;
+  }
+
   quiet(): this {
     if (this.promise.type === "ok") {
       this.promise.val.quiet();
@@ -69,7 +75,7 @@ export class TestBuilder {
     return this;
   }
 
-  stderr(expected: string): this {
+  stderr(expected: string | ((stderr: string, tempDir: string) => void)): this {
     this.expected_stderr = expected;
     return this;
   }
@@ -79,7 +85,7 @@ export class TestBuilder {
     return this;
   }
 
-  error(expected?: string | boolean): this {
+  error(expected?: ShellError | string | boolean): this {
     if (expected === undefined || expected === true) {
       this.expected_error = true;
     } else if (expected === false) {
@@ -133,11 +139,17 @@ export class TestBuilder {
       if (this.expected_error === false) expect(err).toBeUndefined();
       if (typeof this.expected_error === "string") {
         expect(err.message).toEqual(this.expected_error);
+      } else if (this.expected_error instanceof ShellError) {
+        expect(err).toBeInstanceOf(ShellError);
+        const e = err as ShellError;
+        expect(e.exitCode).toEqual(this.expected_error.exitCode);
+        expect(e.stdout.toString()).toEqual(this.expected_error.stdout.toString());
+        expect(e.stderr.toString()).toEqual(this.expected_error.stderr.toString());
       }
       return undefined;
     }
 
-    const output = await this.promise.val;
+    const output = await (this._env !== undefined ? this.promise.val.env(this._env) : this.promise.val);
 
     const { stdout, stderr, exitCode } = output!;
     const tempdir = this.tempdir || "NO_TEMP_DIR";
@@ -148,8 +160,13 @@ export class TestBuilder {
         this.expected_stdout(stdout.toString(), tempdir);
       }
     }
-    if (this.expected_stderr !== undefined)
-      expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
+    if (this.expected_stderr !== undefined) {
+      if (typeof this.expected_stderr === "string") {
+        expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
+      } else {
+        this.expected_stderr(stderr.toString(), tempdir);
+      }
+    }
     if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
     for (const [filename, expected] of Object.entries(this.file_equals)) {

@@ -1708,145 +1708,161 @@ pub const Crypto = struct {
 
         return ZigString.fromUTF8(error_message).toErrorInstance(globalThis);
     }
-    const unknown_password_algorithm_message = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
+    const unknown_password_algorithm_message = "string: \"bcrypt\", \"argon2id\", \"argon2d\", or \"argon2i\" (default is \"argon2id\")";
 
     pub const PasswordObject = struct {
         pub const pwhash = std.crypto.pwhash;
-        pub const Algorithm = enum {
+        pub const Tag = enum {
             argon2i,
             argon2d,
             argon2id,
             bcrypt,
+        };
+        pub const Algorithm = union(Tag) {
+            argon2i: Argon2Params,
+            argon2d: Argon2Params,
+            argon2id: Argon2Params,
+            bcrypt: BCryptParams,
+            pub const default = Algorithm{
+                .argon2id = .{},
+            };
 
-            pub const Value = union(Algorithm) {
-                argon2i: Argon2Params,
-                argon2d: Argon2Params,
-                argon2id: Argon2Params,
-                // bcrypt only accepts "cost"
-                bcrypt: u6,
+            pub const label = bun.ComptimeStringMap(
+                Algorithm,
+                .{
+                    .{ "argon2i", .{ .argon2i = .{} } },
+                    .{ "argon2d", .{ .argon2d = .{} } },
+                    .{ "argon2id", .{ .argon2id = .{} } },
+                    .{ "bcrypt", Algorithm.bcrypt_default },
+                },
+            );
 
-                pub const bcrpyt_default = 10;
+            pub const bcrypt_strategy = bun.ComptimeStringMap(
+                BCryptStrategy,
+                .{
+                    .{ "sha512", .sha512 },
+                    .{ "throw", .throw },
+                    .{ "truncate", .truncate },
+                },
+            );
 
-                pub const default = Algorithm.Value{
-                    .argon2id = .{},
-                };
-
-                pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) ?Value {
-                    if (value.isObject()) {
-                        if (value.getTruthy(globalObject, "algorithm")) |algorithm_value| {
-                            if (!algorithm_value.isString()) {
-                                globalObject.throwInvalidArgumentType("hash", "algorithm", "string");
-                                return null;
-                            }
-
-                            const algorithm_string = algorithm_value.getZigString(globalObject);
-
-                            switch (PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
-                                globalObject.throwInvalidArgumentType("hash", "algorithm", unknown_password_algorithm_message);
-                                return null;
-                            }) {
-                                .bcrypt => {
-                                    var algorithm = PasswordObject.Algorithm.Value{
-                                        .bcrypt = PasswordObject.Algorithm.Value.bcrpyt_default,
-                                    };
-
-                                    if (value.getTruthy(globalObject, "cost")) |rounds_value| {
-                                        if (!rounds_value.isNumber()) {
-                                            globalObject.throwInvalidArgumentType("hash", "cost", "number");
-                                            return null;
-                                        }
-
-                                        const rounds = rounds_value.coerce(i32, globalObject);
-
-                                        if (rounds < 4 or rounds > 31) {
-                                            globalObject.throwInvalidArguments("Rounds must be between 4 and 31", .{});
-                                            return null;
-                                        }
-
-                                        algorithm.bcrypt = @as(u6, @intCast(rounds));
-                                    }
-
-                                    return algorithm;
-                                },
-                                inline .argon2id, .argon2d, .argon2i => |tag| {
-                                    var argon = Algorithm.Argon2Params{};
-
-                                    if (value.getTruthy(globalObject, "timeCost")) |time_value| {
-                                        if (!time_value.isNumber()) {
-                                            globalObject.throwInvalidArgumentType("hash", "timeCost", "number");
-                                            return null;
-                                        }
-
-                                        const time_cost = time_value.coerce(i32, globalObject);
-
-                                        if (time_cost < 1) {
-                                            globalObject.throwInvalidArguments("Time cost must be greater than 0", .{});
-                                            return null;
-                                        }
-
-                                        argon.time_cost = @as(u32, @intCast(time_cost));
-                                    }
-
-                                    if (value.getTruthy(globalObject, "memoryCost")) |memory_value| {
-                                        if (!memory_value.isNumber()) {
-                                            globalObject.throwInvalidArgumentType("hash", "memoryCost", "number");
-                                            return null;
-                                        }
-
-                                        const memory_cost = memory_value.coerce(i32, globalObject);
-
-                                        if (memory_cost < 1) {
-                                            globalObject.throwInvalidArguments("Memory cost must be greater than 0", .{});
-                                            return null;
-                                        }
-
-                                        argon.memory_cost = @as(u32, @intCast(memory_cost));
-                                    }
-
-                                    return @unionInit(Algorithm.Value, @tagName(tag), argon);
-                                },
-                            }
-
-                            unreachable;
-                        } else {
-                            globalObject.throwInvalidArgumentType("hash", "options.algorithm", "string");
+            pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) ?Algorithm {
+                if (value.isUndefinedOrNull()) {
+                    return null;
+                }
+                if (value.isString()) {
+                    const algorithm_string = value.getZigString(globalObject);
+                    return PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
+                        globalObject.throwInvalidArgumentType("hash", "algorithm", unknown_password_algorithm_message);
+                        return null;
+                    };
+                }
+                if (value.isObject()) {
+                    var algorithm = default;
+                    if (value.getTruthy(globalObject, "algorithm")) |algorithm_value| {
+                        if (!algorithm_value.isString()) {
+                            globalObject.throwInvalidArgumentType("hash", "algorithm", "string");
                             return null;
                         }
-                    } else if (value.isString()) {
-                        const algorithm_string = value.getZigString(globalObject);
 
-                        switch (PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
+                        algorithm = fromJS(globalObject, algorithm_value) orelse {
                             globalObject.throwInvalidArgumentType("hash", "algorithm", unknown_password_algorithm_message);
                             return null;
-                        }) {
-                            .bcrypt => {
-                                return PasswordObject.Algorithm.Value{
-                                    .bcrypt = PasswordObject.Algorithm.Value.bcrpyt_default,
-                                };
+                        };
+
+                        switch (algorithm) {
+                            .bcrypt => |*bcrypt| {
+                                if (value.getTruthy(globalObject, "cost")) |rounds_value| {
+                                    if (!rounds_value.isNumber()) {
+                                        globalObject.throwInvalidArgumentType("hash", "cost", "number");
+                                        return null;
+                                    }
+
+                                    const rounds = rounds_value.coerce(i32, globalObject);
+
+                                    if (rounds < 4 or rounds > 31) {
+                                        globalObject.throwInvalidArguments("Rounds must be between 4 and 31", .{});
+                                        return null;
+                                    }
+
+                                    bcrypt.cost = @as(u6, @intCast(rounds));
+                                }
+
+                                if (value.getTruthy(globalObject, "longPassword")) |strategy_value| {
+                                    const strategy_string = strategy_value.getZigString(globalObject);
+                                    if (PasswordObject.Algorithm.bcrypt_strategy.getWithEql(strategy_string, JSC.ZigString.eqlComptime)) |strategy| {
+                                        bcrypt.strategy = strategy;
+                                    } else {
+                                        globalObject.throwInvalidArguments("longPassword must be one of \"sha512\", \"truncate\", \"throw\"", .{});
+                                    }
+                                }
+                                return algorithm;
                             },
-                            .argon2id => {
-                                return PasswordObject.Algorithm.Value{
-                                    .argon2id = .{},
-                                };
-                            },
-                            .argon2d => {
-                                return PasswordObject.Algorithm.Value{
-                                    .argon2d = .{},
-                                };
-                            },
-                            .argon2i => {
-                                return PasswordObject.Algorithm.Value{
-                                    .argon2i = .{},
-                                };
+                            inline .argon2id, .argon2d, .argon2i => |*argon| {
+                                if (value.getTruthy(globalObject, "timeCost")) |time_value| {
+                                    if (!time_value.isNumber()) {
+                                        globalObject.throwInvalidArgumentType("hash", "timeCost", "number");
+                                        return null;
+                                    }
+
+                                    const time_cost = time_value.coerce(i32, globalObject);
+
+                                    if (time_cost < 1) {
+                                        globalObject.throwInvalidArguments("Time cost must be greater than 0", .{});
+                                        return null;
+                                    }
+
+                                    argon.time_cost = @as(u32, @intCast(time_cost));
+                                }
+
+                                if (value.getTruthy(globalObject, "memoryCost")) |memory_value| {
+                                    if (!memory_value.isNumber()) {
+                                        globalObject.throwInvalidArgumentType("hash", "memoryCost", "number");
+                                        return null;
+                                    }
+
+                                    const memory_cost = memory_value.coerce(i32, globalObject);
+
+                                    if (memory_cost < 1) {
+                                        globalObject.throwInvalidArguments("Memory cost must be greater than 0", .{});
+                                        return null;
+                                    }
+
+                                    argon.memory_cost = @as(u32, @intCast(memory_cost));
+                                }
+                                return algorithm;
                             },
                         }
+
+                        unreachable;
                     } else {
-                        globalObject.throwInvalidArgumentType("hash", "algorithm", "string");
+                        globalObject.throwInvalidArgumentType("hash", "options.algorithm", "string");
                         return null;
                     }
-
-                    unreachable;
+                } else {
+                    globalObject.throwInvalidArgumentType("hash", "algorithm", "string or object");
+                    return null;
                 }
+
+                unreachable;
+            }
+
+            pub const BCryptStrategy = enum {
+                sha512,
+                truncate,
+                throw,
+            };
+
+            pub const BCryptParams = struct {
+                cost: u6,
+                strategy: BCryptStrategy,
+            };
+
+            pub const bcrypt_default = Algorithm{
+                .bcrypt = .{
+                    .cost = 10,
+                    .strategy = .sha512,
+                },
             };
 
             pub const Argon2Params = struct {
@@ -1863,20 +1879,6 @@ pub const Crypto = struct {
                 }
             };
 
-            pub const argon2 = Algorithm.argon2id;
-
-            pub const label = bun.ComptimeStringMap(
-                Algorithm,
-                .{
-                    .{ "argon2i", .argon2i },
-                    .{ "argon2d", .argon2d },
-                    .{ "argon2id", .argon2id },
-                    .{ "bcrypt", .bcrypt },
-                },
-            );
-
-            pub const default = Algorithm.argon2;
-
             pub fn get(pw: []const u8) ?Algorithm {
                 if (pw[0] != '$') {
                     return null;
@@ -1884,35 +1886,39 @@ pub const Crypto = struct {
 
                 // PHC format looks like $<algorithm>$<params>$<salt>$<hash><optional stuff>
                 if (strings.hasPrefixComptime(pw[1..], "argon2d$")) {
-                    return .argon2d;
+                    return .{ .argon2d = .{} };
                 }
                 if (strings.hasPrefixComptime(pw[1..], "argon2i$")) {
-                    return .argon2i;
+                    return .{ .argon2i = .{} };
                 }
                 if (strings.hasPrefixComptime(pw[1..], "argon2id$")) {
-                    return .argon2id;
+                    return .{ .argon2id = .{} };
                 }
 
                 if (strings.hasPrefixComptime(pw[1..], "bcrypt")) {
-                    return .bcrypt;
+                    return PasswordObject.Algorithm.bcrypt_default;
                 }
 
-                // https://en.wikipedia.org/wiki/Crypt_(C)
-                if (strings.hasPrefixComptime(pw[1..], "2")) {
-                    return .bcrypt;
+                // $2$ and $2a$ are obsolete insecure versions of
+                // bcrypt. $2x$ and $2y$ are specific to a broken PHP
+                // implementation.
+                if (strings.hasPrefixComptime(pw[1..], "2b")) {
+                    return PasswordObject.Algorithm.bcrypt_default;
                 }
 
                 return null;
             }
         };
 
-        pub const HashError = pwhash.Error || error{UnsupportedAlgorithm};
+        pub const argon2 = Algorithm.argon2id;
+
+        pub const HashError = pwhash.Error || error{UnsupportedAlgorithm} || error{InputTooLong};
 
         // This is purposely simple because nobody asked to make it more complicated
         pub fn hash(
             allocator: std.mem.Allocator,
             password: []const u8,
-            algorithm: Algorithm.Value,
+            algorithm: Algorithm,
         ) HashError![]const u8 {
             switch (algorithm) {
                 inline .argon2i, .argon2d, .argon2id => |argon| {
@@ -1935,23 +1941,33 @@ pub const Crypto = struct {
                     const out_bytes = try pwhash.argon2.strHash(password, hash_options, &outbuf);
                     return try allocator.dupe(u8, out_bytes);
                 },
-                .bcrypt => |cost| {
+                .bcrypt => |bcrypt_options| {
                     var outbuf: [4096]u8 = undefined;
                     var outbuf_slice: []u8 = outbuf[0..];
                     var password_to_use = password;
                     // bcrypt silently truncates passwords longer than 72 bytes
                     // we use SHA512 to hash the password if it's longer than 72 bytes
                     if (password.len > 72) {
-                        var sha_512 = bun.sha.SHA512.init();
-                        defer sha_512.deinit();
-                        sha_512.update(password);
-                        sha_512.final(outbuf[0..bun.sha.SHA512.digest]);
-                        password_to_use = outbuf[0..bun.sha.SHA512.digest];
-                        outbuf_slice = outbuf[bun.sha.SHA512.digest..];
+                        switch (bcrypt_options.strategy) {
+                            .sha512 => {
+                                var sha_512 = bun.sha.SHA512.init();
+                                defer sha_512.deinit();
+                                sha_512.update(password);
+                                sha_512.final(outbuf[0..bun.sha.SHA512.digest]);
+                                password_to_use = outbuf[0..bun.sha.SHA512.digest];
+                                outbuf_slice = outbuf[bun.sha.SHA512.digest..];
+                            },
+                            .truncate => {
+                                password_to_use = password[0..72];
+                            },
+                            .throw => {
+                                return error.InputTooLong;
+                            },
+                        }
                     }
 
                     const hash_options = pwhash.bcrypt.HashOptions{
-                        .params = pwhash.bcrypt.Params{ .rounds_log = cost },
+                        .params = pwhash.bcrypt.Params{ .rounds_log = bcrypt_options.cost },
                         .allocator = allocator,
                         .encoding = .crypt,
                     };
@@ -1996,18 +2012,28 @@ pub const Crypto = struct {
                     };
                     return true;
                 },
-                .bcrypt => {
+                .bcrypt => |bcrypt_options| {
                     var password_to_use = password;
                     var outbuf: [bun.sha.SHA512.digest]u8 = undefined;
 
                     // bcrypt silently truncates passwords longer than 72 bytes
                     // we use SHA512 to hash the password if it's longer than 72 bytes
                     if (password.len > 72) {
-                        var sha_512 = bun.sha.SHA512.init();
-                        defer sha_512.deinit();
-                        sha_512.update(password);
-                        sha_512.final(&outbuf);
-                        password_to_use = &outbuf;
+                        switch (bcrypt_options.strategy) {
+                            .sha512 => {
+                                var sha_512 = bun.sha.SHA512.init();
+                                defer sha_512.deinit();
+                                sha_512.update(password);
+                                sha_512.final(&outbuf);
+                                password_to_use = &outbuf;
+                            },
+                            .truncate => {
+                                password_to_use = password[0..72];
+                            },
+                            .throw => {
+                                return error.InputTooLong;
+                            },
+                        }
                     }
                     pwhash.bcrypt.strVerify(previous_hash, password_to_use, .{ .allocator = allocator }) catch |err| {
                         if (err == error.PasswordVerificationFailed) {
@@ -2065,7 +2091,7 @@ pub const Crypto = struct {
         }
 
         const HashJob = struct {
-            algorithm: PasswordObject.Algorithm.Value,
+            algorithm: PasswordObject.Algorithm,
             password: []const u8,
             promise: JSC.JSPromise.Strong,
             event_loop: *JSC.EventLoop,
@@ -2121,7 +2147,7 @@ pub const Crypto = struct {
                 bun.default_allocator.destroy(this);
             }
 
-            pub fn getValue(password: []const u8, algorithm: PasswordObject.Algorithm.Value) Result.Value {
+            pub fn getValue(password: []const u8, algorithm: PasswordObject.Algorithm) Result.Value {
                 const value = PasswordObject.hash(bun.default_allocator, password, algorithm) catch |err| {
                     return Result.Value{ .err = err };
                 };
@@ -2154,7 +2180,7 @@ pub const Crypto = struct {
         pub fn hash(
             globalObject: *JSC.JSGlobalObject,
             password: []const u8,
-            algorithm: PasswordObject.Algorithm.Value,
+            algorithm: PasswordObject.Algorithm,
             comptime sync: bool,
         ) JSC.JSValue {
             std.debug.assert(password.len > 0); // caller must check
@@ -2248,10 +2274,10 @@ pub const Crypto = struct {
                 return JSC.JSValue.undefined;
             }
 
-            var algorithm = PasswordObject.Algorithm.Value.default;
+            var algorithm = PasswordObject.Algorithm.default;
 
-            if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) {
-                algorithm = PasswordObject.Algorithm.Value.fromJS(globalObject, arguments[1]) orelse
+            if (arguments.len > 1 and !arguments[1].isUndefinedOrNull()) {
+                algorithm = PasswordObject.Algorithm.fromJS(globalObject, arguments[1]) orelse
                     return JSC.JSValue.undefined;
             }
 
@@ -2282,10 +2308,10 @@ pub const Crypto = struct {
                 return JSC.JSValue.undefined;
             }
 
-            var algorithm = PasswordObject.Algorithm.Value.default;
+            var algorithm = PasswordObject.Algorithm.default;
 
             if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) {
-                algorithm = PasswordObject.Algorithm.Value.fromJS(globalObject, arguments[1]) orelse
+                algorithm = PasswordObject.Algorithm.fromJS(globalObject, arguments[1]) orelse
                     return JSC.JSValue.undefined;
             }
 
@@ -2410,15 +2436,8 @@ pub const Crypto = struct {
             var algorithm: ?PasswordObject.Algorithm = null;
 
             if (arguments.len > 2 and !arguments[2].isEmptyOrUndefinedOrNull()) {
-                if (!arguments[2].isString()) {
+                algorithm = PasswordObject.Algorithm.fromJS(globalObject, arguments[2]) orelse {
                     globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
-                    return JSC.JSValue.undefined;
-                }
-
-                const algorithm_string = arguments[2].getZigString(globalObject);
-
-                algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
-                    globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
                     return JSC.JSValue.undefined;
                 };
             }
@@ -2463,14 +2482,7 @@ pub const Crypto = struct {
             var algorithm: ?PasswordObject.Algorithm = null;
 
             if (arguments.len > 2 and !arguments[2].isEmptyOrUndefinedOrNull()) {
-                if (!arguments[2].isString()) {
-                    globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
-                    return JSC.JSValue.undefined;
-                }
-
-                const algorithm_string = arguments[2].getZigString(globalObject);
-
-                algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
+                algorithm = PasswordObject.Algorithm.fromJS(globalObject, arguments[2]) orelse {
                     globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
                     return JSC.JSValue.undefined;
                 };

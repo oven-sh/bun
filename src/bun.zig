@@ -2521,6 +2521,10 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
     }
 
+    const output_name: []const u8 = if (@hasDecl(T, "DEBUG_REFCOUNT_NAME")) T.DEBUG_REFCOUNT_NAME else meta.typeBaseName(@typeName(T));
+
+    const log = Output.scoped(output_name, true);
+
     return struct {
         const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
 
@@ -2538,10 +2542,12 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
 
         pub fn ref(self: *T) void {
+            log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
             self.ref_count += 1;
         }
 
         pub fn deref(self: *T) void {
+            log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
             self.ref_count -= 1;
 
             if (self.ref_count == 0) {

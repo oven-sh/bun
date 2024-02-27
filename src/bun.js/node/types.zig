@@ -1238,7 +1238,7 @@ pub const PathOrFileDescriptor = union(Tag) {
         }
         switch (this) {
             .path => |p| try writer.writeAll(p.slice()),
-            .fd => |fd| try writer.print("{d}", .{fd}),
+            .fd => |fd| try writer.print("{}", .{fd}),
         }
     }
 

@@ -866,7 +866,7 @@ pub const PipeReader = struct {
     pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
         var this: *PipeReader = @ptrCast(@alignCast(ptr));
         this.buffered_output.append(chunk);
-        log("PipeReader(0x{x}, {s}) onReadChunk(...)", .{ @intFromPtr(this), @tagName(this.out_type) });
+        log("PipeReader(0x{x}, {s}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), @tagName(this.out_type), chunk.len, @tagName(has_more) });
         if (!this.captured_writer.dead) {
             if (this.captured_writer.writer.getPoll() == null) {
                 this.captured_writer.writer.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), if (this.out_type == .stdout) bun.STDOUT_FD else bun.STDERR_FD, .{}, @TypeOf(this.captured_writer.writer), &this.captured_writer.writer) };
@@ -880,7 +880,14 @@ pub const PipeReader = struct {
                 else => {},
             }
         }
-        return has_more != .eof;
+
+        const should_continue = has_more != .eof;
+
+        if (should_continue) {
+            this.reader.registerPoll();
+        }
+
+        return should_continue;
     }
 
     pub fn onReaderDone(this: *PipeReader) void {
@@ -989,12 +996,17 @@ pub const PipeReader = struct {
     }
 
     pub fn onReaderError(this: *PipeReader, err: bun.sys.Error) void {
+        log("PipeReader(0x{x}) onReaderError {}", .{ @intFromPtr(this), err });
         if (this.state == .done) {
             bun.default_allocator.free(this.state.done);
         }
         this.state = .{ .err = err };
-        if (this.process) |process|
+        this.signalDoneToCmd();
+        if (this.process) |process| {
+            this.process = null;
             process.onCloseIO(this.kind(process));
+            this.deref();
+        }
     }
 
     pub fn close(this: *PipeReader) void {
@@ -1018,7 +1030,7 @@ pub const PipeReader = struct {
     pub fn deinit(this: *PipeReader) void {
         log("PipeReader(0x{x}, {s}) deinit()", .{ @intFromPtr(this), @tagName(this.out_type) });
         if (comptime Environment.isPosix) {
-            std.debug.assert(this.reader.isDone());
+            std.debug.assert(this.reader.isDone() or this.state == .err);
         }
 
         if (comptime Environment.isWindows) {

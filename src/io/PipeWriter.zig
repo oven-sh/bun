@@ -189,6 +189,10 @@ pub fn PosixBufferedWriter(
 
         pub const auto_poll = if (@hasDecl(Parent, "auto_poll")) Parent.auto_poll else true;
 
+        pub fn createPoll(this: *@This(), fd: bun.FileDescriptor) *Async.FilePoll {
+            return Async.FilePoll.init(@as(*Parent, @ptrCast(this.parent)).eventLoop(), fd, .{}, PosixWriter, this);
+        }
+
         pub fn getPoll(this: *const @This()) ?*Async.FilePoll {
             return this.handle.getPoll();
         }
@@ -322,7 +326,7 @@ pub fn PosixBufferedWriter(
         pub fn watch(this: *PosixWriter) void {
             if (this.pollable) {
                 if (this.handle == .fd) {
-                    this.handle = .{ .poll = Async.FilePoll.init(@as(*Parent, @ptrCast(this.parent)).eventLoop(), this.getFd(), .{}, PosixWriter, this) };
+                    this.handle = .{ .poll = this.createPoll(this.getFd()) };
                 }
 
                 this.registerPoll();
@@ -337,7 +341,7 @@ pub fn PosixBufferedWriter(
                 return JSC.Maybe(void){ .result = {} };
             }
             var poll = this.getPoll() orelse brk: {
-                this.handle = .{ .poll = Async.FilePoll.init(@as(*Parent, @ptrCast(this.parent)).eventLoop(), fd, .{}, PosixWriter, this) };
+                this.handle = .{ .poll = this.createPoll(fd) };
                 break :brk this.handle.poll;
             };
             const loop = @as(*Parent, @ptrCast(this.parent)).eventLoop().loop();

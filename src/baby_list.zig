@@ -210,6 +210,12 @@ pub fn BabyList(comptime Type: type) type {
             this.update(list_);
         }
 
+        pub fn appendFmt(this: *@This(), allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !void {
+            var list__ = this.listManaged(allocator);
+            const writer = list__.writer();
+            try writer.print(fmt, args);
+        }
+
         pub fn append(this: *@This(), allocator: std.mem.Allocator, value: []const Type) !void {
             var list__ = this.listManaged(allocator);
             try list__.appendSlice(value);

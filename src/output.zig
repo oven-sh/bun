@@ -442,7 +442,12 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
 const _log_fn = fn (comptime fmt: string, args: anytype) void;
-pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_fn {
+pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
+    const tagname = switch (@TypeOf(tag)) {
+        @Type(.EnumLiteral) => @tagName(tag),
+        []const u8 => tag,
+        else => @compileError("Output.scoped expected @Type(.EnumLiteral) or []const u8, you gave: " ++ @typeName(@Type(tag))),
+    };
     if (comptime !Environment.isDebug or !Environment.isNative) {
         return struct {
             pub fn log(comptime _: string, _: anytype) void {}
@@ -473,7 +478,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
             if (!evaluated_disable) {
                 evaluated_disable = true;
                 if (bun.getenvZ("BUN_DEBUG_ALL") != null or
-                    bun.getenvZ("BUN_DEBUG_" ++ @tagName(tag)) != null)
+                    bun.getenvZ("BUN_DEBUG_" ++ tagname) != null)
                 {
                     really_disable = false;
                 } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
@@ -496,7 +501,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
             defer lock.unlock();
 
             if (Output.enable_ansi_colors_stdout and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
-                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch {
+                out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, true), args) catch {
                     really_disable = true;
                     return;
                 };
@@ -505,7 +510,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                     return;
                 };
             } else {
-                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, false), args) catch {
+                out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, false), args) catch {
                     really_disable = true;
                     return;
                 };

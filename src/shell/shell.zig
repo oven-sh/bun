@@ -26,6 +26,7 @@ pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
 pub const Interpreter = eval.Interpreter;
 pub const Subprocess = subproc.ShellSubprocess;
+// pub const IOWriter = interpret.IOWriter;
 // pub const SubprocessMini = subproc.ShellSubprocessMini;
 
 const GlobWalker = Glob.GlobWalker_(null, true);
@@ -40,9 +41,13 @@ pub const ShellErr = union(enum) {
     invalid_arguments: struct { val: []const u8 = "" },
     todo: []const u8,
 
-    pub fn newSys(e: Syscall.Error) @This() {
+    pub fn newSys(e: anytype) @This() {
         return .{
-            .sys = e.toSystemError(),
+            .sys = switch (@TypeOf(e)) {
+                Syscall.Error => e.toSystemError(),
+                JSC.SystemError => e,
+                else => @compileError("Invalid `e`: " ++ @typeName(e)),
+            },
         };
     }
 
@@ -68,6 +73,7 @@ pub const ShellErr = union(enum) {
     }
 
     pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) void {
+        defer this.deinit(bun.default_allocator);
         switch (this.*) {
             .sys => {
                 const err = this.sys.toErrorInstance(globalThis);
@@ -90,6 +96,7 @@ pub const ShellErr = union(enum) {
     }
 
     pub fn throwMini(this: @This()) void {
+        defer this.deinit(bun.default_allocator);
         switch (this) {
             .sys => {
                 const err = this.sys;

@@ -180,11 +180,16 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         }
 
         pub inline fn init(_ptr: anytype) @This() {
+            const tyinfo = @typeInfo(@TypeOf(_ptr));
+            if (tyinfo != .Pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
+
             const Type = std.meta.Child(@TypeOf(_ptr));
             return initWithType(Type, _ptr);
         }
 
         pub inline fn initWithType(comptime Type: type, _ptr: anytype) @This() {
+            const tyinfo = @typeInfo(@TypeOf(_ptr));
+            if (tyinfo != .Pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
             const name = comptime typeBaseName(@typeName(Type));
 
             // there will be a compiler error if the passed in type doesn't exist in the enum
@@ -193,6 +198,27 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn isNull(this: This) bool {
             return this.repr._ptr == 0;
+        }
+
+        pub inline fn call(this: This, comptime fn_name: []const u8, args_without_this: anytype, comptime Ret: type) Ret {
+            inline for (type_map) |entry| {
+                if (this.repr.data == entry.value) {
+                    const pointer = this.as(entry.ty);
+                    const func = &@field(entry.ty, fn_name);
+                    const args = brk: {
+                        var args: std.meta.ArgsTuple(@TypeOf(@field(entry.ty, fn_name))) = undefined;
+                        args[0] = pointer;
+
+                        inline for (args_without_this, 1..) |a, i| {
+                            args[i] = a;
+                        }
+
+                        break :brk args;
+                    };
+                    return @call(.auto, func, args);
+                }
+            }
+            @panic("Invalid tag");
         }
     };
 }

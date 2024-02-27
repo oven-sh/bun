@@ -144,16 +144,13 @@ pub const FilePoll = struct {
 
     allocator_type: AllocatorType = .js,
 
-    pub const AllocatorType = enum {
-        js,
-        mini,
-    };
+    const ShellBufferedWriter = bun.shell.Interpreter.IOWriter.Poll;
+    // const ShellBufferedWriter = bun.shell.Interpreter.WriterImpl;
 
     const FileReader = JSC.WebCore.FileReader;
     // const FIFO = JSC.WebCore.FIFO;
     // const FIFOMini = JSC.WebCore.FIFOMini;
 
-    const ShellBufferedWriter = bun.shell.Interpreter.BufferedWriter.Poll;
     const ShellSubprocessCapturedPipeWriter = bun.shell.subproc.PipeReader.CapturedWriter.Poll;
     // const ShellBufferedWriterMini = bun.shell.InterpreterMini.BufferedWriter;
     // const ShellBufferedInput = bun.shell.ShellSubprocess.BufferedInput;
@@ -171,7 +168,6 @@ pub const FilePoll = struct {
     const Deactivated = opaque {
         pub var owner: Owner = Owner.init(@as(*Deactivated, @ptrFromInt(@as(usize, 0xDEADBEEF))));
     };
-
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
     const BufferedReader = bun.io.BufferedReader;
     pub const Owner = bun.TaggedPointerUnion(.{
@@ -188,7 +184,7 @@ pub const FilePoll = struct {
 
         StaticPipeWriter,
 
-        ShellBufferedWriter,
+        // ShellBufferedWriter,
         ShellSubprocessCapturedPipeWriter,
 
         BufferedReader,
@@ -198,7 +194,13 @@ pub const FilePoll = struct {
         GetAddrInfoRequest,
         // LifecycleScriptSubprocessOutputReader,
         Process,
+        ShellBufferedWriter, // i do not know why, but this has to be here otherwise compiler will complain about dependency loop
     });
+
+    pub const AllocatorType = enum {
+        js,
+        mini,
+    };
 
     fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
         var flags = poll.flags;

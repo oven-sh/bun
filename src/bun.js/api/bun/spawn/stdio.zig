@@ -13,7 +13,7 @@ const os = std.os;
 const uv = bun.windows.libuv;
 pub const Stdio = union(enum) {
     inherit: void,
-    capture: *bun.ByteList,
+    capture: struct { fd: bun.FileDescriptor, buf: *bun.ByteList },
     ignore: void,
     fd: bun.FileDescriptor,
     dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },

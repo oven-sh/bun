@@ -624,6 +624,7 @@ const PosixBufferedReader = struct {
     _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     vtable: BufferedReaderVTable,
     flags: Flags = .{},
+    close_handle: bool = true,
 
     const Flags = packed struct {
         is_done: bool = false,
@@ -756,6 +757,7 @@ const PosixBufferedReader = struct {
     }
 
     fn closeHandle(this: *PosixBufferedReader) void {
+        if (!this.close_handle) return;
         if (this.flags.closed_without_reporting) {
             this.flags.closed_without_reporting = false;
             this.done();

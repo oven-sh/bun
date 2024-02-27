@@ -854,7 +854,7 @@ pub fn inspect(
     const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
-    ConsoleObject.format(
+    ConsoleObject.format2(
         .Debug,
         globalThis,
         @as([*]const JSValue, @ptrCast(&value)),

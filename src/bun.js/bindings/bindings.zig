@@ -1610,6 +1610,25 @@ pub const SystemError = extern struct {
     pub const name = "SystemError";
     pub const namespace = "";
 
+    pub fn getErrno(this: *const SystemError) bun.C.E {
+        // The inverse in bun.sys.Error.toSystemError()
+        return @enumFromInt(this.errno * -1);
+    }
+
+    pub fn deref(this: *const SystemError) void {
+        this.path.deref();
+        this.code.deref();
+        this.message.deref();
+        this.syscall.deref();
+    }
+
+    pub fn ref(this: *SystemError) void {
+        this.path.ref();
+        this.code.ref();
+        this.message.ref();
+        this.syscall.ref();
+    }
+
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer {
             this.path.deref();
@@ -3905,7 +3924,7 @@ pub const JSValue = enum(JSValueReprInt) {
             .quote_strings = true,
         };
 
-        JSC.ConsoleObject.format(
+        JSC.ConsoleObject.format2(
             .Debug,
             globalObject,
             @as([*]const JSValue, @ptrCast(&this)),

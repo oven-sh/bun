@@ -35,6 +35,8 @@ writer: BufferedWriter,
 
 counts: Counter = .{},
 
+pub fn format(_: @This(), comptime _: []const u8, _: anytype, _: anytype) !void {}
+
 pub fn init(error_writer: Output.WriterType, writer: Output.WriterType) ConsoleObject {
     return ConsoleObject{
         .error_writer = BufferedWriter{ .unbuffered_writer = error_writer },
@@ -195,7 +197,7 @@ pub fn messageWithTypeAndLevel(
     }
 
     if (print_length > 0)
-        format(
+        format2(
             level,
             global,
             vals,
@@ -650,7 +652,7 @@ pub const FormatOptions = struct {
     max_depth: u16 = 2,
 };
 
-pub fn format(
+pub fn format2(
     level: MessageLevel,
     global: *JSGlobalObject,
     vals: [*]const JSValue,

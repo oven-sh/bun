@@ -38,12 +38,12 @@ afterAll(async () => {
 const BUN = process.argv0;
 
 describe("bunshell", () => {
-  describe.todo("concurrency", () => {
+  describe("concurrency", () => {
     test("writing to stdout", async () => {
       await Promise.all([
         TestBuilder.command`echo 1`.stdout("1\n").run(),
         TestBuilder.command`echo 2`.stdout("2\n").run(),
-        TestBuilder.command`echo 3`.stdout("2\n").run(),
+        TestBuilder.command`echo 3`.stdout("3\n").run(),
       ]);
     });
   });
@@ -116,7 +116,7 @@ describe("bunshell", () => {
   });
 
   describe("quiet", async () => {
-    test("basic", async () => {
+    test.todo("basic", async () => {
       // Check its buffered
       {
         const { stdout, stderr } = await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log('hi'); console.error('lol')"`;

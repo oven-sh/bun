@@ -55,42 +55,31 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
-    JSC::JSValue nativeType()
-    {
-        if (JSC::JSValue value = this->m_nativeType.get())
-            return value;
-        return JSC::jsNumber(0);
-    }
-    JSC::JSValue disturbed()
-    {
-        if (JSC::JSValue value = this->m_disturbed.get())
-            return value;
-        return JSC::jsBoolean(false);
-    }
+    int nativeType() const { return this->m_nativeType; }
+    bool disturbed() const { return this->m_disturbed; }
     JSC::JSValue nativePtr()
     {
         return this->m_nativePtr.get();
-        if (JSC::JSValue value = this->m_nativePtr.get())
-            return value;
-        return JSC::jsNumber(-1);
     }
 
-    void setNativePtr(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value);
+    void setNativePtr(JSC::VM&, JSC::JSValue value);
 
-    void setNativeType(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value)
+    void setNativeType(int value)
     {
-        this->m_nativeType.set(JSC::getVM(lexicalGlobalObject), this, value);
+        this->m_nativeType = value;
     }
 
-    void setDisturbed(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value)
+    void setDisturbed(bool value)
     {
-        this->m_disturbed.set(JSC::getVM(lexicalGlobalObject), this, value);
+        this->m_disturbed = value;
     }
+
+    DECLARE_VISIT_CHILDREN;
 
 protected:
     mutable JSC::WriteBarrier<JSC::Unknown> m_nativePtr;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_nativeType;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_disturbed;
+    int m_nativeType { 0 };
+    bool m_disturbed = false;
 
     JSReadableStream(JSC::Structure*, JSDOMGlobalObject&);
 

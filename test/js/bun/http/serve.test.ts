@@ -8,6 +8,7 @@ import { bunExe, bunEnv } from "harness";
 // import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
+import { heapStats } from "bun:jsc";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
@@ -48,6 +49,48 @@ afterAll(() => {
     server.stop(true);
     server = undefined;
   }
+});
+
+it.todo("1000 simultaneous downloads do not leak ReadableStream", async () => {});
+
+it("1000 simultaneous uploads do not leak ReadableStream", async () => {
+  const blob = new Blob([new Uint8Array(128).fill(123)]);
+  Bun.gc(true);
+
+  const expected = Bun.CryptoHasher.hash("sha256", blob, "base64");
+  const initialCount = heapStats().objectTypeCounts.ReadableStream || 0;
+
+  await runTest(
+    {
+      async fetch(req) {
+        var hasher = new Bun.SHA256();
+        for await (const chunk of req.body) {
+          await Bun.sleep(0);
+          hasher.update(chunk);
+        }
+        return new Response(hasher.digest("base64"));
+      },
+    },
+    async server => {
+      const count = 1000;
+      async function callback() {
+        const response = await fetch(server.url, { body: blob, method: "POST" });
+        const digest = await response.text();
+        expect(digest).toBe(expected);
+      }
+      {
+        const promises = new Array(count);
+        for (let i = 0; i < count; i++) {
+          promises[i] = callback();
+        }
+
+        await Promise.all(promises);
+      }
+
+      Bun.gc(true);
+      expect(heapStats().objectTypeCounts.ReadableStream).toBeWithin(initialCount - 50, initialCount + 50);
+    },
+  );
 });
 
 [200, 200n, 303, 418, 599, 599n].forEach(statusCode => {

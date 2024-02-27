@@ -2508,14 +2508,17 @@ var require_readable = __commonJS({
 
     var { addAbortSignal } = require_add_abort_signal();
     var eos = require_end_of_stream();
-    const { maybeReadMore: _maybeReadMore, resume, emitReadable: _emitReadable, onEofChunk } = $lazy("bun:stream");
+    const { maybeReadMore: _maybeReadMore, resume, emitReadable: _emitReadable } = $lazy("bun:stream");
     function maybeReadMore(stream, state) {
       process.nextTick(_maybeReadMore, stream, state);
     }
-    // REVERT ME
     function emitReadable(stream, state) {
       $debug("NativeReadable - emitReadable", stream.__id);
-      _emitReadable(stream, state);
+      state.needReadable = false;
+      if (!state.emittedReadable) {
+        state.emittedReadable = true;
+        process.nextTick(_emitReadable, stream, state);
+      }
     }
     var destroyImpl = require_destroy();
     var {
@@ -2623,6 +2626,27 @@ var require_readable = __commonJS({
       }
       $debug("about to maybereadmore");
       maybeReadMore(stream, state);
+    }
+    function onEofChunk(stream, state) {
+      if (state.ended) return;
+
+      const decoder = state.decoder;
+      if (decoder) {
+        const chunk = decoder.end();
+        const chunkLength = chunk?.length;
+        if (chunkLength) {
+          state.buffer.push(chunk);
+          state.length += state.objectMode ? 1 : chunkLength;
+        }
+      }
+      state.ended = true;
+      if (state.sync) {
+        emitReadable(stream, state);
+      } else {
+        state.needReadable = false;
+        state.emittedReadable = true;
+        _emitReadable(stream, state);
+      }
     }
     Readable.prototype.isPaused = function () {
       const state = this._readableState;
@@ -5447,16 +5471,19 @@ function getNativeReadableStreamPrototype(nativeType, Readable) {
 }
 
 function getNativeReadableStream(Readable, stream, options) {
-  const native = $direct(stream);
-  if (!native) {
+  const ptr = stream.$bunNativePtr;
+  if (!ptr || ptr === -1) {
     $debug("no native readable stream");
     return undefined;
   }
-  const { 0: ptr, 1: type } = native;
+  const type = stream.$bunNativeType;
   $assert(typeof type === "number", "Invalid native type");
   $assert(typeof ptr === "object", "Invalid native ptr");
 
   const NativeReadable = getNativeReadableStreamPrototype(type, Readable);
+  stream.$bunNativePtr = -1;
+  stream.$bunNativeType = 0;
+  stream.$disturbed = true;
   return new NativeReadable(ptr, options);
 }
 /** --- Bun native stream wrapper ---  */

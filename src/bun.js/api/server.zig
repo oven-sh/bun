@@ -2275,10 +2275,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 response_stream.detach();
                 this.sink = null;
                 response_stream.sink.destroy();
-                this.endStream(this.shouldCloseConnection());
-                this.finalize();
                 stream.done(this.server.globalThis);
                 this.readable_stream_ref.deinit();
+                this.endStream(this.shouldCloseConnection());
+                this.finalize();
                 return;
             }
 
@@ -2748,10 +2748,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
                                     this.blob.from(byte_stream.buffer);
-                                    this.doRenderBlob();
-                                    // is safe to detach here because we're not going to receive any more data
-                                    stream.done(this.server.globalThis);
                                     this.readable_stream_ref.deinit();
+                                    this.doRenderBlob();
                                     return;
                                 }
 
@@ -3233,6 +3231,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     bun.default_allocator,
                                 );
                             } else {
+                                var prev = body.value.Locked.readable;
+                                defer prev.deinit();
+                                body.value.Locked.readable = .{};
                                 readable.ptr.Bytes.onData(
                                     .{
                                         .temporary_and_done = bun.ByteList.initConst(chunk),

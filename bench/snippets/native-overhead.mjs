@@ -5,6 +5,11 @@ const lazy = globalThis[Symbol.for("Bun.lazy")];
 const noop = lazy("noop");
 const fn = noop.function;
 const regular = noop.functionRegular;
+const callback = noop.callback;
+
+bench("C++ callback into JS", () => {
+  callback(() => {});
+});
 
 bench("C++ fn regular", () => {
   regular();

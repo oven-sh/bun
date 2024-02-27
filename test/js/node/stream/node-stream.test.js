@@ -186,6 +186,20 @@ describe("createReadStream", () => {
       done();
     });
   });
+
+  it("should emit readable on end", done => {
+    const testData = "Hello world";
+    const path = join(tmpdir(), `${Date.now()}-testEmitReadableOnEnd.txt`);
+    writeFileSync(path, testData);
+    const stream = createReadStream(path);
+
+    stream.on("readable", () => {
+      const chunk = stream.read();
+      if (!chunk) {
+        done();
+      }
+    });
+  });
 });
 
 describe("Duplex", () => {

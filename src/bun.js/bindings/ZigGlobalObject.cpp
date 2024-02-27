@@ -1895,10 +1895,7 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
                 JSC::JSFunction::create(vm, globalObject, 0, "resume"_s, jsReadable_resume, ImplementationVisibility::Public), 0);
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "emitReadable"_s)),
-                JSC::JSFunction::create(vm, globalObject, 0, "emitReadable"_s, jsReadable_emitReadable, ImplementationVisibility::Public), 0);
-            obj->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "onEofChunk"_s)),
-                JSC::JSFunction::create(vm, globalObject, 0, "onEofChunk"_s, jsReadable_onEofChunk, ImplementationVisibility::Public), 0);
+                JSC::JSFunction::create(vm, globalObject, 0, "emitReadable"_s, jsReadable_emitReadable_, ImplementationVisibility::Public), 0);
             return JSValue::encode(obj);
         }
         if (string == "events"_s) {
@@ -2265,15 +2262,18 @@ extern "C" void ReadableStream__cancel(JSC__JSValue possibleReadableStream, Zig:
     ReadableStream::cancel(*globalObject, readableStream, exception);
 }
 
-extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
 extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
-    auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
+    auto value = JSC::JSValue::decode(possibleReadableStream);
+    if (value.isEmpty() || !value.isCell())
+        return;
+
+    auto* readableStream = static_cast<JSReadableStream*>(value.asCell());
     if (UNLIKELY(!readableStream))
         return;
-    readableStream->setNativePtr(globalObject, jsNumber(-1));
-    readableStream->setNativeType(globalObject, jsNumber(0));
-    readableStream->setDisturbed(globalObject, jsBoolean(true));
+    readableStream->setNativePtr(globalObject->vm(), jsNumber(-1));
+    readableStream->setNativeType(0);
+    readableStream->setDisturbed(true);
 }
 extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
 extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
@@ -3657,65 +3657,6 @@ JSC_DEFINE_CUSTOM_GETTER(functionLazyNavigatorGetter,
     return JSC::JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->navigatorObject());
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionGetDirectStreamDetails, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto argCount = callFrame->argumentCount();
-    if (argCount != 1) {
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    auto stream = callFrame->argument(0);
-    if (!stream.isObject()) {
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    auto* streamObject = stream.getObject();
-    auto* readableStream = jsDynamicCast<WebCore::JSReadableStream*>(streamObject);
-    if (!readableStream) {
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    auto clientData = WebCore::clientData(vm);
-
-    JSValue handle = readableStream->nativePtr();
-
-    if (handle.isEmpty() || !handle.isCell())
-        return JSC::JSValue::encode(JSC::jsNull());
-
-    const auto getTypeValue = [&]() -> JSValue {
-        JSCell* cell = handle.asCell();
-
-        if (cell->inherits<JSBlobInternalReadableStreamSource>()) {
-            return jsNumber(1);
-        }
-
-        if (cell->inherits<JSFileInternalReadableStreamSource>()) {
-            return jsNumber(2);
-        }
-
-        if (cell->inherits<JSBytesInternalReadableStreamSource>()) {
-            return jsNumber(4);
-        }
-
-        return jsUndefined();
-    };
-
-    const JSValue type = getTypeValue();
-    if (type.isUndefined())
-        return JSC::JSValue::encode(JSC::jsNull());
-
-    readableStream->setNativePtr(globalObject, jsUndefined());
-    readableStream->setDisturbed(globalObject, jsBoolean(true));
-
-    auto* resultObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-    resultObject->putDirectIndex(globalObject, 0, handle);
-    resultObject->putDirectIndex(globalObject, 1, type);
-
-    return JSC::JSValue::encode(resultObject);
-}
 JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(
@@ -3781,7 +3722,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.getInternalWritableStreamPrivateName(), JSFunction::create(vm, this, 1, String(), getInternalWritableStream, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.directPrivateName(), JSFunction::create(vm, this, 1, String(), functionGetDirectStreamDetails, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(vm.propertyNames->builtinNames().ArrayBufferPrivateName(), arrayBufferConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.LoaderPrivateName(), this->moduleLoader(), PropertyAttribute::DontDelete | 0),
         GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),

@@ -842,11 +842,8 @@ pub const Body = struct {
             if (tag == .Locked) {
                 if (!this.Locked.deinit) {
                     this.Locked.deinit = true;
-
-                    if (this.Locked.readable.get()) |*readable| {
-                        readable.done(this.Locked.global);
-                    }
                     this.Locked.readable.deinit();
+                    this.Locked.readable = .{};
                 }
 
                 return;
@@ -1110,8 +1107,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
             }
 
-            var blob = value.use();
-            var ptr = bun.new(Blob, blob);
+            var blob = bun.new(Blob, value.use());
             blob.allocator = getAllocator(globalObject);
 
             if (blob.content_type.len == 0 and blob.store != null) {
@@ -1124,7 +1120,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 }
             }
 
-            return JSC.JSPromise.resolvedPromiseValue(globalObject, ptr.toJS(globalObject));
+            return JSC.JSPromise.resolvedPromiseValue(globalObject, blob.toJS(globalObject));
         }
     };
 }

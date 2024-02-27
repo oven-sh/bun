@@ -122,70 +122,43 @@ static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
 
 const ClassInfo JSReadableStreamPrototype::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamPrototype) };
 
-static JSC_DECLARE_CUSTOM_SETTER(JSReadableStreamPrototype__nativePtrSetterWrap);
 static JSC_DEFINE_CUSTOM_SETTER(JSReadableStreamPrototype__nativePtrSetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedJSValue, JSC::PropertyName))
 {
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    thisObject->setNativePtr(lexicalGlobalObject, JSValue::decode(encodedJSValue));
+    thisObject->setNativePtr(lexicalGlobalObject->vm(), JSValue::decode(encodedJSValue));
     return true;
 }
 
-static JSC_DECLARE_CUSTOM_GETTER(JSReadableStreamPrototype__nativePtrGetterWrap);
 static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__nativePtrGetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::PropertyName))
 {
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
     return JSValue::encode(thisObject->nativePtr());
 }
 
-static JSC_DECLARE_CUSTOM_SETTER(JSReadableStreamPrototype__nativeTypeSetterWrap);
 static JSC_DEFINE_CUSTOM_SETTER(JSReadableStreamPrototype__nativeTypeSetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedJSValue, JSC::PropertyName))
 {
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    thisObject->setNativeType(lexicalGlobalObject, JSValue::decode(encodedJSValue));
+    thisObject->setNativeType(JSValue::decode(encodedJSValue).toInt32(lexicalGlobalObject));
     return true;
 }
 
-static JSC_DECLARE_CUSTOM_GETTER(JSReadableStreamPrototype__nativeTypeGetterWrap);
 static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__nativeTypeGetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::PropertyName))
 {
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return JSValue::encode(thisObject->nativeType());
+    return JSValue::encode(jsNumber(thisObject->nativeType()));
 }
 
-static JSC_DECLARE_CUSTOM_SETTER(JSReadableStreamPrototype__disturbedSetterWrap);
 static JSC_DEFINE_CUSTOM_SETTER(JSReadableStreamPrototype__disturbedSetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedJSValue, JSC::PropertyName))
 {
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    thisObject->setDisturbed(lexicalGlobalObject, JSValue::decode(encodedJSValue));
+    thisObject->setDisturbed(JSValue::decode(encodedJSValue).toBoolean(lexicalGlobalObject));
     return true;
 }
 
-static JSC_DECLARE_CUSTOM_GETTER(JSReadableStreamPrototype__disturbedGetterWrap);
 static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__disturbedGetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::PropertyName))
 {
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return JSValue::encode(thisObject->disturbed());
+    return JSValue::encode(jsBoolean(thisObject->disturbed()));
 }
 
 void JSReadableStreamPrototype::finishCreation(VM& vm)
@@ -216,35 +189,10 @@ void JSReadableStream::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
-void JSReadableStream::setNativePtr(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value)
+void JSReadableStream::setNativePtr(JSC::VM& vm, JSC::JSValue value)
 {
 
-    this->m_nativePtr.set(JSC::getVM(lexicalGlobalObject), this, value);
-
-    // know we check if we can increase the ref count of the native object
-    if (value.isEmpty() || !value.isCell()) {
-        return;
-    }
-
-    JSCell* cell = value.asCell();
-
-    if (auto* casted = jsDynamicCast<JSBlobInternalReadableStreamSource*>(cell)) {
-        auto ptr = casted->wrapped();
-        ReadableStream__incrementCount(ptr, 1);
-        return;
-    }
-
-    if (auto* casted = jsDynamicCast<JSFileInternalReadableStreamSource*>(cell)) {
-        auto ptr = casted->wrapped();
-        ReadableStream__incrementCount(ptr, 2);
-        return;
-    }
-
-    if (auto* casted = jsDynamicCast<JSBytesInternalReadableStreamSource*>(cell)) {
-        auto ptr = casted->wrapped();
-        ReadableStream__incrementCount(ptr, 4);
-        return;
-    }
+    this->m_nativePtr.set(vm, this, value);
 }
 
 JSObject* JSReadableStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -289,5 +237,17 @@ JSC::GCClient::IsoSubspace* JSReadableStream::subspaceForImpl(JSC::VM& vm)
         [](auto& spaces) { return spaces.m_subspaceForReadableStream.get(); },
         [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStream = std::forward<decltype(space)>(space); });
 }
+
+template<typename Visitor>
+void JSReadableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSReadableStream* stream = jsCast<JSReadableStream*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(stream, info());
+    Base::visitChildren(stream, visitor);
+
+    visitor.append(stream->m_nativePtr);
+}
+
+DEFINE_VISIT_CHILDREN(JSReadableStream);
 
 }

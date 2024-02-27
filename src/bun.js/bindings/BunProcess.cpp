@@ -238,7 +238,9 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
 }
 
 extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
+#if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))

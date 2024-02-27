@@ -2404,6 +2404,9 @@ describe("expect()", () => {
     expect(o).toContainKey("c");
     expect(o).not.toContainKey("z");
     expect(o).not.toContainKey({ a: "foo" });
+    expect(() => {
+      expect(undefined).toContainKey("id");
+    }).toThrow("undefined is not an object")
   });
 
   test("toContainAnyKeys", () => {

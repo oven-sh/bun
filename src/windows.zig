@@ -3133,7 +3133,7 @@ pub const INPUT_RECORD = extern struct {
     },
 };
 
-pub export fn Bun__UVSignalHandle__init(
+fn Bun__UVSignalHandle__init(
     global: *bun.JSC.JSGlobalObject,
     signal_num: i32,
     callback: *const fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.C) void,
@@ -3160,7 +3160,14 @@ fn freeWithDefaultAllocator(signal: *anyopaque) callconv(.C) void {
     bun.destroy(@as(*libuv.uv_signal_t, @alignCast(@ptrCast(signal))));
 }
 
-pub export fn Bun__UVSignalHandle__close(signal: *libuv.uv_signal_t) callconv(.C) void {
+fn Bun__UVSignalHandle__close(signal: *libuv.uv_signal_t) callconv(.C) void {
     _ = libuv.uv_signal_stop(signal);
     libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
+}
+
+comptime {
+    if (Environment.isWindows) {
+        @export(Bun__UVSignalHandle__init, .{ .name = "Bun__UVSignalHandle__init" });
+        @export(Bun__UVSignalHandle__close, .{ .name = "Bun__UVSignalHandle__close" });
+    }
 }

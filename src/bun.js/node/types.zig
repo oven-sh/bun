@@ -284,9 +284,10 @@ inline fn MaybeSlice(comptime T: type) type {
 }
 
 fn translateToErrInt(err: anytype) bun.sys.Error.Int {
-    if (Environment.isWindows and @TypeOf(err) == bun.windows.NTSTATUS)
-        return @intFromEnum(bun.windows.translateNTStatusToErrno(err));
-    return @truncate(@intFromEnum(err));
+    return switch (@TypeOf(err)) {
+        bun.windows.NTSTATUS => @intFromEnum(bun.windows.translateNTStatusToErrno(err)),
+        else => @truncate(@intFromEnum(err)),
+    };
 }
 
 pub const BlobOrStringOrBuffer = union(enum) {

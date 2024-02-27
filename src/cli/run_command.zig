@@ -562,21 +562,30 @@ pub const RunCommand = struct {
                 argv0 = bun.argv()[0];
             }
 
-            var retried = false;
-            while (true) {
-                inner: {
-                    std.os.symlinkZ(argv0, bun_node_dir ++ "/node") catch |err| {
-                        if (err == error.PathAlreadyExists) break :inner;
-                        if (retried)
-                            return;
+            if (Environment.isDebug) {
+                std.fs.deleteTreeAbsolute(bun_node_dir) catch {};
+            }
+            const paths = if (Environment.isDebug)
+                .{ bun_node_dir ++ "/node", bun_node_dir ++ "/bun" }
+            else
+                .{bun_node_dir ++ "/node"};
+            inline for (paths) |path| {
+                var retried = false;
+                while (true) {
+                    inner: {
+                        std.os.symlinkZ(argv0, path) catch |err| {
+                            if (err == error.PathAlreadyExists) break :inner;
+                            if (retried)
+                                return;
 
-                        std.fs.makeDirAbsoluteZ(bun_node_dir) catch {};
+                            std.fs.makeDirAbsoluteZ(bun_node_dir) catch {};
 
-                        retried = true;
-                        continue;
-                    };
+                            retried = true;
+                            continue;
+                        };
+                    }
+                    break;
                 }
-                break;
             }
 
             if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {

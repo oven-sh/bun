@@ -118,6 +118,10 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
         std.debug.assert(FDImpl.decode(fd).kind == kind);
     }
+
+    pub fn cwd() FileDescriptor {
+        return toFD(std.fs.cwd().fd);
+    }
 };
 
 pub const FDImpl = @import("./fd.zig").FDImpl;

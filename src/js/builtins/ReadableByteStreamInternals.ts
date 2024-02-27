@@ -223,6 +223,7 @@ export function readableByteStreamControllerPull(controller) {
 
 export function readableByteStreamControllerShouldCallPull(controller) {
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+  if (!stream) return false;
 
   if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return false;
   if ($getByIdDirectPrivate(controller, "closeRequested")) return false;

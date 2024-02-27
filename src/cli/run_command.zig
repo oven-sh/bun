@@ -610,15 +610,14 @@ pub const RunCommand = struct {
             const file_slice = target_path_buffer[0 .. prefix.len + len + file_name.len - "\x00".len];
             const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
 
-            const ImagePathName = std.os.windows.peb().ProcessParameters.ImagePathName;
-            std.debug.assert(ImagePathName.Buffer[ImagePathName.Length / 2] == 0); // trust windows
+            const image_path = bun.windows.exePathW();
 
             if (Environment.isDebug) {
                 // the link becomes out of date on rebuild
                 std.os.unlinkW(file_slice) catch {};
             }
 
-            if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), @ptrCast(ImagePathName.Buffer), null) == 0) {
+            if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), image_path.ptr, null) == 0) {
                 switch (std.os.windows.kernel32.GetLastError()) {
                     .ALREADY_EXISTS => {},
                     else => {
@@ -629,7 +628,7 @@ pub const RunCommand = struct {
                             target_path_buffer[dir_slice.len] = '\\';
                         }
 
-                        if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), @ptrCast(ImagePathName.Buffer), null) == 0) {
+                        if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), image_path.ptr, null) == 0) {
                             return;
                         }
                     },

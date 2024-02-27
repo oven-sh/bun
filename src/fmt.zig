@@ -117,10 +117,6 @@ pub const PathFormatOptions = struct {
     escape_backslashes: bool = false,
 };
 
-pub fn fmtUTF16(buf: []const u16) FormatUTF16 {
-    return FormatUTF16{ .buf = buf };
-}
-
 pub const FormatOSPath = if (Environment.isWindows) FormatUTF16 else FormatUTF8;
 
 pub fn fmtOSPath(buf: bun.OSPathSlice, options: PathFormatOptions) FormatOSPath {

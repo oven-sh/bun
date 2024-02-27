@@ -2425,12 +2425,18 @@ describe("expect()", () => {
     expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["a", "b", "e"]);
     expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["z"]);
 
+    expect(undefined).not.toContainKeys(["id"]);
+    expect("").toContainKeys([]);
+    expect("").not.toContainKeys(["id"]);
+    expect(false).toContainKeys([]);
+    expect(false).not.toContainKeys(["id"]);
+
     expect(() => {
       expect(undefined).toContainKeys(["id"]);
-    }).toThrow();
+    }).toThrow(/(Received:)(.*undefined)/);
     expect(() => {
       expect(null).toContainKeys(["id"]);
-    }).toThrow();
+    }).toThrow(/(Received:)(.*null)/);
   });
 
   test("toBeTruthy()", () => {

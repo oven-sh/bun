@@ -854,10 +854,11 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         var pass = brk: {
-            // https://github.com/jest-community/jest-extended/blob/711fdcc54d68c2b2c1992c7cfbdf0d0bd6be0f4d/src/matchers/toContainKeys.js#L1-L6
-            if (!value.coerce(bool, globalObject)) break :brk false;
-
             const count = expected.getLength(globalObject);
+
+            // jest-extended checks for truthiness before calling hasOwnProperty
+            // https://github.com/jest-community/jest-extended/blob/711fdcc54d68c2b2c1992c7cfbdf0d0bd6be0f4d/src/matchers/toContainKeys.js#L1-L6
+            if (!value.coerce(bool, globalObject)) break :brk count == 0;
 
             var i: u32 = 0;
 

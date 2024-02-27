@@ -350,7 +350,7 @@ pub const FDImpl = packed struct {
                                 const path = std.os.windows.GetFinalPathNameByHandle(handle, .{ .volume_name = .Dos }, &fd_path) catch break :print_with_path;
                                 return try writer.print("{d}[{}]", .{
                                     this.value.as_system,
-                                    std.unicode.fmtUtf16le(path),
+                                    bun.fmt.utf16(path),
                                 });
                             }
                         }

@@ -709,7 +709,7 @@ pub const ZigString = extern struct {
         }
 
         if (self.is16Bit()) {
-            try bun.fmt.formatUTF16(self.utf16Slice(), writer);
+            try bun.fmt.formatUTF16Type(@TypeOf(self.utf16Slice()), self.utf16Slice(), writer);
             return;
         }
 

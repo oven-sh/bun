@@ -1345,7 +1345,7 @@ pub fn moveOpenedFileAt(
         @intCast(struct_len), // already checked for error.NameTooLong
         .FileRenameInformationEx,
     );
-    log("moveOpenedFileAt({} ->> {} '{}', {s}) = {s}", .{ src_fd, new_dir_fd, std.unicode.fmtUtf16le(new_file_name), if (replace_if_exists) "replace_if_exists" else "no flag", @tagName(rc) });
+    log("moveOpenedFileAt({} ->> {} '{}', {s}) = {s}", .{ src_fd, new_dir_fd, bun.fmt.utf16(new_file_name), if (replace_if_exists) "replace_if_exists" else "no flag", @tagName(rc) });
 
     if (bun.Environment.isDebug) {
         if (rc == .ACCESS_DENIED) {

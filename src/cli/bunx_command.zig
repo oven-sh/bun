@@ -661,7 +661,7 @@ fn windowsUserUniqueId() u32 {
     }
     const name = buf[0..size];
     if (Environment.isWindows) {
-        Output.scoped(.windowsUserUniqueId, false)("username: {}", .{std.unicode.fmtUtf16le(name)});
+        Output.scoped(.windowsUserUniqueId, false)("username: {}", .{bun.fmt.utf16(name)});
     }
     return bun.hash32(std.mem.sliceAsBytes(name));
 }

@@ -1376,7 +1376,7 @@ pub const RunCommand = struct {
             var command_line = DirectBinLaunch.direct_launch_buffer[l..];
 
             debug("Attempting to find and load bunx file: '{}'", .{
-                std.unicode.fmtUtf16le(path_to_use),
+                bun.fmt.utf16(path_to_use),
             });
             if (Environment.allow_assert) {
                 std.debug.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
@@ -1410,8 +1410,8 @@ pub const RunCommand = struct {
 
             if (Environment.isDebug) {
                 debug("run_ctx.handle: '{}'", .{bun.FDImpl.fromSystem(handle)});
-                debug("run_ctx.base_path: '{}'", .{std.unicode.fmtUtf16le(run_ctx.base_path)});
-                debug("run_ctx.arguments: '{}'", .{std.unicode.fmtUtf16le(run_ctx.arguments)});
+                debug("run_ctx.base_path: '{}'", .{bun.fmt.utf16(run_ctx.base_path)});
+                debug("run_ctx.arguments: '{}'", .{bun.fmt.utf16(run_ctx.arguments)});
                 debug("run_ctx.force_use_bun: '{}'", .{run_ctx.force_use_bun});
             }
 

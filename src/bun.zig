@@ -2005,12 +2005,12 @@ pub const win32 = struct {
     ) !void {
         const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT;
 
-        const image_path = &w.peb().ProcessParameters.ImagePathName;
+        const image_path = windows.exePathW();
         var wbuf: WPathBuffer = undefined;
-        @memcpy(wbuf[0..image_path.Length], image_path.Buffer);
-        wbuf[image_path.Length] = 0;
+        @memcpy(wbuf[0..image_path.len], image_path);
+        wbuf[image_path.len] = 0;
 
-        const image_pathZ = wbuf[0..image_path.Length :0];
+        const image_pathZ = wbuf[0..image_path.len :0];
 
         const kernelenv = w.kernel32.GetEnvironmentStringsW();
         defer {
@@ -2062,7 +2062,7 @@ pub const win32 = struct {
             .hStdError = std.io.getStdErr().handle,
         };
         const rc = w.kernel32.CreateProcessW(
-            image_pathZ,
+            image_pathZ.ptr,
             w.kernel32.GetCommandLineW(),
             null,
             null,

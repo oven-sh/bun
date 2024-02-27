@@ -71,9 +71,9 @@ pub const ReadableStream = struct {
         }
 
         pub fn deinit(this: *Strong) void {
-            if (this.held.get()) |val| {
-                ReadableStream__detach(val, this.held.globalThis.?);
-            }
+            // if (this.held.get()) |val| {
+            //     ReadableStream__detach(val, this.held.globalThis.?);
+            // }
             this.held.deinit();
         }
     };

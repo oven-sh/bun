@@ -1623,12 +1623,20 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
 
     function callClose(controller) {
       try {
+        var underlyingByteSource = controller.$underlyingByteSource;
         const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
-        if (!stream) return;
+        if (!stream) {
+          return;
+        }
+
         if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
         controller.close();
       } catch (e) {
         globalThis.reportError(e);
+      } finally {
+        if (underlyingByteSource?.$stream) {
+          underlyingByteSource.$stream = undefined;
+        }
       }
     }
 
@@ -1675,14 +1683,13 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
     Prototype = class NativeReadableStreamSource {
       constructor(handle, autoAllocateChunkSize, drainValue) {
         $putByIdDirectPrivate(this, "stream", handle);
-        this.#controller = undefined;
         this.pull = this.#pull.bind(this);
         this.cancel = this.#cancel.bind(this);
         this.autoAllocateChunkSize = autoAllocateChunkSize;
 
         if (drainValue !== undefined) {
           this.start = controller => {
-            this.#controller = controller;
+            this.#controller = new WeakRef(controller);
             controller.enqueue(drainValue);
           };
         }
@@ -1692,13 +1699,13 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
       }
 
       #onDrain(chunk) {
-        var controller = this.#controller;
+        var controller = this.#controller?.deref?.();
         if (controller) {
           controller.enqueue(chunk);
         }
       }
 
-      #controller;
+      #controller: WeakRef<ReadableByteStreamController>;
 
       pull;
       cancel;
@@ -1710,9 +1717,12 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
 
       #onClose() {
         this.#closed = true;
-        var controller = this.#controller;
+        this.#controller = undefined;
+
+        var controller = this.#controller?.deref?.();
+
+        $putByIdDirectPrivate(this, "stream", undefined);
         if (controller) {
-          this.#controller = undefined;
           $enqueueJob(callClose, controller);
         }
       }
@@ -1722,12 +1732,13 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
 
         if (!handle || this.#closed) {
           this.#controller = undefined;
+          $putByIdDirectPrivate(this, "stream", undefined);
           $enqueueJob(callClose, controller);
           return;
         }
 
-        if (this.#controller !== controller) {
-          this.#controller = controller;
+        if (!this.#controller) {
+          this.#controller = new WeakRef(controller);
         }
 
         createResult(handle, controller, controller.byobRequest.view, closer);
@@ -1735,14 +1746,17 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
 
       #cancel(reason) {
         var handle = $getByIdDirectPrivate(this, "stream");
-        handle.updateRef(false);
-        handle.cancel(reason);
+        if (handle) {
+          handle.updateRef(false);
+          handle.cancel(reason);
+          $putByIdDirectPrivate(this, "stream", undefined);
+        }
       }
     };
     // this is reuse of an existing private symbol
     Prototype.prototype.$resume = function (has_ref) {
       var handle = $getByIdDirectPrivate(this, "stream");
-      handle.updateRef(has_ref);
+      if (handle) handle.updateRef(has_ref);
     };
     $lazyStreamPrototypeMap.$set($getPrototypeOf(handle), Prototype);
   }

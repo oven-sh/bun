@@ -900,6 +900,9 @@ pub const Fetch = struct {
                         // clean for reuse later
                         this.scheduled_response_buffer.reset();
                     } else {
+                        var prev = this.readable_stream_ref;
+                        this.readable_stream_ref = .{};
+                        defer prev.deinit();
                         readable.ptr.Bytes.onData(
                             .{
                                 .temporary_and_done = bun.ByteList.initConst(chunk),
@@ -913,7 +916,7 @@ pub const Fetch = struct {
 
             if (this.response.get()) |response_js| {
                 if (response_js.as(Response)) |response| {
-                    const body = response.body;
+                    var body = &response.body;
                     if (body.value == .Locked) {
                         if (body.value.Locked.readable.get()) |readable| {
                             if (readable.ptr == .Bytes) {
@@ -934,6 +937,9 @@ pub const Fetch = struct {
                                     // clean for reuse later
                                     this.scheduled_response_buffer.reset();
                                 } else {
+                                    var prev = body.value.Locked.readable;
+                                    body.value.Locked.readable = .{};
+                                    defer prev.deinit();
                                     readable.ptr.Bytes.onData(
                                         .{
                                             .temporary_and_done = bun.ByteList.initConst(chunk),

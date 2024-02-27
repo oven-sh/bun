@@ -848,7 +848,7 @@ Object.defineProperty(IncomingMessage.prototype, "socket", {
 });
 
 IncomingMessage.prototype.setTimeout = function (msecs, callback) {
-// TODO:
+  // TODO:
   return this;
 };
 
@@ -1271,7 +1271,6 @@ ServerResponse.prototype.writeContinue = function (callback) {
 };
 
 ServerResponse.prototype.setTimeout = function (msecs, callback) {
-
   // TODO:
   return this;
 };

@@ -933,8 +933,12 @@ pub const ESMConditions = struct {
         };
     }
 
-    pub fn append(self: *ESMConditions, customConditions: []const string) !void {
-        for (customConditions) |condition| {
+    pub fn appendSlice(self: *ESMConditions, conditions: []const string) !void {
+        try self.default.ensureUnusedCapacity(conditions.len);
+        try self.import.ensureUnusedCapacity(conditions.len);
+        try self.require.ensureUnusedCapacity(conditions.len);
+
+        for (conditions) |condition| {
             self.default.putAssumeCapacityNoClobber(condition, {});
             self.import.putAssumeCapacityNoClobber(condition, {});
             self.require.putAssumeCapacityNoClobber(condition, {});
@@ -1694,7 +1698,7 @@ pub const BundleOptions = struct {
         opts.conditions = try ESMConditions.init(allocator, Target.DefaultConditions.get(opts.target));
 
         if (transform.conditions.len > 0) {
-            opts.conditions.append(transform.conditions) catch unreachable;
+            opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();
         }
 
         switch (opts.target) {

@@ -506,7 +506,7 @@ pub const StandaloneModuleGraph = struct {
 
             bun.C.moveOpenedFileAtLoose(fd, bun.toFD(root_dir.fd), outfile_slice, true).unwrap() catch |err| {
                 if (err == error.EISDIR) {
-                    Output.errGeneric("{} is a directory. Please choose a different --outfile or delete the directory", .{std.unicode.fmtUtf16le(outfile_slice)});
+                    Output.errGeneric("{} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.utf16(outfile_slice)});
                 } else {
                     Output.err(err, "failed to move executable to result path", .{});
                 }

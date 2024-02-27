@@ -79,8 +79,8 @@ pub fn formatUTF16TypeEscapeBackslashes(comptime Slice: type, slice_: Slice, wri
     }
 }
 
-pub fn utf16(slice_: []align(1) const u16, writer: anytype) !void {
-    return formatUTF16Type([]align(1) const u16, slice_, writer);
+pub inline fn utf16(slice_: []const u16) FormatUTF16 {
+    return FormatUTF16{ .buf = slice_ };
 }
 
 pub const FormatUTF16 = struct {

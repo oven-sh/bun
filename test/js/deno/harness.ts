@@ -29,7 +29,7 @@ export function createDenoTest(path: string) {
 
   beforeAll(() => {
     server = serve({
-      port: 4545,
+      port: 0,
       fetch(request: Request): Response {
         const { url } = request;
         const { pathname, search } = new URL(url);
@@ -40,6 +40,7 @@ export function createDenoTest(path: string) {
         return Response.redirect(target.toString());
       },
     });
+    globalThis.PORT = server.port;
   });
 
   afterAll(() => {

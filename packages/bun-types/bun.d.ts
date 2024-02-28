@@ -1489,6 +1489,10 @@ declare module "bun" {
        * A number between 4 and 31. The default is 10.
        */
       cost?: number;
+      /**
+       * What to do for passwords longer than 72 bytes.
+       */
+      longPassword?: "sha512" | "truncate" | "throw";
     }
   }
 
@@ -1557,7 +1561,7 @@ declare module "bun" {
        * If specified and the algorithm does not match the hash, this function
        * throws an error.
        */
-      algorithm?: Password.AlgorithmLabel,
+      algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): Promise<boolean>;
     /**
      * Asynchronously hash a password using argon2 or bcrypt. The default is argon2.
@@ -1590,7 +1594,8 @@ declare module "bun" {
       /**
        * @default "argon2id"
        *
-       * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before
+       * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before,
+       * unless algorithm.longPassword is set to "throw" or "truncate".
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): Promise<string>;
@@ -1631,7 +1636,7 @@ declare module "bun" {
       /**
        * If not specified, the algorithm will be inferred from the hash.
        */
-      algorithm?: Password.AlgorithmLabel,
+      algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): boolean;
 
     /**
@@ -1675,7 +1680,8 @@ declare module "bun" {
       /**
        * @default "argon2id"
        *
-       * When using bcrypt, passwords exceeding 72 characters will be SHA256'd before
+       * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before,
+       * unless algorithm.longPassword is set to "throw" or "truncate".
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
     ): string;

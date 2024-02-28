@@ -995,7 +995,7 @@ pub const FileSystem = struct {
         // https://twitter.com/jarredsumner/status/1655714084569120770
         // https://twitter.com/jarredsumner/status/1655464485245845506
         pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, generation: bun.Generation, store_fd: bool, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
-            var dir = _dir;
+            var dir = bun.strings.pathWithoutTrailingSlashOne(_dir);
 
             // var windows_path_buf: bun.windows.PathBuffer = undefined;
             if (comptime Environment.isWindows) {

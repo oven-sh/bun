@@ -1144,7 +1144,6 @@ pub const Resolver = struct {
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("The import \"{s}\" is being treated as an absolute path", .{import_path});
             }
-            std.debug.print("IS A ABSOLUTE {s}\n", .{import_path});
 
             // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
             if ((r.dirInfoCached(source_dir) catch null)) |_dir_info| {
@@ -1609,7 +1608,6 @@ pub const Resolver = struct {
             {
                 std.debug.panic("Internal Assertion Failure: Invalid cache key \"{s}\"\nSee Resolver.assertValidCacheKey for details.", .{path});
             }
-            std.debug.print("observed cache key {s}\n", .{path});
         }
     }
 
@@ -3489,7 +3487,6 @@ pub const Resolver = struct {
 
         // Is this a file?
         if (r.loadAsFile(path, extension_order)) |file| {
-            std.debug.print("IS A FILE {s}\n", .{file.path});
             // Determine the package folder by looking at the last node_modules/ folder in the path
             if (strings.lastIndexOf(file.path, "node_modules" ++ std.fs.path.sep_str)) |last_node_modules_folder| {
                 const node_modules_folder_offset = last_node_modules_folder + ("node_modules" ++ std.fs.path.sep_str).len;
@@ -3522,7 +3519,6 @@ pub const Resolver = struct {
         }
 
         // Is this a directory?
-        std.debug.print("Attempting to load \"{s}\" as a directory\n", .{path});
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("Attempting to load \"{s}\" as a directory", .{path});
             debug.increaseIndent();

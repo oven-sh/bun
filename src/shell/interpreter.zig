@@ -7803,10 +7803,6 @@ pub fn ShellTask(
         pub fn schedule(this: *@This()) void {
             print("schedule", .{});
 
-            if (bun.Environment.isWindows) {
-                // event loop here is js event loop
-                @panic("TODO SHELL WINDOWS!");
-            }
             this.ref.ref(this.event_loop);
             WorkPool.schedule(&this.task);
         }

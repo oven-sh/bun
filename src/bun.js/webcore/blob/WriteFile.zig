@@ -544,7 +544,8 @@ pub const WriteFileWindows = struct {
     pub fn onFinish(container: *WriteFileWindows) void {
         container.loop().unrefConcurrently();
         var event_loop = container.event_loop;
-        defer event_loop.drainMicrotasks();
+        event_loop.enter();
+        defer event_loop.exit();
 
         // We don't need to enqueue task since this is already in a task.
         container.runFromJSThread();

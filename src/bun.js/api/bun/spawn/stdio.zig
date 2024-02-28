@@ -148,6 +148,7 @@ pub const Stdio = union(enum) {
         return switch (stdio.*) {
             .capture, .pipe, .array_buffer, .blob => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
             .fd => |fd| .{ .pipe = fd },
+            .dup2 => @panic("TODO bun shell redirects on windows"),
             .path => |pathlike| .{ .path = pathlike.slice() },
             .inherit => .{ .inherit = {} },
             .ignore => .{ .ignore = {} },

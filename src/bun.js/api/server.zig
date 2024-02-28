@@ -3285,8 +3285,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.request_body_buf = .{};
 
                     if (old == .Locked) {
-                        var vm = this.server.vm;
-                        defer vm.drainMicrotasks();
+                        var loop = this.server.vm.eventLoop();
+                        loop.enter();
+                        defer loop.exit();
+
                         old.resolve(&body.value, this.server.globalThis);
                     }
                     return;

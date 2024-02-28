@@ -391,6 +391,7 @@ pub const Subprocess = struct {
                     .ignore => Readable{ .ignore = {} },
                     .path => Readable{ .ignore = {} },
                     .fd => |fd| Readable{ .fd = fd },
+                    .dup2 => |dup2| Readable{ .fd = dup2.out.toFd() },
                     .memfd => Readable{ .ignore = {} },
                     .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result) },
                     .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
@@ -1114,6 +1115,9 @@ pub const Subprocess = struct {
                     },
                     .fd => |fd| {
                         return Writable{ .fd = fd };
+                    },
+                    .dup2 => |dup2| {
+                        return Writable{ .fd = dup2.to.toFd() };
                     },
                     .inherit => {
                         return Writable{ .inherit = {} };

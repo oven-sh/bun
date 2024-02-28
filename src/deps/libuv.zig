@@ -598,6 +598,9 @@ pub const Loop = extern struct {
         this.active_handles += value;
     }
 
+    pub const ref = inc;
+    pub const unref = dec;
+
     pub fn inc(this: *Loop) void {
         this.active_handles += 1;
     }

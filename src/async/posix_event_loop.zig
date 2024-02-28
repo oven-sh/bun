@@ -57,10 +57,9 @@ pub const KeepAlive = struct {
         if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
             event_loop_ctx_.loop().subActive(1);
             return;
-        } else {
-            const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
-            event_loop_ctx.platformEventLoop().subActive(1);
         }
+        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        event_loop_ctx.platformEventLoop().subActive(1);
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -103,7 +102,6 @@ pub const KeepAlive = struct {
             return;
         }
         const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
-
         event_loop_ctx.platformEventLoop().ref();
     }
 

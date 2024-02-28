@@ -3,7 +3,6 @@ import { bunExe, bunEnv } from "../../harness.js";
 import { mkdirSync, rmSync, writeFileSync, readFileSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { e } from "../../js/bun/http/js-sink-sourmap-fixture/index.mjs";
 
 it("JSON strings escaped properly", async () => {
   const testDir = mkdtempSync(join(tmpdir(), "issue631-"));

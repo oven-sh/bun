@@ -424,7 +424,7 @@ pub const FileSystem = struct {
     }
 
     pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
-        return @call(bun.callmod_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, true });
+        return @call(bun.callmod_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
     }
 
     pub fn join(_: *@This(), parts: anytype) string {
@@ -994,13 +994,16 @@ pub const FileSystem = struct {
         // https://twitter.com/jarredsumner/status/1655787337027309568
         // https://twitter.com/jarredsumner/status/1655714084569120770
         // https://twitter.com/jarredsumner/status/1655464485245845506
-        pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, generation: bun.Generation, store_fd: bool, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
-            var dir = bun.strings.pathWithoutTrailingSlashOne(_dir);
-
-            // var windows_path_buf: bun.windows.PathBuffer = undefined;
-            if (comptime Environment.isWindows) {
-                // _dir = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, _dir);
-            }
+        pub fn readDirectoryWithIterator(
+            fs: *RealFS,
+            dir_maybe_trail_slash: string,
+            maybe_handle: ?std.fs.Dir,
+            generation: bun.Generation,
+            store_fd: bool,
+            comptime Iterator: type,
+            iterator: Iterator,
+        ) !*EntriesOption {
+            var dir = bun.strings.pathWithoutTrailingSlashOne(dir_maybe_trail_slash);
 
             bun.resolver.Resolver.assertValidCacheKey(dir);
             var cache_result: ?allocators.Result = null;
@@ -1028,20 +1031,20 @@ pub const FileSystem = struct {
                 }
             }
 
-            var handle = _handle orelse try fs.openDir(dir);
+            var handle = maybe_handle orelse try fs.openDir(dir);
 
             defer {
-                if (_handle == null and (!store_fd or fs.needToCloseFiles())) {
+                if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) {
                     handle.close();
                 }
             }
 
             // if we get this far, it's a real directory, so we can just store the dir name.
-            if (_handle == null) {
+            if (maybe_handle == null) {
                 dir = try if (in_place) |existing|
                     existing.dir
                 else
-                    DirnameStore.instance.append(string, _dir);
+                    DirnameStore.instance.append(string, dir_maybe_trail_slash);
             }
 
             // Cache miss: read the directory entries

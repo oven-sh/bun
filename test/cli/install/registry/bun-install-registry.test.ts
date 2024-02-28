@@ -3185,6 +3185,244 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
     });
+
+    describe("--trust", async () => {
+      const trustTests = [
+        {
+          label: "only name",
+          packageJson: {
+            name: "foo",
+          },
+        },
+        {
+          label: "empty dependencies",
+          packageJson: {
+            name: "foo",
+            dependencies: {},
+          },
+        },
+        {
+          label: "populated dependencies",
+          packageJson: {
+            name: "foo",
+            dependencies: {
+              "uses-what-bin": "1.0.0",
+            },
+          },
+        },
+
+        {
+          label: "empty trustedDependencies",
+          packageJson: {
+            name: "foo",
+            trustedDependencies: [],
+          },
+        },
+
+        {
+          label: "populated dependencies, empty trustedDependencies",
+          packageJson: {
+            name: "foo",
+            dependencies: {
+              "uses-what-bin": "1.0.0",
+            },
+            trustedDependencies: [],
+          },
+        },
+
+        {
+          label: "populated dependencies and trustedDependencies",
+          packageJson: {
+            name: "foo",
+            dependencies: {
+              "uses-what-bin": "1.0.0",
+            },
+            trustedDependencies: ["uses-what-bin"],
+          },
+        },
+
+        {
+          label: "empty dependencies and trustedDependencies",
+          packageJson: {
+            name: "foo",
+            dependencies: {},
+            trustedDependencies: [],
+          },
+        },
+      ];
+      for (const { label, packageJson } of trustTests) {
+        test(label, async () => {
+          await writeFile(join(packageDir, "package.json"), JSON.stringify(packageJson));
+
+          let { stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "i", "--trust", "uses-what-bin@1.0.0"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "pipe",
+            env,
+          });
+
+          let err = await Bun.readableStreamToText(stderr);
+          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("not found");
+          expect(err).not.toContain("error:");
+          expect(err).not.toContain("warn:");
+          let out = await Bun.readableStreamToText(stdout);
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+            "",
+            " installed uses-what-bin@1.0.0",
+            "",
+            " 2 packages installed",
+          ]);
+          expect(await exited).toBe(0);
+          expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+            name: "foo",
+            dependencies: {
+              "uses-what-bin": "1.0.0",
+            },
+            trustedDependencies: ["uses-what-bin"],
+          });
+
+          // another install should not error with json SyntaxError
+          ({ stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "i"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "pipe",
+            env,
+          }));
+
+          err = await Bun.readableStreamToText(stderr);
+          expect(err).not.toContain("Saved lockfile");
+          expect(err).not.toContain("not found");
+          expect(err).not.toContain("error:");
+          expect(err).not.toContain("warn:");
+          out = await Bun.readableStreamToText(stdout);
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+            "",
+            "Checked 2 installs across 3 packages (no changes)",
+          ]);
+          expect(await exited).toBe(0);
+        });
+      }
+      describe("packages without lifecycle scripts", async () => {
+        test("initial install", async () => {
+          await writeFile(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+            }),
+          );
+
+          const { stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "i", "--trust", "no-deps@1.0.0"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "pipe",
+            env,
+          });
+
+          const err = await Bun.readableStreamToText(stderr);
+          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("not found");
+          expect(err).not.toContain("error:");
+          expect(err).not.toContain("warn:");
+          const out = await Bun.readableStreamToText(stdout);
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+            "",
+            " installed no-deps@1.0.0",
+            "",
+            expect.stringContaining("1 package installed"),
+          ]);
+          expect(await exited).toBe(0);
+          expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeTrue();
+          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+            name: "foo",
+            dependencies: {
+              "no-deps": "1.0.0",
+            },
+          });
+        });
+        test("already installed", async () => {
+          await writeFile(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+            }),
+          );
+          let { stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "i", "no-deps"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "pipe",
+            env,
+          });
+
+          let err = await Bun.readableStreamToText(stderr);
+          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("not found");
+          expect(err).not.toContain("error:");
+          expect(err).not.toContain("warn:");
+          let out = await Bun.readableStreamToText(stdout);
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+            "",
+            " installed no-deps@2.0.0",
+            "",
+            expect.stringContaining("1 package installed"),
+          ]);
+          expect(await exited).toBe(0);
+          expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeTrue();
+          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+            name: "foo",
+            dependencies: {
+              "no-deps": "^2.0.0",
+            },
+          });
+
+          // oops, I wanted to run the lifecycle scripts for no-deps, I'll install
+          // again with --trust.
+
+          ({ stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "i", "--trust", "no-deps"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "pipe",
+            env,
+          }));
+
+          // oh, I didn't realize no-deps doesn't have
+          // any lifecycle scripts. It shouldn't automatically add to
+          // trustedDependencies.
+
+          err = await Bun.readableStreamToText(stderr);
+          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("not found");
+          expect(err).not.toContain("error:");
+          out = await Bun.readableStreamToText(stdout);
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+            "",
+            " installed no-deps@2.0.0",
+            "",
+            expect.stringContaining("done"),
+            "",
+          ]);
+          expect(await exited).toBe(0);
+          expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeTrue();
+          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+            name: "foo",
+            dependencies: {
+              "no-deps": "^2.0.0",
+            },
+          });
+        });
+      });
+    });
   });
 }
 

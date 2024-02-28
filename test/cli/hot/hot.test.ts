@@ -156,14 +156,9 @@ it("should not hot reload when a random file is written", async () => {
       writeFileSync(root + ".another.yet.js", code);
       unlinkSync(root + ".another.yet.js");
     }
-    var waiter = new Promise<void>((resolve, reject) => {
-      setTimeout(async () => {
-        resolve();
-      }, 50);
-    });
     var finished = false;
     await Promise.race([
-      waiter,
+      Bun.sleep(200),
       (async () => {
         if (finished) {
           return;

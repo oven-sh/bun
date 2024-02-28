@@ -1637,13 +1637,10 @@ pub const EventLoopKind = enum {
     }
 };
 
-pub fn AbstractVM(inner: anytype) brk: {
-    if (@TypeOf(inner) == *JSC.VirtualMachine) {
-        break :brk JsVM;
-    } else if (@TypeOf(inner) == *JSC.MiniEventLoop) {
-        break :brk MiniVM;
-    }
-    @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner)));
+pub fn AbstractVM(inner: anytype) switch (@TypeOf(inner)) {
+    *JSC.VirtualMachine => JsVM,
+    *JSC.MiniEventLoop => MiniVM,
+    else => @compileError("Invalid event loop ctx: " ++ @typeName(@TypeOf(inner))),
 } {
     if (comptime @TypeOf(inner) == *JSC.VirtualMachine) return JsVM.init(inner);
     if (comptime @TypeOf(inner) == *JSC.MiniEventLoop) return MiniVM.init(inner);

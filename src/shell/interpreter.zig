@@ -4299,7 +4299,7 @@ pub const Interpreter = struct {
             this.exit_code = code;
 
             var cmd = this.parentCmdMut();
-            log("builtin done ({s}: exit={d}) cmd to free: ({x})", .{ @tagName(this.kind), exit_code, @intFromPtr(cmd) });
+            log("builtin done ({s}: exit={d}) cmd to free: ({x})", .{ @tagName(this.kind), code, @intFromPtr(cmd) });
             cmd.exit_code = this.exit_code.?;
 
             // Aggregate output data if shell state is piped and this cmd is piped
@@ -7360,6 +7360,7 @@ pub const Interpreter = struct {
         }
 
         pub fn init(fd: bun.FileDescriptor, evtloop: JSC.EventLoopHandle) *This {
+            if (bun.Environment.isWindows) @panic("TODO SHELL WINDOWS");
             const this = IOWriter.new(.{
                 .fd = fd,
                 .evtloop = evtloop,
@@ -7381,6 +7382,7 @@ pub const Interpreter = struct {
 
         /// Idempotent write call
         pub fn write(this: *This) void {
+            if (bun.Environment.isWindows) @panic("TODO SHELL WINDOWS");
             if (bun.Environment.allow_assert) {
                 if (this.writer.handle != .poll) @panic("Should be poll.");
             }

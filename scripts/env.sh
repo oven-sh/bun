@@ -44,3 +44,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "C Compiler: ${CC}"
     echo "C++ Compiler: ${CXX}"
 fi
+
+
+
+if [[ $(uname) ==  "OpenBSD" ]]; then
+    export MAKE="gmake"
+else
+    export MAKE="make"
+fi
+

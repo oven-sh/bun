@@ -32,7 +32,7 @@ for type in CC CXX; do
   ) || fail "LLVM ${LLVM_VERSION} is required. Detected $type as '$compiler'"
 done
 
-has_exec "bun" || fail "you need an existing copy of 'bun' in your path to build bun"
+has_exec "bun" || has_exec "npm" fail "you need an existing copy of 'bun' in your path to build bun"
 has_exec "cmake" || fail "'cmake' is missing"
 has_exec "ninja" || fail "'ninja' is missing"
 $(
@@ -65,20 +65,33 @@ bash ./all-dependencies.sh
 cd ../
 
 # Install bun dependencies
-bun i
+bun i || npm i
 # Install test dependencies
-cd test; bun i; cd ..
+cd test; bun i || npm i ; cd ..
 
 # TODO(@paperdave): do not use the Makefile please
-has_exec "make" || fail "'make' is missing"
-make runtime_js fallback_decoder bun_error node-fallbacks
+if [[ $(uname) == "OpenBSD" ]]; then
+    has_exec "gmake" || fail "make is missing"
+    gmake runtime_js fallback_decoder bun_error node-fallbacks
+else
+    has_exec "make" || fail "'make' is missing"
+    make runtime_js fallback_decoder bun_error node-fallbacks
+fi
+
 
 mkdir -p build
 rm -f build/CMakeCache.txt
+
+NO_CODEGEN="OFF"
+if [[ $(uname) == "OpenBSD" ]]; then
+    NO_CODEGEN="ON";
+fi
+
 cmake -B build -S . \
   -G Ninja \
   -DUSE_DEBUG_JSC=ON \
   -DCMAKE_BUILD_TYPE=Debug \
+  -DNO_CODEGEN="$NO_CODEGEN" \
   -DCMAKE_C_COMPILER="$CC" \
   -DCMAKE_CXX_COMPILER="$CXX" \
   -UZIG_COMPILER "$*" \

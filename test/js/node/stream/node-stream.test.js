@@ -246,7 +246,6 @@ describe("PassThrough", () => {
   });
 });
 
-
 const processStdInTest = `
 const { Transform } = require("node:stream");
 

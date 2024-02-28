@@ -336,7 +336,15 @@ if (!debug) {
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
-  ${moduleList.map((id, n) => declareASCIILiteral(`${idToEnumName(id)}Code`, outputs.get(id.slice(0, -3)))).join("\n")}
+  ${moduleList
+    .map((id, n) => {
+      const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
+      if (!out) {
+        throw new Error(`Missing output for ${id}`);
+      }
+      return declareASCIILiteral(`${idToEnumName(id)}Code`, out);
+    })
+    .join("\n")}
 }
 }`,
   );

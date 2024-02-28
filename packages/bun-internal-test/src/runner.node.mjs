@@ -43,7 +43,7 @@ function defaultConcurrency() {
   // Concurrency causes more flaky tests, only enable it by default on windows
   // See https://github.com/oven-sh/bun/issues/8071
   if (windows) {
-    return Math.floor((cpus().length - 2) / 2);
+    return Math.floor((cpus().length - 2) / 3);
   }
   return 1;
 }

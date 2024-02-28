@@ -403,20 +403,16 @@ pub const Bundler = struct {
                 if (std.fs.path.isAbsolute(entry_point)) {
                     if (std.fs.path.dirname(entry_point)) |dir| {
                         // Normalized with trailing slash
-                        break :name bun.strings.normalizeSlashesOnly(
-                            &cache_bust_buf,
-                            if (dir.len == 1) dir else entry_point[0 .. dir.len + 1],
-                            '/',
-                        );
+                        break :name bun.strings.normalizeSlashesOnly(&cache_bust_buf, dir, std.fs.path.sep);
                     }
                 }
 
                 var parts = [_]string{
                     entry_point,
-                    bun.pathLiteral("../"),
+                    bun.pathLiteral(".."),
                 };
 
-                break :name bun.path.joinAbsStringBufZTrailingSlash(
+                break :name bun.path.joinAbsStringBufZ(
                     bundler.fs.top_level_dir,
                     &cache_bust_buf,
                     &parts,

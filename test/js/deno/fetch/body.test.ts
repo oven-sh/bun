@@ -36,7 +36,7 @@ test({
         net: true
     }
 }, async function bodyMultipartFormData() {
-    const response = await fetch("http://localhost:4545/multipart_form_data.txt");
+    const response = await fetch("http://localhost:" + PORT + "/multipart_form_data.txt");
     assert(response.body instanceof ReadableStream);
     const text = await response.text();
     const body = buildBody(text, response.headers);
@@ -51,7 +51,7 @@ test({
         net: true
     }
 }, async function bodyURLEncodedFormData() {
-    const response = await fetch("http://localhost:4545/subdir/form_urlencoded.txt");
+    const response = await fetch("http://localhost:" + PORT + "/subdir/form_urlencoded.txt");
     assert(response.body instanceof ReadableStream);
     const text = await response.text();
     const body = buildBody(text, response.headers);

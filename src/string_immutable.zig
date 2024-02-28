@@ -742,6 +742,20 @@ pub fn withoutTrailingSlashWindowsPath(this: string) []const u8 {
     return href;
 }
 
+/// This will remove ONE trailing slash at the end of a string,
+/// but on Windows it will not remove the \ in "C:\"
+pub fn pathWithoutTrailingSlashOne(str: []const u8) []const u8 {
+    return if (str.len > 0 and charIsAnySlash(str[str.len - 1]))
+        if (Environment.isWindows and str.len == 3 and str[1] == ':')
+            // Preserve "C:\"
+            str
+        else
+            // Remove one slash
+            str[0 .. str.len - 1]
+    else
+        str;
+}
+
 pub fn withoutLeadingSlash(this: string) []const u8 {
     return std.mem.trimLeft(u8, this, "/");
 }

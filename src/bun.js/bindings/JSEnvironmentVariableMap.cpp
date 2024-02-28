@@ -166,11 +166,10 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             if (auto index = parseIndex(identifier)) {
                 ZigString valueString = { nullptr, 0 };
                 ZigString nameStr = toZigString(name);
-                JSValue value = jsUndefined();
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
-                    value = jsString(vm, Zig::toStringCopy(valueString));
+                    JSValue value = jsString(vm, Zig::toStringCopy(valueString));
+                    object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
                 }
-                object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
                 continue;
             }
         }

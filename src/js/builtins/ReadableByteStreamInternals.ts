@@ -222,7 +222,9 @@ export function readableByteStreamControllerPull(controller) {
 }
 
 export function readableByteStreamControllerShouldCallPull(controller) {
+  $assert(controller);
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+  $assert(stream);
 
   if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return false;
   if ($getByIdDirectPrivate(controller, "closeRequested")) return false;
@@ -244,6 +246,7 @@ export function readableByteStreamControllerShouldCallPull(controller) {
 }
 
 export function readableByteStreamControllerCallPullIfNeeded(controller) {
+  $assert(controller);
   if (!$readableByteStreamControllerShouldCallPull(controller)) return;
 
   if ($getByIdDirectPrivate(controller, "pulling")) {

@@ -5,7 +5,6 @@ const { Duplex, Readable, Writable } = require("node:stream");
 const { getHeader, setHeader, assignHeaders: assignHeadersFast } = $lazy("http");
 
 const GlobalPromise = globalThis.Promise;
-let warnNotImplementedOnce;
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
  * True if val contains an invalid field-vchar
@@ -226,11 +225,6 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   setTimeout(timeout, callback) {
-    if (!warnNotImplementedOnce) {
-      ({ warnNotImplementedOnce } = require("internal/shared"));
-    }
-
-    warnNotImplementedOnce("Socket in HTTP setTimeout");
     return this;
   }
 
@@ -609,10 +603,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
 };
 
 Server.prototype.setTimeout = function (msecs, callback) {
-  if (!warnNotImplementedOnce) {
-    ({ warnNotImplementedOnce } = require("internal/shared"));
-  }
-  warnNotImplementedOnce("Server.setTimeout");
+  // TODO:
   return this;
 };
 
@@ -857,11 +848,7 @@ Object.defineProperty(IncomingMessage.prototype, "socket", {
 });
 
 IncomingMessage.prototype.setTimeout = function (msecs, callback) {
-  if (!warnNotImplementedOnce) {
-    ({ warnNotImplementedOnce } = require("internal/shared"));
-  }
-  warnNotImplementedOnce("IncomingMessage.setTimeout");
-
+  // TODO:
   return this;
 };
 
@@ -1284,11 +1271,7 @@ ServerResponse.prototype.writeContinue = function (callback) {
 };
 
 ServerResponse.prototype.setTimeout = function (msecs, callback) {
-  if (!warnNotImplementedOnce) {
-    ({ warnNotImplementedOnce } = require("internal/shared"));
-  }
-
-  warnNotImplementedOnce("ServerResponse.setTimeout");
+  // TODO:
   return this;
 };
 

@@ -483,6 +483,7 @@ pub const VirtualMachine = struct {
     console: *ConsoleObject,
     log: *logger.Log,
     main: string = "",
+    main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
     process: js.JSObjectRef = null,
     flush_list: std.ArrayList(string),
@@ -1708,15 +1709,19 @@ pub const VirtualMachine = struct {
                         const buster_name = name: {
                             if (std.fs.path.isAbsolute(normalized_specifier)) {
                                 if (std.fs.path.dirname(normalized_specifier)) |dir| {
-                                    // With trailing slash
-                                    break :name if (dir.len == 1) dir else normalized_specifier[0 .. dir.len + 1];
+                                    // Normalized with trailing slash
+                                    break :name bun.strings.normalizeSlashesOnly(
+                                        &specifier_cache_resolver_buf,
+                                        if (dir.len == 1) dir else normalized_specifier[0 .. dir.len + 1],
+                                        '/',
+                                    );
                                 }
                             }
 
                             var parts = [_]string{
                                 source_to_use,
                                 normalized_specifier,
-                                "../",
+                                bun.pathLiteral("../"),
                             };
 
                             break :name bun.path.joinAbsStringBufZTrailingSlash(

@@ -829,7 +829,7 @@ fn scopedWriter() std.fs.File.Writer {
                     std.fs.cwd().fd,
                     path,
                     std.os.O.TRUNC | std.os.O.CREAT | std.os.O.WRONLY,
-                    0o644,
+                    if (Environment.isWindows) 0 else 0o644,
                 ) catch |err_| {
                     // Ensure we don't panic inside panic
                     Scoped.loaded_env = false;

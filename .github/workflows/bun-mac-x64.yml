@@ -52,20 +52,20 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
         id: buildx
         with:
           install: true
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compile Zig Object
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: false
@@ -94,7 +94,7 @@ jobs:
           outputs: type=local,dest=${{runner.temp}}/release
 
       - name: Upload Zig Object
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.tag }}
           path: ${{runner.temp}}/release/bun-zig.o
@@ -144,7 +144,7 @@ jobs:
 
       - name: Cache submodule dependencies
         id: cache-deps-restore
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v4
         with:
           path: ${{runner.temp}}/bun-deps
           key: bun-deps-${{ matrix.tag }}-${{ steps.submodule-versions.outputs.sha }}
@@ -162,13 +162,13 @@ jobs:
       - name: Cache submodule dependencies
         if: ${{ !steps.cache-deps-restore.outputs.cache-hit }}
         id: cache-deps-save
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v4
         with:
           path: ${{runner.temp}}/bun-deps
           key: ${{ steps.cache-deps-restore.outputs.cache-primary-key }}
 
       - name: Upload submodule dependencies
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps
@@ -238,7 +238,7 @@ jobs:
           bash compile-cpp-only.sh -v
 
       - name: Upload C++
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.tag }}-cpp
           path: ${{ runner.temp }}/bun-cpp-obj/bun-cpp-objects.a
@@ -260,7 +260,7 @@ jobs:
             runner: macos-12-large
             artifact: bun-obj-darwin-x64
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Checkout submodules
         run: git submodule update --init --recursive --depth=1 --progress --force
 
@@ -284,19 +284,19 @@ jobs:
           echo "${{ runner.temp }}/.bun/bin" >> $GITHUB_PATH
 
       - name: Download C++
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.tag }}-cpp
           path: ${{ runner.temp }}/bun-cpp-obj
 
       - name: Download Zig Object
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.obj }}
           path: ${{ runner.temp }}/release
 
       - name: Downloaded submodule dependencies
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps
@@ -329,11 +329,11 @@ jobs:
 
           zip -r ${{matrix.tag}}-profile.zip ${{matrix.tag}}-profile
           zip -r ${{matrix.tag}}.zip ${{matrix.tag}}
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{matrix.tag}}-profile
           path: ${{runner.temp}}/link-build/${{matrix.tag}}-profile.zip
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{matrix.tag}}
           path: ${{runner.temp}}/link-build/${{matrix.tag}}.zip
@@ -393,12 +393,12 @@ jobs:
     steps:
       - id: checkout
         name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: false
       - id: download
         name: Download
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{matrix.tag}}
           path: ${{runner.temp}}/release
@@ -426,6 +426,7 @@ jobs:
         env:
           SMTP_SENDGRID_SENDER: ${{ secrets.SMTP_SENDGRID_SENDER }}
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
+          TMPDIR: ${{runner.temp}}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         # if: ${{github.event.inputs.use_bun == 'false'}}
         run: |

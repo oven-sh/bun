@@ -241,7 +241,7 @@ pub const ReadableStream = struct {
         Bytes: *ByteStream,
     };
 
-    extern fn ReadableStreamTag__tagged(globalObject: *JSGlobalObject, possibleReadableStream: JSValue, ptr: *JSValue) Tag;
+    extern fn ReadableStreamTag__tagged(globalObject: *JSGlobalObject, possibleReadableStream: *JSValue, ptr: *JSValue) Tag;
     extern fn ReadableStream__isDisturbed(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__isLocked(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__empty(*JSGlobalObject) JSC.JSValue;
@@ -269,41 +269,42 @@ pub const ReadableStream = struct {
     pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
         JSC.markBinding(@src());
         var ptr = JSValue.zero;
-        return switch (ReadableStreamTag__tagged(globalThis, value, &ptr)) {
+        var out = value;
+        return switch (ReadableStreamTag__tagged(globalThis, &out, &ptr)) {
             .JavaScript => ReadableStream{
-                .value = value,
+                .value = out,
                 .ptr = .{
                     .JavaScript = {},
                 },
             },
             .Blob => ReadableStream{
-                .value = value,
+                .value = out,
                 .ptr = .{
                     .Blob = ptr.asPtr(ByteBlobLoader),
                 },
             },
             .File => ReadableStream{
-                .value = value,
+                .value = out,
                 .ptr = .{
                     .File = ptr.asPtr(FileReader),
                 },
             },
 
             .Bytes => ReadableStream{
-                .value = value,
+                .value = out,
                 .ptr = .{
                     .Bytes = ptr.asPtr(ByteStream),
                 },
             },
 
             // .HTTPRequest => ReadableStream{
-            //     .value = value,
+            //     .value = out,
             //     .ptr = .{
             //         .HTTPRequest = ptr.asPtr(HTTPRequest),
             //     },
             // },
             // .HTTPSRequest => ReadableStream{
-            //     .value = value,
+            //     .value = out,
             //     .ptr = .{
             //         .HTTPSRequest = ptr.asPtr(HTTPSRequest),
             //     },
@@ -499,14 +500,18 @@ pub const StreamStart = union(Tag) {
                 var chunk_size: JSC.WebCore.Blob.SizeType = 0;
                 var empty = true;
 
-                if (value.get(globalThis, "asUint8Array")) |as_array| {
-                    as_uint8array = as_array.toBoolean();
-                    empty = false;
+                if (value.get(globalThis, "asUint8Array")) |val| {
+                    if (val.isBoolean()) {
+                        as_uint8array = val.toBoolean();
+                        empty = false;
+                    }
                 }
 
-                if (value.get(globalThis, "stream")) |as_array| {
-                    stream = as_array.toBoolean();
-                    empty = false;
+                if (value.get(globalThis, "stream")) |val| {
+                    if (val.isBoolean()) {
+                        stream = val.toBoolean();
+                        empty = false;
+                    }
                 }
 
                 if (value.get(globalThis, "highWaterMark")) |chunkSize| {
@@ -707,7 +712,7 @@ pub const StreamResult = union(Tag) {
                     this.handler = struct {
                         const handler = handler_fn;
                         pub fn onHandle(ctx_: *anyopaque, result: StreamResult.Writable) void {
-                            @call(.always_inline, handler, .{ bun.cast(*Context, ctx_), result });
+                            @call(bun.callmod_inline, handler, .{ bun.cast(*Context, ctx_), result });
                         }
                     }.onHandle;
                 }
@@ -830,7 +835,7 @@ pub const StreamResult = union(Tag) {
                 this.handler = struct {
                     const handler = handler_fn;
                     pub fn onHandle(ctx_: *anyopaque, result: StreamResult) void {
-                        @call(.always_inline, handler, .{ bun.cast(*Context, ctx_), result });
+                        @call(bun.callmod_inline, handler, .{ bun.cast(*Context, ctx_), result });
                     }
                 }.onHandle;
             }
@@ -1518,7 +1523,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
                     remain = remain[res.result..];
                     total += res.result;
 
-                    log("Wrote {d} bytes (fd: {d}, head: {d}, {d}/{d})", .{ res.result, fd, this.head, remain.len, total });
+                    log("Wrote {d} bytes (fd: {}, head: {d}, {d}/{d})", .{ res.result, fd, this.head, remain.len, total });
 
                     if (res.result == 0) {
                         if (this.poll_ref) |poll| {

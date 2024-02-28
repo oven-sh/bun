@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { expect, describe, it } from "bun:test";
 import { Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
@@ -6,6 +5,8 @@ import { join } from "path";
 import { bunExe, bunEnv } from "harness";
 import { tmpdir } from "node:os";
 import { writeFileSync, mkdirSync } from "node:fs";
+
+const isWindows = process.platform === "win32";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -183,6 +184,20 @@ describe("createReadStream", () => {
       done();
     });
   });
+
+  it("should emit readable on end", done => {
+    const testData = "Hello world";
+    const path = join(tmpdir(), `${Date.now()}-testEmitReadableOnEnd.txt`);
+    writeFileSync(path, testData);
+    const stream = createReadStream(path);
+
+    stream.on("readable", () => {
+      const chunk = stream.read();
+      if (!chunk) {
+        done();
+      }
+    });
+  });
 });
 
 describe("Duplex", () => {
@@ -336,7 +351,7 @@ describe("TTY", () => {
 });
 `;
 
-it("TTY streams", () => {
+it.skipIf(isWindows)("TTY streams", () => {
   mkdirSync(join(tmpdir(), "tty-test"), { recursive: true });
   writeFileSync(join(tmpdir(), "tty-test/tty-streams.test.js"), ttyStreamsTest, {});
 

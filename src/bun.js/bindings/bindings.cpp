@@ -32,6 +32,7 @@
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSSet.h"
 #include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Microtask.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ParserError.h"
@@ -2496,9 +2497,13 @@ JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue 
 bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key)
 {
     JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue value = JSC::JSValue::decode(jsValue);
-    return value.toObject(globalObject)->hasOwnProperty(globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(key))));
+    JSObject* obj = value.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    RELEASE_AND_RETURN(scope, JSC::objectPrototypeHasOwnProperty(globalObject, obj, JSC::Identifier::fromString(vm, Zig::toString(key))));
 }
 
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
@@ -4716,6 +4721,7 @@ enum class BuiltinNamesMap : uint8_t {
     toString,
     redirect,
     inspectCustom,
+    asyncIterator,
 };
 
 static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -4752,6 +4758,9 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::inspectCustom: {
         return Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
+    }
+    case BuiltinNamesMap::asyncIterator: {
+        return vm.propertyNames->asyncIteratorSymbol;
     }
     }
 }
@@ -5410,22 +5419,27 @@ extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
     return DECLARE_CATCH_SCOPE(globalObject->vm()).exception() != 0;
 }
 
-CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter *gettersetter)
+CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter* gettersetter)
 {
     return gettersetter->isGetterNull();
 }
 
-CPP_DECL bool JSC__GetterSetter__isSetterNull(JSC__GetterSetter *gettersetter)
+CPP_DECL bool JSC__GetterSetter__isSetterNull(JSC__GetterSetter* gettersetter)
 {
     return gettersetter->isSetterNull();
 }
 
-CPP_DECL bool JSC__CustomGetterSetter__isGetterNull(JSC__CustomGetterSetter *gettersetter)
+CPP_DECL bool JSC__CustomGetterSetter__isGetterNull(JSC__CustomGetterSetter* gettersetter)
 {
     return gettersetter->getter() == nullptr;
 }
 
-CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter *gettersetter)
+CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter* gettersetter)
 {
     return gettersetter->setter() == nullptr;
+}
+
+CPP_DECL JSC__JSValue Bun__ProxyObject__getInternalField(JSC__JSValue value, uint32_t id)
+{
+    return JSValue::encode(jsCast<ProxyObject*>(JSValue::decode(value))->internalField((ProxyObject::Field)id).get());
 }

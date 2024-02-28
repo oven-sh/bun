@@ -523,17 +523,19 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             auto* start = uint8Array->typedVector();
             auto* head = start;
             size_t remain = uint8Array->byteLength();
+            length = std::min(length, remain);
+
             memmove(head, view->vector(), length);
             remain -= length;
             head += length;
-            while (remain >= length) {
-                memcpy(head, start, length);
+            while (remain >= length && length > 0) {
+                memmove(head, start, length);
                 remain -= length;
                 head += length;
                 length <<= 1;
             }
             if (remain > 0) {
-                memcpy(head, start, remain);
+                memmove(head, start, remain);
             }
         } else {
             auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
@@ -1202,17 +1204,19 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
             return JSC::JSValue::encode(jsUndefined());
         }
 
+        length = std::min(length, remain);
+
         memmove(head, view->vector(), length);
         remain -= length;
         head += length;
-        while (remain >= length) {
-            memcpy(head, startPtr, length);
+        while (remain >= length && length > 0) {
+            memmove(head, startPtr, length);
             remain -= length;
             head += length;
             length <<= 1;
         }
         if (remain > 0) {
-            memcpy(head, startPtr, remain);
+            memmove(head, startPtr, remain);
         }
     } else {
         auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;

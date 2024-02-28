@@ -69,7 +69,7 @@ pub const Version = struct {
                             ),
                         ),
                     },
-                ) catch unreachable;
+                ) catch bun.outOfMemory();
             }
             return this.tag;
         }
@@ -117,13 +117,12 @@ pub const Version = struct {
 };
 
 pub const UpgradeCheckerThread = struct {
-    var update_checker_thread: std.Thread = undefined;
     pub fn spawn(env_loader: *DotEnv.Loader) void {
         if (env_loader.map.get("BUN_DISABLE_UPGRADE_CHECK") != null or
             env_loader.map.get("CI") != null or
             strings.eqlComptime(env_loader.get("BUN_CANARY") orelse "0", "1"))
             return;
-        update_checker_thread = std.Thread.spawn(.{}, run, .{env_loader}) catch return;
+        var update_checker_thread = std.Thread.spawn(.{}, run, .{env_loader}) catch return;
         update_checker_thread.detach();
     }
 
@@ -133,13 +132,14 @@ pub const UpgradeCheckerThread = struct {
         std.time.sleep(std.time.ns_per_ms * delay);
 
         Output.Source.configureThread();
-        HTTP.HTTPThread.init() catch unreachable;
+        try HTTP.HTTPThread.init();
 
         defer {
             js_ast.Expr.Data.Store.deinit();
             js_ast.Stmt.Data.Store.deinit();
         }
-        var version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, undefined, undefined, false, true)) orelse return;
+
+        var version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, null, null, false, true)) orelse return;
 
         if (!version.isCurrent()) {
             if (version.name()) |name| {
@@ -171,8 +171,8 @@ pub const UpgradeCommand = struct {
     pub fn getLatestVersion(
         allocator: std.mem.Allocator,
         env_loader: *DotEnv.Loader,
-        refresher: *std.Progress,
-        progress: *std.Progress.Node,
+        refresher: ?*std.Progress,
+        progress: ?*std.Progress.Node,
         use_profile: bool,
         comptime silent: bool,
     ) !?Version {
@@ -234,7 +234,7 @@ pub const UpgradeCommand = struct {
         var metadata_body = try MutableString.init(allocator, 2048);
 
         // ensure very stable memory address
-        var async_http: *HTTP.AsyncHTTP = allocator.create(HTTP.AsyncHTTP) catch unreachable;
+        var async_http: *HTTP.AsyncHTTP = try allocator.create(HTTP.AsyncHTTP);
         async_http.* = HTTP.AsyncHTTP.initSync(
             allocator,
             .GET,
@@ -250,7 +250,7 @@ pub const UpgradeCommand = struct {
         );
         async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
-        if (!silent) async_http.client.progress_node = progress;
+        if (!silent) async_http.client.progress_node = progress.?;
         const response = try async_http.sendSync(true);
 
         switch (response.status_code) {
@@ -268,8 +268,8 @@ pub const UpgradeCommand = struct {
         initializeStore();
         var expr = ParseJSON(&source, &log, allocator) catch |err| {
             if (!silent) {
-                progress.end();
-                refresher.refresh();
+                progress.?.end();
+                refresher.?.refresh();
 
                 if (log.errors > 0) {
                     if (Output.enable_ansi_colors) {
@@ -277,6 +277,7 @@ pub const UpgradeCommand = struct {
                     } else {
                         try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
                     }
+
                     Global.exit(1);
                 } else {
                     Output.prettyErrorln("Error parsing releases from GitHub: <r><red>{s}<r>", .{@errorName(err)});
@@ -288,9 +289,9 @@ pub const UpgradeCommand = struct {
         };
 
         if (log.errors > 0) {
-            if (comptime !silent) {
-                progress.end();
-                refresher.refresh();
+            if (!silent) {
+                progress.?.end();
+                refresher.?.refresh();
 
                 if (Output.enable_ansi_colors) {
                     try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
@@ -306,9 +307,9 @@ pub const UpgradeCommand = struct {
         var version = Version{ .zip_url = "", .tag = "", .buf = metadata_body, .size = 0 };
 
         if (expr.data != .e_object) {
-            if (comptime !silent) {
-                progress.end();
-                refresher.refresh();
+            if (!silent) {
+                progress.?.end();
+                refresher.?.refresh();
 
                 const json_type: js_ast.Expr.Tag = @as(js_ast.Expr.Tag, expr.data);
                 Output.prettyErrorln("JSON error - expected an object but received {s}", .{@tagName(json_type)});
@@ -326,8 +327,8 @@ pub const UpgradeCommand = struct {
 
         if (version.tag.len == 0) {
             if (comptime !silent) {
-                progress.end();
-                refresher.refresh();
+                progress.?.end();
+                refresher.?.refresh();
 
                 Output.prettyErrorln("JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{s}", .{metadata_body.list.items});
                 Global.exit(1);
@@ -380,8 +381,8 @@ pub const UpgradeCommand = struct {
         }
 
         if (comptime !silent) {
-            progress.end();
-            refresher.refresh();
+            progress.?.end();
+            refresher.?.refresh();
             if (version.name()) |name| {
                 Output.prettyErrorln("Bun v{s} is out, but not for this platform ({s}) yet.", .{
                     name, Version.triplet,
@@ -433,8 +434,6 @@ pub const UpgradeCommand = struct {
         };
         env_loader.loadProcess();
 
-        var version: Version = undefined;
-
         const use_canary = brk: {
             const default_use_canary = Environment.is_canary;
 
@@ -447,11 +446,11 @@ pub const UpgradeCommand = struct {
 
         const use_profile = strings.containsAny(bun.argv(), "--profile");
 
-        if (!use_canary) {
+        const version: Version = if (!use_canary) v: {
             var refresher = std.Progress{};
             var progress = refresher.start("Fetching version tags", 0);
 
-            version = (try getLatestVersion(ctx.allocator, &env_loader, &refresher, progress, use_profile, false)) orelse return;
+            const version = (try getLatestVersion(ctx.allocator, &env_loader, &refresher, progress, use_profile, false)) orelse return;
 
             progress.end();
             refresher.refresh();
@@ -482,14 +481,14 @@ pub const UpgradeCommand = struct {
                 Output.prettyErrorln("<r><b>Downgrading from Bun <blue>{s}-canary<r> to Bun <cyan>v{s}<r><r>\n", .{ Global.package_json_version, version.name().? });
             }
             Output.flush();
-        } else {
-            version = Version{
-                .tag = "canary",
-                .zip_url = "https://github.com/oven-sh/bun/releases/download/canary/" ++ Version.zip_filename,
-                .size = 0,
-                .buf = MutableString.initEmpty(bun.default_allocator),
-            };
-        }
+
+            break :v version;
+        } else Version{
+            .tag = "canary",
+            .zip_url = "https://github.com/oven-sh/bun/releases/download/canary/" ++ Version.zip_filename,
+            .size = 0,
+            .buf = MutableString.initEmpty(bun.default_allocator),
+        };
 
         const zip_url = URL.parse(version.zip_url);
         const http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
@@ -498,7 +497,7 @@ pub const UpgradeCommand = struct {
             var refresher = std.Progress{};
             var progress = refresher.start("Downloading", version.size);
             refresher.refresh();
-            var async_http = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
+            var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);
             var zip_file_buffer = try ctx.allocator.create(MutableString);
             zip_file_buffer.* = try MutableString.init(ctx.allocator, @max(version.size, 1024));
 
@@ -865,7 +864,7 @@ pub const UpgradeCommand = struct {
                     "completions",
                 };
 
-                env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch unreachable;
+                env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch bun.outOfMemory();
                 var buf_map = try env_loader.map.cloneToEnvMap(ctx.allocator);
                 _ = std.ChildProcess.run(.{
                     .allocator = ctx.allocator,
@@ -873,7 +872,7 @@ pub const UpgradeCommand = struct {
                     .cwd = target_dirname,
                     .max_output_bytes = 4096,
                     .env_map = &buf_map,
-                }) catch undefined;
+                }) catch {};
             }
 
             Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());

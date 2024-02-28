@@ -16,6 +16,8 @@ import { TestBuilder, sortedShellOutput } from "../util";
 const fileExists = async (path: string): Promise<boolean> =>
   $`ls -d ${path}`.then(o => o.stdout.toString() == `${path}\n`);
 
+$.nothrow();
+
 describe("bunshell rm", () => {
   test("force", async () => {
     const files = {

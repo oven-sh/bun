@@ -173,3 +173,34 @@ console.log(hole([1, 2, 3], 0));
 // It appears to not be set and I don't know why.
 
 console.log({ "": "" });
+
+{
+  // proxy
+  const proxy = Proxy.revocable(
+    { hello: 2 },
+    {
+      get(target, prop, receiver) {
+        console.log("FAILED: GET", prop);
+        return Reflect.get(target, prop, receiver);
+      },
+      set(target, prop, value, receiver) {
+        console.log("FAILED: SET", prop, value);
+        return Reflect.set(target, prop, value, receiver);
+      },
+    },
+  );
+  console.log(proxy.proxy);
+  proxy.revoke();
+  console.log(proxy.proxy);
+}
+
+{
+  // proxy custom inspect
+  const proxy = new Proxy(
+    {
+      [Bun.inspect.custom]: () => "custom inspect",
+    },
+    {},
+  );
+  console.log(proxy);
+}

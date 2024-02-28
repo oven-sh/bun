@@ -1151,19 +1151,6 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
-    JSObject* jsObject = val.getObject();
-    NapiPrototype* object = jsDynamicCast<NapiPrototype*>(jsObject);
-    if (object && object->napiRef) {
-        *result = toNapi(object->napiRef);
-        return napi_ok;
-    }
-
-    NapiClass* object2 = jsDynamicCast<NapiClass*>(jsObject);
-    if (object2 && object2->napiRef) {
-        *result = toNapi(object2->napiRef);
-        return napi_ok;
-    }
-
     auto* ref = new NapiRef(globalObject, initial_refcount);
     if (initial_refcount > 0) {
         ref->strongRef.set(globalObject->vm(), val);
@@ -1175,12 +1162,6 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
         } else {
             ref->weakValueRef.setPrimitive(val);
         }
-    }
-
-    if (object) {
-        object->napiRef = ref;
-    } else if (object2) {
-        object2->napiRef = ref;
     }
 
     *result = toNapi(ref);

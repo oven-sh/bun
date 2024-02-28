@@ -65,6 +65,20 @@ describe("hash", () => {
             cost: -999,
           }),
         ).toThrow();
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            longPassword: "sha256",
+          }),
+        ).toThrow();
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            longPassword: "rotate",
+          }),
+        ).toThrow();
       });
 
       test("coercion throwing doesn't crash", () => {
@@ -174,22 +188,42 @@ describe("verify", () => {
   });
 });
 
-test("bcrypt uses the SHA-512 of passwords longer than 72 characters", async () => {
-  const boop = Buffer.from("hey".repeat(100));
-  const hashed = await password.hash(boop, "bcrypt");
-  expect(await password.verify(boop, hashed, "bcrypt")).toBeTrue();
-  const boop2 = Buffer.from("hey".repeat(24));
-  expect(await password.verify(boop2, hashed, "bcrypt")).toBeFalse();
+describe("long passwords", async () => {
+  test("bcrypt uses the SHA-512 of passwords longer than 72 characters", async () => {
+    const boop = Buffer.from("hey".repeat(100));
+    const hashed = await password.hash(boop, "bcrypt");
+    expect(await password.verify(boop, hashed, "bcrypt")).toBeTrue();
+    const boop2 = Buffer.from("hey".repeat(24));
+    expect(await password.verify(boop2, hashed, "bcrypt")).toBeFalse();
+  });
+
+  test("bcrypt can truncate passwords", async () => {
+    const boop = Buffer.from("hey".repeat(100));
+    const hashed = await password.hash(boop, { algorithm: "bcrypt", longPassword: "truncate" });
+    expect(await password.verify(boop, hashed, "bcrypt")).toBeFalse();
+    const boop2 = Buffer.from("hey".repeat(24));
+    expect(await password.verify(boop2, hashed, { algorithm: "bcrypt", longPassword: "truncate" })).toBeTrue();
+  });
+
+  test("bcrypt can throw for long passwords", async () => {
+    const boop = Buffer.from("hey".repeat(100));
+    expect(() => password.hashSync(boop, { algorithm: "bcrypt", longPassword: "throw" })).toThrow();
+    const boop2 = Buffer.from("hey".repeat(24));
+    expect(() => password.hashSync(boop2, { algorithm: "bcrypt", longPassword: "throw" })).not.toThrow();
+  });
 });
 
 const defaultAlgorithm = "argon2id";
-const algorithms = [undefined, "argon2id", "bcrypt"];
+const algorithms = [undefined, "argon2id", "bcrypt", { algorithm: "bcrypt", longPassword: "truncate" }];
 const argons = ["argon2i", "argon2id", "argon2d"];
 
 for (let algorithmValue of algorithms) {
-  const prefix = algorithmValue === "bcrypt" ? "$2" : "$" + (algorithmValue || defaultAlgorithm);
+  const prefix =
+    (algorithmValue?.algorithm || algorithmValue) === "bcrypt"
+      ? "$2"
+      : "$" + (algorithmValue?.algorithm || algorithmValue || defaultAlgorithm);
 
-  describe(algorithmValue ? algorithmValue : "default", () => {
+  describe(algorithmValue ? algorithmValue.toString() : "default", () => {
     const hash = (value: string | TypedArray) => {
       return algorithmValue ? password.hashSync(value, algorithmValue as any) : password.hashSync(value);
     };

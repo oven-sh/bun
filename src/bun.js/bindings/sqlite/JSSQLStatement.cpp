@@ -228,12 +228,18 @@ public:
             sqlite3_result_text(invocation, str.data(), str.length(), SQLITE_TRANSIENT);
             return;
         }
+        if (UNLIKELY(value.isHeapBigInt())) {
+            sqlite3_result_int64(invocation, JSBigInt::toBigInt64(value));
+            return;
+        }
         if (value.isBigInt()) {
             sqlite3_result_int64(invocation, value.toBigInt64(this->lexicalGlobalObject));
             return;
         }
-
-        // TODO: Buffer to blob
+        if (JSC::JSArrayBufferView* buffer = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
+            sqlite3_result_blob(invocation, buffer->vector(), buffer->byteLength(), SQLITE_TRANSIENT);
+            return;
+        }
 
         auto scope = DECLARE_THROW_SCOPE(this->lexicalGlobalObject->vm());
         throwException(
@@ -1209,7 +1215,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalOb
     RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(!sqlite3_get_autocommit(db))));
 }
 
-// TODO: Support undefining functions
+// TODO: Support undefining functions?
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunctionFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = lexicalGlobalObject->vm();

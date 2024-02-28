@@ -810,6 +810,7 @@ pub const EventLoop = struct {
     }
 
     pub fn drainMicrotasks(this: *EventLoop) void {
+        this.virtual_machine.jsc.releaseWeakRefs();
         this.drainMicrotasksWithGlobal(this.global);
     }
 

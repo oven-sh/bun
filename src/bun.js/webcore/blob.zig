@@ -2026,7 +2026,8 @@ pub const Blob = struct {
                 const promise = this.promise.swap();
                 const err_instance = err.toSystemError().toErrorInstance(globalThis);
                 var event_loop = this.event_loop;
-                defer event_loop.drainMicrotasks();
+                event_loop.enter();
+                defer event_loop.exit();
                 this.deinit();
                 promise.reject(globalThis, err_instance);
             }

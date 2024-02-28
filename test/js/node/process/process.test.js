@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { basename, join, resolve } from "path";
 
 it("process", () => {
@@ -535,3 +535,10 @@ it("process.report", () => {
 it("process.exit with jsDoubleNumber that is an integer", () => {
   expect([join(import.meta.dir, "./process-exit-decimal-fixture.js")]).toRun();
 });
+
+if (isWindows) {
+  it("ownKeys trap windows process.env", () => {
+    expect(() => Object.keys(process.env)).not.toThrow();
+    expect(() => Object.getOwnPropertyDescriptors(process.env)).not.toThrow();
+  });
+}

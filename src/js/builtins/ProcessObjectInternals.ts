@@ -363,34 +363,35 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
 
   return new Proxy(internalEnv, {
     get(_, p) {
-      return typeof p === "string" ? Reflect.get(internalEnv, p.toUpperCase()) : undefined;
+      return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
     },
     set(_, p, value) {
       var k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!Reflect.has(internalEnv, k)) {
+      if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
-      return Reflect.set(internalEnv, k, String(value));
+      internalEnv[k] = value;
+      return true;
     },
     has(_, p) {
-      return typeof p === "string" ? Reflect.has(internalEnv, p.toUpperCase()) : false;
+      return typeof p !== "symbol" ? String(p).toUpperCase() in internalEnv : false;
     },
     deleteProperty(_, p) {
       let k = String(p).toUpperCase();
-      let i = envMapList.findIndex(x => x.toUpperCase() === p);
+      let i = envMapList.findIndex(x => x.toUpperCase() === k);
       if (i !== -1) {
         envMapList.splice(i, 1);
       }
-      return typeof p === "string" ? Reflect.deleteProperty(internalEnv, k) : true;
+      return typeof p !== "symbol" ? delete internalEnv[k] : false;
     },
     defineProperty(_, p, attributes) {
       var k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!Reflect.has(internalEnv, k)) {
+      if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
-      return Reflect.defineProperty(internalEnv, k, attributes);
+      return $Object.$defineProperty(internalEnv, k, attributes);
     },
     getOwnPropertyDescriptor(target, p) {
       return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p.toUpperCase()) : undefined;

@@ -238,8 +238,10 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
 }
 
 extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
+#if OS(WINDOWS)
+extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
+#endif
 
-JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -291,8 +293,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     RETURN_IF_EXCEPTION(scope, {});
 #if OS(WINDOWS)
-    CString utf8 = filename.utf8();
-    HMODULE handle = LoadLibraryA(utf8.data());
+    BunString filename_str = Bun::toString(filename);
+    HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
 #else
     CString utf8 = filename.utf8();
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
@@ -300,7 +302,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     if (!handle) {
 #if OS(WINDOWS)
-        WTF::String msg = makeString("LoadLibraryA failed with error code: "_s, GetLastError());
+        DWORD errorId = GetLastError();
+        LPWSTR messageBuffer = nullptr;
+        size_t size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL, errorId, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&messageBuffer, 0, NULL);
+        WTF::String msg = makeString("LoadLibrary failed: ", WTF::StringView((UCHAR*)messageBuffer, size));
+        LocalFree(messageBuffer);
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());
 #endif

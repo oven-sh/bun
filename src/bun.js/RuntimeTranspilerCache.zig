@@ -185,7 +185,6 @@ pub const RuntimeTranspilerCache = struct {
                                 .utf8 => Encoding.utf8,
                                 .utf16 => Encoding.utf16,
                                 .latin1 => Encoding.latin1,
-                                else => @panic("Unexpected encoding"),
                             },
                         },
                         .sourcemap_byte_length = sourcemap.len,

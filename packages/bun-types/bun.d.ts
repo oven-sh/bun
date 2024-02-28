@@ -1594,7 +1594,7 @@ declare module "bun" {
       /**
        * @default "argon2id"
        *
-       * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before,
+       * When using bcrypt, passwords exceeding 72 bytes will be SHA512'd before,
        * unless algorithm.longPassword is set to "throw" or "truncate".
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,
@@ -1680,7 +1680,7 @@ declare module "bun" {
       /**
        * @default "argon2id"
        *
-       * When using bcrypt, passwords exceeding 72 characters will be SHA512'd before,
+       * When using bcrypt, passwords exceeding 72 bytes will be SHA512'd before,
        * unless algorithm.longPassword is set to "throw" or "truncate".
        */
       algorithm?: Password.AlgorithmLabel | Password.Argon2Algorithm | Password.BCryptAlgorithm,

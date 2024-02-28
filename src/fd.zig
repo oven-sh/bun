@@ -350,7 +350,7 @@ pub const FDImpl = packed struct {
                                 return try writer.print("{d}[cwd handle]", .{this.value.as_system});
                             } else print_with_path: {
                                 var fd_path: bun.WPathBuffer = undefined;
-                                const path = std.os.windows.GetFinalPathNameByHandle(handle, .{ .volume_name = .Dos }, &fd_path) catch break :print_with_path;
+                                const path = std.os.windows.GetFinalPathNameByHandle(handle, .{ .volume_name = .Nt }, &fd_path) catch break :print_with_path;
                                 return try writer.print("{d}[{}]", .{
                                     this.value.as_system,
                                     bun.fmt.utf16(path),

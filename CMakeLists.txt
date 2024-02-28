@@ -1050,10 +1050,14 @@ else()
 endif()
 
 if(APPLE)
+    # this is gated to avoid the following warning when developing on modern versions of macOS.
+    # ld: warning: object file (/opt/homebrew/opt/icu4c/lib/libicudata.a[2](icudt73l_dat.o)) was built for newer 'macOS' version (14.0) than being linked (11.0)
+    if(DEFINED ENV{CI})
     if(ARCH STREQUAL "x86_64")
         set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
     else()
         set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
+    endif()
     endif()
 
     target_link_options(${bun} PUBLIC "-dead_strip")

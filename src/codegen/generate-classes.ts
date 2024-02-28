@@ -1228,14 +1228,7 @@ void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
       estimatedSize
         ? `if (auto* ptr = thisObject->wrapped()) {
             auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-<<<<<<< HEAD
-// #if ASSERT_ENABLED
-//             ASSERT(size > 0);
-// #endif
-    visitor.reportExtraMemoryVisited(size);
-=======
 visitor.reportExtraMemoryVisited(size);
->>>>>>> main
 }`
         : ""
     }
@@ -1405,12 +1398,6 @@ extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, v
     obj.estimatedSize
       ? `
       auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-<<<<<<< HEAD
-// #if ASSERT_ENABLED
-//       ASSERT(size > 0);
-// #endif
-=======
->>>>>>> main
       vm.heap.reportExtraMemoryAllocated(instance, size);`
       : ""
   }

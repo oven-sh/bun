@@ -128,7 +128,7 @@ pub const ShellSubprocess = struct {
                     .fd => |fd| Readable{ .fd = fd },
                     .memfd => Readable{ .ignore = {} },
                     .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, false, out_type) },
-                    .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
+                    .array_buffer, .blob => Output.panic("TODO: implement Blob support in Stdio readable", .{}),
                     .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, true, out_type) },
                 };
             }
@@ -147,7 +147,7 @@ pub const ShellSubprocess = struct {
                     };
                     return readable;
                 },
-                .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
+                .blob => Output.panic("TODO: implement Blob support in Stdio readable", .{}),
                 .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, true, out_type) },
             };
         }
@@ -773,10 +773,10 @@ pub const PipeReader = struct {
         }
 
         pub fn onWrite(this: *CapturedWriter, amount: usize, done: bool) void {
-            log("CapturedWriter({x}, {s}) onWrite({d}, {any})", .{ @intFromPtr(this), @tagName(this.parent().out_type), amount, done });
+            log("CapturedWriter({x}, {s}) onWrite({d}, {any}) total_written={d} total_to_write={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), amount, done, this.written + amount, this.parent().buffered_output.slice().len });
             this.written += amount;
             if (done) return;
-            if (this.written >= this.parent().reader.buffer().items.len) {
+            if (this.written >= this.parent().buffered_output.slice().len) {
                 this.writer.end();
             }
         }
@@ -801,6 +801,7 @@ pub const PipeReader = struct {
     }
 
     pub fn isDone(this: *PipeReader) bool {
+        log("PipeReader(0x{x}, {s}) isDone() state={s} captured_writer_done={any}", .{ @intFromPtr(this), @tagName(this.out_type), @tagName(this.state), this.captured_writer.isDone(0) });
         if (this.state == .pending) return false;
         return this.captured_writer.isDone(0);
     }
@@ -897,7 +898,7 @@ pub const PipeReader = struct {
         if (!this.isDone()) return;
         this.signalDoneToCmd();
         if (this.process) |process| {
-            this.process = null;
+            // this.process = null;
             process.onCloseIO(this.kind(process));
             this.deref();
         }
@@ -908,6 +909,7 @@ pub const PipeReader = struct {
     ) void {
         if (!this.isDone()) return;
         log("signalDoneToCmd ({x}: {s}) isDone={any}", .{ @intFromPtr(this), @tagName(this.out_type), this.isDone() });
+        if (bun.Environment.allow_assert) std.debug.assert(this.process != null);
         if (this.process) |proc| {
             if (proc.cmd_parent) |cmd| {
                 if (this.captured_writer.err) |e| {
@@ -1003,7 +1005,7 @@ pub const PipeReader = struct {
         this.state = .{ .err = err };
         this.signalDoneToCmd();
         if (this.process) |process| {
-            this.process = null;
+            // this.process = null;
             process.onCloseIO(this.kind(process));
             this.deref();
         }

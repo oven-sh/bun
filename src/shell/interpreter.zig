@@ -1590,6 +1590,7 @@ pub const Interpreter = struct {
             out_result: Result,
             io: IO,
         ) void {
+            log("Expansion(0x{x}) init", .{@intFromPtr(expansion)});
             expansion.* = .{
                 .node = node,
                 .base = .{
@@ -1611,6 +1612,7 @@ pub const Interpreter = struct {
         }
 
         pub fn deinit(expansion: *Expansion) void {
+            log("Expansion(0x{x}) deinit", .{@intFromPtr(expansion)});
             expansion.current_out.deinit();
             expansion.io.deinit();
         }
@@ -2490,6 +2492,7 @@ pub const Interpreter = struct {
                     this.state = .{
                         .err = expansion.state.err,
                     };
+                    expansion.deinit();
                     return;
                 }
                 var expanding = &this.state.expanding;
@@ -2531,6 +2534,7 @@ pub const Interpreter = struct {
                 }
 
                 expanding.idx += 1;
+                expansion.deinit();
                 this.next();
                 return;
             }
@@ -2940,6 +2944,9 @@ pub const Interpreter = struct {
 
                 std.debug.assert(cmd_or_result.* == .cmd);
                 var cmd = cmd_or_result.cmd;
+                // var stdin = cmd.io.stdin;
+                // var stdout = cmd.io.stdout;
+                // const is_subproc = cmd.isSubproc();
                 cmd.start();
 
                 // If command is a subproc (and not a builtin) we need to close the fd
@@ -3147,7 +3154,7 @@ pub const Interpreter = struct {
                 const ret = (if (this.stdin) |stdin| stdin else true) and
                     (if (this.stdout) |*stdout| stdout.closed() else true) and
                     (if (this.stderr) |*stderr| stderr.closed() else true);
-                log("BufferedIOClosed(0x{x}) all_closed={any}", .{ @intFromPtr(this), ret });
+                log("BufferedIOClosed(0x{x}) all_closed={any} stdin={any} stdout={any} stderr={any}", .{ @intFromPtr(this), ret, if (this.stdin) |stdin| stdin else true, if (this.stdout) |*stdout| stdout.closed() else true, if (this.stderr) |*stderr| stderr.closed() else true });
                 return ret;
             }
 

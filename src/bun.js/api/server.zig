@@ -3232,8 +3232,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 );
                             } else {
                                 var prev = body.value.Locked.readable;
-                                defer prev.deinit();
                                 body.value.Locked.readable = .{};
+                                readable.value.ensureStillAlive();
+                                prev.deinit();
+                                readable.value.ensureStillAlive();
                                 readable.ptr.Bytes.onData(
                                     .{
                                         .temporary_and_done = bun.ByteList.initConst(chunk),
@@ -3248,7 +3250,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
 
                 if (last) {
-                    var bytes = this.request_body_buf;
+                    var bytes = &this.request_body_buf;
 
                     var old = body.value;
 

@@ -939,7 +939,9 @@ pub const Fetch = struct {
                                 } else {
                                     var prev = body.value.Locked.readable;
                                     body.value.Locked.readable = .{};
-                                    defer prev.deinit();
+                                    readable.value.ensureStillAlive();
+                                    prev.deinit();
+                                    readable.value.ensureStillAlive();
                                     readable.ptr.Bytes.onData(
                                         .{
                                             .temporary_and_done = bun.ByteList.initConst(chunk),

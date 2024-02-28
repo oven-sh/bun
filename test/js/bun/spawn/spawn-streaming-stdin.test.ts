@@ -1,7 +1,7 @@
 // @known-failing-on-windows: 1 failing
 import { it, test, expect } from "bun:test";
 import { spawn } from "bun";
-import { bunExe, bunEnv, gcTick } from "harness";
+import { bunExe, bunEnv, gcTick, dumpStats, expectMaxObjectTypeCount } from "harness";
 import { closeSync, openSync } from "fs";
 import { tmpdir, devNull } from "node:os";
 import { join } from "path";
@@ -9,6 +9,8 @@ import { unlinkSync } from "node:fs";
 
 const N = 100;
 test("spawn can write to stdin multiple chunks", async () => {
+  const interval = setInterval(dumpStats, 1000).unref();
+
   const maxFD = openSync(devNull, "w");
   for (let i = 0; i < N; i++) {
     var exited;
@@ -67,4 +69,10 @@ test("spawn can write to stdin multiple chunks", async () => {
 
   // assert we didn't leak any file descriptors
   expect(newMaxFD).toBe(maxFD);
+  clearInterval(interval);
+  await expectMaxObjectTypeCount(expect, "ReadableStream", 10);
+  await expectMaxObjectTypeCount(expect, "ReadableStreamDefaultReader", 10);
+  await expectMaxObjectTypeCount(expect, "ReadableByteStreamController", 10);
+  await expectMaxObjectTypeCount(expect, "Subprocess", 5);
+  dumpStats();
 }, 60_000);

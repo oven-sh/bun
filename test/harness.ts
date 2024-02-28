@@ -492,3 +492,13 @@ function failTestsOnBlockingWriteCall() {
 }
 
 failTestsOnBlockingWriteCall();
+
+import { heapStats } from "bun:jsc";
+export function dumpStats() {
+  const stats = heapStats();
+  const { objectTypeCounts, protectedObjectTypeCounts } = stats;
+  console.log({
+    objects: Object.fromEntries(Object.entries(objectTypeCounts).sort()),
+    protected: Object.fromEntries(Object.entries(protectedObjectTypeCounts).sort()),
+  });
+}

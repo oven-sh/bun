@@ -1747,18 +1747,15 @@ pub const Crypto = struct {
             );
 
             pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) ?Algorithm {
-                if (value.isUndefinedOrNull()) {
-                    return null;
-                }
-                if (value.isString()) {
+                var algorithm: ?Algorithm = null;
+                if (value.isUndefinedOrNull()) {} else if (value.isString()) {
                     const algorithm_string = value.getZigString(globalObject);
-                    return PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
+                    algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
                         globalObject.throwInvalidArgumentType("hash", "algorithm", unknown_password_algorithm_message);
                         return null;
                     };
-                }
-                if (value.isObject()) {
-                    var algorithm = default;
+                } else if (value.isObject()) {
+                    algorithm = default;
                     if (value.getTruthy(globalObject, "algorithm")) |algorithm_value| {
                         if (!algorithm_value.isString()) {
                             globalObject.throwInvalidArgumentType("hash", "algorithm", "string");
@@ -1797,7 +1794,6 @@ pub const Crypto = struct {
                                         return null;
                                     }
                                 }
-                                return algorithm;
                             },
                             inline .argon2id, .argon2d, .argon2i => |*argon| {
                                 if (value.getTruthy(globalObject, "timeCost")) |time_value| {
@@ -1831,21 +1827,15 @@ pub const Crypto = struct {
 
                                     argon.memory_cost = @as(u32, @intCast(memory_cost));
                                 }
-                                return algorithm;
                             },
                         }
-
-                        unreachable;
-                    } else {
-                        globalObject.throwInvalidArgumentType("hash", "options.algorithm", "string");
-                        return null;
                     }
                 } else {
                     globalObject.throwInvalidArgumentType("hash", "algorithm", "string or object");
                     return null;
                 }
 
-                unreachable;
+                return algorithm;
             }
 
             pub const BCryptStrategy = enum {

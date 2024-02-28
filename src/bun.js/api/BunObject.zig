@@ -1794,6 +1794,7 @@ pub const Crypto = struct {
                                         bcrypt.strategy = strategy;
                                     } else {
                                         globalObject.throwInvalidArguments("longPassword must be one of \"sha512\", \"truncate\", \"throw\"", .{});
+                                        return null;
                                     }
                                 }
                                 return algorithm;

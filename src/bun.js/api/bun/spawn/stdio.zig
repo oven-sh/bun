@@ -27,7 +27,7 @@ pub const Stdio = union(enum) {
 
     pub fn byteSlice(this: *const Stdio) []const u8 {
         return switch (this.*) {
-            .capture => this.capture.slice(),
+            .capture => this.capture.buf.slice(),
             .array_buffer => this.array_buffer.array_buffer.byteSlice(),
             .blob => this.blob.slice(),
             else => &[_]u8{},

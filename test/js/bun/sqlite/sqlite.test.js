@@ -518,6 +518,13 @@ it("db.defineFunction() with unsupported returned value", () => {
   }
 });
 
+it("db.defineFunction() with blobs", () => {
+  const db = Database.open(":memory:");
+  db.defineFunction("getBuffer", () => new Uint8Array([42, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+  const res = db.query("SELECT getBuffer() AS b").get().b;
+  expect(res).toStrictEqual(new Uint8Array([42, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+});
+
 // https://github.com/oven-sh/bun/issues/1553
 it("latin1 supplement chars", () => {
   const db = new Database();

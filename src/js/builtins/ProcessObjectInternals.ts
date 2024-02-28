@@ -366,8 +366,9 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
     },
     set(_, p, value) {
-      var k = String(p).toUpperCase();
+      const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
@@ -378,15 +379,15 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
       return typeof p !== "symbol" ? String(p).toUpperCase() in internalEnv : false;
     },
     deleteProperty(_, p) {
-      let k = String(p).toUpperCase();
-      let i = envMapList.findIndex(x => x.toUpperCase() === k);
+      const k = String(p).toUpperCase();
+      const i = envMapList.findIndex(x => x.toUpperCase() === k);
       if (i !== -1) {
         envMapList.splice(i, 1);
       }
       return typeof p !== "symbol" ? delete internalEnv[k] : false;
     },
     defineProperty(_, p, attributes) {
-      var k = String(p).toUpperCase();
+      const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);

@@ -151,11 +151,14 @@ const CowFd = struct {
     refcount: u32 = 1,
     being_used: bool = false,
 
+    const print = bun.Output.scoped(.CowFd, false);
+
     pub fn init(fd: bun.FileDescriptor) *CowFd {
         const this = bun.default_allocator.create(CowFd) catch bun.outOfMemory();
         this.* = .{
             .__fd = fd,
         };
+        print("init(0x{x}, fd={})", .{ @intFromPtr(this), fd });
         return this;
     }
 
@@ -164,6 +167,7 @@ const CowFd = struct {
             .fd = bun.sys.dup(this.fd),
             .writercount = 1,
         });
+        print("dup(0x{x}, fd={}) = (0x{x}, fd={})", .{ @intFromPtr(this), this.fd, new, new.fd });
         return new;
     }
 
@@ -191,13 +195,15 @@ const CowFd = struct {
 
     pub fn deref(this: *CowFd) void {
         this.refcount -= 1;
-        if (this.refcount == 0) {}
+        if (this.refcount == 0) {
+            this.deinit();
+        }
     }
 
     pub fn deinit(this: *CowFd) void {
         std.debug.assert(this.refcount == 0);
-        _ = bun.sys.close(this.fd);
-        bun.destroy(this);
+        _ = bun.sys.close(this.__fd);
+        bun.default_allocator.destroy(this);
     }
 };
 
@@ -216,6 +222,11 @@ pub const IO = struct {
         this.stdin.close();
         this.stdout.close();
         this.stderr.close();
+    }
+
+    pub fn copy(this: *IO) IO {
+        _ = this.ref();
+        return this.*;
     }
 
     pub fn ref(this: *IO) *IO {
@@ -594,6 +605,7 @@ pub const Interpreter = struct {
     jsobjs: []JSValue,
 
     root_shell: ShellState,
+    root_io: IO,
 
     resolve: JSC.Strong = .{},
     reject: JSC.Strong = .{},
@@ -607,9 +619,15 @@ pub const Interpreter = struct {
     });
 
     pub const ShellState = struct {
-        io: IO,
         kind: Kind = .normal,
 
+        /// This is the buffered stdout/stderr that captures the entire
+        /// output of the script and is given to JS.
+        ///
+        /// Accross the entire script execution, this is usually the same.
+        ///
+        /// It changes when a cmd substitution is run.
+        ///
         /// These MUST use the `bun.default_allocator` Allocator
         _buffered_stdout: Bufio = .{ .owned = .{} },
         _buffered_stderr: Bufio = .{ .owned = .{} },
@@ -691,7 +709,7 @@ pub const Interpreter = struct {
                 }
             }
 
-            this.io.deinit();
+            // this.io.deinit();
             this.shell_env.deinit();
             this.cmd_local_env.deinit();
             this.export_env.deinit();
@@ -721,7 +739,6 @@ pub const Interpreter = struct {
             } else if (kind == .pipeline) .{ .borrowed = this.buffered_stderr() } else .{ .owned = .{} };
 
             duped.* = .{
-                .io = io,
                 .kind = kind,
                 ._buffered_stdout = stdout,
                 ._buffered_stderr = stderr,
@@ -840,7 +857,7 @@ pub const Interpreter = struct {
             comptime fmt: []const u8,
             args: anytype,
         ) void {
-            const io: *IO.OutKind = &@field(this.io, "stderr");
+            const io: *IO.OutKind = &@field(ctx.io, "stderr");
             switch (io.*) {
                 .fd => |x| {
                     enqueueCb(ctx);
@@ -1085,22 +1102,6 @@ pub const Interpreter = struct {
             .arena = arena.*,
 
             .root_shell = ShellState{
-                .io = .{
-                    .stdin = .{
-                        .fd = stdin_reader,
-                    },
-                    .stdout = .{
-                        .fd = .{
-                            .writer = stdout_writer,
-                        },
-                    },
-                    .stderr = .{
-                        .fd = .{
-                            .writer = stderr_writer,
-                        },
-                    },
-                },
-
                 .shell_env = EnvMap.init(allocator),
                 .cmd_local_env = EnvMap.init(allocator),
                 .export_env = export_env,
@@ -1109,11 +1110,27 @@ pub const Interpreter = struct {
                 .__prev_cwd = cwd_arr.clone() catch bun.outOfMemory(),
                 .cwd_fd = cwd_fd,
             },
+
+            .root_io = .{
+                .stdin = .{
+                    .fd = stdin_reader,
+                },
+                .stdout = .{
+                    .fd = .{
+                        .writer = stdout_writer,
+                    },
+                },
+                .stderr = .{
+                    .fd = .{
+                        .writer = stderr_writer,
+                    },
+                },
+            },
         };
 
         if (event_loop == .js) {
-            interpreter.root_shell.io.stdout.fd.captured = &interpreter.root_shell._buffered_stdout.owned;
-            interpreter.root_shell.io.stderr.fd.captured = &interpreter.root_shell._buffered_stderr.owned;
+            interpreter.root_io.stdout.fd.captured = &interpreter.root_shell._buffered_stdout.owned;
+            interpreter.root_io.stderr.fd.captured = &interpreter.root_shell._buffered_stderr.owned;
         }
 
         return .{ .result = interpreter };
@@ -1224,7 +1241,7 @@ pub const Interpreter = struct {
     }
 
     pub fn run(this: *ThisInterpreter) !void {
-        var root = Script.init(this, &this.root_shell, this.script, Script.ParentPtr.init(this), this.root_shell.io);
+        var root = Script.init(this, &this.root_shell, this.script, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .SeqCst);
         root.start();
     }
@@ -1234,7 +1251,7 @@ pub const Interpreter = struct {
 
         _ = globalThis;
         incrPendingActivityFlag(&this.has_pending_activity);
-        var root = Script.init(this, &this.root_shell, this.script, Script.ParentPtr.init(this), this.root_shell.io);
+        var root = Script.init(this, &this.root_shell, this.script, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .SeqCst);
         root.start();
         return .undefined;
@@ -1266,8 +1283,8 @@ pub const Interpreter = struct {
 
     fn finish(this: *ThisInterpreter, exit_code: ExitCode) void {
         log("finish", .{});
+        defer decrPendingActivityFlag(&this.has_pending_activity);
         if (this.event_loop == .js) {
-            defer decrPendingActivityFlag(&this.has_pending_activity);
             // defer this.deinit();
             // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
             // this.buffered_stdout.
@@ -1291,10 +1308,11 @@ pub const Interpreter = struct {
     }
 
     fn deinit(this: *ThisInterpreter) void {
-        log("deinit", .{});
+        log("deinit interpreter", .{});
         for (this.jsobjs) |jsobj| {
             jsobj.unprotect();
         }
+        this.root_io.deref();
         this.resolve.deinit();
         this.reject.deinit();
         this.root_shell.deinitImpl(false, true);
@@ -1322,12 +1340,13 @@ pub const Interpreter = struct {
     }
 
     pub fn setQuiet(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
         _ = globalThis;
         _ = callframe;
-        this.root_shell.io.stdout.deref();
-        this.root_shell.io.stderr.deref();
-        this.root_shell.io.stdout = .pipe;
-        this.root_shell.io.stderr = .pipe;
+        this.root_io.stdout.deref();
+        this.root_io.stderr.deref();
+        this.root_io.stdout = .pipe;
+        this.root_io.stderr = .pipe;
         return .undefined;
     }
 
@@ -1445,15 +1464,17 @@ pub const Interpreter = struct {
     fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
         @fence(.SeqCst);
         _ = has_pending_activity.fetchAdd(1, .SeqCst);
+        log("Interpreter incr pending activity {d}", .{has_pending_activity.load(.SeqCst)});
     }
 
     fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
         @fence(.SeqCst);
         _ = has_pending_activity.fetchSub(1, .SeqCst);
+        log("Interpreter decr pending activity {d}", .{has_pending_activity.load(.SeqCst)});
     }
 
     pub fn rootIO(this: *const Interpreter) *const IO {
-        return &this.root_shell.io;
+        return &this.root_io;
     }
 
     const AssignCtx = enum {
@@ -1476,6 +1497,7 @@ pub const Interpreter = struct {
         base: State,
         node: *const ast.Atom,
         parent: ParentPtr,
+        io: IO,
 
         word_idx: u32,
         current_out: std.ArrayList(u8),
@@ -1566,6 +1588,7 @@ pub const Interpreter = struct {
             node: *const ast.Atom,
             parent: ParentPtr,
             out_result: Result,
+            io: IO,
         ) void {
             expansion.* = .{
                 .node = node,
@@ -1582,12 +1605,14 @@ pub const Interpreter = struct {
                 .out = out_result,
                 .out_idx = 0,
                 .current_out = std.ArrayList(u8).init(interpreter.allocator),
+                .io = io,
             };
             // var expansion = interpreter.allocator.create(Expansion) catch bun.outOfMemory();
         }
 
         pub fn deinit(expansion: *Expansion) void {
             expansion.current_out.deinit();
+            expansion.io.deinit();
         }
 
         pub fn start(this: *Expansion) void {
@@ -1744,7 +1769,7 @@ pub const Interpreter = struct {
                         const io: IO = .{
                             .stdin = this.base.rootIO().stdin.ref(),
                             .stdout = .pipe,
-                            .stderr = this.base.shell.io.stderr.ref(),
+                            .stderr = this.base.rootIO().stderr.ref(),
                         };
                         const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .cmd_subst)) {
                             .result => |s| s,
@@ -1773,7 +1798,7 @@ pub const Interpreter = struct {
                             const io: IO = .{
                                 .stdin = this.base.rootIO().stdin.ref(),
                                 .stdout = .pipe,
-                                .stderr = this.base.shell.io.stderr.ref(),
+                                .stderr = this.base.rootIO().stderr.ref(),
                             };
                             const shell_state = switch (this.base.shell.dupeForSubshell(this.base.interpreter.allocator, io, .cmd_subst)) {
                                 .result => |s| s,
@@ -2252,7 +2277,7 @@ pub const Interpreter = struct {
         base: State,
         node: *const ast.Script,
         // currently_executing: ?ChildPtr,
-        io: ?IO = null,
+        io: IO,
         parent: ParentPtr,
         state: union(enum) {
             normal: struct {
@@ -2280,7 +2305,7 @@ pub const Interpreter = struct {
             shell_state: *ShellState,
             node: *const ast.Script,
             parent_ptr: ParentPtr,
-            io: ?IO,
+            io: IO,
         ) *Script {
             const script = interpreter.allocator.create(Script) catch bun.outOfMemory();
             script.* = .{
@@ -2289,12 +2314,12 @@ pub const Interpreter = struct {
                 .parent = parent_ptr,
                 .io = io,
             };
+            log("Script(0x{x}) init", .{@intFromPtr(script)});
             return script;
         }
 
         fn getIO(this: *Script) IO {
-            if (this.io) |io| return io;
-            return this.base.shell.io;
+            return this.io;
         }
 
         fn start(this: *Script) void {
@@ -2341,6 +2366,8 @@ pub const Interpreter = struct {
         }
 
         pub fn deinit(this: *Script) void {
+            log("Script(0x{x}) deinit", .{@intFromPtr(this)});
+            this.io.deref();
             if (this.parent.ptr.is(ThisInterpreter)) {
                 return;
             }
@@ -2351,6 +2378,7 @@ pub const Interpreter = struct {
 
         pub fn deinitFromInterpreter(this: *Script) void {
             // Let the interpreter deinitialize the shell state
+            this.io.deinit();
             // this.base.shell.deinitImpl(false, false);
             bun.default_allocator.destroy(this);
         }
@@ -2374,6 +2402,7 @@ pub const Interpreter = struct {
             done,
         },
         ctx: AssignCtx,
+        io: IO,
 
         const ParentPtr = StatePtrUnion(.{
             Stmt,
@@ -2390,6 +2419,7 @@ pub const Interpreter = struct {
             if (this.state == .expanding) {
                 this.state.expanding.current_expansion_result.deinit();
             }
+            this.io.deinit();
         }
 
         pub inline fn start(this: *Assigns) void {
@@ -2403,6 +2433,7 @@ pub const Interpreter = struct {
             node: []const ast.Assign,
             ctx: AssignCtx,
             parent: ParentPtr,
+            io: IO,
         ) void {
             this.* = .{
                 .base = .{ .kind = .assign, .interpreter = interpreter, .shell = shell_state },
@@ -2410,6 +2441,7 @@ pub const Interpreter = struct {
                 .parent = parent,
                 .state = .idle,
                 .ctx = ctx,
+                .io = io,
             };
         }
 
@@ -2438,6 +2470,7 @@ pub const Interpreter = struct {
                             .{
                                 .array_of_slice = &this.state.expanding.current_expansion_result,
                             },
+                            this.io.copy(),
                         );
                         this.state.expanding.expansion.start();
                         return;
@@ -2543,6 +2576,7 @@ pub const Interpreter = struct {
             script.last_exit_code = null;
             script.currently_executing = null;
             script.io = io;
+            log("Stmt(0x{x}) init", .{@intFromPtr(script)});
             return script;
         }
 
@@ -2566,23 +2600,23 @@ pub const Interpreter = struct {
             const child = &this.node.exprs[this.idx];
             switch (child.*) {
                 .cond => {
-                    const cond = Cond.init(this.base.interpreter, this.base.shell, child.cond, Cond.ParentPtr.init(this), this.io);
+                    const cond = Cond.init(this.base.interpreter, this.base.shell, child.cond, Cond.ParentPtr.init(this), this.io.copy());
                     this.currently_executing = ChildPtr.init(cond);
                     cond.start();
                 },
                 .cmd => {
-                    const cmd = Cmd.init(this.base.interpreter, this.base.shell, child.cmd, Cmd.ParentPtr.init(this), this.io);
+                    const cmd = Cmd.init(this.base.interpreter, this.base.shell, child.cmd, Cmd.ParentPtr.init(this), this.io.copy());
                     this.currently_executing = ChildPtr.init(cmd);
                     cmd.start();
                 },
                 .pipeline => {
-                    const pipeline = Pipeline.init(this.base.interpreter, this.base.shell, child.pipeline, Pipeline.ParentPtr.init(this), this.io);
+                    const pipeline = Pipeline.init(this.base.interpreter, this.base.shell, child.pipeline, Pipeline.ParentPtr.init(this), this.io.copy());
                     this.currently_executing = ChildPtr.init(pipeline);
                     pipeline.start();
                 },
                 .assign => |assigns| {
                     var assign_machine = this.base.interpreter.allocator.create(Assigns) catch bun.outOfMemory();
-                    assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this));
+                    assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
                     assign_machine.start();
                 },
                 .subshell => {
@@ -2604,6 +2638,7 @@ pub const Interpreter = struct {
         }
 
         pub fn deinit(this: *Stmt) void {
+            this.io.deinit();
             if (this.currently_executing) |child| {
                 child.deinit();
             }
@@ -2680,20 +2715,20 @@ pub const Interpreter = struct {
             const node = if (left) &this.node.left else &this.node.right;
             switch (node.*) {
                 .cmd => {
-                    const cmd = Cmd.init(this.base.interpreter, this.base.shell, node.cmd, Cmd.ParentPtr.init(this), this.io);
+                    const cmd = Cmd.init(this.base.interpreter, this.base.shell, node.cmd, Cmd.ParentPtr.init(this), this.io.copy());
                     return ChildPtr.init(cmd);
                 },
                 .cond => {
-                    const cond = Cond.init(this.base.interpreter, this.base.shell, node.cond, Cond.ParentPtr.init(this), this.io);
+                    const cond = Cond.init(this.base.interpreter, this.base.shell, node.cond, Cond.ParentPtr.init(this), this.io.copy());
                     return ChildPtr.init(cond);
                 },
                 .pipeline => {
-                    const pipeline = Pipeline.init(this.base.interpreter, this.base.shell, node.pipeline, Pipeline.ParentPtr.init(this), this.io);
+                    const pipeline = Pipeline.init(this.base.interpreter, this.base.shell, node.pipeline, Pipeline.ParentPtr.init(this), this.io.copy());
                     return ChildPtr.init(pipeline);
                 },
                 .assign => |assigns| {
                     var assign_machine = this.base.interpreter.allocator.create(Assigns) catch bun.outOfMemory();
-                    assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this));
+                    assign_machine.init(this.base.interpreter, this.base.shell, assigns, .shell, Assigns.ParentPtr.init(this), this.io.copy());
                     return ChildPtr.init(assign_machine);
                 },
                 .subshell => @panic(SUBSHELL_TODO_ERROR),
@@ -2750,7 +2785,7 @@ pub const Interpreter = struct {
         exited_count: u32,
         cmds: ?[]CmdOrResult,
         pipes: ?[]Pipe,
-        io: ?IO,
+        io: IO,
         state: union(enum) {
             idle,
             executing,
@@ -2783,7 +2818,7 @@ pub const Interpreter = struct {
             shell_state: *ShellState,
             node: *const ast.Pipeline,
             parent: ParentPtr,
-            io: ?IO,
+            io: IO,
         ) *Pipeline {
             const pipeline = interpreter.allocator.create(Pipeline) catch bun.outOfMemory();
             pipeline.* = .{
@@ -2800,7 +2835,7 @@ pub const Interpreter = struct {
         }
 
         fn getIO(this: *Pipeline) IO {
-            return this.io orelse this.base.shell.io;
+            return this.io;
         }
 
         fn writeFailingError(this: *Pipeline, comptime fmt: []const u8, args: anytype) void {
@@ -2983,6 +3018,7 @@ pub const Interpreter = struct {
             if (this.cmds) |cmds| {
                 this.base.interpreter.allocator.free(cmds);
             }
+            this.io.deref();
             this.base.interpreter.allocator.destroy(this);
         }
 
@@ -3122,7 +3158,7 @@ pub const Interpreter = struct {
                             const readable = io.stdout;
 
                             // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
-                            if (cmd.base.shell.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.node.redirect.redirectsElsewhere(.stdout)) {
+                            if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.node.redirect.redirectsElsewhere(.stdout)) {
                                 const the_slice = readable.pipe.slice();
                                 cmd.base.shell.buffered_stdout().append(bun.default_allocator, the_slice) catch bun.outOfMemory();
                             }
@@ -3135,7 +3171,7 @@ pub const Interpreter = struct {
                             const readable = io.stderr;
 
                             // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
-                            if (cmd.base.shell.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.node.redirect.redirectsElsewhere(.stderr)) {
+                            if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.node.redirect.redirectsElsewhere(.stderr)) {
                                 const the_slice = readable.pipe.slice();
                                 cmd.base.shell.buffered_stderr().append(bun.default_allocator, the_slice) catch bun.outOfMemory();
                             }
@@ -3230,7 +3266,7 @@ pub const Interpreter = struct {
                 switch (this.state) {
                     .idle => {
                         this.state = .{ .expanding_assigns = undefined };
-                        Assigns.init(&this.state.expanding_assigns, this.base.interpreter, this.base.shell, this.node.assigns, .cmd, Assigns.ParentPtr.init(this));
+                        Assigns.init(&this.state.expanding_assigns, this.base.interpreter, this.base.shell, this.node.assigns, .cmd, Assigns.ParentPtr.init(this), this.io.copy());
                         this.state.expanding_assigns.start();
                         return; // yield execution
                     },
@@ -3271,6 +3307,7 @@ pub const Interpreter = struct {
                                     .list = &this.redirection_file,
                                 },
                             },
+                            this.io.copy(),
                         );
 
                         this.state.expanding_redirect.expansion.start();
@@ -3293,6 +3330,7 @@ pub const Interpreter = struct {
                             .{
                                 .array_of_ptr = &this.args,
                             },
+                            this.io.copy(),
                         );
 
                         this.state.expanding_args.idx += 1;
@@ -3732,6 +3770,7 @@ pub const Interpreter = struct {
                 this.spawn_arena.deinit();
             }
             this.freed = true;
+            this.io.deref();
             this.base.interpreter.allocator.destroy(this);
         }
 
@@ -4257,11 +4296,11 @@ pub const Interpreter = struct {
             cmd.exit_code = this.exit_code.?;
 
             // Aggregate output data if shell state is piped and this cmd is piped
-            if (cmd.io.stdout == .pipe and cmd.base.shell.io.stdout == .pipe and this.stdout == .buf) {
+            if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and this.stdout == .buf) {
                 cmd.base.shell.buffered_stdout().append(bun.default_allocator, this.stdout.buf.items[0..]) catch bun.outOfMemory();
             }
             // Aggregate output data if shell state is piped and this cmd is piped
-            if (cmd.io.stderr == .pipe and cmd.base.shell.io.stderr == .pipe and this.stderr == .buf) {
+            if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and this.stderr == .buf) {
                 cmd.base.shell.buffered_stderr().append(bun.default_allocator, this.stderr.buf.items[0..]) catch bun.outOfMemory();
             }
 
@@ -7281,6 +7320,8 @@ pub const Interpreter = struct {
 
         pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOWriterRefCount";
 
+        const print = bun.Output.scoped(.IOWriter, false);
+
         const ChildPtr = IOWriterChildPtr;
         // const ChildPtr = anyopaque{};
 
@@ -7321,6 +7362,8 @@ pub const Interpreter = struct {
             this.writer.handle = .{
                 .poll = this.writer.createPoll(fd),
             };
+
+            print("IOWriter(0x{x}, fd={}) init", .{ @intFromPtr(this), fd });
 
             return this;
         }
@@ -7455,7 +7498,7 @@ pub const Interpreter = struct {
         };
 
         pub fn onWrite(this: *This, amount: usize, done: bool) void {
-            log("IOWriter(0x{x}, fd={}) write(amount={d}, done={})", .{ @intFromPtr(this), this.fd, amount, done });
+            print("IOWriter(0x{x}, fd={}) write(amount={d}, done={})", .{ @intFromPtr(this), this.fd, amount, done });
             const child = this.writers.get(this.idx);
             if (child.bytelist) |bl| {
                 const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amount];
@@ -7478,7 +7521,7 @@ pub const Interpreter = struct {
             }
 
             if (!wrote_everything) {
-                log("IOWriter(0x{x}, fd={}) poll again", .{ @intFromPtr(this), this.fd });
+                print("IOWriter(0x{x}, fd={}) poll again", .{ @intFromPtr(this), this.fd });
                 if (comptime bun.Environment.isWindows) this.writer.write() else this.writer.registerPoll();
             }
         }
@@ -7564,7 +7607,7 @@ pub const Interpreter = struct {
         }
 
         pub fn deinit(this: *This) void {
-            log("IOWriter(0x{x}) deinit", .{@intFromPtr(this)});
+            print("IOWriter(0x{x}) deinit", .{@intFromPtr(this)});
             if (bun.Environment.allow_assert) std.debug.assert(this.ref_count == 0);
             this.buf.deinit(bun.default_allocator);
             if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);

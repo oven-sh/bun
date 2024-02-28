@@ -99,12 +99,11 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
         $putByValDirect(outValues, i, values[i].value);
       }
     }
-
     $resetQueue($getByIdDirectPrivate(controller, "queue"));
 
-    if ($getByIdDirectPrivate(controller, "closeRequested"))
-      $readableStreamClose($getByIdDirectPrivate(controller, "controlledReadableStream"));
-    else if ($isReadableStreamDefaultController(controller)) {
+    if ($getByIdDirectPrivate(controller, "closeRequested")) {
+      $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
+    } else if ($isReadableStreamDefaultController(controller)) {
       $readableStreamDefaultControllerCallPullIfNeeded(controller);
     } else if ($isReadableByteStreamController(controller)) {
       $readableByteStreamControllerCallPullIfNeeded(controller);
@@ -141,7 +140,7 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
     $resetQueue(queue);
 
     if ($getByIdDirectPrivate(controller, "closeRequested")) {
-      $readableStreamClose($getByIdDirectPrivate(controller, "controlledReadableStream"));
+      $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
     } else if ($isReadableStreamDefaultController(controller)) {
       $readableStreamDefaultControllerCallPullIfNeeded(controller);
     } else if ($isReadableByteStreamController(controller)) {

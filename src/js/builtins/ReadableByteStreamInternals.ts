@@ -139,7 +139,7 @@ export function readableByteStreamControllerClose(controller) {
     }
   }
 
-  $readableStreamClose($getByIdDirectPrivate(controller, "controlledReadableStream"));
+  $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
 }
 
 export function readableByteStreamControllerClearPendingPullIntos(controller) {
@@ -177,7 +177,7 @@ export function readableByteStreamControllerHandleQueueDrain(controller) {
     $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamReadable,
   );
   if (!$getByIdDirectPrivate(controller, "queue").size && $getByIdDirectPrivate(controller, "closeRequested"))
-    $readableStreamClose($getByIdDirectPrivate(controller, "controlledReadableStream"));
+    $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
   else $readableByteStreamControllerCallPullIfNeeded(controller);
 }
 
@@ -227,6 +227,7 @@ export function readableByteStreamControllerShouldCallPull(controller) {
   if (!stream) {
     return false;
   }
+
   if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return false;
   if ($getByIdDirectPrivate(controller, "closeRequested")) return false;
   if (!($getByIdDirectPrivate(controller, "started") > 0)) return false;

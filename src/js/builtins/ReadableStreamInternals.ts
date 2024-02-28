@@ -708,7 +708,7 @@ export async function readStreamIntoSink(stream, sink, isNative) {
         sink,
         stream,
         undefined,
-        () => !didThrow && $markPromiseAsHandled(stream.cancel()),
+        () => !didThrow && stream.$state !== $streamClosed && $markPromiseAsHandled(stream.cancel()),
         stream.$asyncContext,
       );
 
@@ -778,7 +778,7 @@ export async function readStreamIntoSink(stream, sink, isNative) {
       }
 
       if (!didThrow && streamState !== $streamClosed && streamState !== $streamErrored) {
-        $readableStreamClose(stream);
+        $readableStreamCloseIfPossible(stream);
       }
       stream = undefined;
     }
@@ -944,7 +944,7 @@ export function onCloseDirectStream(reason) {
     if (_pendingRead && $isPromise(_pendingRead) && flushed?.byteLength) {
       this._pendingRead = undefined;
       $fulfillPromise(_pendingRead, { value: flushed, done: false });
-      $readableStreamClose(stream);
+      $readableStreamCloseIfPossible(stream);
       return;
     }
   }
@@ -953,7 +953,7 @@ export function onCloseDirectStream(reason) {
     var requests = $getByIdDirectPrivate(reader, "readRequests");
     if (requests?.isNotEmpty()) {
       $readableStreamFulfillReadRequest(stream, flushed, false);
-      $readableStreamClose(stream);
+      $readableStreamCloseIfPossible(stream);
       return;
     }
 
@@ -964,7 +964,7 @@ export function onCloseDirectStream(reason) {
         done: false,
       });
       flushed = undefined;
-      $readableStreamClose(stream);
+      $readableStreamCloseIfPossible(stream);
       stream = undefined;
       return thisResult;
     };
@@ -975,7 +975,7 @@ export function onCloseDirectStream(reason) {
     $fulfillPromise(read, { value: undefined, done: true });
   }
 
-  $readableStreamClose(stream);
+  $readableStreamCloseIfPossible(stream);
 }
 
 export function onFlushDirectStream() {
@@ -1374,9 +1374,9 @@ export function readableStreamDefaultControllerPull(controller) {
   var queue = $getByIdDirectPrivate(controller, "queue");
   if (queue.content.isNotEmpty()) {
     const chunk = $dequeueValue(queue);
-    if ($getByIdDirectPrivate(controller, "closeRequested") && queue.content.isEmpty())
-      $readableStreamClose($getByIdDirectPrivate(controller, "controlledReadableStream"));
-    else $readableStreamDefaultControllerCallPullIfNeeded(controller);
+    if ($getByIdDirectPrivate(controller, "closeRequested") && queue.content.isEmpty()) {
+      $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
+    } else $readableStreamDefaultControllerCallPullIfNeeded(controller);
 
     return $createFulfilledPromise({ value: chunk, done: false });
   }
@@ -1388,8 +1388,19 @@ export function readableStreamDefaultControllerPull(controller) {
 export function readableStreamDefaultControllerClose(controller) {
   $assert($readableStreamDefaultControllerCanCloseOrEnqueue(controller));
   $putByIdDirectPrivate(controller, "closeRequested", true);
-  if ($getByIdDirectPrivate(controller, "queue")?.content?.isEmpty())
-    $readableStreamClose($getByIdDirectPrivate(controller, "controlledReadableStream"));
+  if ($getByIdDirectPrivate(controller, "queue")?.content?.isEmpty()) {
+    $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
+  }
+}
+
+export function readableStreamCloseIfPossible(stream) {
+  switch ($getByIdDirectPrivate(stream, "state")) {
+    case $streamReadable:
+    case $streamClosing: {
+      $readableStreamClose(stream);
+      break;
+    }
+  }
 }
 
 export function readableStreamClose(stream) {
@@ -1398,12 +1409,13 @@ export function readableStreamClose(stream) {
       $getByIdDirectPrivate(stream, "state") === $streamClosing,
   );
   $putByIdDirectPrivate(stream, "state", $streamClosed);
-  if (!$getByIdDirectPrivate(stream, "reader")) return;
+  const reader = $getByIdDirectPrivate(stream, "reader");
+  if (!reader) return;
 
-  if ($isReadableStreamDefaultReader($getByIdDirectPrivate(stream, "reader"))) {
-    const requests = $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readRequests");
+  if ($isReadableStreamDefaultReader(reader)) {
+    const requests = $getByIdDirectPrivate(reader, "readRequests");
     if (requests.isNotEmpty()) {
-      $putByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readRequests", $createFIFO());
+      $putByIdDirectPrivate(reader, "readRequests", $createFIFO());
 
       for (var request = requests.shift(); request; request = requests.shift())
         $fulfillPromise(request, { value: undefined, done: true });
@@ -1895,7 +1907,7 @@ export function readableStreamToArrayBufferDirect(stream, underlyingSource) {
     return Promise.$reject(e);
   } finally {
     if (!$isPromise(firstPull)) {
-      if (!didError && stream) $readableStreamClose(stream);
+      if (!didError && stream) $readableStreamCloseIfPossible(stream);
       controller = close = sink = pull = stream = undefined;
       return capability.promise;
     }
@@ -1904,7 +1916,7 @@ export function readableStreamToArrayBufferDirect(stream, underlyingSource) {
   $assert($isPromise(firstPull));
   return firstPull.then(
     () => {
-      if (!didError && stream) $readableStreamClose(stream);
+      if (!didError && stream) $readableStreamCloseIfPossible(stream);
       controller = close = sink = pull = stream = undefined;
       return capability.promise;
     },

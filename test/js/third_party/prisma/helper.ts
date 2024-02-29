@@ -55,7 +55,7 @@ export function generate(type: string) {
 
   fs.writeFileSync(schema, content);
 
-  const result = Bun.spawnSync([bunExe(), "--bun", "x", "prisma", "generate", "--schema", schema], {
+  const result = Bun.spawnSync([bunExe(), "prisma", "generate", "--schema", schema], {
     cwd,
     env: {
       ...bunEnv,

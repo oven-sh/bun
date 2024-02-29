@@ -234,7 +234,7 @@ if(WIN32)
 endif()
 
 if(UNIX AND NOT APPLE)
-    execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
+    execute_process(COMMAND grep -w "NAME" /etc/os-release OUTPUT_VARIABLE LINUX_DISTRO)
 
     if(${LINUX_DISTRO} MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux\"\n")
         set(DEFAULT_USE_STATIC_LIBATOMIC OFF)

@@ -33,7 +33,7 @@
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
-        "BUN_DEBUG_FileReader": "1",
+        "BUN_DEBUG_FileReader": "1"
       },
       "console": "internalConsole"
     },

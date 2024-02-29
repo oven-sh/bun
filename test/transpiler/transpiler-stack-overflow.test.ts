@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { test, expect } from "bun:test";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "path";

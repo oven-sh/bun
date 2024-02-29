@@ -3197,9 +3197,9 @@ pub const Subprocess = struct {
                     .flags = uv.UV_INHERIT_FD,
                     .data = .{ .fd = bun.uvfdcast(_fd) },
                 },
-                .path => |pathlike| {
-                    _ = pathlike;
-                    @panic("TODO");
+                .path => |pathlike| uv.uv_stdio_container_s{
+                    .flags = uv.UV_INHERIT_FD,
+                    .data = .{ .fd = bun.uvfdcast(bun.toLibUVOwnedFD((try std.fs.cwd().openFile(pathlike.slice(), .{})).handle)) },
                 },
                 .inherit => uv.uv_stdio_container_s{
                     .flags = uv.UV_INHERIT_FD,

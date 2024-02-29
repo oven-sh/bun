@@ -2180,10 +2180,7 @@ pub const Interpreter = struct {
                     .expansion = expansion,
                     .result = std.ArrayList([:0]const u8).init(allocator),
                 };
-                if (bun.Environment.isWindows) {
-                    // event loop here is js event loop
-                    @panic("TODO SHELL WINDOWS!");
-                }
+
                 // this.ref.ref(this.event_loop.virtual_machine);
                 this.ref.ref(this.event_loop);
 
@@ -2224,10 +2221,6 @@ pub const Interpreter = struct {
 
             pub fn runFromMainThread(this: *This) void {
                 print("runFromJS", .{});
-                if (bun.Environment.isWindows) {
-                    // event loop here is js event loop
-                    @panic("TODO SHELL WINDOWS!");
-                }
                 this.expansion.onGlobWalkDone(this);
                 // this.ref.unref(this.event_loop.virtual_machine);
                 this.ref.unref(this.event_loop);
@@ -7413,6 +7406,10 @@ pub const Interpreter = struct {
             len: usize,
             written: usize = 0,
             bytelist: ?*bun.ByteList = null,
+
+            pub fn rawPtr(this: Writer) ?*anyopaque {
+                return this.ptr.ptr.ptr();
+            }
         };
 
         pub const Writers = union(enum) {
@@ -7425,15 +7422,19 @@ pub const Interpreter = struct {
                 writers: [INLINED_MAX]Writer = undefined,
                 len: u32 = 0,
 
-                pub fn promote(this: *Inlined, n: usize) std.ArrayListUnmanaged(Writer) {
+                pub fn promote(this: *Inlined, n: usize, new_writer: Writer) std.ArrayListUnmanaged(Writer) {
                     var list = std.ArrayListUnmanaged(Writer).initCapacity(bun.default_allocator, n) catch bun.outOfMemory();
-                    list.appendSlice(bun.default_allocator, this.writers[0..this.len]) catch bun.outOfMemory();
+                    list.appendSlice(bun.default_allocator, this.writers[0..INLINED_MAX]) catch bun.outOfMemory();
+                    list.append(bun.default_allocator, new_writer) catch bun.outOfMemory();
                     return list;
                 }
             };
 
             pub inline fn len(this: *Writers) usize {
-                return this.inlined.len;
+                return switch (this.*) {
+                    .inlined => this.inlined.len,
+                    .heap => this.heap.items.len,
+                };
             }
 
             pub fn truncate(this: *Writers, starting_idx: usize) void {
@@ -7480,7 +7481,7 @@ pub const Interpreter = struct {
                 switch (this.*) {
                     .inlined => {
                         if (this.inlined.len == INLINED_MAX) {
-                            this.* = .{ .heap = this.inlined.promote(INLINED_MAX) };
+                            this.* = .{ .heap = this.inlined.promote(INLINED_MAX, writer) };
                             return;
                         }
                         this.inlined.writers[this.inlined.len] = writer;
@@ -7524,6 +7525,7 @@ pub const Interpreter = struct {
         };
 
         pub fn onWrite(this: *This, amount: usize, done: bool) void {
+            this.setWriting(false);
             print("IOWriter(0x{x}, fd={}) write(amount={d}, done={})", .{ @intFromPtr(this), this.fd, amount, done });
             const child = this.writers.get(this.idx);
             if (child.bytelist) |bl| {
@@ -7546,9 +7548,13 @@ pub const Interpreter = struct {
                 this.bump(child);
             }
 
-            if (!wrote_everything) {
+            log("IOWriter(0x{x}, fd={}) wrote_everything={}, idx={d} writers={d}", .{ @intFromPtr(this), this.fd, wrote_everything, this.idx, this.writers.len() });
+            if (!wrote_everything and this.idx < this.writers.len()) {
                 print("IOWriter(0x{x}, fd={}) poll again", .{ @intFromPtr(this), this.fd });
-                if (comptime bun.Environment.isWindows) this.writer.write() else this.writer.registerPoll();
+                if (comptime bun.Environment.isWindows) {
+                    this.setWriting(true);
+                    this.writer.write();
+                } else this.writer.registerPoll();
             }
         }
 
@@ -7581,9 +7587,11 @@ pub const Interpreter = struct {
         }
 
         pub fn bump(this: *This, current_writer: *Writer) void {
+            log("IOWriter(0x{x}) bump(0x{x} {s})", .{ @intFromPtr(this), @intFromPtr(current_writer), @tagName(current_writer.ptr.ptr.tag()) });
             const child_ptr = current_writer.ptr;
             defer child_ptr.onDone(null);
             if (this.isLastIdx(this.idx)) {
+                log("IOWriter(0x{x}) truncating", .{@intFromPtr(this)});
                 this.buf.clearRetainingCapacity();
                 this.idx = 0;
                 this.writers.clearRetainingCapacity();
@@ -7592,6 +7600,7 @@ pub const Interpreter = struct {
             }
             this.idx += 1;
             if (this.total_bytes_written >= SHRINK_THRESHOLD) {
+                log("IOWriter(0x{x}) truncating", .{@intFromPtr(this)});
                 const replace_range_len = this.buf.items.len - this.total_bytes_written;
                 if (replace_range_len == 0) {
                     this.buf.clearRetainingCapacity();
@@ -7610,6 +7619,7 @@ pub const Interpreter = struct {
                 .len = buf.len,
                 .bytelist = bytelist,
             };
+            log("IOWriter(0x{x}) enqueue(0x{x} {s}, {s})", .{ @intFromPtr(this), @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), buf });
             this.buf.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
             this.writers.append(writer);
         }
@@ -7630,6 +7640,7 @@ pub const Interpreter = struct {
                 .len = end - start,
                 .bytelist = bytelist,
             };
+            log("IOWriter(0x{x}) enqueue(0x{x} {s}, {s})", .{ @intFromPtr(this), @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), this.buf.items[start..end] });
             this.writers.append(writer);
         }
 
@@ -7645,8 +7656,10 @@ pub const Interpreter = struct {
             return idx == this.writers.len() -| 1;
         }
 
+        /// Only does things on windows
         pub inline fn setWriting(this: *This, writing: bool) void {
             if (bun.Environment.isWindows) {
+                log("IOWriter(0x{x}) setWriting({any})", .{ @intFromPtr(this), writing });
                 this.is_writing = writing;
             }
         }
@@ -7664,7 +7677,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
             if (Type == Interpreter)
                 return Interpreter.InterpreterChildPtr;
             if (!@hasDecl(Type, "ChildPtr")) {
-                @compileError(@typeName(Type) ++ " does not have ChildPtr");
+                @compileError(@typeName(Type) ++ " does not have ChildPtr aksjdflkasjdflkasdjf");
             }
             return Type.ChildPtr;
         }

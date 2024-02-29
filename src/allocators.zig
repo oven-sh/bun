@@ -10,6 +10,7 @@ inline fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T
         (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len));
 }
 
+/// LMLJLSDKFjlsdkjflsdkjf
 /// Checks if a slice's pointer is contained within another slice.
 ///
 /// If you need to make this generic, use isSliceInBufferT.

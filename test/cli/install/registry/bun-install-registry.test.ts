@@ -3423,6 +3423,236 @@ for (const forceWaiterThread of [false, true]) {
         });
       });
     });
+    describe("updating trustedDependencies", async () => {
+      test("existing trustedDependencies, unchanged trustedDependencies", async () => {
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            trustedDependencies: ["uses-what-bin"],
+            dependencies: {
+              "uses-what-bin": "1.0.0",
+            },
+          }),
+        );
+
+        let { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "i"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "pipe",
+          env,
+        });
+
+        let err = await Bun.readableStreamToText(stderr);
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(err).not.toContain("warn:");
+        let out = await Bun.readableStreamToText(stdout);
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
+          " + uses-what-bin@1.0.0",
+          "",
+          expect.stringContaining("2 packages installed"),
+        ]);
+        expect(await exited).toBe(0);
+        expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+        expect(await file(join(packageDir, "package.json")).json()).toEqual({
+          name: "foo",
+          dependencies: {
+            "uses-what-bin": "1.0.0",
+          },
+          trustedDependencies: ["uses-what-bin"],
+        });
+
+        // no changes, lockfile shouldn't be saved
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "i"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "pipe",
+          env,
+        }));
+
+        err = await Bun.readableStreamToText(stderr);
+        expect(err).not.toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(err).not.toContain("warn:");
+        out = await Bun.readableStreamToText(stdout);
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
+          "Checked 2 installs across 3 packages (no changes)",
+        ]);
+        expect(await exited).toBe(0);
+      });
+      test("existing trustedDependencies, removing trustedDependencies", async () => {
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            trustedDependencies: ["uses-what-bin"],
+            dependencies: {
+              "uses-what-bin": "1.0.0",
+            },
+          }),
+        );
+
+        let { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "i"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "pipe",
+          env,
+        });
+
+        let err = await Bun.readableStreamToText(stderr);
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(err).not.toContain("warn:");
+        let out = await Bun.readableStreamToText(stdout);
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
+          " + uses-what-bin@1.0.0",
+          "",
+          expect.stringContaining("2 packages installed"),
+        ]);
+        expect(await exited).toBe(0);
+        expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+        expect(await file(join(packageDir, "package.json")).json()).toEqual({
+          name: "foo",
+          dependencies: {
+            "uses-what-bin": "1.0.0",
+          },
+          trustedDependencies: ["uses-what-bin"],
+        });
+
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              "uses-what-bin": "1.0.0",
+            },
+          }),
+        );
+
+        // this script should not run because uses-what-bin is no longer in trustedDependencies
+        await rm(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"), { force: true });
+
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "i"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "pipe",
+          env,
+        }));
+
+        err = await Bun.readableStreamToText(stderr);
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(err).not.toContain("warn:");
+        out = await Bun.readableStreamToText(stdout);
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
+          "Checked 2 installs across 3 packages (no changes)",
+        ]);
+        expect(await exited).toBe(0);
+        expect(await file(join(packageDir, "package.json")).json()).toEqual({
+          name: "foo",
+          dependencies: {
+            "uses-what-bin": "1.0.0",
+          },
+        });
+        expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
+      });
+      test("non-existent trustedDependencies, then adding it", async () => {
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              "electron": "1.0.0",
+            },
+          }),
+        );
+
+        let { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "i"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "pipe",
+          env,
+        });
+
+        let err = await Bun.readableStreamToText(stderr);
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(err).not.toContain("warn:");
+        let out = await Bun.readableStreamToText(stdout);
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
+          " + electron@1.0.0",
+          "",
+          expect.stringContaining("1 package installed"),
+        ]);
+        expect(await exited).toBe(0);
+        expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
+        expect(await file(join(packageDir, "package.json")).json()).toEqual({
+          name: "foo",
+          dependencies: {
+            "electron": "1.0.0",
+          },
+        });
+
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            trustedDependencies: ["electron"],
+            dependencies: {
+              "electron": "1.0.0",
+            },
+          }),
+        );
+
+        await rm(join(packageDir, "node_modules", "electron", "preinstall.txt"), { force: true });
+
+        // lockfile should save evenn though there are no changes to trustedDependencies due to
+        // the default list
+
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "i"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "pipe",
+          env,
+        }));
+
+        err = await Bun.readableStreamToText(stderr);
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(err).not.toContain("warn:");
+        out = await Bun.readableStreamToText(stdout);
+        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          "",
+          "Checked 1 install across 2 packages (no changes)",
+        ]);
+        expect(await exited).toBe(0);
+        expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
+      });
+    });
   });
 }
 

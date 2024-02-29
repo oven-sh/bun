@@ -18,7 +18,6 @@ const strings = @import("../string_immutable.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const Environment = bun.Environment;
 const w = std.os.windows;
-const NameHashSet = @import("./lockfile.zig").NameHashSet;
 
 const ExtractTarball = @This();
 

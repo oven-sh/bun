@@ -1,6 +1,8 @@
 const std = @import("std");
 const PackageID = @import("../install.zig").PackageID;
 const Lockfile = @import("../install.zig").Lockfile;
+const initializeStore = @import("../install.zig").initializeStore;
+const json_parser = bun.JSON;
 const PackageManager = @import("../install.zig").PackageManager;
 const Npm = @import("../npm.zig");
 const logger = @import("root").bun.logger;
@@ -187,13 +189,23 @@ pub const FolderResolution = union(Tag) {
             features,
         );
 
+        const has_scripts = package.scripts.hasAny() or brk: {
+            const dir = std.fs.path.dirname(abs) orelse "";
+            const binding_dot_gyp_path = bun.path.joinAbsStringZ(
+                dir,
+                &[_]string{"binding.gyp"},
+                .auto,
+            );
+            break :brk bun.sys.exists(binding_dot_gyp_path);
+        };
+
+        package.meta.setHasInstallScript(has_scripts);
+
         if (manager.lockfile.getPackageID(package.name_hash, version, &package.resolution)) |existing_id| {
             package.meta.id = existing_id;
             manager.lockfile.packages.set(existing_id, package);
             return manager.lockfile.packages.get(existing_id);
         }
-
-        package.meta.has_install_script = @intFromBool(package.scripts.hasAny());
 
         return manager.lockfile.appendPackage(package);
     }

@@ -487,6 +487,14 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
 
                 .man_dir = String{},
 
+                .__has_install_script = if (pkg.get("hasInstallScript")) |has_install_script_expr| brk: {
+                    if (has_install_script_expr.data != .e_boolean) return error.InvalidNPMLockfile;
+                    break :brk if (has_install_script_expr.data.e_boolean.value)
+                        Lockfile.Package.Meta.has_install_script
+                    else
+                        Lockfile.Package.Meta.no_install_script;
+                } else Lockfile.Package.Meta.no_install_script,
+
                 .integrity = if (pkg.get("integrity")) |integrity|
                     try Integrity.parse(
                         integrity.asString(this.allocator) orelse
@@ -1004,7 +1012,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
     // This is definitely a memory leak, but it's fine because there is no install api, so this can only be leaked once per process.
     // This operation is neccecary because callers of `loadFromDisk` assume the data is written into the passed `this`.
     // You'll find that not cleaning the lockfile will cause `bun install` to not actually install anything since it doesnt have any hoisted trees.
-    this.* = (try this.cleanWithLogger(&[_]Install.PackageManager.UpdateRequest{}, log, false, false)).*;
+    this.* = (try this.cleanWithLogger(&[_]Install.PackageManager.UpdateRequest{}, log, false)).*;
 
     // if (Environment.isDebug) {
     //     const dump_file = try std.fs.cwd().createFileZ("after-clean.json", .{});
@@ -1016,9 +1024,15 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         try this.verifyData();
     }
 
-    this.meta_hash = try this.generateMetaHash(false);
+    this.meta_hash = try this.generateMetaHash(false, this.packages.len);
 
-    return LoadFromDiskResult{ .ok = .{ .lockfile = this, .was_migrated = true } };
+    return LoadFromDiskResult{
+        .ok = .{
+            .lockfile = this,
+            .was_migrated = true,
+            .serializer_result = .{},
+        },
+    };
 }
 
 fn packageNameFromPath(pkg_path: []const u8) []const u8 {

@@ -200,7 +200,8 @@ pub const BunxCommand = struct {
 
     pub fn exec(ctx_: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
         var ctx = ctx_;
-        var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
+        var requests_buf = bun.PackageManager.UpdateRequest.Array.initCapacity(ctx.allocator, 64) catch bun.outOfMemory();
+        defer requests_buf.deinit(ctx.allocator);
         var run_in_bun = ctx.debug.run_in_bun;
 
         var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);

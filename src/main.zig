@@ -57,9 +57,8 @@ pub fn main() void {
         _ = w.kernel32.SetConsoleOutputCP(CP_UTF8);
 
         var mode: w.DWORD = undefined;
-        const stdoutHandle = w.peb().ProcessParameters.hStdOutput;
-        if (w.kernel32.GetConsoleMode(stdoutHandle, &mode) != 0) {
-            _ = SetConsoleMode(stdoutHandle, mode | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {
+            _ = SetConsoleMode(stdout, mode | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING);
         }
     }
 

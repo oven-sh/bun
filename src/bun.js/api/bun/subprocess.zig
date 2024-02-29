@@ -240,7 +240,7 @@ pub const Subprocess = struct {
                     return true;
                 }
 
-                return this.process.uv.hasRef();
+                return this.process.poller.uv.hasRef();
             }
 
             return false;

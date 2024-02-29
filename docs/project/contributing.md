@@ -283,6 +283,31 @@ $ sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
 $ sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
 ```
 
+### lstdc++ linking error on Ubuntu
+
+During the Bun setup process, you might encounter a similar looking linking error:
+
+```
+The C++ compiler
+
+  "/usr/bin/clang++-16"
+
+is not able to compile a simple test program.
+
+...
+
+ld.lld: error: unable to find library -lstdc++
+```
+
+This error indicates that the linker is unable to find the libstdc++ library, which is necessary for compiling C++ applications that depend on it.
+
+To resolve this issue, you may need to install the correct version of the **development** package for libstdc++ that provides the necessary headers and static library files.
+
+```bash
+sudo apt install libstdc++-12-dev
+#sudo apt install libstdc++-{version}-dev
+```
+
 ### libarchive
 
 If you see an error when compiling `libarchive`, run this:

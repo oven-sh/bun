@@ -128,7 +128,14 @@ pub const ShellSubprocess = struct {
                     .fd => |fd| Readable{ .fd = fd },
                     .memfd => Readable{ .ignore = {} },
                     .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, false, out_type) },
-                    .array_buffer, .blob => Output.panic("TODO: implement Blob support in Stdio readable", .{}),
+                    .array_buffer => {
+                        const readable = Readable{ .pipe = PipeReader.create(event_loop, process, result, false, out_type) };
+                        readable.pipe.buffered_output = .{
+                            .array_buffer = .{ .buf = stdio.array_buffer, .i = 0 },
+                        };
+                        return readable;
+                    },
+                    .blob => Output.panic("TODO: implement Blob support in Stdio readable", .{}),
                     .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, true, out_type) },
                 };
             }

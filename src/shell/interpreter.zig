@@ -805,7 +805,7 @@ pub const Interpreter = struct {
                 break :brk cwd_str;
             };
 
-            const new_cwd_fd = switch (Syscall.openat(
+            const new_cwd_fd = switch (ShellSyscall.openat(
                 this.cwd_fd,
                 new_cwd,
                 std.os.O.DIRECTORY | std.os.O.RDONLY,
@@ -3606,7 +3606,7 @@ pub const Interpreter = struct {
                         log("EXPANDED REDIRECT: {s}\n", .{this.redirection_file.items[0..]});
                         const perm = 0o666;
                         const flags = this.node.redirect.toFlags();
-                        const redirfd = switch (Syscall.openat(this.base.shell.cwd_fd, path, flags, perm)) {
+                        const redirfd = switch (ShellSyscall.openat(this.base.shell.cwd_fd, path, flags, perm)) {
                             .err => |e| {
                                 return this.writeFailingError("bun: {s}: {s}", .{ e.toSystemError().message, path });
                             },
@@ -4192,7 +4192,7 @@ pub const Interpreter = struct {
                         log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
                         const perm = 0o666;
                         const flags = node.redirect.toFlags();
-                        const redirfd = switch (Syscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
+                        const redirfd = switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
                             .err => |e| {
                                 cmd.writeFailingError("bun: {s}: {s}", .{ e.toSystemError().message, path });
                                 return .yield;
@@ -5199,7 +5199,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn run(this: *@This()) void {
-                    const fd = switch (Syscall.openat(this.cwd, this.path, os.O.RDONLY | os.O.DIRECTORY, 0)) {
+                    const fd = switch (ShellSyscall.openat(this.cwd, this.path, os.O.RDONLY | os.O.DIRECTORY, 0)) {
                         .err => |e| {
                             switch (e.getErrno()) {
                                 bun.C.E.NOENT => {
@@ -5776,7 +5776,7 @@ pub const Interpreter = struct {
                 task: shell.eval.ShellTask(@This(), runFromThreadPool, runFromMainThread, print),
 
                 pub fn runFromThreadPool(this: *@This()) void {
-                    const fd = switch (Syscall.openat(this.cwd, this.target, os.O.RDONLY | os.O.DIRECTORY, 0)) {
+                    const fd = switch (ShellSyscall.openat(this.cwd, this.target, os.O.RDONLY | os.O.DIRECTORY, 0)) {
                         .err => |e| {
                             switch (e.getErrno()) {
                                 bun.C.E.NOTDIR => {
@@ -7025,7 +7025,7 @@ pub const Interpreter = struct {
                     }
 
                     const flags = os.O.DIRECTORY | os.O.RDONLY;
-                    const fd = switch (Syscall.openat(dirfd, path, flags, 0)) {
+                    const fd = switch (ShellSyscall.openat(dirfd, path, flags, 0)) {
                         .result => |fd| fd,
                         .err => |e| {
                             switch (e.getErrno()) {
@@ -7128,7 +7128,7 @@ pub const Interpreter = struct {
                     var treat_as_dir = true;
                     const fd: bun.FileDescriptor = handle_entry: while (true) {
                         if (treat_as_dir) {
-                            switch (Syscall.openat(dirfd, dir_task.path, os.O.DIRECTORY | os.O.RDONLY, 0)) {
+                            switch (ShellSyscall.openat(dirfd, dir_task.path, os.O.DIRECTORY | os.O.RDONLY, 0)) {
                                 .err => |e| switch (e.getErrno()) {
                                     bun.C.E.NOENT => {
                                         if (this.opts.force) {

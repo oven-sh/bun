@@ -98,7 +98,7 @@ it("process.env is spreadable and editable", () => {
   expect(process.env).toEqual(process.env);
   eval(`globalThis.process.env.USER = 'bun';`);
   expect(eval(`globalThis.process.env.USER`)).toBe("bun");
-  expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(orig);
+  expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
 it("process.env.TZ", () => {

@@ -540,7 +540,7 @@ pub fn normalizePathWindows(
         } };
     };
 
-    if (path.len >= 2 and bun.path.isDriveLetter(path[0]) and path[1] == ':') {
+    if (path.len >= 2 and bun.path.isDriveLetterT(u16, path[0]) and path[1] == ':') {
         path = path[2..];
     }
 

@@ -39,11 +39,16 @@ pub fn main() void {
     if (Environment.isWindows) {
         environ = @ptrCast(std.os.environ.ptr);
         _environ = @ptrCast(std.os.environ.ptr);
-        bun.win32.STDOUT_FD = bun.toFD(std.io.getStdOut().handle);
-        bun.win32.STDERR_FD = bun.toFD(std.io.getStdErr().handle);
-        bun.win32.STDIN_FD = bun.toFD(std.io.getStdIn().handle);
+        const peb = std.os.windows.peb();
+        const stdout = peb.ProcessParameters.hStdOutput;
+        const stderr = peb.ProcessParameters.hStdError;
+        const stdin = peb.ProcessParameters.hStdInput;
 
-        bun.buffered_stdin.unbuffered_reader.context.handle = std.io.getStdIn().handle;
+        bun.win32.STDERR_FD = if (stderr != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stderr) else bun.invalid_fd;
+        bun.win32.STDOUT_FD = if (stdout != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdout) else bun.invalid_fd;
+        bun.win32.STDIN_FD = if (stdin != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdin) else bun.invalid_fd;
+
+        bun.buffered_stdin.unbuffered_reader.context.handle = stdin;
 
         const w = std.os.windows;
 
@@ -79,5 +84,5 @@ pub fn main() void {
         );
     }
 
-    bun.CLI.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
+    bun.CLI.Cli.start(bun.default_allocator, MainPanicHandler);
 }

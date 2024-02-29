@@ -10,9 +10,11 @@ it("process", () => {
 
   if (!isNode && process.platform !== "win32" && process.title !== "bun") throw new Error("process.title is not 'bun'");
 
-  if (typeof process.env.USER !== "string") throw new Error("process.env is not an object");
+  if (process.platform !== "win32" && typeof process.env.USER !== "string")
+    throw new Error("process.env is not an object");
 
-  if (process.env.USER.length === 0) throw new Error("process.env is missing a USER property");
+  if (process.platform !== "win32" && process.env.USER.length === 0)
+    throw new Error("process.env is missing a USER property");
 
   if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32")
     throw new Error("process.platform is invalid");
@@ -98,7 +100,7 @@ it("process.env is spreadable and editable", () => {
   expect(process.env).toEqual(process.env);
   eval(`globalThis.process.env.USER = 'bun';`);
   expect(eval(`globalThis.process.env.USER`)).toBe("bun");
-  expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(orig);
+  expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
 it("process.env.TZ", () => {

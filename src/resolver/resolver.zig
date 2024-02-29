@@ -3789,7 +3789,7 @@ pub const Resolver = struct {
                                             query.entry.abs_path = PathString.init(r.fs.filename_store.append(@TypeOf(parts), parts) catch unreachable);
                                             // the trailing path CAN be missing here
                                         } else {
-                                            const parts = [_]string{ query.entry.dir, "/", buffer };
+                                            const parts = [_]string{ query.entry.dir, std.fs.path.sep_str, buffer };
                                             query.entry.abs_path = PathString.init(r.fs.filename_store.append(@TypeOf(parts), parts) catch unreachable);
                                         }
                                     }

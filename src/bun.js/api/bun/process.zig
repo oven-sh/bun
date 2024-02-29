@@ -1408,7 +1408,6 @@ pub fn spawnProcessWindows(
 
     errdefer failed = true;
     process.poller = .{ .uv = std.mem.zeroes(uv.Process) };
-    process.poller.uv.setData(process);
 
     if (process.poller.uv.spawn(loop, &uv_process_options).toError(.posix_spawn)) |err| {
         failed = true;
@@ -1416,6 +1415,7 @@ pub fn spawnProcessWindows(
     }
 
     process.pid = process.poller.uv.getPid();
+    process.poller.uv.setData(process);
 
     var result = WindowsSpawnResult{
         .process_ = process,

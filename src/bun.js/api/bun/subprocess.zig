@@ -329,7 +329,7 @@ pub const Subprocess = struct {
         }
 
         if (!this.hasCalledGetter(.stderr)) {
-            this.stdout.ref();
+            this.stderr.ref();
         }
 
         this.updateHasPendingActivity();
@@ -348,7 +348,7 @@ pub const Subprocess = struct {
         }
 
         if (!this.hasCalledGetter(.stderr)) {
-            this.stdout.unref();
+            this.stderr.unref();
         }
 
         this.updateHasPendingActivity();

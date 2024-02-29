@@ -478,9 +478,6 @@ pub const ShellSubprocess = struct {
         spawn_args_: SpawnArgs,
         out: **@This(),
     ) bun.shell.Result(void) {
-        if (comptime Environment.isWindows) {
-            @panic("TODO spawn windows");
-        }
         var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 
@@ -537,6 +534,11 @@ pub const ShellSubprocess = struct {
             .stdin = spawn_args.stdio[0].asSpawnOption(),
             .stdout = spawn_args.stdio[1].asSpawnOption(),
             .stderr = spawn_args.stdio[2].asSpawnOption(),
+
+            .windows = if (Environment.isWindows) bun.spawn.WindowsSpawnOptions.WindowsOptions{
+                .hide_window = true,
+                .loop = event_loop,
+            } else {},
         };
 
         spawn_args.argv.append(allocator, null) catch {
@@ -547,7 +549,7 @@ pub const ShellSubprocess = struct {
             return .{ .err = .{ .custom = bun.default_allocator.dupe(u8, "out of memory") catch bun.outOfMemory() } };
         };
 
-        const spawn_result = switch (bun.spawn.spawnProcess(
+        var spawn_result = switch (bun.spawn.spawnProcess(
             &spawn_options,
             @ptrCast(spawn_args.argv.items.ptr),
             @ptrCast(spawn_args.env_array.items.ptr),
@@ -638,7 +640,7 @@ pub const ShellSubprocess = struct {
     }
 
     pub fn wait(this: *@This(), sync: bool) void {
-        return this.process.waitPosix(sync);
+        return this.process.wait(sync);
     }
 
     pub fn onProcessExit(this: *@This(), _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
@@ -868,10 +870,26 @@ pub const PipeReader = struct {
         var this: *PipeReader = @ptrCast(@alignCast(ptr));
         this.buffered_output.append(chunk);
         log("PipeReader(0x{x}, {s}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), @tagName(this.out_type), chunk.len, @tagName(has_more) });
+
+        // Setup the writer
         if (!this.captured_writer.dead) {
-            if (this.captured_writer.writer.getPoll() == null) {
-                this.captured_writer.writer.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), if (this.out_type == .stdout) bun.STDOUT_FD else bun.STDERR_FD, .{}, @TypeOf(this.captured_writer.writer), &this.captured_writer.writer) };
+            // FIXME: Can't use bun.STDOUT_FD and bun.STDERR_FD here because we could have multiple writers to it and break kqueue/epoll
+            const writer_fd: bun.FileDescriptor = if (this.out_type == .stdout) bun.shell.STDOUT_FD else bun.shell.STDERR_FD;
+
+            if (comptime Environment.isWindows) {
+                if (this.captured_writer.writer.source == null) {
+                    if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
+                        const writer = std.io.getStdOut().writer();
+                        e.format("Yoops ", .{}, writer) catch @panic("oops");
+                        @panic("TODO SHELL SUBPROC onReadChunk error");
+                    }
+                }
+            } else {
+                if (this.captured_writer.writer.getPoll() == null) {
+                    this.captured_writer.writer.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), writer_fd, .{}, @TypeOf(this.captured_writer.writer), &this.captured_writer.writer) };
+                }
             }
+
             switch (this.captured_writer.writer.write(chunk)) {
                 .err => |e| {
                     const writer = std.io.getStdOut().writer();
@@ -885,7 +903,14 @@ pub const PipeReader = struct {
         const should_continue = has_more != .eof;
 
         if (should_continue) {
-            this.reader.registerPoll();
+            if (bun.Environment.isPosix) this.reader.registerPoll() else switch (this.reader.startWithCurrentPipe()) {
+                .err => |e| {
+                    const writer = std.io.getStdOut().writer();
+                    e.format("Yoops ", .{}, writer) catch @panic("oops");
+                    @panic("TODO SHELL SUBPROC onReadChunk error");
+                },
+                else => {},
+            }
         }
 
         return should_continue;

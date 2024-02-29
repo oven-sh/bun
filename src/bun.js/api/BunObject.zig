@@ -992,11 +992,9 @@ pub fn getMain(
                 break :use_resolved_path;
             }
 
-            const fd = bun.sys.openat(
-                // avoid going thorugh libuv for this one.
-                bun.toFD(std.fs.cwd().fd),
-
-                &(std.os.toPosixPath(vm.main) catch break :use_resolved_path),
+            const fd = bun.sys.openatA(
+                if (comptime Environment.isWindows) bun.invalid_fd else bun.toFD(std.fs.cwd().fd),
+                vm.main,
 
                 // Open with the minimum permissions necessary for resolving the file path.
                 if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY,

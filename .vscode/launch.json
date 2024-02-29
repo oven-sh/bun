@@ -18,7 +18,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -32,7 +32,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "0"
       },
       "console": "internalConsole"
     },
@@ -46,7 +46,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "0",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -60,7 +60,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -74,7 +74,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -93,7 +93,7 @@
       },
       "console": "internalConsole",
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
       }
@@ -113,7 +113,7 @@
       },
       "console": "internalConsole",
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
       }
@@ -129,9 +129,9 @@
       "env": {
         "FORCE_COLOR": "0",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
-      "console": "internalConsole",
+      "console": "internalConsole"
     },
     {
       "type": "lldb",
@@ -143,7 +143,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "0"
       },
       "console": "internalConsole"
     },
@@ -157,7 +157,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "0",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -171,7 +171,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -185,7 +185,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -204,10 +204,10 @@
       },
       "console": "internalConsole",
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
-      },
+      }
     },
     {
       "type": "lldb",
@@ -224,10 +224,10 @@
       },
       "console": "internalConsole",
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
-      },
+      }
     },
     // bun test [...]
     {
@@ -240,7 +240,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -254,7 +254,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "0"
       },
       "console": "internalConsole"
     },
@@ -268,7 +268,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "0",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -282,7 +282,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -296,7 +296,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -315,7 +315,7 @@
       },
       "console": "internalConsole",
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
       }
@@ -335,7 +335,7 @@
       },
       "console": "internalConsole",
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
       }
@@ -365,7 +365,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "0"
       },
       "console": "internalConsole"
     },
@@ -384,7 +384,7 @@
       },
       "console": "internalConsole",
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
       }
@@ -419,7 +419,29 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2"
         }
-      ],
+      ]
+    },
+    {
+      "type": "cppvsdbg",
+      "request": "launch",
+      "name": "Windows: bun test --only [file]",
+      "program": "${workspaceFolder}/build/bun-debug.exe",
+      "args": ["test", "--only", "${file}"],
+      "cwd": "${workspaceFolder}/test",
+      "environment": [
+        {
+          "name": "FORCE_COLOR",
+          "value": "1"
+        },
+        {
+          "name": "BUN_DEBUG_QUIET_LOGS",
+          "value": "1"
+        },
+        {
+          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
+          "value": "2"
+        }
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -441,7 +463,7 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "0"
         }
-      ],
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -463,7 +485,7 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2"
         }
-      ],
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -491,10 +513,10 @@
         }
       ],
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
-      },
+      }
     },
     {
       "type": "cppvsdbg",
@@ -522,10 +544,10 @@
         }
       ],
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
-      },
+      }
     },
     // Windows: bun run [file]
     {
@@ -548,7 +570,7 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2"
         }
-      ],
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -570,7 +592,7 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "0"
         }
-      ],
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -592,7 +614,7 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2"
         }
-      ],
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -620,10 +642,10 @@
         }
       ],
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
-      },
+      }
     },
     {
       "type": "cppvsdbg",
@@ -651,10 +673,10 @@
         }
       ],
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
-      },
+      }
     },
     // Windows: bun test [...]
     {
@@ -677,7 +699,7 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2"
         }
-      ],
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -699,7 +721,7 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "0"
         }
-      ],
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -721,7 +743,7 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2"
         }
-      ],
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -743,7 +765,7 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2"
         }
-      ],
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -765,7 +787,7 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2"
         }
-      ],
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -793,10 +815,10 @@
         }
       ],
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
-      },
+      }
     },
     {
       "type": "cppvsdbg",
@@ -824,10 +846,10 @@
         }
       ],
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
-      },
+      }
     },
     // Windows: bun test [*]
     {
@@ -850,7 +872,7 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2"
         }
-      ],
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -872,7 +894,7 @@
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "0"
         }
-      ],
+      ]
     },
     {
       "type": "cppvsdbg",
@@ -900,10 +922,10 @@
         }
       ],
       "serverReadyAction": {
-        "pattern": "https:\/\/debug.bun.sh\/#localhost:([0-9]+)/",
+        "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
         "action": "openExternally"
-      },
+      }
     },
     {
       "type": "cppvsdbg",
@@ -913,7 +935,7 @@
       "args": ["src/runner.node.mjs"],
       "cwd": "${workspaceFolder}/packages/bun-internal-test",
       "console": "internalConsole"
-    },
+    }
   ],
   "inputs": [
     {
@@ -925,6 +947,6 @@
       "id": "testName",
       "type": "promptString",
       "description": "Usage: bun test [...]"
-    },
+    }
   ]
 }

@@ -39,6 +39,8 @@ const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const TaggedPointer = @import("../tagged_pointer.zig").TaggedPointer;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
+const windows = bun.windows;
+const uv = windows.libuv;
 const Maybe = JSC.Maybe;
 
 const Pipe = [2]bun.FileDescriptor;
@@ -1073,17 +1075,17 @@ pub const Interpreter = struct {
             std.debug.assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
         }
 
-        const stdin_fd = switch (Syscall.dup(bun.STDIN_FD)) {
+        const stdin_fd = switch (ShellSyscall.dup(shell.STDIN_FD)) {
             .result => |fd| fd,
             .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
         };
 
-        const stdout_fd = switch (Syscall.dup(bun.STDOUT_FD)) {
+        const stdout_fd = switch (ShellSyscall.dup(shell.STDOUT_FD)) {
             .result => |fd| fd,
             .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
         };
 
-        const stderr_fd = switch (Syscall.dup(bun.STDERR_FD)) {
+        const stderr_fd = switch (ShellSyscall.dup(shell.STDERR_FD)) {
             .result => |fd| fd,
             .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
         };
@@ -7324,6 +7326,7 @@ pub const Interpreter = struct {
         ref_count: u32 = 1,
         err: ?JSC.SystemError = null,
         evtloop: JSC.EventLoopHandle,
+        is_writing: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
 
         pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOWriterRefCount";
 
@@ -7360,18 +7363,23 @@ pub const Interpreter = struct {
         }
 
         pub fn init(fd: bun.FileDescriptor, evtloop: JSC.EventLoopHandle) *This {
-            if (bun.Environment.isWindows) @panic("TODO SHELL WINDOWS");
             const this = IOWriter.new(.{
                 .fd = fd,
                 .evtloop = evtloop,
             });
 
             this.writer.parent = this;
-            this.writer.handle = .{
-                .poll = this.writer.createPoll(fd),
-            };
+            if (comptime bun.Environment.isPosix) {
+                this.writer.handle = .{
+                    .poll = this.writer.createPoll(fd),
+                };
+            } else {
+                this.writer.source = .{
+                    .file = bun.io.Source.openFile(fd),
+                };
+            }
 
-            print("IOWriter(0x{x}, fd={}) init", .{ @intFromPtr(this), fd });
+            print("IOWriter(0x{x}, fd={}) init noice", .{ @intFromPtr(this), fd });
 
             return this;
         }
@@ -7382,7 +7390,16 @@ pub const Interpreter = struct {
 
         /// Idempotent write call
         pub fn write(this: *This) void {
-            if (bun.Environment.isWindows) @panic("TODO SHELL WINDOWS");
+            if (bun.Environment.isWindows) {
+                if (this.is_writing) return;
+                this.is_writing = true;
+                if (this.writer.startWithCurrentPipe().asErr()) |e| {
+                    _ = e;
+                    @panic("TODO handle error");
+                }
+                return;
+            }
+
             if (bun.Environment.allow_assert) {
                 if (this.writer.handle != .poll) @panic("Should be poll.");
             }
@@ -7536,10 +7553,11 @@ pub const Interpreter = struct {
         }
 
         pub fn onClose(this: *This) void {
-            _ = this;
+            this.setWriting(false);
         }
 
         pub fn onError(this: *This, err__: bun.sys.Error) void {
+            this.setWriting(false);
             this.err = err__.toSystemError();
             var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);
             var seen = std.ArrayList(usize).initCapacity(seen_alloc.get(), 64) catch bun.outOfMemory();
@@ -7625,6 +7643,12 @@ pub const Interpreter = struct {
 
         pub fn isLastIdx(this: *This, idx: usize) bool {
             return idx == this.writers.len() -| 1;
+        }
+
+        pub inline fn setWriting(this: *This, writing: bool) void {
+            if (bun.Environment.isWindows) {
+                this.is_writing = writing;
+            }
         }
     };
 };
@@ -7918,5 +7942,173 @@ pub const IOWriterChildPtr = struct {
 
     pub fn onDone(this: IOWriterChildPtr, err: ?JSC.SystemError) void {
         return this.ptr.call("onIOWriterDone", .{err}, void);
+    }
+};
+
+/// Shell modifications for syscalls, mostly to make windows work:
+/// - Any function that returns a file descriptor will return a uv file descriptor
+/// - Sometimes windows doesn't have `*at()` functions like `rmdirat` so we have to join the directory path with the target path
+/// - Converts Posix absolute paths to Windows absolute paths on Windows
+const ShellSyscall = struct {
+    fn getPath(dirfd: anytype, to: [:0]const u8, buf: *[bun.MAX_PATH_BYTES]u8) Maybe([:0]const u8) {
+        if (bun.Environment.isPosix) @compileError("Don't use this");
+        if (bun.strings.eqlComptime(to[0..to.len], "/dev/null")) {
+            return .{ .result = shell.WINDOWS_DEV_NULL };
+        }
+        if (ResolvePath.Platform.posix.isAbsolute(to[0..to.len])) {
+            const dirpath = brk: {
+                if (@TypeOf(dirfd) == bun.FileDescriptor) break :brk switch (Syscall.getFdPath(dirfd, buf)) {
+                    .result => |path| path,
+                    .err => |e| return .{ .err = e.withFd(dirfd) },
+                };
+                break :brk dirfd;
+            };
+            const source_root = ResolvePath.windowsFilesystemRoot(dirpath);
+            std.mem.copyForwards(u8, buf[0..source_root.len], source_root);
+            @memcpy(buf[source_root.len..][0 .. to.len - 1], to[1..]);
+            buf[source_root.len + to.len - 1] = 0;
+            return .{ .result = buf[0 .. source_root.len + to.len - 1 :0] };
+        }
+        if (ResolvePath.Platform.isAbsolute(.windows, to[0..to.len])) return .{ .result = to };
+
+        const dirpath = brk: {
+            if (@TypeOf(dirfd) == bun.FileDescriptor) break :brk switch (Syscall.getFdPath(dirfd, buf)) {
+                .result => |path| path,
+                .err => |e| return .{ .err = e.withFd(dirfd) },
+            };
+            @memcpy(buf[0..dirfd.len], dirfd[0..dirfd.len]);
+            break :brk buf[0..dirfd.len];
+        };
+
+        const parts: []const []const u8 = &.{
+            dirpath[0..dirpath.len],
+            to[0..to.len],
+        };
+        const joined = ResolvePath.joinZBuf(buf, parts, .auto);
+        return .{ .result = joined };
+    }
+
+    fn statat(dir: bun.FileDescriptor, path_: [:0]const u8) Maybe(bun.Stat) {
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const path = switch (getPath(dir, path_, &buf)) {
+            .err => |e| return .{ .err = e },
+            .result => |p| p,
+        };
+
+        return switch (Syscall.stat(path)) {
+            .err => |e| .{ .err = e.clone(bun.default_allocator) catch bun.outOfMemory() },
+            .result => |s| .{ .result = s },
+        };
+    }
+
+    fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+        if (bun.Environment.isWindows) {
+            if (flags & os.O.DIRECTORY != 0) {
+                if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {
+                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    const p = switch (getPath(dir, path, &buf)) {
+                        .result => |p| p,
+                        .err => |e| return .{ .err = e },
+                    };
+                    return switch (Syscall.openDirAtWindowsA(dir, p, true, flags & os.O.NOFOLLOW != 0)) {
+                        .result => |fd| .{ .result = bun.toLibUVOwnedFD(fd) },
+                        .err => |e| return .{ .err = e.withPath(path) },
+                    };
+                }
+                return switch (Syscall.openDirAtWindowsA(dir, path, true, flags & os.O.NOFOLLOW != 0)) {
+                    .result => |fd| .{ .result = bun.toLibUVOwnedFD(fd) },
+                    .err => |e| return .{ .err = e.withPath(path) },
+                };
+            }
+
+            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const p = switch (getPath(dir, path, &buf)) {
+                .result => |p| p,
+                .err => |e| return .{ .err = e },
+            };
+            return bun.sys.open(p, flags, perm);
+        }
+
+        const fd = switch (Syscall.openat(dir, path, flags, perm)) {
+            .result => |fd| fd,
+            .err => |e| return .{ .err = e.withPath(path) },
+        };
+        if (bun.Environment.isWindows) {
+            return .{ .result = bun.toLibUVOwnedFD(fd) };
+        }
+        return .{ .result = fd };
+    }
+
+    pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+        const fd = switch (Syscall.open(file_path, flags, perm)) {
+            .result => |fd| fd,
+            .err => |e| return .{ .err = e },
+        };
+        if (bun.Environment.isWindows) {
+            return .{ .result = bun.toLibUVOwnedFD(fd) };
+        }
+        return .{ .result = fd };
+    }
+
+    pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
+        if (bun.Environment.isWindows) {
+            return switch (Syscall.dup(fd)) {
+                .result => |f| return .{ .result = bun.toLibUVOwnedFD(f) },
+                .err => |e| return .{ .err = e },
+            };
+        }
+        return Syscall.dup(fd);
+    }
+
+    pub fn unlinkatWithFlags(dirfd: anytype, to: [:0]const u8, flags: c_uint) Maybe(void) {
+        if (bun.Environment.isWindows) {
+            if (flags & std.os.AT.REMOVEDIR != 0) return ShellSyscall.rmdirat(dirfd, to);
+
+            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const path = brk: {
+                switch (ShellSyscall.getPath(dirfd, to, &buf)) {
+                    .err => |e| return .{ .err = e },
+                    .result => |p| break :brk p,
+                }
+            };
+
+            return switch (Syscall.unlink(path)) {
+                .result => return Maybe(void).success,
+                .err => |e| {
+                    log("unlinkatWithFlags({s}) = {s}", .{ path, @tagName(e.getErrno()) });
+                    return .{ .err = e.withPath(bun.default_allocator.dupe(u8, path) catch bun.outOfMemory()) };
+                },
+            };
+        }
+        if (@TypeOf(dirfd) != bun.FileDescriptor) {
+            @compileError("Bad type: " ++ @typeName(@TypeOf(dirfd)));
+        }
+        return Syscall.unlinkatWithFlags(dirfd, to, flags);
+    }
+
+    pub fn rmdirat(dirfd: anytype, to: [:0]const u8) Maybe(void) {
+        if (bun.Environment.isWindows) {
+            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const path: []const u8 = brk: {
+                switch (getPath(dirfd, to, &buf)) {
+                    .result => |p| break :brk p,
+                    .err => |e| return .{ .err = e },
+                }
+            };
+            var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
+            const wpath = bun.strings.toWPath(&wide_buf, path);
+            while (true) {
+                if (windows.RemoveDirectoryW(wpath) == 0) {
+                    const errno = Syscall.getErrno(420);
+                    if (errno == .INTR) continue;
+                    log("rmdirat({s}) = {d}: {s}", .{ path, @intFromEnum(errno), @tagName(errno) });
+                    return .{ .err = Syscall.Error.fromCode(errno, .rmdir) };
+                }
+                log("rmdirat({s}) = {d}", .{ path, 0 });
+                return Maybe(void).success;
+            }
+        }
+
+        return Syscall.rmdirat(dirfd, to);
     }
 };

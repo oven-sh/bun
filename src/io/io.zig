@@ -13,6 +13,8 @@ const TimerHeap = heap.Intrusive(Timer, void, Timer.less);
 const os = std.os;
 const assert = std.debug.assert;
 
+pub const Source = @import("./source.zig").Source;
+
 pub const Loop = struct {
     pending: Request.Queue = .{},
     waker: bun.Async.Waker,

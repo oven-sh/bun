@@ -32,7 +32,15 @@ pub const Subprocess = subproc.ShellSubprocess;
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
-pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue.";
+pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue!";
+
+/// Using these instead of `bun.STD{IN,OUT,ERR}_FD` to makesure we use uv fd
+pub const STDIN_FD: bun.FileDescriptor = if (bun.Environment.isWindows) bun.FDImpl.fromUV(0).encode() else bun.STDIN_FD;
+pub const STDOUT_FD: bun.FileDescriptor = if (bun.Environment.isWindows) bun.FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+pub const STDERR_FD: bun.FileDescriptor = if (bun.Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+
+pub const POSIX_DEV_NULL: [:0]const u8 = "/dev/null";
+pub const WINDOWS_DEV_NULL: [:0]const u8 = "NUL";
 
 /// The strings in this type are allocated with event loop ctx allocator
 pub const ShellErr = union(enum) {

@@ -129,13 +129,13 @@ pub const Source = union(enum) {
         };
     }
 
-    pub fn openFile(fd: bun.FileDescriptor) bun.JSC.Maybe(*Source.File) {
+    pub fn openFile(fd: bun.FileDescriptor) *Source.File {
         log("openFile (fd = {})", .{fd});
         const file = bun.default_allocator.create(Source.File) catch bun.outOfMemory();
 
         file.* = std.mem.zeroes(Source.File);
         file.file = bun.uvfdcast(fd);
-        return .{ .result = file };
+        return file;
     }
 
     pub fn open(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(Source) {
@@ -144,11 +144,8 @@ pub const Source = union(enum) {
         if (rc == bun.windows.FILE_TYPE_CHAR) .{ .tty = switch (openTty(loop, fd)) {
             .result => |tty| return .{ .result = .{ .tty = tty } },
             .err => |err| return .{ .err = err },
-        } } else .{
-            .file = switch (openFile(fd)) {
-                .result => |file| return .{ .result = .{ .file = file } },
-                .err => |err| return .{ .err = err },
-            },
-        };
+        } } else return .{ .result = .{
+            .file = openFile(fd),
+        } };
     }
 };

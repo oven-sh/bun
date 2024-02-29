@@ -99,6 +99,13 @@ pub const FDImpl = packed struct {
         }
     }
 
+    pub fn fromSystemWithoutAssertion(system_fd: System) FDImpl {
+        return FDImpl{
+            .kind = .system,
+            .value = .{ .as_system = handleToNumber(system_fd) },
+        };
+    }
+
     pub fn fromSystem(system_fd: System) FDImpl {
         if (env.os == .windows) {
             // the current process fd is max usize
@@ -106,10 +113,7 @@ pub const FDImpl = packed struct {
             std.debug.assert(@intFromPtr(system_fd) <= std.math.maxInt(SystemAsInt));
         }
 
-        return FDImpl{
-            .kind = .system,
-            .value = .{ .as_system = handleToNumber(system_fd) },
-        };
+        return fromSystemWithoutAssertion(system_fd);
     }
 
     pub fn fromUV(uv_fd: UV) FDImpl {

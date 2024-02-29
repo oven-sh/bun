@@ -330,20 +330,20 @@ for (let [gcTick, label] of [
         }
       });
 
-      it("kill(1) works", async () => {
+      it("kill(SIGKILL) works", async () => {
         const process = spawn({
-          cmd: ["bash", "-c", "sleep 1000"],
+          cmd: ["sleep", "1000"],
           stdout: "pipe",
         });
         gcTick();
         const prom = process.exited;
-        process.kill(1);
+        process.kill("SIGKILL");
         await prom;
       });
 
       it("kill() works", async () => {
         const process = spawn({
-          cmd: ["bash", "-c", "sleep 1000"],
+          cmd: ["sleep", "1000"],
           stdout: "pipe",
         });
         gcTick();

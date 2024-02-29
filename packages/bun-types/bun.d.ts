@@ -4317,7 +4317,7 @@ declare module "bun" {
      * Kill the process
      * @param exitCode The exitCode to send to the process
      */
-    kill(exitCode?: number): void;
+    kill(exitCode?: number | NodeJS.Signals): void;
 
     /**
      * This method will tell Bun to wait for this process to exit after you already

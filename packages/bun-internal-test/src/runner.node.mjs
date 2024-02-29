@@ -83,7 +83,7 @@ function* findTests(dir, query) {
 }
 
 // pick the last one, kind of a hack to allow 'bun run test bun-release' to test the release build
-let bunExe = (process.argv.length > 2 ? process.argv[process.argv.length - 1] : null) ?? "bun";
+const bunExe = (process.argv.length > 2 ? resolve(process.argv[process.argv.length - 1]) : null) ?? "bun";
 const { error, stdout: revision_stdout } = spawnSync(bunExe, ["--revision"], {
   env: { ...process.env, BUN_DEBUG_QUIET_LOGS: 1 },
 });

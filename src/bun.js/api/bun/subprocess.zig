@@ -539,10 +539,16 @@ pub const Subprocess = struct {
         var arguments = callframe.arguments(1);
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
-        var sig: i32 = @intFromEnum(bun.SignalCode.SIGTERM);
+        var sig: i32 = SignalCode.default;
 
         if (arguments.len > 0) {
-            sig = arguments.ptr[0].coerce(i32, globalThis);
+            if (arguments.ptr[0].isString()) {
+                const signal_code = arguments.ptr[0].toEnum(globalThis, "signal", SignalCode) catch return .zero;
+                sig = @intFromEnum(signal_code);
+            } else {
+                sig = arguments.ptr[0].coerce(i32, globalThis);
+            }
+            if (globalThis.hasException()) return .zero;
         }
 
         if (!(sig >= 0 and sig <= std.math.maxInt(u8))) {

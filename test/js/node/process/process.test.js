@@ -407,9 +407,9 @@ if (process.platform !== "win32") {
   });
 }
 
-describe.skipIf(process.platform === "win32")("signal", () => {
+describe("signal", () => {
   const fixture = join(import.meta.dir, "./process-signal-handler.fixture.js");
-  it("simple case works", async () => {
+  it.skipIf(isWindows)("simple case works", async () => {
     const child = Bun.spawn({
       cmd: [bunExe(), fixture, "SIGUSR1"],
       env: bunEnv,
@@ -418,7 +418,7 @@ describe.skipIf(process.platform === "win32")("signal", () => {
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stdout).text()).toBe("PASS\n");
   });
-  it("process.emit will call signal events", async () => {
+  it.skipIf(isWindows)("process.emit will call signal events", async () => {
     const child = Bun.spawn({
       cmd: [bunExe(), fixture, "SIGUSR2"],
       env: bunEnv,
@@ -430,26 +430,36 @@ describe.skipIf(process.platform === "win32")("signal", () => {
 
   it("process.kill(2) works", async () => {
     const child = Bun.spawn({
-      cmd: ["bash", "-c", "sleep 1000000"],
+      cmd: ["sleep", "1000000"],
       stdout: "pipe",
     });
     const prom = child.exited;
     const ret = process.kill(child.pid, "SIGTERM");
     expect(ret).toBe(true);
     await prom;
-    expect(child.signalCode).toBe("SIGTERM");
+    if (process.platform === "win32") {
+      expect(child.exitCode).toBe(1);
+    } else {
+      expect(child.signalCode).toBe("SIGTERM");
+    }
   });
 
   it("process._kill(2) works", async () => {
     const child = Bun.spawn({
-      cmd: ["bash", "-c", "sleep 1000000"],
+      cmd: ["sleep", "1000000"],
       stdout: "pipe",
     });
     const prom = child.exited;
-    const ret = process.kill(child.pid, "SIGKILL");
-    expect(ret).toBe(true);
+    // SIGKILL as a number
+    const SIGKILL = 9;
+    process._kill(child.pid, SIGKILL);
     await prom;
-    expect(child.signalCode).toBe("SIGKILL");
+
+    if (process.platform === "win32") {
+      expect(child.exitCode).toBe(1);
+    } else {
+      expect(child.signalCode).toBe("SIGKILL");
+    }
   });
 
   it("process.kill(2) throws on invalid input", async () => {

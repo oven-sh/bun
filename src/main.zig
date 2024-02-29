@@ -48,7 +48,7 @@ pub fn main() void {
         bun.win32.STDOUT_FD = if (stdout != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdout) else bun.invalid_fd;
         bun.win32.STDIN_FD = if (stdin != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdin) else bun.invalid_fd;
 
-        bun.buffered_stdin.unbuffered_reader.context.handle = stdin;
+        bun.Output.buffered_stdin.unbuffered_reader.context.handle = stdin;
 
         const w = std.os.windows;
 

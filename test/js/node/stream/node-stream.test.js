@@ -250,14 +250,14 @@ const processStdInTest = `
 const { Transform } = require("node:stream");
 
 let totalChunkSize = 0;
-const uppercase = new Transform({
+const transform = new Transform({
   transform(chunk, _encoding, callback) {
     totalChunkSize += chunk.length;
     callback(null, "");
   },
 });
 
-process.stdin.pipe(uppercase).pipe(process.stdout);
+process.stdin.pipe(transform).pipe(process.stdout);
 process.stdin.on("end", () => console.log(totalChunkSize));
 `;
 describe("process.stdin", () => {

@@ -519,7 +519,7 @@ pub fn normalizePathWindows(
         @compileError("normalizePathWindows only supports u8 and u16 character types");
     }
     var wbuf: if (T == u16) void else bun.WPathBuffer = undefined;
-    const path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(&wbuf, path_);
+    var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(&wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
@@ -539,6 +539,10 @@ pub fn normalizePathWindows(
             .syscall = .open,
         } };
     };
+
+    if (path.len >= 2 and bun.path.isDriveLetterT(u16, path[0]) and path[1] == ':') {
+        path = path[2..];
+    }
 
     var buf1: bun.WPathBuffer = undefined;
     @memcpy(buf1[0..base_path.len], base_path);

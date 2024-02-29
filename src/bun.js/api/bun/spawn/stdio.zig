@@ -188,8 +188,15 @@ pub const Stdio = union(enum) {
         i: u32,
         value: JSValue,
     ) bool {
-        if (value.isEmptyOrUndefinedOrNull()) {
-            return true;
+        switch (value) {
+            // undefined: default
+            .undefined, .zero => return true,
+            // null: ignore
+            .null => {
+                out_stdio.* = Stdio{ .ignore = {} };
+                return true;
+            },
+            else => {},
         }
 
         if (value.isString()) {

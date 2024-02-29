@@ -234,7 +234,19 @@ pub const Subprocess = struct {
             return true;
         }
 
-        return this.process.hasRef();
+        if (comptime Environment.isWindows) {
+            if (this.process.poller == .uv) {
+                if (this.process.poller.uv.isActive()) {
+                    return true;
+                }
+
+                return this.process.uv.hasRef();
+            }
+
+            return false;
+        } else {
+            return this.process.hasRef();
+        }
     }
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
@@ -319,6 +331,8 @@ pub const Subprocess = struct {
         if (!this.hasCalledGetter(.stderr)) {
             this.stdout.ref();
         }
+
+        this.updateHasPendingActivity();
     }
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
@@ -336,6 +350,8 @@ pub const Subprocess = struct {
         if (!this.hasCalledGetter(.stderr)) {
             this.stdout.unref();
         }
+
+        this.updateHasPendingActivity();
     }
 
     pub fn constructor(

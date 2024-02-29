@@ -132,6 +132,7 @@ export function getStdinStream(fd) {
   const originalOn = stream.on;
 
   let stream_destroyed = false;
+  let stream_endEmitted = false;
   stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
@@ -190,7 +191,10 @@ export function getStdinStream(fd) {
 
         if (shouldUnref) unref();
       } else {
-        stream.emit("end");
+        if (!stream_endEmitted) {
+          stream_endEmitted = true;
+          stream.emit("end");
+        }
         if (!stream_destroyed) {
           stream_destroyed = true;
           stream.destroy();
@@ -204,10 +208,9 @@ export function getStdinStream(fd) {
 
   stream._read = function (size) {
     $debug("_read();", reader);
-    if (!reader) {
-      // TODO: this is wrong
-      this.push(null);
-    } else if (!shouldUnref) {
+    if (!reader) return;
+
+    if (!shouldUnref) {
       internalRead(this);
     }
   };

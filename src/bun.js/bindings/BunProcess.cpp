@@ -838,6 +838,8 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     sigaction(signalNumber, &action, nullptr);
 #else
                     signal_handle.handle = Bun__UVSignalHandle__init(
+                        // todo: post a task to main thread to add the signal handler to it, or if main thread then you can use this
+                        // i think we want all of these handlers to use the main thread handler
                         eventEmitter.scriptExecutionContext()->jsGlobalObject(),
                         signalNumber,
                         handler);

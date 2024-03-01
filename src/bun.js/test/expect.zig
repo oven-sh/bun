@@ -4325,14 +4325,9 @@ pub const Expect = struct {
     pub fn hasAssertions(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         _ = callFrame;
         defer globalObject.bunVM().autoGarbageCollect();
-        const fmt = comptime "<d>expect.hasAssertions()<r>\n\nExpected <green>at least one assertion<r> to be called but <red>received none<r>.\n";
-        const error_value = if (Output.enable_ansi_colors)
-            globalObject.createErrorInstance(Output.prettyFmt(fmt, true), .{})
-        else
-            globalObject.createErrorInstance(Output.prettyFmt(fmt, false), .{});
 
         if (Jest.runner.?.pending_test) |pending_test|
-            pending_test.assert_asserts(NeededAssertType.atLeastOne, 0, error_value);
+            pending_test.assert_asserts(NeededAssertType.atLeastOne, 0);
 
         return .zero;
     }
@@ -4363,12 +4358,10 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const error_value = globalObject.createErrorInstance("expected x assertion(s) but found only y", .{});
-
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
 
         if (Jest.runner.?.pending_test) |pending_test|
-            pending_test.assert_asserts(NeededAssertType.equalToNeededAsserts, unsigned_expected_assertions, error_value);
+            pending_test.assert_asserts(NeededAssertType.equalToNeededAsserts, unsigned_expected_assertions);
 
         return .zero;
     }

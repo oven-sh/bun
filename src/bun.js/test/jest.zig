@@ -1236,7 +1236,6 @@ pub const NeededAssertType = enum(u2) {
 pub const TestRunnerTask = struct {
     needed_assert_type: NeededAssertType = NeededAssertType.none,
     needed_asserts: u32 = 0,
-    assert_error: JSValue = .zero,
 
     test_id: TestRunner.Test.ID,
     describe: *DescribeScope,
@@ -1429,10 +1428,9 @@ pub const TestRunnerTask = struct {
         processTestResult(this, this.globalThis, result, test_, test_id, describe);
     }
 
-    pub fn assert_asserts(this: *TestRunnerTask, assert_type: NeededAssertType, assert_count: u32, assert_error: JSValue) void {
+    pub fn assert_asserts(this: *TestRunnerTask, assert_type: NeededAssertType, assert_count: u32) void {
         this.needed_assert_type = assert_type;
         this.needed_asserts = assert_count;
-        this.assert_error = assert_error;
     }
 
     fn processTestResult(this: *TestRunnerTask, globalThis: *JSC.JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {

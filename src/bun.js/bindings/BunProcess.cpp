@@ -675,6 +675,7 @@ static void loadSignalNumberMap()
 }
 
 extern "C" uv_signal_t* Bun__UVSignalHandle__init(JSC::JSGlobalObject* lexicalGlobalObject, int signalNumber, void (*callback)(uv_signal_t*, int));
+extern "C" uv_signal_t* Bun__UVSignalHandle__close(uv_signal_t*);
 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
@@ -861,7 +862,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #if !OS(WINDOWS)
                         signal(signalNumber, SIG_DFL);
 #else
-                        uv_signal_stop(signal_handle.handle);
+                        Bun__UVSignalHandle__close(signal_handle.handle);
 #endif
                         signalToContextIdsMap->remove(signalNumber);
                     } else {

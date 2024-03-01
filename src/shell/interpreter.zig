@@ -688,10 +688,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     break :brk cwd_str;
                 };
 
+                const O = std.c.O{ .DIRECTORY = true };
                 const new_cwd_fd = switch (Syscall.openat(
                     this.cwd_fd,
                     new_cwd,
-                    std.os.O.DIRECTORY | std.os.O.RDONLY,
+                    @bitCast(O),
                     0,
                 )) {
                     .result => |fd| fd,

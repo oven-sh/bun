@@ -1,4 +1,3 @@
-$env:PATH = "C:\bun\.cache\zig;" + $env:PATH
 param(
   [switch]$Baseline = $False
 )

@@ -355,6 +355,7 @@ const ShellRmDirTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask.DirTask;
 const ShellLsTask = bun.shell.Interpreter.Builtin.Ls.ShellLsTask;
 const ShellMvCheckTargetTask = bun.shell.Interpreter.Builtin.Mv.ShellMvCheckTargetTask;
 const ShellMvBatchedTask = bun.shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
+const ShellMkdirTask = bun.shell.Interpreter.Builtin.Mkdir.ShellMkdirTask;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
@@ -422,6 +423,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellMvCheckTargetTask,
     ShellMvBatchedTask,
     ShellLsTask,
+    ShellMkdirTask,
     TimerReference,
 
     ProcessWaiterThreadTask,
@@ -873,6 +875,11 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
+                @field(Task.Tag, typeBaseName(@typeName(ShellMkdirTask))) => {
+                    var shell_ls_task: *ShellMkdirTask = task.get(ShellMkdirTask).?;
+                    shell_ls_task.runFromMainThread();
+                    // shell_ls_task.deinit();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(ShellLsTask))) => {
                     var shell_ls_task: *ShellLsTask = task.get(ShellLsTask).?;
                     shell_ls_task.runFromMainThread();

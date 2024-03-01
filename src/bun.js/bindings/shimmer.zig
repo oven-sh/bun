@@ -1,7 +1,7 @@
 const std = @import("std");
 const StaticExport = @import("./static_export.zig");
 const Sizes = @import("./sizes.zig");
-pub const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+pub const is_bindgen: bool = false;
 const headers = @import("./headers.zig");
 
 fn isNullableType(comptime Type: type) bool {

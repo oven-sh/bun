@@ -7,7 +7,7 @@ const strings = bun.strings;
 const JSC = @import("root").bun.JSC;
 const Environment = bun.Environment;
 const Global = bun.Global;
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen: bool = false;
 const heap_allocator = bun.default_allocator;
 
 const libuv = bun.windows.libuv;
@@ -79,6 +79,7 @@ pub const Os = struct {
         return switch (Environment.os) {
             .linux => cpusImplLinux(globalThis),
             .mac => cpusImplDarwin(globalThis),
+            .openbsd => cpusImplDarwin(globalThis),
             .windows => cpusImplWindows(globalThis),
             else => @compileError("unsupported OS"),
         } catch {
@@ -550,7 +551,7 @@ pub const Os = struct {
                     //  cast to a link-layer socket address
                     if (comptime Environment.isLinux) {
                         break @as(?*std.os.sockaddr.ll, @ptrCast(@alignCast(ll_iface.ifa_addr)));
-                    } else if (comptime Environment.isMac) {
+                    } else if (comptime (Environment.isMac or Environment.isOpenBSD)) {
                         break @as(?*C.sockaddr_dl, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                     } else {
                         comptime unreachable;
@@ -561,7 +562,7 @@ pub const Os = struct {
                     // Encode its link-layer address.  We need 2*6 bytes for the
                     //  hex characters and 5 for the colon separators
                     var mac_buf: [17]u8 = undefined;
-                    const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime Environment.isMac) ll_addr.sdl_data[ll_addr.sdl_nlen..] else comptime unreachable;
+                    const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime (Environment.isMac or Environment.isOpenBSD)) ll_addr.sdl_data[ll_addr.sdl_nlen..] else comptime unreachable;
                     const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
                         addr_data[0], addr_data[1], addr_data[2],
                         addr_data[3], addr_data[4], addr_data[5],

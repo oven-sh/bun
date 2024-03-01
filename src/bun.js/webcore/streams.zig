@@ -1316,9 +1316,10 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
         pub fn prepare(this: *ThisFileSink, input_path: PathOrFileDescriptor, mode: bun.Mode) JSC.Maybe(void) {
             var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             const auto_close = this.auto_close;
+            const flags: std.c.O = .{ .ACCMODE = .WRONLY, .NONBLOCK = true, .CLOEXEC = true, .CREAT = true };
             const fd = if (!auto_close)
                 input_path.fd
-            else switch (bun.sys.open(input_path.path.toSliceZ(&file_buf), std.os.O.WRONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC | std.os.O.CREAT, mode)) {
+            else switch (bun.sys.open(input_path.path.toSliceZ(&file_buf), @bitCast(flags), mode)) {
                 .result => |_fd| _fd,
                 .err => |err| return .{ .err = err.withPath(input_path.path.slice()) },
             };

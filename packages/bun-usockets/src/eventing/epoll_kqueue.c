@@ -29,6 +29,7 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <unistd.h>
 #include <stdint.h>
 #include <errno.h>
+#include <string.h> // memset
 #endif
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs);

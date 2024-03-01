@@ -483,6 +483,7 @@ pub const VirtualMachine = struct {
     console: *ConsoleObject,
     log: *logger.Log,
     main: string = "",
+    main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
     process: js.JSObjectRef = null,
     flush_list: std.ArrayList(string),

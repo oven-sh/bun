@@ -4274,6 +4274,11 @@ describe("expect()", () => {
     expect("a").toEqual("a");
   });
 
+  test("expect.assertions force throw", () => {
+    expect.assertions(2);
+    expect(true).toBe(true);
+  });
+
   const mocked = mock(() => {});
   mocked();
 

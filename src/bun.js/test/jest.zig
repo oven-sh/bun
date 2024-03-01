@@ -1338,13 +1338,26 @@ pub const TestRunnerTask = struct {
             NeededAssertType.none => {},
             NeededAssertType.atLeastOne => {
                 if (expect.active_test_expectation_counter.actual == 0) {
-                    globalThis.*.bunVM().runErrorHandler(this.assert_error, null);
+                    const fmt = comptime "<d>expect.hasAssertions()<r>\n\nExpected <green>at least one assertion<r> to be called but <red>received none<r>.\n";
+                    const error_value = if (Output.enable_ansi_colors)
+                        globalThis.createErrorInstance(Output.prettyFmt(fmt, true), .{})
+                    else
+                        globalThis.createErrorInstance(Output.prettyFmt(fmt, false), .{});
+
+                    globalThis.*.bunVM().runErrorHandler(error_value, null);
                     result = .{ .fail = 0 };
                 }
             },
             NeededAssertType.equalToNeededAsserts => {
                 if (expect.active_test_expectation_counter.actual != this.needed_asserts) {
-                    globalThis.*.bunVM().runErrorHandler(this.assert_error, null);
+                    const fmt = comptime "<d>expect.assertions({})<r>\n\nExpected <green>{} assertion<r> to be called but <red>found {} assertions<r> instead.\n";
+                    const fmt_args = .{ this.needed_asserts, this.needed_asserts, expect.active_test_expectation_counter.actual };
+                    const error_value = if (Output.enable_ansi_colors)
+                        globalThis.createErrorInstance(Output.prettyFmt(fmt, true), fmt_args)
+                    else
+                        globalThis.createErrorInstance(Output.prettyFmt(fmt, false), fmt_args);
+
+                    globalThis.*.bunVM().runErrorHandler(error_value, null);
                     result = .{ .fail = expect.active_test_expectation_counter.actual };
                 }
             },

@@ -446,7 +446,7 @@ describe("bunshell", () => {
     });
 
     test("syntax edgecase", async () => {
-      const buffer = new Uint8Array(8192);
+      const buffer = new Uint8Array(1 << 20);
       const shellProc = await $`FOO=bar BUN_TEST_VAR=1 ${BUN} -e "console.log(JSON.stringify(process.env))"> ${buffer}`;
 
       const str = stringifyBuffer(buffer);

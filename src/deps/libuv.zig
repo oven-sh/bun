@@ -1410,7 +1410,7 @@ const union_unnamed_433 = extern union {
     reserved: [4]?*anyopaque,
 };
 pub const uv_signal_t = struct_uv_signal_s;
-pub const uv_signal_cb = ?*const fn ([*c]uv_signal_t, c_int) callconv(.C) void;
+pub const uv_signal_cb = ?*const fn (*uv_signal_t, c_int) callconv(.C) void;
 const struct_unnamed_434 = extern struct {
     rbe_left: [*c]struct_uv_signal_s,
     rbe_right: [*c]struct_uv_signal_s,
@@ -2204,9 +2204,9 @@ pub extern fn uv_fs_poll_start(handle: *uv_fs_poll_t, poll_cb: uv_fs_poll_cb, pa
 pub extern fn uv_fs_poll_stop(handle: *uv_fs_poll_t) c_int;
 pub extern fn uv_fs_poll_getpath(handle: *uv_fs_poll_t, buffer: [*]u8, size: [*c]usize) c_int;
 pub extern fn uv_signal_init(loop: *uv_loop_t, handle: *uv_signal_t) ReturnCode;
-pub extern fn uv_signal_start(handle: *uv_signal_t, signal_cb: uv_signal_cb, signum: c_int) c_int;
-pub extern fn uv_signal_start_oneshot(handle: *uv_signal_t, signal_cb: uv_signal_cb, signum: c_int) c_int;
-pub extern fn uv_signal_stop(handle: *uv_signal_t) c_int;
+pub extern fn uv_signal_start(handle: *uv_signal_t, signal_cb: uv_signal_cb, signum: c_int) ReturnCode;
+pub extern fn uv_signal_start_oneshot(handle: *uv_signal_t, signal_cb: uv_signal_cb, signum: c_int) ReturnCode;
+pub extern fn uv_signal_stop(handle: *uv_signal_t) ReturnCode;
 pub extern fn uv_loadavg(avg: [*c]f64) void;
 pub const UV_FS_EVENT_WATCH_ENTRY: c_int = 1;
 pub const UV_FS_EVENT_STAT: c_int = 2;

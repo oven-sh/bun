@@ -930,12 +930,12 @@ comptime {
 const libuv = bun.windows.libuv;
 
 pub export fn Bun__UVSignalHandle__init(
-    loop: *libuv.Loop,
+    global: *JSC.JSGlobalObject,
     signal_num: i32,
-    callback: *fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.C) void,
-) ?*libuv.uv_signal_t {
-    const signal = bun.new(libuv.uv_signal_t, undefined);
-    const rc = libuv.uv_signal_init(loop, &signal);
+    callback: *const fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.C) void,
+) callconv(.C) ?*libuv.uv_signal_t {
+    const signal = bun.default_allocator.create(libuv.uv_signal_t) catch bun.outOfMemory();
+    var rc = libuv.uv_signal_init(global.bunVM().uvLoop(), signal);
     if (rc.errno()) |_| {
         return null;
     }
@@ -945,5 +945,5 @@ pub export fn Bun__UVSignalHandle__init(
         return null;
     }
 
-    return &signal;
+    return signal;
 }

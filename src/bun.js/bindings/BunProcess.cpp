@@ -789,15 +789,18 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 
             if (isAdded) {
                 if (!signalToContextIdsMap->contains(signalNumber)) {
-                    SignalHandleValue signal_handle;
+                    SignalHandleValue signal_handle = {
+                        .handle = nullptr,
+                        .contextIds = {},
+                    };
                     signal_handle.contextIds.add(contextId);
-                    signalToContextIdsMap->set(signalNumber, signal_handle);
 
 #if !OS(WINDOWS)
                     auto handler = [](int signalNumber) {
 #else
                     auto handler = [](uv_signal_t* signal, int signalNumber) {
 #endif
+                        printf("signal %d\n", signalNumber);
                         if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
                             return;
 
@@ -820,7 +823,6 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         }
                     };
 
-                    lock.unlockEarly();
 #if !OS(WINDOWS)
                     struct sigaction action;
                     memset(&action, 0, sizeof(struct sigaction));
@@ -839,7 +841,11 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         eventEmitter.scriptExecutionContext()->jsGlobalObject(),
                         signalNumber,
                         handler);
+                    if (UNLIKELY(!signal_handle.handle))
+                        return;
 #endif
+
+                    signalToContextIdsMap->set(signalNumber, signal_handle);
                 } else {
                     SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                     signal_handle.contextIds.add(contextId);
@@ -853,6 +859,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #if !OS(WINDOWS)
                         signal(signalNumber, SIG_DFL);
 #else
+                        uv_signal_stop(signal_handle.handle);
 #endif
                         signalToContextIdsMap->remove(signalNumber);
                     } else {

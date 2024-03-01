@@ -2413,7 +2413,7 @@ pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdo
 
 /// Globally-allocate a value on the heap.
 ///
-/// When used, yuo must call `bun.destroy` to free the memory.
+/// When used, you must call `bun.destroy` to free the memory.
 /// default_allocator.destroy should not be used.
 ///
 /// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`

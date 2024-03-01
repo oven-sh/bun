@@ -58,8 +58,7 @@ const git_sha =
 const TEST_FILTER = process.env.BUN_TEST_FILTER;
 
 function isTest(path) {
-  console.log(path);
-  if (!path.includes("expect.test.") || !extensions.some(ext => path.endsWith(ext))) {
+  if (!basename(path).includes(".test.") || !extensions.some(ext => path.endsWith(ext))) {
     return false;
   }
 
@@ -76,7 +75,7 @@ function* findTests(dir, query) {
   for (const entry of readdirSync(resolve(dir), { encoding: "utf-8", withFileTypes: true })) {
     const path = resolve(dir, entry.name);
     if (entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git") {
-      // yield* findTests(path, query);
+      yield* findTests(path, query);
     } else if (isTest(path)) {
       yield path;
     }
@@ -312,7 +311,7 @@ async function runTest(path) {
   }
 }
 
-const queue = [...findTests(resolve(cwd, "test/js/bun/test"))];
+const queue = [...findTests(resolve(cwd, "test"))];
 let running = 0;
 let total = queue.length;
 let finished = 0;
@@ -487,12 +486,6 @@ console.log("-> test-report.md, test-report.json");
 
 if (ci) {
   if (windows) {
-<<<<<<< HEAD
-=======
-    if (regressions.length > 0) {
-      action.setFailed(`${regressions.length} regressing tests`);
-    }
->>>>>>> f8a2dd460 (feat: initial implementation still need to test)
     action.setOutput("regressing_tests", regressions.map(({ path }) => `- \`${path}\``).join("\n"));
     action.setOutput("regressing_test_count", regressions.length);
   }

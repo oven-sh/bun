@@ -24,9 +24,6 @@ const mode_t = bun.Mode;
 const libc_stat = bun.Stat;
 
 const zeroes = mem.zeroes;
-pub const darwin = @import("./darwin_c.zig");
-pub const linux = @import("./linux_c.zig");
-pub const openbsd = @import("./openbsd_c.zig");
 pub extern "c" fn chmod([*c]const u8, mode_t) c_int;
 pub extern "c" fn fchmod(std.c.fd_t, mode_t) c_int;
 pub extern "c" fn fchmodat(c_int, [*c]const u8, mode_t, c_int) c_int;
@@ -351,9 +348,9 @@ pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
 
 pub fn getVersion(buf: []u8) []const u8 {
     if (comptime Environment.isLinux) {
-        return linux.get_version(buf.ptr[0..bun.HOST_NAME_MAX]);
+        return PlatformSpecific.get_version(buf.ptr[0..bun.HOST_NAME_MAX]);
     } else if (comptime Environment.isMac) {
-        return darwin.get_version(buf);
+        return PlatformSpecific.get_version(buf);
     } else {
         var info: bun.windows.libuv.uv_utsname_s = undefined;
         const err = bun.windows.libuv.uv_os_uname(&info);
@@ -368,9 +365,9 @@ pub fn getVersion(buf: []u8) []const u8 {
 
 pub fn getRelease(buf: []u8) []const u8 {
     if (comptime Environment.isLinux) {
-        return linux.get_release(buf.ptr[0..bun.HOST_NAME_MAX]);
+        return PlatformSpecific.get_release(buf.ptr[0..bun.HOST_NAME_MAX]);
     } else if (comptime Environment.isMac) {
-        return darwin.get_release(buf);
+        return PlatformSpecific.get_release(buf);
     } else {
         var info: bun.windows.libuv.uv_utsname_s = undefined;
         const err = bun.windows.libuv.uv_os_uname(&info);

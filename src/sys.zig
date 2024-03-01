@@ -920,7 +920,8 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
     }
 
     while (true) {
-        const rc = Syscall.system.openat(dirfd.cast(), file_path, @as(std.c.O, flags), perm);
+        const O_flags: std.c.O = @as(*const std.c.O, @ptrCast(&flags)).*;
+        const rc = Syscall.system.openat(dirfd.cast(), file_path, O_flags, perm);
         if (comptime Environment.allow_assert)
             log("openat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
         return switch (Syscall.getErrno(rc)) {

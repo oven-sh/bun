@@ -258,7 +258,8 @@ pub const Arguments = struct {
     }
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)) {
+        const O = std.c.O{};
+        var config_file = switch (bun.sys.openA(config_path, @bitCast(O), 0)) {
             .result => |fd| fd.asFile(),
             .err => |err| {
                 if (auto_loaded) return;

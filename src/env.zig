@@ -21,6 +21,7 @@ pub const isDebug = std.builtin.Mode.Debug == @import("builtin").mode;
 pub const isRelease = std.builtin.Mode.Debug != @import("builtin").mode and !isTest;
 pub const isTest = @import("builtin").is_test;
 pub const isLinux = @import("builtin").target.os.tag == .linux;
+pub const isOpenBSD = @import("builtin").target.os.tag == .openbsd;
 pub const isAarch64 = @import("builtin").target.cpu.arch.isAARCH64();
 pub const isX86 = @import("builtin").target.cpu.arch.isX86();
 pub const isX64 = @import("builtin").target.cpu.arch == .x86_64;
@@ -58,6 +59,7 @@ pub const OperatingSystem = enum {
     mac,
     linux,
     windows,
+    openbsd,
     // wAsM is nOt aN oPeRaTiNg SyStEm
     wasm,
 
@@ -67,6 +69,7 @@ pub const OperatingSystem = enum {
             .mac => "macOS",
             .linux => "Linux",
             .windows => "Windows",
+            .openbsd => "OpenBSD",
             .wasm => "WASM",
         };
     }
@@ -77,6 +80,7 @@ pub const OperatingSystem = enum {
             .mac => "darwin",
             .linux => "linux",
             .windows => "win32",
+            .openbsd => "openbsd",
             .wasm => "wasm",
         };
     }
@@ -88,6 +92,8 @@ else if (isLinux)
     OperatingSystem.linux
 else if (isWindows)
     OperatingSystem.windows
+else if (isOpenBSD)
+    OperatingSystem.openbsd
 else if (isWasm)
     OperatingSystem.wasm
 else

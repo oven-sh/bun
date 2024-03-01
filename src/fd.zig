@@ -226,7 +226,7 @@ pub const FDImpl = packed struct {
                     else => null,
                 };
             },
-            .mac => result: {
+            .openbsd, .mac => result: {
                 const fd = this.encode();
                 std.debug.assert(fd != bun.invalid_fd);
                 std.debug.assert(fd.cast() > -1);

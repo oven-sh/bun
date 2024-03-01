@@ -351,7 +351,7 @@ const PosixFutex = struct {
             var ts_ptr: ?*const std.os.timespec = null;
             if (timeout) |timeout_ns| {
                 ts_ptr = &ts;
-                std.os.clock_gettime(std.os.CLOCK_REALTIME, &ts) catch unreachable;
+                std.os.clock_gettime(std.os.CLOCK.REALTIME, &ts) catch unreachable;
                 ts.tv_sec += @as(@TypeOf(ts.tv_sec), @intCast(timeout_ns / std.time.ns_per_s));
                 ts.tv_nsec += @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
                 if (ts.tv_nsec >= std.time.ns_per_s) {

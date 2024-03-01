@@ -729,7 +729,7 @@ pub const StandaloneModuleGraph = struct {
                     return error.FileNotFound;
                 }
             },
-            .mac => {
+            .openbsd, .mac => {
                 // Use of MAX_PATH_BYTES here is valid as the resulting path is immediately
                 // opened with no modification.
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;

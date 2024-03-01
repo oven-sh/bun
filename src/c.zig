@@ -6,6 +6,7 @@ const PlatformSpecific = switch (Environment.os) {
     .mac => @import("./darwin_c.zig"),
     .linux => @import("./linux_c.zig"),
     .windows => @import("./windows_c.zig"),
+    .openbsd => @import("./openbsd_c.zig"),
     else => struct {},
 };
 pub usingnamespace PlatformSpecific;
@@ -25,6 +26,7 @@ const libc_stat = bun.Stat;
 const zeroes = mem.zeroes;
 pub const darwin = @import("./darwin_c.zig");
 pub const linux = @import("./linux_c.zig");
+pub const openbsd = @import("./openbsd_c.zig");
 pub extern "c" fn chmod([*c]const u8, mode_t) c_int;
 pub extern "c" fn fchmod(std.c.fd_t, mode_t) c_int;
 pub extern "c" fn fchmodat(c_int, [*c]const u8, mode_t, c_int) c_int;
@@ -393,7 +395,7 @@ const LazyStatus = enum {
 pub fn _dlsym(handle: ?*anyopaque, name: [:0]const u8) ?*anyopaque {
     if (comptime Environment.isWindows) {
         return bun.windows.GetProcAddressA(handle, name);
-    } else if (comptime Environment.isMac or Environment.isLinux) {
+    } else if (comptime Environment.isMac or Environment.isLinux or Environment.isOpenBSD) {
         return std.c.dlsym(handle, name.ptr);
     }
 

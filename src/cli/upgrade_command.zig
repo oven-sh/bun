@@ -81,6 +81,7 @@ pub const Version = struct {
         .mac => "darwin",
         .linux => "linux",
         .windows => "windows",
+        .openbsd => "openbsd",
         else => @compileError("Unsupported OS for Bun Upgrade"),
     };
 

@@ -2985,7 +2985,7 @@ pub extern fn LoadLibraryA(
     [*:0]const u8,
 ) ?*anyopaque;
 
-pub extern fn LoadLibraryExW([*:0]const u16, ?HANDLE, DWORD) ?*anyopaque;
+//pub extern fn LoadLibraryExW([*:0]const u16, ?HANDLE, DWORD) ?*anyopaque;
 
 pub extern "kernel32" fn CreateHardLinkW(
     newFileName: LPCWSTR,

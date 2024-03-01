@@ -828,7 +828,7 @@ fn scopedWriter() std.fs.File.Writer {
                 const fd = std.os.openat(
                     std.fs.cwd().fd,
                     path,
-                    std.os.O.TRUNC | std.os.O.CREAT | std.os.O.WRONLY,
+                    .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true },
                     if (Environment.isWindows) 0 else 0o644,
                 ) catch |err_| {
                     // Ensure we don't panic inside panic

@@ -76,7 +76,8 @@ pub const CrashReportWriter = struct {
             _ = bun.sys.mkdirA(dirname, 0);
         }
 
-        const call = bun.sys.open(file_path, std.os.O.TRUNC, 0).unwrap() catch return;
+        const O = std.c.O{ .TRUNC = true };
+        const call = bun.sys.open(file_path, @bitCast(O), 0).unwrap() catch return;
         var file = call.asFile();
         this.file = std.io.bufferedWriter(
             file.writer(),

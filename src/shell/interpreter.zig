@@ -3848,6 +3848,7 @@ pub const Interpreter = struct {
         const Result = @import("../result.zig").Result;
 
         pub const Kind = enum {
+            // mkdir,
             @"export",
             cd,
             echo,
@@ -3863,6 +3864,7 @@ pub const Interpreter = struct {
 
             pub fn usageString(this: Kind) []const u8 {
                 return switch (this) {
+                    // .mkdir => "usage: mkdir [-pv] [-m mode] directory_name ...\n",
                     .@"export" => "",
                     .cd => "",
                     .echo => "",
@@ -3876,6 +3878,7 @@ pub const Interpreter = struct {
 
             pub fn asString(this: Kind) []const u8 {
                 return switch (this) {
+                    // .mkdir => "mkdir",
                     .@"export" => "export",
                     .cd => "cd",
                     .echo => "echo",
@@ -3888,6 +3891,7 @@ pub const Interpreter = struct {
             }
 
             pub fn fromStr(str: []const u8) ?Builtin.Kind {
+                @setEvalBranchQuota(5000);
                 const tyinfo = @typeInfo(Builtin.Kind);
                 inline for (tyinfo.Enum.fields) |field| {
                     if (bun.strings.eqlComptime(str, field.name)) {
@@ -4111,6 +4115,11 @@ pub const Interpreter = struct {
             };
 
             switch (kind) {
+                // .mkdir => {
+                //     cmd.exec.bltn.impl = .{
+                //         .mkdir = Mkdir{ .bltn = &cmd.exec.bltn },
+                //     };
+                // },
                 .@"export" => {
                     cmd.exec.bltn.impl = .{
                         .@"export" = Export{ .bltn = &cmd.exec.bltn },
@@ -4422,6 +4431,307 @@ pub const Interpreter = struct {
             const fmt = cmd_str ++ fmt_;
             return std.fmt.allocPrint(this.arena.allocator(), fmt, args) catch bun.outOfMemory();
         }
+
+        // pub const Mkdir = struct {
+        //     bltn: *Builtin,
+        //     opts: Opts = .{},
+        //     state: union(enum) {
+        //         idle,
+        //         exec: struct {
+        //             started: bool = false,
+        //             tasks_count: usize = 0,
+        //             tasks_done: usize = 0,
+        //             output_count: u16 = 0,
+        //             output_done: u16 = 0,
+        //             args: []const [*:0]const u8,
+        //             err: ?JSC.SystemError = null,
+        //         },
+        //         waiting_write_err,
+        //         done,
+        //     } = .idle,
+
+        //     pub fn onBufferedWriterDone(this: *Mkdir, e: ?JSC.SystemError) void {
+        //         if (e) |err| err.deref();
+
+        //         switch (this.state) {
+        //             .waiting_write_err => return this.bltn.done(1),
+        //             .exec => {
+        //                 this.state.exec.output_done += 1;
+        //             },
+        //             .idle, .done => @panic("Invalid state"),
+        //         }
+        //         this.next();
+        //     }
+        //     pub fn writeFailingError(this: *Mkdir, buf: []const u8, exit_code: ExitCode) Maybe(void) {
+        //         if (this.bltn.stderr.needsIO()) {
+        //             this.state = .waiting_write_err;
+        //             this.bltn.stderr.enqueueAndWrite(this, buf);
+        //             return Maybe(void).success;
+        //         }
+
+        //         if (this.bltn.writeNoIO(.stderr, buf).asErr()) |e| {
+        //             return .{ .err = e };
+        //         }
+
+        //         this.bltn.done(exit_code);
+        //         return Maybe(void).success;
+        //     }
+
+        //     pub fn start(this: *Mkdir) Maybe(void) {
+        //         const filepath_args = switch (this.opts.parse(this.bltn.argsSlice())) {
+        //             .ok => |filepath_args| filepath_args,
+        //             .err => |e| {
+        //                 const buf = switch (e) {
+        //                     .illegal_option => |opt_str| this.bltn.fmtErrorArena(.mkdir, "illegal option -- {s}\n", .{opt_str}),
+        //                     .show_usage => Builtin.Kind.mkdir.usageString(),
+        //                     .unsupported => |unsupported| this.bltn.fmtErrorArena(.mkdir, "unsupported option, please open a GitHub issue -- {s}\n", .{unsupported}),
+        //                 };
+
+        //                 _ = this.writeFailingError(buf, 1);
+        //                 return Maybe(void).success;
+        //             },
+        //         } orelse {
+        //             _ = this.writeFailingError(Builtin.Kind.mkdir.usageString(), 1);
+        //             return Maybe(void).success;
+        //         };
+
+        //         this.state = .{
+        //             .exec = .{
+        //                 .args = filepath_args,
+        //             },
+        //         };
+
+        //         _ = this.next();
+
+        //         return Maybe(void).success;
+        //     }
+
+        //     pub fn next(this: *Mkdir) void {
+        //         switch (this.state) {
+        //             .idle => @panic("Invalid state"),
+        //             .exec => {
+        //                 var exec = &this.state.exec;
+        //                 if (exec.started) {
+        //                     if (this.state.exec.tasks_done >= this.state.exec.tasks_count and this.state.exec.output_done >= this.state.exec.output_count) {
+        //                         const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
+        //                         if (this.state.exec.err) |e| e.deref();
+        //                         this.state = .done;
+        //                         this.bltn.done(exit_code);
+        //                         return;
+        //                     }
+        //                     return;
+        //                 }
+
+        //                 exec.started = true;
+        //                 exec.tasks_count = exec.args.len;
+
+        //                 for (exec.args) |dir_to_mk_| {
+        //                     const dir_to_mk = dir_to_mk_[0..std.mem.len(dir_to_mk_) :0];
+        //                     var task = ShellMkdirTask.create(this, this.opts, dir_to_mk, this.bltn.parentCmd().base.shell.cwdZ());
+        //                     task.schedule();
+        //                 }
+        //             },
+        //             .waiting_write_err => return,
+        //             .done => this.bltn.done(0),
+        //         }
+        //     }
+
+        //     pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) void {
+        //         _ = this; // autofix
+        //         _ = task; // autofix
+
+        //         // defer bun
+        //     }
+
+        //     pub const ShellMkdirTask = struct {
+        //         mkdir: *Mkdir,
+
+        //         opts: Opts,
+        //         filepath: [:0]const u8,
+        //         cwd_path: [:0]const u8,
+        //         created_directories: ArrayList(u8),
+
+        //         err: ?JSC.SystemError = null,
+        //         task: JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
+        //         event_loop: JSC.EventLoopHandle,
+        //         concurrent_task: JSC.EventLoopTask,
+
+        //         const print = bun.Output.scoped(.ShellMkdirTask, false);
+
+        //         fn takeOutput(this: *ShellMkdirTask) ArrayList(u8) {
+        //             const out = this.created_directories;
+        //             this.created_directories = ArrayList(u8).init(bun.default_allocator);
+        //             return out;
+        //         }
+
+        //         pub fn create(
+        //             mkdir: *Mkdir,
+        //             opts: Opts,
+        //             filepath: [:0]const u8,
+        //             cwd_path: [:0]const u8,
+        //         ) *ShellMkdirTask {
+        //             const task = bun.default_allocator.create(ShellMkdirTask) catch bun.outOfMemory();
+        //             task.* = ShellMkdirTask{
+        //                 .mkdir = mkdir,
+        //                 .opts = opts,
+        //                 .cwd_path = cwd_path,
+        //                 .filepath = filepath,
+        //                 .created_directories = ArrayList(u8).init(bun.default_allocator),
+        //                 .event_loop = event_loop_ref.get(),
+        //             };
+        //             return task;
+        //         }
+
+        //         pub fn schedule(this: *@This()) void {
+        //             print("schedule", .{});
+        //             WorkPool.schedule(&this.task);
+        //         }
+
+        //         pub fn runFromMainThread(this: *@This()) void {
+        //             print("runFromJS", .{});
+        //             this.mkdir.onAsyncTaskDone(this);
+        //         }
+
+        //         pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
+        //             this.runFromMainThread();
+        //         }
+
+        //         fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
+        //             var this: *ShellMkdirTask = @fieldParentPtr(ShellMkdirTask, "task", task);
+
+        //             // We have to give an absolute path to our mkdir
+        //             // implementation for it to work with cwd
+        //             const filepath: [:0]const u8 = brk: {
+        //                 if (ResolvePath.Platform.auto.isAbsolute(this.filepath)) break :brk this.filepath;
+        //                 const parts: []const []const u8 = &.{
+        //                     this.cwd_path[0..],
+        //                     this.filepath[0..],
+        //                 };
+        //                 break :brk ResolvePath.joinZ(parts, .auto);
+        //             };
+
+        //             var node_fs = JSC.Node.NodeFS{};
+        //             // Recursive
+        //             if (this.opts.parents) {
+        //                 const args = JSC.Node.Arguments.Mkdir{
+        //                     .path = JSC.Node.PathLike{ .string = bun.PathString.init(filepath) },
+        //                     .recursive = true,
+        //                     .always_return_none = true,
+        //                 };
+
+        //                 var vtable = MkdirVerboseVTable{ .inner = this, .active = this.opts.verbose };
+
+        //                 switch (node_fs.mkdirRecursiveImpl(args, .callback, *MkdirVerboseVTable, &vtable)) {
+        //                     .result => {},
+        //                     .err => |e| {
+        //                         this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+        //                         std.mem.doNotOptimizeAway(&node_fs);
+        //                     },
+        //                 }
+        //             } else {
+        //                 const args = JSC.Node.Arguments.Mkdir{
+        //                     .path = JSC.Node.PathLike{ .string = bun.PathString.init(filepath) },
+        //                     .recursive = false,
+        //                     .always_return_none = true,
+        //                 };
+        //                 switch (node_fs.mkdirNonRecursive(args, .callback)) {
+        //                     .result => {
+        //                         if (this.opts.verbose) {
+        //                             this.created_directories.appendSlice(filepath[0..filepath.len]) catch bun.outOfMemory();
+        //                             this.created_directories.append('\n') catch bun.outOfMemory();
+        //                         }
+        //                     },
+        //                     .err => |e| {
+        //                         this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
+        //                         std.mem.doNotOptimizeAway(&node_fs);
+        //                     },
+        //                 }
+        //             }
+
+        //             if (comptime EventLoopKind == .js) {
+        //                 this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
+        //             } else {
+        //                 this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this, "runFromMainThreadMini"));
+        //             }
+        //         }
+
+        //         const MkdirVerboseVTable = struct {
+        //             inner: *ShellMkdirTask,
+        //             active: bool,
+
+        //             pub fn onCreateDir(vtable: *@This(), dirpath: bun.OSPathSliceZ) void {
+        //                 if (!vtable.active) return;
+        //                 if (bun.Environment.isWindows) {
+        //                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        //                     const str = bun.strings.fromWPath(&buf, dirpath[0..dirpath.len]);
+        //                     vtable.inner.created_directories.appendSlice(str) catch bun.outOfMemory();
+        //                     vtable.inner.created_directories.append('\n') catch bun.outOfMemory();
+        //                 } else {
+        //                     vtable.inner.created_directories.appendSlice(dirpath) catch bun.outOfMemory();
+        //                     vtable.inner.created_directories.append('\n') catch bun.outOfMemory();
+        //                 }
+        //                 return;
+        //             }
+        //         };
+        //     };
+
+        //     const Opts = struct {
+        //         /// -m, --mode
+        //         ///
+        //         /// set file mode (as in chmod), not a=rwx - umask
+        //         mode: ?u32 = null,
+
+        //         /// -p, --parents
+        //         ///
+        //         /// no error if existing, make parent directories as needed,
+        //         /// with their file modes unaffected by any -m option.
+        //         parents: bool = false,
+
+        //         /// -v, --verbose
+        //         ///
+        //         /// print a message for each created directory
+        //         verbose: bool = false,
+
+        //         const Parse = FlagParser(*@This());
+
+        //         pub fn parse(opts: *Opts, args: []const [*:0]const u8) Result(?[]const [*:0]const u8, ParseError) {
+        //             return Parse.parseFlags(opts, args);
+        //         }
+
+        //         pub fn parseLong(this: *Opts, flag: []const u8) ?ParseFlagResult {
+        //             if (bun.strings.eqlComptime(flag, "--mode")) {
+        //                 return .{ .unsupported = "--mode" };
+        //             } else if (bun.strings.eqlComptime(flag, "--parents")) {
+        //                 this.parents = true;
+        //                 return .continue_parsing;
+        //             } else if (bun.strings.eqlComptime(flag, "--vebose")) {
+        //                 this.verbose = true;
+        //                 return .continue_parsing;
+        //             }
+
+        //             return null;
+        //         }
+
+        //         fn parseShort(this: *Opts, char: u8, smallflags: []const u8, i: usize) ?ParseFlagResult {
+        //             switch (char) {
+        //                 'm' => {
+        //                     return .{ .unsupported = "-m " };
+        //                 },
+        //                 'p' => {
+        //                     this.parents = true;
+        //                 },
+        //                 'v' => {
+        //                     this.verbose = true;
+        //                 },
+        //                 else => {
+        //                     return .{ .illegal_option = smallflags[1 + i ..] };
+        //                 },
+        //             }
+
+        //             return null;
+        //         }
+        //     };
+        // };
 
         pub const Export = struct {
             bltn: *Builtin,
@@ -5047,81 +5357,63 @@ pub const Interpreter = struct {
 
             pub fn onShellLsTaskDone(this: *Ls, task: *ShellLsTask) void {
                 this.state.exec.tasks_done += 1;
-                const output = task.takeOutput();
+                var output = task.takeOutput();
                 const err_ = task.err;
 
-                const reused: *ShellLsOutputTask = bun.new(ShellLsOutputTask, .{
-                    .ls = this,
-                    .output = output,
+                // TODO: Reuse the allocation
+                const output_task: *ShellLsOutputTask = bun.new(ShellLsOutputTask, .{
+                    .parent = this,
+                    .output = .{ .arrlist = output.moveToUnmanaged() },
                     .state = .waiting_write_err,
                 });
 
                 if (err_) |err| {
                     const error_string = this.bltn.taskErrorToString(.ls, err);
-                    this.state.exec.err = err;
-                    if (this.bltn.stderr.needsIO()) {
-                        this.state.exec.output_waiting += 1;
-                        this.bltn.stderr.enqueueAndWrite(reused, error_string);
-                        return;
-                    }
-                    _ = this.bltn.writeNoIO(.stderr, error_string);
-                }
-
-                if (this.bltn.stdout.needsIO()) {
-                    this.state.exec.output_waiting += 1;
-                    reused.state = .waiting_write_out;
-                    this.bltn.stdout.enqueueAndWrite(reused, reused.output.items[0..]);
+                    output_task.start(error_string);
                     return;
                 }
-                _ = this.bltn.writeNoIO(.stdout, reused.output.items[0..]);
-
-                reused.state = .done;
-                reused.deinit();
+                output_task.start(null);
             }
 
-            pub const ShellLsOutputTask = struct {
-                ls: *Ls,
-                output: std.ArrayList(u8),
-                state: union(enum) {
-                    waiting_write_err,
-                    waiting_write_out,
-                    done,
-                },
+            pub const ShellLsOutputTask = OutputTask(Ls, .{
+                .writeErr = ShellLsOutputTaskVTable.writeErr,
+                .onWriteErr = ShellLsOutputTaskVTable.onWriteErr,
+                .writeOut = ShellLsOutputTaskVTable.writeOut,
+                .onWriteOut = ShellLsOutputTaskVTable.onWriteOut,
+                .onDone = ShellLsOutputTaskVTable.onDone,
+            });
 
-                pub fn deinit(this: *ShellLsOutputTask) void {
-                    log("ReusedShellLsTask(0x{x}).deinit()", .{@intFromPtr(this)});
-                    if (comptime bun.Environment.allow_assert) std.debug.assert(this.state == .done);
-                    this.ls.next();
-                    this.output.deinit();
-                    bun.destroy(this);
+            const ShellLsOutputTaskVTable = struct {
+                pub fn writeErr(this: *Ls, childptr: anytype, errbuf: []const u8) CoroutineResult {
+                    if (this.bltn.stderr.needsIO()) {
+                        this.state.exec.output_waiting += 1;
+                        this.bltn.stderr.enqueueAndWrite(childptr, errbuf);
+                        return .yield;
+                    }
+                    _ = this.bltn.writeNoIO(.stderr, errbuf);
+                    return .cont;
                 }
 
-                pub fn onIOWriterDone(this: *ShellLsOutputTask, err: ?JSC.SystemError) void {
-                    log("ShellLsOutputTask(0x{x}) onIOWriterDone", .{@intFromPtr(this)});
-                    if (err) |e| {
-                        e.deref();
-                    }
+                pub fn onWriteErr(this: *Ls) void {
+                    this.state.exec.output_done += 1;
+                }
 
-                    switch (this.state) {
-                        .waiting_write_err => {
-                            this.ls.state.exec.output_done += 1;
-                            if (this.ls.bltn.stdout.needsIO()) {
-                                this.ls.state.exec.output_waiting += 1;
-                                this.state = .waiting_write_out;
-                                this.ls.bltn.stdout.enqueueAndWrite(this, this.output.items[0..]);
-                                return;
-                            }
-                            _ = this.ls.bltn.writeNoIO(.stdout, this.output.items[0..]);
-                            this.state = .done;
-                            this.deinit();
-                        },
-                        .waiting_write_out => {
-                            this.ls.state.exec.output_done += 1;
-                            this.state = .done;
-                            this.deinit();
-                        },
-                        .done => @panic("Invalid state"),
+                pub fn writeOut(this: *Ls, childptr: anytype, output: *OutputSrc) CoroutineResult {
+                    if (this.bltn.stdout.needsIO()) {
+                        this.state.exec.output_waiting += 1;
+                        this.bltn.stdout.enqueueAndWrite(childptr, output.slice());
+                        return .yield;
                     }
+                    _ = this.bltn.writeNoIO(.stdout, output.slice());
+                    return .cont;
+                }
+
+                pub fn onWriteOut(this: *Ls) void {
+                    this.state.exec.output_done += 1;
+                }
+
+                pub fn onDone(this: *Ls) void {
+                    this.next();
                 }
             };
 
@@ -8077,6 +8369,7 @@ pub const IOWriterChildPtr = struct {
         Interpreter.Builtin.Pwd,
         Interpreter.Builtin.Rm,
         Interpreter.Builtin.Which,
+        // Interpreter.Builtin.Mkdir,
     });
 
     pub fn init(p: anytype) IOWriterChildPtr {
@@ -8258,3 +8551,190 @@ const ShellSyscall = struct {
         return Syscall.rmdirat(dirfd, to);
     }
 };
+
+/// A task that can write to stdout and/or stderr
+pub fn OutputTask(
+    comptime Parent: type,
+    comptime vtable: struct {
+        writeErr: *const fn (*Parent, childptr: anytype, []const u8) CoroutineResult,
+        onWriteErr: *const fn (*Parent) void,
+        writeOut: *const fn (*Parent, childptr: anytype, *OutputSrc) CoroutineResult,
+        onWriteOut: *const fn (*Parent) void,
+        onDone: *const fn (*Parent) void,
+    },
+) type {
+    return struct {
+        parent: *Parent,
+        output: OutputSrc,
+        state: enum {
+            waiting_write_err,
+            waiting_write_out,
+            done,
+        },
+
+        pub fn deinit(this: *@This()) void {
+            if (comptime bun.Environment.allow_assert) std.debug.assert(this.state == .done);
+            vtable.onDone(this.parent);
+            this.output.deinit();
+            bun.destroy(this);
+        }
+
+        pub fn start(this: *@This(), errbuf: ?[]const u8) void {
+            this.state = .waiting_write_err;
+            if (errbuf) |err| {
+                switch (vtable.writeErr(this.parent, this, err)) {
+                    .cont => {
+                        this.next();
+                    },
+                    .yield => return,
+                }
+                return;
+            }
+            this.state = .waiting_write_out;
+            switch (vtable.writeOut(this.parent, this, &this.output)) {
+                .cont => {
+                    vtable.onWriteOut(this.parent);
+                    this.state = .done;
+                    this.deinit();
+                },
+                .yield => return,
+            }
+        }
+
+        pub fn next(this: *@This()) void {
+            switch (this.state) {
+                .waiting_write_err => {
+                    vtable.onWriteErr(this.parent);
+                    this.state = .waiting_write_out;
+                    switch (vtable.writeOut(this.parent, this, &this.output)) {
+                        .cont => {
+                            vtable.onWriteOut(this.parent);
+                            this.state = .done;
+                            this.deinit();
+                        },
+                        .yield => return,
+                    }
+                },
+                .waiting_write_out => {
+                    vtable.onWriteOut(this.parent);
+                    this.state = .done;
+                    this.deinit();
+                },
+                .done => @panic("Invalid state"),
+            }
+        }
+
+        pub fn onIOWriterDone(this: *@This(), err: ?JSC.SystemError) void {
+            if (err) |e| {
+                e.deref();
+            }
+
+            switch (this.state) {
+                .waiting_write_err => {
+                    vtable.onWriteErr(this.parent);
+                    this.state = .waiting_write_out;
+                    switch (vtable.writeOut(this.parent, this, &this.output)) {
+                        .cont => {
+                            vtable.onWriteOut(this.parent);
+                            this.state = .done;
+                            this.deinit();
+                        },
+                        .yield => return,
+                    }
+                },
+                .waiting_write_out => {
+                    vtable.onWriteOut(this.parent);
+                    this.state = .done;
+                    this.deinit();
+                },
+                .done => @panic("Invalid state"),
+            }
+        }
+    };
+}
+
+/// All owned memory is assumed to be allocated with `bun.default_allocator`
+pub const OutputSrc = union(enum) {
+    arrlist: std.ArrayListUnmanaged(u8),
+    owned_buf: []const u8,
+    borrowed_buf: []const u8,
+
+    pub fn slice(this: *OutputSrc) []const u8 {
+        return switch (this.*) {
+            .arrlist => this.arrlist.items[0..],
+            .owned_buf => this.owned_buf,
+            .borrowed_buf => this.borrowed_buf,
+        };
+    }
+
+    pub fn deinit(this: *OutputSrc) void {
+        switch (this.*) {
+            .arrlist => {
+                this.arrlist.deinit(bun.default_allocator);
+            },
+            .owned_buf => {
+                bun.default_allocator.free(this.owned_buf);
+            },
+            .borrowed_buf => {},
+        }
+    }
+};
+
+/// Custom parse error for invalid options
+pub const ParseError = union(enum) {
+    illegal_option: []const u8,
+    unsupported: []const u8,
+    show_usage,
+};
+pub fn unsupportedFlag(comptime name: []const u8) []const u8 {
+    return "unsupported option, please open a GitHub issue -- " ++ name ++ "\n";
+}
+pub const ParseFlagResult = union(enum) { continue_parsing, done, illegal_option: []const u8, unsupported: []const u8, show_usage };
+pub fn FlagParser(comptime Opts: type) type {
+    return struct {
+        pub const Result = @import("../result.zig").Result;
+
+        pub fn parseFlags(opts: Opts, args: []const [*:0]const u8) Result(?[]const [*:0]const u8, ParseError) {
+            var idx: usize = 0;
+            if (args.len == 0) {
+                return .{ .ok = null };
+            }
+
+            while (idx < args.len) : (idx += 1) {
+                const flag = args[idx];
+                switch (parseFlag(opts, flag[0..std.mem.len(flag)])) {
+                    .done => {
+                        const filepath_args = args[idx..];
+                        return .{ .ok = filepath_args };
+                    },
+                    .continue_parsing => {},
+                    .illegal_option => |opt_str| return .{ .err = .{ .illegal_option = opt_str } },
+                    .unsupported => |unsp| return .{ .err = .{ .unsupported = unsp } },
+                    .show_usage => return .{ .err = .show_usage },
+                }
+            }
+
+            return .{ .err = .show_usage };
+        }
+
+        fn parseFlag(opts: Opts, flag: []const u8) ParseFlagResult {
+            if (flag.len == 0) return .done;
+            if (flag[0] != '-') return .done;
+
+            if (flag.len == 1) return .{ .illegal_option = "-" };
+
+            if (flag.len > 2 and flag[1] == '-') {
+                if (opts.parseLong(flag)) |result| return result;
+            }
+
+            const small_flags = flag[1..];
+            for (small_flags, 0..) |char, i| {
+                if (opts.parseShort(char, small_flags, i)) |err| {
+                    return err;
+                }
+            }
+
+            return .continue_parsing;
+        }
+    };
+}

@@ -2,6 +2,7 @@ import { spawnSync } from "bun";
 import { it, expect } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "node:path";
+
 it("setTimeout", async () => {
   var lastID = -1;
   const result = await new Promise((resolve, reject) => {
@@ -150,14 +151,14 @@ it("Bun.sleep propagates exceptions", async () => {
 it("Bun.sleep works with a Date object", async () => {
   const now = performance.now();
   var ten_ms = new Date();
-  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 100);
   await Bun.sleep(ten_ms);
-  expect(performance.now() - now).toBeGreaterThan(11);
+  expect(performance.now() - now).toBeGreaterThan(100);
 });
 
 it("Bun.sleep(Date) fulfills after Date", async () => {
   let ten_ms = new Date();
-  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 100);
   await Bun.sleep(ten_ms);
   let now = new Date();
   expect(+now).toBeGreaterThanOrEqual(+ten_ms);

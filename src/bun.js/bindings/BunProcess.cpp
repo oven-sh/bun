@@ -677,6 +677,34 @@ static void loadSignalNumberMap()
 extern "C" uv_signal_t* Bun__UVSignalHandle__init(JSC::JSGlobalObject* lexicalGlobalObject, int signalNumber, void (*callback)(uv_signal_t*, int));
 extern "C" uv_signal_t* Bun__UVSignalHandle__close(uv_signal_t*);
 
+#if !OS(WINDOWS)
+void signalHandler(int signalNumber)
+#else
+void signalHandler(uv_signal_t* signal, int signalNumber)
+#endif
+{
+    if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
+        return;
+
+    Locker lock { signalToContextIdsMapLock };
+    if (UNLIKELY(signalToContextIdsMap->find(signalNumber) == signalToContextIdsMap->end()))
+        return;
+    SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
+
+    for (int contextId : signal_handle.contextIds) {
+        auto* context = ScriptExecutionContext::getScriptExecutionContext(contextId);
+        if (UNLIKELY(!context))
+            continue;
+
+        JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
+        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+        Process* process = jsCast<Process*>(globalObject->processObject());
+
+        context->postCrossThreadTask(*process, &Process::emitSignalEvent, signalNumber);
+    }
+};
+
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (eventName.string() == "message"_s) {
@@ -795,41 +823,12 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         .contextIds = {},
                     };
                     signal_handle.contextIds.add(contextId);
-
-#if !OS(WINDOWS)
-                    auto handler = [](int signalNumber) {
-#else
-                    auto handler = [](uv_signal_t* signal, int signalNumber) {
-#endif
-                        printf("signal %d\n", signalNumber);
-                        if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
-                            return;
-
-                        Locker lock { signalToContextIdsMapLock };
-                        if (UNLIKELY(signalToContextIdsMap->find(signalNumber) == signalToContextIdsMap->end()))
-                            return;
-                        SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
-
-                        for (int contextId : signal_handle.contextIds) {
-                            auto* context = ScriptExecutionContext::getScriptExecutionContext(contextId);
-                            if (UNLIKELY(!context))
-                                continue;
-
-                            JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
-                            Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-                            Process* process = jsCast<Process*>(globalObject->processObject());
-
-                            context->postCrossThreadTask(*process, &Process::emitSignalEvent, signalNumber);
-                        }
-                    };
-
 #if !OS(WINDOWS)
                     struct sigaction action;
                     memset(&action, 0, sizeof(struct sigaction));
 
                     // Set the handler in the action struct
-                    action.sa_handler = handler;
+                    action.sa_handler = signalHandler;
 
                     // Clear the sa_mask
                     sigemptyset(&action.sa_mask);
@@ -838,12 +837,28 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 
                     sigaction(signalNumber, &action, nullptr);
 #else
-                    signal_handle.handle = Bun__UVSignalHandle__init(
-                        // todo: post a task to main thread to add the signal handler to it, or if main thread then you can use this
-                        // i think we want all of these handlers to use the main thread handler
-                        eventEmitter.scriptExecutionContext()->jsGlobalObject(),
-                        signalNumber,
-                        handler);
+                    // To be more consistant, make sure the loop used is always the main thread's loop
+                    if (eventEmitter.scriptExecutionContext()->isMainThread()) {
+                        signal_handle.handle = Bun__UVSignalHandle__init(
+                            eventEmitter.scriptExecutionContext()->jsGlobalObject(),
+                            signalNumber,
+                            signalHandler);
+                    } else {
+                        eventEmitter.scriptExecutionContext()->ensureOnMainThread([signalNumber](ScriptExecutionContext& mainThreadContext) {
+                            Locker lock { signalToContextIdsMapLock };
+
+                            // Can be deleted before this is called, in this case we simply do not create the handler
+                            if (signalToContextIdsMap->find(signalNumber) == signalToContextIdsMap->end())
+                                return;
+                            auto signal = signalToContextIdsMap->get(signalNumber);
+
+                            signal.handle = Bun__UVSignalHandle__init(
+                                mainThreadContext.jsGlobalObject(),
+                                signalNumber,
+                                signalHandler);
+                        });
+                    }
+
                     if (UNLIKELY(!signal_handle.handle))
                         return;
 #endif
@@ -862,6 +877,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #if !OS(WINDOWS)
                         signal(signalNumber, SIG_DFL);
 #else
+                        // Freeing the handle does not depend on the loop, so no ensureOnMainThread() shenanigans
                         Bun__UVSignalHandle__close(signal_handle.handle);
 #endif
                         signalToContextIdsMap->remove(signalNumber);
@@ -890,7 +906,6 @@ Process::~Process()
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {
     abort();
-    __builtin_unreachable();
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

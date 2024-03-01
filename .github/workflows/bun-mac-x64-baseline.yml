@@ -79,12 +79,6 @@ jobs:
         with:
           name: ${{ matrix.tag }}
           path: ${{runner.temp}}/release/bun-zig.o
-
-      - name: Upload Zig Object
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.tag }}
-          path: ${{runner.temp}}/release/bun-zig.o
   macOS-dependencies:
     name: macOS Dependencies
     runs-on: ${{ matrix.runner }}

@@ -53,7 +53,7 @@ jobs:
         cpu: [haswell, nehalem]
         arch: [x86_64]
     name: Zig Build
-    runs-on: med-ubuntu
+    runs-on: namespace-profile-zig-build
     timeout-minutes: 60
     if: github.repository_owner == 'oven-sh'
     steps:

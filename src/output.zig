@@ -482,7 +482,7 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
                 {
                     really_disable = false;
                 } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
-                    really_disable = !strings.eqlComptime(val, "0");
+                    really_disable = really_disable or !strings.eqlComptime(val, "0");
                 }
             }
 

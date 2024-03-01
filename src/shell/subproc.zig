@@ -778,7 +778,7 @@ pub const PipeReader = struct {
             if (this.dead) return true;
             const p = this.parent();
             if (p.state == .pending) return false;
-            return this.written + just_written >= p.reader.buffer().items.len;
+            return this.written + just_written >= p.buffered_output.slice().len;
         }
 
         pub fn onWrite(this: *CapturedWriter, amount: usize, done: bool) void {
@@ -891,19 +891,48 @@ pub const PipeReader = struct {
                         @panic("TODO SHELL SUBPROC onReadChunk error");
                     }
                 }
-            } else {
-                if (this.captured_writer.writer.getPoll() == null) {
-                    this.captured_writer.writer.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), writer_fd, .{}, @TypeOf(this.captured_writer.writer), &this.captured_writer.writer) };
+
+                this.captured_writer.writer.outgoing.write(chunk) catch bun.outOfMemory();
+            } else if (this.captured_writer.writer.getPoll() == null) {
+                if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
+                    const writer = std.io.getStdOut().writer();
+                    e.format("Yoops ", .{}, writer) catch @panic("oops");
+                    @panic("TODO SHELL SUBPROC onReadChunk error");
                 }
             }
 
-            switch (this.captured_writer.writer.write(chunk)) {
+            // if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
+            //     const writer = std.io.getStdOut().writer();
+            //     e.format("Yoops ", .{}, writer) catch @panic("oops");
+            //     @panic("TODO SHELL SUBPROC onReadChunk error");
+            // }
+
+            // if (comptime Environment.isWindows) {
+            //     if (this.captured_writer.writer.source == null) {
+            //         if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
+            //             const writer = std.io.getStdOut().writer();
+            //             e.format("Yoops ", .{}, writer) catch @panic("oops");
+            //             @panic("TODO SHELL SUBPROC onReadChunk error");
+            //         }
+            //     }
+            // } else {
+            //     if (this.captured_writer.writer.getPoll() == null) {
+            //         this.captured_writer.writer.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), writer_fd, .{}, @TypeOf(this.captured_writer.writer), &this.captured_writer.writer) };
+            //     }
+            // }
+
+            log("CapturedWriter(0x{x}, {s}) write", .{ @intFromPtr(&this.captured_writer), @tagName(this.out_type) });
+            if (bun.Environment.isWindows) {
+                _ = this.captured_writer.writer.flush();
+            } else switch (this.captured_writer.writer.write(chunk)) {
                 .err => |e| {
                     const writer = std.io.getStdOut().writer();
                     e.format("Yoops ", .{}, writer) catch @panic("oops");
                     @panic("TODO SHELL SUBPROC onReadChunk error");
                 },
-                else => {},
+                else => |result| {
+                    log("CapturedWriter(0x{x}, {s}) write result={any}", .{ @intFromPtr(&this.captured_writer), @tagName(this.out_type), result });
+                },
             }
         }
 

@@ -18,11 +18,14 @@ const fileExists = async (path: string): Promise<boolean> =>
 
 $.nothrow();
 
-const BUN = process.argv0
+const BUN = process.argv0;
 const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 
 describe("bunshell rm", () => {
-  TestBuilder.command`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}; rm -rf node_modules/`.ensureTempDir().doesNotExist("node_modules").runAsTest("node_modules")
+  TestBuilder.command`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}; rm -rf node_modules/`
+    .ensureTempDir()
+    .doesNotExist("node_modules")
+    .runAsTest("node_modules");
 
   test("force", async () => {
     const files = {

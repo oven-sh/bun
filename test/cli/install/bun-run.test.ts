@@ -257,7 +257,7 @@ console.log(minify("print(6 * 7)").code);
   } = spawn({
     cmd: [bunExe(), "run", "test.js"],
     cwd: run_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {
@@ -283,7 +283,7 @@ console.log(minify("print(6 * 7)").code);
   } = spawn({
     cmd: [bunExe(), "test.js"],
     cwd: run_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {
@@ -323,7 +323,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   } = spawn({
     cmd: [bunExe(), "test.js"],
     cwd: run_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {
@@ -363,7 +363,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   } = spawn({
     cmd: [bunExe(), "run", "test.js"],
     cwd: run_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {

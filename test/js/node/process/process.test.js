@@ -10,9 +10,11 @@ it("process", () => {
 
   if (!isNode && process.platform !== "win32" && process.title !== "bun") throw new Error("process.title is not 'bun'");
 
-  if (typeof process.env.USER !== "string") throw new Error("process.env is not an object");
+  if (process.platform !== "win32" && typeof process.env.USER !== "string")
+    throw new Error("process.env is not an object");
 
-  if (process.env.USER.length === 0) throw new Error("process.env is missing a USER property");
+  if (process.platform !== "win32" && process.env.USER.length === 0)
+    throw new Error("process.env is missing a USER property");
 
   if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32")
     throw new Error("process.platform is invalid");

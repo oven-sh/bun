@@ -37,7 +37,7 @@ on:
 jobs:
   macOS-zig:
     name: macOS Zig Object
-    runs-on: med-ubuntu
+    runs-on: namespace-profile-zig-build
     if: github.repository_owner == 'oven-sh'
     strategy:
       matrix:

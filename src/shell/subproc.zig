@@ -726,6 +726,7 @@ pub const PipeReader = struct {
                     if (this.array_buffer.i >= array_buf_slice.len) return;
                     const len = @min(array_buf_slice.len - this.array_buffer.i, bytes.len);
                     @memcpy(array_buf_slice[this.array_buffer.i .. this.array_buffer.i + len], bytes[0..len]);
+                    this.array_buffer.i += @intCast(len);
                 },
             }
         }

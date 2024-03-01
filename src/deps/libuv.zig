@@ -1627,7 +1627,7 @@ pub const fs_t = extern struct {
     ///
     /// It is assumed that if UV overwrites the .loop, it probably overwrote the rest of the struct.
     pub const uninitialized: fs_t = if (bun.Environment.allow_assert) value: {
-        comptime var value = std.mem.zeroes(fs_t);
+        var value = std.mem.zeroes(fs_t);
         value.loop = @ptrFromInt(0xAAAAAAAAAAAA0000);
         break :value value;
     } else undefined;

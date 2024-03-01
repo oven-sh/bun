@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm } from "fs/promises";
 import { bunEnv, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, sep } from "path";
 import { TestBuilder, sortedShellOutput } from "./util";
 
 $.env(bunEnv);
@@ -510,11 +510,11 @@ describe("bunshell", () => {
           .filter(s => s.length !== 0)
           .sort(),
       ).toEqual(
-        `${temp_dir}/foo
-${temp_dir}/dir/files
-${temp_dir}/dir/some
-${temp_dir}/dir
-${temp_dir}/bar
+        `${join(temp_dir, 'foo')}
+${join(temp_dir,'dir','files')}
+${join(temp_dir, 'dir','some')}
+${join(temp_dir, 'dir')}
+${join(temp_dir,'bar')}
 ${temp_dir}`
           .split("\n")
           .sort(),

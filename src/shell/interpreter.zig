@@ -6745,6 +6745,7 @@ pub const Interpreter = struct {
                 opts: Opts,
 
                 cwd: bun.FileDescriptor,
+                cwd_path: ?CwdPath = if (bun.Environment.isPosix) 0 else null,
 
                 root_task: DirTask,
                 root_path: bun.PathString = bun.PathString.empty,
@@ -6762,14 +6763,17 @@ pub const Interpreter = struct {
                     .callback = workPoolCallback,
                 },
 
+                const CwdPath = if (bun.Environment.isWindows) [:0]const u8 else u0;
+
                 const ParentRmTask = @This();
 
                 pub const DirTask = struct {
                     task_manager: *ParentRmTask,
                     parent_task: ?*DirTask,
                     path: [:0]const u8,
+                    is_absolute: bool = false,
                     subtask_count: std.atomic.Value(usize),
-                    need_to_wait: bool = false,
+                    need_to_wait: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
                     kind_hint: EntryKindHint,
                     task: JSC.WorkPoolTask = .{ .callback = runFromThreadPool },
                     deleted_entries: std.ArrayList(u8),
@@ -6800,10 +6804,32 @@ pub const Interpreter = struct {
                     fn runFromThreadPoolImpl(this: *DirTask) void {
                         defer this.postRun();
 
+                        // Root, get cwd path on windows
+                        if (bun.Environment.isWindows) {
+                            if (this.parent_task == null) {
+                                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                const cwd_path = switch (Syscall.getFdPath(this.task_manager.cwd, &buf)) {
+                                    .result => |p| bun.default_allocator.dupeZ(u8, p) catch bun.outOfMemory(),
+                                    .err => |err| {
+                                        print("[runFromThreadPoolImpl:getcwd] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
+                                        this.task_manager.err_mutex.lock();
+                                        defer this.task_manager.err_mutex.unlock();
+                                        if (this.task_manager.err == null) {
+                                            this.task_manager.err = err;
+                                            this.task_manager.error_signal.store(true, .SeqCst);
+                                        }
+                                        return;
+                                    },
+                                };
+                                this.task_manager.cwd_path = cwd_path;
+                            }
+                        }
+
                         print("DirTask: {s}", .{this.path});
-                        switch (this.task_manager.removeEntry(this, ResolvePath.Platform.auto.isAbsolute(this.path[0..this.path.len]))) {
+                        this.is_absolute = ResolvePath.Platform.auto.isAbsolute(this.path[0..this.path.len]);
+                        switch (this.task_manager.removeEntry(this, this.is_absolute)) {
                             .err => |err| {
-                                print("DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
+                                print("[runFromThreadPoolImpl] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
                                 this.task_manager.err_mutex.lock();
                                 defer this.task_manager.err_mutex.unlock();
                                 if (this.task_manager.err == null) {
@@ -6818,7 +6844,7 @@ pub const Interpreter = struct {
                     }
 
                     fn handleErr(this: *DirTask, err: Syscall.Error) void {
-                        print("DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
+                        print("[handleErr] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(err.getErrno()), err.path });
                         this.task_manager.err_mutex.lock();
                         defer this.task_manager.err_mutex.unlock();
                         if (this.task_manager.err == null) {
@@ -6830,8 +6856,9 @@ pub const Interpreter = struct {
                     }
 
                     pub fn postRun(this: *DirTask) void {
-                        // All entries including recursive directories were deleted
-                        if (this.need_to_wait) return;
+                        // // This is true if the directory has subdirectories
+                        // // that need to be deleted
+                        if (this.need_to_wait.load(.SeqCst)) return;
 
                         // We have executed all the children of this task
                         if (this.subtask_count.fetchSub(1, .SeqCst) == 1) {
@@ -6843,8 +6870,14 @@ pub const Interpreter = struct {
                             }
 
                             // If we have a parent and we are the last child, now we can delete the parent
-                            if (this.parent_task != null and this.parent_task.?.subtask_count.fetchSub(1, .SeqCst) == 2) {
-                                this.parent_task.?.deleteAfterWaitingForChildren();
+                            if (this.parent_task != null) {
+                                // It's possible that we queued this subdir task and it finished, while the parent
+                                // was still in the `removeEntryDir` function
+                                const tasks_left_before_decrement = this.parent_task.?.subtask_count.fetchSub(1, .SeqCst);
+                                const parent_still_in_remove_entry_dir = !this.parent_task.?.need_to_wait.load(.Monotonic);
+                                if (!parent_still_in_remove_entry_dir and tasks_left_before_decrement == 2) {
+                                    this.parent_task.?.deleteAfterWaitingForChildren();
+                                }
                                 return;
                             }
 
@@ -6856,15 +6889,18 @@ pub const Interpreter = struct {
                     }
 
                     pub fn deleteAfterWaitingForChildren(this: *DirTask) void {
-                        this.need_to_wait = false;
-                        defer this.postRun();
+                        this.need_to_wait.store(false, .SeqCst);
+                        var do_post_run = true;
+                        defer {
+                            if (do_post_run) this.postRun();
+                        }
                         if (this.task_manager.error_signal.load(.SeqCst)) {
                             return;
                         }
 
                         switch (this.task_manager.removeEntryDirAfterChildren(this)) {
                             .err => |e| {
-                                print("DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(e.getErrno()), e.path });
+                                print("[deleteAfterWaitingForChildren] DirTask({x}) failed: {s}: {s}", .{ @intFromPtr(this), @tagName(e.getErrno()), e.path });
                                 this.task_manager.err_mutex.lock();
                                 defer this.task_manager.err_mutex.unlock();
                                 if (this.task_manager.err == null) {
@@ -6873,7 +6909,11 @@ pub const Interpreter = struct {
                                     bun.default_allocator.free(e.path);
                                 }
                             },
-                            .result => {},
+                            .result => |deleted| {
+                                if (!deleted) {
+                                    do_post_run = false;
+                                }
+                            },
                         }
                     }
 
@@ -6941,7 +6981,8 @@ pub const Interpreter = struct {
                 }
 
                 pub fn enqueueNoJoin(this: *ShellRmTask, parent_task: *DirTask, path: [:0]const u8, kind_hint: DirTask.EntryKindHint) void {
-                    print("enqueue: {s}", .{path});
+                    defer print("enqueue: {s} {s}", .{ path, @tagName(kind_hint) });
+
                     if (this.error_signal.load(.SeqCst)) {
                         return;
                     }
@@ -6962,7 +7003,12 @@ pub const Interpreter = struct {
                         .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.event_loop),
                     };
                     std.debug.assert(parent_task.subtask_count.fetchAdd(1, .Monotonic) > 0);
+
                     JSC.WorkPool.schedule(&subtask.task);
+                }
+
+                pub fn getcwd(this: *ShellRmTask) if (bun.Environment.isWindows) CwdPath else bun.FileDescriptor {
+                    return if (bun.Environment.isWindows) this.cwd_path.? else bun.toFD(this.cwd);
                 }
 
                 pub fn verboseDeleted(this: *@This(), dir_task: *DirTask, path: [:0]const u8) Maybe(void) {
@@ -6977,6 +7023,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn finishConcurrently(this: *ShellRmTask) void {
+                    print("finishConcurrently", .{});
                     if (this.event_loop == .js) {
                         this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
                     } else {
@@ -6990,9 +7037,13 @@ pub const Interpreter = struct {
                 }
 
                 pub fn removeEntry(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool) Maybe(void) {
+                    var remove_child_vtable = RemoveFileVTable{
+                        .task = this,
+                        .child_of_dir = false,
+                    };
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     switch (dir_task.kind_hint) {
-                        .idk, .file => return this.removeEntryFile(dir_task, dir_task.path, is_absolute, &buf, false),
+                        .idk, .file => return this.removeEntryFile(dir_task, dir_task.path, is_absolute, &buf, &remove_child_vtable),
                         .dir => return this.removeEntryDir(dir_task, is_absolute, &buf),
                     }
                 }
@@ -7000,23 +7051,36 @@ pub const Interpreter = struct {
                 fn removeEntryDir(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
                     const path = dir_task.path;
                     const dirfd = this.cwd;
+                    print("removeEntryDir({s})", .{path});
 
                     // If `-d` is specified without `-r` then we can just use `rmdirat`
-                    if (this.opts.remove_empty_dirs and !this.opts.recursive) {
-                        switch (Syscall.rmdirat(dirfd, path)) {
-                            .result => return Maybe(void).success,
-                            .err => |e| {
-                                switch (e.getErrno()) {
-                                    bun.C.E.NOENT => {
-                                        if (this.opts.force) return this.verboseDeleted(dir_task, path);
-                                        return .{ .err = this.errorWithPath(e, path) };
-                                    },
-                                    bun.C.E.NOTDIR => {
-                                        return this.removeEntryFile(dir_task, dir_task.path, is_absolute, buf, false);
-                                    },
-                                    else => return .{ .err = this.errorWithPath(e, path) },
-                                }
-                            },
+                    if (this.opts.remove_empty_dirs and !this.opts.recursive) out_to_iter: {
+                        var delete_state = RemoveFileParent{
+                            .task = this,
+                            .treat_as_dir = true,
+                            .allow_enqueue = false,
+                        };
+                        while (delete_state.treat_as_dir) {
+                            switch (ShellSyscall.rmdirat(dirfd, path)) {
+                                .result => return Maybe(void).success,
+                                .err => |e| {
+                                    switch (e.getErrno()) {
+                                        bun.C.E.NOENT => {
+                                            if (this.opts.force) return this.verboseDeleted(dir_task, path);
+                                            return .{ .err = this.errorWithPath(e, path) };
+                                        },
+                                        bun.C.E.NOTDIR => {
+                                            delete_state.treat_as_dir = false;
+                                            if (this.removeEntryFile(dir_task, dir_task.path, is_absolute, buf, &delete_state).asErr()) |err| {
+                                                return .{ .err = this.errorWithPath(err, path) };
+                                            }
+                                            if (!delete_state.treat_as_dir) return Maybe(void).success;
+                                            if (delete_state.treat_as_dir) break :out_to_iter;
+                                        },
+                                        else => return .{ .err = this.errorWithPath(e, path) },
+                                    }
+                                },
+                            }
                         }
                     }
 
@@ -7034,14 +7098,20 @@ pub const Interpreter = struct {
                                     return .{ .err = this.errorWithPath(e, path) };
                                 },
                                 bun.C.E.NOTDIR => {
-                                    return this.removeEntryFile(dir_task, dir_task.path, is_absolute, buf, false);
+                                    return this.removeEntryFile(dir_task, dir_task.path, is_absolute, buf, &DummyRemoveFile.dummy);
                                 },
                                 else => return .{ .err = this.errorWithPath(e, path) },
                             }
                         },
                     };
+
+                    var close_fd = true;
                     defer {
-                        _ = Syscall.close(fd);
+                        // On posix we can close the file descriptor whenever, but on Windows
+                        // we need to close it BEFORE we delete
+                        if (close_fd) {
+                            _ = Syscall.close(fd);
+                        }
                     }
 
                     if (this.error_signal.load(.SeqCst)) {
@@ -7051,6 +7121,11 @@ pub const Interpreter = struct {
                     var iterator = DirIterator.iterate(fd.asDir(), .u8);
                     var entry = iterator.next();
 
+                    var remove_child_vtable = RemoveFileVTable{
+                        .task = this,
+                        .child_of_dir = true,
+                    };
+
                     var i: usize = 0;
                     while (switch (entry) {
                         .err => |err| {
@@ -7058,6 +7133,7 @@ pub const Interpreter = struct {
                         },
                         .result => |ent| ent,
                     }) |current| : (entry = iterator.next()) {
+                        print("dir({s}) entry({s}, {s})", .{ path, current.name.slice(), @tagName(current.kind) });
                         // TODO this seems bad maybe better to listen to kqueue/epoll event
                         if (fastMod(i, 4) == 0 and this.error_signal.load(.SeqCst)) return Maybe(void).success;
 
@@ -7080,7 +7156,7 @@ pub const Interpreter = struct {
                                     .result => |p| p,
                                 };
 
-                                switch (this.removeEntryFile(dir_task, file_path, is_absolute, buf, true)) {
+                                switch (this.removeEntryFile(dir_task, file_path, is_absolute, buf, &remove_child_vtable)) {
                                     .err => |e| return .{ .err = this.errorWithPath(e, current.name.sliceAssumeZ()) },
                                     .result => {},
                                 }
@@ -7090,13 +7166,20 @@ pub const Interpreter = struct {
 
                     // Need to wait for children to finish
                     if (dir_task.subtask_count.load(.SeqCst) > 1) {
-                        dir_task.need_to_wait = true;
+                        close_fd = true;
+                        dir_task.need_to_wait.store(true, .SeqCst);
                         return Maybe(void).success;
                     }
 
                     if (this.error_signal.load(.SeqCst)) return Maybe(void).success;
 
-                    switch (Syscall.unlinkatWithFlags(dirfd, path, std.os.AT.REMOVEDIR)) {
+                    if (bun.Environment.isWindows) {
+                        close_fd = false;
+                        _ = Syscall.close(fd);
+                    }
+
+                    print("[removeEntryDir] remove after children {s}", .{path});
+                    switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, std.os.AT.REMOVEDIR)) {
                         .result => {
                             switch (this.verboseDeleted(dir_task, path)) {
                                 .err => |e| return .{ .err = e },
@@ -7123,92 +7206,144 @@ pub const Interpreter = struct {
                     }
                 }
 
-                fn removeEntryDirAfterChildren(this: *ShellRmTask, dir_task: *DirTask) Maybe(void) {
+                const DummyRemoveFile = struct {
+                    var dummy: @This() = std.mem.zeroes(@This());
+
+                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                        _ = this; // autofix
+                        _ = parent_dir_task; // autofix
+                        _ = path; // autofix
+                        _ = is_absolute; // autofix
+                        _ = buf; // autofix
+
+                        return Maybe(void).success;
+                    }
+
+                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                        _ = this; // autofix
+                        _ = parent_dir_task; // autofix
+                        _ = path; // autofix
+                        _ = is_absolute; // autofix
+                        _ = buf; // autofix
+
+                        return Maybe(void).success;
+                    }
+                };
+
+                const RemoveFileVTable = struct {
+                    task: *ShellRmTask,
+                    child_of_dir: bool,
+
+                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                        if (this.child_of_dir) {
+                            this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir);
+                            return Maybe(void).success;
+                        }
+                        return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
+                    }
+
+                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                        if (this.child_of_dir) return .{ .result = this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir) };
+                        return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
+                    }
+                };
+
+                const RemoveFileParent = struct {
+                    task: *ShellRmTask,
+                    treat_as_dir: bool,
+                    allow_enqueue: bool = true,
+                    enqueued: bool = false,
+
+                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                        _ = parent_dir_task; // autofix
+                        _ = path; // autofix
+                        _ = is_absolute; // autofix
+                        _ = buf; // autofix
+
+                        this.treat_as_dir = true;
+                        return Maybe(void).success;
+                    }
+
+                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                        _ = is_absolute; // autofix
+                        _ = buf; // autofix
+
+                        this.treat_as_dir = true;
+                        if (this.allow_enqueue) {
+                            this.task.enqueueNoJoin(parent_dir_task, path, .dir);
+                            this.enqueued = true;
+                        }
+                        return Maybe(void).success;
+                    }
+                };
+
+                fn removeEntryDirAfterChildren(this: *ShellRmTask, dir_task: *DirTask) Maybe(bool) {
+                    print("remove entry after children: {s}", .{dir_task.path});
                     const dirfd = bun.toFD(this.cwd);
-                    var treat_as_dir = true;
-                    const fd: bun.FileDescriptor = handle_entry: while (true) {
-                        if (treat_as_dir) {
-                            switch (ShellSyscall.openat(dirfd, dir_task.path, os.O.DIRECTORY | os.O.RDONLY, 0)) {
-                                .err => |e| switch (e.getErrno()) {
-                                    bun.C.E.NOENT => {
-                                        if (this.opts.force) {
-                                            if (this.verboseDeleted(dir_task, dir_task.path).asErr()) |e2| return .{ .err = e2 };
-                                            return Maybe(void).success;
-                                        }
-                                        return .{ .err = e };
-                                    },
-                                    bun.C.E.NOTDIR => {
-                                        treat_as_dir = false;
-                                        continue;
-                                    },
-                                    else => return .{ .err = e },
+                    var state = RemoveFileParent{
+                        .task = this,
+                        .treat_as_dir = true,
+                    };
+                    while (true) {
+                        if (state.treat_as_dir) {
+                            log("rmdirat({}, {s})", .{ dirfd, dir_task.path });
+                            switch (ShellSyscall.rmdirat(dirfd, dir_task.path)) {
+                                .result => {
+                                    _ = this.verboseDeleted(dir_task, dir_task.path);
+                                    return .{ .result = true };
                                 },
-                                .result => |fd| break :handle_entry fd,
+                                .err => |e| {
+                                    switch (e.getErrno()) {
+                                        bun.C.E.NOENT => {
+                                            if (this.opts.force) {
+                                                _ = this.verboseDeleted(dir_task, dir_task.path);
+                                                return .{ .result = true };
+                                            }
+                                            return .{ .err = this.errorWithPath(e, dir_task.path) };
+                                        },
+                                        bun.C.E.NOTDIR => {
+                                            state.treat_as_dir = false;
+                                            continue;
+                                        },
+                                        else => return .{ .err = this.errorWithPath(e, dir_task.path) },
+                                    }
+                                },
                             }
                         } else {
-                            if (Syscall.unlinkat(dirfd, dir_task.path).asErr()) |e| {
-                                switch (e.getErrno()) {
-                                    bun.C.E.NOENT => {
-                                        if (this.opts.force) {
-                                            if (this.verboseDeleted(dir_task, dir_task.path).asErr()) |e2| return .{ .err = e2 };
-                                            return Maybe(void).success;
-                                        }
-                                        return .{ .err = e };
-                                    },
-                                    bun.C.E.ISDIR => {
-                                        treat_as_dir = true;
-                                        continue;
-                                    },
-                                    bun.C.E.PERM => {
-                                        // TODO should check if dir
-                                        return .{ .err = e };
-                                    },
-                                    else => return .{ .err = e },
-                                }
+                            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            if (this.removeEntryFile(dir_task, dir_task.path, dir_task.is_absolute, &buf, &state).asErr()) |e| {
+                                return .{ .err = e };
+                            }
+                            if (state.enqueued) return .{ .result = false };
+                            if (state.treat_as_dir) continue;
+                            return .{ .result = true };
+                        }
+                    }
+                }
+
+                fn removeEntryFile(this: *ShellRmTask, parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8, vtable: anytype) Maybe(void) {
+                    const VTable = std.meta.Child(@TypeOf(vtable));
+                    const Handler = struct {
+                        pub fn onIsDir(vtable_: anytype, parent_dir_task_: *DirTask, path_: [:0]const u8, is_absolute_: bool, buf_: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                            if (@hasDecl(VTable, "onIsDir")) {
+                                return VTable.onIsDir(vtable_, parent_dir_task_, path_, is_absolute_, buf_);
+                            }
+                            return Maybe(void).success;
+                        }
+
+                        pub fn onDirNotEmpty(vtable_: anytype, parent_dir_task_: *DirTask, path_: [:0]const u8, is_absolute_: bool, buf_: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                            if (@hasDecl(VTable, "onDirNotEmpty")) {
+                                return VTable.onDirNotEmpty(vtable_, parent_dir_task_, path_, is_absolute_, buf_);
                             }
                             return Maybe(void).success;
                         }
                     };
-
-                    defer {
-                        _ = Syscall.close(fd);
-                    }
-
-                    switch (Syscall.unlinkatWithFlags(dirfd, dir_task.path, std.os.AT.REMOVEDIR)) {
-                        .result => {
-                            switch (this.verboseDeleted(dir_task, dir_task.path)) {
-                                .err => |e| return .{ .err = e },
-                                else => {},
-                            }
-                            return Maybe(void).success;
-                        },
-                        .err => |e| {
-                            switch (e.getErrno()) {
-                                bun.C.E.NOENT => {
-                                    if (this.opts.force) {
-                                        if (this.verboseDeleted(dir_task, dir_task.path).asErr()) |e2| return .{ .err = e2 };
-                                        return Maybe(void).success;
-                                    }
-                                    return .{ .err = e };
-                                },
-                                else => return .{ .err = e },
-                            }
-                        },
-                    }
-                }
-
-                fn removeEntryFile(
-                    this: *ShellRmTask,
-                    parent_dir_task: *DirTask,
-                    path: [:0]const u8,
-                    is_absolute: bool,
-                    buf: *[bun.MAX_PATH_BYTES]u8,
-                    comptime is_file_in_dir: bool,
-                ) Maybe(void) {
                     const dirfd = bun.toFD(this.cwd);
-                    switch (Syscall.unlinkatWithFlags(dirfd, path, 0)) {
+                    _ = dirfd; // autofix
+                    switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, 0)) {
                         .result => return this.verboseDeleted(parent_dir_task, path),
                         .err => |e| {
+                            print("unlinkatWithFlags({s}) = {s}", .{ path, @tagName(e.getErrno()) });
                             switch (e.getErrno()) {
                                 bun.C.E.NOENT => {
                                     if (this.opts.force)
@@ -7217,31 +7352,33 @@ pub const Interpreter = struct {
                                     return .{ .err = this.errorWithPath(e, path) };
                                 },
                                 bun.C.E.ISDIR => {
-                                    if (comptime is_file_in_dir) {
-                                        this.enqueueNoJoin(parent_dir_task, path, .dir);
-                                        return Maybe(void).success;
-                                    }
-                                    return this.removeEntryDir(parent_dir_task, is_absolute, buf);
+                                    return Handler.onIsDir(vtable, parent_dir_task, path, is_absolute, buf);
+                                    // if (comptime is_file_in_dir) {
+                                    //     this.enqueueNoJoin(parent_dir_task, path, .dir);
+                                    //     return Maybe(void).success;
+                                    // }
+                                    // return this.removeEntryDir(parent_dir_task, is_absolute, buf);
                                 },
                                 // This might happen if the file is actually a directory
                                 bun.C.E.PERM => {
                                     switch (builtin.os.tag) {
-                                        // non-Linux POSIX systems return EPERM when trying to delete a directory, so
+                                        // non-Linux POSIX systems and Windows return EPERM when trying to delete a directory, so
                                         // we need to handle that case specifically and translate the error
-                                        .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris, .illumos => {
+                                        .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris, .illumos, .windows => {
                                             // If we are allowed to delete directories then we can call `unlink`.
                                             // If `path` points to a directory, then it is deleted (if empty) or we handle it as a directory
                                             // If it's actually a file, we get an error so we don't need to call `stat` to check that.
                                             if (this.opts.recursive or this.opts.remove_empty_dirs) {
-                                                return switch (Syscall.unlinkatWithFlags(dirfd, path, std.os.AT.REMOVEDIR)) {
+                                                return switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, std.os.AT.REMOVEDIR)) {
                                                     // it was empty, we saved a syscall
                                                     .result => return this.verboseDeleted(parent_dir_task, path),
                                                     .err => |e2| {
                                                         return switch (e2.getErrno()) {
                                                             // not empty, process directory as we would normally
                                                             bun.C.E.NOTEMPTY => {
-                                                                this.enqueueNoJoin(parent_dir_task, path, .dir);
-                                                                return Maybe(void).success;
+                                                                // this.enqueueNoJoin(parent_dir_task, path, .dir);
+                                                                // return Maybe(void).success;
+                                                                return Handler.onDirNotEmpty(vtable, parent_dir_task, path, is_absolute, buf);
                                                             },
                                                             // actually a file, the error is a permissions error
                                                             bun.C.E.NOTDIR => .{ .err = this.errorWithPath(e, path) },
@@ -7252,11 +7389,7 @@ pub const Interpreter = struct {
                                             }
 
                                             // We don't know if it was an actual permissions error or it was a directory so we need to try to delete it as a directory
-                                            if (comptime is_file_in_dir) {
-                                                this.enqueueNoJoin(parent_dir_task, path, .dir);
-                                                return Maybe(void).success;
-                                            }
-                                            return this.removeEntryDir(parent_dir_task, is_absolute, buf);
+                                            return Handler.onIsDir(vtable, parent_dir_task, path, is_absolute, buf);
                                         },
                                         else => {},
                                     }

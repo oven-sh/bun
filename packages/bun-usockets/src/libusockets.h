@@ -17,7 +17,7 @@
 // clang-format off
 
 #ifndef us_malloc
-#define us_malloc malloc
+#define us_malloc(x) calloc(1, (x))
 #endif
 
 #ifndef us_realloc

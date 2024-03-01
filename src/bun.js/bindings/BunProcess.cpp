@@ -303,10 +303,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     if (!handle) {
 #if OS(WINDOWS)
         DWORD errorId = GetLastError();
-        LPSTR messageBuffer = nullptr;
-        size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-            NULL, errorId, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
-        WTF::String msg = makeString("LoadLibrary failed: ", WTF::StringView(messageBuffer, size));
+        LPWSTR messageBuffer = nullptr;
+        size_t size = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            NULL, errorId, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&messageBuffer, 0, NULL);
+        WTF::String msg = makeString("LoadLibrary failed: ", WTF::StringView((UCHAR*)messageBuffer, size));
         LocalFree(messageBuffer);
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());

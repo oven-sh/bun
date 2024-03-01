@@ -132,14 +132,10 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
     }
 
     // iterate over system path delimiter
-    var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
-    while (path_iter.next()) |_segment| {
-        // we also iterate over ':' to match linux behavior
-        var segment_iter = std.mem.tokenizeScalar(u8, _segment, ':');
-        while (segment_iter.next()) |segment_part| {
-            if (searchBinInPath(buf, &path_buf, segment_part, bin, check_windows_extensions)) |bin_path| {
-                return bin_path;
-            }
+    var path_iter = std.mem.tokenizeScalar(u8, path, ';');
+    while (path_iter.next()) |segment_part| {
+        if (searchBinInPath(buf, &path_buf, segment_part, bin, check_windows_extensions)) |bin_path| {
+            return bin_path;
         }
     }
 

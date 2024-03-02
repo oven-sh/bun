@@ -380,7 +380,7 @@ pub const BunxCommand = struct {
                     uid,
                     package_fmt,
                     if (path_is_nonzero) &[1]u8{std.fs.path.delimiter} else "",
-                    PATH,
+                    if (path_is_nonzero) PATH else "",
                 },
             ),
         };
@@ -389,10 +389,7 @@ pub const BunxCommand = struct {
         const bunx_cache_dir = PATH[0 .. temp_dir.len +
             "/bunx--".len +
             package_fmt.len +
-            if (Environment.isPosix)
-            std.fmt.count("{d}", .{uid})
-        else
-            0];
+            std.fmt.count("{d}", .{uid})];
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(

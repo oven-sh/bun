@@ -4274,6 +4274,14 @@ describe("expect()", () => {
     expect("a").toEqual("a");
   });
 
+  test("expect.hasAssertions returns undefined", () => {
+    expect(expect.hasAssertions()).toBeUndefined();
+  });
+
+  test("expect.assertions returns undefined", () => {
+    expect(expect.assertions(1)).toBeUndefined();
+  });
+
   const mocked = mock(() => {});
   mocked();
 

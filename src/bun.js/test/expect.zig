@@ -4329,7 +4329,7 @@ pub const Expect = struct {
         if (Jest.runner.?.pending_test) |pending_test|
             pending_test.assert_asserts(NeededAssertType.atLeastOne, 0);
 
-        return .zero;
+        return .undefined;
     }
 
     pub fn assertions(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
@@ -4340,7 +4340,7 @@ pub const Expect = struct {
 
         if (arguments.len < 1) {
             globalObject.throwInvalidArguments("expect.assertions() takes 1 argument", .{});
-            return .zero;
+            return .undefined;
         }
 
         const expected: JSValue = arguments[0];
@@ -4348,14 +4348,14 @@ pub const Expect = struct {
         if (!expected.isNumber()) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
             globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
-            return .zero;
+            return .undefined;
         }
 
         const expected_assertions: f64 = expected.asNumber();
         if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
             globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
-            return .zero;
+            return .undefined;
         }
 
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
@@ -4363,7 +4363,7 @@ pub const Expect = struct {
         if (Jest.runner.?.pending_test) |pending_test|
             pending_test.assert_asserts(NeededAssertType.equalToNeededAsserts, unsigned_expected_assertions);
 
-        return .zero;
+        return .undefined;
     }
 
     pub fn notImplementedJSCFn(_: *Expect, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

@@ -1601,7 +1601,7 @@ pub const Resolver = struct {
     /// the trailing slash from a path, but also note it will only remove a SINGLE slash.
     pub fn assertValidCacheKey(path: []const u8) void {
         if (Environment.allow_assert) {
-            if (strings.charIsAnySlash(path[path.len - 1]) and !if (Environment.isWindows)
+            if (path.len > 1 and strings.charIsAnySlash(path[path.len - 1]) and !if (Environment.isWindows)
                 path.len == 3 and path[1] == ':'
             else
                 path.len == 1)

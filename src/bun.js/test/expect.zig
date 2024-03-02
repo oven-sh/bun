@@ -4340,7 +4340,7 @@ pub const Expect = struct {
 
         if (arguments.len < 1) {
             globalObject.throwInvalidArguments("expect.assertions() takes 1 argument", .{});
-            return .undefined;
+            return .zero;
         }
 
         const expected: JSValue = arguments[0];
@@ -4348,14 +4348,14 @@ pub const Expect = struct {
         if (!expected.isNumber()) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
             globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
-            return .undefined;
+            return .zero;
         }
 
         const expected_assertions: f64 = expected.asNumber();
         if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
             globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
-            return .undefined;
+            return .zero;
         }
 
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);

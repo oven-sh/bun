@@ -1381,8 +1381,9 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg1/custom2.js": `console.log('SUCCESS')`,
     },
     outfile: "/Users/user/project/out.js",
-    bundleErrors: {
-      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1". Maybe you need to "bun install"?`],
+    conditions: ["custom2"],
+    run: {
+      stdout: "SUCCESS",
     },
   });
   itBundled("packagejson/ExportsNotExactMissingExtension", {

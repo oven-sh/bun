@@ -146,18 +146,12 @@ jobs:
         with:
           name: bun-${{matrix.tag}}-profile
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip
+          if-no-files-found: "error"
       - uses: actions/upload-artifact@v4
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bun-obj-${{matrix.tag}}
-          path: ${{runner.temp}}/release/bun-obj
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{matrix.tag}}-dependencies
-          path: ${{runner.temp}}/release/bun-dependencies
+          if-no-files-found: "error"
       - name: Release
         id: release
         uses: ncipollo/release-action@v1
@@ -277,6 +271,7 @@ jobs:
         with:
           name: cores
           path: /cores
+          if-no-files-found: "error"
       - uses: sarisia/actions-status-discord@v1
         if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         with:

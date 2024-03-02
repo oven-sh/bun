@@ -117,10 +117,12 @@ jobs:
         with:
           name: bun-${{matrix.tag}}-profile
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip
+          if-no-files-found: "error"
       - uses: actions/upload-artifact@v4
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
+          if-no-files-found: "error"
       - name: Release
         id: release
         uses: ncipollo/release-action@v1

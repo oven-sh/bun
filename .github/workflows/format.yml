@@ -1,5 +1,8 @@
 name: autofix.ci # Must be named this for autofix.ci to work
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   pull_request:
@@ -10,24 +13,22 @@ on:
 env:
   ZIG_VERSION: 0.12.0-dev.1828+225fe6ddb
 
-permissions:
-  contents: read
-
 jobs:
   format:
     name: format
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_LINUX_X64 || 'ubuntu-latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           sparse-checkout: |
+            .github
             src
             packages
             test
             bench
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: ./.github/actions/setup-bun
         with:
           bun-version: "1.0.21"
       - name: Setup Zig

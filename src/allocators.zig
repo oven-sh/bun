@@ -634,9 +634,11 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             return instance.map.backing_buf_used >= count;
         }
         pub fn getOrPut(self: *Self, key: []const u8) !Result {
+            std.debug.print("BSSMap.getOrPut({s})\n", .{key});
             return try self.map.getOrPut(key);
         }
         pub fn get(self: *Self, key: []const u8) ?*ValueType {
+            std.debug.print("BSSMap.get({s})\n", .{key});
             return @call(bun.callmod_inline, BSSMapType.get, .{ self.map, key });
         }
 
@@ -658,6 +660,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         pub fn put(self: *Self, key: anytype, comptime store_key: bool, result: *Result, value: ValueType) !*ValueType {
+            std.debug.print("BSSMap.put({s})\n", .{key});
             const ptr = try self.map.put(result, value);
             if (store_key) {
                 try self.putKey(key, result);

@@ -14,9 +14,10 @@ const file2 = \`\${import.meta.dir}/second.mjs\`;
 
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 
-if (existsSync(file)) {
+if (existsSync(file) || existsSync(file2)) {
   console.log("temp.mjs cannot exist before running this script");
-  unlinkSync(file);
+  try { unlinkSync(file); } catch {}
+  try { unlinkSync(file2); } catch {}
   process.exit(2);
 }
 
@@ -45,7 +46,7 @@ try {
     cwd: tmp,
     env: bunEnv,
   });
-  
+
   if (result.exitCode !== 0) {
     console.log(result.stderr.toString("utf-8"));
   }

@@ -109,16 +109,11 @@ pub const FileSystem = struct {
         ENOTDIR,
     };
 
-    pub fn init(
-        top_level_dir: ?string,
-    ) !*FileSystem {
+    pub fn init(top_level_dir: ?string) !*FileSystem {
         return initWithForce(top_level_dir, false);
     }
 
-    pub fn initWithForce(
-        top_level_dir_: ?string,
-        comptime force: bool,
-    ) !*FileSystem {
+    pub fn initWithForce(top_level_dir_: ?string, comptime force: bool) !*FileSystem {
         const allocator = bun.fs_allocator;
         var top_level_dir = top_level_dir_ orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
 
@@ -134,9 +129,7 @@ pub const FileSystem = struct {
         if (!instance_loaded or force) {
             instance = FileSystem{
                 .top_level_dir = top_level_dir,
-                .fs = Implementation.init(
-                    top_level_dir,
-                ),
+                .fs = Implementation.init(top_level_dir),
                 // must always use default_allocator since the other allocators may not be threadsafe when an element resizes
                 .dirname_store = DirnameStore.init(bun.default_allocator),
                 .filename_store = FilenameStore.init(bun.default_allocator),
@@ -431,7 +424,7 @@ pub const FileSystem = struct {
     }
 
     pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
-        return @call(bun.callmod_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
+        return @call(bun.callmod_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, true });
     }
 
     pub fn join(_: *@This(), parts: anytype) string {
@@ -1003,6 +996,13 @@ pub const FileSystem = struct {
         // https://twitter.com/jarredsumner/status/1655464485245845506
         pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, generation: bun.Generation, store_fd: bool, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
             var dir = _dir;
+
+            // var windows_path_buf: bun.windows.PathBuffer = undefined;
+            if (comptime Environment.isWindows) {
+                // _dir = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, _dir);
+            }
+
+            bun.resolver.Resolver.assertValidCacheKey(dir);
             var cache_result: ?allocators.Result = null;
             if (comptime FeatureFlags.enable_entry_cache) {
                 fs.entries_mutex.lock();

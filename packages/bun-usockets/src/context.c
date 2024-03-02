@@ -222,6 +222,7 @@ struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *
      * context_ext_size will however be modified larger in case of SSL, to hold SSL extensions */
 
     struct us_socket_context_t *context = us_malloc(sizeof(struct us_socket_context_t) + context_ext_size);
+    memset(context, 0, sizeof(struct us_socket_context_t) + context_ext_size);
     context->loop = loop;
     context->head_sockets = 0;
     context->head_listen_sockets = 0;
@@ -252,6 +253,7 @@ struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop
      * context_ext_size will however be modified larger in case of SSL, to hold SSL extensions */
 
     struct us_socket_context_t *context = us_malloc(sizeof(struct us_socket_context_t) + context_ext_size);
+    memset(context, 0, sizeof(struct us_socket_context_t) + context_ext_size);
     context->loop = loop;
     context->head_sockets = 0;
     context->head_listen_sockets = 0;

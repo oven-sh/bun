@@ -316,20 +316,8 @@ pub const IO = struct {
             comptime fmt_: []const u8,
             args: anytype,
         ) void {
-            this.enqueueFmtBltnImpl(ptr, kind, fmt_, args, false);
-        }
-
-        pub fn enqueueFmtBltnImpl(
-            this: *@This(),
-            ptr: anytype,
-            comptime kind: ?Interpreter.Builtin.Kind,
-            comptime fmt_: []const u8,
-            args: anytype,
-            comptime write: bool,
-        ) void {
             if (bun.Environment.allow_assert) std.debug.assert(this.* == .fd);
             this.fd.writer.enqueueFmtBltn(ptr, this.fd.captured, kind, fmt_, args);
-            if (comptime write) this.fd.writer.write();
         }
 
         fn close(this: OutKind) void {
@@ -864,7 +852,6 @@ pub const Interpreter = struct {
                 .fd => |x| {
                     enqueueCb(ctx);
                     x.writer.enqueueFmt(ctx, x.captured, fmt, args);
-                    x.writer.write();
                 },
                 .pipe => {
                     const bufio: *bun.ByteList = this.buffered_stderr();
@@ -3937,11 +3924,6 @@ pub const Interpreter = struct {
                     };
                 }
 
-                pub fn start(this: *@This()) void {
-                    if (bun.Environment.allow_assert) std.debug.assert(this.* == .fd);
-                    this.fd.writer.write();
-                }
-
                 pub fn enqueueFmtBltn(
                     this: *@This(),
                     ptr: anytype,
@@ -3949,44 +3931,13 @@ pub const Interpreter = struct {
                     comptime fmt_: []const u8,
                     args: anytype,
                 ) void {
-                    this.enqueueFmtBltnImpl(ptr, kind, fmt_, args, false);
-                }
-
-                pub fn enqueueFmtBltnAndWrite(
-                    this: *@This(),
-                    ptr: anytype,
-                    comptime kind: ?Interpreter.Builtin.Kind,
-                    comptime fmt_: []const u8,
-                    args: anytype,
-                ) void {
-                    this.enqueueFmtBltnImpl(ptr, kind, fmt_, args, true);
-                }
-
-                pub fn enqueueFmtBltnImpl(
-                    this: *@This(),
-                    ptr: anytype,
-                    comptime kind: ?Interpreter.Builtin.Kind,
-                    comptime fmt_: []const u8,
-                    args: anytype,
-                    comptime call_write: bool,
-                ) void {
                     if (bun.Environment.allow_assert) std.debug.assert(this.* == .fd);
                     this.fd.writer.enqueueFmtBltn(ptr, this.fd.captured, kind, fmt_, args);
-                    if (comptime call_write) this.fd.writer.write();
                 }
 
                 pub fn enqueue(this: *@This(), ptr: anytype, buf: []const u8) void {
-                    this.enqueueImpl(ptr, buf, false);
-                }
-
-                pub fn enqueueAndWrite(this: *@This(), ptr: anytype, buf: []const u8) void {
-                    this.enqueueImpl(ptr, buf, true);
-                }
-
-                pub fn enqueueImpl(this: *@This(), ptr: anytype, buf: []const u8, comptime call_write: bool) void {
                     if (bun.Environment.allow_assert) std.debug.assert(this.* == .fd);
                     this.fd.writer.enqueue(ptr, this.fd.captured, buf);
-                    if (comptime call_write) this.fd.writer.write();
                 }
             };
 
@@ -4481,7 +4432,7 @@ pub const Interpreter = struct {
             pub fn writeFailingError(this: *Mkdir, buf: []const u8, exit_code: ExitCode) Maybe(void) {
                 if (this.bltn.stderr.needsIO()) {
                     this.state = .waiting_write_err;
-                    this.bltn.stderr.enqueueAndWrite(this, buf);
+                    this.bltn.stderr.enqueue(this, buf);
                     return Maybe(void).success;
                 }
 
@@ -4585,7 +4536,7 @@ pub const Interpreter = struct {
                 pub fn writeErr(this: *Mkdir, childptr: anytype, errbuf: []const u8) CoroutineResult {
                     if (this.bltn.stderr.needsIO()) {
                         this.state.exec.output_waiting += 1;
-                        this.bltn.stderr.enqueueAndWrite(childptr, errbuf);
+                        this.bltn.stderr.enqueue(childptr, errbuf);
                         return .yield;
                     }
                     _ = this.bltn.writeNoIO(.stderr, errbuf);
@@ -4599,7 +4550,9 @@ pub const Interpreter = struct {
                 pub fn writeOut(this: *Mkdir, childptr: anytype, output: *OutputSrc) CoroutineResult {
                     if (this.bltn.stdout.needsIO()) {
                         this.state.exec.output_waiting += 1;
-                        this.bltn.stdout.enqueueAndWrite(childptr, output.slice());
+                        const slice = output.slice();
+                        log("THE SLICE: {d} {s}", .{ slice.len, slice });
+                        this.bltn.stdout.enqueue(childptr, slice);
                         return .yield;
                     }
                     _ = this.bltn.writeNoIO(.stdout, output.slice());
@@ -4834,7 +4787,7 @@ pub const Interpreter = struct {
 
                 var output: *BuiltinIO.Output = &@field(this.bltn, @tagName(io_kind));
                 this.printing = true;
-                output.enqueueFmtBltnAndWrite(this, .@"export", fmt, args);
+                output.enqueueFmtBltn(this, .@"export", fmt, args);
                 return Maybe(void).success;
             }
 
@@ -4892,7 +4845,7 @@ pub const Interpreter = struct {
                     }
 
                     this.printing = true;
-                    this.bltn.stdout.enqueueAndWrite(this, buf);
+                    this.bltn.stdout.enqueue(this, buf);
 
                     return Maybe(void).success;
                 }
@@ -4960,7 +4913,7 @@ pub const Interpreter = struct {
                 }
 
                 this.state = .waiting;
-                this.bltn.stdout.enqueueAndWrite(this, this.output.items[0..]);
+                this.bltn.stdout.enqueue(this, this.output.items[0..]);
                 return Maybe(void).success;
             }
 
@@ -5015,7 +4968,7 @@ pub const Interpreter = struct {
                         return Maybe(void).success;
                     }
                     this.state = .one_arg;
-                    this.bltn.stdout.enqueueAndWrite(this, "\n");
+                    this.bltn.stdout.enqueue(this, "\n");
                     return Maybe(void).success;
                 }
 
@@ -5072,7 +5025,7 @@ pub const Interpreter = struct {
                         return;
                     }
                     multiargs.state = .waiting_write;
-                    this.bltn.stdout.enqueueFmtBltnAndWrite(this, null, "{s} not found\n", .{arg});
+                    this.bltn.stdout.enqueueFmtBltn(this, null, "{s} not found\n", .{arg});
                     // yield execution
                     return;
                 };
@@ -5085,7 +5038,7 @@ pub const Interpreter = struct {
                 }
 
                 multiargs.state = .waiting_write;
-                this.bltn.stdout.enqueueFmtBltnAndWrite(this, null, "{s}\n", .{resolved});
+                this.bltn.stdout.enqueueFmtBltn(this, null, "{s}\n", .{resolved});
                 return;
             }
 
@@ -5141,7 +5094,7 @@ pub const Interpreter = struct {
 
             fn writeStderrNonBlocking(this: *Cd, comptime fmt: []const u8, args: anytype) void {
                 this.state = .waiting_write_stderr;
-                this.bltn.stderr.enqueueFmtBltnAndWrite(this, .cd, fmt, args);
+                this.bltn.stderr.enqueueFmtBltn(this, .cd, fmt, args);
             }
 
             pub fn start(this: *Cd) Maybe(void) {
@@ -5253,7 +5206,7 @@ pub const Interpreter = struct {
                     const msg = "pwd: too many arguments";
                     if (this.bltn.stderr.needsIO()) {
                         this.state = .{ .waiting_io = .{ .kind = .stderr } };
-                        this.bltn.stderr.enqueueAndWrite(this, msg);
+                        this.bltn.stderr.enqueue(this, msg);
                         return Maybe(void).success;
                     }
 
@@ -5266,7 +5219,7 @@ pub const Interpreter = struct {
                 const cwd_str = this.bltn.parentCmd().base.shell.cwd();
                 if (this.bltn.stdout.needsIO()) {
                     this.state = .{ .waiting_io = .{ .kind = .stdout } };
-                    this.bltn.stdout.enqueueFmtBltnAndWrite(this, null, "{s}\n", .{cwd_str});
+                    this.bltn.stdout.enqueueFmtBltn(this, null, "{s}\n", .{cwd_str});
                     return Maybe(void).success;
                 }
                 const buf = this.bltn.fmtErrorArena(null, "{s}\n", .{cwd_str});
@@ -5343,7 +5296,7 @@ pub const Interpreter = struct {
 
             pub fn writeFailingError(this: *Ls, buf: []const u8, exit_code: ExitCode) Maybe(void) {
                 if (this.bltn.stderr.needsIO()) {
-                    this.bltn.stderr.enqueueAndWrite(this, buf);
+                    this.bltn.stderr.enqueue(this, buf);
                     return Maybe(void).success;
                 }
 
@@ -5466,7 +5419,7 @@ pub const Interpreter = struct {
                 pub fn writeErr(this: *Ls, childptr: anytype, errbuf: []const u8) CoroutineResult {
                     if (this.bltn.stderr.needsIO()) {
                         this.state.exec.output_waiting += 1;
-                        this.bltn.stderr.enqueueAndWrite(childptr, errbuf);
+                        this.bltn.stderr.enqueue(childptr, errbuf);
                         return .yield;
                     }
                     _ = this.bltn.writeNoIO(.stderr, errbuf);
@@ -5480,7 +5433,7 @@ pub const Interpreter = struct {
                 pub fn writeOut(this: *Ls, childptr: anytype, output: *OutputSrc) CoroutineResult {
                     if (this.bltn.stdout.needsIO()) {
                         this.state.exec.output_waiting += 1;
-                        this.bltn.stdout.enqueueAndWrite(childptr, output.slice());
+                        this.bltn.stdout.enqueue(childptr, output.slice());
                         return .yield;
                     }
                     _ = this.bltn.writeNoIO(.stdout, output.slice());
@@ -6284,7 +6237,7 @@ pub const Interpreter = struct {
             pub fn writeFailingError(this: *Mv, buf: []const u8, exit_code: ExitCode) Maybe(void) {
                 if (this.bltn.stderr.needsIO()) {
                     this.state = .{ .waiting_write_err = .{ .exit_code = exit_code } };
-                    this.bltn.stderr.enqueueAndWrite(this, buf);
+                    this.bltn.stderr.enqueue(this, buf);
                     return Maybe(void).success;
                 }
 
@@ -6758,7 +6711,7 @@ pub const Interpreter = struct {
                                         const error_string = Builtin.Kind.usageString(.rm);
                                         if (this.bltn.stderr.needsIO()) {
                                             parse_opts.state = .wait_write_err;
-                                            this.bltn.stderr.enqueueAndWrite(this, error_string);
+                                            this.bltn.stderr.enqueue(this, error_string);
                                             return Maybe(void).success;
                                         }
 
@@ -6787,7 +6740,7 @@ pub const Interpreter = struct {
                                                 const buf = "rm: \"-i\" is not supported yet";
                                                 if (this.bltn.stderr.needsIO()) {
                                                     parse_opts.state = .wait_write_err;
-                                                    this.bltn.stderr.enqueueAndWrite(this, buf);
+                                                    this.bltn.stderr.enqueue(this, buf);
                                                     continue;
                                                 }
 
@@ -6823,7 +6776,7 @@ pub const Interpreter = struct {
                                                     if (is_root) {
                                                         if (this.bltn.stderr.needsIO()) {
                                                             parse_opts.state = .wait_write_err;
-                                                            this.bltn.stderr.enqueueFmtBltnAndWrite(this, .rm, "\"{s}\" may not be removed\n", .{resolved_path});
+                                                            this.bltn.stderr.enqueueFmtBltn(this, .rm, "\"{s}\" may not be removed\n", .{resolved_path});
                                                             return Maybe(void).success;
                                                         }
 
@@ -6855,7 +6808,7 @@ pub const Interpreter = struct {
                                             const error_string = "rm: illegal option -- -\n";
                                             if (this.bltn.stderr.needsIO()) {
                                                 parse_opts.state = .wait_write_err;
-                                                this.bltn.stderr.enqueueAndWrite(this, error_string);
+                                                this.bltn.stderr.enqueue(this, error_string);
                                                 return Maybe(void).success;
                                             }
 
@@ -6868,7 +6821,7 @@ pub const Interpreter = struct {
                                             const flag = arg;
                                             if (this.bltn.stderr.needsIO()) {
                                                 parse_opts.state = .wait_write_err;
-                                                this.bltn.stderr.enqueueFmtBltnAndWrite(this, .rm, "illegal option -- {s}\n", .{flag[1..]});
+                                                this.bltn.stderr.enqueueFmtBltn(this, .rm, "illegal option -- {s}\n", .{flag[1..]});
                                                 return Maybe(void).success;
                                             }
                                             const error_string = this.bltn.fmtErrorArena(.rm, "illegal option -- {s}\n", .{flag[1..]});
@@ -7072,7 +7025,7 @@ pub const Interpreter = struct {
                                 _ = this.bltn.writeNoIO(.stderr, error_string);
                             } else {
                                 exec.incrementOutputCount(.output_count);
-                                this.bltn.stderr.enqueueAndWrite(this, error_string);
+                                this.bltn.stderr.enqueue(this, error_string);
                                 return;
                             }
                         }
@@ -7104,7 +7057,7 @@ pub const Interpreter = struct {
                 }
                 const buf = verbose.takeDeletedEntries();
                 defer buf.deinit();
-                this.bltn.stdout.enqueueAndWrite(this, buf.items[0..]);
+                this.bltn.stdout.enqueue(this, buf.items[0..]);
             }
 
             pub const ShellRmTask = struct {
@@ -7888,6 +7841,7 @@ pub const Interpreter = struct {
         /// Idempotent write call
         pub fn write(this: *This) void {
             if (bun.Environment.isWindows) {
+                log("IOWriter(0x{x}, fd={}) write() is_writing={any}", .{ @intFromPtr(this), this.fd, this.is_writing });
                 if (this.is_writing) return;
                 this.is_writing = true;
                 if (this.writer.startWithCurrentPipe().asErr()) |e| {
@@ -8118,23 +8072,43 @@ pub const Interpreter = struct {
         }
 
         pub fn enqueue(this: *This, ptr: anytype, bytelist: ?*bun.ByteList, buf: []const u8) void {
+            const childptr = if (@TypeOf(ptr) == ChildPtr) ptr else ChildPtr.init(ptr);
+            if (buf.len == 0) {
+                log("IOWriter(0x{x}) enqueue EMPTY", .{@intFromPtr(this)});
+                childptr.onDone(null);
+                return;
+            }
             const writer: Writer = .{
-                .ptr = if (@TypeOf(ptr) == ChildPtr) ptr else ChildPtr.init(ptr),
+                .ptr = childptr,
                 .len = buf.len,
                 .bytelist = bytelist,
             };
-            log("IOWriter(0x{x}) enqueue(0x{x} {s}, {s})", .{ @intFromPtr(this), @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), buf });
+            log("IOWriter(0x{x}) enqueue(0x{x} {s}, buf={s})", .{ @intFromPtr(this), @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), buf });
             this.buf.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
             this.writers.append(writer);
+            this.write();
         }
 
-        pub fn enqueueFmtBltn(this: *This, ptr: anytype, bytelist: ?*bun.ByteList, comptime kind: ?Interpreter.Builtin.Kind, comptime fmt_: []const u8, args: anytype) void {
+        pub fn enqueueFmtBltn(
+            this: *This,
+            ptr: anytype,
+            bytelist: ?*bun.ByteList,
+            comptime kind: ?Interpreter.Builtin.Kind,
+            comptime fmt_: []const u8,
+            args: anytype,
+        ) void {
             const cmd_str = comptime if (kind) |k| k.asString() ++ ": " else "";
             const fmt__ = cmd_str ++ fmt_;
             this.enqueueFmt(ptr, bytelist, fmt__, args);
         }
 
-        pub fn enqueueFmt(this: *This, ptr: anytype, bytelist: ?*bun.ByteList, comptime fmt: []const u8, args: anytype) void {
+        pub fn enqueueFmt(
+            this: *This,
+            ptr: anytype,
+            bytelist: ?*bun.ByteList,
+            comptime fmt: []const u8,
+            args: anytype,
+        ) void {
             var buf_writer = this.buf.writer(bun.default_allocator);
             const start = this.buf.items.len;
             buf_writer.print(fmt, args) catch bun.outOfMemory();
@@ -8146,6 +8120,7 @@ pub const Interpreter = struct {
             };
             log("IOWriter(0x{x}) enqueue(0x{x} {s}, {s})", .{ @intFromPtr(this), @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), this.buf.items[start..end] });
             this.writers.append(writer);
+            this.write();
         }
 
         pub fn deinit(this: *This) void {

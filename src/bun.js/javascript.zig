@@ -1732,6 +1732,7 @@ pub const VirtualMachine = struct {
                             );
                         };
 
+                        // Only re-query if we previously had something cached.
                         if (jsc_vm.bundler.resolver.bustDirCache(buster_name)) {
                             continue;
                         }

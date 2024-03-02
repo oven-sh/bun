@@ -1583,11 +1583,15 @@ pub const Resolver = struct {
     const dev = Output.scoped(.Resolver, false);
 
     /// Bust the directory cache for the given path.
+    /// Path given must be absolute native paths that contain a trailing slash.
     /// Returns `true` if something was deleted, otherwise `false`.
     pub fn bustDirCache(r: *ThisResolver, path: string) bool {
         dev("Bust {s}", .{path});
         if (Environment.allow_assert) {
             if (path[path.len - 1] != std.fs.path.sep) {
+                // This assertion is in place so that we can catch misuses that
+                // attempt to bust the cache, but end up doing nothing as they
+                // subtlely use the wrong path.
                 std.debug.panic("Expected a trailing slash on {s}", .{path});
             }
         }

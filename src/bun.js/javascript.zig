@@ -1713,7 +1713,7 @@ pub const VirtualMachine = struct {
                                     break :name bun.strings.normalizeSlashesOnly(
                                         &specifier_cache_resolver_buf,
                                         if (dir.len == 1) dir else normalized_specifier[0 .. dir.len + 1],
-                                        '/',
+                                        std.fs.path.sep,
                                     );
                                 }
                             }

@@ -406,7 +406,7 @@ pub const Bundler = struct {
                         break :name bun.strings.normalizeSlashesOnly(
                             &cache_bust_buf,
                             if (dir.len == 1) dir else entry_point[0 .. dir.len + 1],
-                            '/',
+                            std.fs.path.sep,
                         );
                     }
                 }

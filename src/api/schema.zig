@@ -1755,6 +1755,9 @@ pub const Api = struct {
         /// source_map
         source_map: ?SourceMapMode = null,
 
+        /// conditions
+        conditions: []const []const u8,
+
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
 
@@ -1838,6 +1841,9 @@ pub const Api = struct {
                     },
                     25 => {
                         this.source_map = try reader.readValue(SourceMapMode);
+                    },
+                    26 => {
+                        this.conditions = try reader.readArray([]const u8);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -1948,6 +1954,12 @@ pub const Api = struct {
                 try writer.writeFieldID(25);
                 try writer.writeEnum(source_map);
             }
+
+            if (this.conditions) |conditions| {
+                try writer.writeFieldID(26);
+                try writer.writeArray([]const u8, conditions);
+            }
+
             try writer.endMessage();
         }
     };

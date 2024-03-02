@@ -1097,17 +1097,38 @@ pub const Map = struct {
         while (iter_.next()) |entry| {
             // Allow var from .env.development or .env.production to be loaded again
             if (!entry.value_ptr.conditional) {
-                std.debug.print("{s} = {s}\n", .{ .key = entry.key_ptr.*, .value = entry.value_ptr.value });
-                // TODO(@paperdave): this crashes on windows. i remember there being a merge conflict with these two implementations. not sure what we should keep
-                if (Environment.isWindows) {
-                    try env_map.put(@constCast(entry.key_ptr.*), @constCast(entry.value_ptr.value));
-                } else {
-                    try env_map.putMove(@constCast(entry.key_ptr.*), @constCast(entry.value_ptr.value));
-                }
+                try env_map.putMove(@constCast(entry.key_ptr.*), @constCast(entry.value_ptr.value));
             }
         }
 
         return env_map;
+    }
+
+    /// Write the Windows environment block into a buffer
+    /// This can be passed to CreateProcessW's lpEnvironment parameter
+    pub fn writeWindowsEnvBlock(this: *Map, result: *[32767]u16) ![*]const u16 {
+        var it = this.map.iterator();
+        var i: usize = 0;
+        while (it.next()) |pair| {
+            i += bun.strings.convertUTF8toUTF16InBuffer(result[i..], pair.key_ptr.*).len;
+            if (i + 7 >= result.len) return error.TooManyEnvironmentVariables;
+            result[i] = '=';
+            i += 1;
+            i += bun.strings.convertUTF8toUTF16InBuffer(result[i..], pair.value_ptr.*.value).len;
+            if (i + 5 >= result.len) return error.TooManyEnvironmentVariables;
+            result[i] = 0;
+            i += 1;
+        }
+        result[i] = 0;
+        i += 1;
+        result[i] = 0;
+        i += 1;
+        result[i] = 0;
+        i += 1;
+        result[i] = 0;
+        i += 1;
+
+        return result[0..].ptr;
     }
 
     pub inline fn init(allocator: std.mem.Allocator) Map {

@@ -316,7 +316,12 @@ fn launcher(bun_ctx: anytype) noreturn {
 
     // BUF1: '\??\C:\Users\dave\project\node_modules\.bin\hello.!!!!!!!!!!!!!!!!!!!!!!!!!!'
     const suffix = comptime (if (is_standalone) wliteral("exe") else wliteral("bunx"));
-    std.debug.assert(std.mem.endsWith(u16, image_path_u16, suffix));
+    if (dbg) if (!std.mem.endsWith(u16, image_path_u16, suffix)) {
+        std.debug.panic("assert failed: image path expected to end with {}, got {}", .{
+            std.unicode.fmtUtf16le(suffix),
+            std.unicode.fmtUtf16le(image_path_u16),
+        });
+    };
     const image_path_to_copy_b_len = image_path_b_len - 2 * suffix.len;
     @memcpy(
         buf1_u8[2 * nt_object_prefix.len ..][0..image_path_to_copy_b_len],
@@ -696,8 +701,8 @@ fn launcher(bun_ctx: anytype) noreturn {
             null,
             null,
             1, // true
-            0,
-            null,
+            if (is_standalone) 0 else w.CREATE_UNICODE_ENVIRONMENT,
+            if (is_standalone) null else @constCast(bun_ctx.environment),
             null,
             &startup_info,
             &process,
@@ -710,31 +715,45 @@ fn launcher(bun_ctx: anytype) noreturn {
             }
             return switch (spawn_err) {
                 .FILE_NOT_FOUND => if (flags.has_shebang) {
-                    if (attempt_number == 0 and flags.is_node) {
-                        if (dbg)
-                            debug("node is not found, changing to bun", .{});
-                        // There are many packages that specifically call for node.exe, and Bun will respect that
-                        // but if node installed, this means the binary is unlaunchable. So before we fail,
-                        // we will try to launch it with bun.exe
-                        //
-                        // This is not an issue when using 'bunx' or 'bun run', because node.exe is already
-                        // added to the path synthetically through 'createFakeTemporaryNodeExecutable'. The path
-                        // here applies for when the binary is launched directly (user shell, double click, etc...)
-                        assert(flags.has_shebang);
-                        if (dbg)
-                            assert(std.mem.startsWith(u16, std.mem.span(spawn_command_line), comptime wliteral("node ")));
+                    if (attempt_number == 0) {
+                        if (flags.is_node) {
+                            if (dbg)
+                                debug("node is not found, changing to bun", .{});
 
-                        // To go from node -> bun, it is a matter of writing three chars, and incrementing a pointer.
-                        //
-                        // lpCommandLine: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
-                        //                  ^~~ replace these three bytes with 'bun'
-                        @memcpy(spawn_command_line[1..][0..3], comptime wliteral("bun"));
+                            if (!is_standalone) {
+                                // TODO: this is another place that direct_launch_with_bun_js should be used
+                            }
 
-                        // lpCommandLine: 'nbun "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
-                        //                  ^ increment pointer by one char
-                        spawn_command_line += 1;
+                            // There are many packages that specifically call for node.exe, and Bun will respect that
+                            // but if node installed, this means the binary is unlaunchable. So before we fail,
+                            // we will try to launch it with bun.exe
+                            //
+                            // This is not an issue when using 'bunx' or 'bun run', because node.exe is already
+                            // added to the path synthetically through 'createFakeTemporaryNodeExecutable'. The path
+                            // here applies for when the binary is launched directly (user shell, double click, etc...)
+                            assert(flags.has_shebang);
+                            if (dbg)
+                                assert(std.mem.startsWith(u16, std.mem.span(spawn_command_line), comptime wliteral("node ")));
 
-                        break :iteration; // loop back
+                            // To go from node -> bun, it is a matter of writing three chars, and incrementing a pointer.
+                            //
+                            // lpCommandLine: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
+                            //                  ^~~ replace these three bytes with 'bun'
+                            @memcpy(spawn_command_line[1..][0..3], comptime wliteral("bun"));
+
+                            // lpCommandLine: 'nbun "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
+                            //                  ^ increment pointer by one char
+                            spawn_command_line += 1;
+
+                            break :iteration; // loop back
+                        }
+
+                        if (flags.is_node_or_bun) {
+                            // This script calls for 'bun', but it was not found.
+                            if (dbg)
+                                assert(std.mem.startsWith(u16, std.mem.span(spawn_command_line), comptime wliteral("bun ")));
+                            return fail(.InterpreterNotFoundBun);
+                        }
                     }
 
                     // if attempt_number == 1, we already tried rewriting this to bun, and will now fail for real
@@ -789,6 +808,8 @@ pub const FromBunRunContext = struct {
     direct_launch_with_bun_js: *const fn (wpath: []u16, args: *CommandContext) void,
     /// Command.Context
     cli_context: *CommandContext,
+    /// Passed directly to CreateProcessW's lpEnvironment with CREATE_UNICODE_ENVIRONMENT
+    environment: ?[*]const u16,
 };
 
 /// This is called from run_command.zig in bun.exe which allows us to skip the CreateProcessW

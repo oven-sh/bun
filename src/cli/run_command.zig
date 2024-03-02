@@ -539,9 +539,10 @@ pub const RunCommand = struct {
     else
         "/bun-debug-node";
 
-    pub fn bunNodeFileUtf8(target_path_buffer: *bun.windows.PathBuffer) ![:0]const u8 {
+    pub fn bunNodeFileUtf8(allocator: std.mem.Allocator) ![:0]const u8 {
         if (!Environment.isWindows) return bun_node_dir;
         var temp_path_buffer: bun.WPathBuffer = undefined;
+        var target_path_buffer: bun.PathBuffer = undefined;
         const len = bun.windows.GetTempPathW(
             temp_path_buffer.len,
             @ptrCast(&temp_path_buffer),
@@ -551,7 +552,7 @@ pub const RunCommand = struct {
         }
 
         const converted = try bun.strings.convertUTF16toUTF8InBuffer(
-            target_path_buffer,
+            &target_path_buffer,
             temp_path_buffer[0..len],
         );
 
@@ -561,7 +562,7 @@ pub const RunCommand = struct {
 
         target_path_buffer[converted.len + file_name.len] = 0;
 
-        return target_path_buffer[0 .. converted.len + file_name.len :0];
+        return try allocator.dupeZ(u8, target_path_buffer[0 .. converted.len + file_name.len :0]);
     }
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
@@ -802,8 +803,7 @@ pub const RunCommand = struct {
             original_path.* = PATH;
         }
 
-        var buf: bun.windows.PathBuffer = undefined;
-        const bun_node_exe = try bunNodeFileUtf8(&buf);
+        const bun_node_exe = try bunNodeFileUtf8(ctx.allocator);
         const bun_node_dir_win = bun.Dirname.dirname(u8, bun_node_exe) orelse return error.FailedToGetTempPath;
         const found_node = this_bundler.env.loadNodeJSConfig(
             this_bundler.fs,
@@ -867,7 +867,6 @@ pub const RunCommand = struct {
             try new_path.appendSlice(PATH);
         }
 
-        std.debug.print("PATH: {s}\n", .{new_path.items});
         this_bundler.env.map.put("PATH", new_path.items) catch bun.outOfMemory();
     }
 
@@ -1378,7 +1377,7 @@ pub const RunCommand = struct {
             }
         }
 
-        if (false and Environment.isWindows) try_bunx_file: {
+        if (Environment.isWindows) try_bunx_file: {
             const WinBunShimImpl = @import("../install/windows-shim/bun_shim_impl.zig");
             const w = std.os.windows;
             const debug = Output.scoped(.BunRunXFastPath, false);
@@ -1439,6 +1438,7 @@ pub const RunCommand = struct {
                 .force_use_bun = ctx.debug.run_in_bun,
                 .direct_launch_with_bun_js = &DirectBinLaunch.directLaunchWithBunJSFromShim,
                 .cli_context = &ctx,
+                .environment = try this_bundler.env.map.writeWindowsEnvBlock(&DirectBinLaunch.environment_buffer),
             };
 
             if (Environment.isDebug) {
@@ -1554,6 +1554,7 @@ pub const RunCommand = struct {
 
 pub const DirectBinLaunch = struct {
     var direct_launch_buffer: bun.WPathBuffer = undefined;
+    var environment_buffer: bun.WPathBuffer = undefined;
 
     fn directLaunchWithBunJSFromShim(wpath: []u16, ctx: *Command.Context) void {
         const utf8 = bun.strings.convertUTF16toUTF8InBuffer(

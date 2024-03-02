@@ -266,12 +266,12 @@ jobs:
           ulimit -c
 
           node packages/bun-internal-test/src/runner.node.mjs || true
-      - uses: actions/upload-artifact@v4
-        if: steps.test.outputs.failing_tests != ''
-        with:
-          name: cores
-          path: /cores
-          if-no-files-found: "error"
+      # - uses: actions/upload-artifact@v4
+      #   if: steps.test.outputs.failing_tests != ''
+      #   with:
+      #     name: cores
+      #     path: /cores
+      #     if-no-files-found: "error"
       - uses: sarisia/actions-status-discord@v1
         if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         with:

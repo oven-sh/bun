@@ -65,7 +65,6 @@ jobs:
 
       - name: Compile Zig Object
         uses: docker/build-push-action@v5
-        if: runner.arch == 'X64'
         with:
           context: .
           push: false

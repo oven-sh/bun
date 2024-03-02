@@ -1227,7 +1227,16 @@ pub const WrappedDescribeScope = struct {
     pub const each = wrapTestFunction("describe", DescribeScope.each);
 };
 
+pub const NeededAssertType = enum(u2) {
+    none,
+    atLeastOne,
+    equalToNeededAsserts,
+};
+
 pub const TestRunnerTask = struct {
+    needed_assert_type: NeededAssertType = NeededAssertType.none,
+    needed_asserts: u32 = 0,
+
     test_id: TestRunner.Test.ID,
     describe: *DescribeScope,
     globalThis: *JSC.JSGlobalObject,
@@ -1313,7 +1322,7 @@ pub const TestRunnerTask = struct {
 
         this.sync_state = .pending;
 
-        const result = TestScope.run(&test_, this);
+        var result = TestScope.run(&test_, this);
 
         // rejected promises should fail the test
         if (result != .fail)
@@ -1322,6 +1331,35 @@ pub const TestRunnerTask = struct {
         if (result == .pending and this.sync_state == .pending and (this.done_callback_state == .pending or this.promise_state == .pending)) {
             this.sync_state = .fulfilled;
             return true;
+        }
+
+        switch (this.needed_assert_type) {
+            NeededAssertType.none => {},
+            NeededAssertType.atLeastOne => {
+                if (expect.active_test_expectation_counter.actual == 0) {
+                    const fmt = comptime "<d>expect.hasAssertions()<r>\n\nExpected <green>at least one assertion<r> to be called but <red>received none<r>.\n";
+                    const error_value = if (Output.enable_ansi_colors)
+                        globalThis.createErrorInstance(Output.prettyFmt(fmt, true), .{})
+                    else
+                        globalThis.createErrorInstance(Output.prettyFmt(fmt, false), .{});
+
+                    globalThis.*.bunVM().runErrorHandler(error_value, null);
+                    result = .{ .fail = 0 };
+                }
+            },
+            NeededAssertType.equalToNeededAsserts => {
+                if (expect.active_test_expectation_counter.actual != this.needed_asserts) {
+                    const fmt = comptime "<d>expect.assertions({})<r>\n\nExpected <green>{} assertion<r> to be called but <red>found {} assertions<r> instead.\n";
+                    const fmt_args = .{ this.needed_asserts, this.needed_asserts, expect.active_test_expectation_counter.actual };
+                    const error_value = if (Output.enable_ansi_colors)
+                        globalThis.createErrorInstance(Output.prettyFmt(fmt, true), fmt_args)
+                    else
+                        globalThis.createErrorInstance(Output.prettyFmt(fmt, false), fmt_args);
+
+                    globalThis.*.bunVM().runErrorHandler(error_value, null);
+                    result = .{ .fail = expect.active_test_expectation_counter.actual };
+                }
+            },
         }
 
         this.handleResult(result, .sync);
@@ -1388,6 +1426,11 @@ pub const TestRunnerTask = struct {
         }
 
         processTestResult(this, this.globalThis, result, test_, test_id, describe);
+    }
+
+    pub fn assert_asserts(this: *TestRunnerTask, assert_type: NeededAssertType, assert_count: u32) void {
+        this.needed_assert_type = assert_type;
+        this.needed_asserts = assert_count;
     }
 
     fn processTestResult(this: *TestRunnerTask, globalThis: *JSC.JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {

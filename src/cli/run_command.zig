@@ -593,21 +593,30 @@ pub const RunCommand = struct {
                 argv0 = bun.argv()[0];
             }
 
-            var retried = false;
-            while (true) {
-                inner: {
-                    std.os.symlinkZ(argv0, bun_node_dir ++ "/node") catch |err| {
-                        if (err == error.PathAlreadyExists) break :inner;
-                        if (retried)
-                            return;
+            if (Environment.isDebug) {
+                std.fs.deleteTreeAbsolute(bun_node_dir) catch {};
+            }
+            const paths = if (Environment.isDebug)
+                .{ bun_node_dir ++ "/node", bun_node_dir ++ "/bun" }
+            else
+                .{bun_node_dir ++ "/node"};
+            inline for (paths) |path| {
+                var retried = false;
+                while (true) {
+                    inner: {
+                        std.os.symlinkZ(argv0, path) catch |err| {
+                            if (err == error.PathAlreadyExists) break :inner;
+                            if (retried)
+                                return;
 
-                        std.fs.makeDirAbsoluteZ(bun_node_dir) catch {};
+                            std.fs.makeDirAbsoluteZ(bun_node_dir) catch {};
 
-                        retried = true;
-                        continue;
-                    };
+                            retried = true;
+                            continue;
+                        };
+                    }
+                    break;
                 }
-                break;
             }
 
             if (PATH.items.len > 0 and PATH.items[PATH.items.len - 1] != std.fs.path.delimiter) {
@@ -634,35 +643,37 @@ pub const RunCommand = struct {
 
             @memcpy(target_path_buffer[0..prefix.len], prefix);
 
-            const dir_name = "bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else "";
-            const file_name = dir_name ++ "\\node.exe\x00";
-            @memcpy(target_path_buffer[len + prefix.len ..][0..file_name.len], comptime bun.strings.w(file_name));
-
-            const file_slice = target_path_buffer[0 .. prefix.len + len + file_name.len - "\x00".len];
+            const dir_name = "bun-node" ++ if (Environment.isDebug)
+                "-debug"
+            else if (Environment.git_sha_short.len > 0)
+                "-" ++ Environment.git_sha_short
+            else
+                "";
             const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
 
             const image_path = bun.windows.exePathW();
+            inline for (.{ "node.exe", "bun.exe" }) |name| {
+                const file_name = dir_name ++ "\\" ++ name ++ "\x00";
+                @memcpy(target_path_buffer[len + prefix.len ..][0..file_name.len], comptime bun.strings.w(file_name));
 
-            if (Environment.isDebug) {
-                // the link becomes out of date on rebuild
-                std.os.unlinkW(file_slice) catch {};
-            }
+                const file_slice = target_path_buffer[0 .. prefix.len + len + file_name.len - "\x00".len];
 
-            if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), image_path.ptr, null) == 0) {
-                switch (std.os.windows.kernel32.GetLastError()) {
-                    .ALREADY_EXISTS => {},
-                    else => {
-                        {
-                            std.debug.assert(target_path_buffer[dir_slice.len] == '\\');
-                            target_path_buffer[dir_slice.len] = 0;
-                            std.os.mkdirW(target_path_buffer[0..dir_slice.len :0], 0) catch {};
-                            target_path_buffer[dir_slice.len] = '\\';
-                        }
+                if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), image_path.ptr, null) == 0) {
+                    switch (std.os.windows.kernel32.GetLastError()) {
+                        .ALREADY_EXISTS => {},
+                        else => {
+                            {
+                                std.debug.assert(target_path_buffer[dir_slice.len] == '\\');
+                                target_path_buffer[dir_slice.len] = 0;
+                                std.os.mkdirW(target_path_buffer[0..dir_slice.len :0], 0) catch {};
+                                target_path_buffer[dir_slice.len] = '\\';
+                            }
 
-                        if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), image_path.ptr, null) == 0) {
-                            return;
-                        }
-                    },
+                            if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), image_path.ptr, null) == 0) {
+                                return;
+                            }
+                        },
+                    }
                 }
             }
 

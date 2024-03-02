@@ -1587,7 +1587,7 @@ pub const Resolver = struct {
     pub fn bustDirCache(r: *ThisResolver, path: string) bool {
         dev("Bust {s}", .{path});
         if (Environment.allow_assert) {
-            if (path[path.len - 1] != '/') {
+            if (path[path.len - 1] != std.fs.path.sep) {
                 std.debug.panic("Expected a trailing slash on {s}", .{path});
             }
         }

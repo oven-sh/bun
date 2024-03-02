@@ -1097,7 +1097,12 @@ pub const Map = struct {
         while (iter_.next()) |entry| {
             // Allow var from .env.development or .env.production to be loaded again
             if (!entry.value_ptr.conditional) {
-                try env_map.putMove(@constCast(entry.key_ptr.*), @constCast(entry.value_ptr.value));
+                // TODO(@paperdave): this does not work on Windows. not sure why. It used to crash/panic, no longer does that, it just... doesnt work.
+                if (Environment.isWindows) {
+                    try env_map.put(@constCast(entry.key_ptr.*), @constCast(entry.value_ptr.value));
+                } else {
+                    try env_map.putMove(@constCast(entry.key_ptr.*), @constCast(entry.value_ptr.value));
+                }
             }
         }
 

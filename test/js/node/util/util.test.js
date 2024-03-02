@@ -316,13 +316,38 @@ describe("util", () => {
     });
   });
 
-  it("format", () => {
-    expect(util.format("%s:%s", "foo")).toBe("foo:%s");
+  describe("Format", () => {
+    it("format", () => {
+      expect(util.format("%s:%s", "foo")).toBe("foo:%s");
+    });
   });
-  it("formatWithOptions", () => {
-    expect(util.formatWithOptions({ colors: true }, "%s:%s", "foo")).toBe("foo:%s");
-    expect(util.formatWithOptions({ colors: true }, "wow(%o)", { obj: true })).toBe(
-      "wow({ obj: \u001B[33mtrue\u001B[39m })",
-    );
+
+  describe("FormatWithOptions", () => {
+    it("formatWithOptions", () => {
+      expect(util.formatWithOptions({ colors: true }, "%s:%s", "foo")).toBe("foo:%s");
+      expect(util.formatWithOptions({ colors: true }, "wow(%o)", { obj: true })).toBe(
+        "wow({ obj: \u001B[33mtrue\u001B[39m })",
+      );
+    });
   });
+
+  describe("Promisify", () => {
+    it("should return 3 using promise", async () => {
+      const fn = util.promisify((a, b, callback) => callback(null, a + b));
+      expect(await fn(1, 2)).toBe(3);
+    });
+  })
+
+  describe("Callbackify", () => {
+    it("should return 3 using callback", (done) => {
+      const asyncFn = async (a, b) => a + b;
+      const fn = util.callbackify(asyncFn);
+
+      fn(1, 2, (err, res) => {
+        expect(err).toBe(null);
+        expect(res).toBe(3);
+        done()
+      });
+    });
+  })
 });

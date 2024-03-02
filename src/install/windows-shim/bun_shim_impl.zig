@@ -36,9 +36,20 @@
 //!
 //! The compiled binary is 10752 bytes and is `@embedFile`d into Bun itself.
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
-const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("root").bun;
+const dbg = builtin.mode == .Debug;
+
+const std = @import("std");
+const w = std.os.windows;
+const assert = std.debug.assert;
+const fmt16 = std.unicode.fmtUtf16le;
+
+const is_standalone = !@hasDecl(@import("root"), "JavaScriptCore");
+const bun = if (!is_standalone) @import("root").bun else @compileError("cannot use 'bun' in standalone build of bun_shim_impl");
+const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, true);
+const callmod_inline = if (is_standalone) std.builtin.CallModifier.always_inline else bun.callmod_inline;
+
+const Flags = @import("./BinLinkingShim.zig").Flags;
 
 pub inline fn wliteral(comptime str: []const u8) []const u16 {
     if (!@inComptime()) @compileError("strings.w() must be called in a comptime context");
@@ -53,18 +64,6 @@ pub inline fn wliteral(comptime str: []const u8) []const u16 {
     };
     return Static.literal;
 }
-
-const is_standalone = !@hasDecl(@import("root"), "bun");
-const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, true);
-
-const dbg = builtin.mode == .Debug;
-
-const Flags = @import("./BinLinkingShim.zig").Flags;
-
-const assert = std.debug.assert;
-const fmt16 = std.unicode.fmtUtf16le;
-
-const w = std.os.windows;
 
 /// A copy of all ntdll declarations this program uses
 const nt = struct {
@@ -151,6 +150,7 @@ const FailReason = enum {
     CouldNotDirectLaunch,
     BinNotFound,
     InterpreterNotFound,
+    InterpreterNotFoundBun,
     ElevationRequired,
 
     pub fn render(reason: FailReason) []const u8 {
@@ -167,6 +167,7 @@ const FailReason = enum {
             // the other is without. This is a helpful distinction because it can detect if something
             // like node or bun is not in %path%, vs the actual executable was not installed in node_modules.
             .InterpreterNotFound => "interpreter executable could not be found",
+            .InterpreterNotFoundBun => "bun is not installed",
             .BinNotFound => "bin executable does not exist on disk",
             .ElevationRequired => "process requires elevation",
             .CreateProcessFailed => "could not create process",
@@ -212,7 +213,7 @@ const NtWriter = std.io.Writer(w.HANDLE, error{}, writeToHandle);
 inline fn printError(comptime fmt: []const u8, args: anytype) void {
     std.fmt.format(
         NtWriter{
-            .context = @call(bun.callmod_inline, w.teb, .{})
+            .context = @call(callmod_inline, w.teb, .{})
                 .ProcessEnvironmentBlock
                 .ProcessParameters
                 .hStdError,
@@ -240,15 +241,28 @@ noinline fn failWithReason(reason: FailReason) noreturn {
     printError(
         \\error: {s}
         \\
-        \\Bun failed to remap this bin to it's proper location within node_modules.
-        \\This is an indication of a corrupted node_modules directory.
-        \\
-        \\Please run 'bun install --force' in the project root and try
-        \\it again. If this message persists, please open an issue:
-        \\https://github.com/oven-sh/bun/issues
-        \\
-        \\
-    , .{reason.render()});
+        \\{s}
+    , .{
+        reason.render(),
+        switch (reason) {
+            .InterpreterNotFoundBun =>
+            \\Please run the following command, or double check %PATH%
+            \\
+            \\    powershell -c "irm bun.sh/install.ps1|iex"
+            \\
+            \\
+            ,
+            else =>
+            \\Bun failed to remap this bin to it's proper location within node_modules.
+            \\This is an indication of a corrupted node_modules directory.
+            \\
+            \\Please run 'bun install --force' in the project root and try
+            \\it again. If this message persists, please open an issue:
+            \\https://github.com/oven-sh/bun/issues
+            \\
+            \\
+        },
+    });
     nt.RtlExitUserProcess(255);
 }
 
@@ -256,7 +270,7 @@ const nt_object_prefix = [4]u16{ '\\', '?', '?', '\\' };
 
 fn launcher(bun_ctx: anytype) noreturn {
     // peb! w.teb is a couple instructions of inline asm
-    const teb: *w.TEB = @call(bun.callmod_inline, w.teb, .{});
+    const teb: *w.TEB = @call(callmod_inline, w.teb, .{});
     const peb = teb.ProcessEnvironmentBlock;
     const ProcessParameters = peb.ProcessParameters;
     const CommandLine = ProcessParameters.CommandLine;
@@ -439,7 +453,7 @@ fn launcher(bun_ctx: anytype) noreturn {
         while (true) {
             if (dbg) debug("2 - {}\n", .{std.unicode.fmtUtf16le(ptr[0..1])});
             if (ptr[0] == '\\') {
-                // ptr is at the position marked s, so move forward one *character*
+                // ptr is at the position marked S, so move forward one *character*
                 break :brk ptr + 1;
             }
             left -= 1;
@@ -504,7 +518,7 @@ fn launcher(bun_ctx: anytype) noreturn {
     if (!flags.isValid())
         fail(.InvalidShimValidation);
 
-    const spawn_command_line: [*:0]u16 = switch (flags.has_shebang) {
+    var spawn_command_line: [*:0]u16 = switch (flags.has_shebang) {
         false => spawn_command_line: {
             // no shebang, which means the command line is simply going to be the joined file exe
             // followed by the existing command line.
@@ -638,9 +652,6 @@ fn launcher(bun_ctx: anytype) noreturn {
         },
     };
 
-    if (dbg)
-        debug("lpCommandLine: {}\n", .{fmt16(std.mem.span(spawn_command_line))});
-
     // I attempted to use lower level methods for this, but it really seems
     // too difficult and not worth the stability risks.
     //
@@ -675,51 +686,91 @@ fn launcher(bun_ctx: anytype) noreturn {
         .hStdOutput = ProcessParameters.hStdOutput,
         .hStdError = ProcessParameters.hStdError,
     };
-    const did_process_spawn = k32.CreateProcessW(
-        null,
-        spawn_command_line,
-        null,
-        null,
-        1, // true
-        0,
-        null,
-        null,
-        &startup_info,
-        &process,
-    );
-    if (did_process_spawn == 0) {
-        const spawn_err = k32.GetLastError();
-        if (dbg) {
-            printError("CreateProcessW failed: {s}\n", .{@tagName(spawn_err)});
-        }
-        switch (spawn_err) {
-            .FILE_NOT_FOUND => if (flags.has_shebang)
-                fail(.InterpreterNotFound)
-            else
-                fail(.BinNotFound),
 
-            // TODO: ERROR_ELEVATION_REQUIRED must take a fallback path, this path is potentially slower:
-            // This likely will not be an issue anyone runs into for a while, because it implies
-            // the shebang depends on something that requires UAC, which .... why?
-            //
-            // https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/how-it-works#user
-            // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
-            .ELEVATION_REQUIRED => fail(.ElevationRequired),
+    inline for (.{ 0, 1 }) |attempt_number| iteration: {
+        if (dbg)
+            debug("lpCommandLine: {}\n", .{fmt16(std.mem.span(spawn_command_line))});
+        const did_process_spawn = k32.CreateProcessW(
+            null,
+            spawn_command_line,
+            null,
+            null,
+            1, // true
+            0,
+            null,
+            null,
+            &startup_info,
+            &process,
+        );
+        if (did_process_spawn == 0) {
+            const spawn_err = k32.GetLastError();
+            if (dbg) {
+                debug("CreateProcessW failed: {s}\n", .{@tagName(spawn_err)});
+                debug("attempt number: {d}\n", .{attempt_number});
+            }
+            return switch (spawn_err) {
+                .FILE_NOT_FOUND => if (flags.has_shebang) {
+                    if (attempt_number == 0 and flags.is_node) {
+                        if (dbg)
+                            debug("node is not found, changing to bun", .{});
+                        // There are many packages that specifically call for node.exe, and Bun will respect that
+                        // but if node installed, this means the binary is unlaunchable. So before we fail,
+                        // we will try to launch it with bun.exe
+                        //
+                        // This is not an issue when using 'bunx' or 'bun run', because node.exe is already
+                        // added to the path synthetically through 'createFakeTemporaryNodeExecutable'. The path
+                        // here applies for when the binary is launched directly (user shell, double click, etc...)
+                        assert(flags.has_shebang);
+                        if (dbg)
+                            assert(std.mem.startsWith(u16, std.mem.span(spawn_command_line), comptime wliteral("node ")));
 
-            else => fail(.CreateProcessFailed),
+                        // To go from node -> bun, it is a matter of writing three chars, and incrementing a pointer.
+                        //
+                        // lpCommandLine: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
+                        //                  ^~~ replace these three bytes with 'bun'
+                        @memcpy(spawn_command_line[1..][0..3], comptime wliteral("bun"));
+
+                        // lpCommandLine: 'nbun "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
+                        //                  ^ increment pointer by one char
+                        spawn_command_line += 1;
+
+                        break :iteration; // loop back
+                    }
+
+                    // if attempt_number == 1, we already tried rewriting this to bun, and will now fail for real
+                    if (attempt_number == 1) {
+                        if (dbg)
+                            assert(std.mem.startsWith(u16, std.mem.span(spawn_command_line), comptime wliteral("bun ")));
+                        return fail(.InterpreterNotFoundBun);
+                    }
+
+                    return fail(.InterpreterNotFound);
+                } else fail(.BinNotFound),
+
+                // TODO: ERROR_ELEVATION_REQUIRED must take a fallback path, this path is potentially slower:
+                // This likely will not be an issue anyone runs into for a while, because it implies
+                // the shebang depends on something that requires UAC, which .... why?
+                //
+                // https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/how-it-works#user
+                // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
+                .ELEVATION_REQUIRED => fail(.ElevationRequired),
+
+                else => fail(.CreateProcessFailed),
+            };
         }
+
+        _ = k32.WaitForSingleObject(process.hProcess, w.INFINITE);
+
+        var exit_code: w.DWORD = 255;
+        _ = k32.GetExitCodeProcess(process.hProcess, &exit_code);
+
+        _ = nt.NtClose(process.hProcess);
+        _ = nt.NtClose(process.hThread);
+
+        nt.RtlExitUserProcess(exit_code);
         comptime unreachable;
     }
-
-    _ = k32.WaitForSingleObject(process.hProcess, w.INFINITE);
-
-    var exit_code: w.DWORD = 255;
-    _ = k32.GetExitCodeProcess(process.hProcess, &exit_code);
-
-    _ = nt.NtClose(process.hProcess);
-    _ = nt.NtClose(process.hThread);
-
-    nt.RtlExitUserProcess(exit_code);
+    comptime unreachable;
 }
 
 pub const FromBunRunContext = struct {

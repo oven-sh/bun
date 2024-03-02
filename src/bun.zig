@@ -2687,3 +2687,5 @@ pub var buffered_stdin = std.io.BufferedReader(4096, std.fs.File.Reader){
 };
 
 pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");
+
+pub const exe_suffix = if (Environment.isWindows) ".exe" else "";

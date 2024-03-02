@@ -379,7 +379,7 @@ pub const BunxCommand = struct {
                     temp_dir,
                     uid,
                     package_fmt,
-                    if (path_is_nonzero) ":" else "",
+                    if (path_is_nonzero) &[1]u8{std.fs.path.delimiter} else "",
                     PATH,
                 },
             ),

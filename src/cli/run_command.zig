@@ -400,7 +400,9 @@ pub const RunCommand = struct {
     /// This prevents '"node" exited with ...' when it was actually bun.
     /// As of writing this is only used for 'runBinary'
     fn basenameOrBun(str: []const u8) []const u8 {
-        if (strings.eqlComptime(str, bun_node_dir ++ "/node")) {
+        // The full path is not used here, because on windows it is dependant on the
+        // username. Before windows we checked bun_node_dir, but this is not allowed on Windows.
+        if (strings.hasSuffixComptime(str, "/bun-node/node" ++ bun.exe_suffix)) {
             return "bun";
         }
         return std.fs.path.basename(str);
@@ -524,8 +526,11 @@ pub const RunCommand = struct {
     }
 
     pub const bun_node_dir = switch (Environment.os) {
-        // TODO:
-        .windows => "TMPDIR",
+        // $Env:TEMP is almost always a path to a user directory. So it cannot be inlined like
+        // our uses of /tmp. You can use one of these functions instead:
+        // - bun.windows.GetTempPathW (native)
+        // - bun.fs.FileSystem.RealFS.platformTempDir (any platform)
+        .windows => @compileError("Do not use RunCommand.bun_node_dir on Windows"),
 
         .mac => "/private/tmp",
         else => "/tmp",
@@ -533,6 +538,31 @@ pub const RunCommand = struct {
         "/bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else ""
     else
         "/bun-debug-node";
+
+    pub fn bunNodeFileUtf8(target_path_buffer: *bun.windows.PathBuffer) ![:0]const u8 {
+        if (!Environment.isWindows) return bun_node_dir;
+        var temp_path_buffer: bun.WPathBuffer = undefined;
+        const len = bun.windows.GetTempPathW(
+            temp_path_buffer.len,
+            @ptrCast(&temp_path_buffer),
+        );
+        if (len == 0) {
+            return error.FailedToGetTempPath;
+        }
+
+        const converted = try bun.strings.convertUTF16toUTF8InBuffer(
+            target_path_buffer,
+            temp_path_buffer[0..len],
+        );
+
+        const dir_name = "bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else "";
+        const file_name = dir_name ++ "\\node.exe\x00";
+        @memcpy(target_path_buffer[converted.len..][0..file_name.len], file_name);
+
+        target_path_buffer[converted.len + file_name.len] = 0;
+
+        return target_path_buffer[0 .. converted.len + file_name.len :0];
+    }
 
     var self_exe_bin_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
 
@@ -772,9 +802,12 @@ pub const RunCommand = struct {
             original_path.* = PATH;
         }
 
+        var buf: bun.windows.PathBuffer = undefined;
+        const bun_node_exe = try bunNodeFileUtf8(&buf);
+        const bun_node_dir_win = bun.Dirname.dirname(u8, bun_node_exe) orelse return error.FailedToGetTempPath;
         const found_node = this_bundler.env.loadNodeJSConfig(
             this_bundler.fs,
-            if (force_using_bun) bun_node_dir ++ "/node" else "",
+            if (force_using_bun) bun_node_exe else "",
         ) catch false;
 
         var needs_to_force_bun = force_using_bun or !found_node;
@@ -797,17 +830,17 @@ pub const RunCommand = struct {
         }
 
         if (needs_to_force_bun) {
-            new_path_len += bun_node_dir.len + 1;
+            new_path_len += bun_node_dir_win.len + 1;
         }
 
         var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
 
         if (needs_to_force_bun) {
-            createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch unreachable;
+            createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch bun.outOfMemory();
             if (!force_using_bun) {
-                this_bundler.env.map.put("NODE", bun_node_dir ++ "/node") catch unreachable;
-                this_bundler.env.map.put("npm_node_execpath", bun_node_dir ++ "/node") catch unreachable;
-                this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch unreachable;
+                this_bundler.env.map.put("NODE", bun_node_exe) catch bun.outOfMemory();
+                this_bundler.env.map.put("npm_node_execpath", bun_node_exe) catch bun.outOfMemory();
+                this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch bun.outOfMemory();
             }
 
             needs_to_force_bun = false;
@@ -834,7 +867,8 @@ pub const RunCommand = struct {
             try new_path.appendSlice(PATH);
         }
 
-        this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
+        std.debug.print("PATH: {s}\n", .{new_path.items});
+        this_bundler.env.map.put("PATH", new_path.items) catch bun.outOfMemory();
     }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
@@ -1344,7 +1378,7 @@ pub const RunCommand = struct {
             }
         }
 
-        if (Environment.isWindows) try_bunx_file: {
+        if (false and Environment.isWindows) try_bunx_file: {
             const WinBunShimImpl = @import("../install/windows-shim/bun_shim_impl.zig");
             const w = std.os.windows;
             const debug = Output.scoped(.BunRunXFastPath, false);

@@ -1,7 +1,6 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    // TODO(@paperdave): arm support
     const target = b.standardTargetOptions(.{
         .default_target = .{
             .cpu_model = .{ .explicit = &std.Target.x86.cpu.nehalem },

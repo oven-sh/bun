@@ -1543,7 +1543,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.flags.is_waiting_for_request_body = false;
                     resp.clearOnData();
                 }
-                resp.endStream(closeConnection);
+
+                // This will send a terminating 0\r\n\r\n chunk to the client
+                // We only want to do that if they're still expecting a body
+                // We cannot call this function if the Content-Length header was previously set
+                if (resp.state().isResponsePending())
+                    resp.endStream(closeConnection);
+
                 this.resp = null;
             }
         }

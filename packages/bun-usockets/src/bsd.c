@@ -392,7 +392,12 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 
     internal_finalize_bsd_addr(addr);
 
+#if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
+// skip the extra fcntl calls.
+    return accepted_fd;
+#else
     return bsd_set_nonblocking(apple_no_sigpipe(accepted_fd));
+#endif
 }
 
 int bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {

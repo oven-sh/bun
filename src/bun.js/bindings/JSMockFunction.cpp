@@ -579,11 +579,12 @@ extern "C" JSC::EncodedJSValue JSMock__jsRestoreAllMocks(JSC::JSGlobalObject* gl
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject) {
-    if (!globalObject->mockModule.activeSpies) {
+extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
+{
+    if (!globalObject->mockModule.activeMocks) {
         return;
     }
-    auto spiesValue = globalObject->mockModule.activeSpies.get();
+    auto spiesValue = globalObject->mockModule.activeMocks.get();
 
     ActiveSpySet* activeSpies = jsCast<ActiveSpySet*>(spiesValue);
     MarkedArgumentBuffer active;
@@ -597,12 +598,13 @@ extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject) {
 
         auto* spyObject = jsCast<JSMockFunction*>(spy);
         // seems similar to what we do in JSMock__resetSpies,
-        // but we actually only clear calls, context, instances and results 
-        spyObject->clear(); 
+        // but we actually only clear calls, context, instances and results
+        spyObject->clear();
     }
 }
 
-extern "C" JSC::EncodedJSValue JSMock__jsClearAllMocks(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe) {
+extern "C" JSC::EncodedJSValue JSMock__jsClearAllMocks(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+{
     JSMock__clearAllMocks(jsCast<Zig::GlobalObject*>(globalObject));
     return JSValue::encode(jsUndefined());
 }
@@ -700,13 +702,23 @@ extern "C" JSC::EncodedJSValue JSMock__jsSpyOn(JSC::JSGlobalObject* lexicalGloba
 
         mock->spyOriginal.set(vm, mock, value);
 
-        if (!globalObject->mockModule.activeSpies) {
-            ActiveSpySet* activeSpies = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
-            globalObject->mockModule.activeSpies.set(vm, activeSpies);
+        {
+            if (!globalObject->mockModule.activeSpies) {
+                ActiveSpySet* activeSpies = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
+                globalObject->mockModule.activeSpies.set(vm, activeSpies);
+            }
+            ActiveSpySet* activeSpies = jsCast<ActiveSpySet*>(globalObject->mockModule.activeSpies.get());
+            activeSpies->add(vm, mock, mock);
         }
 
-        ActiveSpySet* activeSpies = jsCast<ActiveSpySet*>(globalObject->mockModule.activeSpies.get());
-        activeSpies->add(vm, mock, mock);
+        {
+            if (!globalObject->mockModule.activeMocks) {
+                ActiveSpySet* activeMocks = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
+                globalObject->mockModule.activeMocks.set(vm, activeMocks);
+            }
+            ActiveSpySet* activeMocks = jsCast<ActiveSpySet*>(globalObject->mockModule.activeMocks.get());
+            activeMocks->add(vm, mock, mock);
+        }
 
         return JSValue::encode(mock);
     }
@@ -1097,6 +1109,14 @@ extern "C" JSC::EncodedJSValue JSMock__jsMockFn(JSC::JSGlobalObject* lexicalGlob
     } else {
         thisObject->setName("mockConstructor"_s);
     }
+
+    if (!globalObject->mockModule.activeMocks) {
+        ActiveSpySet* activeMocks = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
+        globalObject->mockModule.activeMocks.set(vm, activeMocks);
+    }
+
+    ActiveSpySet* activeMocks = jsCast<ActiveSpySet*>(globalObject->mockModule.activeMocks.get());
+    activeMocks->add(vm, thisObject, thisObject);
 
     return JSValue::encode(thisObject);
 }

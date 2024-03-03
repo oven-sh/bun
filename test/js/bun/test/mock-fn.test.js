@@ -76,6 +76,20 @@ describe("mock()", () => {
     expect(fn).toHaveBeenLastCalledWith();
     expect(fn).toHaveBeenCalledWith();
   });
+
+  test("jest.clearAllMocks()", () => {
+    const func = jest.fn(() => 42);
+    expect(func).not.toHaveBeenCalled();
+    expect(func()).toBe(42);
+    expect(func).toHaveBeenCalled();
+
+    jest.clearAllMocks();
+
+    expect(func).not.toHaveBeenCalled();
+    expect(func()).toBe(42);
+    expect(func).toHaveBeenCalled();
+  });
+
   test("passes this value", () => {
     const fn = jest.fn(function hey() {
       "use strict";

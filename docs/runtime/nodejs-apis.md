@@ -432,7 +432,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL)
 
-🟢 Fully implemented.
+🟡 `URL.createObjectURL` is missing. See [Issue #3925](https://github.com/oven-sh/bun/issues/3925)
 
 ### [`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams)
 

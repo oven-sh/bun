@@ -214,16 +214,12 @@ template<> void JSTextEncoderDOMConstructor::initializeProperties(VM& vm, JSDOMG
     putDirect(vm, vm.propertyNames->prototype, JSTextEncoder::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
-constexpr JSC::DFG::AbstractHeapKind heapKinds[4] = { JSC::DFG::HeapObjectCount };
-
-// TODO: figure out why the test fails after JSC upgrade and re-enable this!
-// constexpr JSC::DFG::AbstractHeapKind encodeIntoRead[4] = { JSC::DFG::Heap, JSC::DFG::MiscFields, JSC::DFG::TypedArrayProperties, JSC::DFG::Absolute };
-// constexpr JSC::DFG::AbstractHeapKind encodeIntoWrite[4] = { JSC::DFG::SideState, JSC::DFG::Absolute, JSC::DFG::JSCell_structureID, JSC::DFG::HeapObjectCount };
-
 static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck(
     jsTextEncoderEncodeWithoutTypeCheck,
     JSTextEncoder::info(),
-    JSC::DOMJIT::Effect::forReadWriteKinds(heapKinds, heapKinds),
+    // https://github.com/oven-sh/bun/issues/9226
+    // It's not totally clear what the correct side effects are for this function, so we just make it conservative for now.
+    JSC::DOMJIT::Effect {},
     DOMJIT::IDLResultTypeFilter<IDLUint8Array>::value,
     DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value);
 

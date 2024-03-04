@@ -6,7 +6,7 @@ export function main() {
 $visibility = "Private";
 export function require(this: CommonJSModuleRecord, id: string) {
   // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
-  return $overridableRequire.$call(this, id);
+  return $overridableRequire.$apply(this, arguments);
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`

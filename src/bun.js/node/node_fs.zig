@@ -6546,7 +6546,7 @@ pub const NodeFS = struct {
         }
 
         const open_flags = os.O.DIRECTORY | os.O.RDONLY;
-        const fd = switch (Syscall.openatOSPath(bun.invalid_fd, src, open_flags, 0)) {
+        const fd = switch (Syscall.openatOSPath(bun.toFD(std.fs.cwd().fd), src, open_flags, 0)) {
             .err => |err| {
                 task.finishConcurrently(.{ .err = err.withPath(this.osPathIntoSyncErrorBuf(src)) });
                 return false;

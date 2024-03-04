@@ -1143,15 +1143,19 @@ pub export fn napi_is_buffer(env: napi_env, value: napi_value, result: *bool) na
     result.* = value.isBuffer(env);
     return .ok;
 }
-pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: *[*]u8, length: *usize) napi_status {
+pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: ?*[*]u8, length: ?*usize) napi_status {
     log("napi_get_buffer_info", .{});
     const array_buf = value.asArrayBuffer(env) orelse {
         // TODO: is invalid_arg what to return here?
         return .arraybuffer_expected;
     };
 
-    data.* = array_buf.ptr;
-    length.* = array_buf.byte_len;
+    if (data) |dat|
+        dat.* = array_buf.ptr;
+
+    if (length) |len|
+        len.* = array_buf.byte_len;
+
     return .ok;
 }
 

@@ -9,7 +9,6 @@ const jest = bun.JSC.Jest;
 const Jest = jest.Jest;
 const TestRunner = jest.TestRunner;
 const DescribeScope = jest.DescribeScope;
-const NeededAssertType = jest.NeededAssertType;
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -41,6 +40,9 @@ const JSTypeOfMap = bun.ComptimeStringMap([]const u8, .{
 });
 
 pub var active_test_expectation_counter: Counter = .{};
+pub var is_expecting_assertions: bool = false;
+pub var is_expecting_assertions_count: bool = false;
+pub var expected_assertions_number: u32 = 0;
 
 const log = bun.Output.scoped(.expect, false);
 
@@ -4326,8 +4328,7 @@ pub const Expect = struct {
         _ = callFrame;
         defer globalObject.bunVM().autoGarbageCollect();
 
-        if (Jest.runner.?.pending_test) |pending_test|
-            pending_test.assert_asserts(NeededAssertType.atLeastOne, 0);
+        is_expecting_assertions = true;
 
         return .undefined;
     }
@@ -4360,8 +4361,8 @@ pub const Expect = struct {
 
         const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
 
-        if (Jest.runner.?.pending_test) |pending_test|
-            pending_test.assert_asserts(NeededAssertType.equalToNeededAsserts, unsigned_expected_assertions);
+        is_expecting_assertions_count = true;
+        expected_assertions_number = unsigned_expected_assertions;
 
         return .undefined;
     }

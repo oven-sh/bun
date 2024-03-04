@@ -655,9 +655,6 @@ function assignHeaders(object, req) {
     return false;
   }
 }
-function destroyBodyStreamNT(bodyStream) {
-  bodyStream.destroy();
-}
 
 var defaultIncomingOpts = { type: "request" };
 
@@ -749,7 +746,6 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
     if (self[abortedSymbol]) return;
     if (done) {
       self.push(null);
-      process.nextTick(destroyBodyStreamNT, self);
       break;
     }
     for (var v of value) {

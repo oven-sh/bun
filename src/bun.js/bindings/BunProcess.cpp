@@ -550,14 +550,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
 static HashMap<String, int>* signalNameToNumberMap = nullptr;
 static HashMap<int, String>* signalNumberToNameMap = nullptr;
 
-// signal number to array of script execution context ids that care about the signal
+// On windows, signals need to have a handle to the uv_signal_t. When sigaction is used, this is kept track globally for you.
 struct SignalHandleValue {
 #if OS(WINDOWS)
     uv_signal_t* handle;
 #endif
 };
 static HashMap<int, SignalHandleValue>* signalToContextIdsMap = nullptr;
-static Lock signalToContextIdsMapLock;
 
 static const NeverDestroyed<String> signalNames[] = {
     MAKE_STATIC_STRING_IMPL("SIGHUP"),
@@ -829,7 +828,6 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
             if (signalNumber != SIGKILL) { // windows has no SIGSTOP
 #endif
                 uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
-                Locker lock { signalToContextIdsMapLock };
 
                 if (isAdded) {
                     if (!signalToContextIdsMap->contains(signalNumber)) {
@@ -861,9 +859,6 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                             return;
 #endif
 
-                        signalToContextIdsMap->set(signalNumber, signal_handle);
-                    } else {
-                        SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                         signalToContextIdsMap->set(signalNumber, signal_handle);
                     }
                 } else {

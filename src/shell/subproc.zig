@@ -118,7 +118,7 @@ pub const ShellSubprocess = struct {
             _ = allocator; // autofix
             _ = max_size; // autofix
             _ = is_sync; // autofix
-        
+
             assertStdioResult(result);
 
             if (Environment.isWindows) {

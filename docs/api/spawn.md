@@ -186,6 +186,7 @@ proc.unref();
 ## Inter-process communication (IPC)
 
 Bun supports direct inter-process communication channel between two `bun` processes. To receive messages from a spawned Bun subprocess, specify an `ipc` handler.
+
 {%callout%}
 **Note** — This API is only compatible with other `bun` processes. Use `process.execPath` to get a path to the currently running `bun` executable.
 {%/callout%}
@@ -227,8 +228,6 @@ process.on("message", (message) => {
 });
 ```
 
-All messages are serialized using the JSC `serialize` API, which allows for the same set of [transferrable types](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) supported by `postMessage` and `structuredClone`, including strings, typed arrays, streams, and objects.
-
 ```ts#child.ts
 // send a string
 process.send("Hello from child as string");
@@ -236,6 +235,11 @@ process.send("Hello from child as string");
 // send an object
 process.send({ message: "Hello from child as object" });
 ```
+
+The `ipcMode` option controls the underlying communication format between the two processes:
+
+- `advanced`: (default) Messages are serialized using the JSC `serialize` API, which supports cloning [everything `structuredClone` supports](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm). This does not support transferring ownership of objects.
+- `json`: Messages are serialized using `JSON.stringify` and `JSON.parse`, which does not support as many object types as `advanced` does.
 
 ## Blocking API (`Bun.spawnSync()`)
 

@@ -1,7 +1,7 @@
 // @known-failing-on-windows: 1 failing
 
-import { test as bunTest, expect, describe } from "bun:test";
-import { generateClient } from "./helper.ts";
+import { test as bunTest, it as bunIt, expect, describe } from "bun:test";
+import { generate, generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";
 import { createCanvas } from "@napi-rs/canvas";
 
@@ -205,5 +205,9 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
       },
       20000,
     );
+
+    bunIt("generates client successfully", async () => {
+      generate(type);
+    });
   });
 });

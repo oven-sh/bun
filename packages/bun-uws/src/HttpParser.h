@@ -262,15 +262,15 @@ namespace uWS
                    hasMore(x, 'z');
         }
 
-        static inline void *consumeFieldName(char *p) {
+        static inline void *consumeFieldName(unsigned char *p) {
         //for (; true; p += 8) {
             //uint64_t word;
             //memcpy(&word, p, sizeof(uint64_t));
             //if (notFieldNameWord(word)) {
-                while (isFieldNameByte(*(unsigned char *)p)) {
-                    *(p++) |= 0x20;
-                }
-                return (void *)p;
+            while (isFieldNameByte(*(unsigned char *)p)) {
+                *(p++) |= p[0] <= 'Z' ? 32 : 0;
+            }
+            return (void *)p;
             //}
             //word |= 0x2020202020202020ull;
             //memcpy(p, &word, sizeof(uint64_t));
@@ -386,7 +386,7 @@ namespace uWS
             {
                 /* Lower case and consume the field name */
                 preliminaryKey = postPaddedBuffer;
-                postPaddedBuffer = (char *)consumeFieldName(postPaddedBuffer);
+                postPaddedBuffer = (char *)consumeFieldName(reinterpret_cast<unsigned char*>(postPaddedBuffer));
                 headers->key = std::string_view(preliminaryKey, (size_t)(postPaddedBuffer - preliminaryKey));
 
                 /* We should not accept whitespace between key and colon, so colon must foloow immediately */

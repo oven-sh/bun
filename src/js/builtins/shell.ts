@@ -110,7 +110,7 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
         };
         reject = code => {
           potentialError.initialize(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code), code);
-          rej();
+          rej(potentialError);
         };
       });
 

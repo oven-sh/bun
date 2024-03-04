@@ -704,7 +704,7 @@ const PosixBufferedReader = struct {
         if (this.getFd() != bun.invalid_fd) {
             std.debug.assert(!this.flags.closed_without_reporting);
             this.flags.closed_without_reporting = true;
-            this.handle.close(this, {});
+            if (this.close_handle) this.handle.close(this, {});
         }
     }
 
@@ -748,7 +748,7 @@ const PosixBufferedReader = struct {
 
     fn finish(this: *PosixBufferedReader) void {
         if (this.handle != .closed or this.flags.closed_without_reporting) {
-            this.closeHandle();
+            if (this.close_handle) this.closeHandle();
             return;
         }
 
@@ -757,18 +757,17 @@ const PosixBufferedReader = struct {
     }
 
     fn closeHandle(this: *PosixBufferedReader) void {
-        if (!this.close_handle) return;
         if (this.flags.closed_without_reporting) {
             this.flags.closed_without_reporting = false;
             this.done();
             return;
         }
 
-        this.handle.close(this, done);
+        if (this.close_handle) this.handle.close(this, done);
     }
 
     pub fn done(this: *PosixBufferedReader) void {
-        if (this.handle != .closed) {
+        if (this.handle != .closed and this.close_handle) {
             this.closeHandle();
             return;
         } else if (this.flags.closed_without_reporting) {

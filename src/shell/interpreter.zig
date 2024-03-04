@@ -3013,10 +3013,19 @@ pub const Interpreter = struct {
 
         fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {
             for (pipes) |*pipe| {
-                pipe.* = switch (Syscall.pipe()) {
-                    .err => |e| return .{ .err = e },
-                    .result => |p| p,
-                };
+                if (bun.Environment.isWindows) {
+                    var fds: [2]uv.uv_file = undefined;
+                    if (uv.uv_pipe(&fds, 0, 0).errEnum()) |e| {
+                        return .{ .err = Syscall.Error.fromCode(e, .pipe) };
+                    }
+                    pipe[0] = bun.FDImpl.fromUV(fds[0]).encode();
+                    pipe[1] = bun.FDImpl.fromUV(fds[1]).encode();
+                } else {
+                    pipe.* = switch (Syscall.pipe()) {
+                        .err => |e| return .{ .err = e },
+                        .result => |p| p,
+                    };
+                }
                 set_count.* += 1;
             }
             return Maybe(void).success;
@@ -3887,12 +3896,12 @@ pub const Interpreter = struct {
             }
 
             pub fn fromStr(str: []const u8) ?Builtin.Kind {
-                if (!bun.Environment.isWindows) {
-                    if (bun.strings.eqlComptime(str, "cat")) {
-                        log("Cat builtin disabled on posix for now", .{});
-                        return null;
-                    }
-                }
+                // if (!bun.Environment.isWindows) {
+                //     if (bun.strings.eqlComptime(str, "cat")) {
+                //         log("Cat builtin disabled on posix for now", .{});
+                //         return null;
+                //     }
+                // }
                 @setEvalBranchQuota(5000);
                 const tyinfo = @typeInfo(Builtin.Kind);
                 inline for (tyinfo.Enum.fields) |field| {
@@ -4451,6 +4460,8 @@ pub const Interpreter = struct {
                     args: []const [*:0]const u8,
                     idx: usize = 0,
                     reader: ?*IOReader = null,
+                    chunks_queued: usize = 0,
+                    chunks_done: usize = 0,
                     out_done: bool = false,
                     in_done: bool = false,
 
@@ -4494,12 +4505,17 @@ pub const Interpreter = struct {
 
                 if (should_read_from_stdin) {
                     this.state = .{
-                        .exec_stdin = .{},
+                        .exec_stdin = .{
+                            // .in_done = !this.bltn.stdin.needsIO(),
+                            // .out_done = !this.bltn.stdout.needsIO(),
+                        },
                     };
                 } else {
                     this.state = .{
                         .exec_filepath_args = .{
                             .args = filepath_args.?,
+                            // .in_done = !this.bltn.stdin.needsIO(),
+                            // .out_done = !this.bltn.stdout.needsIO(),
                         },
                     };
                 }
@@ -4538,6 +4554,7 @@ pub const Interpreter = struct {
                         if (exec.reader) |r| r.deref();
 
                         const arg = std.mem.span(exec.args[exec.idx]);
+                        exec.idx += 1;
                         const dir = this.bltn.parentCmd().base.shell.cwd_fd;
                         const fd = switch (ShellSyscall.openat(dir, arg, os.O.RDONLY, 0)) {
                             .result => |fd| fd,
@@ -4550,6 +4567,8 @@ pub const Interpreter = struct {
                         };
 
                         const reader = IOReader.init(fd, this.bltn.eventLoop());
+                        exec.chunks_done = 0;
+                        exec.chunks_queued = 0;
                         exec.reader = reader;
                         exec.reader.?.addReader(this);
                         exec.reader.?.start();
@@ -4560,6 +4579,7 @@ pub const Interpreter = struct {
             }
 
             pub fn onIOWriterChunk(this: *Cat, err: ?JSC.SystemError) void {
+                print("onIOWriterChunk(0x{x}, {s}, had_err={any})", .{ @intFromPtr(this), @tagName(this.state), err != null });
                 // Writing to stdout errored, cancel everything and write error
                 if (err) |e| {
                     defer e.deref();
@@ -4599,6 +4619,7 @@ pub const Interpreter = struct {
                         // Need to wait for more chunks to be written
                     },
                     .exec_filepath_args => {
+                        this.state.exec_filepath_args.chunks_done += 1;
                         if (this.state.exec_filepath_args.in_done) {
                             this.next();
                             return;
@@ -4612,6 +4633,7 @@ pub const Interpreter = struct {
             }
 
             pub fn onIOReaderChunk(this: *Cat, chunk: []const u8) ReadChunkAction {
+                print("onIOReaderChunk(0x{x}, {s}, chunk_len={d})", .{ @intFromPtr(this), @tagName(this.state), chunk.len });
                 switch (this.state) {
                     .exec_stdin => {
                         // out_done should only be done if reader is done (impossible since we just read a chunk)
@@ -4626,6 +4648,7 @@ pub const Interpreter = struct {
                     },
                     .exec_filepath_args => {
                         if (this.bltn.stdout.needsIO()) {
+                            this.state.exec_filepath_args.chunks_queued += 1;
                             this.bltn.stdout.enqueue(this, chunk);
                             return .cont;
                         }
@@ -4641,6 +4664,7 @@ pub const Interpreter = struct {
                     defer e.deref();
                     break :brk @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
                 } else 0;
+                print("onIOReaderDone(0x{x}, {s}, errno={d})", .{ @intFromPtr(this), @tagName(this.state), errno });
 
                 switch (this.state) {
                     .exec_stdin => {
@@ -4654,9 +4678,25 @@ pub const Interpreter = struct {
                             this.bltn.stdout.fd.writer.cancelChunks(this);
                             return;
                         }
-                        // TODO finish this
+                        if (this.state.exec_stdin.out_done or !this.bltn.stdout.needsIO()) {
+                            this.bltn.done(0);
+                        }
                     },
-                    .exec_filepath_args => {},
+                    .exec_filepath_args => {
+                        this.state.exec_filepath_args.in_done = true;
+                        if (errno != 0) {
+                            if (this.state.exec_filepath_args.out_done or !this.bltn.stdout.needsIO()) {
+                                this.state.exec_filepath_args.deinit();
+                                this.bltn.done(errno);
+                                return;
+                            }
+                            this.bltn.stdout.fd.writer.cancelChunks(this);
+                            return;
+                        }
+                        if (this.state.exec_filepath_args.out_done or (this.state.exec_filepath_args.chunks_done >= this.state.exec_filepath_args.chunks_queued) or !this.bltn.stdout.needsIO()) {
+                            this.next();
+                        }
+                    },
                     .done, .waiting_write_err, .idle => {},
                 }
             }
@@ -8551,8 +8591,10 @@ pub const Interpreter = struct {
         /// Idempotent function to start the reading
         pub fn start(this: *IOReader) void {
             if (bun.Environment.isPosix) {
-                if (this.reader.handle.poll.isRegistered()) {
-                    this.reader.read();
+                if (this.reader.handle == .closed or !this.reader.handle.poll.isRegistered()) {
+                    if (this.reader.start(this.fd, true).asErr()) |_| {
+                        @panic("TODO handle error");
+                    }
                 }
                 return;
             }
@@ -8649,6 +8691,7 @@ pub const Interpreter = struct {
         }
 
         pub fn onReaderDone(this: *IOReader) void {
+            log("IOReader(0x{x}) done", .{@intFromPtr(this)});
             this.setReading(false);
             for (this.readers.slice()) |r| {
                 r.onReaderDone(if (this.err) |*err| brk: {
@@ -8664,9 +8707,12 @@ pub const Interpreter = struct {
 
         pub fn __deinit(this: *@This()) void {
             if (this.fd != bun.invalid_fd) {
+                log("IOReader(0x{x}) __deinit fd={}", .{ @intFromPtr(this), this.fd });
                 _ = bun.sys.close(this.fd);
             }
             this.buf.deinit(bun.default_allocator);
+            this.reader.disableKeepingProcessAlive({});
+            this.reader.deinit();
             bun.destroy(this);
         }
 

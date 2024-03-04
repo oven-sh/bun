@@ -2089,7 +2089,7 @@ pub const sys = @import("./sys.zig");
 
 pub const Mode = C.Mode;
 
-pub const windows = if (Environment.isWindows) @import("./windows.zig") else struct {};
+pub const windows = @import("./windows.zig");
 
 pub const FDTag = enum {
     none,

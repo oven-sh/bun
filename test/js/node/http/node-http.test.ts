@@ -23,6 +23,7 @@ import { spawnSync } from "node:child_process";
 import nodefs from "node:fs";
 import { join as joinPath } from "node:path";
 import { unlinkSync } from "node:fs";
+import { PassThrough } from "node:stream";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
@@ -187,6 +188,15 @@ describe("node:http", () => {
               Location: `http://localhost:${server.port}/redirected`,
             });
             res.end("Got redirect!\n");
+            return;
+          }
+          if (reqUrl.pathname === "/multi-chunk-response") {
+            res.writeHead(200, { "Content-Type": "text/plain" });
+            const toWrite = "a".repeat(512);
+            for (let i = 0; i < 4; i++) {
+              res.write(toWrite);
+            }
+            res.end();
             return;
           }
           if (reqUrl.pathname === "/multiple-set-cookie") {
@@ -760,6 +770,25 @@ describe("node:http", () => {
         req.on("error", err => {
           done(err);
         });
+        req.end();
+      });
+    });
+
+    it("should correctly stream a multi-chunk response #5320", async done => {
+      runTest(done, (server, serverPort, done) => {
+        const req = request({ host: "localhost", port: `${serverPort}`, path: "/multi-chunk-response", method: "GET" });
+
+        req.on("error", err => done(err));
+
+        req.on("response", async res => {
+          const body = res.pipe(new PassThrough({ highWaterMark: 512 }));
+          const response = new Response(body);
+          const text = await response.text();
+
+          expect(text.length).toBe(2048);
+          done();
+        });
+
         req.end();
       });
     });

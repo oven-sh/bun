@@ -774,11 +774,11 @@ describe("node:http", () => {
       });
     });
 
-    it("should correctly stream a multi-chunk response #5320", async (done) => {
+    it("should correctly stream a multi-chunk response #5320", async done => {
       runTest(done, (server, serverPort, done) => {
-        const req = request({ host: "localhost", port: `${serverPort}`, path: '/multi-chunk-response', method: "GET" });
+        const req = request({ host: "localhost", port: `${serverPort}`, path: "/multi-chunk-response", method: "GET" });
 
-        req.on('error', (err) => done(err));
+        req.on("error", err => done(err));
 
         req.on("response", async res => {
           const body = res.pipe(new PassThrough({ highWaterMark: 512 }));

@@ -409,6 +409,23 @@ pub const UpgradeCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         @setCold(true);
 
+        const args = bun.argv();
+        if (args.len > 2) {
+            for (args[2..]) |arg| {
+                if (!strings.contains(arg, "--")) {
+                    Output.prettyError(
+                        \\<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.
+                        \\<blue>note<r><d>:<r> Use `bun update
+                    , .{});
+                    for (args[2..]) |arg_err| {
+                        Output.prettyError(" {s}", .{arg_err});
+                    }
+                    Output.prettyErrorln("` instead.", .{});
+                    Global.exit(1);
+                }
+            }
+        }
+
         _exec(ctx) catch |err| {
             Output.prettyErrorln(
                 \\<r>Bun upgrade failed with error: <red><b>{s}<r>

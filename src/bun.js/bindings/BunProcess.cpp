@@ -695,7 +695,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 
     SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
 
-    auto* context = ScriptExecutionContext::getScriptExecutionContext(1);
+    auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
     if (UNLIKELY(!context))
         return;
 

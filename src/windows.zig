@@ -3169,7 +3169,6 @@ fn freeWithDefaultAllocator(signal: *anyopaque) callconv(.C) void {
 }
 
 fn Bun__UVSignalHandle__close(signal: *libuv.uv_signal_t) callconv(.C) void {
-    std.debug.print("THAT SIGNAL IS DONE\n", .{});
     _ = libuv.uv_signal_stop(signal);
     libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
 }

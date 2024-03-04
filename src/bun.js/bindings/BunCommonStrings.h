@@ -3,7 +3,8 @@
 // clang-format off
 #define BUN_COMMON_STRINGS_EACH_NAME(macro) \
     macro(require)                          \
-    macro(resolve)
+    macro(resolve) \
+    macro(mockedFunction)
 // clang-format on
 
 #define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)                           \

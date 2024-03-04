@@ -560,7 +560,7 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
 void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
   if (!loop->data.ssl_data) {
     struct loop_ssl_data *loop_ssl_data =
-        us_malloc(sizeof(struct loop_ssl_data));
+        us_calloc(1, sizeof(struct loop_ssl_data));
     loop_ssl_data->ssl_read_input_length = 0;
     loop_ssl_data->ssl_read_input_offset = 0;
     loop_ssl_data->last_write_was_msg_more = 0;

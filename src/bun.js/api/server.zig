@@ -1550,7 +1550,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.flags.is_waiting_for_request_body = false;
                     resp.clearOnData();
                 }
-                resp.endStream(closeConnection);
+
+                // This will send a terminating 0\r\n\r\n chunk to the client
+                // We only want to do that if they're still expecting a body
+                // We cannot call this function if the Content-Length header was previously set
+                if (resp.state().isResponsePending())
+                    resp.endStream(closeConnection);
+
                 this.resp = null;
             }
         }
@@ -1757,7 +1763,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 // the promise is pending
-                if (body.value == .Locked and body.value.Locked.action != .none and body.value.Locked.promise != null) {
+                if (body.value == .Locked and body.value.Locked.hasPendingPromise()) {
                     body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                 }
             }

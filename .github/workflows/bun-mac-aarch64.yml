@@ -65,7 +65,6 @@ jobs:
 
       - name: Compile Zig Object
         uses: docker/build-push-action@v5
-        if: runner.arch == 'X64'
         with:
           context: .
           push: false
@@ -88,6 +87,7 @@ jobs:
         with:
           name: ${{ matrix.tag }}
           path: ${{runner.temp}}/release/bun-zig.o
+          if-no-files-found: "error"
 
   macOS-dependencies:
     name: macOS Dependencies
@@ -169,6 +169,7 @@ jobs:
         with:
           name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps
+          if-no-files-found: "error"
 
   macOS-cpp:
     name: macOS C++
@@ -240,6 +241,7 @@ jobs:
         with:
           name: ${{ matrix.tag }}-cpp
           path: ${{ runner.temp }}/bun-cpp-obj/bun-cpp-objects.a
+          if-no-files-found: "error"
   macOS-link:
     name: macOS Link
     runs-on: ${{ matrix.runner }}
@@ -336,10 +338,12 @@ jobs:
         with:
           name: ${{matrix.tag}}-profile
           path: ${{runner.temp}}/link-build/${{matrix.tag}}-profile.zip
+          if-no-files-found: "error"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{matrix.tag}}
           path: ${{runner.temp}}/link-build/${{matrix.tag}}.zip
+          if-no-files-found: "error"
       - name: Release
         id: release
         uses: ncipollo/release-action@v1

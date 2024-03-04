@@ -43,7 +43,8 @@ private:
     HTTPHeaderField(String&& name, String&& value)
         : m_name(WTFMove(name))
         , m_value(WTFMove(value))
-    { }
+    {
+    }
     String m_name;
     String m_value;
 };
@@ -68,12 +69,14 @@ std::optional<HTTPHeaderField> HTTPHeaderField::decode(Decoder& decoder)
     if (!value)
         return std::nullopt;
 
-    return {{ WTFMove(*name), WTFMove(*value) }};
+    return { { WTFMove(*name), WTFMove(*value) } };
 }
 
 namespace RFC7230 {
 bool isTokenCharacter(UChar);
 bool isWhitespace(UChar);
+bool isTokenCharacter(LChar);
+bool isWhitespace(LChar);
 bool isCommentText(UChar);
 bool isQuotedPairSecondOctet(UChar);
 bool isDelimiter(UChar);

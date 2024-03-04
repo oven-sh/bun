@@ -245,7 +245,7 @@ pub const IO = struct {
     }
 
     pub const InKind = union(enum) {
-        fd: *CowFd,
+        fd: *Interpreter.IOReader,
         ignore,
 
         pub fn ref(this: InKind) InKind {
@@ -273,7 +273,7 @@ pub const IO = struct {
         pub fn to_subproc_stdio(this: InKind, stdio: *bun.shell.subproc.Stdio) void {
             switch (this) {
                 .fd => {
-                    stdio.* = .{ .fd = this.fd.__fd };
+                    stdio.* = .{ .fd = this.fd.fd };
                 },
                 .ignore => {
                     stdio.* = .ignore;
@@ -1017,7 +1017,7 @@ pub const Interpreter = struct {
 
         const export_env = brk: {
             var export_env = EnvMap.init(allocator);
-            // This will be set by in the shell builtin to `process.env`
+            // This will be set in the shell builtin to `process.env`
             if (event_loop == .js) break :brk export_env;
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
@@ -1077,7 +1077,7 @@ pub const Interpreter = struct {
             .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
         };
 
-        const stdin_reader = CowFd.init(stdin_fd);
+        const stdin_reader = IOReader.init(stdin_fd, event_loop);
         const stdout_writer = IOWriter.init(stdout_fd, event_loop);
         const stderr_writer = IOWriter.init(stderr_fd, event_loop);
 
@@ -2867,7 +2867,7 @@ pub const Interpreter = struct {
                         const kind = "subproc";
                         _ = kind;
                         var cmd_io = this.getIO();
-                        const stdin = if (cmd_count > 1) Pipeline.readPipe(pipes, i, &cmd_io) else cmd_io.stdin.ref();
+                        const stdin = if (cmd_count > 1) Pipeline.readPipe(pipes, i, &cmd_io, evtloop) else cmd_io.stdin.ref();
                         const stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io, evtloop) else cmd_io.stdout.ref();
                         cmd_io.stdin = stdin;
                         cmd_io.stdout = stdout;
@@ -2939,7 +2939,7 @@ pub const Interpreter = struct {
             }
         }
 
-        pub fn onIOWriterDone(this: *Pipeline, err: ?JSC.SystemError) void {
+        pub fn onIOWriterChunk(this: *Pipeline, err: ?JSC.SystemError) void {
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.state == .waiting_write_err);
             }
@@ -3028,10 +3028,10 @@ pub const Interpreter = struct {
             return .{ .fd = .{ .writer = IOWriter.init(pipes[proc_idx][1], evtloop) } };
         }
 
-        fn readPipe(pipes: []Pipe, proc_idx: usize, io: *IO) IO.InKind {
+        fn readPipe(pipes: []Pipe, proc_idx: usize, io: *IO, evtloop: JSC.EventLoopHandle) IO.InKind {
             // First command in the pipeline should read from stdin
             if (proc_idx == 0) return io.stdin.ref();
-            return .{ .fd = CowFd.init(pipes[proc_idx - 1][0]) };
+            return .{ .fd = IOReader.init(pipes[proc_idx - 1][0], evtloop) };
         }
     };
 
@@ -3358,7 +3358,7 @@ pub const Interpreter = struct {
             return this.next();
         }
 
-        pub fn onIOWriterDone(this: *Cmd, e: ?JSC.SystemError) void {
+        pub fn onIOWriterChunk(this: *Cmd, e: ?JSC.SystemError) void {
             if (e) |err| {
                 this.base.throw(&bun.shell.ShellErr.newSys(err));
                 return;
@@ -3822,6 +3822,7 @@ pub const Interpreter = struct {
         cwd: bun.FileDescriptor,
 
         impl: union(Kind) {
+            cat: Cat,
             touch: Touch,
             mkdir: Mkdir,
             @"export": Export,
@@ -3837,6 +3838,7 @@ pub const Interpreter = struct {
         const Result = @import("../result.zig").Result;
 
         pub const Kind = enum {
+            cat,
             touch,
             mkdir,
             @"export",
@@ -3854,6 +3856,7 @@ pub const Interpreter = struct {
 
             pub fn usageString(this: Kind) []const u8 {
                 return switch (this) {
+                    .cat => "usage: cat [-belnstuv] [file ...]\n",
                     .touch => "usage: touch [-A [-][[hh]mm]SS] [-achm] [-r file] [-t [[CC]YY]MMDDhhmm[.SS]]\n       [-d YYYY-MM-DDThh:mm:SS[.frac][tz]] file ...\n",
                     .mkdir => "usage: mkdir [-pv] [-m mode] directory_name ...\n",
                     .@"export" => "",
@@ -3869,6 +3872,7 @@ pub const Interpreter = struct {
 
             pub fn asString(this: Kind) []const u8 {
                 return switch (this) {
+                    .cat => "cat",
                     .touch => "touch",
                     .mkdir => "mkdir",
                     .@"export" => "export",
@@ -3883,6 +3887,12 @@ pub const Interpreter = struct {
             }
 
             pub fn fromStr(str: []const u8) ?Builtin.Kind {
+                if (!bun.Environment.isWindows) {
+                    if (bun.strings.eqlComptime(str, "cat")) {
+                        log("Cat builtin disabled on posix for now", .{});
+                        return null;
+                    }
+                }
                 @setEvalBranchQuota(5000);
                 const tyinfo = @typeInfo(Builtin.Kind);
                 inline for (tyinfo.Enum.fields) |field| {
@@ -3946,7 +3956,7 @@ pub const Interpreter = struct {
             };
 
             pub const Input = union(enum) {
-                fd: *CowFd,
+                fd: *IOReader,
                 /// array list not ownedby this type
                 buf: std.ArrayList(u8),
                 arraybuf: ArrayBuf,
@@ -3962,7 +3972,7 @@ pub const Interpreter = struct {
                     }
                 }
 
-                pub fn needsIO(this: *Output) bool {
+                pub fn needsIO(this: *Input) bool {
                     return switch (this.*) {
                         .fd => true,
                         else => false,
@@ -3988,6 +3998,7 @@ pub const Interpreter = struct {
 
         pub inline fn callImpl(this: *Builtin, comptime Ret: type, comptime field: []const u8, args_: anytype) Ret {
             return switch (this.kind) {
+                .cat => this.callImplWithType(Cat, Ret, "cat", field, args_),
                 .touch => this.callImplWithType(Touch, Ret, "touch", field, args_),
                 .mkdir => this.callImplWithType(Mkdir, Ret, "mkdir", field, args_),
                 .@"export" => this.callImplWithType(Export, Ret, "export", field, args_),
@@ -4073,6 +4084,11 @@ pub const Interpreter = struct {
             };
 
             switch (kind) {
+                .cat => {
+                    cmd.exec.bltn.impl = .{
+                        .cat = Cat{ .bltn = &cmd.exec.bltn },
+                    };
+                },
                 .touch => {
                     cmd.exec.bltn.impl = .{
                         .touch = Touch{ .bltn = &cmd.exec.bltn },
@@ -4173,7 +4189,7 @@ pub const Interpreter = struct {
                             // cmd.redirection_fd = redirfd;
                         };
                         if (node.redirect.stdin) {
-                            cmd.exec.bltn.stdin = .{ .fd = CowFd.init(redirfd) };
+                            cmd.exec.bltn.stdin = .{ .fd = IOReader.init(redirfd, cmd.base.eventLoop()) };
                         }
                         if (node.redirect.stdout) {
                             cmd.exec.bltn.stdout = .{ .fd = .{ .writer = IOWriter.init(redirfd, cmd.base.eventLoop()) } };
@@ -4332,6 +4348,15 @@ pub const Interpreter = struct {
             };
         }
 
+        pub fn readStdinNoIO(this: *Builtin) []const u8 {
+            return switch (this.stdin) {
+                .arraybuf => |buf| buf.buf.slice(),
+                .buf => |buf| buf.items[0..],
+                .blob => |blob| blob.sharedView(),
+                else => "",
+            };
+        }
+
         pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []const u8) usize {
             if (comptime io_kind != .stdout and io_kind != .stderr) {
                 @compileError("Bad IO" ++ @tagName(io_kind));
@@ -4407,6 +4432,320 @@ pub const Interpreter = struct {
             const fmt = cmd_str ++ fmt_;
             return std.fmt.allocPrint(this.arena.allocator(), fmt, args) catch bun.outOfMemory();
         }
+
+        pub const Cat = struct {
+            const print = bun.Output.scoped(.ShellCat, false);
+
+            bltn: *Builtin,
+            opts: Opts = .{},
+            state: union(enum) {
+                idle,
+                exec_stdin: struct {
+                    in_done: bool = false,
+                    out_done: bool = false,
+                    chunks_queued: usize = 0,
+                    chunks_done: usize = 0,
+                    errno: ExitCode = 0,
+                },
+                exec_filepath_args: struct {
+                    args: []const [*:0]const u8,
+                    idx: usize = 0,
+                    reader: ?*IOReader = null,
+                    out_done: bool = false,
+                    in_done: bool = false,
+
+                    pub fn deinit(this: *@This()) void {
+                        if (this.reader) |r| r.deref();
+                    }
+                },
+                waiting_write_err,
+                done,
+            } = .idle,
+
+            pub fn writeFailingError(this: *Cat, buf: []const u8, exit_code: ExitCode) Maybe(void) {
+                if (this.bltn.stderr.needsIO()) {
+                    this.state = .waiting_write_err;
+                    this.bltn.stderr.enqueue(this, buf);
+                    return Maybe(void).success;
+                }
+
+                _ = this.bltn.writeNoIO(.stderr, buf);
+
+                this.bltn.done(exit_code);
+                return Maybe(void).success;
+            }
+
+            pub fn start(this: *Cat) Maybe(void) {
+                const filepath_args = switch (this.opts.parse(this.bltn.argsSlice())) {
+                    .ok => |filepath_args| filepath_args,
+                    .err => |e| {
+                        const buf = switch (e) {
+                            .illegal_option => |opt_str| this.bltn.fmtErrorArena(.cat, "illegal option -- {s}\n", .{opt_str}),
+                            .show_usage => Builtin.Kind.cat.usageString(),
+                            .unsupported => |unsupported| this.bltn.fmtErrorArena(.cat, "unsupported option, please open a GitHub issue -- {s}\n", .{unsupported}),
+                        };
+
+                        _ = this.writeFailingError(buf, 1);
+                        return Maybe(void).success;
+                    },
+                };
+
+                const should_read_from_stdin = filepath_args == null or filepath_args.?.len == 0;
+
+                if (should_read_from_stdin) {
+                    this.state = .{
+                        .exec_stdin = .{},
+                    };
+                } else {
+                    this.state = .{
+                        .exec_filepath_args = .{
+                            .args = filepath_args.?,
+                        },
+                    };
+                }
+
+                _ = this.next();
+
+                return Maybe(void).success;
+            }
+
+            pub fn next(this: *Cat) void {
+                switch (this.state) {
+                    .idle => @panic("Invalid state"),
+                    .exec_stdin => {
+                        if (!this.bltn.stdin.needsIO()) {
+                            this.state.exec_stdin.in_done = true;
+                            const buf = this.bltn.readStdinNoIO();
+                            if (!this.bltn.stdout.needsIO()) {
+                                _ = this.bltn.writeNoIO(.stdout, buf);
+                                this.bltn.done(0);
+                                return;
+                            }
+                            this.bltn.stdout.enqueue(this, buf);
+                            return;
+                        }
+                        this.bltn.stdin.fd.addReader(this);
+                        this.bltn.stdin.fd.start();
+                        return;
+                    },
+                    .exec_filepath_args => {
+                        var exec = &this.state.exec_filepath_args;
+                        if (exec.idx >= exec.args.len) {
+                            exec.deinit();
+                            return this.bltn.done(0);
+                        }
+
+                        if (exec.reader) |r| r.deref();
+
+                        const arg = std.mem.span(exec.args[exec.idx]);
+                        const dir = this.bltn.parentCmd().base.shell.cwd_fd;
+                        const fd = switch (ShellSyscall.openat(dir, arg, os.O.RDONLY, 0)) {
+                            .result => |fd| fd,
+                            .err => |e| {
+                                const buf = this.bltn.taskErrorToString(.cat, e);
+                                _ = this.writeFailingError(buf, 1);
+                                exec.deinit();
+                                return;
+                            },
+                        };
+
+                        const reader = IOReader.init(fd, this.bltn.eventLoop());
+                        exec.reader = reader;
+                        exec.reader.?.addReader(this);
+                        exec.reader.?.start();
+                    },
+                    .waiting_write_err => return,
+                    .done => this.bltn.done(0),
+                }
+            }
+
+            pub fn onIOWriterChunk(this: *Cat, err: ?JSC.SystemError) void {
+                // Writing to stdout errored, cancel everything and write error
+                if (err) |e| {
+                    defer e.deref();
+                    switch (this.state) {
+                        .exec_stdin => {
+                            this.state.exec_stdin.out_done = true;
+                            // Cancel reader if needed
+                            if (!this.state.exec_stdin.in_done) {
+                                if (this.bltn.stdin.needsIO()) {
+                                    this.bltn.stdin.fd.removeReader(this);
+                                }
+                                this.state.exec_stdin.in_done = true;
+                            }
+                            this.bltn.done(e.getErrno());
+                        },
+                        .exec_filepath_args => {
+                            var exec = &this.state.exec_filepath_args;
+                            if (exec.reader) |r| {
+                                r.removeReader(this);
+                            }
+                            exec.deinit();
+                            this.bltn.done(e.getErrno());
+                        },
+                        .waiting_write_err => this.bltn.done(e.getErrno()),
+                        else => @panic("Invalid state"),
+                    }
+                    return;
+                }
+
+                switch (this.state) {
+                    .exec_stdin => {
+                        this.state.exec_stdin.chunks_done += 1;
+                        if (this.state.exec_stdin.in_done and this.state.exec_stdin.chunks_done >= this.state.exec_stdin.chunks_queued) {
+                            this.bltn.done(0);
+                            return;
+                        }
+                        // Need to wait for more chunks to be written
+                    },
+                    .exec_filepath_args => {
+                        if (this.state.exec_filepath_args.in_done) {
+                            this.next();
+                            return;
+                        }
+                        // Wait for reader to be done
+                        return;
+                    },
+                    .waiting_write_err => this.bltn.done(1),
+                    else => @panic("Invalid state"),
+                }
+            }
+
+            pub fn onIOReaderChunk(this: *Cat, chunk: []const u8) ReadChunkAction {
+                switch (this.state) {
+                    .exec_stdin => {
+                        // out_done should only be done if reader is done (impossible since we just read a chunk)
+                        // or it errored (also impossible since that removes us from the reader)
+                        std.debug.assert(!this.state.exec_stdin.out_done);
+                        if (this.bltn.stdout.needsIO()) {
+                            this.state.exec_stdin.chunks_queued += 1;
+                            this.bltn.stdout.enqueue(this, chunk);
+                            return .cont;
+                        }
+                        _ = this.bltn.writeNoIO(.stdout, chunk);
+                    },
+                    .exec_filepath_args => {
+                        if (this.bltn.stdout.needsIO()) {
+                            this.bltn.stdout.enqueue(this, chunk);
+                            return .cont;
+                        }
+                        _ = this.bltn.writeNoIO(.stdout, chunk);
+                    },
+                    else => @panic("Invalid state"),
+                }
+                return .cont;
+            }
+
+            pub fn onIOReaderDone(this: *Cat, err: ?JSC.SystemError) void {
+                const errno: ExitCode = if (err) |e| brk: {
+                    defer e.deref();
+                    break :brk @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
+                } else 0;
+
+                switch (this.state) {
+                    .exec_stdin => {
+                        this.state.exec_stdin.errno = errno;
+                        this.state.exec_stdin.in_done = true;
+                        if (errno != 0) {
+                            if (this.state.exec_stdin.out_done or !this.bltn.stdout.needsIO()) {
+                                this.bltn.done(errno);
+                                return;
+                            }
+                            this.bltn.stdout.fd.writer.cancelChunks(this);
+                            return;
+                        }
+                        // TODO finish this
+                    },
+                    .exec_filepath_args => {},
+                    .done, .waiting_write_err, .idle => {},
+                }
+            }
+
+            pub fn deinit(this: *Cat) void {
+                _ = this; // autofix
+            }
+
+            const Opts = struct {
+                /// -b
+                ///
+                /// Number the non-blank output lines, starting at 1.
+                number_nonblank: bool = false,
+
+                /// -e
+                ///
+                /// Display non-printing characters and display a dollar sign ($) at the end of each line.
+                show_ends: bool = false,
+
+                /// -n
+                ///
+                /// Number the output lines, starting at 1.
+                number_all: bool = false,
+
+                /// -s
+                ///
+                /// Squeeze multiple adjacent empty lines, causing the output to be single spaced.
+                squeeze_blank: bool = false,
+
+                /// -t
+                ///
+                /// Display non-printing characters and display tab characters as ^I at the end of each line.
+                show_tabs: bool = false,
+
+                /// -u
+                ///
+                /// Disable output buffering.
+                disable_output_buffering: bool = false,
+
+                /// -v
+                ///
+                /// Displays non-printing characters so they are visible.
+                show_nonprinting: bool = false,
+
+                const Parse = FlagParser(*@This());
+
+                pub fn parse(opts: *Opts, args: []const [*:0]const u8) Result(?[]const [*:0]const u8, ParseError) {
+                    return Parse.parseFlags(opts, args);
+                }
+
+                pub fn parseLong(this: *Opts, flag: []const u8) ?ParseFlagResult {
+                    _ = this; // autofix
+                    _ = flag;
+                    return null;
+                }
+
+                fn parseShort(this: *Opts, char: u8, smallflags: []const u8, i: usize) ?ParseFlagResult {
+                    _ = this; // autofix
+                    switch (char) {
+                        'b' => {
+                            return .{ .unsupported = unsupportedFlag("-b") };
+                        },
+                        'e' => {
+                            return .{ .unsupported = unsupportedFlag("-e") };
+                        },
+                        'n' => {
+                            return .{ .unsupported = unsupportedFlag("-n") };
+                        },
+                        's' => {
+                            return .{ .unsupported = unsupportedFlag("-s") };
+                        },
+                        't' => {
+                            return .{ .unsupported = unsupportedFlag("-t") };
+                        },
+                        'u' => {
+                            return .{ .unsupported = unsupportedFlag("-u") };
+                        },
+                        'v' => {
+                            return .{ .unsupported = unsupportedFlag("-v") };
+                        },
+                        else => {
+                            return .{ .illegal_option = smallflags[1 + i ..] };
+                        },
+                    }
+
+                    return null;
+                }
+            };
+        };
 
         pub const Touch = struct {
             bltn: *Builtin,
@@ -4489,7 +4828,7 @@ pub const Interpreter = struct {
                 }
             }
 
-            pub fn onIOWriterDone(this: *Touch, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Touch, e: ?JSC.SystemError) void {
                 if (this.state == .waiting_write_err) {
                     // if (e) |err| return this.bltn.done(1);
                     return this.bltn.done(1);
@@ -4806,7 +5145,7 @@ pub const Interpreter = struct {
                 done,
             } = .idle,
 
-            pub fn onIOWriterDone(this: *Mkdir, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Mkdir, e: ?JSC.SystemError) void {
                 if (e) |err| err.deref();
 
                 switch (this.state) {
@@ -5181,7 +5520,7 @@ pub const Interpreter = struct {
                 return Maybe(void).success;
             }
 
-            pub fn onIOWriterDone(this: *Export, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Export, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.printing);
                 }
@@ -5307,7 +5646,7 @@ pub const Interpreter = struct {
                 return Maybe(void).success;
             }
 
-            pub fn onIOWriterDone(this: *Echo, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Echo, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.state == .waiting);
                 }
@@ -5442,7 +5781,7 @@ pub const Interpreter = struct {
                 this.next();
             }
 
-            pub fn onIOWriterDone(this: *Which, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Which, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.state == .one_arg or
                         (this.state == .multi_args and this.state.multi_args.state == .waiting_write));
@@ -5558,7 +5897,7 @@ pub const Interpreter = struct {
                 }
             }
 
-            pub fn onIOWriterDone(this: *Cd, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Cd, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.state == .waiting_write_stderr);
                 }
@@ -5640,7 +5979,7 @@ pub const Interpreter = struct {
                 }
             }
 
-            pub fn onIOWriterDone(this: *Pwd, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Pwd, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.state == .waiting_io);
                 }
@@ -5766,7 +6105,7 @@ pub const Interpreter = struct {
                 _ = this; // autofix
             }
 
-            pub fn onIOWriterDone(this: *Ls, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Ls, e: ?JSC.SystemError) void {
                 if (e) |err| err.deref();
                 if (this.state == .waiting_write_err) {
                     // if (e) |err| return this.bltn.done(1);
@@ -6796,7 +7135,7 @@ pub const Interpreter = struct {
                 return Maybe(void).success;
             }
 
-            pub fn onIOWriterDone(this: *Mv, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Mv, e: ?JSC.SystemError) void {
                 defer if (e) |err| err.deref();
                 switch (this.state) {
                     .waiting_write_err => {
@@ -7277,7 +7616,7 @@ pub const Interpreter = struct {
                 return Maybe(void).success;
             }
 
-            pub fn onIOWriterDone(this: *Rm, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Rm, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
                         (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_count.load(.SeqCst) > 0));
@@ -8154,6 +8493,221 @@ pub const Interpreter = struct {
         };
     };
 
+    /// This type is reference counted, but deinitialization is queued onto the event loop
+    pub const IOReader = struct {
+        fd: bun.FileDescriptor,
+        reader: ReaderImpl,
+        buf: std.ArrayListUnmanaged(u8) = .{},
+        readers: Readers = .{ .inlined = .{} },
+        read: usize = 0,
+        ref_count: u32 = 1,
+        err: ?JSC.SystemError = null,
+        evtloop: JSC.EventLoopHandle,
+        concurrent_task: JSC.EventLoopTask,
+        async_deinit: AsyncDeinit,
+        is_reading: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
+
+        pub const ChildPtr = IOReaderChildPtr;
+        pub const ReaderImpl = bun.io.BufferedReader;
+
+        pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOReaderRefCount";
+        pub usingnamespace bun.NewRefCounted(@This(), IOReader.asyncDeinit);
+
+        pub fn refSelf(this: *IOReader) *IOReader {
+            this.ref();
+            return this;
+        }
+
+        pub fn eventLoop(this: *IOReader) JSC.EventLoopHandle {
+            return this.evtloop;
+        }
+
+        pub fn loop(this: *IOReader) *bun.uws.Loop {
+            return this.evtloop.loop();
+        }
+
+        pub fn init(fd: bun.FileDescriptor, evtloop: JSC.EventLoopHandle) *IOReader {
+            const this = IOReader.new(.{
+                .fd = fd,
+                .reader = ReaderImpl.init(@This()),
+                .evtloop = evtloop,
+                .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
+                .async_deinit = .{},
+            });
+            log("IOReader(0x{x}, fd={}) create", .{ @intFromPtr(this), fd });
+
+            if (bun.Environment.isPosix) {
+                this.reader.close_handle = false;
+            }
+
+            if (bun.Environment.isWindows) {
+                this.reader.source = .{ .source = bun.io.Source.openFile(fd) };
+            }
+            this.reader.setParent(this);
+
+            return this;
+        }
+
+        /// Idempotent function to start the reading
+        pub fn start(this: *IOReader) void {
+            if (bun.Environment.isPosix) {
+                if (this.reader.handle.poll.isRegistered()) {
+                    this.reader.read();
+                }
+                return;
+            }
+
+            if (this.is_reading) return;
+            this.is_reading = true;
+            if (this.reader.startWithCurrentPipe().asErr()) |e| {
+                _ = e;
+                @panic("TODO handle error");
+            }
+        }
+
+        /// Only does things on windows
+        pub inline fn setReading(this: *IOReader, reading: bool) void {
+            if (bun.Environment.isWindows) {
+                log("IOReader(0x{x}) setReading({any})", .{ @intFromPtr(this), reading });
+                this.is_reading = reading;
+            }
+        }
+
+        pub fn addReader(this: *IOReader, reader_: anytype) void {
+            const reader: ChildPtr = switch (@TypeOf(reader_)) {
+                ChildPtr => reader_,
+                else => ChildPtr.init(reader_),
+            };
+
+            const slice = this.readers.slice();
+            const usize_slice: []const usize = @as([*]const usize, @ptrCast(slice.ptr))[0..slice.len];
+            const ptr_usize: usize = @intFromPtr(reader.ptr.ptr());
+            // Only add if it hasn't been added yet
+            if (std.mem.indexOfScalar(usize, usize_slice, ptr_usize) == null) {
+                this.readers.append(reader);
+            }
+        }
+
+        pub fn removeReader(this: *IOReader, reader_: anytype) void {
+            const reader = switch (@TypeOf(reader_)) {
+                ChildPtr => reader_,
+                else => ChildPtr.init(reader_),
+            };
+            const slice = this.readers.slice();
+            const usize_slice: []const usize = @as([*]const usize, @ptrCast(slice.ptr))[0..slice.len];
+            const ptr_usize: usize = @intFromPtr(reader.ptr.ptr());
+            if (std.mem.indexOfScalar(usize, usize_slice, ptr_usize)) |idx| {
+                this.readers.swapRemove(idx);
+            }
+        }
+
+        pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
+            var this: *IOReader = @ptrCast(@alignCast(ptr));
+            log("IOReader(0x{x}, fd={}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), this.fd, chunk.len, @tagName(has_more) });
+            this.setReading(false);
+
+            var i: usize = 0;
+            while (i < this.readers.len()) {
+                var r = this.readers.get(i);
+                switch (r.onReadChunk(chunk)) {
+                    .cont => {
+                        i += 1;
+                    },
+                    .stop_listening => {
+                        this.readers.swapRemove(i);
+                    },
+                }
+            }
+
+            const should_continue = has_more != .eof;
+            if (should_continue) {
+                if (this.readers.len() > 0) {
+                    this.setReading(true);
+                    if (bun.Environment.isPosix) this.reader.registerPoll() else switch (this.reader.startWithCurrentPipe()) {
+                        .err => |e| {
+                            const writer = std.io.getStdOut().writer();
+                            e.format("Yoops ", .{}, writer) catch @panic("oops");
+                            @panic("TODO SHELL SUBPROC onReadChunk error");
+                        },
+                        else => {},
+                    }
+                }
+            }
+
+            return should_continue;
+        }
+
+        pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
+            this.setReading(false);
+            this.err = err.toSystemError();
+            for (this.readers.slice()) |r| {
+                r.onReaderDone(if (this.err) |*e| brk: {
+                    e.ref();
+                    break :brk e.*;
+                } else null);
+            }
+        }
+
+        pub fn onReaderDone(this: *IOReader) void {
+            this.setReading(false);
+            for (this.readers.slice()) |r| {
+                r.onReaderDone(if (this.err) |*err| brk: {
+                    err.ref();
+                    break :brk err.*;
+                } else null);
+            }
+        }
+
+        pub fn asyncDeinit(this: *@This()) void {
+            this.async_deinit.schedule();
+        }
+
+        pub fn __deinit(this: *@This()) void {
+            if (this.fd != bun.invalid_fd) {
+                _ = bun.sys.close(this.fd);
+            }
+            this.buf.deinit(bun.default_allocator);
+            bun.destroy(this);
+        }
+
+        pub const Reader = struct {
+            ptr: ChildPtr,
+        };
+
+        pub const Readers = SmolList(ChildPtr, 4);
+    };
+
+    pub const AsyncDeinit = struct {
+        task: WorkPoolTask = .{ .callback = &runFromThreadPool },
+
+        pub fn runFromThreadPool(task: *WorkPoolTask) void {
+            var this = @fieldParentPtr(AsyncDeinit, "task", task);
+            var ioreader = this.reader();
+            if (ioreader.evtloop == .js) {
+                ioreader.evtloop.js.enqueueTaskConcurrent(ioreader.concurrent_task.js.from(this, .manual_deinit));
+            } else {
+                ioreader.evtloop.mini.enqueueTaskConcurrent(ioreader.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+            }
+        }
+
+        pub fn reader(this: *AsyncDeinit) *IOReader {
+            return @fieldParentPtr(IOReader, "async_deinit", this);
+        }
+
+        pub fn runFromMainThread(this: *AsyncDeinit) void {
+            const ioreader = @fieldParentPtr(IOReader, "async_deinit", this);
+            ioreader.__deinit();
+        }
+
+        pub fn runFromMainThreadMini(this: *AsyncDeinit, _: *void) void {
+            this.runFromMainThread();
+        }
+
+        pub fn schedule(this: *AsyncDeinit) void {
+            WorkPool.schedule(&this.task);
+        }
+    };
+
     pub const IOWriter = struct {
         writer: WriterImpl = if (bun.Environment.isWindows) .{} else .{
             .close_fd = false,
@@ -8161,7 +8715,7 @@ pub const Interpreter = struct {
         fd: bun.FileDescriptor,
         writers: Writers = .{ .inlined = .{} },
         buf: std.ArrayListUnmanaged(u8) = .{},
-        idx: usize = 0,
+        __idx: usize = 0,
         total_bytes_written: usize = 0,
         ref_count: u32 = 1,
         err: ?JSC.SystemError = null,
@@ -8249,6 +8803,24 @@ pub const Interpreter = struct {
             }
         }
 
+        /// Cancel the chunks enqueued by the given writer by
+        /// marking them as dead
+        pub fn cancelChunks(this: *This, ptr_: anytype) void {
+            const ptr = switch (@TypeOf(ptr_)) {
+                ChildPtr => ptr_,
+                else => ChildPtr.init(ptr_),
+            };
+            if (this.writers.len() == 0) return;
+            const idx = this.__idx;
+            const slice: []Writer = this.writers.sliceMutable();
+            if (idx >= slice.len) return;
+            for (slice[idx..]) |*w| {
+                if (w.ptr.ptr.repr._ptr == ptr.ptr.repr._ptr) {
+                    w.setDead();
+                }
+            }
+        }
+
         const Writer = struct {
             ptr: ChildPtr,
             len: usize,
@@ -8258,146 +8830,64 @@ pub const Interpreter = struct {
             pub fn rawPtr(this: Writer) ?*anyopaque {
                 return this.ptr.ptr.ptr();
             }
-        };
 
-        pub const Writers = union(enum) {
-            inlined: Inlined,
-            heap: std.ArrayListUnmanaged(Writer),
-
-            const INLINED_MAX = 2;
-
-            pub const Inlined = struct {
-                writers: [INLINED_MAX]Writer = undefined,
-                len: u32 = 0,
-
-                pub fn promote(this: *Inlined, n: usize, new_writer: Writer) std.ArrayListUnmanaged(Writer) {
-                    var list = std.ArrayListUnmanaged(Writer).initCapacity(bun.default_allocator, n) catch bun.outOfMemory();
-                    list.appendSlice(bun.default_allocator, this.writers[0..INLINED_MAX]) catch bun.outOfMemory();
-                    list.append(bun.default_allocator, new_writer) catch bun.outOfMemory();
-                    return list;
-                }
-            };
-
-            pub inline fn len(this: *Writers) usize {
-                return switch (this.*) {
-                    .inlined => this.inlined.len,
-                    .heap => this.heap.items.len,
-                };
+            pub fn isDead(this: Writer) bool {
+                return this.ptr.ptr.isNull();
             }
 
-            pub fn truncate(this: *Writers, starting_idx: usize) void {
-                switch (this.*) {
-                    .inlined => {
-                        if (starting_idx >= this.inlined.len) return;
-                        const slice_to_move = this.inlined.writers[starting_idx..this.inlined.len];
-                        std.mem.copyForwards(Writer, this.inlined.writers[0..starting_idx], slice_to_move);
-                    },
-                    .heap => {
-                        const new_len = this.heap.items.len - starting_idx;
-                        this.heap.replaceRange(bun.default_allocator, 0, starting_idx, this.heap.items[starting_idx..this.heap.items.len]) catch bun.outOfMemory();
-                        this.heap.items.len = new_len;
-                    },
-                }
-            }
-
-            pub inline fn slice(this: *Writers) []const Writer {
-                return switch (this.*) {
-                    .inlined => {
-                        if (this.inlined.len == 0) return &[_]Writer{};
-                        return this.inlined.writers[0..this.inlined.len];
-                    },
-                    .heap => {
-                        if (this.heap.items.len == 0) return &[_]Writer{};
-                        return this.heap.items[0..];
-                    },
-                };
-            }
-
-            pub inline fn get(this: *Writers, idx: usize) *Writer {
-                return switch (this.*) {
-                    .inlined => {
-                        if (bun.Environment.allow_assert) {
-                            if (idx >= this.inlined.len) @panic("Index out of bounds");
-                        }
-                        return &this.inlined.writers[idx];
-                    },
-                    .heap => &this.heap.items[idx],
-                };
-            }
-
-            pub fn append(this: *Writers, writer: Writer) void {
-                switch (this.*) {
-                    .inlined => {
-                        if (this.inlined.len == INLINED_MAX) {
-                            this.* = .{ .heap = this.inlined.promote(INLINED_MAX, writer) };
-                            return;
-                        }
-                        this.inlined.writers[this.inlined.len] = writer;
-                        this.inlined.len += 1;
-                    },
-                    .heap => {
-                        this.heap.append(bun.default_allocator, writer) catch bun.outOfMemory();
-                    },
-                }
-            }
-
-            pub fn popFirst(this: *@This()) ?ChildPtr {
-                switch (this.*) {
-                    .inlined => {
-                        if (this.inlined.len == 0) return null;
-                        const child = this.inlined.writers[0];
-                        if (this.inlined.len == 1) {
-                            return child;
-                        }
-                        std.mem.copyForwards(ChildPtr, this.inlined[0 .. this.inlined.len - 1], this.inlined[1 .. this.inlined.len - 1]);
-                        return child;
-                    },
-                    .heap => {
-                        if (this.heap.items.len == 0) return null;
-                        const child = this.heap.orderedRemove(0) catch bun.outOfMemory();
-                        return child;
-                    },
-                }
-            }
-
-            pub fn clearRetainingCapacity(this: *@This()) void {
-                switch (this.*) {
-                    .inlined => {
-                        this.inlined.len = 0;
-                    },
-                    .heap => {
-                        this.heap.clearRetainingCapacity();
-                    },
-                }
+            pub fn setDead(this: *Writer) void {
+                this.ptr.ptr = ChildPtr.ChildPtrRaw.Null;
             }
         };
+
+        pub const Writers = SmolList(Writer, 2);
+
+        /// Skips over dead children and increments `total_bytes_written` by the
+        /// amount they would have written so the buf is skipped as well
+        pub fn skipDead(this: *This) void {
+            const slice = this.writers.slice();
+            for (slice[this.__idx..]) |*w| {
+                if (w.isDead()) {
+                    this.__idx += 1;
+                    this.total_bytes_written = w.len - w.written;
+                    continue;
+                }
+                return;
+            }
+            return;
+        }
 
         pub fn onWrite(this: *This, amount: usize, done: bool) void {
             this.setWriting(false);
             print("IOWriter(0x{x}, fd={}) write(amount={d}, done={})", .{ @intFromPtr(this), this.fd, amount, done });
-            const child = this.writers.get(this.idx);
-            if (child.bytelist) |bl| {
-                const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amount];
-                bl.append(bun.default_allocator, written_slice) catch bun.outOfMemory();
-            }
-            this.total_bytes_written += amount;
-            child.written += amount;
-            if (done) {
-                const not_fully_written = !this.isLastIdx(this.idx) or child.written < child.len;
-                if (bun.Environment.allow_assert and not_fully_written) {
-                    bun.Output.debugWarn("IOWriter(0x{x}) received done without fully writing data, check that onError is thrown", .{@intFromPtr(this)});
-                }
-                return;
-            }
-
-            const wrote_everything = this.total_bytes_written >= this.buf.items.len;
-
-            if (child.written >= child.len) {
+            if (this.__idx >= this.writers.len()) return;
+            const child = this.writers.get(this.__idx);
+            if (child.isDead()) {
                 this.bump(child);
+            } else {
+                if (child.bytelist) |bl| {
+                    const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amount];
+                    bl.append(bun.default_allocator, written_slice) catch bun.outOfMemory();
+                }
+                this.total_bytes_written += amount;
+                child.written += amount;
+                if (done) {
+                    const not_fully_written = !this.isLastIdx(this.__idx) or child.written < child.len;
+                    if (bun.Environment.allow_assert and not_fully_written) {
+                        bun.Output.debugWarn("IOWriter(0x{x}) received done without fully writing data, check that onError is thrown", .{@intFromPtr(this)});
+                    }
+                    return;
+                }
+
+                if (child.written >= child.len) {
+                    this.bump(child);
+                }
             }
 
-            log("IOWriter(0x{x}, fd={}) wrote_everything={}, idx={d} writers={d}", .{ @intFromPtr(this), this.fd, wrote_everything, this.idx, this.writers.len() });
-            if (!wrote_everything and this.idx < this.writers.len()) {
+            const wrote_everything: bool = this.total_bytes_written >= this.buf.items.len;
+
+            log("IOWriter(0x{x}, fd={}) wrote_everything={}, idx={d} writers={d}", .{ @intFromPtr(this), this.fd, wrote_everything, this.__idx, this.writers.len() });
+            if (!wrote_everything and this.__idx < this.writers.len()) {
                 print("IOWriter(0x{x}, fd={}) poll again", .{ @intFromPtr(this), this.fd });
                 if (comptime bun.Environment.isWindows) {
                     this.setWriting(true);
@@ -8417,38 +8907,58 @@ pub const Interpreter = struct {
             var seen = std.ArrayList(usize).initCapacity(seen_alloc.get(), 64) catch bun.outOfMemory();
             defer seen.deinit();
             writer_loop: for (this.writers.slice()) |w| {
+                if (w.isDead()) continue;
                 const ptr = w.ptr.ptr.ptr();
-                for (seen.items[0..]) |item| {
-                    if (item == @intFromPtr(ptr)) {
-                        continue :writer_loop;
+                if (seen.items.len < 8) {
+                    for (seen.items[0..]) |item| {
+                        if (item == @intFromPtr(ptr)) {
+                            continue :writer_loop;
+                        }
                     }
+                } else if (std.mem.indexOfScalar(usize, seen.items[0..], @intFromPtr(ptr)) != null) {
+                    continue :writer_loop;
                 }
 
-                w.ptr.onDone(this.err);
+                w.ptr.onWriteChunk(this.err);
                 seen.append(@intFromPtr(ptr)) catch bun.outOfMemory();
             }
         }
 
         pub fn getBuffer(this: *This) []const u8 {
-            const writer = this.writers.get(this.idx);
+            const writer = brk: {
+                const writer = this.writers.get(this.__idx);
+                if (!writer.isDead()) break :brk writer;
+                this.skipDead();
+                if (this.__idx >= this.writers.len()) return "";
+                break :brk this.writers.get(this.__idx);
+            };
             return this.buf.items[this.total_bytes_written .. this.total_bytes_written + writer.len];
         }
 
         pub fn bump(this: *This, current_writer: *Writer) void {
             log("IOWriter(0x{x}) bump(0x{x} {s})", .{ @intFromPtr(this), @intFromPtr(current_writer), @tagName(current_writer.ptr.ptr.tag()) });
+            const is_dead = current_writer.isDead();
             const child_ptr = current_writer.ptr;
-            defer child_ptr.onDone(null);
-            if (this.isLastIdx(this.idx)) {
-                log("IOWriter(0x{x}) truncating", .{@intFromPtr(this)});
+
+            defer if (!is_dead) child_ptr.onWriteChunk(null);
+
+            if (is_dead) {
+                this.skipDead();
+            } else {
+                this.__idx += 1;
+            }
+
+            if (this.__idx >= this.writers.len()) {
+                log("IOWriter(0x{x}) all writers complete: truncating", .{@intFromPtr(this)});
                 this.buf.clearRetainingCapacity();
-                this.idx = 0;
+                this.__idx = 0;
                 this.writers.clearRetainingCapacity();
                 this.total_bytes_written = 0;
                 return;
             }
-            this.idx += 1;
+
             if (this.total_bytes_written >= SHRINK_THRESHOLD) {
-                log("IOWriter(0x{x}) truncating", .{@intFromPtr(this)});
+                log("IOWriter(0x{x}) exceeded shrink threshold: truncating", .{@intFromPtr(this)});
                 const replace_range_len = this.buf.items.len - this.total_bytes_written;
                 if (replace_range_len == 0) {
                     this.buf.clearRetainingCapacity();
@@ -8456,8 +8966,8 @@ pub const Interpreter = struct {
                     this.buf.replaceRange(bun.default_allocator, 0, replace_range_len, this.buf.items[this.total_bytes_written..replace_range_len]) catch bun.outOfMemory();
                     this.buf.items.len = replace_range_len;
                 }
-                this.writers.truncate(this.idx);
-                this.idx = 0;
+                this.writers.truncate(this.__idx);
+                this.__idx = 0;
             }
         }
 
@@ -8465,7 +8975,7 @@ pub const Interpreter = struct {
             const childptr = if (@TypeOf(ptr) == ChildPtr) ptr else ChildPtr.init(ptr);
             if (buf.len == 0) {
                 log("IOWriter(0x{x}) enqueue EMPTY", .{@intFromPtr(this)});
-                childptr.onDone(null);
+                childptr.onWriteChunk(null);
                 return;
             }
             const writer: Writer = .{
@@ -8771,30 +9281,32 @@ fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) 
     }
 }
 
-pub const IOReader = struct {
-    fd: bun.FileDescriptor,
-    pipe_reader: bun.io.PipeReader = .{ .close_handle = false },
-    buf: std.ArrayListUnmanaged(u8) = .{},
-    read: usize = 0,
-    ref_count: u32 = 1,
+pub const ReadChunkAction = enum {
+    stop_listening,
+    cont,
+};
 
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+pub const IOReaderChildPtr = struct {
+    ptr: ChildPtrRaw,
 
-    pub const Reader = struct {};
+    pub const ChildPtrRaw = TaggedPointerUnion(.{
+        Interpreter.Builtin.Cat,
+    });
 
-    pub fn init(fd: bun.FileDescriptor) *IOReader {
-        const reader = IOReader.new(.{
-            .fd = fd,
-        });
-        return reader;
+    pub fn init(p: anytype) IOReaderChildPtr {
+        return .{
+            .ptr = ChildPtrRaw.init(p),
+            // .ptr = @ptrCast(p),
+        };
     }
 
-    pub fn deinit(this: *@This()) void {
-        if (this.fd != bun.invalid_fd) {
-            _ = bun.sys.close(this.fd);
-        }
-        this.buf.deinit(bun.default_allocator);
-        bun.destroy(this);
+    /// Return true if the child should be deleted
+    pub fn onReadChunk(this: IOReaderChildPtr, chunk: []const u8) ReadChunkAction {
+        return this.ptr.call("onIOReaderChunk", .{chunk}, ReadChunkAction);
+    }
+
+    pub fn onReaderDone(this: IOReaderChildPtr, err: ?JSC.SystemError) void {
+        return this.ptr.call("onIOReaderDone", .{err}, void);
     }
 };
 
@@ -8817,6 +9329,7 @@ pub const IOWriterChildPtr = struct {
         Interpreter.Builtin.Mkdir.ShellMkdirOutputTask,
         Interpreter.Builtin.Touch,
         Interpreter.Builtin.Touch.ShellTouchOutputTask,
+        Interpreter.Builtin.Cat,
     });
 
     pub fn init(p: anytype) IOWriterChildPtr {
@@ -8826,8 +9339,9 @@ pub const IOWriterChildPtr = struct {
         };
     }
 
-    pub fn onDone(this: IOWriterChildPtr, err: ?JSC.SystemError) void {
-        return this.ptr.call("onIOWriterDone", .{err}, void);
+    /// Called when the IOWriter writes a complete chunk of data the child enqueued
+    pub fn onWriteChunk(this: IOWriterChildPtr, err: ?JSC.SystemError) void {
+        return this.ptr.call("onIOWriterChunk", .{err}, void);
     }
 };
 
@@ -9071,7 +9585,7 @@ pub fn OutputTask(
             }
         }
 
-        pub fn onIOWriterDone(this: *@This(), err: ?JSC.SystemError) void {
+        pub fn onIOWriterChunk(this: *@This(), err: ?JSC.SystemError) void {
             if (err) |e| {
                 e.deref();
             }
@@ -9182,6 +9696,160 @@ pub fn FlagParser(comptime Opts: type) type {
             }
 
             return .continue_parsing;
+        }
+    };
+}
+
+/// A list that can store its items inlined, and promote itself to a heap allocated bun.ByteList
+pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
+    return union(enum) {
+        inlined: Inlined,
+        heap: ByteList,
+
+        const ByteList = bun.BabyList(T);
+
+        pub const Inlined = struct {
+            items: [INLINED_MAX]T = undefined,
+            len: u32 = 0,
+
+            pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
+                var list = bun.BabyList(T).initCapacity(bun.default_allocator, n) catch bun.outOfMemory();
+                list.append(bun.default_allocator, this.items[0..INLINED_MAX]) catch bun.outOfMemory();
+                list.push(bun.default_allocator, new) catch bun.outOfMemory();
+                return list;
+            }
+
+            pub fn orderedRemove(this: *Inlined, idx: usize) T {
+                if (this.len - 1 == idx) return this.pop();
+                const slice_to_shift = this.items[idx + 1 .. this.len];
+                std.mem.copyForwards(T, this.items[idx .. this.len - 1], slice_to_shift);
+                this.len -= 1;
+            }
+
+            pub fn swapRemove(this: *Inlined, idx: usize) T {
+                if (this.len - 1 == idx) return this.pop();
+
+                const old_item = this.items[idx];
+                this.items[idx] = this.pop();
+                return old_item;
+            }
+
+            pub fn pop(this: *Inlined) T {
+                const ret = this.items[this.items.len - 1];
+                this.len -= 1;
+                return ret;
+            }
+        };
+
+        pub inline fn len(this: *@This()) usize {
+            return switch (this.*) {
+                .inlined => this.inlined.len,
+                .heap => this.heap.len,
+            };
+        }
+
+        pub fn orderedRemove(this: *@This(), idx: usize) void {
+            switch (this.*) {
+                .heap => {
+                    var list = this.heap.listManaged(bun.default_allocator);
+                    _ = list.orderedRemove(idx);
+                },
+                .inlined => {
+                    _ = this.inlined.orderedRemove(idx);
+                },
+            }
+        }
+
+        pub fn swapRemove(this: *@This(), idx: usize) void {
+            switch (this.*) {
+                .heap => {
+                    var list = this.heap.listManaged(bun.default_allocator);
+                    _ = list.swapRemove(idx);
+                },
+                .inlined => {
+                    _ = this.inlined.swapRemove(idx);
+                },
+            }
+        }
+
+        pub fn truncate(this: *@This(), starting_idx: usize) void {
+            switch (this.*) {
+                .inlined => {
+                    if (starting_idx >= this.inlined.len) return;
+                    const slice_to_move = this.inlined.items[starting_idx..this.inlined.len];
+                    std.mem.copyForwards(T, this.inlined.items[0..starting_idx], slice_to_move);
+                },
+                .heap => {
+                    const new_len = this.heap.len - starting_idx;
+                    this.heap.replaceRange(0, starting_idx, this.heap.ptr[starting_idx..this.heap.len]) catch bun.outOfMemory();
+                    this.heap.len = @intCast(new_len);
+                },
+            }
+        }
+
+        pub inline fn sliceMutable(this: *@This()) []T {
+            return switch (this.*) {
+                .inlined => {
+                    if (this.inlined.len == 0) return &[_]T{};
+                    return this.inlined.items[0..this.inlined.len];
+                },
+                .heap => {
+                    if (this.heap.len == 0) return &[_]T{};
+                    return this.heap.slice();
+                },
+            };
+        }
+
+        pub inline fn slice(this: *@This()) []const T {
+            return switch (this.*) {
+                .inlined => {
+                    if (this.inlined.len == 0) return &[_]T{};
+                    return this.inlined.items[0..this.inlined.len];
+                },
+                .heap => {
+                    if (this.heap.len == 0) return &[_]T{};
+                    return this.heap.slice();
+                },
+            };
+        }
+
+        pub inline fn get(this: *@This(), idx: usize) *T {
+            return switch (this.*) {
+                .inlined => {
+                    if (bun.Environment.allow_assert) {
+                        if (idx >= this.inlined.len) @panic("Index out of bounds");
+                    }
+                    return &this.inlined.items[idx];
+                },
+                .heap => &this.heap.ptr[idx],
+            };
+        }
+
+        pub fn append(this: *@This(), new: T) void {
+            switch (this.*) {
+                .inlined => {
+                    if (this.inlined.len == INLINED_MAX) {
+                        this.* = .{ .heap = this.inlined.promote(INLINED_MAX, new) };
+                        return;
+                    }
+                    this.inlined.items[this.inlined.len] = new;
+                    this.inlined.len += 1;
+                },
+                .heap => {
+                    this.heap.push(bun.default_allocator, new) catch bun.outOfMemory();
+                },
+            }
+        }
+
+        pub fn clearRetainingCapacity(this: *@This()) void {
+            switch (this.*) {
+                .inlined => {
+                    this.inlined.len = 0;
+                },
+                .heap => {
+                    this.heap.clearRetainingCapacity();
+                },
+            }
         }
     };
 }

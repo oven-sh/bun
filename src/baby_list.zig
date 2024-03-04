@@ -65,6 +65,16 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
+        pub fn clearRetainingCapacity(this: *@This()) void {
+            var list_ = this.listManaged(bun.default_allocator);
+            list_.clearRetainingCapacity();
+        }
+
+        pub fn replaceRange(this: *@This(), start: usize, len_: usize, new_items: []const Type) !void {
+            var list_ = this.listManaged(bun.default_allocator);
+            try list_.replaceRange(start, len_, new_items);
+        }
+
         pub fn appendAssumeCapacity(this: *@This(), value: Type) void {
             this.ptr[this.len] = value;
             this.len += 1;

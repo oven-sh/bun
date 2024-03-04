@@ -118,6 +118,7 @@ pub const ShellSubprocess = struct {
             _ = allocator; // autofix
             _ = max_size; // autofix
             _ = is_sync; // autofix
+        
             assertStdioResult(result);
 
             if (Environment.isWindows) {
@@ -864,6 +865,7 @@ pub const PipeReader = struct {
             },
             .result => {
                 if (comptime Environment.isPosix) {
+                    // TODO: are these flags correct
                     const poll = this.reader.handle.poll;
                     poll.flags.insert(.nonblocking);
                     poll.flags.insert(.socket);

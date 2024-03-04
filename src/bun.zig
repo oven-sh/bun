@@ -975,7 +975,9 @@ pub const SignalCode = enum(u8) {
     SIGSYS = 31,
     _,
 
-    pub const default = if (Environment.isWindows) 1 else @intFromEnum(SignalCode.SIGTERM);
+    // The `subprocess.kill()` method sends a signal to the child process. If no
+    // argument is given, the process will be sent the 'SIGTERM' signal.
+    pub const default = @intFromEnum(SignalCode.SIGTERM);
     pub const Map = ComptimeEnumMap(SignalCode);
     pub fn name(value: SignalCode) ?[]const u8 {
         if (@intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS)) {

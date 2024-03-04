@@ -575,6 +575,7 @@ pub const Subprocess = struct {
         switch (this.tryKill(sig)) {
             .result => {},
             .err => |err| {
+                // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
                 globalThis.throwValue(err.toJSC(globalThis));
                 return .zero;
             },

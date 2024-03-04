@@ -494,7 +494,10 @@ pub const Process = struct {
             switch (this.poller) {
                 .uv => |*handle| {
                     if (handle.kill(signal).toError(.kill)) |err| {
-                        return .{ .err = err };
+                        // if the process was already killed don't throw
+                        if (err.errno != @intFromEnum(bun.C.E.SRCH)) {
+                            return .{ .err = err };
+                        }
                     }
 
                     return .{

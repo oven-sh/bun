@@ -2414,13 +2414,14 @@ pub const ReturnCode = enum(c_int) {
         if (this.errEnum()) |err| {
             try writer.writeAll(@tagName(err));
         } else {
-            try writer.print("{d}", .{this.value});
+            try writer.print("{d}", .{this});
         }
     }
 
     pub inline fn int(this: ReturnCode) c_int {
         return @intFromEnum(this);
     }
+
     pub inline fn errno(this: ReturnCode) ?@TypeOf(@intFromEnum(bun.C.E.ACCES)) {
         return if (this.int() < 0)
             switch (this.int()) {

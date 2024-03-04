@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { dns } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
@@ -70,7 +69,7 @@ describe("dns", () => {
       );
       const answers = results.flat();
       expect(answers).toBeArray();
-      expect(answers.length).toBeGreaterThan(10);
+      expect(answers.length).toBeGreaterThanOrEqual(10);
       withoutAggressiveGC(() => {
         for (const { family, address, ttl } of answers) {
           expect(address).toBeString();

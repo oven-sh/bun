@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { expect, describe, it } from "bun:test";
 import { Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
@@ -6,6 +5,9 @@ import { join } from "path";
 import { bunExe, bunEnv } from "harness";
 import { tmpdir } from "node:os";
 import { writeFileSync, mkdirSync } from "node:fs";
+import { spawn } from "node:child_process";
+
+const isWindows = process.platform === "win32";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -183,6 +185,20 @@ describe("createReadStream", () => {
       done();
     });
   });
+
+  it("should emit readable on end", done => {
+    const testData = "Hello world";
+    const path = join(tmpdir(), `${Date.now()}-testEmitReadableOnEnd.txt`);
+    writeFileSync(path, testData);
+    const stream = createReadStream(path);
+
+    stream.on("readable", () => {
+      const chunk = stream.read();
+      if (!chunk) {
+        done();
+      }
+    });
+  });
 });
 
 describe("Duplex", () => {
@@ -227,6 +243,42 @@ describe("PassThrough", () => {
 
     const subclass = new Subclass();
     expect(subclass instanceof PassThrough).toBe(true);
+  });
+});
+
+const processStdInTest = `
+const { Transform } = require("node:stream");
+
+let totalChunkSize = 0;
+const transform = new Transform({
+  transform(chunk, _encoding, callback) {
+    totalChunkSize += chunk.length;
+    callback(null, "");
+  },
+});
+
+process.stdin.pipe(transform).pipe(process.stdout);
+process.stdin.on("end", () => console.log(totalChunkSize));
+`;
+describe("process.stdin", () => {
+  it("should pipe correctly", done => {
+    mkdirSync(join(tmpdir(), "process-stdin-test"), { recursive: true });
+    writeFileSync(join(tmpdir(), "process-stdin-test/process-stdin.test.js"), processStdInTest, {});
+
+    // A sufficiently large input to make at least four chunks
+    const ARRAY_SIZE = 8_388_628;
+    const typedArray = new Uint8Array(ARRAY_SIZE).fill(97);
+
+    const { stdout, exitCode, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), "test", "process-stdin.test.js"],
+      cwd: join(tmpdir(), "process-stdin-test"),
+      env: bunEnv,
+      stdin: typedArray,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(String(stdout)).toBe(`${ARRAY_SIZE}\n`);
+    done();
   });
 });
 
@@ -336,7 +388,7 @@ describe("TTY", () => {
 });
 `;
 
-it("TTY streams", () => {
+it.skipIf(isWindows)("TTY streams", () => {
   mkdirSync(join(tmpdir(), "tty-test"), { recursive: true });
   writeFileSync(join(tmpdir(), "tty-test/tty-streams.test.js"), ttyStreamsTest, {});
 

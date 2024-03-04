@@ -27,6 +27,8 @@ else
 
 pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
 
+pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
+
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
@@ -68,6 +70,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     _,
 
     pub inline fn int(fd: FileDescriptor) FileDescriptorInt {
+        // TODO(@paperdave): make this a compile error to call on windows. every usage is incorrect.
         return @intFromEnum(fd);
     }
 
@@ -463,7 +466,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
     };
 
     const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    global_scope_log("poll({d}) readable: {any} ({d})", .{ fd, result, polls[0].revents });
+    global_scope_log("poll({}) readable: {any} ({d})", .{ fd, result, polls[0].revents });
     return if (result and polls[0].revents & std.os.POLL.HUP != 0)
         PollFlag.hup
     else if (result)
@@ -475,7 +478,24 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
 pub const PollFlag = enum { ready, not_ready, hup };
 pub fn isWritable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
-        @panic("TODO on Windows");
+        var polls = [_]std.os.windows.ws2_32.WSAPOLLFD{
+            .{
+                .fd = socketcast(fd),
+                .events = std.os.POLL.WRNORM,
+                .revents = 0,
+            },
+        };
+        const rc = std.os.windows.ws2_32.WSAPoll(&polls, 1, 0);
+        const result = (if (rc != std.os.windows.ws2_32.SOCKET_ERROR) @as(usize, @intCast(rc)) else 0) != 0;
+        global_scope_log("poll({}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
+        if (result and polls[0].revents & std.os.POLL.WRNORM != 0) {
+            return .hup;
+        } else if (result) {
+            return .ready;
+        } else {
+            return .not_ready;
+        }
+        return;
     }
 
     var polls = [_]std.os.pollfd{
@@ -487,13 +507,13 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
     };
 
     const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    global_scope_log("poll({d}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
+    global_scope_log("poll({}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
     if (result and polls[0].revents & std.os.POLL.HUP != 0) {
-        return PollFlag.hup;
+        return .hup;
     } else if (result) {
-        return PollFlag.ready;
+        return .ready;
     } else {
-        return PollFlag.not_ready;
+        return .not_ready;
     }
 }
 
@@ -1985,12 +2005,12 @@ pub const win32 = struct {
     ) !void {
         const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT;
 
-        const image_path = &w.peb().ProcessParameters.ImagePathName;
+        const image_path = windows.exePathW();
         var wbuf: WPathBuffer = undefined;
-        @memcpy(wbuf[0..image_path.Length], image_path.Buffer);
-        wbuf[image_path.Length] = 0;
+        @memcpy(wbuf[0..image_path.len], image_path);
+        wbuf[image_path.len] = 0;
 
-        const image_pathZ = wbuf[0..image_path.Length :0];
+        const image_pathZ = wbuf[0..image_path.len :0];
 
         const kernelenv = w.kernel32.GetEnvironmentStringsW();
         defer {
@@ -2042,7 +2062,7 @@ pub const win32 = struct {
             .hStdError = std.io.getStdErr().handle,
         };
         const rc = w.kernel32.CreateProcessW(
-            image_pathZ,
+            image_pathZ.ptr,
             w.kernel32.GetCommandLineW(),
             null,
             null,

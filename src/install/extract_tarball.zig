@@ -326,7 +326,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                     logger.Loc.Empty,
                     this.package_manager.allocator,
                     "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {}",
-                    .{ name, err, tmpname, std.unicode.fmtUtf16le(folder_name_w) },
+                    .{ name, err, tmpname, bun.fmt.utf16(folder_name_w) },
                 ) catch unreachable;
                 return error.InstallFailed;
             },

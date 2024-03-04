@@ -2307,7 +2307,7 @@ const GitHandler = struct {
                 process.stderr_behavior = .Inherit;
 
                 _ = try process.spawnAndWait();
-                _ = process.kill() catch undefined;
+                _ = process.kill() catch {};
             }
 
             Output.prettyError("\n", .{});

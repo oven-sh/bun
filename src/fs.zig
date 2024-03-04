@@ -109,16 +109,11 @@ pub const FileSystem = struct {
         ENOTDIR,
     };
 
-    pub fn init(
-        top_level_dir: ?string,
-    ) !*FileSystem {
+    pub fn init(top_level_dir: ?string) !*FileSystem {
         return initWithForce(top_level_dir, false);
     }
 
-    pub fn initWithForce(
-        top_level_dir_: ?string,
-        comptime force: bool,
-    ) !*FileSystem {
+    pub fn initWithForce(top_level_dir_: ?string, comptime force: bool) !*FileSystem {
         const allocator = bun.fs_allocator;
         var top_level_dir = top_level_dir_ orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
 
@@ -134,9 +129,7 @@ pub const FileSystem = struct {
         if (!instance_loaded or force) {
             instance = FileSystem{
                 .top_level_dir = top_level_dir,
-                .fs = Implementation.init(
-                    top_level_dir,
-                ),
+                .fs = Implementation.init(top_level_dir),
                 // must always use default_allocator since the other allocators may not be threadsafe when an element resizes
                 .dirname_store = DirnameStore.init(bun.default_allocator),
                 .filename_store = FilenameStore.init(bun.default_allocator),
@@ -427,15 +420,15 @@ pub const FileSystem = struct {
 
     // }
     pub fn normalize(_: *@This(), str: string) string {
-        return @call(.always_inline, path_handler.normalizeString, .{ str, true, .auto });
+        return @call(bun.callmod_inline, path_handler.normalizeString, .{ str, true, .auto });
     }
 
     pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
-        return @call(.always_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
+        return @call(bun.callmod_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
     }
 
     pub fn join(_: *@This(), parts: anytype) string {
-        return @call(.always_inline, path_handler.joinStringBuf, .{
+        return @call(bun.callmod_inline, path_handler.joinStringBuf, .{
             &join_buf,
             parts,
             .loose,
@@ -443,7 +436,7 @@ pub const FileSystem = struct {
     }
 
     pub fn joinBuf(_: *@This(), parts: anytype, buf: []u8) string {
-        return @call(.always_inline, path_handler.joinStringBuf, .{
+        return @call(bun.callmod_inline, path_handler.joinStringBuf, .{
             buf,
             parts,
             .loose,
@@ -451,14 +444,14 @@ pub const FileSystem = struct {
     }
 
     pub fn relative(_: *@This(), from: string, to: string) string {
-        return @call(.always_inline, path_handler.relative, .{
+        return @call(bun.callmod_inline, path_handler.relative, .{
             from,
             to,
         });
     }
 
     pub fn relativePlatform(_: *@This(), from: string, to: string, comptime platform: path_handler.Platform) string {
-        return @call(.always_inline, path_handler.relativePlatform, .{
+        return @call(bun.callmod_inline, path_handler.relativePlatform, .{
             from,
             to,
             platform,
@@ -467,14 +460,14 @@ pub const FileSystem = struct {
     }
 
     pub fn relativeTo(f: *@This(), to: string) string {
-        return @call(.always_inline, path_handler.relative, .{
+        return @call(bun.callmod_inline, path_handler.relative, .{
             f.top_level_dir,
             to,
         });
     }
 
     pub fn relativeFrom(f: *@This(), from: string) string {
-        return @call(.always_inline, path_handler.relative, .{
+        return @call(bun.callmod_inline, path_handler.relative, .{
             from,
             f.top_level_dir,
         });
@@ -735,7 +728,7 @@ pub const FileSystem = struct {
                 else
                     bun.strings.toWPathNormalized(&existing_buf, name);
                 if (comptime Environment.allow_assert) {
-                    debug("moveFileExW({s}, {s})", .{ bun.fmt.fmtUTF16(existing), bun.fmt.fmtUTF16(new) });
+                    debug("moveFileExW({s}, {s})", .{ bun.fmt.utf16(existing), bun.fmt.utf16(new) });
                 }
 
                 if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
@@ -750,9 +743,7 @@ pub const FileSystem = struct {
         };
 
         pub fn needToCloseFiles(rfs: *const RealFS) bool {
-            // On Windows, we must always close open file handles
-            // Windows locks files
-            if (comptime !FeatureFlags.store_file_descriptors) {
+            if (!FeatureFlags.store_file_descriptors) {
                 return true;
             }
 
@@ -760,8 +751,9 @@ pub const FileSystem = struct {
             return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd.int() + 1) * 2);
         }
 
-        pub fn bustEntriesCache(rfs: *RealFS, file_path: string) void {
-            rfs.entries.remove(file_path);
+        /// Returns `true` if an entry was removed
+        pub fn bustEntriesCache(rfs: *RealFS, file_path: string) bool {
+            return rfs.entries.remove(file_path);
         }
 
         pub const Limit = struct {
@@ -1002,8 +994,18 @@ pub const FileSystem = struct {
         // https://twitter.com/jarredsumner/status/1655787337027309568
         // https://twitter.com/jarredsumner/status/1655714084569120770
         // https://twitter.com/jarredsumner/status/1655464485245845506
-        pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, generation: bun.Generation, store_fd: bool, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
-            var dir = _dir;
+        pub fn readDirectoryWithIterator(
+            fs: *RealFS,
+            dir_maybe_trail_slash: string,
+            maybe_handle: ?std.fs.Dir,
+            generation: bun.Generation,
+            store_fd: bool,
+            comptime Iterator: type,
+            iterator: Iterator,
+        ) !*EntriesOption {
+            var dir = bun.strings.pathWithoutTrailingSlashOne(dir_maybe_trail_slash);
+
+            bun.resolver.Resolver.assertValidCacheKey(dir);
             var cache_result: ?allocators.Result = null;
             if (comptime FeatureFlags.enable_entry_cache) {
                 fs.entries_mutex.lock();
@@ -1029,20 +1031,20 @@ pub const FileSystem = struct {
                 }
             }
 
-            var handle = _handle orelse try fs.openDir(dir);
+            var handle = maybe_handle orelse try fs.openDir(dir);
 
             defer {
-                if (_handle == null and (!store_fd or fs.needToCloseFiles())) {
+                if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) {
                     handle.close();
                 }
             }
 
             // if we get this far, it's a real directory, so we can just store the dir name.
-            if (_handle == null) {
+            if (maybe_handle == null) {
                 dir = try if (in_place) |existing|
                     existing.dir
                 else
-                    DirnameStore.instance.append(string, _dir);
+                    DirnameStore.instance.append(string, dir_maybe_trail_slash);
             }
 
             // Cache miss: read the directory entries

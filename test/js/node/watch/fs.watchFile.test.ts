@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 // before it is actually watching, we need to repeat the operation to avoid
 // a race condition.
 function repeat(fn: any) {
-  const interval = setInterval(fn, 20);
+  const interval = setInterval(fn, 20).unref();
   return interval;
 }
 const encodingFileName = `新建文夹件.txt`;
@@ -43,7 +43,7 @@ describe("fs.watchFile", () => {
       increment++;
       fs.writeFileSync(path.join(testDir, "watch.txt"), "hello" + increment);
     });
-    await Bun.sleep(200);
+    await Bun.sleep(300);
     clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, "watch.txt"));
@@ -65,7 +65,7 @@ describe("fs.watchFile", () => {
       increment++;
       fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
     });
-    await Bun.sleep(200);
+    await Bun.sleep(300);
     clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, encodingFileName));
@@ -88,7 +88,7 @@ describe("fs.watchFile", () => {
       increment++;
       fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
     });
-    await Bun.sleep(200);
+    await Bun.sleep(300);
     clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, encodingFileName));

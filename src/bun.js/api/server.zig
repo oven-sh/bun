@@ -1279,7 +1279,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         defer_deinit_until_callback_completes: ?*bool = null,
 
         // TODO: support builtin compression
-        const can_sendfile = !ssl_enabled;
+        const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
         pub inline fn isAsync(this: *const RequestContext) bool {
             return this.defer_deinit_until_callback_completes == null;
@@ -1543,7 +1543,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.flags.is_waiting_for_request_body = false;
                     resp.clearOnData();
                 }
-                resp.endStream(closeConnection);
+
+                // This will send a terminating 0\r\n\r\n chunk to the client
+                // We only want to do that if they're still expecting a body
+                // We cannot call this function if the Content-Length header was previously set
+                if (resp.state().isResponsePending())
+                    resp.endStream(closeConnection);
+
                 this.resp = null;
             }
         }
@@ -1750,7 +1756,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 // the promise is pending
-                if (body.value == .Locked and body.value.Locked.action != .none and body.value.Locked.promise != null) {
+                if (body.value == .Locked and body.value.Locked.hasPendingPromise()) {
                     body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                 }
             }
@@ -1893,14 +1899,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.cleanupAndFinalizeAfterSendfile();
                     return errcode != .SUCCESS;
                 }
-            } else if (Environment.isWindows) {
-                const win = std.os.windows;
-                const uv = bun.windows.libuv;
-                const socket = bun.socketcast(this.sendfile.socket_fd);
-                const file_handle = uv.uv_get_osfhandle(bun.uvfdcast(this.sendfile.fd));
-                this.sendfile.offset += this.sendfile.remain;
-                this.sendfile.remain = 0;
-                return win.ws2_32.TransmitFile(socket, file_handle, 0, 0, null, null, 0) == 1;
             } else {
                 var sbytes: std.os.off_t = adjusted_count;
                 const signed_offset = @as(i64, @bitCast(@as(u64, this.sendfile.offset)));

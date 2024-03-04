@@ -141,6 +141,23 @@ pub const Body = struct {
             return this.toAnyBlobAllowPromise();
         }
 
+        pub fn hasPendingPromise(this: *PendingValue) bool {
+            const promise = this.promise orelse return false;
+
+            if (promise.asAnyPromise()) |internal| {
+                if (internal.status(this.global.vm()) != .Pending) {
+                    promise.unprotect();
+                    this.promise = null;
+                    return false;
+                }
+
+                return true;
+            }
+
+            this.promise = null;
+            return false;
+        }
+
         pub fn toAnyBlobAllowPromise(this: *PendingValue) ?AnyBlob {
             var stream = if (this.readable != null) &this.readable.? else return null;
 
@@ -195,6 +212,7 @@ pub const Body = struct {
 
                         // js now owns the memory
                         value.readable = null;
+                        value.promise.?.protect();
 
                         return value.promise.?;
                     },
@@ -811,17 +829,19 @@ pub const Body = struct {
             if (this.* == .Locked) {
                 var locked = this.Locked;
                 locked.deinit = true;
-                if (locked.promise) |promise| {
+                if (locked.hasPendingPromise()) {
+                    const promise = locked.promise.?;
+                    locked.promise = null;
+
                     if (promise.asAnyPromise()) |internal| {
                         internal.reject(global, error_instance);
                     }
-                    JSC.C.JSValueUnprotect(global, promise.asObjectRef());
-                    locked.promise = null;
+                    promise.unprotect();
                 }
 
                 if (locked.readable) |readable| {
-                    readable.done();
                     locked.readable = null;
+                    readable.done();
                 }
                 // will be unprotected by body value deinit
                 error_instance.protect();
@@ -835,12 +855,6 @@ pub const Body = struct {
             // will be unprotected by body value deinit
             error_instance.protect();
             this.* = .{ .Error = error_instance };
-        }
-
-        pub fn toErrorString(this: *Value, comptime err: string, global: *JSGlobalObject) void {
-            var error_str = ZigString.init(err);
-            const error_instance = error_str.toErrorInstance(global);
-            return this.toErrorInstance(error_instance, global);
         }
 
         pub fn toError(this: *Value, err: anyerror, global: *JSGlobalObject) void {
@@ -1126,8 +1140,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
             }
 
-            var blob = value.use();
-            var ptr = bun.new(Blob, blob);
+            var blob = bun.new(Blob, value.use());
             blob.allocator = getAllocator(globalObject);
 
             if (blob.content_type.len == 0 and blob.store != null) {
@@ -1140,7 +1153,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 }
             }
 
-            return JSC.JSPromise.resolvedPromiseValue(globalObject, ptr.toJS(globalObject));
+            return JSC.JSPromise.resolvedPromiseValue(globalObject, blob.toJS(globalObject));
         }
     };
 }

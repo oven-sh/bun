@@ -5,7 +5,6 @@ const { Duplex, Readable, Writable } = require("node:stream");
 const { getHeader, setHeader, assignHeaders: assignHeadersFast } = $lazy("http");
 
 const GlobalPromise = globalThis.Promise;
-
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
  * True if val contains an invalid field-vchar
@@ -186,7 +185,9 @@ var FakeSocket = class Socket extends Duplex {
     }
   }
 
-  ref() {}
+  ref() {
+    return this;
+  }
 
   get remoteAddress() {
     return this.address()?.address;
@@ -227,7 +228,9 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  unref() {}
+  unref() {
+    return this;
+  }
 
   _write(chunk, encoding, callback) {}
 };
@@ -598,7 +601,11 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
 
   return this;
 };
-Server.prototype.setTimeout = function (msecs, callback) {};
+
+Server.prototype.setTimeout = function (msecs, callback) {
+  // TODO:
+  return this;
+};
 
 function assignHeadersSlow(object, req) {
   const headers = req.headers;
@@ -647,9 +654,6 @@ function assignHeaders(object, req) {
     assignHeadersSlow(object, req);
     return false;
   }
-}
-function destroyBodyStreamNT(bodyStream) {
-  bodyStream.destroy();
 }
 
 var defaultIncomingOpts = { type: "request" };
@@ -742,7 +746,6 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
     if (self[abortedSymbol]) return;
     if (done) {
       self.push(null);
-      process.nextTick(destroyBodyStreamNT, self);
       break;
     }
     for (var v of value) {
@@ -841,7 +844,8 @@ Object.defineProperty(IncomingMessage.prototype, "socket", {
 });
 
 IncomingMessage.prototype.setTimeout = function (msecs, callback) {
-  throw new Error("not implemented");
+  // TODO:
+  return this;
 };
 
 function emitErrorNt(msg, err, callback) {
@@ -1263,7 +1267,8 @@ ServerResponse.prototype.writeContinue = function (callback) {
 };
 
 ServerResponse.prototype.setTimeout = function (msecs, callback) {
-  throw new Error("not implemented");
+  // TODO:
+  return this;
 };
 
 ServerResponse.prototype.appendHeader = function (name, value) {

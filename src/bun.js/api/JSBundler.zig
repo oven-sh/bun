@@ -66,6 +66,7 @@ pub const JSBundler = struct {
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -260,6 +261,30 @@ pub const JSBundler = struct {
             } else {
                 globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
                 return error.JSException;
+            }
+
+            if (config.getTruthy(globalThis, "conditions")) |conditions_value| {
+                if (conditions_value.isString()) {
+                    var slice = conditions_value.toSliceOrNull(globalThis) orelse {
+                        globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
+                        return error.JSException;
+                    };
+                    defer slice.deinit();
+                    try this.conditions.insert(slice.slice());
+                } else if (conditions_value.jsType().isArray()) {
+                    var iter = conditions_value.arrayIterator(globalThis);
+                    while (iter.next()) |entry_point| {
+                        var slice = entry_point.toSliceOrNull(globalThis) orelse {
+                            globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
+                            return error.JSException;
+                        };
+                        defer slice.deinit();
+                        try this.conditions.insert(slice.slice());
+                    }
+                } else {
+                    globalThis.throwInvalidArguments("Expected conditions to be an array of strings", .{});
+                    return error.JSException;
+                }
             }
 
             {
@@ -493,6 +518,7 @@ pub const JSBundler = struct {
             self.outdir.deinit();
             self.rootdir.deinit();
             self.public_path.deinit();
+            self.conditions.deinit();
         }
     };
 
@@ -1041,7 +1067,7 @@ pub const BuildArtifact = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return @call(.always_inline, Blob.getText, .{ &this.blob, globalThis, callframe });
+        return @call(bun.callmod_inline, Blob.getText, .{ &this.blob, globalThis, callframe });
     }
 
     pub fn getJSON(
@@ -1049,27 +1075,27 @@ pub const BuildArtifact = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return @call(.always_inline, Blob.getJSON, .{ &this.blob, globalThis, callframe });
+        return @call(bun.callmod_inline, Blob.getJSON, .{ &this.blob, globalThis, callframe });
     }
     pub fn getArrayBuffer(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getArrayBuffer, .{ &this.blob, globalThis, callframe });
+        return @call(bun.callmod_inline, Blob.getArrayBuffer, .{ &this.blob, globalThis, callframe });
     }
     pub fn getSlice(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        return @call(.always_inline, Blob.getSlice, .{ &this.blob, globalThis, callframe });
+        return @call(bun.callmod_inline, Blob.getSlice, .{ &this.blob, globalThis, callframe });
     }
     pub fn getType(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getType, .{ &this.blob, globalThis });
+        return @call(bun.callmod_inline, Blob.getType, .{ &this.blob, globalThis });
     }
 
     pub fn getStream(
@@ -1077,7 +1103,7 @@ pub const BuildArtifact = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getStream, .{
+        return @call(bun.callmod_inline, Blob.getStream, .{
             &this.blob,
             globalThis,
             callframe,
@@ -1108,11 +1134,11 @@ pub const BuildArtifact = struct {
     }
 
     pub fn getSize(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getSize, .{ &this.blob, globalObject });
+        return @call(bun.callmod_inline, Blob.getSize, .{ &this.blob, globalObject });
     }
 
     pub fn getMimeType(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
-        return @call(.always_inline, Blob.getType, .{ &this.blob, globalObject });
+        return @call(bun.callmod_inline, Blob.getType, .{ &this.blob, globalObject });
     }
 
     pub fn getOutputKind(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {

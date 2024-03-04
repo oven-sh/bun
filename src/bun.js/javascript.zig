@@ -102,7 +102,7 @@ pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context)
     return struct {
         pub fn callback(ctx: ?*anyopaque) callconv(.C) void {
             const context: *Context = @as(*Context, @ptrCast(@alignCast(ctx.?)));
-            @call(.auto, Function, .{context});
+            Function(context);
         }
     }.callback;
 }
@@ -483,6 +483,7 @@ pub const VirtualMachine = struct {
     console: *ConsoleObject,
     log: *logger.Log,
     main: string = "",
+    main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
     process: js.JSObjectRef = null,
     flush_list: std.ArrayList(string),
@@ -1708,17 +1709,18 @@ pub const VirtualMachine = struct {
                         const buster_name = name: {
                             if (std.fs.path.isAbsolute(normalized_specifier)) {
                                 if (std.fs.path.dirname(normalized_specifier)) |dir| {
-                                    break :name strings.withTrailingSlash(dir, normalized_specifier);
+                                    // Normalized with trailing slash
+                                    break :name bun.strings.normalizeSlashesOnly(&specifier_cache_resolver_buf, dir, std.fs.path.sep);
                                 }
                             }
 
                             var parts = [_]string{
                                 source_to_use,
                                 normalized_specifier,
-                                "../",
+                                bun.pathLiteral(".."),
                             };
 
-                            break :name bun.path.joinAbsStringBuf(
+                            break :name bun.path.joinAbsStringBufZ(
                                 jsc_vm.bundler.fs.top_level_dir,
                                 &specifier_cache_resolver_buf,
                                 &parts,
@@ -1726,8 +1728,12 @@ pub const VirtualMachine = struct {
                             );
                         };
 
-                        jsc_vm.bundler.resolver.bustDirCache(buster_name);
-                        continue;
+                        // Only re-query if we previously had something cached.
+                        if (jsc_vm.bundler.resolver.bustDirCache(buster_name)) {
+                            continue;
+                        }
+
+                        return error.ModuleNotFound;
                     },
                 };
             }
@@ -3438,7 +3444,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             // on windows we receive file events for all items affected by a directory change
                             // so we only need to clear the directory cache. all other effects will be handled
                             // by the file events
-                            resolver.bustDirCache(file_path);
+                            _ = resolver.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
                             continue;
                         }
                         var affected_buf: [128][]const u8 = undefined;
@@ -3488,7 +3494,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             }
                         }
 
-                        resolver.bustDirCache(file_path);
+                        _ = resolver.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
 
                         if (entries_option) |dir_ent| {
                             var last_file_hash: GenericWatcher.HashType = std.math.maxInt(GenericWatcher.HashType);

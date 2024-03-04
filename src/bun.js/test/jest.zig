@@ -437,6 +437,7 @@ pub const Jest = struct {
         const mockFn = JSC.NewFunction(globalObject, ZigString.static("fn"), 1, JSMock__jsMockFn, false);
         const spyOn = JSC.NewFunction(globalObject, ZigString.static("spyOn"), 2, JSMock__jsSpyOn, false);
         const restoreAllMocks = JSC.NewFunction(globalObject, ZigString.static("restoreAllMocks"), 2, JSMock__jsRestoreAllMocks, false);
+        const clearAllMocks = JSC.NewFunction(globalObject, ZigString.static("clearAllMocks"), 2, JSMock__jsClearAllMocks, false);
         const mockModuleFn = JSC.NewFunction(globalObject, ZigString.static("module"), 2, JSMock__jsModuleMock, false);
         module.put(globalObject, ZigString.static("mock"), mockFn);
         mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
@@ -446,6 +447,7 @@ pub const Jest = struct {
         jest.put(globalObject, ZigString.static("fn"), mockFn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
+        jest.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
         jest.put(
             globalObject,
             ZigString.static("setSystemTime"),
@@ -476,6 +478,7 @@ pub const Jest = struct {
         vi.put(globalObject, ZigString.static("spyOn"), spyOn);
         vi.put(globalObject, ZigString.static("module"), mockModuleFn);
         vi.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
+        vi.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
         module.put(globalObject, ZigString.static("vi"), vi);
     }
 
@@ -486,6 +489,7 @@ pub const Jest = struct {
     extern fn JSMock__jsNow(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsSetSystemTime(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsRestoreAllMocks(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
+    extern fn JSMock__jsClearAllMocks(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsSpyOn(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsUseFakeTimers(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
     extern fn JSMock__jsUseRealTimers(*JSC.JSGlobalObject, *JSC.CallFrame) JSC.JSValue;
@@ -1196,7 +1200,7 @@ pub fn wrapTestFunction(comptime name: []const u8, comptime func: DescribeScope.
                 globalThis.throw("Cannot use " ++ name ++ "() outside of a test file.", .{});
                 return .zero;
             }
-            return @call(.always_inline, func, .{ globalThis, callframe });
+            return @call(bun.callmod_inline, func, .{ globalThis, callframe });
         }
     }.wrapped;
 }
@@ -1265,6 +1269,8 @@ pub const TestRunnerTask = struct {
         // reset the global state for each test
         // prior to the run
         expect.active_test_expectation_counter = .{};
+        expect.is_expecting_assertions = false;
+        expect.is_expecting_assertions_count = false;
         jsc_vm.last_reported_error_for_dedupe = .zero;
 
         const test_id = this.test_id;
@@ -1309,7 +1315,7 @@ pub const TestRunnerTask = struct {
 
         this.sync_state = .pending;
 
-        const result = TestScope.run(&test_, this);
+        var result = TestScope.run(&test_, this);
 
         // rejected promises should fail the test
         if (result != .fail)
@@ -1318,6 +1324,29 @@ pub const TestRunnerTask = struct {
         if (result == .pending and this.sync_state == .pending and (this.done_callback_state == .pending or this.promise_state == .pending)) {
             this.sync_state = .fulfilled;
             return true;
+        }
+
+        if (expect.is_expecting_assertions and expect.active_test_expectation_counter.actual == 0) {
+            const fmt = comptime "<d>expect.hasAssertions()<r>\n\nExpected <green>at least one assertion<r> to be called but <red>received none<r>.\n";
+            const error_value = if (Output.enable_ansi_colors)
+                globalThis.createErrorInstance(Output.prettyFmt(fmt, true), .{})
+            else
+                globalThis.createErrorInstance(Output.prettyFmt(fmt, false), .{});
+
+            globalThis.*.bunVM().runErrorHandler(error_value, null);
+            result = .{ .fail = 0 };
+        }
+
+        if (expect.is_expecting_assertions_count and expect.active_test_expectation_counter.actual != expect.expected_assertions_number) {
+            const fmt = comptime "<d>expect.assertions({})<r>\n\nExpected <green>{} assertion<r> to be called but <red>found {} assertions<r> instead.\n";
+            const fmt_args = .{ expect.expected_assertions_number, expect.expected_assertions_number, expect.active_test_expectation_counter.actual };
+            const error_value = if (Output.enable_ansi_colors)
+                globalThis.createErrorInstance(Output.prettyFmt(fmt, true), fmt_args)
+            else
+                globalThis.createErrorInstance(Output.prettyFmt(fmt, false), fmt_args);
+
+            globalThis.*.bunVM().runErrorHandler(error_value, null);
+            result = .{ .fail = expect.active_test_expectation_counter.actual };
         }
 
         this.handleResult(result, .sync);
@@ -1553,8 +1582,11 @@ inline fn createScope(
     else
         (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
 
-    if (tag == .only) {
+    var tag_to_use = tag;
+
+    if (tag_to_use == .only or parent.tag == .only) {
         Jest.runner.?.setOnly();
+        tag_to_use = .only;
     } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
         return .zero;
     }
@@ -1563,7 +1595,6 @@ inline fn createScope(
         (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
-    var tag_to_use = tag;
     if (is_test) {
         if (!is_skip) {
             if (Jest.runner.?.filter_regex) |regex| {
@@ -1616,7 +1647,7 @@ inline fn createScope(
             .label = label,
             .parent = parent,
             .file_id = parent.file_id,
-            .tag = tag,
+            .tag = tag_to_use,
         };
 
         return scope.run(globalThis, function, &.{});
@@ -1857,7 +1888,15 @@ fn eachBind(
                 (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
             const formattedLabel = formatLabel(globalThis, label, function_args, test_idx) catch return .zero;
 
-            var is_skip = false;
+            const tag = parent.tag;
+
+            if (tag == .only) {
+                Jest.runner.?.setOnly();
+            }
+
+            var is_skip = tag == .skip or
+                (tag == .todo and (function == .zero or !Jest.runner.?.run_todo)) or
+                (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
             if (Jest.runner.?.filter_regex) |regex| {
                 var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
@@ -1872,21 +1911,25 @@ fn eachBind(
                 parent.skip_count += 1;
                 function.unprotect();
             } else if (each_data.is_test) {
-                function.protect();
-                parent.tests.append(allocator, TestScope{
-                    .label = formattedLabel,
-                    .parent = parent,
-                    .tag = parent.tag,
-                    .func = function,
-                    .func_arg = function_args,
-                    .func_has_callback = has_callback_function,
-                    .timeout_millis = timeout_ms,
-                }) catch unreachable;
+                if (Jest.runner.?.only and tag != .only) {
+                    return .zero;
+                } else {
+                    function.protect();
+                    parent.tests.append(allocator, TestScope{
+                        .label = formattedLabel,
+                        .parent = parent,
+                        .tag = tag,
+                        .func = function,
+                        .func_arg = function_args,
+                        .func_has_callback = has_callback_function,
+                        .timeout_millis = timeout_ms,
+                    }) catch unreachable;
 
-                if (test_elapsed_timer == null) create_timer: {
-                    const timer = allocator.create(std.time.Timer) catch unreachable;
-                    timer.* = std.time.Timer.start() catch break :create_timer;
-                    test_elapsed_timer = timer;
+                    if (test_elapsed_timer == null) create_timer: {
+                        const timer = allocator.create(std.time.Timer) catch unreachable;
+                        timer.* = std.time.Timer.start() catch break :create_timer;
+                        test_elapsed_timer = timer;
+                    }
                 }
             } else {
                 var scope = allocator.create(DescribeScope) catch unreachable;
@@ -1894,7 +1937,7 @@ fn eachBind(
                     .label = formattedLabel,
                     .parent = parent,
                     .file_id = parent.file_id,
-                    .tag = .pass,
+                    .tag = tag,
                 };
 
                 const ret = scope.run(globalThis, function, function_args);

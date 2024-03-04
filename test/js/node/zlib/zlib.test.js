@@ -15,6 +15,16 @@ describe("zlib", () => {
     const decompressed = gunzipSync(compressed);
     expect(decompressed.join("")).toBe(data.join(""));
   });
+
+  it("should throw on invalid raw deflate data", () => {
+    const data = new TextEncoder().encode("Hello World!".repeat(1));
+    expect(() => inflateSync(data)).toThrow(new Error("invalid stored block lengths"));
+  });
+
+  it("should throw on invalid gzip data", () => {
+    const data = new TextEncoder().encode("Hello World!".repeat(1));
+    expect(() => gunzipSync(data)).toThrow(new Error("incorrect header check"));
+  });
 });
 
 import * as zlib from "node:zlib";

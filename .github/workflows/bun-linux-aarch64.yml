@@ -9,6 +9,7 @@ on:
     branches:
       - main
     paths:
+      - ".github/workflows/bun-linux-aarch64.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -17,11 +18,11 @@ on:
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
-      - ".github/workflows/bun-linux-aarch64.yml"
   pull_request:
     branches:
       - main
     paths:
+      - ".github/workflows/bun-linux-aarch64.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -30,7 +31,6 @@ on:
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
-      - ".github/workflows/bun-linux-aarch64.yml"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -51,14 +51,14 @@ jobs:
             runner: linux-arm64
             build_machine_arch: aarch64
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: false
           ref: ${{github.sha}}
           clean: true
       - run: |
           bash ./scripts/update-submodules.sh
-      - uses: docker/setup-buildx-action@v2
+      - uses: docker/setup-buildx-action@v3
         id: buildx
         with:
           install: true
@@ -66,7 +66,7 @@ jobs:
         run: |
           rm -rf ${{runner.temp}}/release
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -74,7 +74,7 @@ jobs:
       - run: |
           mkdir -p /tmp/.buildx-cache-${{matrix.tag}}
       - name: Build and push
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: false
@@ -113,14 +113,16 @@ jobs:
 
           zip -r bun-${{matrix.tag}}-profile.zip bun-${{matrix.tag}}-profile
           zip -r bun-${{matrix.tag}}.zip bun-${{matrix.tag}}
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: bun-${{matrix.tag}}-profile
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip
-      - uses: actions/upload-artifact@v3
+          if-no-files-found: "error"
+      - uses: actions/upload-artifact@v4
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
+          if-no-files-found: "error"
       - name: Release
         id: release
         uses: ncipollo/release-action@v1

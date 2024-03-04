@@ -44,13 +44,10 @@ const ShellCompletions = @import("./shell_completions.zig");
 pub const InstallCompletionsCommand = struct {
     pub fn testPath(_: string) !std.fs.Dir {}
 
-    fn installBunxSymlink(allocator: std.mem.Allocator, cwd: []const u8) !void {
-        if (comptime Environment.isWindows) {
-            @panic("TODO on Windows");
-        }
+    const bunx_name = if (Environment.isDebug) "bunx-debug" else "bunx";
 
+    fn installBunxSymlinkPosix(allocator: std.mem.Allocator, cwd: []const u8) !void {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const bunx_name = if (Environment.isDebug) "bunx-debug" else "bunx";
 
         // don't install it if it's already there
         if (bun.which(&buf, bun.getenvZ("PATH") orelse cwd, cwd, bunx_name) != null)
@@ -92,6 +89,81 @@ pub const InstallCompletionsCommand = struct {
         };
     }
 
+    fn installBunxSymlinkWindows(_: std.mem.Allocator, _: []const u8) !void {
+        // Because symlinks are not always allowed on windows,
+        // `bunx.exe` on windows is a hardlink to `bun.exe`
+        // for this to work, we need to delete and recreate the hardlink every time
+        const image_path = bun.windows.exePathW();
+        const image_dirname = image_path[0 .. (std.mem.lastIndexOfScalar(u16, image_path, '\\') orelse unreachable) + 1];
+
+        var bunx_path_buf: bun.WPathBuffer = undefined;
+
+        std.os.windows.DeleteFile(try bun.strings.concatBufT(u16, &bunx_path_buf, .{
+            &bun.windows.nt_object_prefix,
+            image_dirname,
+            comptime bun.strings.literal(u16, bunx_name ++ ".cmd"),
+        }), .{ .dir = null }) catch {};
+
+        const bunx_path_with_z = try bun.strings.concatBufT(u16, &bunx_path_buf, .{
+            &bun.windows.nt_object_prefix,
+            image_dirname,
+            comptime bun.strings.literal(u16, bunx_name ++ ".exe\x00"),
+        });
+        const bunx_path = bunx_path_with_z[0 .. bunx_path_with_z.len - 1 :0];
+        std.os.windows.DeleteFile(bunx_path, .{ .dir = null }) catch {};
+
+        if (bun.windows.CreateHardLinkW(bunx_path, image_path, null) == 0) {
+            // if hard link fails, use a cmd script
+            const script = "@%~dp0bun.exe x %*\n";
+
+            const bunx_cmd_with_z = try bun.strings.concatBufT(u16, &bunx_path_buf, .{
+                &bun.windows.nt_object_prefix,
+                image_dirname,
+                comptime bun.strings.literal(u16, bunx_name ++ ".exe\x00"),
+            });
+            const bunx_cmd = bunx_cmd_with_z[0 .. bunx_cmd_with_z.len - 1 :0];
+            // TODO: fix this zig bug, it is one line change to a few functions.
+            // const file = try std.fs.createFileAbsoluteW(bunx_cmd, .{});
+            const file = try std.fs.cwd().createFileW(bunx_cmd, .{});
+            defer file.close();
+            try file.writeAll(script);
+        }
+    }
+
+    fn installBunxSymlink(allocator: std.mem.Allocator, cwd: []const u8) !void {
+        if (Environment.isWindows) {
+            try installBunxSymlinkWindows(allocator, cwd);
+        } else {
+            try installBunxSymlinkPosix(allocator, cwd);
+        }
+    }
+
+    fn installUninstallerWindows() !void {
+        // This uninstaller file is only written if the current exe is within a path
+        // like `\bun\bin\<whatever>.exe` so that it probably only runs when the
+        // powershell `install.ps1` was used to install.
+
+        const image_path = bun.windows.exePathW();
+        const image_dirname = image_path[0..(std.mem.lastIndexOfScalar(u16, image_path, '\\') orelse unreachable)];
+
+        if (!std.mem.endsWith(u16, image_dirname, comptime bun.strings.literal(u16, "\\bun\\bin")))
+            return;
+
+        const content = @embedFile("uninstall.ps1");
+
+        var bunx_path_buf: bun.WPathBuffer = undefined;
+        const uninstaller_path = try bun.strings.concatBufT(u16, &bunx_path_buf, .{
+            &bun.windows.nt_object_prefix,
+            image_dirname[0 .. image_dirname.len - 3],
+            comptime bun.strings.literal(u16, "uninstall.ps1"),
+        });
+
+        const file = try std.fs.cwd().createFileW(uninstaller_path, .{});
+        defer file.close();
+
+        try file.writeAll(content);
+    }
+
     pub fn exec(allocator: std.mem.Allocator) !void {
         // Fail silently on auto-update.
         const fail_exit_code: u8 = if (bun.getenvZ("IS_BUN_AUTO_UPDATE") == null) 1 else 0;
@@ -120,9 +192,21 @@ pub const InstallCompletionsCommand = struct {
 
         installBunxSymlink(allocator, cwd) catch {};
 
+        if (Environment.isWindows) {
+            installUninstallerWindows() catch {};
+        }
+
+        // TODO: https://github.com/oven-sh/bun/issues/8939
+        if (Environment.isWindows) {
+            Output.errGeneric("PowerShell completions are not yet written for Bun yet.", .{});
+            Output.printErrorln("See https://github.com/oven-sh/bun/issues/8939", .{});
+            return;
+        }
+
         switch (shell) {
             .unknown => {
-                Output.prettyErrorln("<r><red>error:<r> Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash. To manually output completions, run this:\n      bun getcompletes", .{});
+                Output.errGeneric("Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.", .{});
+                Output.note("To manually output completions, run 'bun getcompletes'", .{});
                 Global.exit(fail_exit_code);
             },
             else => {},

@@ -8541,7 +8541,7 @@ pub const Interpreter = struct {
             }
 
             if (bun.Environment.isWindows) {
-                this.reader.source = .{ .source = bun.io.Source.openFile(fd) };
+                this.reader.source = .{ .file = bun.io.Source.openFile(fd) };
             }
             this.reader.setParent(this);
 

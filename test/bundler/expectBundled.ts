@@ -149,7 +149,7 @@ export interface BundlerTestInput {
   define?: Record<string, string | number>;
 
   /** Use for resolve custom conditions */
-  conditions?: String[];
+  conditions?: string[];
 
   /** Default is "[name].[ext]" */
   entryNaming?: string;
@@ -906,6 +906,10 @@ function expectBundled(
           target,
           publicPath,
         } as BuildConfig;
+
+        if (conditions?.length) {
+          buildConfig.conditions = conditions;
+        }
 
         if (DEBUG) {
           if (_referenceFn) {

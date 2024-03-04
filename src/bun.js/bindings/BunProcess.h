@@ -27,8 +27,6 @@ public:
     {
     }
 
-    void emitSignalEvent(int signalNumber);
-
     DECLARE_EXPORT_INFO;
 
     static void destroy(JSC::JSCell* cell)

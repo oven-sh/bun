@@ -70,7 +70,7 @@ pub fn main() void {
 
     Output.Source.set(&output_source);
     defer Output.flush();
-    if (Environment.isX64 and Environment.enableSIMD) {
+    if (Environment.isX64 and Environment.enableSIMD and Environment.isPosix) {
         bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
     }
 

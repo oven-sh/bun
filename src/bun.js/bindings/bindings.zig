@@ -5322,6 +5322,20 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn getProxyInternalField(this: JSValue, field: ProxyInternalField) JSValue {
         return Bun__ProxyObject__getInternalField(this, field);
     }
+
+    extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *bun.String) bool;
+
+    /// Returned memory is read-only memory of the s_info assigned to a JSCell
+    pub fn getClassInfoName(this: JSValue) ?[]const u8 {
+        var out: bun.String = undefined;
+        if (!JSC__JSValue__getClassInfoName(this, &out)) return null;
+        // we assume the class name is ASCII text
+        const data = out.latin1();
+        if (bun.Environment.allow_assert) {
+            std.debug.assert(bun.strings.isAllASCII(data));
+        }
+        return data;
+    }
 };
 
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;

@@ -546,13 +546,17 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
 
     return JSC::JSValue::encode(result);
 }
-#if !OS(WINDOWS)
+
 static HashMap<String, int>* signalNameToNumberMap = nullptr;
 static HashMap<int, String>* signalNumberToNameMap = nullptr;
 
-// signal number to array of script execution context ids that care about the signal
-static HashMap<int, HashSet<uint32_t>>* signalToContextIdsMap = nullptr;
-static Lock signalToContextIdsMapLock;
+// On windows, signals need to have a handle to the uv_signal_t. When sigaction is used, this is kept track globally for you.
+struct SignalHandleValue {
+#if OS(WINDOWS)
+    uv_signal_t* handle;
+#endif
+};
+static HashMap<int, SignalHandleValue>* signalToContextIdsMap = nullptr;
 
 static const NeverDestroyed<String> signalNames[] = {
     MAKE_STATIC_STRING_IMPL("SIGHUP"),
@@ -599,31 +603,69 @@ static void loadSignalNumberMap()
         signalNameToNumberMap->add(signalNames[1], SIGINT);
         signalNameToNumberMap->add(signalNames[2], SIGQUIT);
         signalNameToNumberMap->add(signalNames[3], SIGILL);
+#ifdef SIGTRAP
         signalNameToNumberMap->add(signalNames[4], SIGTRAP);
+#endif
         signalNameToNumberMap->add(signalNames[5], SIGABRT);
+#ifdef SIGIOT
         signalNameToNumberMap->add(signalNames[6], SIGIOT);
+#endif
+#ifdef SIGBUS
         signalNameToNumberMap->add(signalNames[7], SIGBUS);
+#endif
         signalNameToNumberMap->add(signalNames[8], SIGFPE);
         signalNameToNumberMap->add(signalNames[9], SIGKILL);
+#ifdef SIGUSR1
         signalNameToNumberMap->add(signalNames[10], SIGUSR1);
+#endif
         signalNameToNumberMap->add(signalNames[11], SIGSEGV);
+#ifdef SIGUSR2
         signalNameToNumberMap->add(signalNames[12], SIGUSR2);
+#endif
+#ifdef SIGPIPE
         signalNameToNumberMap->add(signalNames[13], SIGPIPE);
+#endif
+#ifdef SIGALRM
         signalNameToNumberMap->add(signalNames[14], SIGALRM);
+#endif
         signalNameToNumberMap->add(signalNames[15], SIGTERM);
+#ifdef SIGCHLD
         signalNameToNumberMap->add(signalNames[16], SIGCHLD);
+#endif
+#ifdef SIGCONT
         signalNameToNumberMap->add(signalNames[17], SIGCONT);
+#endif
+#ifdef SIGSTOP
         signalNameToNumberMap->add(signalNames[18], SIGSTOP);
+#endif
+#ifdef SIGTSTP
         signalNameToNumberMap->add(signalNames[19], SIGTSTP);
+#endif
+#ifdef SIGTTIN
         signalNameToNumberMap->add(signalNames[20], SIGTTIN);
+#endif
+#ifdef SIGTTOU
         signalNameToNumberMap->add(signalNames[21], SIGTTOU);
+#endif
+#ifdef SIGURG
         signalNameToNumberMap->add(signalNames[22], SIGURG);
+#endif
+#ifdef SIGXCPU
         signalNameToNumberMap->add(signalNames[23], SIGXCPU);
+#endif
+#ifdef SIGXFSZ
         signalNameToNumberMap->add(signalNames[24], SIGXFSZ);
+#endif
+#ifdef SIGVTALRM
         signalNameToNumberMap->add(signalNames[25], SIGVTALRM);
+#endif
+#ifdef SIGPROF
         signalNameToNumberMap->add(signalNames[26], SIGPROF);
+#endif
         signalNameToNumberMap->add(signalNames[27], SIGWINCH);
+#ifdef SIGIO
         signalNameToNumberMap->add(signalNames[28], SIGIO);
+#endif
 #ifdef SIGINFO
         signalNameToNumberMap->add(signalNames[29], SIGINFO);
 #endif
@@ -631,152 +673,208 @@ static void loadSignalNumberMap()
 #ifndef SIGINFO
         signalNameToNumberMap->add(signalNames[29], 255);
 #endif
+#ifdef SIGSYS
         signalNameToNumberMap->add(signalNames[30], SIGSYS);
+#endif
     });
 }
 
+#if OS(WINDOWS)
+extern "C" uv_signal_t* Bun__UVSignalHandle__init(JSC::JSGlobalObject* lexicalGlobalObject, int signalNumber, void (*callback)(uv_signal_t*, int));
+extern "C" uv_signal_t* Bun__UVSignalHandle__close(uv_signal_t*);
+#endif
+
+#if !OS(WINDOWS)
+void signalHandler(int signalNumber)
+#else
+void signalHandler(uv_signal_t* signal, int signalNumber)
+#endif
+{
+    if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
+        return;
+
+    SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
+
+    auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
+    if (UNLIKELY(!context))
+        return;
+
+    JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    Process* process = jsCast<Process*>(globalObject->processObject());
+
+    String signalName = signalNumberToNameMap->get(signalNumber);
+    Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
+    MarkedArgumentBuffer args;
+    args.append(jsNumber(signalNumber));
+    // TODO(@paperdave): add an ASSERT(isMainThread());
+    // This should be true on posix if I understand sigaction right
+    // On Windows it should be true if the uv_signal is created on the main thread's loop
+    //
+    // I would like to assert this because if that assumption is not true,
+    // this call will probably cause very confusing bugs.
+    process->wrapped().emitForBindings(signalNameIdentifier, args);
+};
+
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
-    if (eventName.string() == "message"_s) {
-        if (isAdded) {
-            if (Bun__GlobalObject__hasIPC(eventEmitter.scriptExecutionContext()->jsGlobalObject())
-                && eventEmitter.listenerCount(eventName) == 1) {
-                eventEmitter.scriptExecutionContext()->refEventLoop();
-                eventEmitter.m_hasIPCRef = true;
-            }
-        } else {
-            if (eventEmitter.listenerCount(eventName) == 0 && eventEmitter.m_hasIPCRef) {
-                eventEmitter.scriptExecutionContext()->unrefEventLoop();
-            }
-        }
-        return;
-    }
-
-    loadSignalNumberMap();
-
-    static std::once_flag signalNumberToNameMapOnceFlag;
-    std::call_once(signalNumberToNameMapOnceFlag, [] {
-        signalNumberToNameMap = new HashMap<int, String>();
-        signalNumberToNameMap->reserveInitialCapacity(31);
-        signalNumberToNameMap->add(SIGHUP, signalNames[0]);
-        signalNumberToNameMap->add(SIGINT, signalNames[1]);
-        signalNumberToNameMap->add(SIGQUIT, signalNames[2]);
-        signalNumberToNameMap->add(SIGILL, signalNames[3]);
-        signalNumberToNameMap->add(SIGTRAP, signalNames[4]);
-        signalNumberToNameMap->add(SIGABRT, signalNames[5]);
-        signalNumberToNameMap->add(SIGIOT, signalNames[6]);
-        signalNumberToNameMap->add(SIGBUS, signalNames[7]);
-        signalNumberToNameMap->add(SIGFPE, signalNames[8]);
-        signalNumberToNameMap->add(SIGKILL, signalNames[9]);
-        signalNumberToNameMap->add(SIGUSR1, signalNames[10]);
-        signalNumberToNameMap->add(SIGSEGV, signalNames[11]);
-        signalNumberToNameMap->add(SIGUSR2, signalNames[12]);
-        signalNumberToNameMap->add(SIGPIPE, signalNames[13]);
-        signalNumberToNameMap->add(SIGALRM, signalNames[14]);
-        signalNumberToNameMap->add(SIGTERM, signalNames[15]);
-        signalNumberToNameMap->add(SIGCHLD, signalNames[16]);
-        signalNumberToNameMap->add(SIGCONT, signalNames[17]);
-        signalNumberToNameMap->add(SIGSTOP, signalNames[18]);
-        signalNumberToNameMap->add(SIGTSTP, signalNames[19]);
-        signalNumberToNameMap->add(SIGTTIN, signalNames[20]);
-        signalNumberToNameMap->add(SIGTTOU, signalNames[21]);
-        signalNumberToNameMap->add(SIGURG, signalNames[22]);
-        signalNumberToNameMap->add(SIGXCPU, signalNames[23]);
-        signalNumberToNameMap->add(SIGXFSZ, signalNames[24]);
-        signalNumberToNameMap->add(SIGVTALRM, signalNames[25]);
-        signalNumberToNameMap->add(SIGPROF, signalNames[26]);
-        signalNumberToNameMap->add(SIGWINCH, signalNames[27]);
-        signalNumberToNameMap->add(SIGIO, signalNames[28]);
-#ifdef SIGINFO
-        signalNumberToNameMap->add(SIGINFO, signalNames[29]);
-#endif
-        signalNumberToNameMap->add(SIGSYS, signalNames[30]);
-    });
-
-    if (!signalToContextIdsMap) {
-        signalToContextIdsMap = new HashMap<int, HashSet<uint32_t>>();
-    }
-
-    if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
-        if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {
-            uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
-            Locker lock { signalToContextIdsMapLock };
-
+    if (eventEmitter.scriptExecutionContext()->isMainThread()) {
+        // IPC handlers
+        if (eventName.string() == "message"_s) {
             if (isAdded) {
-                if (!signalToContextIdsMap->contains(signalNumber)) {
-                    HashSet<uint32_t> contextIds;
-                    contextIds.add(contextId);
-                    signalToContextIdsMap->set(signalNumber, contextIds);
-
-                    lock.unlockEarly();
-
-                    struct sigaction action;
-                    memset(&action, 0, sizeof(struct sigaction));
-
-                    // Set the handler in the action struct
-                    action.sa_handler = [](int signalNumber) {
-                        if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
-                            return;
-
-                        Locker lock { signalToContextIdsMapLock };
-                        if (UNLIKELY(signalToContextIdsMap->find(signalNumber) == signalToContextIdsMap->end()))
-                            return;
-                        auto contextIds = signalToContextIdsMap->get(signalNumber);
-
-                        for (int contextId : contextIds) {
-                            auto* context = ScriptExecutionContext::getScriptExecutionContext(contextId);
-                            if (UNLIKELY(!context))
-                                continue;
-
-                            JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
-                            Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-                            Process* process = jsCast<Process*>(globalObject->processObject());
-
-                            context->postCrossThreadTask(*process, &Process::emitSignalEvent, signalNumber);
-                        }
-                    };
-
-                    // Clear the sa_mask
-                    sigemptyset(&action.sa_mask);
-                    sigaddset(&action.sa_mask, signalNumber);
-                    action.sa_flags = SA_RESTART;
-
-                    sigaction(signalNumber, &action, nullptr);
-                } else {
-                    auto contextIds = signalToContextIdsMap->get(signalNumber);
-                    contextIds.add(contextId);
-                    signalToContextIdsMap->set(signalNumber, contextIds);
+                if (Bun__GlobalObject__hasIPC(eventEmitter.scriptExecutionContext()->jsGlobalObject())
+                    && eventEmitter.listenerCount(eventName) == 1) {
+                    eventEmitter.scriptExecutionContext()->refEventLoop();
+                    eventEmitter.m_hasIPCRef = true;
                 }
             } else {
-                if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end()) {
-                    HashSet<uint32_t> contextIds = signalToContextIdsMap->get(signalNumber);
-                    contextIds.remove(contextId);
-                    if (contextIds.isEmpty()) {
+                if (eventEmitter.listenerCount(eventName) == 0 && eventEmitter.m_hasIPCRef) {
+                    eventEmitter.scriptExecutionContext()->unrefEventLoop();
+                }
+            }
+            return;
+        }
+
+        // Signal Handlers
+        loadSignalNumberMap();
+        static std::once_flag signalNumberToNameMapOnceFlag;
+        std::call_once(signalNumberToNameMapOnceFlag, [] {
+            signalNumberToNameMap = new HashMap<int, String>();
+            signalNumberToNameMap->reserveInitialCapacity(31);
+            signalNumberToNameMap->add(SIGHUP, signalNames[0]);
+            signalNumberToNameMap->add(SIGINT, signalNames[1]);
+            signalNumberToNameMap->add(SIGQUIT, signalNames[2]);
+            signalNumberToNameMap->add(SIGILL, signalNames[3]);
+#ifdef SIGTRAP
+            signalNumberToNameMap->add(SIGTRAP, signalNames[4]);
+#endif
+            signalNumberToNameMap->add(SIGABRT, signalNames[5]);
+#ifdef SIGIOT
+            signalNumberToNameMap->add(SIGIOT, signalNames[6]);
+#endif
+#ifdef SIGBUS
+            signalNumberToNameMap->add(SIGBUS, signalNames[7]);
+#endif
+            signalNumberToNameMap->add(SIGFPE, signalNames[8]);
+            signalNumberToNameMap->add(SIGKILL, signalNames[9]);
+#ifdef SIGUSR1
+            signalNumberToNameMap->add(SIGUSR1, signalNames[10]);
+#endif
+            signalNumberToNameMap->add(SIGSEGV, signalNames[11]);
+#ifdef SIGUSR2
+            signalNumberToNameMap->add(SIGUSR2, signalNames[12]);
+#endif
+#ifdef SIGPIPE
+            signalNumberToNameMap->add(SIGPIPE, signalNames[13]);
+#endif
+#ifdef SIGALRM
+            signalNumberToNameMap->add(SIGALRM, signalNames[14]);
+#endif
+            signalNumberToNameMap->add(SIGTERM, signalNames[15]);
+#ifdef SIGCHLD
+            signalNumberToNameMap->add(SIGCHLD, signalNames[16]);
+#endif
+#ifdef SIGCONT
+            signalNumberToNameMap->add(SIGCONT, signalNames[17]);
+#endif
+#ifdef SIGSTOP
+            signalNumberToNameMap->add(SIGSTOP, signalNames[18]);
+#endif
+#ifdef SIGTSTP
+            signalNumberToNameMap->add(SIGTSTP, signalNames[19]);
+#endif
+#ifdef SIGTTIN
+            signalNumberToNameMap->add(SIGTTIN, signalNames[20]);
+#endif
+#ifdef SIGTTOU
+            signalNumberToNameMap->add(SIGTTOU, signalNames[21]);
+#endif
+#ifdef SIGURG
+            signalNumberToNameMap->add(SIGURG, signalNames[22]);
+#endif
+#ifdef SIGXCPU
+            signalNumberToNameMap->add(SIGXCPU, signalNames[23]);
+#endif
+#ifdef SIGXFSZ
+            signalNumberToNameMap->add(SIGXFSZ, signalNames[24]);
+#endif
+#ifdef SIGVTALRM
+            signalNumberToNameMap->add(SIGVTALRM, signalNames[25]);
+#endif
+#ifdef SIGPROF
+            signalNumberToNameMap->add(SIGPROF, signalNames[26]);
+#endif
+            signalNumberToNameMap->add(SIGWINCH, signalNames[27]);
+#ifdef SIGIO
+            signalNumberToNameMap->add(SIGIO, signalNames[28]);
+#endif
+#ifdef SIGINFO
+            signalNumberToNameMap->add(SIGINFO, signalNames[29]);
+#endif
+#ifdef SIGSYS
+            signalNumberToNameMap->add(SIGSYS, signalNames[30]);
+#endif
+        });
+
+        if (!signalToContextIdsMap) {
+            signalToContextIdsMap = new HashMap<int, SignalHandleValue>();
+        }
+
+        if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
+#if !OS(WINDOWS)
+            if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {
+#else
+            if (signalNumber != SIGKILL) { // windows has no SIGSTOP
+#endif
+                uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
+
+                if (isAdded) {
+                    if (!signalToContextIdsMap->contains(signalNumber)) {
+                        SignalHandleValue signal_handle = {
+#if OS(WINDOWS)
+                            .handle = nullptr,
+#endif
+                        };
+#if !OS(WINDOWS)
+                        struct sigaction action;
+                        memset(&action, 0, sizeof(struct sigaction));
+
+                        // Set the handler in the action struct
+                        action.sa_handler = signalHandler;
+
+                        // Clear the sa_mask
+                        sigemptyset(&action.sa_mask);
+                        sigaddset(&action.sa_mask, signalNumber);
+                        action.sa_flags = SA_RESTART;
+
+                        sigaction(signalNumber, &action, nullptr);
+#else
+                        signal_handle.handle = Bun__UVSignalHandle__init(
+                            eventEmitter.scriptExecutionContext()->jsGlobalObject(),
+                            signalNumber,
+                            &signalHandler);
+
+                        if (UNLIKELY(!signal_handle.handle))
+                            return;
+#endif
+
+                        signalToContextIdsMap->set(signalNumber, signal_handle);
+                    }
+                } else {
+                    if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end()) {
+                        SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
+#if !OS(WINDOWS)
                         signal(signalNumber, SIG_DFL);
+#else
+                        Bun__UVSignalHandle__close(signal_handle.handle);
+#endif
                         signalToContextIdsMap->remove(signalNumber);
-                    } else {
-                        signalToContextIdsMap->set(signalNumber, contextIds);
                     }
                 }
             }
         }
     }
-}
-#endif
-
-void Process::emitSignalEvent(int signalNumber)
-{
-#if !OS(WINDOWS)
-
-    String signalName = signalNumberToNameMap->get(signalNumber);
-    Identifier signalNameIdentifier = Identifier::fromString(vm(), signalName);
-    MarkedArgumentBuffer args;
-    args.append(jsNumber(signalNumber));
-    wrapped().emitForBindings(signalNameIdentifier, args);
-#else
-    UNUSED_PARAM(signalNumber);
-#endif
 }
 
 Process::~Process()
@@ -786,7 +884,6 @@ Process::~Process()
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {
     abort();
-    __builtin_unreachable();
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2633,9 +2730,7 @@ void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
 
-#ifndef WIN32
     wrapped().onDidChangeListener = &onDidChangeListeners;
-#endif
 
     m_cpuUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
         init.set(constructCPUUsageStructure(init.vm, init.owner->globalObject()));

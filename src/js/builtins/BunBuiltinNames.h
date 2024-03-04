@@ -143,6 +143,7 @@ using namespace JSC;
     macro(makeDOMException) \
     macro(makeGetterTypeError) \
     macro(makeThisTypeError) \
+    macro(mockedFunction) \
     macro(method) \
     macro(nextTick) \
     macro(normalize) \

@@ -25,6 +25,7 @@ jobs:
       with:
         name: artifacts
         path: ./out/artifacts
+        if-no-files-found: "error"
 
   build_windows:
     runs-on: windows-latest

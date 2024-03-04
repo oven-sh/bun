@@ -16,6 +16,10 @@
  */
 // clang-format off
 
+#ifndef us_calloc
+#define us_calloc calloc
+#endif
+
 #ifndef us_malloc
 #define us_malloc malloc
 #endif

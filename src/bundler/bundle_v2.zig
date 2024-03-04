@@ -1617,7 +1617,7 @@ pub const BundleV2 = struct {
                 .main_fields = &.{},
                 .extension_order = &.{},
                 .env_files = &.{},
-                .conditions = &.{},
+                .conditions = config.conditions.map.keys(),
             },
             completion.env,
         );

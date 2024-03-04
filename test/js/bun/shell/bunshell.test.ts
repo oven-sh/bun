@@ -748,6 +748,33 @@ describe("deno_task", () => {
       });
     }
   });
+
+  test("stacktrace", async () => {
+    // const folder = TestBuilder.tmpdir();
+    const code = /* ts */ `
+    import { $ } from 'bun'
+
+    $.throws(true)
+
+    async function someFunction() {
+      await $\`somecommandthatdoesnotexist\`
+    }
+
+    someFunction()
+    `;
+
+    const [_, lineNr] = code
+      .split("\n")
+      .map((l, i) => [l, i + 1] as const)
+      .find(([line, _]) => line.includes("somecommandthatdoesnotexist"))!;
+
+    if (lineNr === undefined) throw new Error("uh oh");
+
+    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code} 2>&1`
+      .exitCode(1)
+      .stdout(s => expect(s).toInclude(`[eval]:${lineNr}`))
+      .run();
+  });
 });
 
 function stringifyBuffer(buffer: Uint8Array): string {

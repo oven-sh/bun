@@ -1798,8 +1798,10 @@ JSC_DEFINE_HOST_FUNCTION(functionDomainToASCII, (JSC::JSGlobalObject * globalObj
     auto domain = arg0.toWTFString(globalObject);
     if (domain.isNull())
         return JSC::JSValue::encode(jsUndefined());
-    if (domain.is8Bit())
+    if (domain.containsOnlyASCII())
         return JSC::JSValue::encode(arg0);
+    if (domain.is8Bit())
+        domain.convertTo16Bit();
 
     constexpr static int allowedNameToASCIIErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
     constexpr static size_t hostnameBufferLength = 2048;

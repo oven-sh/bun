@@ -6170,6 +6170,7 @@ pub const Interpreter = struct {
                 });
 
                 if (err_) |err| {
+                    this.state.exec.err = err;
                     const error_string = this.bltn.taskErrorToString(.ls, err);
                     output_task.start(error_string);
                     return;

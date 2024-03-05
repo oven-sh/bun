@@ -5,7 +5,7 @@ import { readFile } from "fs/promises";
 import { readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { cpus, hostname, tmpdir, totalmem, userInfo } from "os";
-import { join } from "path";
+import { join, normalize } from "path";
 import { fileURLToPath } from "url";
 
 const run_start = new Date();
@@ -82,8 +82,15 @@ function* findTests(dir, query) {
   }
 }
 
-// pick the last one, kind of a hack to allow 'bun run test bun-release' to test the release build
-const bunExe = (process.argv.length > 2 ? resolve(process.argv[process.argv.length - 1]) : null) ?? "bun";
+let bunExe = "bun";
+
+if (process.argv.length > 2) {
+  bunExe = resolve(process.argv.at(-1));
+} else if (process.env.BUN_PATH) {
+  const { BUN_PATH_BASE, BUN_PATH } = process.env;
+  bunExe = resolve(normalize(BUN_PATH_BASE), normalize(BUN_PATH));
+}
+
 const { error, stdout: revision_stdout } = spawnSync(bunExe, ["--revision"], {
   env: { ...process.env, BUN_DEBUG_QUIET_LOGS: 1 },
 });

@@ -59,7 +59,9 @@ test("no assertion failures", () => {
   assert.strictEqual(util.format("%d", Infinity), "Infinity");
   assert.strictEqual(util.format("%d", -Infinity), "-Infinity");
   assert.strictEqual(util.format("%d %d", 42, 43), "42 43");
+  assert.strictEqual(util.format("%d%d", 42, 43), "4243");
   assert.strictEqual(util.format("%d %d", 42), "42 %d");
+  assert.strictEqual(util.format("%d%d", 42), "42%d");
   assert.strictEqual(util.format("%d", 1180591620717411303424), "1.1805916207174113e+21");
   assert.strictEqual(util.format("%d", 1180591620717411303424n), "1180591620717411303424n");
   assert.strictEqual(
@@ -151,7 +153,9 @@ test("no assertion failures", () => {
   assert.strictEqual(util.format("%s", -0), "-0");
   assert.strictEqual(util.format("%s", "-0.0"), "-0.0");
   assert.strictEqual(util.format("%s %s", 42, 43), "42 43");
+  assert.strictEqual(util.format("%s%s", 42, 43), "4243");
   assert.strictEqual(util.format("%s %s", 42), "42 %s");
+  assert.strictEqual(util.format("%s%s", 42), "42%s");
   assert.strictEqual(util.format("%s", 42n), "42n");
   assert.strictEqual(util.format("%s", Symbol("foo")), "Symbol(foo)");
   assert.strictEqual(util.format("%s", true), "true");
@@ -239,6 +243,7 @@ test("no assertion failures", () => {
   assert.strictEqual(util.format("%j", 42), "42");
   assert.strictEqual(util.format("%j", "42"), '"42"');
   assert.strictEqual(util.format("%j %j", 42, 43), "42 43");
+  assert.strictEqual(util.format("%j%j", 42, null), "42null");
   assert.strictEqual(util.format("%j %j", 42), "42 %j");
 
   // Object format specifier

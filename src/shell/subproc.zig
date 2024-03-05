@@ -780,6 +780,7 @@ pub const PipeReader = struct {
 
         pub fn isDone(this: *CapturedWriter, just_written: usize) bool {
             if (this.dead) return true;
+            if (this.writer.is_done) return true;
             const p = this.parent();
             if (p.state == .pending) return false;
             return this.written + just_written >= p.buffered_output.slice().len;
@@ -958,7 +959,7 @@ pub const PipeReader = struct {
     }
 
     pub fn onReaderDone(this: *PipeReader) void {
-        log("onReaderDone({x})", .{@intFromPtr(this)});
+        log("onReaderDone(0x{x}, {s})", .{ @intFromPtr(this), @tagName(this.out_type) });
         const owned = this.toOwnedSlice();
         this.state = .{ .done = owned };
         if (!this.isDone()) return;

@@ -856,6 +856,7 @@ pub const Interpreter = struct {
                 .pipe => {
                     const bufio: *bun.ByteList = this.buffered_stderr();
                     bufio.appendFmt(bun.default_allocator, fmt, args) catch bun.outOfMemory();
+                    ctx.parent.childDone(ctx, 1);
                 },
                 .ignore => {},
             }
@@ -3896,12 +3897,12 @@ pub const Interpreter = struct {
             }
 
             pub fn fromStr(str: []const u8) ?Builtin.Kind {
-                // if (!bun.Environment.isWindows) {
-                //     if (bun.strings.eqlComptime(str, "cat")) {
-                //         log("Cat builtin disabled on posix for now", .{});
-                //         return null;
-                //     }
-                // }
+                if (!bun.Environment.isWindows) {
+                    if (bun.strings.eqlComptime(str, "cat")) {
+                        log("Cat builtin disabled on posix for now", .{});
+                        return null;
+                    }
+                }
                 @setEvalBranchQuota(5000);
                 const tyinfo = @typeInfo(Builtin.Kind);
                 inline for (tyinfo.Enum.fields) |field| {
@@ -8577,7 +8578,7 @@ pub const Interpreter = struct {
             log("IOReader(0x{x}, fd={}) create", .{ @intFromPtr(this), fd });
 
             if (bun.Environment.isPosix) {
-                this.reader.close_handle = false;
+                this.reader.flags.close_handle = false;
             }
 
             if (bun.Environment.isWindows) {

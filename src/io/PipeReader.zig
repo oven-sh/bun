@@ -624,7 +624,6 @@ const PosixBufferedReader = struct {
     _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     vtable: BufferedReaderVTable,
     flags: Flags = .{},
-    close_handle: bool = true,
 
     const Flags = packed struct {
         is_done: bool = false,
@@ -632,6 +631,7 @@ const PosixBufferedReader = struct {
         nonblocking: bool = false,
         received_eof: bool = false,
         closed_without_reporting: bool = false,
+        close_handle: bool = true,
     };
 
     pub fn init(comptime Type: type) PosixBufferedReader {
@@ -704,7 +704,7 @@ const PosixBufferedReader = struct {
         if (this.getFd() != bun.invalid_fd) {
             std.debug.assert(!this.flags.closed_without_reporting);
             this.flags.closed_without_reporting = true;
-            if (this.close_handle) this.handle.close(this, {});
+            if (this.flags.close_handle) this.handle.close(this, {});
         }
     }
 
@@ -748,7 +748,7 @@ const PosixBufferedReader = struct {
 
     fn finish(this: *PosixBufferedReader) void {
         if (this.handle != .closed or this.flags.closed_without_reporting) {
-            if (this.close_handle) this.closeHandle();
+            if (this.flags.close_handle) this.closeHandle();
             return;
         }
 
@@ -763,11 +763,11 @@ const PosixBufferedReader = struct {
             return;
         }
 
-        if (this.close_handle) this.handle.close(this, done);
+        if (this.flags.close_handle) this.handle.close(this, done);
     }
 
     pub fn done(this: *PosixBufferedReader) void {
-        if (this.handle != .closed and this.close_handle) {
+        if (this.handle != .closed and this.flags.close_handle) {
             this.closeHandle();
             return;
         } else if (this.flags.closed_without_reporting) {
@@ -890,6 +890,7 @@ pub const WindowsBufferedReader = struct {
         nonblocking: bool = false,
         received_eof: bool = false,
         closed_without_reporting: bool = false,
+        close_handle: bool = true,
     };
 
     pub fn init(comptime Type: type) WindowsOutputReader {

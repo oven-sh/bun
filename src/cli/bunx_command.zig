@@ -200,50 +200,50 @@ pub const BunxCommand = struct {
 
     pub fn exec(ctx_: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
         var ctx = ctx_;
-        var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
-        var run_in_bun = ctx.debug.run_in_bun;
+        // Don't log stuff
+        ctx.debug.silent = true;
 
         var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);
-        var package_name_for_update_request = [1]string{""};
+        var package_name: ?string = null;
         {
             var found_subcommand_name = false;
 
             for (argv) |positional| {
-                if (positional.len == 0) continue;
-
-                if (positional[0] != '-') {
-                    if (!found_subcommand_name) {
-                        found_subcommand_name = true;
-                        if (positional.len == 1 and positional[0] == 'x')
-                            continue;
-                    }
-                }
-
-                if (!run_in_bun and !found_subcommand_name) {
-                    if (strings.eqlComptime(positional, "--bun")) {
-                        run_in_bun = true;
-                        continue;
-                    }
-                }
-
-                if (package_name_for_update_request[0].len == 0 and positional.len > 0 and positional[0] != '-') {
-                    package_name_for_update_request[0] = positional;
+                Output.debug("positional: {s}", .{positional});
+                if (package_name != null) {
+                    passthrough_list.appendAssumeCapacity(positional);
+                    Output.debug("push to passthrough_list: {s}", .{positional});
                     continue;
                 }
 
-                try passthrough_list.append(positional);
+                if (positional.len > 0 and positional[0] == '-') {
+                    Output.debug("is a flag", .{});
+                    if (strings.eqlComptime(positional, "--bun")) {
+                        ctx.debug.run_in_bun = true;
+                    }
+                } else {
+                    if (!found_subcommand_name) {
+                        Output.debug("is subcommand name", .{});
+                        found_subcommand_name = true;
+                    } else {
+                        Output.debug("is package name", .{});
+                        package_name = positional;
+                    }
+                }
             }
         }
 
         // check if package_name_for_update_request is empty string or " "
-        if (package_name_for_update_request[0].len == 0) {
+        if (package_name == null or package_name.?.len == 0) {
             exitWithUsage();
         }
 
+        var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch
+            unreachable; // 0 is less than array maximum
         const update_requests = bun.PackageManager.UpdateRequest.parse(
             ctx.allocator,
             ctx.log,
-            &package_name_for_update_request,
+            &.{package_name.?},
             &requests_buf,
             .add,
         );
@@ -252,15 +252,7 @@ pub const BunxCommand = struct {
             exitWithUsage();
         }
 
-        // this shouldn't happen
-        if (update_requests.len > 1) {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> Only one package can be installed & run at a time right now", .{});
-            Global.exit(1);
-        }
-
-        // Don't log stuff
-        ctx.debug.silent = true;
-
+        std.debug.assert(update_requests.len == 1); // One positional cannot parse to multiple requests
         var update_request = update_requests[0];
 
         // if you type "tsc" and TypeScript is not installed:
@@ -284,7 +276,6 @@ pub const BunxCommand = struct {
         var this_bundler: bun.Bundler = undefined;
         var ORIGINAL_PATH: string = "";
 
-        const force_using_bun = run_in_bun;
         const root_dir_info = try Run.configureEnvForRun(
             ctx,
             &this_bundler,
@@ -298,7 +289,7 @@ pub const BunxCommand = struct {
             &this_bundler,
             &ORIGINAL_PATH,
             root_dir_info.abs_path,
-            force_using_bun,
+            ctx.debug.run_in_bun,
         );
 
         const ignore_cwd = this_bundler.env.get("BUN_WHICH_IGNORE_CWD") orelse "";
@@ -318,14 +309,31 @@ pub const BunxCommand = struct {
                 break :brk update_request.version.literal.slice(update_request.version_buf);
             }
 
-            break :brk try std.fmt.allocPrint(
-                ctx.allocator,
-                "{s}@{s}",
-                .{
+            // Includes the delimiters because we use this as a part of $PATH
+            const banned_path_chars = switch (Environment.os) {
+                .windows => ":*?<>|;",
+                else => ":",
+            };
+
+            const has_banned_char = std.mem.indexOfAny(u8, update_request.name, banned_path_chars) != null or
+                std.mem.indexOfAny(u8, display_version, banned_path_chars) != null;
+
+            break :brk try if (has_banned_char)
+                // This branch gets hit usually when a URL is requested as the package
+                // See https://github.com/oven-sh/bun/issues/3675
+                //
+                // But the requested version will contain the url.
+                // The colon will break all platforms.
+                std.fmt.allocPrint(ctx.allocator, "{s}@{s}@{d}", .{
+                    initial_bin_name,
+                    @tagName(update_request.version.tag),
+                    bun.hash(update_request.name) +% bun.hash(display_version),
+                })
+            else
+                try std.fmt.allocPrint(ctx.allocator, "{s}@{s}", .{
                     update_request.name,
                     display_version,
-                },
-            );
+                });
         };
 
         const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
@@ -350,12 +358,9 @@ pub const BunxCommand = struct {
 
             break :brk new_path.items;
         };
-
-        defer {
-            if (ignore_cwd.len > 0) {
-                ctx.allocator.free(PATH_FOR_BIN_DIRS);
-            }
-        }
+        defer if (ignore_cwd.len > 0) {
+            ctx.allocator.free(PATH_FOR_BIN_DIRS);
+        };
 
         // The bunx cache path is at the following location
         //
@@ -479,48 +484,47 @@ pub const BunxCommand = struct {
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-            // TODO: root_dir_fd was observed on Windows to be zero, which is incorrect. figure out why
+            // TODO(@paperdave): On windows, root_dir_fd is always .zero indicating it was closed. See `needToCloseFiles` in fs.zig
             const root_dir_fd = root_dir_info.getFileDescriptor();
-            if (root_dir_fd != .zero) {
-                if (getBinName(&this_bundler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
-                    // if we check the bin name and its actually the same, we don't need to check $PATH here again
-                    if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
+            std.debug.assert(root_dir_fd != .zero);
+            if (getBinName(&this_bundler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+                // if we check the bin name and its actually the same, we don't need to check $PATH here again
+                if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
+                    absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
-                        // Only use the system-installed version if there is no version specified
-                        if (update_request.version.literal.isEmpty()) {
-                            destination_ = bun.which(
-                                &path_buf,
-                                PATH_FOR_BIN_DIRS,
-                                if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
-                                package_name_for_bin,
-                            );
-                        }
-
-                        if (destination_ orelse bun.which(
+                    // Only use the system-installed version if there is no version specified
+                    if (update_request.version.literal.isEmpty()) {
+                        destination_ = bun.which(
                             &path_buf,
-                            bunx_cache_dir,
+                            PATH_FOR_BIN_DIRS,
                             if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
-                            absolute_in_cache_dir,
-                        )) |destination| {
-                            const out = bun.asByteSlice(destination);
-                            try Run.runBinary(
-                                ctx,
-                                try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
-                                this_bundler.fs.top_level_dir,
-                                this_bundler.env,
-                                passthrough,
-                                null,
-                            );
-                            // runBinary is noreturn
-                            comptime unreachable;
-                        }
+                            package_name_for_bin,
+                        );
                     }
-                } else |err| {
-                    if (err == error.NoBinFound) {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> could not determine executable to run for package <r><b>{s}<r>", .{update_request.name});
-                        Global.exit(1);
+
+                    if (destination_ orelse bun.which(
+                        &path_buf,
+                        bunx_cache_dir,
+                        if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
+                        absolute_in_cache_dir,
+                    )) |destination| {
+                        const out = bun.asByteSlice(destination);
+                        try Run.runBinary(
+                            ctx,
+                            try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
+                            this_bundler.fs.top_level_dir,
+                            this_bundler.env,
+                            passthrough,
+                            null,
+                        );
+                        // runBinary is noreturn
+                        comptime unreachable;
                     }
+                }
+            } else |err| {
+                if (err == error.NoBinFound) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> could not determine executable to run for package <r><b>{s}<r>", .{update_request.name});
+                    Global.exit(1);
                 }
             }
         }

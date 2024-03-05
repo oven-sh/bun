@@ -776,12 +776,15 @@ pub const Arguments = struct {
 
         if (cmd == .AutoCommand or cmd == .RunCommand) {
             ctx.debug.silent = args.flag("--silent");
-            ctx.debug.run_in_bun = args.flag("--bun") or ctx.debug.run_in_bun;
 
             if (opts.define) |define| {
                 if (define.keys.len > 0)
                     bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             }
+        }
+
+        if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .BunxCommand) {
+            ctx.debug.run_in_bun = args.flag("--bun") or ctx.debug.run_in_bun;
         }
 
         opts.resolve = Api.ResolveMode.lazy;

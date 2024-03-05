@@ -827,9 +827,12 @@ pub const UpgradeCommand = struct {
                         // Attempt to restore the old executable. If this fails, the user will be left without a working copy of bun.
                         std.os.rename(outdated_filename.?, destination_executable) catch {
                             Output.errGeneric(
-                                \\Failed to move new version of Bun due to {s}
+                                \\Failed to move new version of Bun to {s} due to {s}
                             ,
-                                .{@errorName(err)},
+                                .{
+                                    destination_executable,
+                                    @errorName(err),
+                                },
                             );
                             Output.errGeneric(
                                 \\Failed to restore the working copy of Bun. The installation is now corrupt.

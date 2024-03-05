@@ -21,7 +21,6 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
         const result_converted = bun.strings.convertUTF16toUTF8InBuffer(buf, result) catch unreachable;
         buf[result_converted.len] = 0;
         std.debug.assert(result_converted.ptr == buf.ptr);
-        std.debug.print("which({s}) = {s}\n", .{ path, result_converted });
         return buf[0..result_converted.len :0];
     }
     if (bin.len == 0) return null;

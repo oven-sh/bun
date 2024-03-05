@@ -2105,6 +2105,7 @@ pub const Resolver = struct {
             ) catch unreachable;
             return err;
         };
+        Fs.FileSystem.fd_close_tracker.onOpen(bun.toFD(open_dir.handle));
 
         if (rfs.entries.atIndex(cached_dir_entry_result.index)) |cached_entry| {
             if (cached_entry.* == .entries) {
@@ -2142,7 +2143,6 @@ pub const Resolver = struct {
             dir_entries_ptr.* = new_entry;
 
             if (r.store_fd) {
-                Fs.FileSystem.setMaxFd(open_dir.fd);
                 dir_entries_ptr.fd = bun.toFD(open_dir.fd);
             }
 

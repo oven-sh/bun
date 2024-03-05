@@ -55,6 +55,8 @@ const Lockfile = @import("../install/lockfile.zig");
 
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 
+const windows = std.os.windows;
+
 pub const RunCommand = struct {
     const shells_to_search = &[_]string{
         "bash",
@@ -408,7 +410,49 @@ pub const RunCommand = struct {
         return std.fs.path.basename(str);
     }
 
+    /// On windows, this checks for a `.bunx` file in the same directory as the
+    /// script If it exists, it will be run instead of the script which is
+    /// assumed to `bun_shim_impl.exe`
+    ///
+    /// This function only returns if an error starting the process is
+    /// encountered, most other errors are handled by printing and exiting.
     pub fn runBinary(
+        ctx: Command.Context,
+        executable: []const u8,
+        cwd: string,
+        env: *DotEnv.Loader,
+        passthrough: []const string,
+        original_script_for_bun_run: ?[]const u8,
+    ) !noreturn {
+        // Attempt to find a ".bunx" file on disk, and run it, skipping the
+        // wrapper exe.  we build the full exe path even though we could do
+        // a relative lookup, because in the case we do find it, we have to
+        // generate this full path anyways.
+        if (Environment.isWindows and bun.strings.hasSuffixComptime(executable, ".exe")) {
+            std.debug.assert(std.fs.path.isAbsolute(executable));
+
+            // Using @constCast is safe because we know that `direct_launch_buffer` is the data destination
+            var wpath = @constCast(bun.strings.toNTPath(&BunXFastPath.direct_launch_buffer, executable));
+            std.debug.assert(bun.isSliceInBuffer(u16, wpath, &BunXFastPath.direct_launch_buffer));
+
+            std.debug.assert(wpath.len > bun.windows.nt_object_prefix.len + ".exe".len);
+            wpath.len += ".bunx".len - ".exe".len;
+            @memcpy(wpath[wpath.len - "bunx".len ..], comptime bun.strings.w("bunx"));
+
+            BunXFastPath.tryLaunch(ctx, wpath, env, passthrough);
+        }
+
+        try runBinaryWithoutBunxPath(
+            ctx,
+            executable,
+            cwd,
+            env,
+            passthrough,
+            original_script_for_bun_run,
+        );
+    }
+
+    pub fn runBinaryWithoutBunxPath(
         ctx: Command.Context,
         executable: []const u8,
         cwd: string,
@@ -526,7 +570,7 @@ pub const RunCommand = struct {
     }
 
     pub const bun_node_dir = switch (Environment.os) {
-        // $Env:TEMP is almost always a path to a user directory. So it cannot be inlined like
+        // This path is almost always a path to a user directory. So it cannot be inlined like
         // our uses of /tmp. You can use one of these functions instead:
         // - bun.windows.GetTempPathW (native)
         // - bun.fs.FileSystem.RealFS.platformTempDir (any platform)
@@ -1389,18 +1433,16 @@ pub const RunCommand = struct {
         }
 
         if (Environment.isWindows) try_bunx_file: {
-            const WinBunShimImpl = @import("../install/windows-shim/bun_shim_impl.zig");
-            const w = std.os.windows;
-            const debug = Output.scoped(.BunRunXFastPath, false);
-
-            // Attempt to find a ".bunx" file on disk, and run it, skipping the wrapper exe.
-            // we build the full exe path even though we could do a relative lookup, because in the case we do find it, we have to generate this full path anyways
-            var ptr: []u16 = &DirectBinLaunch.direct_launch_buffer;
+            // Attempt to find a ".bunx" file on disk, and run it, skipping the
+            // wrapper exe.  we build the full exe path even though we could do
+            // a relative lookup, because in the case we do find it, we have to
+            // generate this full path anyways.
+            var ptr: []u16 = &BunXFastPath.direct_launch_buffer;
             const root = comptime bun.strings.w("\\??\\");
             @memcpy(ptr[0..root.len], root);
             ptr = ptr[4..];
-            const cwd_len = w.kernel32.GetCurrentDirectoryW(
-                DirectBinLaunch.direct_launch_buffer.len - 4,
+            const cwd_len = windows.kernel32.GetCurrentDirectoryW(
+                BunXFastPath.direct_launch_buffer.len - 4,
                 ptr.ptr,
             );
             if (cwd_len == 0) break :try_bunx_file;
@@ -1415,53 +1457,8 @@ pub const RunCommand = struct {
             ptr[ext.len] = 0;
 
             const l = root.len + cwd_len + prefix.len + script_name_to_search.len + ext.len;
-            const path_to_use = DirectBinLaunch.direct_launch_buffer[0..l];
-            var command_line = DirectBinLaunch.direct_launch_buffer[l..];
-
-            debug("Attempting to find and load bunx file: '{}'", .{
-                bun.fmt.utf16(path_to_use),
-            });
-            if (Environment.allow_assert) {
-                std.debug.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
-            }
-            const handle = (bun.sys.openFileAtWindows(
-                bun.invalid_fd, // absolute path is given
-                path_to_use,
-                w.STANDARD_RIGHTS_READ | w.FILE_READ_DATA | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE,
-                w.FILE_OPEN,
-                w.FILE_NON_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT,
-            ).unwrap() catch |err| {
-                debug("Failed to open bunx file: '{}'", .{err});
-                break :try_bunx_file;
-            }).cast();
-
-            var i: usize = 0;
-            for (ctx.passthrough) |str| {
-                command_line[i] = ' ';
-                const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[1 + i ..], str);
-                i += result.len + 1;
-            }
-
-            const run_ctx = WinBunShimImpl.FromBunRunContext{
-                .handle = handle,
-                .base_path = path_to_use[4..],
-                .arguments = command_line[0..i],
-                .force_use_bun = ctx.debug.run_in_bun,
-                .direct_launch_with_bun_js = &DirectBinLaunch.directLaunchWithBunJSFromShim,
-                .cli_context = &ctx,
-                .environment = try this_bundler.env.map.writeWindowsEnvBlock(&DirectBinLaunch.environment_buffer),
-            };
-
-            if (Environment.isDebug) {
-                debug("run_ctx.handle: '{}'", .{bun.FDImpl.fromSystem(handle)});
-                debug("run_ctx.base_path: '{}'", .{bun.fmt.utf16(run_ctx.base_path)});
-                debug("run_ctx.arguments: '{}'", .{bun.fmt.utf16(run_ctx.arguments)});
-                debug("run_ctx.force_use_bun: '{}'", .{run_ctx.force_use_bun});
-            }
-
-            // this function does not return. spooky
-            WinBunShimImpl.startupFromBunJS(run_ctx);
-            comptime unreachable;
+            const path_to_use = BunXFastPath.direct_launch_buffer[0..l :0];
+            BunXFastPath.tryLaunch(ctx, path_to_use, this_bundler.env, ctx.passthrough);
         }
 
         const PATH = this_bundler.env.get("PATH") orelse "";
@@ -1476,24 +1473,8 @@ pub const RunCommand = struct {
 
         if (path_for_which.len > 0) {
             if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
-                // var file = std.fs.openFileAbsoluteZ(destination, .{ .mode = .read_only }) catch |err| {
-                //     if (!log_errors) return false;
-
-                //     Output.prettyErrorln("<r>error: <red>{s}<r> opening file: \"{s}\"", .{ err, std.mem.span(destination) });
-                //     Output.flush();
-                //     return err;
-                // };
-                // // var outbuf = bun.getFdPath(file.handle, &path_buf2) catch |err| {
-                // //     if (!log_errors) return false;
-                // //     Output.prettyErrorln("<r>error: <red>{s}<r> resolving file: \"{s}\"", .{ err, std.mem.span(destination) });
-                // //     Output.flush();
-                // //     return err;
-                // // };
-
-                // // file.close();
-
                 const out = bun.asByteSlice(destination);
-                return try runBinary(
+                return try runBinaryWithoutBunxPath(
                     ctx,
                     try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
                     this_bundler.fs.top_level_dir,
@@ -1563,11 +1544,61 @@ pub const RunCommand = struct {
     }
 };
 
-pub const DirectBinLaunch = struct {
+pub const BunXFastPath = struct {
+    const shim_impl = @import("../install/windows-shim/bun_shim_impl.zig");
+    const debug = Output.scoped(.BunXFastPath, false);
+
     var direct_launch_buffer: bun.WPathBuffer = undefined;
     var environment_buffer: bun.WPathBuffer = undefined;
 
-    fn directLaunchWithBunJSFromShim(wpath: []u16, ctx: *Command.Context) void {
+    /// If this returns, it implies the fast path cannot be taken
+    fn tryLaunch(ctx: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
+        std.debug.assert(bun.isSliceInBuffer(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
+        var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
+
+        debug("Attempting to find and load bunx file: '{}'", .{bun.fmt.utf16(path_to_use)});
+        if (Environment.allow_assert) {
+            std.debug.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
+        }
+        const handle = (bun.sys.openFileAtWindows(
+            bun.invalid_fd, // absolute path is given
+            path_to_use,
+            windows.STANDARD_RIGHTS_READ | windows.FILE_READ_DATA | windows.FILE_READ_ATTRIBUTES | windows.FILE_READ_EA | windows.SYNCHRONIZE,
+            windows.FILE_OPEN,
+            windows.FILE_NON_DIRECTORY_FILE | windows.FILE_SYNCHRONOUS_IO_NONALERT,
+        ).unwrap() catch |err| {
+            debug("Failed to open bunx file: '{}'", .{err});
+            return;
+        }).cast();
+
+        var i: usize = 0;
+        for (passthrough) |str| {
+            command_line[i] = ' ';
+            const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[1 + i ..], str);
+            i += result.len + 1;
+        }
+
+        const run_ctx = shim_impl.FromBunRunContext{
+            .handle = handle,
+            .base_path = path_to_use[4..],
+            .arguments = command_line[0..i],
+            .force_use_bun = ctx.debug.run_in_bun,
+            .direct_launch_with_bun_js = &directLaunchCallback,
+            .cli_context = &ctx,
+            .environment = env.map.writeWindowsEnvBlock(&environment_buffer) catch return,
+        };
+
+        if (Environment.isDebug) {
+            debug("run_ctx.handle: '{}'", .{bun.FDImpl.fromSystem(handle)});
+            debug("run_ctx.base_path: '{}'", .{bun.fmt.utf16(run_ctx.base_path)});
+            debug("run_ctx.arguments: '{}'", .{bun.fmt.utf16(run_ctx.arguments)});
+            debug("run_ctx.force_use_bun: '{}'", .{run_ctx.force_use_bun});
+        }
+
+        shim_impl.tryStartupFromBunJS(run_ctx);
+    }
+
+    fn directLaunchCallback(wpath: []u16, ctx: *const Command.Context) void {
         const utf8 = bun.strings.convertUTF16toUTF8InBuffer(
             bun.reinterpretSlice(u8, &direct_launch_buffer),
             wpath,

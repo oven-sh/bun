@@ -69,13 +69,19 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     zero,
     _,
 
+    /// Returns the underlying file descriptor description as an integer.
+    ///
+    /// Not valid on windows because the integer representation does not make
+    /// sense to interpret as an integer. Doing so will break code.
     pub inline fn int(fd: FileDescriptor) FileDescriptorInt {
-        // TODO(@paperdave): make this a compile error to call on windows. every usage is incorrect.
+        if (Environment.isWindows) {
+            @compileError("FileDescriptor.int() is not allowed on Windows");
+        }
         return @intFromEnum(fd);
     }
 
     pub inline fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
-        try writer.writeInt(FileDescriptorInt, fd.int(), endian);
+        try writer.writeInt(FileDescriptorInt, @enumFromInt(fd), endian);
     }
 
     pub inline fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {

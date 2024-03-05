@@ -1789,15 +1789,9 @@ JSC_DEFINE_HOST_FUNCTION(functionDomainToASCII, (JSC::JSGlobalObject * globalObj
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (callFrame->argumentCount() != 1) {
-        throwTypeError(globalObject, scope, "domainToASCII needs 1 argument"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
     auto arg0 = callFrame->argument(0);
-
     if (!arg0.isString()) {
-        throwTypeError(globalObject, scope, "the \"domain\" argument must be a string"_s);
+        throwTypeError(globalObject, scope, "the \"domain\" argument is missing or not a string"_s);
         return JSC::JSValue::encode(jsUndefined());
     }
 
@@ -1829,15 +1823,9 @@ JSC_DEFINE_HOST_FUNCTION(functionDomainToUnicode, (JSC::JSGlobalObject * globalO
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (callFrame->argumentCount() != 1) {
-        throwTypeError(globalObject, scope, "domainToUnicode needs 1 argument"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
     auto arg0 = callFrame->argument(0);
-
     if (!arg0.isString()) {
-        throwTypeError(globalObject, scope, "the \"domain\" argument must be a string"_s);
+        throwTypeError(globalObject, scope, "the \"domain\" argument is missing or not a string"_s);
         return JSC::JSValue::encode(jsUndefined());
     }
 

@@ -631,10 +631,10 @@ function spawnSync(file, args, options) {
 function execFileSync(file, args, options) {
   ({ file, args, options } = normalizeExecFileArgs(file, args, options));
 
-  // const inheritStderr = !options.stdio;
+  const inheritStderr = !options.stdio;
   const ret = spawnSync(file, args, options);
 
-  // if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr);
+  if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr);
 
   const errArgs = [options.argv0 || file];
   ArrayPrototypePush.$apply(errArgs, args);
@@ -666,11 +666,11 @@ function execFileSync(file, args, options) {
  */
 function execSync(command, options) {
   const opts = normalizeExecArgs(command, options, null);
-  // const inheritStderr = !opts.options.stdio;
+  const inheritStderr = !opts.options.stdio;
 
   const ret = spawnSync(opts.file, opts.options);
 
-  // if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr); // TODO: Uncomment when we have process.stderr
+  if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr);
 
   const err = checkExecSyncError(ret, undefined, command);
 
@@ -929,7 +929,7 @@ function normalizeSpawnArguments(file, args, options) {
       else file = process.env.comspec || "cmd.exe";
       // '/d /s /c' is used only for cmd.exe.
       if (/^(?:.*\\)?cmd(?:\.exe)?$/i.exec(file) !== null) {
-        args = ["/d", "/s", "/c", `"${command}"`];
+        args = ["/d", "/s", "/c", command];
         windowsVerbatimArguments = true;
       } else {
         args = ["-c", command];

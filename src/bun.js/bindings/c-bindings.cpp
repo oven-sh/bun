@@ -32,11 +32,7 @@ extern "C" void bun_warn_avx_missing(const char* url)
     strcpy(buf + len + strlen(url), "\n\0");
     write(STDERR_FILENO, buf, strlen(buf));
 }
-#else
-extern "C" void bun_warn_avx_missing(char* url)
-{
-}
-#endif // CPU(X86_64)
+#endif
 
 extern "C" int32_t get_process_priority(uint32_t pid)
 {
@@ -59,12 +55,9 @@ extern "C" int32_t set_process_priority(uint32_t pid, int32_t priority)
 #endif // OS(WINDOWS)
 }
 
+#if !OS(WINDOWS)
 extern "C" bool is_executable_file(const char* path)
 {
-#if OS(WINDOWS)
-    return false;
-#else
-
 #if defined(O_EXEC)
     // O_EXEC is macOS specific
     int fd = open(path, O_EXEC | O_CLOEXEC, 0);
@@ -80,8 +73,8 @@ extern "C" bool is_executable_file(const char* path)
 
     // regular file and user can execute
     return S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR);
-#endif // OS(WINDOWS)
 }
+#endif
 
 extern "C" void bun_ignore_sigpipe()
 {

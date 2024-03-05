@@ -96,11 +96,11 @@ pub const Source = union(enum) {
         }
     }
 
-    pub fn openPipe(loop: *uv.Loop, fd: bun.FileDescriptor, ipc: bool) bun.JSC.Maybe(*Source.Pipe) {
+    pub fn openPipe(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(*Source.Pipe) {
         log("openPipe (fd = {})", .{fd});
         const pipe = bun.default_allocator.create(Source.Pipe) catch bun.outOfMemory();
-
-        switch (pipe.init(loop, ipc)) {
+        // we should never init using IPC here see ipc.zig
+        switch (pipe.init(loop, false)) {
             .err => |err| {
                 return .{ .err = err };
             },
@@ -141,11 +141,24 @@ pub const Source = union(enum) {
     pub fn open(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(Source) {
         log("open (fd = {})", .{fd});
         const rc = bun.windows.GetFileType(fd.cast());
-        if (rc == bun.windows.FILE_TYPE_CHAR) .{ .tty = switch (openTty(loop, fd)) {
-            .result => |tty| return .{ .result = .{ .tty = tty } },
-            .err => |err| return .{ .err = err },
-        } } else return .{ .result = .{
-            .file = openFile(fd),
-        } };
+        switch (rc) {
+            bun.windows.FILE_TYPE_PIPE => {
+                switch (openPipe(loop, fd)) {
+                    .result => |pipe| return .{ .result = .{ .pipe = pipe } },
+                    .err => |err| return .{ .err = err },
+                }
+            },
+            bun.windows.FILE_TYPE_CHAR => {
+                switch (openTty(loop, fd)) {
+                    .result => |tty| return .{ .result = .{ .tty = tty } },
+                    .err => |err| return .{ .err = err },
+                }
+            },
+            else => {
+                return .{ .result = .{
+                    .file = openFile(fd),
+                } };
+            },
+        }
     }
 };

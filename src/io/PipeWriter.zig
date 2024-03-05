@@ -1235,13 +1235,9 @@ pub fn WindowsStreamingWriter(
                 return .{ .done = 0 };
             }
 
-            if (this.outgoing.isNotEmpty()) {
-                this.outgoing.write(buffer) catch {
-                    return .{ .err = bun.sys.Error.oom };
-                };
-
-                return .{ .pending = 0 };
-            }
+            this.outgoing.write(buffer) catch {
+                return .{ .err = bun.sys.Error.oom };
+            };
 
             this.processSend();
             return this.last_write_result;

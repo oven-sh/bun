@@ -1279,6 +1279,9 @@ pub const EventLoop = struct {
             }
         } else {
             loop.tickWithoutIdle();
+            if (comptime Environment.isDebug) {
+                log("tickWithoutIdle", .{});
+            }
         }
 
         this.flushImmediateQueue();

@@ -1929,7 +1929,7 @@ pub const Fetch = struct {
                             }
                         }
 
-                        if (options.get(globalThis, "socket")) |socket_path| {
+                        if (options.get(globalThis, "unix")) |socket_path| {
                             if (socket_path.isString() and socket_path.getLength(ctx) > 0) {
                                 if (socket_path.toSliceCloneWithAllocator(globalThis, allocator)) |slice| {
                                     unix_socket_path = slice;
@@ -2145,7 +2145,7 @@ pub const Fetch = struct {
                             }
                         }
 
-                        if (options.get(globalThis, "socket")) |socket_path| {
+                        if (options.get(globalThis, "unix")) |socket_path| {
                             if (socket_path.isString() and socket_path.getLength(ctx) > 0) {
                                 if (socket_path.toSliceCloneWithAllocator(globalThis, allocator)) |slice| {
                                     unix_socket_path = slice;

@@ -1808,7 +1808,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDomainToASCII, (JSC::JSGlobalObject * globalObj
     UChar hostnameBuffer[hostnameBufferLength];
     UErrorCode error = U_ZERO_ERROR;
     UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
-    int32_t numCharactersConverted = uidna_nameToASCII(encoder, StringView(domain).upconvertedCharacters(), domain.length(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
+    int32_t numCharactersConverted = uidna_nameToASCII(encoder, StringView(domain).characters16(), domain.length(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
 
     if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted) {
         return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(hostnameBuffer, numCharactersConverted)));

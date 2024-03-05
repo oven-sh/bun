@@ -1251,6 +1251,10 @@ pub fn WindowsStreamingWriter(
             if (this.is_done) {
                 return .{ .done = 0 };
             }
+            if (!this.hasPendingData()) {
+                return .{ .wrote = 0 };
+            }
+
             this.processSend();
             return this.last_write_result;
         }

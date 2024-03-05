@@ -1196,6 +1196,7 @@ pub const struct_uv_write_s = extern struct {
             req.data = context;
 
             const rc = uv_write(req, stream, @ptrCast(input), 1, &Wrapper.uvWriteCb);
+            bun.sys.syslog("uv_write({d}) = {d}", .{ input.len, rc.int() });
 
             if (rc.toError(.write)) |err| {
                 return .{ .err = err };
@@ -1426,22 +1427,22 @@ pub const struct_uv_process_exit_s = extern struct {
     next_req: [*c]struct_uv_req_s,
 };
 pub const Process = extern struct {
-    data: ?*anyopaque,
-    loop: *uv_loop_t,
-    type: uv_handle_type,
-    close_cb: uv_close_cb,
-    handle_queue: struct_uv__queue,
-    u: union_unnamed_424,
-    endgame_next: [*c]uv_handle_t,
-    flags: c_uint,
-    exit_cb: ?*const fn ([*c]Process, i64, c_int) callconv(.C) void,
-    pid: c_int,
-    exit_req: struct_uv_process_exit_s,
-    unused: ?*anyopaque,
-    exit_signal: c_int,
-    wait_handle: HANDLE,
-    process_handle: HANDLE,
-    exit_cb_pending: u8,
+    data: ?*anyopaque = null,
+    loop: ?*uv_loop_t = null,
+    type: uv_handle_type = std.mem.zeroes(uv_handle_type),
+    close_cb: uv_close_cb = null,
+    handle_queue: struct_uv__queue = std.mem.zeroes(struct_uv__queue),
+    u: union_unnamed_424 = std.mem.zeroes(union_unnamed_424),
+    endgame_next: ?[*]uv_handle_t = null,
+    flags: c_uint = 0,
+    exit_cb: uv_exit_cb = null,
+    pid: c_int = 0,
+    exit_req: struct_uv_process_exit_s = std.mem.zeroes(struct_uv_process_exit_s),
+    unused: ?*anyopaque = null,
+    exit_signal: c_int = 0,
+    wait_handle: HANDLE = windows.INVALID_HANDLE_VALUE,
+    process_handle: HANDLE = windows.INVALID_HANDLE_VALUE,
+    exit_cb_pending: u8 = 0,
 
     pub fn spawn(handle: *uv_process_t, loop: *uv_loop_t, options: *const uv_process_options_t) ReturnCode {
         return uv_spawn(loop, handle, options);
@@ -2800,12 +2801,14 @@ fn StreamMixin(comptime Type: type) type {
                 const Wrapper = struct {
                     pub fn uvWriteCb(req: *uv_write_t, status: ReturnCode) callconv(.C) void {
                         const context_data: Context = @ptrCast(@alignCast(req.data));
+                        bun.sys.syslog("uv_write({d}) = {d}", .{ req.write_buffer.len, status.int() });
                         bun.destroy(req);
                         callback(context_data, status);
                     }
                 };
                 var uv_data = bun.new(uv_write_t, std.mem.zeroes(uv_write_t));
                 uv_data.data = context;
+
                 if (uv_write(uv_data, @ptrCast(this), @ptrCast(input), 1, &Wrapper.uvWriteCb).toError(.write)) |err| {
                     return .{ .err = err };
                 }
@@ -2816,6 +2819,7 @@ fn StreamMixin(comptime Type: type) type {
             if (uv_write(&req, this, @ptrCast(input), 1, null).toError(.write)) |err| {
                 return .{ .err = err };
             }
+
             return .{ .result = {} };
         }
 

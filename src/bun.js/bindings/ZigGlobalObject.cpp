@@ -1813,6 +1813,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDomainToASCII, (JSC::JSGlobalObject * globalObj
     if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted) {
         return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(hostnameBuffer, numCharactersConverted)));
     }
+    throwTypeError(globalObject, scope, "domainToASCII failed"_s);
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -1848,6 +1849,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDomainToUnicode, (JSC::JSGlobalObject * globalO
     if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToUnicodeErrors) && numCharactersConverted) {
         return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(hostnameBuffer, numCharactersConverted)));
     }
+    throwTypeError(globalObject, scope, "domainToUnicode failed"_s);
     return JSC::JSValue::encode(jsUndefined());
 }
 

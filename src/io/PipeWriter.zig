@@ -1195,13 +1195,13 @@ pub fn WindowsStreamingWriter(
             this.close();
         }
 
-        pub fn writeUTF16(this: *WindowsWriter, buf: []const u16) WriteResult {
+        fn writeInternal(this: *WindowsWriter, buffer: anytype, comptime writeFn: anytype) WriteResult {
             if (this.is_done) {
                 return .{ .done = 0 };
             }
 
             const had_buffered_data = this.outgoing.isNotEmpty();
-            this.outgoing.writeUTF16(buf) catch {
+            writeFn(&this.outgoing, buffer) catch {
                 return .{ .err = bun.sys.Error.oom };
             };
 
@@ -1210,37 +1210,18 @@ pub fn WindowsStreamingWriter(
             }
             this.processSend();
             return this.last_write_result;
+        }
+
+        pub fn writeUTF16(this: *WindowsWriter, buf: []const u16) WriteResult {
+            return writeInternal(this, buf, StreamBuffer.writeUTF16);
         }
 
         pub fn writeLatin1(this: *WindowsWriter, buffer: []const u8) WriteResult {
-            if (this.is_done) {
-                return .{ .done = 0 };
-            }
-
-            const had_buffered_data = this.outgoing.isNotEmpty();
-            this.outgoing.writeLatin1(buffer) catch {
-                return .{ .err = bun.sys.Error.oom };
-            };
-
-            if (had_buffered_data) {
-                return .{ .pending = 0 };
-            }
-
-            this.processSend();
-            return this.last_write_result;
+            return writeInternal(this, buffer, StreamBuffer.writeLatin1);
         }
 
         pub fn write(this: *WindowsWriter, buffer: []const u8) WriteResult {
-            if (this.is_done) {
-                return .{ .done = 0 };
-            }
-
-            this.outgoing.write(buffer) catch {
-                return .{ .err = bun.sys.Error.oom };
-            };
-
-            this.processSend();
-            return this.last_write_result;
+            return writeInternal(this, buffer, StreamBuffer.write);
         }
 
         pub fn flush(this: *WindowsWriter) WriteResult {

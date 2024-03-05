@@ -53,27 +53,27 @@ pub const Constants = struct {
     pub const COPYFILE_FICLONE_FORCE: i32 = Copyfile.force;
     // File Open Constants
     /// Constant for fs.open(). Flag indicating to open a file for read-only access.
-    pub const O_RDONLY = std.os.O.RDONLY;
+    pub const O_RDONLY = bun.OpMode.RDONLY;
     /// Constant for fs.open(). Flag indicating to open a file for write-only access.
-    pub const O_WRONLY = std.os.O.WRONLY;
+    pub const O_WRONLY = bun.OpMode.WRONLY;
     /// Constant for fs.open(). Flag indicating to open a file for read-write access.
-    pub const O_RDWR = std.os.O.RDWR;
+    pub const O_RDWR = bun.OpMode.RDWR;
     /// Constant for fs.open(). Flag indicating to create the file if it does not already exist.
-    pub const O_CREAT = std.os.O.CREAT;
+    pub const O_CREAT = bun.OpMode.CREAT;
     /// Constant for fs.open(). Flag indicating that opening a file should fail if the O_CREAT flag is set and the file already exists.
-    pub const O_EXCL = std.os.O.EXCL;
+    pub const O_EXCL = bun.OpMode.EXCL;
 
     ///
     /// Constant for fs.open(). Flag indicating that if path identifies a terminal device,
     /// opening the path shall not cause that terminal to become the controlling terminal for the process
     /// (if the process does not already have one).
-    pub const O_NOCTTY = std.os.O.NOCTTY;
+    pub const O_NOCTTY = bun.OpMode.NOCTTY;
     /// Constant for fs.open(). Flag indicating that if the file exists and is a regular file, and the file is opened successfully for write access, its length shall be truncated to zero.
-    pub const O_TRUNC = std.os.O.TRUNC;
+    pub const O_TRUNC = bun.OpMode.TRUNC;
     /// Constant for fs.open(). Flag indicating that data will be appended to the end of the file.
-    pub const O_APPEND = std.os.O.APPEND;
+    pub const O_APPEND = bun.OpMode.APPEND;
     /// Constant for fs.open(). Flag indicating that the open should fail if the path is not a directory.
-    pub const O_DIRECTORY = std.os.O.DIRECTORY;
+    pub const O_DIRECTORY = bun.OpMode.DIRECTORY;
 
     ///
     /// constant for fs.open().
@@ -82,17 +82,17 @@ pub const Constants = struct {
     /// This flag is available on Linux operating systems only.
     pub const O_NOATIME = get("NOATIME");
     /// Constant for fs.open(). Flag indicating that the open should fail if the path is a symbolic link.
-    pub const O_NOFOLLOW = std.os.O.NOFOLLOW;
+    pub const O_NOFOLLOW = bun.OpMode.NOFOLLOW;
     /// Constant for fs.open(). Flag indicating that the file is opened for synchronous I/O.
-    pub const O_SYNC = std.os.O.SYNC;
+    pub const O_SYNC = bun.OpMode.SYNC;
     /// Constant for fs.open(). Flag indicating that the file is opened for synchronous I/O with write operations waiting for data integrity.
-    pub const O_DSYNC = std.os.O.DSYNC;
+    pub const O_DSYNC = bun.OpMode.DSYNC;
     /// Constant for fs.open(). Flag indicating to open the symbolic link itself rather than the resource it is pointing to.
     pub const O_SYMLINK = get("SYMLINK");
     /// Constant for fs.open(). When set, an attempt will be made to minimize caching effects of file I/O.
     pub const O_DIRECT = get("DIRECT");
     /// Constant for fs.open(). Flag indicating to open the file in nonblocking mode when possible.
-    pub const O_NONBLOCK = std.os.O.NONBLOCK;
+    pub const O_NONBLOCK = bun.OpMode.NONBLOCK;
     // File Type Constants
     /// Constant for fs.Stats mode property for determining a file's type. Bit mask used to extract the file type code.
     pub const S_IFMT = std.os.S.IFMT;

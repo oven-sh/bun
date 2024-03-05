@@ -769,7 +769,7 @@ pub const Blob = struct {
                 var result = ctx.bunVM().nodeFS().truncate(.{
                     .path = destination_blob.store.?.data.file.pathlike,
                     .len = 0,
-                    .flags = std.os.O.CREAT,
+                    .flags = bun.OpMode.CREAT,
                 }, .sync);
                 if (result == .err) {
                     // it might return EPERM when the parent directory doesn't exist
@@ -1176,7 +1176,7 @@ pub const Blob = struct {
                 pathlike.path.sliceZ(&file_path),
                 // we deliberately don't use O_TRUNC here
                 // it's a perf optimization
-                std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                bun.OpMode.WRONLY | bun.OpMode.CREAT | bun.OpMode.NONBLOCK,
                 write_permissions,
             )) {
                 .result => |result| {
@@ -1260,9 +1260,9 @@ pub const Blob = struct {
                 if (!Environment.isWindows)
                     // we deliberately don't use O_TRUNC here
                     // it's a perf optimization
-                    std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK
+                    bun.OpMode.WRONLY | bun.OpMode.CREAT | bun.OpMode.NONBLOCK
                 else
-                    std.os.O.WRONLY | std.os.O.CREAT,
+                    bun.OpMode.WRONLY | bun.OpMode.CREAT,
                 write_permissions,
             )) {
                 .result => |result| {
@@ -1727,12 +1727,12 @@ pub const Blob = struct {
 
                 const State = @This();
 
-                const __opener_flags = std.os.O.NONBLOCK | std.os.O.CLOEXEC;
+                const __opener_flags = bun.OpMode.NONBLOCK | bun.OpMode.CLOEXEC;
 
                 const open_flags_ = if (@hasDecl(This, "open_flags"))
                     This.open_flags | __opener_flags
                 else
-                    std.os.O.RDONLY | __opener_flags;
+                    bun.OpMode.RDONLY | __opener_flags;
 
                 pub inline fn getFdByOpening(this: *This, comptime Callback: OpenCallback) void {
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -2282,9 +2282,9 @@ pub const Blob = struct {
                 }
             }
 
-            const O = if (Environment.isLinux) linux.O else std.os.O;
-            const open_destination_flags = O.CLOEXEC | O.CREAT | O.WRONLY | O.TRUNC;
-            const open_source_flags = O.CLOEXEC | O.RDONLY;
+            // const O = if (Environment.isLinux) linux.O else std.os.O;
+            const open_destination_flags = bun.OpMode.CLOEXEC | bun.OpMode.CREAT | bun.OpMode.WRONLY | bun.OpMode.TRUNC;
+            const open_source_flags = bun.OpMode.CLOEXEC | bun.OpMode.RDONLY;
 
             pub fn doOpenFile(this: *CopyFile, comptime which: IOWhich) !void {
                 var path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -2423,8 +2423,8 @@ pub const Blob = struct {
                                     // this messes up sendfile()
                                     has_unset_append = true;
                                     const flags = linux.fcntl(dest_fd.cast(), linux.F.GETFL, 0);
-                                    if ((flags & O.APPEND) != 0) {
-                                        _ = linux.fcntl(dest_fd.cast(), linux.F.SETFL, flags ^ O.APPEND);
+                                    if ((flags & bun.OpMode.APPEND) != 0) {
+                                        _ = linux.fcntl(dest_fd.cast(), linux.F.SETFL, flags ^ bun.OpMode.APPEND);
                                         continue;
                                     }
                                 }
@@ -2947,7 +2947,7 @@ pub const Blob = struct {
                 var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
                 switch (bun.sys.open(
                     pathlike.path.sliceZ(&file_path),
-                    std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                    bun.OpMode.WRONLY | bun.OpMode.CREAT | bun.OpMode.NONBLOCK,
                     write_permissions,
                 )) {
                     .result => |result| {

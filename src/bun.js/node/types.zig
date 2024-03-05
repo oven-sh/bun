@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 const meta = bun.meta;
 const windows = bun.windows;
 const heap_allocator = bun.default_allocator;
-const is_bindgen: bool = meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen: bool = if (!@hasDecl(@import("root"), "bindgen")) false else @field(@import("root"), "bindgen");
 const kernel32 = windows.kernel32;
 const logger = bun.logger;
 const os = std.os;
@@ -1256,44 +1256,44 @@ pub const PathOrFileDescriptor = union(Tag) {
 
 pub const FileSystemFlags = enum(Mode) {
     /// Open file for appending. The file is created if it does not exist.
-    a = std.os.O.APPEND | std.os.O.WRONLY | std.os.O.CREAT,
+    a = bun.OpMode.APPEND | bun.OpMode.WRONLY | bun.OpMode.CREAT,
     /// Like 'a' but fails if the path exists.
-    // @"ax" = std.os.O.APPEND | std.os.O.EXCL,
+    // @"ax" = bun.OpMode.APPEND | bun.OpMode.EXCL,
     /// Open file for reading and appending. The file is created if it does not exist.
-    // @"a+" = std.os.O.APPEND | std.os.O.RDWR,
+    // @"a+" = bun.OpMode.APPEND | bun.OpMode.RDWR,
     /// Like 'a+' but fails if the path exists.
-    // @"ax+" = std.os.O.APPEND | std.os.O.RDWR | std.os.O.EXCL,
+    // @"ax+" = bun.OpMode.APPEND | bun.OpMode.RDWR | bun.OpMode.EXCL,
     /// Open file for appending in synchronous mode. The file is created if it does not exist.
-    // @"as" = std.os.O.APPEND,
+    // @"as" = bun.OpMode.APPEND,
     /// Open file for reading and appending in synchronous mode. The file is created if it does not exist.
-    // @"as+" = std.os.O.APPEND | std.os.O.RDWR,
+    // @"as+" = bun.OpMode.APPEND | bun.OpMode.RDWR,
     /// Open file for reading. An exception occurs if the file does not exist.
-    r = std.os.O.RDONLY,
+    r = bun.OpMode.RDONLY,
     /// Open file for reading and writing. An exception occurs if the file does not exist.
-    // @"r+" = std.os.O.RDWR,
+    // @"r+" = bun.OpMode.RDWR,
     /// Open file for reading and writing in synchronous mode. Instructs the operating system to bypass the local file system cache.
     /// This is primarily useful for opening files on NFS mounts as it allows skipping the potentially stale local cache. It has a very real impact on I/O performance so using this flag is not recommended unless it is needed.
     /// This doesn't turn fs.open() or fsPromises.open() into a synchronous blocking call. If synchronous operation is desired, something like fs.openSync() should be used.
-    // @"rs+" = std.os.O.RDWR,
+    // @"rs+" = bun.OpMode.RDWR,
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    w = std.os.O.WRONLY | std.os.O.CREAT,
+    w = bun.OpMode.WRONLY | bun.OpMode.CREAT,
     /// Like 'w' but fails if the path exists.
-    // @"wx" = std.os.O.WRONLY | std.os.O.TRUNC,
+    // @"wx" = bun.OpMode.WRONLY | bun.OpMode.TRUNC,
     // ///  Open file for reading and writing. The file is created (if it does not exist) or truncated (if it exists).
-    // @"w+" = std.os.O.RDWR | std.os.O.CREAT,
+    // @"w+" = bun.OpMode.RDWR | bun.OpMode.CREAT,
     // ///  Like 'w+' but fails if the path exists.
-    // @"wx+" = std.os.O.RDWR | std.os.O.EXCL,
+    // @"wx+" = bun.OpMode.RDWR | bun.OpMode.EXCL,
 
     _,
 
-    const O_RDONLY: Mode = std.os.O.RDONLY;
-    const O_RDWR: Mode = std.os.O.RDWR;
-    const O_APPEND: Mode = std.os.O.APPEND;
-    const O_CREAT: Mode = std.os.O.CREAT;
-    const O_WRONLY: Mode = std.os.O.WRONLY;
-    const O_EXCL: Mode = std.os.O.EXCL;
+    const O_RDONLY: Mode = bun.OpMode.RDONLY;
+    const O_RDWR: Mode = bun.OpMode.RDWR;
+    const O_APPEND: Mode = bun.OpMode.APPEND;
+    const O_CREAT: Mode = bun.OpMode.CREAT;
+    const O_WRONLY: Mode = bun.OpMode.WRONLY;
+    const O_EXCL: Mode = bun.OpMode.EXCL;
     const O_SYNC: Mode = 0;
-    const O_TRUNC: Mode = std.os.O.TRUNC;
+    const O_TRUNC: Mode = bun.OpMode.TRUNC;
 
     const map = bun.ComptimeStringMap(Mode, .{
         .{ "r", O_RDONLY },

@@ -1318,7 +1318,7 @@ pub fn NewFileSink(comptime EventLoop: JSC.EventLoopKind) type {
             const auto_close = this.auto_close;
             const fd = if (!auto_close)
                 input_path.fd
-            else switch (bun.sys.open(input_path.path.toSliceZ(&file_buf), std.os.O.WRONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC | std.os.O.CREAT, mode)) {
+            else switch (bun.sys.open(input_path.path.toSliceZ(&file_buf), bun.OpMode.WRONLY | bun.OpMode.NONBLOCK | bun.OpMode.CLOEXEC | bun.OpMode.CREAT, mode)) {
                 .result => |_fd| _fd,
                 .err => |err| return .{ .err = err.withPath(input_path.path.slice()) },
             };
@@ -4553,7 +4553,7 @@ pub const File = struct {
                     return .{ .err = err.withFd(file.pathlike.fd) };
                 },
             }
-        else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
+        else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), bun.OpMode.RDONLY | bun.OpMode.NONBLOCK | bun.OpMode.CLOEXEC, 0)) {
             .result => |_fd| _fd,
             .err => |err| {
                 return .{ .err = err.withPath(file.pathlike.path.slice()) };
@@ -4577,13 +4577,13 @@ pub const File = struct {
                     .result => |flags| {
                         // if we do not, clone the descriptor and set non-blocking
                         // it is important for us to clone it so we don't cause Weird Things to happen
-                        if ((flags & std.os.O.NONBLOCK) == 0) {
+                        if ((flags & bun.OpMode.NONBLOCK) == 0) {
                             fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
                                 .result => |_fd| bun.toFD(_fd),
                                 .err => |err| return .{ .err = err },
                             };
 
-                            switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
+                            switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | bun.OpMode.NONBLOCK)) {
                                 .err => |err| return .{ .err = err },
                                 .result => |_| {},
                             }

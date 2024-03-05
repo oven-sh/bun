@@ -170,7 +170,7 @@ pub const Fs = struct {
 
         if (_file_handle == null) {
             if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd.int() > 0) {
-                file_handle = (bun.sys.openatA(dirname_fd, std.fs.path.basename(path), std.os.O.RDONLY, 0).unwrap() catch |err| brk: {
+                file_handle = (bun.sys.openatA(dirname_fd, std.fs.path.basename(path), bun.OpMode.RDONLY, 0).unwrap() catch |err| brk: {
                     switch (err) {
                         error.ENOENT => {
                             const handle = try bun.openFile(path, .{ .mode = .read_only });

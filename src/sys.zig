@@ -849,28 +849,28 @@ pub noinline fn openFileAtWindowsA(
 }
 
 pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: bun.Mode) Maybe(bun.FileDescriptor) {
-    if (flags & O.DIRECTORY != 0) {
+    if (flags & bun.OpMode.DIRECTORY != 0) {
         // we interpret O_PATH as meaning that we don't want iteration
-        return openDirAtWindowsT(T, dir, path, flags & O.PATH == 0, flags & O.NOFOLLOW != 0);
+        return openDirAtWindowsT(T, dir, path, flags & bun.OpMode.PATH == 0, flags & bun.OpMode.NOFOLLOW != 0);
     }
 
-    const nonblock = flags & O.NONBLOCK != 0;
-    const overwrite = flags & O.WRONLY != 0 and flags & O.APPEND == 0;
+    const nonblock = flags & bun.OpMode.NONBLOCK != 0;
+    const overwrite = flags & bun.OpMode.WRONLY != 0 and flags & bun.OpMode.APPEND == 0;
 
     var access_mask: w.ULONG = w.READ_CONTROL | w.FILE_WRITE_ATTRIBUTES | w.SYNCHRONIZE;
-    if (flags & O.RDWR != 0) {
+    if (flags & bun.OpMode.RDWR != 0) {
         access_mask |= w.GENERIC_READ | w.GENERIC_WRITE;
-    } else if (flags & O.APPEND != 0) {
+    } else if (flags & bun.OpMode.APPEND != 0) {
         access_mask |= w.GENERIC_WRITE | w.FILE_APPEND_DATA;
-    } else if (flags & O.WRONLY != 0) {
+    } else if (flags & bun.OpMode.WRONLY != 0) {
         access_mask |= w.GENERIC_WRITE;
     } else {
         access_mask |= w.GENERIC_READ;
     }
 
     const creation: w.ULONG = blk: {
-        if (flags & O.CREAT != 0) {
-            if (flags & O.EXCL != 0) {
+        if (flags & bun.OpMode.CREAT != 0) {
+            if (flags & bun.OpMode.EXCL != 0) {
                 break :blk w.FILE_CREATE;
             }
             break :blk if (overwrite) w.FILE_OVERWRITE_IF else w.FILE_OPEN_IF;
@@ -879,12 +879,12 @@ pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T
     };
 
     const blocking_flag: windows.ULONG = if (!nonblock) windows.FILE_SYNCHRONOUS_IO_NONALERT else 0;
-    const file_or_dir_flag: windows.ULONG = switch (flags & O.DIRECTORY != 0) {
+    const file_or_dir_flag: windows.ULONG = switch (flags & bun.OpMode.DIRECTORY != 0) {
         // .file_only => windows.FILE_NON_DIRECTORY_FILE,
         true => windows.FILE_DIRECTORY_FILE,
         false => 0,
     };
-    const follow_symlinks = flags & O.NOFOLLOW == 0;
+    const follow_symlinks = flags & bun.OpMode.NOFOLLOW == 0;
 
     const options: windows.ULONG = if (follow_symlinks) file_or_dir_flag | blocking_flag else file_or_dir_flag | windows.FILE_OPEN_REPARSE_POINT;
 
@@ -1613,13 +1613,13 @@ pub fn mmap(
     ptr: ?[*]align(mem.page_size) u8,
     length: usize,
     prot: u32,
-    flags: u32,
+    flags: std.os.MAP,
     fd: bun.FileDescriptor,
     offset: u64,
 ) Maybe([]align(mem.page_size) u8) {
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
-    const rc = std.c.mmap(ptr, length, prot, flags, fd.cast(), ioffset);
-    const fail = std.c.MAP.FAILED;
+    const rc = std.c.mmap(ptr, length, prot, @bitCast(flags), fd.cast(), ioffset);
+    const fail = std.c.MAP_FAILED;
     if (rc == fail) {
         return Maybe([]align(mem.page_size) u8){
             .err = .{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(std.c.getErrno(@as(i64, @bitCast(@intFromPtr(fail))))))), .syscall = .mmap },
@@ -1629,9 +1629,9 @@ pub fn mmap(
     return Maybe([]align(mem.page_size) u8){ .result = @as([*]align(mem.page_size) u8, @ptrCast(@alignCast(rc)))[0..length] };
 }
 
-pub fn mmapFile(path: [:0]const u8, flags: u32, wanted_size: ?usize, offset: usize) Maybe([]align(mem.page_size) u8) {
+pub fn mmapFile(path: [:0]const u8, flags: std.os.MAP, wanted_size: ?usize, offset: usize) Maybe([]align(mem.page_size) u8) {
     assertIsValidWindowsPath(u8, path);
-    const fd = switch (open(path, os.O.RDWR, 0)) {
+    const fd = switch (open(path, bun.OpMode.RDWR, 0)) {
         .result => |fd| fd,
         .err => |err| return .{ .err = err },
     };
@@ -1705,7 +1705,7 @@ pub fn getMaxPipeSizeOnLinux() usize {
             fn once() c_int {
                 const strings = bun.strings;
                 const default_out_size = 512 * 1024;
-                const pipe_max_size_fd = switch (bun.sys.open("/proc/sys/fs/pipe-max-size", std.os.O.RDONLY, 0)) {
+                const pipe_max_size_fd = switch (bun.sys.open("/proc/sys/fs/pipe-max-size", bun.OpMode.RDONLY, 0)) {
                     .result => |fd2| fd2,
                     .err => |err| {
                         log("Failed to open /proc/sys/fs/pipe-max-size: {d}\n", .{err.errno});

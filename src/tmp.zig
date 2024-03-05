@@ -26,7 +26,7 @@ pub const Tmpfile = struct {
 
         open: while (true) {
             if (comptime allow_tmpfile) {
-                switch (bun.sys.openat(destination_dir, ".", O.WRONLY | O.TMPFILE | O.CLOEXEC, perm)) {
+                switch (bun.sys.openat(destination_dir, ".", bun.OpMode.WRONLY | bun.OpMode.TMPFILE | bun.OpMode.CLOEXEC, perm)) {
                     .result => |fd| {
                         tmpfile.fd = bun.toLibUVOwnedFD(fd);
                         break :open;
@@ -42,7 +42,7 @@ pub const Tmpfile = struct {
                 }
             }
 
-            tmpfile.fd = switch (bun.sys.openat(destination_dir, tmpfilename, O.CREAT | O.CLOEXEC | O.WRONLY, perm)) {
+            tmpfile.fd = switch (bun.sys.openat(destination_dir, tmpfilename, bun.OpMode.CREAT | bun.OpMode.CLOEXEC | bun.OpMode.WRONLY, perm)) {
                 .result => |fd| bun.toLibUVOwnedFD(fd),
                 .err => |err| return .{ .err = err },
             };

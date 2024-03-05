@@ -997,7 +997,7 @@ pub fn getMain(
                 vm.main,
 
                 // Open with the minimum permissions necessary for resolving the file path.
-                if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY,
+                if (comptime Environment.isLinux) bun.OpMode.PATH else bun.OpMode.RDONLY,
 
                 0,
             ).unwrap() catch break :use_resolved_path;
@@ -3298,8 +3298,10 @@ pub fn mmapFile(
 
     const buf_z: [:0]const u8 = buf[0..path.len :0];
 
-    const sync_flags: u32 = if (@hasDecl(std.os.MAP, "SYNC")) std.os.MAP.SYNC | std.os.MAP.SHARED_VALIDATE else 0;
-    const file_flags: u32 = if (@hasDecl(std.os.MAP, "FILE")) std.os.MAP.FILE else 0;
+    const sync_flags: std.os.MAP = if (@hasDecl(std.os.MAP, "SYNC")) .{ .SYNC = true, .TYPE = .SHARED_VALIDATE } else .{ .TYPE = .SHARED };
+    // const file_flags: std.os.MAP = if (@hasDecl(std.os.MAP, "FILE")) .{ .FILE = true} std.c.MAP. else .{ .TYPE = .SHARED };
+    // TODO: investigate MAP.FILE
+    const file_flags: std.os.MAP = .{ .TYPE = .SHARED };
 
     // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
     var offset: usize = 0;
@@ -3309,8 +3311,10 @@ pub fn mmapFile(
     if (args.nextEat()) |opts| {
         const sync = opts.get(globalThis, "sync") orelse JSC.JSValue.jsBoolean(false);
         const shared = opts.get(globalThis, "shared") orelse JSC.JSValue.jsBoolean(true);
-        flags |= @as(u32, if (sync.toBoolean()) sync_flags else 0);
-        flags |= @as(u32, if (shared.toBoolean()) std.os.MAP.SHARED else std.os.MAP.PRIVATE);
+        if (sync.toBoolean()) {
+            flags = @bitCast(@as(u32, @bitCast(flags)) | @as(u32, @bitCast(sync_flags)));
+        }
+        flags.TYPE = if (shared.toBoolean()) .SHARED else .PRIVATE;
 
         if (opts.get(globalThis, "size")) |value| {
             map_size = @as(usize, @intCast(value.toInt64()));
@@ -3321,7 +3325,7 @@ pub fn mmapFile(
             offset = std.mem.alignBackwardAnyAlign(offset, std.mem.page_size);
         }
     } else {
-        flags |= std.os.MAP.SHARED;
+        flags.TYPE = .SHARED;
     }
 
     const map = switch (bun.sys.mmapFile(buf_z, flags, map_size, offset)) {

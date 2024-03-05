@@ -197,7 +197,7 @@ pub const LifecycleScriptSubprocess = struct {
         };
         // Have both stdout and stderr write to the same buffer
         const fdsOut, const fdsErr = if (!this.manager.options.log_level.isVerbose())
-            .{ try std.os.pipe2(0), try std.os.pipe2(0) }
+            .{ try std.os.pipe2(.{}), try std.os.pipe2(.{}) }
         else
             .{ .{ 0, 0 }, .{ 0, 0 } };
 
@@ -214,7 +214,7 @@ pub const LifecycleScriptSubprocess = struct {
 
             var actions = try PosixSpawn.Actions.init();
             defer actions.deinit();
-            try actions.openZ(bun.STDIN_FD, "/dev/null", std.os.O.RDONLY, 0o664);
+            try actions.openZ(bun.STDIN_FD, "/dev/null", bun.OpMode.RDONLY, 0o664);
 
             if (!this.manager.options.log_level.isVerbose()) {
                 try actions.dup2(bun.toFD(fdsOut[1]), bun.STDOUT_FD);

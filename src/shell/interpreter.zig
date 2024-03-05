@@ -691,7 +691,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 const new_cwd_fd = switch (Syscall.openat(
                     this.cwd_fd,
                     new_cwd,
-                    std.os.O.DIRECTORY | std.os.O.RDONLY,
+                    bun.OpMode.DIRECTORY | bun.OpMode.RDONLY,
                     0,
                 )) {
                     .result => |fd| fd,
@@ -993,7 +993,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
             // export_env.put("PWD", cwd) catch bun.outOfMemory();
             // export_env.put("OLDPWD", "/") catch bun.outOfMemory();
 
-            const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+            const cwd_fd = switch (Syscall.open(cwd, bun.OpMode.DIRECTORY | bun.OpMode.RDONLY, 0)) {
                 .result => |fd| fd,
                 .err => |err| {
                     return .{ .err = .{ .sys = err.toSystemError() } };
@@ -5181,7 +5181,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     }
 
                     pub fn run(this: *@This()) void {
-                        const fd = switch (Syscall.openat(this.cwd, this.path, os.O.RDONLY | os.O.DIRECTORY, 0)) {
+                        const fd = switch (Syscall.openat(this.cwd, this.path, bun.OpMode.RDONLY | bun.OpMode.DIRECTORY, 0)) {
                             .err => |e| {
                                 switch (e.getErrno()) {
                                     bun.C.E.NOENT => {
@@ -5759,7 +5759,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     task: shell.eval.ShellTask(@This(), EventLoopKind, runFromThreadPool, runFromMainThread, print),
 
                     pub fn runFromThreadPool(this: *@This()) void {
-                        const fd = switch (Syscall.openat(this.cwd, this.target, os.O.RDONLY | os.O.DIRECTORY, 0)) {
+                        const fd = switch (Syscall.openat(this.cwd, this.target, bun.OpMode.RDONLY | bun.OpMode.DIRECTORY, 0)) {
                             .err => |e| {
                                 switch (e.getErrno()) {
                                     bun.C.E.NOTDIR => {
@@ -7114,7 +7114,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             return Maybe(void).initErr(Syscall.Error.fromCode(bun.C.E.ISDIR, .TODO).withPath(bun.default_allocator.dupeZ(u8, dir_task.path) catch bun.outOfMemory()));
                         }
 
-                        const flags = os.O.DIRECTORY | os.O.RDONLY;
+                        const flags = bun.OpMode.DIRECTORY | bun.OpMode.RDONLY;
                         const fd = switch (Syscall.openat(dirfd, path, flags, 0)) {
                             .result => |fd| fd,
                             .err => |e| {
@@ -7218,7 +7218,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         var treat_as_dir = true;
                         const fd: bun.FileDescriptor = handle_entry: while (true) {
                             if (treat_as_dir) {
-                                switch (Syscall.openat(dirfd, dir_task.path, os.O.DIRECTORY | os.O.RDONLY, 0)) {
+                                switch (Syscall.openat(dirfd, dir_task.path, bun.OpMode.DIRECTORY | bun.OpMode.RDONLY, 0)) {
                                     .err => |e| switch (e.getErrno()) {
                                         bun.C.E.NOENT => {
                                             if (this.opts.force) {

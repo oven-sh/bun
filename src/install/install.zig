@@ -1630,7 +1630,7 @@ pub const PackageInstall = struct {
 
     pub fn isDanglingSymlink(path: [:0]const u8) bool {
         if (comptime Environment.isLinux) {
-            const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
+            const rc = Syscall.system.open(path, .{ .PATH = true }, @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
                     _ = Syscall.system.close(@intCast(rc));
@@ -1649,7 +1649,7 @@ pub const PackageInstall = struct {
                 },
             }
         } else {
-            const rc = Syscall.system.open(path, @as(u32, 0), @as(u32, 0));
+            const rc = Syscall.system.open(path, .{}, @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
                     _ = Syscall.system.close(rc);
@@ -1663,7 +1663,7 @@ pub const PackageInstall = struct {
     pub fn isDanglingWindowsBinLink(node_mod_fd: bun.FileDescriptor, path: []const u16, temp_buffer: []u8) bool {
         const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
         const bin_path = bin_path: {
-            const fd = bun.sys.openatWindows(node_mod_fd, path, std.os.O.RDONLY).unwrap() catch return true;
+            const fd = bun.sys.openatWindows(node_mod_fd, path, bun.OpMode.RDONLY).unwrap() catch return true;
             defer _ = bun.sys.close(fd);
             const size = fd.asFile().readAll(temp_buffer) catch return true;
             const decoded = WinBinLinkingShim.looseDecode(temp_buffer[0..size]) orelse return true;
@@ -1672,7 +1672,7 @@ pub const PackageInstall = struct {
         };
 
         {
-            const fd = bun.sys.openatWindows(node_mod_fd, bin_path, std.os.O.RDONLY).unwrap() catch return true;
+            const fd = bun.sys.openatWindows(node_mod_fd, bin_path, bun.OpMode.RDONLY).unwrap() catch return true;
             _ = bun.sys.close(fd);
         }
 

@@ -95,16 +95,16 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         self.end_index = @as(usize, @intCast(rc));
                     }
                     const darwin_entry = @as(*align(1) os.system.dirent, @ptrCast(&self.buf[self.index]));
-                    const next_index = self.index + darwin_entry.reclen();
+                    const next_index = self.index + darwin_entry.reclen;
                     self.index = next_index;
 
-                    const name = @as([*]u8, @ptrCast(&darwin_entry.d_name))[0..darwin_entry.d_namlen];
+                    const name = @as([*]u8, @ptrCast(&darwin_entry.name))[0..darwin_entry.name.len];
 
-                    if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..") or (darwin_entry.d_ino == 0)) {
+                    if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..") or (darwin_entry.ino == 0)) {
                         continue :start_over;
                     }
 
-                    const entry_kind = switch (darwin_entry.d_type) {
+                    const entry_kind = switch (darwin_entry.type) {
                         os.DT.BLK => Entry.Kind.block_device,
                         os.DT.CHR => Entry.Kind.character_device,
                         os.DT.DIR => Entry.Kind.directory,

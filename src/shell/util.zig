@@ -93,11 +93,11 @@ pub const Stdio = union(enum) {
                 try actions.dup2(fd, std_fileno);
             },
             .path => |pathlike| {
-                const flag = if (std_fileno == bun.STDIN_FD) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
-                try actions.open(std_fileno, pathlike.slice(), flag | std.os.O.CREAT, 0o664);
+                const flag = if (std_fileno == bun.STDIN_FD) @as(u32, bun.OpMode.RDONLY) else @as(u32, bun.OpMode.WRONLY);
+                try actions.open(std_fileno, pathlike.slice(), flag | bun.OpMode.CREAT, 0o664);
             },
             .ignore => {
-                const flag = if (std_fileno == bun.STDIN_FD) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
+                const flag = if (std_fileno == bun.STDIN_FD) @as(u32, bun.OpMode.RDONLY) else @as(u32, bun.OpMode.WRONLY);
                 try actions.openZ(std_fileno, "/dev/null", flag, 0o664);
             },
         }

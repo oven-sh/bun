@@ -941,7 +941,7 @@ pub const FFI = struct {
 
             if (comptime Environment.allow_assert and Environment.isPosix) {
                 debug_write: {
-                    const fd = std.os.open("/tmp/bun-ffi-callback-source.c", std.os.O.WRONLY | std.os.O.CREAT, 0o644) catch break :debug_write;
+                    const fd = std.os.open("/tmp/bun-ffi-callback-source.c", .{ .ACCMODE = .WRONLY, .CREAT = true }, 0o644) catch break :debug_write;
                     _ = std.os.write(fd, source_code.items) catch break :debug_write;
                     std.os.ftruncate(fd, source_code.items.len) catch break :debug_write;
                     std.os.close(fd);

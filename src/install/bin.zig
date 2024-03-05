@@ -403,7 +403,7 @@ pub const Bin = extern struct {
                                     )
                                 else
                                     target_wpath,
-                                std.os.O.RDONLY,
+                                bun.OpMode.RDONLY,
                             ).unwrap() catch break :contents null;
                             defer _ = bun.sys.close(fd);
                             const reader = fd.asFile().reader();

@@ -212,14 +212,14 @@ pub const O = struct {
 
     pub fn fromStd(c_flags: i32) i32 {
         var flags: i32 = 0;
-        if (c_flags & std.os.O.NONBLOCK != 0) flags |= NONBLOCK;
-        if (c_flags & std.os.O.CREAT != 0) flags |= CREAT;
-        if (c_flags & std.os.O.NOFOLLOW != 0) flags |= NOFOLLOW;
-        if (c_flags & std.os.O.WRONLY != 0) flags |= WRONLY;
-        if (c_flags & std.os.O.RDONLY != 0) flags |= RDONLY;
-        if (c_flags & std.os.O.RDWR != 0) flags |= RDWR;
-        if (c_flags & std.os.O.TRUNC != 0) flags |= TRUNC;
-        if (c_flags & std.os.O.APPEND != 0) flags |= APPEND;
+        if (c_flags & bun.OpMode.NONBLOCK != 0) flags |= NONBLOCK;
+        if (c_flags & bun.OpMode.CREAT != 0) flags |= CREAT;
+        if (c_flags & bun.OpMode.NOFOLLOW != 0) flags |= NOFOLLOW;
+        if (c_flags & bun.OpMode.WRONLY != 0) flags |= WRONLY;
+        if (c_flags & bun.OpMode.RDONLY != 0) flags |= RDONLY;
+        if (c_flags & bun.OpMode.RDWR != 0) flags |= RDWR;
+        if (c_flags & bun.OpMode.TRUNC != 0) flags |= TRUNC;
+        if (c_flags & bun.OpMode.APPEND != 0) flags |= APPEND;
 
         return flags;
     }
@@ -1627,7 +1627,7 @@ pub const fs_t = extern struct {
     ///
     /// It is assumed that if UV overwrites the .loop, it probably overwrote the rest of the struct.
     pub const uninitialized: fs_t = if (bun.Environment.allow_assert) value: {
-        comptime var value = std.mem.zeroes(fs_t);
+        var value = std.mem.zeroes(fs_t);
         value.loop = @ptrFromInt(0xAAAAAAAAAAAA0000);
         break :value value;
     } else undefined;

@@ -3922,7 +3922,7 @@ pub const NodeFS = struct {
                         return ret.success;
                     }
                 } else {
-                    const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
+                    const src_fd = switch (Syscall.open(src, bun.OpMode.RDONLY, 0o644)) {
                         .result => |result| result,
                         .err => |err| return .{ .err = err.withPath(args.src.slice()) },
                     };
@@ -3930,10 +3930,10 @@ pub const NodeFS = struct {
                         _ = Syscall.close(src_fd);
                     }
 
-                    var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+                    var flags: Mode = bun.OpMode.CREAT | bun.OpMode.WRONLY;
                     var wrote: usize = 0;
                     if (args.mode.shouldntOverwrite()) {
-                        flags |= std.os.O.EXCL;
+                        flags |= bun.OpMode.EXCL;
                     }
 
                     const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
@@ -3967,7 +3967,7 @@ pub const NodeFS = struct {
             const src = args.src.sliceZ(&src_buf);
             const dest = args.dest.sliceZ(&dest_buf);
 
-            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
+            const src_fd = switch (Syscall.open(src, bun.OpMode.RDONLY, 0o644)) {
                 .result => |result| result,
                 .err => |err| return .{ .err = err },
             };
@@ -3984,10 +3984,10 @@ pub const NodeFS = struct {
                 return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP), .syscall = .copyfile } };
             }
 
-            var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+            var flags: Mode = bun.OpMode.CREAT | bun.OpMode.WRONLY;
             var wrote: usize = 0;
             if (args.mode.shouldntOverwrite()) {
-                flags |= std.os.O.EXCL;
+                flags |= bun.OpMode.EXCL;
             }
 
             const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
@@ -4750,7 +4750,7 @@ pub const NodeFS = struct {
         entries: *std.ArrayList(ExpectedType),
         comptime is_root: bool,
     ) Maybe(void) {
-        const flags = os.O.DIRECTORY | os.O.RDONLY;
+        const flags = bun.OpMode.DIRECTORY | bun.OpMode.RDONLY;
 
         const atfd = if (comptime is_root) bun.toFD(std.fs.cwd().fd) else async_task.root_fd;
         const fd = switch (switch (Environment.os) {
@@ -4901,7 +4901,7 @@ pub const NodeFS = struct {
                 }
             }
 
-            const flags = os.O.DIRECTORY | os.O.RDONLY;
+            const flags = bun.OpMode.DIRECTORY | bun.OpMode.RDONLY;
             const fd = switch (Syscall.openat(if (root_fd == bun.invalid_fd) bun.toFD(std.fs.cwd().fd) else root_fd, basename, flags, 0)) {
                 .err => |err| {
                     if (root_fd == bun.invalid_fd) {
@@ -5046,7 +5046,7 @@ pub const NodeFS = struct {
             @panic("This code path should never be reached. It should only go through readdirWithEntriesRecursiveAsync.");
         }
 
-        const flags = os.O.DIRECTORY | os.O.RDONLY;
+        const flags = bun.OpMode.DIRECTORY | bun.OpMode.RDONLY;
         const fd = switch (switch (Environment.os) {
             else => Syscall.open(path, flags, 0),
             // windows bun.sys.open does not pass iterable=true,
@@ -5126,7 +5126,7 @@ pub const NodeFS = struct {
 
                 break :brk switch (Syscall.open(
                     path,
-                    os.O.RDONLY | os.O.NOCTTY,
+                    bun.OpMode.RDONLY | bun.OpMode.NOCTTY,
                     0,
                 )) {
                     .err => |err| return .{
@@ -5320,7 +5320,7 @@ pub const NodeFS = struct {
                 const open_result = Syscall.openat(
                     dirfd,
                     path,
-                    @intFromEnum(args.flag) | os.O.NOCTTY,
+                    @intFromEnum(args.flag) | bun.OpMode.NOCTTY,
                     args.mode,
                 );
 
@@ -5401,7 +5401,7 @@ pub const NodeFS = struct {
             }
         } else {
             // https://github.com/oven-sh/bun/issues/2931
-            if ((@intFromEnum(args.flag) & std.os.O.APPEND) == 0) {
+            if ((@intFromEnum(args.flag) & bun.OpMode.APPEND) == 0) {
                 _ = ftruncateSync(.{ .fd = fd, .len = @as(JSC.WebCore.Blob.SizeType, @truncate(written)) });
             }
         }
@@ -5497,9 +5497,9 @@ pub const NodeFS = struct {
 
         const flags = if (comptime Environment.isLinux)
             // O_PATH is faster
-            std.os.O.PATH
+            bun.OpMode.PATH
         else
-            std.os.O.RDONLY;
+            bun.OpMode.RDONLY;
 
         const fd = switch (Syscall.open(path, flags, 0)) {
             .err => |err| return .{ .err = err.withPath(path) },
@@ -5555,7 +5555,6 @@ pub const NodeFS = struct {
         if (args.recursive) {
             std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
                 const errno: bun.C.E = switch (err) {
-                    error.InvalidHandle => .BADF,
                     error.AccessDenied => .PERM,
                     error.FileTooBig => .FBIG,
                     error.SymLinkLoop => .LOOP,
@@ -5573,6 +5572,7 @@ pub const NodeFS = struct {
                     error.NotDir => .NOTDIR,
                     // On Windows, file paths must be valid Unicode.
                     error.InvalidUtf8 => .INVAL,
+                    error.InvalidWtf8 => .INVAL,
 
                     // On Windows, file paths cannot contain these characters:
                     // '/', '*', '?', '"', '<', '>', '|'
@@ -5602,7 +5602,6 @@ pub const NodeFS = struct {
             // TODO: switch to an implementation which does not use any "unreachable"
             std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
                 const errno: E = switch (err) {
-                    error.InvalidHandle => .BADF,
                     error.AccessDenied => .PERM,
                     error.FileTooBig => .FBIG,
                     error.SymLinkLoop => .LOOP,
@@ -5620,6 +5619,7 @@ pub const NodeFS = struct {
                     error.NotDir => .NOTDIR,
                     // On Windows, file paths must be valid Unicode.
                     error.InvalidUtf8 => .INVAL,
+                    error.InvalidWtf8 => .INVAL,
 
                     // On Windows, file paths cannot contain these characters:
                     // '/', '*', '?', '"', '<', '>', '|'
@@ -5753,7 +5753,7 @@ pub const NodeFS = struct {
         if (comptime Environment.isWindows) {
             const file = Syscall.open(
                 path.sliceZ(&this.sync_error_buf),
-                os.O.WRONLY | flags,
+                bun.OpMode.WRONLY | flags,
                 0o644,
             );
             if (file == .err)
@@ -6036,7 +6036,7 @@ pub const NodeFS = struct {
             }
         }
 
-        const flags = os.O.DIRECTORY | os.O.RDONLY;
+        const flags = bun.OpMode.DIRECTORY | bun.OpMode.RDONLY;
         const fd = switch (Syscall.openatOSPath(
             bun.toFD((std.fs.cwd().fd)),
             src,
@@ -6167,7 +6167,7 @@ pub const NodeFS = struct {
                         return ret.success;
                     }
                 } else {
-                    const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
+                    const src_fd = switch (Syscall.open(src, bun.OpMode.RDONLY, 0o644)) {
                         .result => |result| result,
                         .err => |err| {
                             @memcpy(this.sync_error_buf[0..src.len], src);
@@ -6178,10 +6178,10 @@ pub const NodeFS = struct {
                         _ = Syscall.close(src_fd);
                     }
 
-                    var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+                    var flags: Mode = bun.OpMode.CREAT | bun.OpMode.WRONLY;
                     var wrote: usize = 0;
                     if (mode.shouldntOverwrite()) {
-                        flags |= std.os.O.EXCL;
+                        flags |= bun.OpMode.EXCL;
                     }
 
                     const dest_fd = dest_fd: {
@@ -6240,7 +6240,7 @@ pub const NodeFS = struct {
                 return Maybe(Return.CopyFile).todo();
             }
 
-            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY | std.os.O.NOFOLLOW, 0o644)) {
+            const src_fd = switch (Syscall.open(src, bun.OpMode.RDONLY | bun.OpMode.NOFOLLOW, 0o644)) {
                 .result => |result| result,
                 .err => |err| {
                     if (err.getErrno() == .LOOP) {
@@ -6268,10 +6268,10 @@ pub const NodeFS = struct {
                 } };
             }
 
-            var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+            var flags: Mode = bun.OpMode.CREAT | bun.OpMode.WRONLY;
             var wrote: usize = 0;
             if (mode.shouldntOverwrite()) {
-                flags |= std.os.O.EXCL;
+                flags |= bun.OpMode.EXCL;
             }
 
             const dest_fd = dest_fd: {
@@ -6401,7 +6401,7 @@ pub const NodeFS = struct {
                 }
                 return ret.success;
             } else {
-                const handle = switch (bun.sys.openatWindows(bun.invalid_fd, src, os.O.RDONLY)) {
+                const handle = switch (bun.sys.openatWindows(bun.invalid_fd, src, bun.OpMode.RDONLY)) {
                     .err => |err| return .{ .err = err },
                     .result => |src_fd| src_fd,
                 };
@@ -6545,7 +6545,7 @@ pub const NodeFS = struct {
             }
         }
 
-        const open_flags = os.O.DIRECTORY | os.O.RDONLY;
+        const open_flags = bun.OpMode.DIRECTORY | bun.OpMode.RDONLY;
         const fd = switch (Syscall.openatOSPath(bun.toFD(std.fs.cwd().fd), src, open_flags, 0)) {
             .err => |err| {
                 task.finishConcurrently(.{ .err = err.withPath(this.osPathIntoSyncErrorBuf(src)) });

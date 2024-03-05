@@ -45,7 +45,7 @@ pub const WriteFile = struct {
     pub usingnamespace FileOpenerMixin(WriteFile);
     pub usingnamespace FileCloserMixin(WriteFile);
 
-    pub const open_flags = std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC | std.os.O.NONBLOCK;
+    pub const open_flags = bun.OpMode.WRONLY | bun.OpMode.CREAT | bun.OpMode.TRUNC | bun.OpMode.NONBLOCK;
 
     pub fn onWritable(request: *io.Request) void {
         var this: *WriteFile = @fieldParentPtr(WriteFile, "io_request", request);

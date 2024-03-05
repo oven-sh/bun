@@ -7,7 +7,7 @@ const strings = bun.strings;
 const JSC = @import("root").bun.JSC;
 const Environment = bun.Environment;
 const Global = bun.Global;
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen: bool = if (!@hasDecl(@import("root"), "bindgen")) false else @field(@import("root"), "bindgen");
 const heap_allocator = bun.default_allocator;
 
 const libuv = bun.windows.libuv;

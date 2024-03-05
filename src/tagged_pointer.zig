@@ -8,6 +8,7 @@ const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const typeBaseName = @import("./meta.zig").typeBaseName;
+const typeBaseNameZ = @import("./meta.zig").typeBaseNameZ;
 
 const TagSize = u15;
 const AddressableSize = u49;
@@ -71,7 +72,7 @@ pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
     var decls = [_]std.builtin.Type.Declaration{};
 
     inline for (Types, 0..) |field, i| {
-        const name = comptime typeBaseName(@typeName(field));
+        const name = comptime typeBaseNameZ(@typeName(field));
         enumFields[i] = .{
             .name = name,
             .value = 1024 - i,

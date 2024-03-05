@@ -911,7 +911,7 @@ fn NewPrinter(
             return;
         }
 
-        pub fn writeByteNTimes(self: *Printer, byte: u8, n: usize) !void {
+        pub fn writeByteNTimes(self: *Printer, byte: u8, n: usize) anyerror!void {
             var bytes: [256]u8 = undefined;
             @memset(bytes[0..], byte);
 
@@ -920,6 +920,13 @@ fn NewPrinter(
                 const to_write = @min(remaining, bytes.len);
                 try self.writeAll(bytes[0..to_write]);
                 remaining -= to_write;
+            }
+        }
+
+        pub fn writeBytesNTimes(self: *Printer, bytes: []const u8, n: usize) anyerror!void {
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                try self.writeAll(bytes);
             }
         }
 

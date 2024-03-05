@@ -602,7 +602,7 @@ pub const Archive = struct {
 
                             const file_handle_native = brk: {
                                 if (Environment.isWindows) {
-                                    const flags = std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC;
+                                    const flags = bun.OpMode.WRONLY | bun.OpMode.CREAT | bun.OpMode.TRUNC;
                                     switch (bun.sys.openatWindows(bun.toFD(dir_fd), pathname, flags)) {
                                         .result => |fd| break :brk fd,
                                         .err => |e| switch (e.errno) {

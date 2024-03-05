@@ -442,13 +442,13 @@ pub const ObjectPool = @import("./pool.zig").ObjectPool;
 
 pub fn assertNonBlocking(fd: anytype) void {
     std.debug.assert(
-        (std.os.fcntl(fd, std.os.F.GETFL, 0) catch unreachable) & std.os.O.NONBLOCK != 0,
+        (std.os.fcntl(fd, std.os.F.GETFL, 0) catch unreachable) & OpMode.NONBLOCK != 0,
     );
 }
 
 pub fn ensureNonBlocking(fd: anytype) void {
     const current = std.os.fcntl(fd, std.os.F.GETFL, 0) catch 0;
-    _ = std.os.fcntl(fd, std.os.F.SETFL, current | std.os.O.NONBLOCK) catch 0;
+    _ = std.os.fcntl(fd, std.os.F.SETFL, current | OpMode.NONBLOCK) catch 0;
 }
 
 const global_scope_log = Output.scoped(.bun, false);
@@ -617,9 +617,9 @@ pub var start_time: i128 = 0;
 pub fn openFileZ(pathZ: [:0]const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
     var flags: Mode = 0;
     switch (open_flags.mode) {
-        .read_only => flags |= std.os.O.RDONLY,
-        .write_only => flags |= std.os.O.WRONLY,
-        .read_write => flags |= std.os.O.RDWR,
+        .read_only => flags |= OpMode.RDONLY,
+        .write_only => flags |= OpMode.WRONLY,
+        .read_write => flags |= OpMode.RDWR,
     }
 
     const res = try sys.open(pathZ, flags, 0).unwrap();
@@ -630,9 +630,9 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
     if (comptime Environment.isWindows) {
         var flags: Mode = 0;
         switch (open_flags.mode) {
-            .read_only => flags |= std.os.O.RDONLY,
-            .write_only => flags |= std.os.O.WRONLY,
-            .read_write => flags |= std.os.O.RDWR,
+            .read_only => flags |= OpMode.RDONLY,
+            .write_only => flags |= OpMode.WRONLY,
+            .read_write => flags |= OpMode.RDWR,
         }
 
         const fd = try sys.openA(path_, flags, 0).unwrap();
@@ -647,7 +647,7 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
         return res.asDir();
     } else {
-        const fd = try sys.openat(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        const fd = try sys.openat(toFD(dir.fd), path_, OpMode.DIRECTORY | OpMode.CLOEXEC | OpMode.RDONLY, 0).unwrap();
         return fd.asDir();
     }
 }
@@ -657,7 +657,7 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, true, false).unwrap();
         return res.asDir();
     } else {
-        const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        const fd = try sys.openatA(toFD(dir.fd), path_, OpMode.DIRECTORY | OpMode.CLOEXEC | OpMode.RDONLY, 0).unwrap();
         return fd.asDir();
     }
 }
@@ -667,7 +667,7 @@ pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(invalid_fd, path_, true, false).unwrap();
         return res.asDir();
     } else {
-        const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        const fd = try sys.openA(path_, OpMode.DIRECTORY | OpMode.CLOEXEC | OpMode.RDONLY, 0).unwrap();
         return fd.asDir();
     }
 }
@@ -1122,7 +1122,7 @@ var needs_proc_self_workaround: bool = false;
 // necessary on linux because other platforms don't have an optional
 // /proc/self/fd
 fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
-    const prev_fd = try std.os.openatZ(std.fs.cwd().fd, ".", std.os.O.DIRECTORY, 0);
+    const prev_fd = try std.os.openatZ(std.fs.cwd().fd, ".", .{ .DIRECTORY = true }, 0);
     var needs_chdir = false;
     defer {
         if (needs_chdir) std.os.fchdir(prev_fd) catch unreachable;
@@ -1739,8 +1739,11 @@ pub const tracy = @import("./tracy.zig");
 pub const trace = tracy.trace;
 
 pub fn openFileForPath(path_: [:0]const u8) !std.fs.File {
-    const O_PATH = if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY;
-    const flags: u32 = std.os.O.CLOEXEC | std.os.O.NOCTTY | O_PATH;
+    var flags: std.os.O = if (comptime Environment.isLinux) .{
+        .PATH = true,
+    } else .{};
+    flags.CLOEXEC = true;
+    flags.NOCTTY = true;
 
     const fd = try std.os.openZ(path_, flags, 0);
     return std.fs.File{
@@ -1749,8 +1752,12 @@ pub fn openFileForPath(path_: [:0]const u8) !std.fs.File {
 }
 
 pub fn openDirForPath(path_: [:0]const u8) !std.fs.Dir {
-    const O_PATH = if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY;
-    const flags: u32 = std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.DIRECTORY | O_PATH;
+    var flags: std.os.O = if (comptime Environment.isLinux) .{
+        .PATH = true,
+    } else .{};
+    flags.CLOEXEC = true;
+    flags.NOCTTY = true;
+    flags.DIRECTORY = true;
 
     const fd = try std.os.openZ(path_, flags, 0);
     return std.fs.Dir{
@@ -2088,6 +2095,28 @@ pub fn isRegularFile(mode: anytype) bool {
 pub const sys = @import("./sys.zig");
 
 pub const Mode = C.Mode;
+
+pub const OpMode = struct {
+    pub const RDONLY: Mode = @bitCast(std.os.O{ .ACCMODE = .RDONLY });
+    pub const WRONLY: Mode = @bitCast(std.os.O{ .ACCMODE = .WRONLY });
+    pub const RDWR: Mode = @bitCast(std.os.O{ .ACCMODE = .RDWR });
+    pub const CREAT: Mode = @bitCast(std.os.O{ .CREAT = true });
+    pub const EXCL: Mode = @bitCast(std.os.O{ .EXCL = true });
+    pub const NOCTTY: Mode = @bitCast(std.os.O{ .NOCTTY = true });
+    pub const TRUNC: Mode = @bitCast(std.os.O{ .TRUNC = true });
+    pub const APPEND: Mode = @bitCast(std.os.O{ .APPEND = true });
+    pub const NONBLOCK: Mode = @bitCast(std.os.O{ .NONBLOCK = true });
+    pub const DSYNC: Mode = @bitCast(std.os.O{ .DSYNC = true });
+    pub const ASYNC: Mode = @bitCast(std.os.O{ .ASYNC = true });
+    pub const DIRECT: Mode = @bitCast(std.os.O{ .DIRECT = true });
+    pub const DIRECTORY: Mode = @bitCast(std.os.O{ .DIRECTORY = true });
+    pub const NOFOLLOW: Mode = @bitCast(std.os.O{ .NOFOLLOW = true });
+    pub const NOATIME: Mode = @bitCast(std.os.O{ .NOATIME = true });
+    pub const CLOEXEC: Mode = @bitCast(std.os.O{ .CLOEXEC = true });
+    pub const SYNC: Mode = @bitCast(std.os.O{ .SYNC = true });
+    pub const PATH: Mode = @bitCast(std.os.O{ .PATH = true });
+    pub const TMPFILE: Mode = @bitCast(std.os.O{ .TMPFILE = true });
+};
 
 pub const windows = @import("./windows.zig");
 

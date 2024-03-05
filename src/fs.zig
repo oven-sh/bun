@@ -663,7 +663,7 @@ pub const FileSystem = struct {
                 // We originally used a temporary directory, but it caused EXDEV.
                 const dir_fd = std.fs.cwd().fd;
 
-                const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
+                const flags = bun.OpMode.CREAT | bun.OpMode.RDWR | bun.OpMode.CLOEXEC;
                 this.dir_fd = bun.toFD(dir_fd);
 
                 const result = try bun.sys.openat(bun.toFD(dir_fd), name, flags, std.os.S.IRWXU).unwrap();
@@ -708,7 +708,7 @@ pub const FileSystem = struct {
             pub fn create(this: *TmpfileWindows, rfs: *RealFS, name: [:0]const u8) !void {
                 const tmpdir_ = try rfs.openTmpDir();
 
-                const flags = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.CLOEXEC;
+                const flags = bun.OpMode.CREAT | bun.OpMode.WRONLY | bun.OpMode.CLOEXEC;
 
                 const result = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
                 this.fd = bun.toLibUVOwnedFD(result);
@@ -918,7 +918,7 @@ pub const FileSystem = struct {
             else
                 bun.sys.openA(
                     unsafe_dir_string,
-                    std.os.O.DIRECTORY,
+                    bun.OpMode.DIRECTORY,
                     0,
                 );
             const fd = try dirfd.unwrap();
@@ -1812,7 +1812,7 @@ pub const Path = struct {
 };
 
 // pub fn customRealpath(allocator: std.mem.Allocator, path: string) !string {
-//     var opened = try std.os.open(path, if (Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY, 0);
+//     var opened = try std.os.open(path, if (Environment.isLinux) bun.OpMode.PATH else bun.OpMode.RDONLY, 0);
 //     defer std.os.close(opened);
 
 // }

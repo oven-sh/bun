@@ -2476,7 +2476,7 @@ pub const Subprocess = struct {
                 item.fd = fds[0];
                 // enable non-block
                 const before = std.c.fcntl(fds[0], os.F.GETFL);
-                _ = std.c.fcntl(fds[0], os.F.SETFL, before | os.O.NONBLOCK);
+                _ = std.c.fcntl(fds[0], os.F.SETFL, before | bun.OpMode.NONBLOCK);
                 // enable SOCK_CLOXEC
                 _ = std.c.fcntl(fds[0], os.FD_CLOEXEC);
             };
@@ -2529,7 +2529,7 @@ pub const Subprocess = struct {
             actions.close(bun.toFD(fds[1])) catch |err| return globalThis.handleError(err, "in posix_spawn");
             // enable non-block
             const before = std.c.fcntl(fds[0], os.F.GETFL);
-            _ = std.c.fcntl(fds[0], os.F.SETFL, before | os.O.NONBLOCK);
+            _ = std.c.fcntl(fds[0], os.F.SETFL, before | bun.OpMode.NONBLOCK);
             // enable SOCK_CLOXEC
             _ = std.c.fcntl(fds[0], os.FD_CLOEXEC);
         }
@@ -3148,8 +3148,8 @@ pub const Subprocess = struct {
                     try actions.dup2(fd, std_fileno);
                 },
                 .path => |pathlike| {
-                    const flag = if (std_fileno == bun.STDIN_FD) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
-                    try actions.open(std_fileno, pathlike.slice(), flag | std.os.O.CREAT, 0o664);
+                    const flag = if (std_fileno == bun.STDIN_FD) @as(u32, bun.OpMode.RDONLY) else @as(u32, bun.OpMode.WRONLY);
+                    try actions.open(std_fileno, pathlike.slice(), flag | bun.OpMode.CREAT, 0o664);
                 },
                 .inherit => {
                     if (comptime Environment.isMac) {
@@ -3159,7 +3159,7 @@ pub const Subprocess = struct {
                     }
                 },
                 .ignore => {
-                    const flag = if (std_fileno == bun.STDIN_FD) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
+                    const flag = if (std_fileno == bun.STDIN_FD) @as(u32, bun.OpMode.RDONLY) else @as(u32, bun.OpMode.WRONLY);
                     try actions.openZ(std_fileno, "/dev/null", flag, 0o664);
                 },
             }
@@ -3402,7 +3402,7 @@ pub const Subprocess = struct {
 
         // pidfd_nonblock only supported in 5.10+
         return if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
-            std.os.O.NONBLOCK
+            bun.OpMode.NONBLOCK
         else
             0;
     }

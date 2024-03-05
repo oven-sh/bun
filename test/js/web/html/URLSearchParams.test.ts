@@ -156,14 +156,14 @@ describe("URLSearchParams", () => {
   });
 });
 
-test(".delete second argument", () => {
+it(".delete second argument", () => {
   const params = new URLSearchParams("a=1&a=2&b=3");
   params.delete("a", 1);
   params.delete("b", undefined);
   expect(params + "").toBe("a=2");
 });
 
-test(".has second argument", () => {
+it(".has second argument", () => {
   const params = new URLSearchParams("a=1&a=2&b=3");
   expect(params.has("a", 1)).toBe(true);
   expect(params.has("a", 2)).toBe(true);

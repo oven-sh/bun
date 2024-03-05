@@ -1811,9 +1811,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDomainToASCII, (JSC::JSGlobalObject * globalObj
     int32_t numCharactersConverted = uidna_nameToASCII(encoder, StringView(domain).upconvertedCharacters(), domain.length(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
 
     if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted) {
-        WTF::Vector<LChar, hostnameBufferLength> ascii;
-        ascii.append(hostnameBuffer, numCharactersConverted);
-        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(ascii.data(), ascii.size())));
+        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(hostnameBuffer, numCharactersConverted)));
     }
     return JSC::JSValue::encode(jsUndefined());
 }
@@ -1848,9 +1846,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDomainToUnicode, (JSC::JSGlobalObject * globalO
     int32_t numCharactersConverted = uidna_nameToUnicode(encoder, StringView(domain).characters16(), domain.length(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
 
     if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToUnicodeErrors) && numCharactersConverted) {
-        WTF::Vector<UChar, hostnameBufferLength> ascii;
-        ascii.append(hostnameBuffer, numCharactersConverted);
-        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(ascii.data(), ascii.size())));
+        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(hostnameBuffer, numCharactersConverted)));
     }
     return JSC::JSValue::encode(jsUndefined());
 }

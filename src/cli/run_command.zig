@@ -745,6 +745,7 @@ pub const RunCommand = struct {
 
         this_bundler.resolver.care_about_bin_folder = true;
         this_bundler.resolver.care_about_scripts = true;
+        this_bundler.resolver.store_fd = true;
 
         this_bundler.resolver.opts.load_tsconfig_json = false;
         this_bundler.options.load_tsconfig_json = false;
@@ -1596,6 +1597,8 @@ pub const BunXFastPath = struct {
         }
 
         shim_impl.tryStartupFromBunJS(run_ctx);
+
+        debug("did not start via shim", .{});
     }
 
     fn directLaunchCallback(wpath: []u16, ctx: *const Command.Context) void {

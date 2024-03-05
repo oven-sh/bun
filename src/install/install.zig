@@ -692,9 +692,7 @@ const Task = struct {
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
-                            _ = trace; // autofix
-
-                            // std.debug.dumpStackTrace(trace.*);
+                            std.debug.dumpStackTrace(trace.*);
                         }
                     }
 
@@ -4716,7 +4714,7 @@ pub const PackageManager = struct {
                                     null,
                                     logger.Loc.Empty,
                                     manager.allocator,
-                                    "<r><yellow>warn:<r> {s} downloading package manifest <b>{s}<r>",
+                                    "{s}  downloading package manifest <b>{s}<r>",
                                     .{ bun.span(@errorName(err)), name.slice() },
                                 ) catch unreachable;
                             }

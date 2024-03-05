@@ -205,28 +205,26 @@ pub const BunxCommand = struct {
 
         var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);
         var package_name: ?string = null;
+        var verbose_install = false;
         {
             var found_subcommand_name = false;
 
             for (argv) |positional| {
-                Output.debug("positional: {s}", .{positional});
                 if (package_name != null) {
                     passthrough_list.appendAssumeCapacity(positional);
-                    Output.debug("push to passthrough_list: {s}", .{positional});
                     continue;
                 }
 
                 if (positional.len > 0 and positional[0] == '-') {
-                    Output.debug("is a flag", .{});
-                    if (strings.eqlComptime(positional, "--bun")) {
+                    if (strings.eqlComptime(positional, "--verbose")) {
+                        verbose_install = true;
+                    } else if (strings.eqlComptime(positional, "--bun") or strings.eqlComptime(positional, "-b")) {
                         ctx.debug.run_in_bun = true;
                     }
                 } else {
                     if (!found_subcommand_name) {
-                        Output.debug("is subcommand name", .{});
                         found_subcommand_name = true;
                     } else {
-                        Output.debug("is package name", .{});
                         package_name = positional;
                     }
                 }
@@ -375,7 +373,9 @@ pub const BunxCommand = struct {
         //   across users, you run into permission conflicts
         //   - If you set permission to 777, you run into a potential attack vector
         //     where a user can replace the directory with malicious code.
-        const uid = if (bun.Environment.isPosix) bun.C.getuid() else windowsUserUniqueId();
+        //
+        // If this format changes, please update cache clearing code in package_manager_command.zig
+        const uid = if (bun.Environment.isPosix) bun.C.getuid() else bun.windows.userUniqueId();
         PATH = switch (PATH.len > 0) {
             inline else => |path_is_nonzero| try std.fmt.allocPrint(
                 ctx.allocator,
@@ -538,28 +538,41 @@ pub const BunxCommand = struct {
             package_json.writeAll("{}\n") catch {};
         }
 
-        var args_buf = [_]string{
+        var args = std.BoundedArray([]const u8, 7).fromSlice(&.{
             try std.fs.selfExePathAlloc(ctx.allocator),
             "add",
             "--no-summary",
             package_fmt,
+        }) catch
+            unreachable; // upper bound is known
 
-            // the following two args are stripped off if `do_cache_bust` is false
-
+        if (do_cache_bust) {
             // disable the manifest cache when a tag is specified
             // so that @latest is fetched from the registry
-            "--no-cache",
+            args.append("--no-cache") catch
+                unreachable; // upper bound is known
+
             // forcefully re-install packages in this mode too
-            "--force",
-        };
+            args.append("--force") catch
+                unreachable; // upper bound is known
+        }
 
-        const argv_to_use: []const string = args_buf[0 .. args_buf.len - 2 * @as(usize, @intFromBool(!do_cache_bust))];
+        if (verbose_install) {
+            args.append("--verbose") catch
+                unreachable; // upper bound is known
+        }
 
+        const argv_to_use = args.slice();
+
+        if (Environment.isDebug) {
+            Output.debug("argv_to_use: {s}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
+        }
         var child_process = std.ChildProcess.init(argv_to_use, default_allocator);
         child_process.cwd_dir = bunx_install_dir;
         // https://github.com/ziglang/zig/issues/5190
         if (Environment.isWindows) {
             child_process.cwd = bunx_cache_dir;
+            Output.debug("child_process.cwd: {?s}", .{child_process.cwd});
         }
         const env_map = try this_bundler.env.map.cloneToEnvMap(ctx.allocator);
         child_process.env_map = &env_map;
@@ -644,25 +657,3 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 };
-
-extern fn GetUserNameW(
-    lpBuffer: bun.windows.LPWSTR,
-    pcbBuffer: bun.windows.LPDWORD,
-) bun.windows.BOOL;
-
-/// Is not the actual UID of the user, but just a hash of username.
-fn windowsUserUniqueId() u32 {
-    // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/165836c1-89d7-4abb-840d-80cf2510aa3e
-    // UNLEN + 1
-    var buf: [257]u16 = undefined;
-    var size: u32 = buf.len;
-    if (GetUserNameW(@ptrCast(&buf), &size) == 0) {
-        if (Environment.isDebug) std.debug.panic("GetUserNameW failed: {}", .{bun.windows.GetLastError()});
-        return 0;
-    }
-    const name = buf[0..size];
-    if (Environment.isWindows) {
-        Output.scoped(.windowsUserUniqueId, false)("username: {}", .{bun.fmt.utf16(name)});
-    }
-    return bun.hash32(std.mem.sliceAsBytes(name));
-}

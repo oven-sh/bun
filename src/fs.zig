@@ -7,7 +7,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptor = bun.FileDescriptor;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
@@ -66,7 +66,7 @@ pub const FileSystem = struct {
         return tmpdir_handle.?;
     }
 
-    pub fn getFdPath(this: *const FileSystem, fd: FileDescriptorType) ![]const u8 {
+    pub fn getFdPath(this: *const FileSystem, fd: FileDescriptor) ![]const u8 {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const dir = try bun.getFdPath(fd, &buf);
         return try this.dirname_store.append([]u8, dir);
@@ -83,18 +83,18 @@ pub const FileSystem = struct {
         });
     }
 
-    pub var max_fd: FileDescriptorType = .zero;
+    pub var max_fd: FileDescriptor = .zero;
 
-    pub inline fn setMaxFd(fd: anytype) void {
+    pub inline fn setMaxFd(fd: std.os.fd_t) void {
+        if (Environment.isWindows) {
+            return;
+        }
+
         if (!FeatureFlags.store_file_descriptors) {
             return;
         }
 
-        if (comptime @TypeOf(fd) == *anyopaque) {
-            max_fd = @enumFromInt(@max(@intFromPtr(fd), max_fd.int()));
-        } else {
-            max_fd = @enumFromInt(@max(fd, max_fd.int()));
-        }
+        max_fd = @enumFromInt(@max(fd, max_fd));
     }
     pub var instance_loaded: bool = false;
     pub var instance: FileSystem = undefined;
@@ -745,6 +745,10 @@ pub const FileSystem = struct {
         pub fn needToCloseFiles(rfs: *const RealFS) bool {
             if (!FeatureFlags.store_file_descriptors) {
                 return true;
+            }
+
+            if (Environment.isWindows) {
+                return false;
             }
 
             // If we're not near the max amount of open files, don't worry about it.

@@ -40,7 +40,7 @@ pub const meta = @import("./meta.zig");
 pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
-pub const resolver = @import("./resolver//resolver.zig");
+pub const resolver = @import("./resolver/resolver.zig");
 pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
@@ -66,22 +66,17 @@ else
     std.os.fd_t;
 
 pub const FileDescriptor = enum(FileDescriptorInt) {
-    zero,
+    /// Zero is used in old filesystem code to indicate "no file descriptor"
+    /// This is problematic because on POSIX, this is ambiguous with stdin being 0.
+    /// All code that uses this should migrate to invalid_fd to represent invalid states.
+    zero = 0,
+    // Represents an invalid file descriptor. This is used instead of null to
+    // avoid an extra bit.
+    // invalid = @intFromEnum(invalid_fd),
     _,
 
-    /// Returns the underlying file descriptor description as an integer.
-    ///
-    /// Not valid on windows because the integer representation does not make
-    /// sense to interpret as an integer. Doing so will break code.
-    pub inline fn int(fd: FileDescriptor) FileDescriptorInt {
-        if (Environment.isWindows) {
-            @compileError("FileDescriptor.int() is not allowed on Windows");
-        }
-        return @intFromEnum(fd);
-    }
-
     pub inline fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
-        try writer.writeInt(FileDescriptorInt, @enumFromInt(fd), endian);
+        try writer.writeInt(FileDescriptorInt, @intFromEnum(fd), endian);
     }
 
     pub inline fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
@@ -123,6 +118,24 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
         std.debug.assert(FDImpl.decode(fd).kind == kind);
+    }
+
+    pub fn isStdio(fd: FileDescriptor) bool {
+        fd.assertValid();
+        const decoded = FDImpl.decode(fd);
+        return switch (Environment.os) {
+            else => decoded.value.as_system < 3,
+            .windows => switch (decoded.kind) {
+                .system => fd == win32.STDIN_FD or
+                    fd == win32.STDOUT_FD or
+                    fd == win32.STDERR_FD,
+                .uv => decoded.value.as_uv < 3,
+            },
+        };
+    }
+
+    pub fn toJS(value: FileDescriptor, global: *JSC.JSGlobalObject) JSC.JSValue {
+        return FDImpl.decode(value).toJS(global);
     }
 };
 

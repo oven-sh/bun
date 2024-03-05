@@ -653,18 +653,14 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
             }
 
-            if (HTTPSocket.connectAnon(
+            const socket = try HTTPSocket.connectAnon(
                 hostname,
                 port,
                 this.us_socket_context,
-                undefined,
-            )) |socket| {
-                client.allow_retry = false;
-                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
-                return socket;
-            }
-
-            return error.FailedToOpenSocket;
+                ActiveSocket.init(client).ptr(),
+            );
+            client.allow_retry = false;
+            return socket;
         }
     };
 }
@@ -731,6 +727,7 @@ pub const HTTPThread = struct {
         Output.Source.configureNamedThread("HTTP Client");
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
+
         const loop = bun.uws.Loop.create(struct {
             pub fn wakeup(_: *uws.Loop) callconv(.C) void {
                 http_thread.drainEvents();
@@ -738,6 +735,23 @@ pub const HTTPThread = struct {
             pub fn pre(_: *uws.Loop) callconv(.C) void {}
             pub fn post(_: *uws.Loop) callconv(.C) void {}
         });
+
+        if (Environment.isWindows) {
+            var result: std.os.windows.ws2_32.WSADATA = undefined;
+            const err = std.os.windows.ws2_32.WSAStartup(0x202, &result);
+            if (err != 0) {
+                // Instead of panicing here, let the program run until the first
+                // request fails. There may be a chance it is already
+                // initialized, or through some other cause it just happens to
+                // work.
+                //
+                // TODO: More research is needed here.
+                switch (@as(std.os.windows.ws2_32.WinsockError, @enumFromInt(err))) {
+                    .WSAVERNOTSUPPORTED => Output.warn("Windows Socket API not supported. Network requests may fail.", .{}),
+                    else => |e| Output.warn("Unexpected error while initializing Windows Socket API: {}. Network requests may fail.", .{e}),
+                }
+            }
+        }
 
         http_thread.loop = loop;
         http_thread.http_context.init() catch @panic("Failed to init http context");
@@ -1347,7 +1361,7 @@ pub const InternalState = struct {
     request_body: []const u8 = "",
     original_request_body: HTTPRequestBody = .{ .bytes = "" },
     request_sent_len: usize = 0,
-    fail: anyerror = error.NoError,
+    fail: ?anyerror = null,
     request_stage: HTTPStage = .pending,
     response_stage: HTTPStage = .pending,
     certificate_info: ?CertificateInfo = null,
@@ -1961,13 +1975,9 @@ pub const AsyncHTTP = struct {
         http_thread.schedule(batch);
         while (true) {
             const result: HTTPClientResult = ctx.channel.readItem() catch unreachable;
-            if (!result.isSuccess()) {
-                return result.fail;
-            }
+            if (result.fail) |e| return e;
             std.debug.assert(result.metadata != null);
-            if (result.metadata) |metadata| {
-                return metadata.response;
-            }
+            return result.metadata.?.response;
         }
 
         unreachable;
@@ -2222,13 +2232,18 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     }
 
     var socket = http_thread.connect(this, is_ssl) catch |err| {
+        if (Environment.isDebug) {
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
+        }
         this.fail(err);
         return;
     };
 
     if (socket.isClosed() and (this.state.response_stage != .done and this.state.response_stage != .fail)) {
         this.fail(error.ConnectionClosed);
-        std.debug.assert(this.state.fail != error.NoError);
+        std.debug.assert(this.state.fail != null);
         return;
     }
 }
@@ -2948,7 +2963,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         const body = out_str.*;
         const result = this.toResult();
         const is_done = !result.has_more;
-        if (this.state.is_redirect_pending and this.state.fail == error.NoError) {
+        if (this.state.is_redirect_pending and this.state.fail == null) {
             if (this.state.isDone()) {
                 this.doRedirect(is_ssl, ctx, socket);
             }
@@ -3000,7 +3015,8 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
 pub const HTTPClientResult = struct {
     body: ?*MutableString = null,
     has_more: bool = false,
-    fail: anyerror = error.NoError,
+    fail: ?anyerror = null,
+
     /// Owns the response metadata aka headers, url and status code
     metadata: ?HTTPResponseMetadata = null,
 
@@ -3019,15 +3035,15 @@ pub const HTTPClientResult = struct {
     };
 
     pub fn isSuccess(this: *const HTTPClientResult) bool {
-        return this.fail == error.NoError;
+        return this.fail == null;
     }
 
     pub fn isTimeout(this: *const HTTPClientResult) bool {
-        return this.fail == error.Timeout;
+        return if (this.fail) |e| e == error.Timeout else false;
     }
 
     pub fn isAbort(this: *const HTTPClientResult) bool {
-        return this.fail == error.Aborted;
+        return if (this.fail) |e| e == error.Aborted else false;
     }
 
     pub const Callback = struct {
@@ -3080,7 +3096,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .redirected = this.remaining_redirect_count != default_redirect_count,
             .fail = this.state.fail,
             // check if we are reporting cert errors, do not have a fail state and we are not done
-            .has_more = this.state.fail == error.NoError and !this.state.isDone(),
+            .has_more = this.state.fail == null and !this.state.isDone(),
             .body_size = body_size,
             .certificate_info = null,
         };
@@ -3090,7 +3106,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
         .metadata = null,
         .fail = this.state.fail,
         // check if we are reporting cert errors, do not have a fail state and we are not done
-        .has_more = certificate_info != null or (this.state.fail == error.NoError and !this.state.isDone()),
+        .has_more = certificate_info != null or (this.state.fail == null and !this.state.isDone()),
         .body_size = body_size,
         .certificate_info = certificate_info,
     };

@@ -140,6 +140,14 @@ pub const Process = struct {
         this.exit_handler.init(handler);
     }
 
+    pub fn updateStatusOnWindows(this: *Process) void {
+        if (this.poller == .uv) {
+            if (!this.poller.uv.isActive() and this.status == .running) {
+                onExitUV(&this.poller.uv, 0, 0);
+            }
+        }
+    }
+
     pub fn initPosix(
         posix: PosixSpawnResult,
         event_loop: anytype,
@@ -603,13 +611,19 @@ pub const PollerWindows = union(enum) {
     }
 
     pub fn disableKeepingEventLoopAlive(this: *PollerWindows, event_loop: JSC.EventLoopHandle) void {
+        _ = this; // autofix
         _ = event_loop; // autofix
-        switch (this.*) {
-            .uv => |*process| {
-                process.unref();
-            },
-            else => {},
-        }
+
+        // This is disabled on Windows
+        // uv_unref() causes the onExitUV callback to *never* be called
+        // This breaks a lot of stuff...
+        // Once fixed, re-enable "should not hang after unref" test in spawn.test
+        // switch (this.*) {
+        //     .uv => |*process| {
+        //         // process.unref();
+        //     },
+        //     else => {},
+        // }
     }
 
     pub fn hasRef(this: *const PollerWindows) bool {
@@ -1033,6 +1047,7 @@ pub const PosixSpawnResult = struct {
         unreachable;
     }
 };
+
 pub const SpawnOptions = if (Environment.isPosix) PosixSpawnOptions else WindowsSpawnOptions;
 pub const SpawnProcessResult = if (Environment.isPosix) PosixSpawnResult else WindowsSpawnResult;
 pub fn spawnProcess(

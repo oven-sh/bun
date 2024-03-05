@@ -5,7 +5,6 @@ const { Duplex, Readable, Writable } = require("node:stream");
 const { getHeader, setHeader, assignHeaders: assignHeadersFast } = $lazy("http");
 
 const GlobalPromise = globalThis.Promise;
-let warnNotImplementedOnce;
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
  * True if val contains an invalid field-vchar
@@ -226,11 +225,6 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   setTimeout(timeout, callback) {
-    if (!warnNotImplementedOnce) {
-      ({ warnNotImplementedOnce } = require("internal/shared"));
-    }
-
-    warnNotImplementedOnce("Socket in HTTP setTimeout");
     return this;
   }
 
@@ -437,6 +431,7 @@ function Server(options, callback) {
   return this;
 }
 Object.setPrototypeOf((Server.prototype = {}), EventEmitter.prototype);
+Server.prototype.constructor = Server; // Re-add constructor which got lost when setting prototype
 Object.setPrototypeOf(Server, EventEmitter);
 
 Server.prototype.ref = function () {
@@ -609,10 +604,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
 };
 
 Server.prototype.setTimeout = function (msecs, callback) {
-  if (!warnNotImplementedOnce) {
-    ({ warnNotImplementedOnce } = require("internal/shared"));
-  }
-  warnNotImplementedOnce("Server.setTimeout");
+  // TODO:
   return this;
 };
 
@@ -663,9 +655,6 @@ function assignHeaders(object, req) {
     assignHeadersSlow(object, req);
     return false;
   }
-}
-function destroyBodyStreamNT(bodyStream) {
-  bodyStream.destroy();
 }
 
 var defaultIncomingOpts = { type: "request" };
@@ -732,6 +721,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
 }
 
 Object.setPrototypeOf((IncomingMessage.prototype = {}), Readable.prototype);
+IncomingMessage.prototype.constructor = IncomingMessage; // Re-add constructor which got lost when setting prototype
 Object.setPrototypeOf(IncomingMessage, Readable);
 
 IncomingMessage.prototype._construct = function (callback) {
@@ -758,7 +748,6 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
     if (self[abortedSymbol]) return;
     if (done) {
       self.push(null);
-      process.nextTick(destroyBodyStreamNT, self);
       break;
     }
     for (var v of value) {
@@ -857,11 +846,7 @@ Object.defineProperty(IncomingMessage.prototype, "socket", {
 });
 
 IncomingMessage.prototype.setTimeout = function (msecs, callback) {
-  if (!warnNotImplementedOnce) {
-    ({ warnNotImplementedOnce } = require("internal/shared"));
-  }
-  warnNotImplementedOnce("IncomingMessage.setTimeout");
-
+  // TODO:
   return this;
 };
 
@@ -947,6 +932,7 @@ function OutgoingMessage(options) {
 }
 
 Object.setPrototypeOf((OutgoingMessage.prototype = {}), Writable.prototype);
+OutgoingMessage.prototype.constructor = OutgoingMessage; // Re-add constructor which got lost when setting prototype
 Object.setPrototypeOf(OutgoingMessage, Writable);
 
 // Express "compress" package uses this
@@ -1151,6 +1137,7 @@ function ServerResponse(req, reply) {
   if (req.method === "HEAD") this._hasBody = false;
 }
 Object.setPrototypeOf((ServerResponse.prototype = {}), OutgoingMessage.prototype);
+ServerResponse.prototype.constructor = ServerResponse; // Re-add constructor which got lost when setting prototype
 Object.setPrototypeOf(ServerResponse, OutgoingMessage);
 
 // Express "compress" package uses this
@@ -1284,11 +1271,7 @@ ServerResponse.prototype.writeContinue = function (callback) {
 };
 
 ServerResponse.prototype.setTimeout = function (msecs, callback) {
-  if (!warnNotImplementedOnce) {
-    ({ warnNotImplementedOnce } = require("internal/shared"));
-  }
-
-  warnNotImplementedOnce("ServerResponse.setTimeout");
+  // TODO:
   return this;
 };
 

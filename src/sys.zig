@@ -331,11 +331,11 @@ pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
 
     if (comptime Environment.isWindows) {
         if (kernel32.SetCurrentDirectory(destination) == windows.FALSE) {
-            log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.fmtUTF16(destination), kernel32.GetLastError() });
+            log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.utf16(destination), kernel32.GetLastError() });
             return Maybe(void).errnoSys(0, .chdir) orelse Maybe(void).success;
         }
 
-        log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.fmtUTF16(destination), 0 });
+        log("SetCurrentDirectory({}) = {d}", .{ bun.fmt.utf16(destination), 0 });
 
         return Maybe(void).success;
     }
@@ -519,7 +519,7 @@ pub fn normalizePathWindows(
         @compileError("normalizePathWindows only supports u8 and u16 character types");
     }
     var wbuf: if (T == u16) void else bun.WPathBuffer = undefined;
-    const path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(&wbuf, path_);
+    var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(&wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
@@ -539,6 +539,10 @@ pub fn normalizePathWindows(
             .syscall = .open,
         } };
     };
+
+    if (path.len >= 2 and bun.path.isDriveLetterT(u16, path[0]) and path[1] == ':') {
+        path = path[2..];
+    }
 
     var buf1: bun.WPathBuffer = undefined;
     @memcpy(buf1[0..base_path.len], base_path);
@@ -604,11 +608,11 @@ pub fn openDirAtWindowsNtPath(
             // - access_mask probably needs w.SYNCHRONIZE,
             // - options probably needs w.FILE_SYNCHRONOUS_IO_NONALERT
             // - disposition probably needs w.FILE_OPEN
-            bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (dir) = {d}\nYou are calling this function with the wrong flags!!!", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
+            bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (dir) = {d}\nYou are calling this function with the wrong flags!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
         } else if (rc == .OBJECT_PATH_SYNTAX_BAD or rc == .OBJECT_NAME_INVALID) {
-            bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (dir) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
+            bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (dir) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
         } else {
-            log("NtCreateFile({}, {}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(fd) });
+            log("NtCreateFile({}, {}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
         }
     }
 
@@ -758,12 +762,12 @@ pub fn openFileAtWindowsNtPath(
                 // - access_mask probably needs w.SYNCHRONIZE,
                 // - options probably needs w.FILE_SYNCHRONOUS_IO_NONALERT
                 // - disposition probably needs w.FILE_OPEN
-                bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function with the wrong flags!!!", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
+                bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function with the wrong flags!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             } else if (rc == .OBJECT_PATH_SYNTAX_BAD or rc == .OBJECT_NAME_INVALID) {
                 // See above comment. For absolute paths you must have \??\ at the start.
-                bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
+                bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             } else {
-                log("NtCreateFile({}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.fmtUTF16(path), @tagName(rc), @intFromPtr(result) });
+                log("NtCreateFile({}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             }
         }
 
@@ -932,8 +936,6 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
             },
         };
     }
-
-    unreachable;
 }
 
 pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
@@ -1740,7 +1742,7 @@ pub fn existsOSPath(path: bun.OSPathSliceZ, file_only: bool) bool {
         assertIsValidWindowsPath(bun.OSPathChar, path);
         const attributes = kernel32.GetFileAttributesW(path.ptr);
         if (Environment.isDebug) {
-            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.fmtUTF16(path), attributes });
+            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.utf16(path), attributes });
         }
         if (attributes == windows.INVALID_FILE_ATTRIBUTES) {
             return false;
@@ -1830,7 +1832,7 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSliceZ) bool {
         //     else => false,
         // };
 
-        // log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.fmt.fmtUTF16(path), out, result });
+        // log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.fmt.utf16(path), out, result });
 
         // return result;
     }

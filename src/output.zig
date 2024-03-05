@@ -477,7 +477,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                 {
                     really_disable = false;
                 } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
-                    really_disable = !strings.eqlComptime(val, "0");
+                    really_disable = really_disable or !strings.eqlComptime(val, "0");
                 }
             }
 
@@ -829,7 +829,7 @@ fn scopedWriter() std.fs.File.Writer {
                     std.fs.cwd().fd,
                     path,
                     std.os.O.TRUNC | std.os.O.CREAT | std.os.O.WRONLY,
-                    0o644,
+                    if (Environment.isWindows) 0 else 0o644,
                 ) catch |err_| {
                     // Ensure we don't panic inside panic
                     Scoped.loaded_env = false;

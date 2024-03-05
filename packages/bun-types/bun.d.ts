@@ -1444,6 +1444,14 @@ declare module "bun" {
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
     sourcemap?: "none" | "inline" | "external"; // default: "none"
+    /**
+     * package.json `exports` conditions used when resolving imports
+     *
+     * Equivalent to `--conditions` in `bun build` or `bun run`.
+     *
+     * https://nodejs.org/api/packages.html#exports
+     */
+    conditions?: Array<string> | string;
     minify?:
       | boolean
       | {
@@ -4127,19 +4135,21 @@ declare module "bun" {
       // windowsHide?: boolean;
     }
 
-    type OptionsToSubprocess<Opts extends OptionsObject> = Opts extends OptionsObject<infer In, infer Out, infer Err>
-      ? Subprocess<
-          // "Writable extends In" means "if In === Writable",
-          // aka if true that means the user didn't specify anything
-          Writable extends In ? "ignore" : In,
-          Readable extends Out ? "pipe" : Out,
-          Readable extends Err ? "inherit" : Err
-        >
-      : Subprocess<Writable, Readable, Readable>;
+    type OptionsToSubprocess<Opts extends OptionsObject> =
+      Opts extends OptionsObject<infer In, infer Out, infer Err>
+        ? Subprocess<
+            // "Writable extends In" means "if In === Writable",
+            // aka if true that means the user didn't specify anything
+            Writable extends In ? "ignore" : In,
+            Readable extends Out ? "pipe" : Out,
+            Readable extends Err ? "inherit" : Err
+          >
+        : Subprocess<Writable, Readable, Readable>;
 
-    type OptionsToSyncSubprocess<Opts extends OptionsObject> = Opts extends OptionsObject<any, infer Out, infer Err>
-      ? SyncSubprocess<Readable extends Out ? "pipe" : Out, Readable extends Err ? "pipe" : Err>
-      : SyncSubprocess<Readable, Readable>;
+    type OptionsToSyncSubprocess<Opts extends OptionsObject> =
+      Opts extends OptionsObject<any, infer Out, infer Err>
+        ? SyncSubprocess<Readable extends Out ? "pipe" : Out, Readable extends Err ? "pipe" : Err>
+        : SyncSubprocess<Readable, Readable>;
 
     type ReadableIO = ReadableStream<Uint8Array> | number | undefined;
 

@@ -2985,6 +2985,8 @@ pub extern fn LoadLibraryA(
     [*:0]const u8,
 ) ?*anyopaque;
 
+pub extern fn LoadLibraryExW([*:0]const u16, ?HANDLE, DWORD) ?*anyopaque;
+
 pub extern "kernel32" fn CreateHardLinkW(
     newFileName: LPCWSTR,
     existingFileName: LPCWSTR,
@@ -3091,6 +3093,11 @@ pub extern "kernel32" fn OpenProcess(
 // https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
 pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
 
+pub fn exePathW() [:0]const u16 {
+    const image_path_unicode_string = &std.os.windows.peb().ProcessParameters.ImagePathName;
+    return image_path_unicode_string.Buffer[0 .. image_path_unicode_string.Length / 2 :0];
+}
+
 pub const KEY_EVENT_RECORD = extern struct {
     bKeyDown: BOOL,
     wRepeatCount: WORD,
@@ -3132,3 +3139,43 @@ pub const INPUT_RECORD = extern struct {
         FocusEvent: FOCUS_EVENT_RECORD,
     },
 };
+
+fn Bun__UVSignalHandle__init(
+    global: *bun.JSC.JSGlobalObject,
+    signal_num: i32,
+    callback: *const fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.C) void,
+) callconv(.C) ?*libuv.uv_signal_t {
+    const signal = bun.new(libuv.uv_signal_t, undefined);
+
+    var rc = libuv.uv_signal_init(global.bunVM().uvLoop(), signal);
+    if (rc.errno()) |_| {
+        bun.destroy(signal);
+        return null;
+    }
+
+    rc = libuv.uv_signal_start(signal, callback, signal_num);
+    if (rc.errno()) |_| {
+        libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
+        return null;
+    }
+
+    libuv.uv_unref(@ptrCast(signal));
+
+    return signal;
+}
+
+fn freeWithDefaultAllocator(signal: *anyopaque) callconv(.C) void {
+    bun.destroy(@as(*libuv.uv_signal_t, @alignCast(@ptrCast(signal))));
+}
+
+fn Bun__UVSignalHandle__close(signal: *libuv.uv_signal_t) callconv(.C) void {
+    _ = libuv.uv_signal_stop(signal);
+    libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
+}
+
+comptime {
+    if (Environment.isWindows) {
+        @export(Bun__UVSignalHandle__init, .{ .name = "Bun__UVSignalHandle__init" });
+        @export(Bun__UVSignalHandle__close, .{ .name = "Bun__UVSignalHandle__close" });
+    }
+}

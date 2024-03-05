@@ -2003,6 +2003,7 @@ var require_legacy = __commonJS({
     }
     Stream.prototype = {};
     ObjectSetPrototypeOf(Stream.prototype, EE.prototype);
+    Stream.prototype.constructor = Stream; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Stream, EE);
 
     Stream.prototype.pipe = function (dest, options) {
@@ -2282,6 +2283,7 @@ var require_readable = __commonJS({
     }
     Readable.prototype = {};
     ObjectSetPrototypeOf(Readable.prototype, Stream.prototype);
+    Readable.prototype.constructor = Readable; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Readable, Stream);
 
     Readable.prototype.on = function (ev, fn) {
@@ -3468,6 +3470,7 @@ var require_writable = __commonJS({
     }
     Writable.prototype = {};
     ObjectSetPrototypeOf(Writable.prototype, Stream.prototype);
+    Writable.prototype.constructor = Writable; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Writable, Stream);
     module.exports = Writable;
 
@@ -4430,6 +4433,7 @@ var require_duplex = __commonJS({
     Duplex.prototype = {};
     module.exports = Duplex;
     ObjectSetPrototypeOf(Duplex.prototype, Readable.prototype);
+    Duplex.prototype.constructor = Duplex; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Duplex, Readable);
 
     {
@@ -4506,6 +4510,7 @@ var require_transform = __commonJS({
     }
     Transform.prototype = {};
     ObjectSetPrototypeOf(Transform.prototype, Duplex.prototype);
+    Transform.prototype.constructor = Transform; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Transform, Duplex);
 
     module.exports = Transform;
@@ -4594,6 +4599,7 @@ var require_passthrough = __commonJS({
     PassThrough.prototype = {};
 
     ObjectSetPrototypeOf(PassThrough.prototype, Transform.prototype);
+    PassThrough.prototype.constructor = PassThrough; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(PassThrough, Transform);
 
     PassThrough.prototype._transform = function (chunk, encoding, cb) {

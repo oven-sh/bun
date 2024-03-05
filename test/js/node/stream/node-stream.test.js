@@ -1,5 +1,5 @@
 import { expect, describe, it } from "bun:test";
-import { Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
+import { Stream, Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
 import { join } from "path";
 import { bunExe, bunEnv } from "harness";
@@ -441,4 +441,29 @@ it("Readable.fromWeb", async () => {
     chunks.push(chunk);
   }
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
+});
+
+it("#9242.5 Stream has constructor", () => {
+  const s = new Stream({});
+  expect(s.constructor).toBe(Stream);
+});
+it("#9242.6 Readable has constructor", () => {
+  const r = new Readable({});
+  expect(r.constructor).toBe(Readable);
+});
+it("#9242.7 Writable has constructor", () => {
+  const w = new Writable({});
+  expect(w.constructor).toBe(Writable);
+});
+it("#9242.8 Duplex has constructor", () => {
+  const d = new Duplex({});
+  expect(d.constructor).toBe(Duplex);
+});
+it("#9242.9 Transform has constructor", () => {
+  const t = new Transform({});
+  expect(t.constructor).toBe(Transform);
+});
+it("#9242.10 PassThrough has constructor", () => {
+  const pt = new PassThrough({});
+  expect(pt.constructor).toBe(PassThrough);
 });

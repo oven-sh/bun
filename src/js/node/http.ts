@@ -431,6 +431,7 @@ function Server(options, callback) {
   return this;
 }
 Object.setPrototypeOf((Server.prototype = {}), EventEmitter.prototype);
+Server.prototype.constructor = Server; // Re-add constructor which got lost when setting prototype
 Object.setPrototypeOf(Server, EventEmitter);
 
 Server.prototype.ref = function () {
@@ -720,6 +721,7 @@ function IncomingMessage(req, defaultIncomingOpts) {
 }
 
 Object.setPrototypeOf((IncomingMessage.prototype = {}), Readable.prototype);
+IncomingMessage.prototype.constructor = IncomingMessage; // Re-add constructor which got lost when setting prototype
 Object.setPrototypeOf(IncomingMessage, Readable);
 
 IncomingMessage.prototype._construct = function (callback) {
@@ -930,6 +932,7 @@ function OutgoingMessage(options) {
 }
 
 Object.setPrototypeOf((OutgoingMessage.prototype = {}), Writable.prototype);
+OutgoingMessage.prototype.constructor = OutgoingMessage; // Re-add constructor which got lost when setting prototype
 Object.setPrototypeOf(OutgoingMessage, Writable);
 
 // Express "compress" package uses this
@@ -1134,6 +1137,7 @@ function ServerResponse(req, reply) {
   if (req.method === "HEAD") this._hasBody = false;
 }
 Object.setPrototypeOf((ServerResponse.prototype = {}), OutgoingMessage.prototype);
+ServerResponse.prototype.constructor = ServerResponse; // Re-add constructor which got lost when setting prototype
 Object.setPrototypeOf(ServerResponse, OutgoingMessage);
 
 // Express "compress" package uses this

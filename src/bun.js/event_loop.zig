@@ -703,7 +703,7 @@ pub const DeferredTaskQueue = struct {
     }
 };
 pub const EventLoop = struct {
-    tasks: if (JSC.is_bindgen) void else Queue = undefined,
+    tasks: Queue = undefined,
 
     /// setImmediate() gets it's own two task queues
     /// When you call `setImmediate` in JS, it queues to the start of the next tick

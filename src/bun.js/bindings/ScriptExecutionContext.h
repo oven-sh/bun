@@ -195,6 +195,8 @@ public:
 
     BunBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry; }
 
+    static ScriptExecutionContext* getMainThreadScriptExecutionContext();
+
 private:
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;

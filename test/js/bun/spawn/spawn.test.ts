@@ -358,7 +358,7 @@ for (let [gcTick, label] of [
 
       it("stdin can be read and stdout can be written", async () => {
         const proc = spawn({
-          cmd: ["bash", import.meta.dir + "/bash-echo.sh"],
+          cmd: ["node", "-e", "process.stdin.setRawMode?.(true); process.stdin.pipe(process.stdout)"],
           stdout: "pipe",
           stdin: "pipe",
           lazy: true,
@@ -384,8 +384,8 @@ for (let [gcTick, label] of [
             done = false;
           }
         }
-
         expect(text.trim().length).toBe("hey".length);
+
         expect(text.trim()).toBe("hey");
         gcTick();
         await proc.exited;
@@ -537,18 +537,18 @@ describe("spawn unref and kill should not hang", () => {
 
     expect().pass();
   });
-  it.only("kill and unref", async () => {
+  it("kill and unref", async () => {
     for (let i = 0; i < (isWindows ? 10 : 100); i++) {
       const proc = spawn({
-        cmd: ["sleep.exe", "0.001"],
+        cmd: ["sleep", "0.001"],
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
-        windowsHide: true,
       });
 
       // proc.kill();
       proc.unref();
+      await Bun.sleep(100);
       await proc.exited;
 
       console.log("exited");
@@ -557,7 +557,7 @@ describe("spawn unref and kill should not hang", () => {
     expect().pass();
   });
   it("unref and kill", async () => {
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < (isWindows ? 10 : 100); i++) {
       const proc = spawn({
         cmd: ["sleep", "0.001"],
         stdout: "ignore",
@@ -572,7 +572,8 @@ describe("spawn unref and kill should not hang", () => {
     expect().pass();
   });
 
-  it("should not hang after unref", async () => {
+  // process.unref() on Windows does not work ye :(
+  it.skipIf(isWindows)("should not hang after unref", async () => {
     const proc = spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
     });

@@ -60,6 +60,7 @@
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "wtf/Gigacage.h"
 #include "wtf/URL.h"
+#include "wtf/URLParser.h"
 #include "wtf/text/ExternalStringImpl.h"
 #include "wtf/text/StringCommon.h"
 #include "wtf/text/StringImpl.h"
@@ -137,6 +138,8 @@
 #include "JSDOMFile.h"
 
 #include "ProcessBindingConstants.h"
+
+#include <unicode/uidna.h>
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -1724,6 +1727,8 @@ JSC_DEFINE_CUSTOM_SETTER(noop_setter,
 
 static NeverDestroyed<const String> pathToFileURLString(MAKE_STATIC_STRING_IMPL("pathToFileURL"));
 static NeverDestroyed<const String> fileURLToPathString(MAKE_STATIC_STRING_IMPL("fileURLToPath"));
+static NeverDestroyed<const String> domainToASCIIString(MAKE_STATIC_STRING_IMPL("domainToASCII"));
+static NeverDestroyed<const String> domainToUnicodeString(MAKE_STATIC_STRING_IMPL("domainToUnicode"));
 
 enum ReadableStreamTag : int32_t {
     Invalid = -1,
@@ -1776,6 +1781,89 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     }
 
     throwTypeError(lexicalGlobalObject, scope, "the \"port\" argument must be a MessagePort instance"_s);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionDomainToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() != 1) {
+        throwTypeError(globalObject, scope, "domainToASCII needs 1 argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto arg0 = callFrame->argument(0);
+
+    if (!arg0.isString()) {
+        throwTypeError(globalObject, scope, "the \"domain\" argument must be a string"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    auto domain = arg0.toWTFString(globalObject);
+    if (domain.isNull())
+        return JSC::JSValue::encode(jsUndefined());
+    if (domain.is8Bit())
+        return JSC::JSValue::encode(arg0);
+
+    constexpr static int allowedNameToASCIIErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
+    constexpr static size_t hostnameBufferLength = 2048;
+
+    auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
+    UChar hostnameBuffer[hostnameBufferLength];
+    UErrorCode error = U_ZERO_ERROR;
+    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
+    int32_t numCharactersConverted = uidna_nameToASCII(encoder, StringView(domain).upconvertedCharacters(), domain.length(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
+
+    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted) {
+        WTF::Vector<LChar, hostnameBufferLength> ascii;
+        ascii.append(hostnameBuffer, numCharactersConverted);
+        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(ascii.data(), ascii.size())));
+    }
+    return JSC::JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionDomainToUnicode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() != 1) {
+        throwTypeError(globalObject, scope, "domainToUnicode needs 1 argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto arg0 = callFrame->argument(0);
+
+    if (!arg0.isString()) {
+        throwTypeError(globalObject, scope, "the \"domain\" argument must be a string"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    auto domain = arg0.toWTFString(globalObject);
+    if (domain.isNull())
+        return JSC::JSValue::encode(jsUndefined());
+    if (!domain.is8Bit())
+        return JSC::JSValue::encode(arg0);
+
+    domain.convertTo16Bit();
+
+    constexpr static int allowedNameToUnicodeErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
+    constexpr static int hostnameBufferLength = 2048;
+
+    auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
+    UChar hostnameBuffer[hostnameBufferLength];
+    UErrorCode error = U_ZERO_ERROR;
+    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
+
+    int32_t numCharactersConverted = uidna_nameToUnicode(encoder, StringView(domain).characters16(), domain.length(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
+
+    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToUnicodeErrors) && numCharactersConverted) {
+        WTF::Vector<UChar, hostnameBufferLength> ascii;
+        ascii.append(hostnameBuffer, numCharactersConverted);
+        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(ascii.data(), ascii.size())));
+    }
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -1891,6 +1979,16 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             return JSValue::encode(JSC::JSFunction::create(vm, globalObject, 1, "getStringWidth"_s, BunString__getStringWidth, ImplementationVisibility::Public));
         }
 
+        if (string == "domainToASCII"_s) {
+            return JSValue::encode(
+                JSFunction::create(vm, globalObject, 1, domainToASCIIString, functionDomainToASCII, ImplementationVisibility::Public, NoIntrinsic));
+        }
+
+        if (string == "domainToUnicode"_s) {
+            return JSValue::encode(
+                JSFunction::create(vm, globalObject, 1, domainToUnicodeString, functionDomainToUnicode, ImplementationVisibility::Public, NoIntrinsic));
+        }
+
         if (string == "pathToFileURL"_s) {
             return JSValue::encode(
                 JSFunction::create(vm, globalObject, 1, pathToFileURLString, functionPathToFileURL, ImplementationVisibility::Public, NoIntrinsic));
@@ -1916,6 +2014,7 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
                 JSC::JSFunction::create(vm, globalObject, 0, "emitReadable"_s, jsReadable_emitReadable_, ImplementationVisibility::Public), 0);
             return JSValue::encode(obj);
         }
+
         if (string == "events"_s) {
             return JSValue::encode(WebCore::JSEventEmitter::getConstructor(vm, globalObject));
         }
@@ -1970,6 +2069,7 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getUnpackedSettings"_s)), JSC::JSFunction::create(vm, globalObject, 1, "getUnpackedSettings"_s, BUN__HTTP2__getUnpackedSettings, ImplementationVisibility::Public, NoIntrinsic), 0);
             return JSValue::encode(obj);
         }
+
         if (string == "internal/tls"_s) {
             auto* obj = constructEmptyObject(globalObject);
 
@@ -2053,9 +2153,13 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
             return JSC::JSValue::encode(obj);
         }
 
+#if BUN_DEBUG
+        // this should always be unreachable unless in development and adding a new lazy value
+        // and it has not been added above yet.
+        return raise(SIGABRT);
+#else
         return JSC::JSValue::encode(JSC::jsUndefined());
-
-        break;
+#endif
     }
     }
 }
@@ -3713,6 +3817,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGetDirectStreamDetails, (JSC::JSGlobalObject * 
 
     return JSC::JSValue::encode(resultObject);
 }
+
 JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(

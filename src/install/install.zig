@@ -592,7 +592,7 @@ const Task = struct {
     /// An ID that lets us register a callback without keeping the same pointer around
     pub const Id = struct {
         pub fn forNPMPackage(package_name: string, package_version: Semver.Version) u64 {
-            var hasher = bun.Wyhash.init(0);
+            var hasher = bun.Wyhash11.init(0);
             hasher.update(package_name);
             hasher.update("@");
             hasher.update(std.mem.asBytes(&package_version));
@@ -600,28 +600,28 @@ const Task = struct {
         }
 
         pub fn forBinLink(package_id: PackageID) u64 {
-            const hash = bun.Wyhash.hash(0, std.mem.asBytes(&package_id));
+            const hash = bun.Wyhash11.hash(0, std.mem.asBytes(&package_id));
             return @as(u64, 1 << 61) | @as(u64, @as(u61, @truncate(hash)));
         }
 
         pub fn forManifest(name: string) u64 {
-            return @as(u64, 2 << 61) | @as(u64, @as(u61, @truncate(bun.Wyhash.hash(0, name))));
+            return @as(u64, 2 << 61) | @as(u64, @as(u61, @truncate(bun.Wyhash11.hash(0, name))));
         }
 
         pub fn forTarball(url: string) u64 {
-            var hasher = bun.Wyhash.init(0);
+            var hasher = bun.Wyhash11.init(0);
             hasher.update(url);
             return @as(u64, 3 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
         }
 
         pub fn forGitClone(url: string) u64 {
-            var hasher = bun.Wyhash.init(0);
+            var hasher = bun.Wyhash11.init(0);
             hasher.update(url);
             return @as(u64, 4 << 61) | @as(u64, @as(u61, @truncate(hasher.final())));
         }
 
         pub fn forGitCheckout(url: string, resolved: string) u64 {
-            var hasher = bun.Wyhash.init(0);
+            var hasher = bun.Wyhash11.init(0);
             hasher.update(url);
             hasher.update("@");
             hasher.update(resolved);
@@ -6069,7 +6069,7 @@ pub const PackageManager = struct {
         }
     };
 
-    const PackageJSONEditor = struct {
+    pub const PackageJSONEditor = struct {
         const Expr = JSAst.Expr;
         const G = JSAst.G;
         const E = JSAst.E;
@@ -6081,6 +6081,149 @@ pub const PackageManager = struct {
             add_trusted_dependencies: bool = false,
         };
 
+        pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr, names_to_add: []string) !void {
+            var len = names_to_add.len;
+
+            var original_trusted_dependencies = brk: {
+                if (package_json.asProperty(trusted_dependencies_string)) |query| {
+                    if (query.expr.data == .e_array) {
+                        break :brk query.expr.data.e_array.*;
+                    }
+                }
+                break :brk E.Array{};
+            };
+
+            for (names_to_add, 0..) |name, i| {
+                for (original_trusted_dependencies.items.slice()) |item| {
+                    if (item.data == .e_string) {
+                        if (item.data.e_string.eql(string, name)) {
+                            const temp = names_to_add[i];
+                            names_to_add[i] = names_to_add[len - 1];
+                            names_to_add[len - 1] = temp;
+                            len -= 1;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            var trusted_dependencies: []Expr = &[_]Expr{};
+            if (package_json.asProperty(trusted_dependencies_string)) |query| {
+                if (query.expr.data == .e_array) {
+                    trusted_dependencies = query.expr.data.e_array.items.slice();
+                }
+            }
+
+            const trusted_dependencies_to_add = len;
+            const new_trusted_deps = brk: {
+                var deps = try allocator.alloc(Expr, trusted_dependencies.len + trusted_dependencies_to_add);
+                @memcpy(deps[0..trusted_dependencies.len], trusted_dependencies);
+                @memset(deps[trusted_dependencies.len..], Expr.empty);
+
+                for (names_to_add[0..len]) |name| {
+                    if (comptime Environment.allow_assert) {
+                        var has_missing = false;
+                        for (deps) |dep| {
+                            if (dep.data == .e_missing) has_missing = true;
+                        }
+                        std.debug.assert(has_missing);
+                    }
+
+                    var i = deps.len;
+                    while (i > 0) {
+                        i -= 1;
+                        if (deps[i].data == .e_missing) {
+                            deps[i] = try Expr.init(
+                                E.String,
+                                E.String{
+                                    .data = name,
+                                },
+                                logger.Loc.Empty,
+                            ).clone(allocator);
+                            break;
+                        }
+                    }
+                }
+
+                if (comptime Environment.allow_assert) {
+                    for (deps) |dep| std.debug.assert(dep.data != .e_missing);
+                }
+
+                break :brk deps;
+            };
+
+            var needs_new_trusted_dependencies_list = true;
+            const trusted_dependencies_array: Expr = brk: {
+                if (package_json.asProperty(trusted_dependencies_string)) |query| {
+                    if (query.expr.data == .e_array) {
+                        needs_new_trusted_dependencies_list = false;
+                        break :brk Expr.empty;
+                    }
+                }
+
+                break :brk Expr.init(
+                    E.Array,
+                    E.Array{
+                        .items = JSAst.ExprNodeList.init(new_trusted_deps),
+                    },
+                    logger.Loc.Empty,
+                );
+            };
+
+            if (trusted_dependencies_to_add > 0 and new_trusted_deps.len > 0) {
+                if (comptime Environment.allow_assert) {
+                    for (trusted_dependencies_array.data.e_array.items.slice()) |item| {
+                        std.debug.assert(item.data == .e_string);
+                    }
+                }
+                trusted_dependencies_array.data.e_array.alphabetizeStrings();
+            }
+
+            if (package_json.data != .e_object or package_json.data.e_object.properties.len == 0) {
+                var root_properties = try allocator.alloc(JSAst.G.Property, 1);
+                root_properties[0] = JSAst.G.Property{
+                    .key = Expr.init(
+                        E.String,
+                        E.String{
+                            .data = trusted_dependencies_string,
+                        },
+                        logger.Loc.Empty,
+                    ),
+                    .value = trusted_dependencies_array,
+                };
+
+                package_json.* = Expr.init(
+                    E.Object,
+                    E.Object{
+                        .properties = JSAst.G.Property.List.init(root_properties),
+                    },
+                    logger.Loc.Empty,
+                );
+            } else if (needs_new_trusted_dependencies_list) {
+                var root_properties = try allocator.alloc(G.Property, package_json.data.e_object.properties.len + 1);
+                @memcpy(root_properties[0..package_json.data.e_object.properties.len], package_json.data.e_object.properties.slice());
+                root_properties[root_properties.len - 1] = .{
+                    .key = Expr.init(
+                        E.String,
+                        E.String{
+                            .data = trusted_dependencies_string,
+                        },
+                        logger.Loc.Empty,
+                    ),
+                    .value = trusted_dependencies_array,
+                };
+                package_json.* = Expr.init(
+                    E.Object,
+                    E.Object{
+                        .properties = JSAst.G.Property.List.init(root_properties),
+                    },
+                    logger.Loc.Empty,
+                );
+            }
+        }
+
+        /// edits dependencies and trusted dependencies
+        /// if options.add_trusted_dependencies is true, gets list from PackageManager.trusted_deps_to_add_to_package_json
         pub fn edit(
             allocator: std.mem.Allocator,
             updates: []UpdateRequest,
@@ -6198,7 +6341,6 @@ pub const PackageManager = struct {
                             for (deps) |dep| {
                                 if (dep.data == .e_missing) has_missing = true;
                             }
-
                             std.debug.assert(has_missing);
                         }
 
@@ -8124,9 +8266,9 @@ pub const PackageManager = struct {
         }
     }
 
-    var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var package_json_cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var package_json_cwd: string = "";
+    var cwd_buf: bun.PathBuffer = undefined;
+    var package_json_cwd_buf: bun.PathBuffer = undefined;
+    pub var package_json_cwd: string = "";
 
     pub inline fn install(ctx: Command.Context) !void {
         var manager = try init(ctx, .install);
@@ -8631,6 +8773,7 @@ pub const PackageManager = struct {
                         }
 
                         if (!is_trusted and this.lockfile.packages.get(package_id).meta.hasInstallScript()) {
+                            std.debug.print("skipped: {s}@{s}\n", .{ alias, resolution.fmt(this.lockfile.buffers.string_bytes.items) });
                             this.summary.packages_with_skipped_scripts_set.put(this.manager.allocator, name_hash, {}) catch bun.outOfMemory();
                         }
 
@@ -9447,6 +9590,41 @@ pub const PackageManager = struct {
         manager.downloads_node = null;
     }
 
+    pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) void {
+        const binding_dot_gyp_path = Path.joinAbsStringZ(
+            Fs.FileSystem.instance.top_level_dir,
+            &[_]string{"binding.gyp"},
+            .auto,
+        );
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(root_package.scripts.filled);
+        }
+        if (root_package.scripts.hasAny()) {
+            const add_node_gyp_rebuild_script = root_package.scripts.install.isEmpty() and root_package.scripts.postinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
+
+            this.root_lifecycle_scripts = root_package.scripts.createList(
+                this.lockfile,
+                this.lockfile.buffers.string_bytes.items,
+                strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
+                root_package.name.slice(this.lockfile.buffers.string_bytes.items),
+                .root,
+                add_node_gyp_rebuild_script,
+            );
+        } else {
+            if (Syscall.exists(binding_dot_gyp_path)) {
+                // no scripts exist but auto node gyp script needs to be added
+                this.root_lifecycle_scripts = root_package.scripts.createList(
+                    this.lockfile,
+                    this.lockfile.buffers.string_bytes.items,
+                    strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
+                    root_package.name.slice(this.lockfile.buffers.string_bytes.items),
+                    .root,
+                    true,
+                );
+            }
+        }
+    }
+
     fn installWithManager(
         manager: *PackageManager,
         ctx: Command.Context,
@@ -9811,39 +9989,8 @@ pub const PackageManager = struct {
         }
 
         {
-            // append scripts to lockfile before generating new metahashes
-            const binding_dot_gyp_path = Path.joinAbsStringZ(
-                Fs.FileSystem.instance.top_level_dir,
-                &[_]string{"binding.gyp"},
-                .auto,
-            );
-            if (comptime Environment.allow_assert) {
-                std.debug.assert(root.scripts.filled);
-            }
-            if (root.scripts.hasAny()) {
-                const add_node_gyp_rebuild_script = root.scripts.install.isEmpty() and root.scripts.postinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
-
-                manager.root_lifecycle_scripts = root.scripts.createList(
-                    manager.lockfile,
-                    manager.lockfile.buffers.string_bytes.items,
-                    strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
-                    root.name.slice(manager.lockfile.buffers.string_bytes.items),
-                    .root,
-                    add_node_gyp_rebuild_script,
-                );
-            } else {
-                if (Syscall.exists(binding_dot_gyp_path)) {
-                    // no scripts exist but auto node gyp script needs to be added
-                    manager.root_lifecycle_scripts = root.scripts.createList(
-                        manager.lockfile,
-                        manager.lockfile.buffers.string_bytes.items,
-                        strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
-                        root.name.slice(manager.lockfile.buffers.string_bytes.items),
-                        .root,
-                        true,
-                    );
-                }
-            }
+            // append scripts to lockfile before generating new metahash
+            manager.loadRootLifecycleScripts(root);
 
             if (manager.root_lifecycle_scripts) |root_scripts| {
                 root_scripts.appendToLockfile(manager.lockfile);

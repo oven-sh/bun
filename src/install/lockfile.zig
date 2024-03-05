@@ -298,6 +298,15 @@ pub const Tree = struct {
         relative_path: stringZ,
         dependencies: []const DependencyID,
         tree_id: Tree.Id,
+
+        /// depth of the node_modules folder in the tree
+        ///
+        ///            0 (./node_modules)
+        ///           / \
+        ///          1   1
+        ///         /
+        ///        2
+        depth: usize,
     };
 
     pub const Iterator = struct {
@@ -306,7 +315,7 @@ pub const Tree = struct {
         dependencies: []const Dependency,
         resolutions: []const PackageID,
         tree_id: Id,
-        path_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+        path_buf: bun.PathBuffer = undefined,
         path_buf_len: usize = 0,
         last_parent: Id = invalid_id,
         string_buf: string,
@@ -315,7 +324,7 @@ pub const Tree = struct {
         depth_stack: [(bun.MAX_PATH_BYTES / "node_modules".len) + 1]Id = undefined,
 
         pub fn init(lockfile: *const Lockfile) Iterator {
-            return .{
+            var iter = Iterator{
                 .trees = lockfile.buffers.trees.items,
                 .tree_id = 0,
                 .dependency_ids = lockfile.buffers.hoisted_dependencies.items,
@@ -323,6 +332,8 @@ pub const Tree = struct {
                 .resolutions = lockfile.buffers.resolutions.items,
                 .string_buf = lockfile.buffers.string_bytes.items,
             };
+            @memcpy(iter.path_buf[0.."node_modules".len], "node_modules");
+            return iter;
         }
 
         pub fn reload(this: *Iterator, lockfile: *const Lockfile) void {
@@ -331,6 +342,10 @@ pub const Tree = struct {
             this.dependencies = lockfile.buffers.dependencies.items;
             this.resolutions = lockfile.buffers.resolutions.items;
             this.string_buf = lockfile.buffers.string_bytes.items;
+        }
+
+        pub fn reset(this: *Iterator) void {
+            this.tree_id = 0;
         }
 
         pub fn nextNodeModulesFolder(this: *Iterator, completed_trees: ?*Bitset) ?NodeModulesFolder {
@@ -345,13 +360,9 @@ pub const Tree = struct {
             }
 
             const tree = this.trees[this.tree_id];
-            const string_buf = this.string_buf;
+            var depth: usize = 0;
 
             {
-
-                // For now, the dumb way
-                // (the smart way is avoiding this copy)
-                this.path_buf[0.."node_modules".len].* = "node_modules".*;
                 var parent_id = tree.id;
                 var path_written: usize = "node_modules".len;
                 this.depth_stack[0] = 0;
@@ -364,16 +375,17 @@ pub const Tree = struct {
                         depth_buf_len += 1;
                     }
                     depth_buf_len -= 1;
+                    depth = depth_buf_len;
                     while (depth_buf_len > 0) : (depth_buf_len -= 1) {
                         this.path_buf[path_written] = std.fs.path.sep;
                         path_written += 1;
 
                         const tree_id = this.depth_stack[depth_buf_len];
-                        const name = this.dependencies[this.trees[tree_id].dependency_id].name.slice(string_buf);
-                        bun.copy(u8, this.path_buf[path_written..], name);
+                        const name = this.dependencies[this.trees[tree_id].dependency_id].name.slice(this.string_buf);
+                        @memcpy(this.path_buf[path_written..][0..name.len], name);
                         path_written += name.len;
 
-                        this.path_buf[path_written..][0.."/node_modules".len].* = (std.fs.path.sep_str ++ "node_modules").*;
+                        @memcpy(this.path_buf[path_written..][0.."/node_modules".len], std.fs.path.sep_str ++ "node_modules");
                         path_written += "/node_modules".len;
                     }
                 }
@@ -387,6 +399,7 @@ pub const Tree = struct {
                 .relative_path = relative_path,
                 .dependencies = tree.dependencies.get(this.dependency_ids),
                 .tree_id = tree.id,
+                .depth = depth,
             };
         }
     };
@@ -1556,6 +1569,7 @@ pub fn verifyData(this: *const Lockfile) !void {
             std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
             std.debug.assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
         }
+        std.debug.assert(package.meta.__has_install_script != 0);
     }
 }
 
@@ -1684,7 +1698,7 @@ pub fn saveToDisk(this: *const Lockfile, filename: stringZ) void {
     };
 }
 
-pub fn rootPackage(this: *Lockfile) ?Lockfile.Package {
+pub fn rootPackage(this: *const Lockfile) ?Lockfile.Package {
     if (this.packages.len == 0) {
         return null;
     }
@@ -4819,15 +4833,8 @@ pub const Package = extern struct {
 
             inline for (FieldsEnum.fields) |field| {
                 const value = sliced.items(@field(Lockfile.Package.List.Field, field.name));
-                if (comptime Environment.allow_assert) {
+                if (comptime Environment.allow_assert)
                     debug("save(\"{s}\") = {d} bytes", .{ field.name, std.mem.sliceAsBytes(value).len });
-                    if (comptime strings.eqlComptime(field.name, "meta")) {
-                        for (value) |meta| {
-                            std.debug.assert(meta.__has_install_script != 0);
-                        }
-                    }
-                }
-
                 comptime assertNoUninitializedPadding(@TypeOf(value));
                 try writer.writeAll(std.mem.sliceAsBytes(value));
             }

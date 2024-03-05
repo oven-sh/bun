@@ -444,7 +444,7 @@ jobs:
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
           SHELLOPTS: igncr
           BUN_PATH_BASE: ${{runner.temp}}
-          BUN_PATH: release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}/${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile/bun.exe
+          BUN_PATH: release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile/bun.exe
         run: |
           node packages/bun-internal-test/src/runner.node.mjs  || true
         shell: bash

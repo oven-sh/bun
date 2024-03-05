@@ -1226,7 +1226,13 @@ pub const Formatter = struct {
         var i: u32 = 0;
         var len: u32 = @as(u32, @truncate(slice.len));
         var any_non_ascii = false;
+        var hit_percent = false;
         while (i < len) : (i += 1) {
+            if (hit_percent) {
+                i = 0;
+                hit_percent = false;
+            }
+
             switch (slice[i]) {
                 '%' => {
                     i += 1;
@@ -1251,6 +1257,7 @@ pub const Formatter = struct {
                     any_non_ascii = false;
                     slice = slice[@min(slice.len, i + 1)..];
                     i = 0;
+                    hit_percent = true;
                     len = @as(u32, @truncate(slice.len));
                     const next_value = this.remaining_values[0];
                     this.remaining_values = this.remaining_values[1..];

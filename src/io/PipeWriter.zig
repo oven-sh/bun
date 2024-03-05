@@ -1069,7 +1069,7 @@ pub fn WindowsStreamingWriter(
         }
 
         fn hasPendingData(this: *WindowsWriter) bool {
-            return (this.outgoing.isNotEmpty() and this.current_payload.isNotEmpty());
+            return (this.outgoing.isNotEmpty() or this.current_payload.isNotEmpty());
         }
 
         fn isDone(this: *WindowsWriter) bool {

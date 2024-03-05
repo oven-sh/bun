@@ -1705,6 +1705,23 @@ it("#4415.4 IncomingMessage es5", () => {
   expect(im.url).toBe("/foo");
 });
 
+it("#9242.1 Server has constructor", () => {
+  const s = new Server();
+  expect(s.constructor).toBe(Server);
+});
+it("#9242.2 IncomingMessage has constructor", () => {
+  const im = new IncomingMessage("http://localhost");
+  expect(im.constructor).toBe(IncomingMessage);
+});
+it("#9242.3 OutgoingMessage has constructor", () => {
+  const om = new OutgoingMessage();
+  expect(om.constructor).toBe(OutgoingMessage);
+});
+it("#9242.4 ServerResponse has constructor", () => {
+  const sr = new ServerResponse({});
+  expect(sr.constructor).toBe(ServerResponse);
+});
+
 // Windows doesnt support SIGUSR1
 if (process.platform !== "win32") {
   // By not timing out, this test passes.

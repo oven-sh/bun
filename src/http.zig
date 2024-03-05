@@ -1569,10 +1569,6 @@ pub fn deinit(this: *HTTPClient) void {
 
 pub fn isKeepAlivePossible(this: *HTTPClient) bool {
     if (comptime FeatureFlags.enable_keepalive) {
-        if (this.unix_socket_path.len > 0)
-            // TODO:
-            return false;
-
         // is not possible to reuse Proxy with TSL, so disable keepalive if url is tunneling HTTPS
         if (this.http_proxy != null and this.url.isHTTPS()) {
             return false;

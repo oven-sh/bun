@@ -32,7 +32,9 @@ it("provide body", async () => {
     },
   });
   // POST with body
-  const response = await fetch("http://localhost/hello", { method: "POST", body: "buntastic", unix: path });
-  expect(response.status).toBe(200);
-  expect(await response.text()).toBe("buntastic");
+  for (let i = 0; i < 20; i++) {
+    const response = await fetch("http://localhost/hello", { method: "POST", body: String(i), unix: path });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(String(i));
+  }
 });

@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, isWindows } from "harness";
 import path from "path";
 import { semver } from "bun";
 import fs from "fs";
@@ -133,7 +133,7 @@ describe("spawn()", () => {
   });
 
   it("should allow us to set cwd", async () => {
-    const child = spawn("pwd", { cwd: platformTmpDir });
+    const child = spawn(bunExe(), ["-e", "console.log(process.cwd())"], { cwd: platformTmpDir, env: bunEnv });
     const result: string = await new Promise(resolve => {
       child.stdout.on("data", data => {
         resolve(data.toString());
@@ -168,24 +168,40 @@ describe("spawn()", () => {
   });
 
   it("should allow us to set env", async () => {
-    async function getChildEnv(env: any): Promise<string> {
-      const child = spawn("env", { env: env });
-      const result: string = await new Promise(resolve => {
+    async function getChildEnv(env: any): Promise<object> {
+      const child = spawn("printenv", {
+        env: env,
+        stdio: ["inherit", "pipe", "inherit"],
+      });
+      const result: object = await new Promise(resolve => {
         let output = "";
         child.stdout.on("data", data => {
           output += data;
         });
         child.stdout.on("end", () => {
-          resolve(output);
+          const envs = output
+            .split("\n")
+            .map(env => env.trim().split("="))
+            .filter(env => env.length === 2 && env[0]);
+          const obj = Object.fromEntries(envs);
+          resolve(obj);
         });
       });
       return result;
     }
 
-    expect(/TEST\=test/.test(await getChildEnv({ TEST: "test" }))).toBe(true);
-    expect(await getChildEnv({})).toStrictEqual("");
-    expect(await getChildEnv(undefined)).not.toStrictEqual("");
-    expect(await getChildEnv(null)).not.toStrictEqual("");
+    // on Windows, there's a set of environment variables which are always set
+    if (isWindows) {
+      expect(await getChildEnv({ TEST: "test" })).toMatchObject({ TEST: "test" });
+      expect(await getChildEnv({})).toMatchObject({});
+      expect(await getChildEnv(undefined)).not.toStrictEqual({});
+      expect(await getChildEnv(null)).not.toStrictEqual({});
+    } else {
+      expect(await getChildEnv({ TEST: "test" })).toEqual({ TEST: "test" });
+      expect(await getChildEnv({})).toEqual({});
+      expect(await getChildEnv(undefined)).toEqual({});
+      expect(await getChildEnv(null)).toEqual({});
+    }
   });
 
   it("should allow explicit setting of argv0", async () => {
@@ -194,10 +210,14 @@ describe("spawn()", () => {
       resolve = resolve1;
     });
     process.env.NO_COLOR = "1";
-    const child = spawn("node", ["-e", "console.log(JSON.stringify([process.argv0, process.argv[0]]))"], {
-      argv0: bunExe(),
-      stdio: ["inherit", "pipe", "inherit"],
-    });
+    const child = spawn(
+      "node",
+      ["-e", "console.log(JSON.stringify([process.argv0, fs.realpathSync(process.argv[0])]))"],
+      {
+        argv0: bunExe(),
+        stdio: ["inherit", "pipe", "inherit"],
+      },
+    );
     delete process.env.NO_COLOR;
     let msg = "";
 
@@ -226,7 +246,11 @@ describe("spawn()", () => {
         resolve(data.toString());
       });
     });
-    expect(result1.trim()).toBe("/bin/sh");
+
+    // on Windows it will run in comamnd prompt
+    // we know it's command prompt because it's the only shell that doesn't support $0.
+    expect(result1.trim()).toBe(isWindows ? "$0" : "/bin/sh");
+
     expect(result2.trim()).toBe("bash");
   });
   it("should spawn a process synchronously", () => {

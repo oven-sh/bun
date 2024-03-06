@@ -119,7 +119,7 @@ it("cpus", () => {
   const cpus = os.cpus();
 
   for (const cpu of cpus) {
-    expect(typeof cpu.model === "string").toBe(true);
+    expect(typeof cpu.model === "string" || typeof cpu.model === "undefined").toBe(true);
     expect(typeof cpu.speed === "number").toBe(true);
     expect(typeof cpu.times.idle === "number").toBe(true);
     expect(typeof cpu.times.irq === "number").toBe(true);

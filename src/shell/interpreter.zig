@@ -1071,16 +1071,19 @@ pub const Interpreter = struct {
             std.debug.assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
         }
 
+        log("Duping stdin", .{});
         const stdin_fd = switch (ShellSyscall.dup(shell.STDIN_FD)) {
             .result => |fd| fd,
             .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
         };
 
+        log("Duping stdout", .{});
         const stdout_fd = switch (ShellSyscall.dup(shell.STDOUT_FD)) {
             .result => |fd| fd,
             .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
         };
 
+        log("Duping stderr", .{});
         const stderr_fd = switch (ShellSyscall.dup(shell.STDERR_FD)) {
             .result => |fd| fd,
             .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
@@ -9074,13 +9077,13 @@ pub const Interpreter = struct {
                 .len = end - start,
                 .bytelist = bytelist,
             };
-            log("IOWriter(0x{x}) enqueue(0x{x} {s}, {s})", .{ @intFromPtr(this), @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), this.buf.items[start..end] });
+            log("IOWriter(0x{x}, fd={}) enqueue(0x{x} {s}, {s})", .{ @intFromPtr(this), this.fd, @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), this.buf.items[start..end] });
             this.writers.append(writer);
             this.write();
         }
 
         pub fn deinit(this: *This) void {
-            print("IOWriter(0x{x}) deinit", .{@intFromPtr(this)});
+            print("IOWriter(0x{x}, fd={}) deinit", .{ @intFromPtr(this), this.fd });
             if (bun.Environment.allow_assert) std.debug.assert(this.ref_count == 0);
             this.buf.deinit(bun.default_allocator);
             if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);

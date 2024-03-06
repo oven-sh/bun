@@ -2005,6 +2005,7 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
             w.TRUE,
             w.DUPLICATE_SAME_ACCESS,
         );
+        log("dup({d}) = {d}", .{ fd.cast(), out });
         if (out == 0) {
             if (Maybe(bun.FileDescriptor).errnoSysFd(0, .dup, fd)) |err| {
                 return err;

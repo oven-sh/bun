@@ -4452,6 +4452,8 @@
         },
         "URLSearchParams": "function",
         "Url": "function",
+        "domainToASCII": "function",
+        "domainToUnicode": "function",
         "fileURLToPath": "function",
         "format": "function",
         "parse": "function",
@@ -4460,6 +4462,8 @@
         "resolveObject": "function",
         "urlToHttpOptions": "function"
       },
+      "domainToASCII": "function",
+      "domainToUnicode": "function",
       "fileURLToPath": "function",
       "format": "function",
       "parse": "function",

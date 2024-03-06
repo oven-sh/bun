@@ -1351,7 +1351,9 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
         {
             char cwd[PATH_MAX] = { 0 };
-            getcwd(cwd, PATH_MAX);
+            char *r = getcwd(cwd, PATH_MAX);
+
+	    assert(r);
 
             header->putDirect(vm, JSC::Identifier::fromString(vm, "cwd"_s), JSC::jsString(vm, String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(cwd), strlen(cwd))), 0);
         }

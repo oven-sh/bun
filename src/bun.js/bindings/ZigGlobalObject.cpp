@@ -2209,7 +2209,7 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
 #if BUN_DEBUG
         // this should always be unreachable unless in development and adding a new lazy value
         // and it has not been added above yet.
-        return raise(SIGABRT);
+        ASSERT_NOT_REACHED();
 #else
         return JSC::JSValue::encode(JSC::jsUndefined());
 #endif

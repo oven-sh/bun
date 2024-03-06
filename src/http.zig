@@ -711,7 +711,7 @@ pub const HTTPThread = struct {
             .{
                 .stack_size = bun.default_thread_stack_size,
             },
-            comptime onStart,
+            onStart,
             .{},
         );
         thread.detach();

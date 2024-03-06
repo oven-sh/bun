@@ -539,6 +539,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 @sizeOf(*anyopaque),
             ) orelse {
                 if (Environment.isWindows) {
+                    std.debug.print("Thread {d} Failure HTTP\n", .{std.Thread.getCurrentId()});
                     try bun.windows.WSAGetLastError();
                 } else {
                     // TODO(@paperdave): is it reliable to read posix errno here?

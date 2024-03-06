@@ -691,10 +691,6 @@ pub const HTTPThread = struct {
 
     const threadlog = Output.scoped(.HTTPThread, true);
 
-    const FakeStruct = struct {
-        trash: i64 = 0,
-    };
-
     pub fn init() !void {
         if (http_thread_loaded.swap(true, .SeqCst)) {
             return;
@@ -716,14 +712,12 @@ pub const HTTPThread = struct {
                 .stack_size = bun.default_thread_stack_size,
             },
             comptime onStart,
-            .{
-                FakeStruct{},
-            },
+            .{},
         );
         thread.detach();
     }
 
-    pub fn onStart(_: FakeStruct) void {
+    pub fn onStart() void {
         Output.Source.configureNamedThread("HTTP Client");
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
@@ -737,6 +731,7 @@ pub const HTTPThread = struct {
         });
 
         if (Environment.isWindows) {
+            std.debug.print("Thread {d} init HTTP\n", .{std.Thread.getCurrentId()});
             var result: std.os.windows.ws2_32.WSADATA = undefined;
             const err = std.os.windows.ws2_32.WSAStartup(0x202, &result);
             if (err != 0) {

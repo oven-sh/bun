@@ -954,6 +954,6 @@ test("can open more than 63 symbols", () => {
   });
 
   expect(Object.keys(lib.symbols).length).toBe(65);
-  expect(lib.symbols.strcasecmp(Buffer.from("ciro"), Buffer.from("CIRO"))).toBe(0);
-  expect(lib.symbols.strlen(Buffer.from("bunbun", "ascii"))).toBe(6n);
+  expect(lib.symbols.strcasecmp(Buffer.from("ciro\0"), Buffer.from("CIRO\0"))).toBe(0);
+  expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
 });

@@ -1145,6 +1145,9 @@ pub const Map = struct {
     }
 
     pub inline fn put(this: *Map, key: string, value: string) !void {
+        if (Environment.isWindows and Environment.allow_assert) {
+            std.debug.assert(bun.strings.indexOfChar(key, '\x00') == null);
+        }
         try this.map.put(key, .{
             .value = value,
             .conditional = false,

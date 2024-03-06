@@ -731,21 +731,9 @@ pub const HTTPThread = struct {
         });
 
         if (Environment.isWindows) {
-            std.debug.print("Thread {d} init HTTP\n", .{std.Thread.getCurrentId()});
-            var result: std.os.windows.ws2_32.WSADATA = undefined;
-            const err = std.os.windows.ws2_32.WSAStartup(0x202, &result);
-            if (err != 0) {
-                // Instead of panicing here, let the program run until the first
-                // request fails. There may be a chance it is already
-                // initialized, or through some other cause it just happens to
-                // work.
-                //
-                // TODO: More research is needed here.
-                switch (@as(std.os.windows.ws2_32.WinsockError, @enumFromInt(err))) {
-                    .WSAVERNOTSUPPORTED => Output.warn("Windows Socket API not supported. Network requests may fail.", .{}),
-                    else => |e| Output.warn("Unexpected error while initializing Windows Socket API: {}. Network requests may fail.", .{e}),
-                }
-            }
+            _ = std.os.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
+                std.debug.panic("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
+            };
         }
 
         http_thread.loop = loop;

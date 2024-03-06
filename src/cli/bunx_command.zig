@@ -484,7 +484,6 @@ pub const BunxCommand = struct {
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-            // TODO(@paperdave): On windows, root_dir_fd is always .zero indicating it was closed. See `needToCloseFiles` in fs.zig
             const root_dir_fd = root_dir_info.getFileDescriptor();
             std.debug.assert(root_dir_fd != .zero);
             if (getBinName(&this_bundler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {

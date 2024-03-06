@@ -601,7 +601,7 @@ pub const RunCommand = struct {
         );
 
         const dir_name = "bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else "";
-        const file_name = dir_name ++ "\\node.exe\x00";
+        const file_name = dir_name ++ "\\node.exe";
         @memcpy(target_path_buffer[converted.len..][0..file_name.len], file_name);
 
         target_path_buffer[converted.len + file_name.len] = 0;

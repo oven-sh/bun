@@ -760,7 +760,7 @@ pub const FileSystem = struct {
                 // But in a crazy experiment to find the upper-bound of the number of open handles,
                 // I found that opening upwards of 500k to a million handles in a single process
                 // would cause the process to hang while closing. This might just be Windows slowly
-                // closing the handles, but I think it was a deadlock.
+                // closing the handles, not sure. This is likely not something to worry about.
                 //
                 // If it is decided that not closing files ever is a bad idea. This should be
                 // replaced with some form of intelligent count of how many files we opened.

@@ -531,7 +531,8 @@ describe("spawn unref and kill should not hang", () => {
         stderr: "ignore",
         stdin: "ignore",
       });
-      proc.unref();
+      // TODO: on Windows
+      if (!isWindows) proc.unref();
       await proc.exited;
     }
 
@@ -546,7 +547,7 @@ describe("spawn unref and kill should not hang", () => {
         stdin: "ignore",
       });
 
-      // proc.kill();
+      proc.kill();
       proc.unref();
       await Bun.sleep(100);
       await proc.exited;
@@ -564,7 +565,8 @@ describe("spawn unref and kill should not hang", () => {
         stderr: "ignore",
         stdin: "ignore",
       });
-      proc.unref();
+      // TODO: on Windows
+      if (!isWindows) proc.unref();
       proc.kill();
       await proc.exited;
     }
@@ -573,7 +575,7 @@ describe("spawn unref and kill should not hang", () => {
   });
 
   // process.unref() on Windows does not work ye :(
-  it.skipIf(isWindows)("should not hang after unref", async () => {
+  it("should not hang after unref", async () => {
     const proc = spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
     });

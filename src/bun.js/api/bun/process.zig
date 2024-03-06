@@ -611,19 +611,18 @@ pub const PollerWindows = union(enum) {
     }
 
     pub fn disableKeepingEventLoopAlive(this: *PollerWindows, event_loop: JSC.EventLoopHandle) void {
-        _ = this; // autofix
         _ = event_loop; // autofix
 
         // This is disabled on Windows
         // uv_unref() causes the onExitUV callback to *never* be called
         // This breaks a lot of stuff...
         // Once fixed, re-enable "should not hang after unref" test in spawn.test
-        // switch (this.*) {
-        //     .uv => |*process| {
-        //         // process.unref();
-        //     },
-        //     else => {},
-        // }
+        switch (this.*) {
+            .uv => {
+                this.uv.unref();
+            },
+            else => {},
+        }
     }
 
     pub fn hasRef(this: *const PollerWindows) bool {

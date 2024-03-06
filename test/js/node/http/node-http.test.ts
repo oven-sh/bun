@@ -175,8 +175,8 @@ describe("node:http", () => {
 
   describe("request", () => {
     function runTest(done: Function, callback: (server: Server, port: number, done: (err?: Error) => void) => void) {
-      var timer;
-      var server = createServer((req, res) => {
+      let timer;
+      const server = createServer((req, res) => {
         if (req.headers.__proto__ !== {}.__proto__) {
           throw new Error("Headers should inherit from Object.prototype");
         }
@@ -663,6 +663,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("reassign writeHead method, issue#3585", done => {
       runTest(done, (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}/customWriteHead`, res => {
@@ -673,6 +674,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("uploading file by 'formdata/multipart', issue#3116", done => {
       runTest(done, (server, serverPort, done) => {
         const boundary = "----FormBoundary" + Date.now();
@@ -716,6 +718,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("request via http proxy, issue#4295", done => {
       const proxyServer = createServer(function (req, res) {
         let option = url.parse(req.url);
@@ -792,10 +795,24 @@ describe("node:http", () => {
         req.end();
       });
     });
+
+    it("should emit a socket event when connecting", async done => {
+      runTest(done, async (server, serverPort, done) => {
+        const req = request(`http://localhost:${serverPort}`, {});
+        await new Promise((resolve, reject) => {
+          req.on("error", reject);
+          req.on("socket", function onRequestSocket(socket) {
+            req.destroy();
+            done();
+            resolve();
+          });
+        });
+      });
+    });
   });
 
   describe("signal", () => {
-    it.skip("should abort and close the server", done => {
+    it("should abort and close the server", done => {
       const server = createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("Hello World");

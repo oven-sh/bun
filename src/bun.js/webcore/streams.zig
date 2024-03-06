@@ -2951,15 +2951,20 @@ pub const FileSink = struct {
     }
 
     pub fn createWithPipe(
-        event_loop: *JSC.EventLoop,
+        event_loop_: anytype,
         pipe: *uv.Pipe,
     ) *FileSink {
         if (Environment.isPosix) {
             @compileError("FileSink.createWithPipe is only available on Windows");
         }
 
+        const evtloop = switch (@TypeOf(event_loop_)) {
+            JSC.EventLoopHandle => event_loop_,
+            else => JSC.EventLoopHandle.iniit(event_loop_),
+        };
+
         var this = FileSink.new(.{
-            .event_loop_handle = JSC.EventLoopHandle.init(event_loop),
+            .event_loop_handle = JSC.EventLoopHandle.init(evtloop),
             .fd = pipe.fd(),
         });
         this.writer.setPipe(pipe);
@@ -2968,11 +2973,15 @@ pub const FileSink = struct {
     }
 
     pub fn create(
-        event_loop: *JSC.EventLoop,
+        event_loop_: anytype,
         fd: bun.FileDescriptor,
     ) *FileSink {
+        const evtloop = switch (@TypeOf(event_loop_)) {
+            JSC.EventLoopHandle => event_loop_,
+            else => JSC.EventLoopHandle.init(event_loop_),
+        };
         var this = FileSink.new(.{
-            .event_loop_handle = JSC.EventLoopHandle.init(event_loop),
+            .event_loop_handle = JSC.EventLoopHandle.init(evtloop),
             .fd = fd,
         });
         this.writer.setParent(this);

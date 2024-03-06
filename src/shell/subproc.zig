@@ -45,7 +45,7 @@ pub const ShellSubprocess = struct {
 
     process: *Process,
 
-    // stdin: *Writable = undefined,
+    stdin: Writable = undefined,
     stdout: Readable = undefined,
     stderr: Readable = undefined,
 
@@ -61,6 +61,237 @@ pub const ShellSubprocess = struct {
     flags: Flags = .{},
 
     pub const OutKind = util.OutKind;
+
+    pub fn onStaticPipeWriterDone(this: *ShellSubprocess) void {
+        log("Subproc(0x{x}) onStaticPipeWriterDone(cmd=0x{x}))", .{ @intFromPtr(this), if (this.cmd_parent) |cmd| @intFromPtr(cmd) else 0 });
+        if (this.cmd_parent) |cmd| {
+            cmd.bufferedInputClose();
+        }
+    }
+
+    const Writable = union(enum) {
+        pipe: *JSC.WebCore.FileSink,
+        fd: bun.FileDescriptor,
+        buffer: *StaticPipeWriter,
+        memfd: bun.FileDescriptor,
+        inherit: void,
+        ignore: void,
+
+        pub fn hasPendingActivity(this: *const Writable) bool {
+            return switch (this.*) {
+                // we mark them as .ignore when they are closed, so this must be true
+                .pipe => true,
+                .buffer => true,
+                else => false,
+            };
+        }
+
+        pub fn ref(this: *Writable) void {
+            switch (this.*) {
+                .pipe => {
+                    this.pipe.updateRef(true);
+                },
+                .buffer => {
+                    this.buffer.updateRef(true);
+                },
+                else => {},
+            }
+        }
+
+        pub fn unref(this: *Writable) void {
+            switch (this.*) {
+                .pipe => {
+                    this.pipe.updateRef(false);
+                },
+                .buffer => {
+                    this.buffer.updateRef(false);
+                },
+                else => {},
+            }
+        }
+
+        // When the stream has closed we need to be notified to prevent a use-after-free
+        // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
+        pub fn onClose(this: *Writable, _: ?bun.sys.Error) void {
+            switch (this.*) {
+                .buffer => {
+                    this.buffer.deref();
+                },
+                .pipe => {
+                    this.pipe.deref();
+                },
+                else => {},
+            }
+            this.* = .{
+                .ignore = {},
+            };
+        }
+        pub fn onReady(_: *Writable, _: ?JSC.WebCore.Blob.SizeType, _: ?JSC.WebCore.Blob.SizeType) void {}
+        pub fn onStart(_: *Writable) void {}
+
+        pub fn init(
+            stdio: Stdio,
+            event_loop: JSC.EventLoopHandle,
+            subprocess: *Subprocess,
+            result: StdioResult,
+        ) !Writable {
+            assertStdioResult(result);
+
+            if (Environment.isWindows) {
+                switch (stdio) {
+                    .pipe => {
+                        if (result == .buffer) {
+                            const pipe = JSC.WebCore.FileSink.createWithPipe(event_loop, result.buffer);
+
+                            switch (pipe.writer.startWithCurrentPipe()) {
+                                .result => {},
+                                .err => |err| {
+                                    _ = err; // autofix
+                                    pipe.deref();
+                                    return error.UnexpectedCreatingStdin;
+                                },
+                            }
+
+                            subprocess.weak_file_sink_stdin_ptr = pipe;
+                            subprocess.flags.has_stdin_destructor_called = false;
+
+                            return Writable{
+                                .pipe = pipe,
+                            };
+                        }
+                        return Writable{ .inherit = {} };
+                    },
+
+                    .blob => |blob| {
+                        return Writable{
+                            .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .blob = blob }),
+                        };
+                    },
+                    .array_buffer => |array_buffer| {
+                        return Writable{
+                            .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .array_buffer = array_buffer }),
+                        };
+                    },
+                    .fd => |fd| {
+                        return Writable{ .fd = fd };
+                    },
+                    .dup2 => |dup2| {
+                        return Writable{ .fd = dup2.to.toFd() };
+                    },
+                    .inherit => {
+                        return Writable{ .inherit = {} };
+                    },
+                    .memfd, .path, .ignore => {
+                        return Writable{ .ignore = {} };
+                    },
+                    .capture => {
+                        return Writable{ .ignore = {} };
+                    },
+                }
+            }
+            switch (stdio) {
+                // The shell never uses this
+                .dup2 => @panic("Unimplemented stdin dup2"),
+                .pipe => {
+                    // The shell never uses this
+                    @panic("Unimplemented stdin pipe");
+                },
+
+                .blob => |blob| {
+                    return Writable{
+                        .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .blob = blob }),
+                    };
+                },
+                .array_buffer => |array_buffer| {
+                    return Writable{
+                        .buffer = StaticPipeWriter.create(event_loop, subprocess, result, .{ .array_buffer = array_buffer }),
+                    };
+                },
+                .memfd => |memfd| {
+                    std.debug.assert(memfd != bun.invalid_fd);
+                    return Writable{ .memfd = memfd };
+                },
+                .fd => {
+                    return Writable{ .fd = result.? };
+                },
+                .inherit => {
+                    return Writable{ .inherit = {} };
+                },
+                .path, .ignore => {
+                    return Writable{ .ignore = {} };
+                },
+                .capture => {
+                    return Writable{ .ignore = {} };
+                },
+            }
+        }
+
+        pub fn toJS(this: *Writable, globalThis: *JSC.JSGlobalObject, subprocess: *Subprocess) JSValue {
+            return switch (this.*) {
+                .fd => |fd| JSValue.jsNumber(fd),
+                .memfd, .ignore => JSValue.jsUndefined(),
+                .buffer, .inherit => JSValue.jsUndefined(),
+                .pipe => |pipe| {
+                    this.* = .{ .ignore = {} };
+                    if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
+                        pipe.onAttachedProcessExit();
+                        return pipe.toJS(globalThis);
+                    } else {
+                        subprocess.flags.has_stdin_destructor_called = false;
+                        subprocess.weak_file_sink_stdin_ptr = pipe;
+                        return pipe.toJSWithDestructor(
+                            globalThis,
+                            JSC.WebCore.SinkDestructor.Ptr.init(subprocess),
+                        );
+                    }
+                },
+            };
+        }
+
+        pub fn finalize(this: *Writable) void {
+            const subprocess = @fieldParentPtr(Subprocess, "stdin", this);
+            if (subprocess.this_jsvalue != .zero) {
+                if (JSC.Codegen.JSSubprocess.stdinGetCached(subprocess.this_jsvalue)) |existing_value| {
+                    JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
+                }
+            }
+
+            return switch (this.*) {
+                .pipe => |pipe| {
+                    pipe.deref();
+
+                    this.* = .{ .ignore = {} };
+                },
+                .buffer => {
+                    this.buffer.updateRef(false);
+                    this.buffer.deref();
+                },
+                .memfd => |fd| {
+                    _ = bun.sys.close(fd);
+                    this.* = .{ .ignore = {} };
+                },
+                .ignore => {},
+                .fd, .inherit => {},
+            };
+        }
+
+        pub fn close(this: *Writable) void {
+            switch (this.*) {
+                .pipe => |pipe| {
+                    _ = pipe.end(null);
+                },
+                inline .memfd, .fd => |fd| {
+                    _ = bun.sys.close(fd);
+                    this.* = .{ .ignore = {} };
+                },
+                .buffer => {
+                    this.buffer.close();
+                },
+                .ignore => {},
+                .inherit => {},
+            }
+        }
+    };
 
     pub const Readable = union(enum) {
         fd: bun.FileDescriptor,
@@ -127,6 +358,9 @@ pub const ShellSubprocess = struct {
                     .dup2, .ignore => Readable{ .ignore = {} },
                     .path => Readable{ .ignore = {} },
                     .fd => |fd| Readable{ .fd = fd },
+                    // blobs are immutable, so we should only ever get the case
+                    // where the user passed in a Blob with an fd
+                    .blob => Readable{ .ignore = {} },
                     .memfd => Readable{ .ignore = {} },
                     .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, false, out_type) },
                     .array_buffer => {
@@ -136,7 +370,6 @@ pub const ShellSubprocess = struct {
                         };
                         return readable;
                     },
-                    .blob => Output.panic("TODO: implement Blob support in Stdio readable", .{}),
                     .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, true, out_type) },
                 };
             }
@@ -146,6 +379,9 @@ pub const ShellSubprocess = struct {
                 .dup2, .ignore => Readable{ .ignore = {} },
                 .path => Readable{ .ignore = {} },
                 .fd => Readable{ .fd = result.? },
+                // blobs are immutable, so we should only ever get the case
+                // where the user passed in a Blob with an fd
+                .blob => Readable{ .ignore = {} },
                 .memfd => Readable{ .memfd = stdio.memfd },
                 .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, false, out_type) },
                 .array_buffer => {
@@ -155,7 +391,6 @@ pub const ShellSubprocess = struct {
                     };
                     return readable;
                 },
-                .blob => Output.panic("TODO: implement Blob support in Stdio readable", .{}),
                 .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, true, out_type) },
             };
         }
@@ -207,7 +442,7 @@ pub const ShellSubprocess = struct {
     //     },
     // };
 
-    pub const StaticPipeWriter = JSC.Subprocess.NewStaticPipeWriter(Subprocess);
+    pub const StaticPipeWriter = JSC.Subprocess.NewStaticPipeWriter(ShellSubprocess);
 
     pub fn getIO(this: *Subprocess, comptime out_kind: OutKind) *Readable {
         switch (out_kind) {
@@ -312,7 +547,22 @@ pub const ShellSubprocess = struct {
 
     pub fn onCloseIO(this: *Subprocess, kind: StdioKind) void {
         switch (kind) {
-            .stdin => {},
+            .stdin => {
+                switch (this.stdin) {
+                    .pipe => |pipe| {
+                        pipe.signal.clear();
+                        pipe.deref();
+                        this.stdin = .{ .ignore = {} };
+                    },
+                    .buffer => {
+                        this.onStaticPipeWriterDone();
+                        this.stdin.buffer.source.detach();
+                        this.stdin.buffer.deref();
+                        this.stdin = .{ .ignore = {} };
+                    },
+                    else => {},
+                }
+            },
             inline .stdout, .stderr => |tag| {
                 const out: *Readable = &@field(this, @tagName(tag));
                 switch (out.*) {
@@ -539,9 +789,30 @@ pub const ShellSubprocess = struct {
 
         var spawn_options = bun.spawn.SpawnOptions{
             .cwd = spawn_args.cwd,
-            .stdin = spawn_args.stdio[0].asSpawnOption(),
-            .stdout = spawn_args.stdio[1].asSpawnOption(),
-            .stderr = spawn_args.stdio[2].asSpawnOption(),
+            .stdin = switch (spawn_args.stdio[0].asSpawnOption(0)) {
+                .result => |opt| opt,
+                .err => |e| {
+                    return .{ .err = .{
+                        .custom = bun.default_allocator.dupe(u8, e.toStr()) catch bun.outOfMemory(),
+                    } };
+                },
+            },
+            .stdout = switch (spawn_args.stdio[1].asSpawnOption(1)) {
+                .result => |opt| opt,
+                .err => |e| {
+                    return .{ .err = .{
+                        .custom = bun.default_allocator.dupe(u8, e.toStr()) catch bun.outOfMemory(),
+                    } };
+                },
+            },
+            .stderr = switch (spawn_args.stdio[2].asSpawnOption(2)) {
+                .result => |opt| opt,
+                .err => |e| {
+                    return .{ .err = .{
+                        .custom = bun.default_allocator.dupe(u8, e.toStr()) catch bun.outOfMemory(),
+                    } };
+                },
+            },
 
             .windows = if (Environment.isWindows) bun.spawn.WindowsSpawnOptions.WindowsOptions{
                 .hide_window = true,
@@ -576,12 +847,7 @@ pub const ShellSubprocess = struct {
                 event_loop,
                 is_sync,
             ),
-            // .stdin = Subprocess.Writable.init(subprocess, spawn_args.stdio[0], spawn_result.stdin, globalThis_) catch bun.outOfMemory(),
-            // Readable initialization functions won't touch the subrpocess pointer so it's okay to hand it to them even though it technically has undefined memory at the point of Readble initialization
-            // stdout and stderr only uses allocator and default_max_buffer_size if they are pipes and not a array buffer
-
-            // .stdout = Subprocess.Readable.init(subprocess, .stdout, spawn_args.stdio[1], spawn_result.stdout, event_loop.allocator(), Subprocess.default_max_buffer_size),
-            // .stderr = Subprocess.Readable.init(subprocess, .stderr, spawn_args.stdio[2], spawn_result.stderr, event_loop.allocator(), Subprocess.default_max_buffer_size),
+            .stdin = Subprocess.Writable.init(spawn_args.stdio[0], event_loop, subprocess, spawn_result.stdin) catch bun.outOfMemory(),
 
             .stdout = Subprocess.Readable.init(.stdout, spawn_args.stdio[1], event_loop, subprocess, spawn_result.stdout, event_loop.allocator(), ShellSubprocess.default_max_buffer_size, true),
             .stderr = Subprocess.Readable.init(.stderr, spawn_args.stdio[2], event_loop, subprocess, spawn_result.stderr, event_loop.allocator(), ShellSubprocess.default_max_buffer_size, true),
@@ -593,9 +859,9 @@ pub const ShellSubprocess = struct {
         };
         subprocess.process.setExitHandler(subprocess);
 
-        // if (subprocess.stdin == .pipe) {
-        //     subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
-        // }
+        if (subprocess.stdin == .pipe) {
+            subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
+        }
 
         var send_exit_notification = false;
 
@@ -617,13 +883,9 @@ pub const ShellSubprocess = struct {
             }
         }
 
-        // if (subprocess.stdin == .buffered_input) {
-        //     subprocess.stdin.buffered_input.remain = switch (subprocess.stdin.buffered_input.source) {
-        //         .blob => subprocess.stdin.buffered_input.source.blob.slice(),
-        //         .array_buffer => |array_buffer| array_buffer.slice(),
-        //     };
-        //     subprocess.stdin.buffered_input.writeIfPossible(is_sync);
-        // }
+        if (subprocess.stdin == .buffer) {
+            subprocess.stdin.buffer.start().assert();
+        }
 
         if (subprocess.stdout == .pipe) {
             subprocess.stdout.pipe.start(subprocess, event_loop).assert();
@@ -684,8 +946,6 @@ pub const ShellSubprocess = struct {
 };
 
 const WaiterThread = bun.spawn.WaiterThread;
-
-// pub const
 
 pub const PipeReader = struct {
     reader: IOReader = undefined,

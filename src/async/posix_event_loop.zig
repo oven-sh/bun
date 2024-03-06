@@ -160,6 +160,7 @@ pub const FilePoll = struct {
     const Process = bun.spawn.Process;
     const Subprocess = JSC.Subprocess;
     const StaticPipeWriter = Subprocess.StaticPipeWriter.Poll;
+    const ShellStaticPipeWriter = bun.shell.ShellSubprocess.StaticPipeWriter.Poll;
     const FileSink = JSC.WebCore.FileSink.Poll;
     const DNSResolver = JSC.DNS.DNSResolver;
     const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
@@ -181,6 +182,7 @@ pub const FilePoll = struct {
         // ShellBufferedOutputMini,
 
         StaticPipeWriter,
+        ShellStaticPipeWriter,
 
         // ShellBufferedWriter,
         ShellSubprocessCapturedPipeWriter,
@@ -371,6 +373,10 @@ pub const FilePoll = struct {
             // },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellBufferedWriter))) => {
                 var handler: *ShellBufferedWriter = ptr.as(ShellBufferedWriter);
+                handler.onPoll(size_or_offset, poll.flags.contains(.hup));
+            },
+            @field(Owner.Tag, bun.meta.typeBaseName(@typeName(ShellStaticPipeWriter))) => {
+                var handler: *ShellStaticPipeWriter = ptr.as(ShellStaticPipeWriter);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
             @field(Owner.Tag, bun.meta.typeBaseName(@typeName(StaticPipeWriter))) => {

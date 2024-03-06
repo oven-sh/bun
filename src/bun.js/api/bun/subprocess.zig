@@ -735,6 +735,7 @@ pub const Subprocess = struct {
 
             pub usingnamespace bun.NewRefCounted(@This(), deinit);
             const This = @This();
+            const print = bun.Output.scoped(.StaticPipeWriter, false);
 
             pub const IOWriter = bun.io.BufferedWriter(
                 This,
@@ -755,6 +756,7 @@ pub const Subprocess = struct {
             }
 
             pub fn close(this: *This) void {
+                log("StaticPipeWriter(0x{x}) close()", .{@intFromPtr(this)});
                 this.writer.close();
             }
 
@@ -778,6 +780,7 @@ pub const Subprocess = struct {
             }
 
             pub fn start(this: *This) JSC.Maybe(void) {
+                log("StaticPipeWriter(0x{x}) start()", .{@intFromPtr(this)});
                 this.ref();
                 this.buffer = this.source.slice();
                 if (Environment.isWindows) {
@@ -799,6 +802,7 @@ pub const Subprocess = struct {
             }
 
             pub fn onWrite(this: *This, amount: usize, is_done: bool) void {
+                log("StaticPipeWriter(0x{x}) onWrite(amount={d} is_done={any})", .{ @intFromPtr(this), amount, is_done });
                 this.buffer = this.buffer[@min(amount, this.buffer.len)..];
                 if (is_done or this.buffer.len == 0) {
                     this.writer.close();
@@ -806,11 +810,12 @@ pub const Subprocess = struct {
             }
 
             pub fn onError(this: *This, err: bun.sys.Error) void {
-                _ = err; // autofix
+                log("StaticPipeWriter(0x{x}) onError(err={any})", .{ @intFromPtr(this), err });
                 this.source.detach();
             }
 
             pub fn onClose(this: *This) void {
+                log("StaticPipeWriter(0x{x}) onClose()", .{@intFromPtr(this)});
                 this.source.detach();
                 this.process.onCloseIO(.stdin);
             }
@@ -1721,7 +1726,13 @@ pub const Subprocess = struct {
                                     return JSC.JSValue.jsUndefined();
                                 }
 
-                                extra_fds.append(new_item.asSpawnOption()) catch {
+                                const opt = switch (new_item.asSpawnOption(i)) {
+                                    .result => |opt| opt,
+                                    .err => |e| {
+                                        return e.throwJS(globalThis);
+                                    },
+                                };
+                                extra_fds.append(opt) catch {
                                     globalThis.throwOutOfMemory();
                                     return .zero;
                                 };
@@ -1843,9 +1854,18 @@ pub const Subprocess = struct {
         const spawn_options = bun.spawn.SpawnOptions{
             .cwd = cwd,
             .detached = detached,
-            .stdin = stdio[0].asSpawnOption(),
-            .stdout = stdio[1].asSpawnOption(),
-            .stderr = stdio[2].asSpawnOption(),
+            .stdin = switch (stdio[0].asSpawnOption(0)) {
+                .result => |opt| opt,
+                .err => |e| return e.throwJS(globalThis),
+            },
+            .stdout = switch (stdio[1].asSpawnOption(1)) {
+                .result => |opt| opt,
+                .err => |e| return e.throwJS(globalThis),
+            },
+            .stderr = switch (stdio[2].asSpawnOption(2)) {
+                .result => |opt| opt,
+                .err => |e| return e.throwJS(globalThis),
+            },
             .extra_fds = extra_fds.items,
             .argv0 = argv0,
 

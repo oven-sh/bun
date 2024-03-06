@@ -25,6 +25,30 @@ pub const Stdio = union(enum) {
 
     const log = bun.sys.syslog;
 
+    pub const Result = union(enum) {
+        result: bun.spawn.SpawnOptions.Stdio,
+        err: ToSpawnOptsError,
+    };
+
+    pub const ToSpawnOptsError = union(enum) {
+        stdin_used_as_out,
+        out_used_as_stdin,
+        blob_used_as_out,
+
+        pub fn toStr(this: *const @This()) []const u8 {
+            return switch (this.*) {
+                .stdin_used_as_out => "Stdin cannot be used for stdout or stderr",
+                .out_used_as_stdin => "Stdout and stderr cannot be used for stdin",
+                .blob_used_as_out => "Blobs are immutable, and cannot be used for stdout/stderr",
+            };
+        }
+
+        pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) JSValue {
+            globalThis.throw("{s}", .{this.toStr()});
+            return .zero;
+        }
+    };
+
     pub fn byteSlice(this: *const Stdio) []const u8 {
         return switch (this.*) {
             .capture => this.capture.buf.slice(),
@@ -130,30 +154,108 @@ pub const Stdio = union(enum) {
 
     fn toPosix(
         stdio: *@This(),
-    ) bun.spawn.SpawnOptions.Stdio {
-        return switch (stdio.*) {
-            .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
-            .capture, .pipe, .array_buffer, .blob => .{ .buffer = {} },
-            .fd => |fd| .{ .pipe = fd },
-            .memfd => |fd| .{ .pipe = fd },
-            .path => |pathlike| .{ .path = pathlike.slice() },
-            .inherit => .{ .inherit = {} },
-            .ignore => .{ .ignore = {} },
+        i: u32,
+    ) Result {
+        return .{
+            .result = switch (stdio.*) {
+                .blob => |blob| brk: {
+                    const fd = bun.stdio(i);
+                    if (blob.needsToReadFile()) {
+                        if (blob.store()) |store| {
+                            if (store.data.file.pathlike == .fd) {
+                                if (store.data.file.pathlike.fd == fd) {
+                                    break :brk .{ .inherit = {} };
+                                }
+
+                                switch (bun.FDTag.get(store.data.file.pathlike.fd)) {
+                                    .stdin => {
+                                        if (i == 1 or i == 2) {
+                                            return .{ .err = .stdin_used_as_out };
+                                        }
+                                    },
+                                    .stdout, .stderr => {
+                                        if (i == 0) {
+                                            return .{ .err = .out_used_as_stdin };
+                                        }
+                                    },
+                                    else => {},
+                                }
+
+                                break :brk .{ .pipe = store.data.file.pathlike.fd };
+                            }
+
+                            break :brk .{ .path = store.data.file.pathlike.path.slice() };
+                        }
+                    }
+
+                    if (i == 1 or i == 2) {
+                        return .{ .err = .blob_used_as_out };
+                    }
+
+                    break :brk .{ .buffer = {} };
+                },
+                .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
+                .capture, .pipe, .array_buffer => .{ .buffer = {} },
+                .fd => |fd| .{ .pipe = fd },
+                .memfd => |fd| .{ .pipe = fd },
+                .path => |pathlike| .{ .path = pathlike.slice() },
+                .inherit => .{ .inherit = {} },
+                .ignore => .{ .ignore = {} },
+            },
         };
     }
 
     fn toWindows(
         stdio: *@This(),
-    ) bun.spawn.SpawnOptions.Stdio {
-        return switch (stdio.*) {
-            .capture, .pipe, .array_buffer, .blob => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
-            .fd => |fd| .{ .pipe = fd },
-            .dup2 => @panic("TODO bun shell redirects on windows"),
-            .path => |pathlike| .{ .path = pathlike.slice() },
-            .inherit => .{ .inherit = {} },
-            .ignore => .{ .ignore = {} },
+        i: u32,
+    ) Result {
+        return .{
+            .result = switch (stdio.*) {
+                .blob => |blob| brk: {
+                    const fd = bun.stdio(i);
+                    if (blob.needsToReadFile()) {
+                        if (blob.store()) |store| {
+                            if (store.data.file.pathlike == .fd) {
+                                if (store.data.file.pathlike.fd == fd) {
+                                    break :brk .{ .inherit = {} };
+                                }
 
-            .memfd => @panic("This should never happen"),
+                                switch (bun.FDTag.get(store.data.file.pathlike.fd)) {
+                                    .stdin => {
+                                        if (i == 1 or i == 2) {
+                                            return .{ .err = .stdin_used_as_out };
+                                        }
+                                    },
+                                    .stdout, .stderr => {
+                                        if (i == 0) {
+                                            return .{ .err = .out_used_as_stdin };
+                                        }
+                                    },
+                                    else => {},
+                                }
+
+                                break :brk .{ .pipe = store.data.file.pathlike.fd };
+                            }
+
+                            break :brk .{ .path = store.data.file.pathlike.path.slice() };
+                        }
+                    }
+
+                    if (i == 1 or i == 2) {
+                        return .{ .err = .blob_used_as_out };
+                    }
+
+                    break :brk .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+                },
+                .capture, .pipe, .array_buffer => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
+                .fd => |fd| .{ .pipe = fd },
+                .dup2 => @panic("TODO bun shell redirects on windows"),
+                .path => |pathlike| .{ .path = pathlike.slice() },
+                .inherit => .{ .inherit = {} },
+                .ignore => .{ .ignore = {} },
+
+                .memfd => @panic("This should never happen"),
+            },
         };
     }
 
@@ -167,11 +269,12 @@ pub const Stdio = union(enum) {
     /// On windows this function allocate memory ensure that .deinit() is called or ownership is passed for all *uv.Pipe
     pub fn asSpawnOption(
         stdio: *@This(),
-    ) bun.spawn.SpawnOptions.Stdio {
+        i: u32,
+    ) Stdio.Result {
         if (comptime Environment.isWindows) {
-            return stdio.toWindows();
+            return stdio.toWindows(i);
         } else {
-            return stdio.toPosix();
+            return stdio.toPosix(i);
         }
     }
 

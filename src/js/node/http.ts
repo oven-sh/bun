@@ -1725,6 +1725,8 @@ class ClientRequest extends OutgoingMessage {
     process.nextTick(() => {
       // this will be FakeSocket since we use fetch() atm under the hood.
       // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
+      if (this.destroyed) return;
+      if (this.listenerCount("socket") === 0) return;
       this.emit("socket", this.socket);
     });
   }

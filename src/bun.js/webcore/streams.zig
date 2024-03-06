@@ -2960,7 +2960,7 @@ pub const FileSink = struct {
 
         const evtloop = switch (@TypeOf(event_loop_)) {
             JSC.EventLoopHandle => event_loop_,
-            else => JSC.EventLoopHandle.iniit(event_loop_),
+            else => JSC.EventLoopHandle.init(event_loop_),
         };
 
         var this = FileSink.new(.{

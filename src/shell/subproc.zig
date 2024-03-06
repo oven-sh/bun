@@ -152,8 +152,9 @@ pub const ShellSubprocess = struct {
                                 },
                             }
 
-                            subprocess.weak_file_sink_stdin_ptr = pipe;
-                            subprocess.flags.has_stdin_destructor_called = false;
+                            // TODO: uncoment this when is ready, commented because was not compiling
+                            // subprocess.weak_file_sink_stdin_ptr = pipe;
+                            // subprocess.flags.has_stdin_destructor_called = false;
 
                             return Writable{
                                 .pipe = pipe,

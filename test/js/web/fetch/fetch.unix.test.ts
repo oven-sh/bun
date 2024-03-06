@@ -63,7 +63,7 @@ it("handle redirect to non-unix", async () => {
       if (req.url.endsWith("/hello")) {
         return new Response(null, {
           status: 302,
-          headers: { Location: `http://${server.hostname}:${server.port}/world` },
+          headers: { Location: `${server.url.origin}/world` },
         });
       }
       return new Response(null, { status: 404 });

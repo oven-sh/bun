@@ -51,7 +51,7 @@ template<> JsonWebKey convertDictionary<JsonWebKey>(JSGlobalObject& lexicalGloba
         throwTypeError(&lexicalGlobalObject, throwScope);
         return { };
     }
-    JsonWebKey result;
+    JsonWebKey result{};
     JSValue algValue;
     if (isNullOrUndefined)
         algValue = jsUndefined();

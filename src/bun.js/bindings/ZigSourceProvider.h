@@ -65,7 +65,7 @@ private:
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
         : Base(sourceOrigin, WTFMove(sourceURL), String(), taintedness, startPosition, sourceType)
-        , m_source(sourceImpl)
+        , m_source(sourceImpl), m_hash(0)
     {
 
         m_resolvedSource = resolvedSource;

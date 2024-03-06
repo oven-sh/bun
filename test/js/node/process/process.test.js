@@ -4,6 +4,8 @@ import { existsSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { basename, join, resolve } from "path";
 
+const process_sleep = join(import.meta.dir, "process-sleep.js");
+
 it("process", () => {
   // this property isn't implemented yet but it should at least return a string
   const isNode = !process.isBun;
@@ -432,8 +434,9 @@ describe("signal", () => {
 
   it("process.kill(2) works", async () => {
     const child = Bun.spawn({
-      cmd: ["sleep", "1000000"],
+      cmd: [bunExe(), process_sleep, "1000000"],
       stdout: "pipe",
+      env: bunEnv,
     });
     const prom = child.exited;
     const ret = process.kill(child.pid, "SIGTERM");
@@ -448,8 +451,9 @@ describe("signal", () => {
 
   it("process._kill(2) works", async () => {
     const child = Bun.spawn({
-      cmd: ["sleep", "1000000"],
+      cmd: [bunExe(), process_sleep, "1000000"],
       stdout: "pipe",
+      env: bunEnv,
     });
     const prom = child.exited;
     // SIGKILL as a number

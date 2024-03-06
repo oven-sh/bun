@@ -3514,11 +3514,13 @@ pub const FileReader = struct {
                     } else if (in_progress.len > 0 and !hasMore) {
                         this.read_inside_on_pull = .{ .temporary = buf };
                     } else if (hasMore and !bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
+                        log("onReadChunk() appendSlice", .{});
                         this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
                         this.read_inside_on_pull = .{ .use_buffered = buf.len };
                     }
                 },
                 .use_buffered => |original| {
+                    log("onReadChunk() appendSlice", .{});
                     this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
                     this.read_inside_on_pull = .{ .use_buffered = buf.len + original };
                 },
@@ -3544,16 +3546,16 @@ pub const FileReader = struct {
                 this.reader.buffer().clearRetainingCapacity();
                 this.buffered.clearRetainingCapacity();
 
-                this.pending.result = .{
-                    .into_array = .{
-                        .value = this.pending_value.get() orelse .zero,
-                        .len = @truncate(buf.len),
-                    },
-                };
-
                 if (was_done) {
                     this.pending.result = .{
                         .into_array_and_done = .{
+                            .value = this.pending_value.get() orelse .zero,
+                            .len = @truncate(buf.len),
+                        },
+                    };
+                } else {
+                    this.pending.result = .{
+                        .into_array = .{
                             .value = this.pending_value.get() orelse .zero,
                             .len = @truncate(buf.len),
                         },
@@ -3725,7 +3727,7 @@ pub const FileReader = struct {
 
     fn consumeReaderBuffer(this: *FileReader) void {
         if (this.buffered.capacity > 0) {
-            this.buffered.appendSlice(bun.default_allocator, this.reader.buffer().items) catch bun.outOfMemory();
+            // already buffered we just clean up the reader buffer
             this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
         } else {
             this.buffered = this.reader.buffer().moveToUnmanaged();

@@ -83,7 +83,7 @@ pub const FileSystem = struct {
         });
     }
 
-    pub var max_fd: FileDescriptor = .zero;
+    pub var max_fd: std.os.fd_t = 0;
 
     pub inline fn setMaxFd(fd: std.os.fd_t) void {
         if (Environment.isWindows) {
@@ -94,7 +94,7 @@ pub const FileSystem = struct {
             return;
         }
 
-        max_fd = @enumFromInt(@max(fd, max_fd));
+        max_fd = @max(fd, max_fd);
     }
     pub var instance_loaded: bool = false;
     pub var instance: FileSystem = undefined;
@@ -752,7 +752,7 @@ pub const FileSystem = struct {
             }
 
             // If we're not near the max amount of open files, don't worry about it.
-            return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd.int() + 1) * 2);
+            return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd + 1) * 2);
         }
 
         /// Returns `true` if an entry was removed

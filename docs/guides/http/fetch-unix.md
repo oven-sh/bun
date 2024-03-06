@@ -1,5 +1,5 @@
 ---
-name: Send an HTTP request over a unix domain socket with fetch
+name: fetch with unix domain sockets in Bun
 ---
 
 In Bun, the `unix` option in `fetch()` lets you send HTTP requests over a [unix domain socket](https://en.wikipedia.org/wiki/Unix_domain_socket).

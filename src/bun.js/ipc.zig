@@ -502,6 +502,10 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             log("onRead {d}", .{buffer.len});
             this.ipc.incoming.len += @as(u32, @truncate(buffer.len));
             var slice = this.ipc.incoming.slice();
+
+            std.debug.assert(this.ipc.incoming.len <= this.ipc.incoming.cap);
+            std.debug.assert(bun.isSliceInBuffer(buffer, this.ipc.incoming.allocatedSlice()));
+
             const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
                 .Pointer => this.globalThis,
                 .Optional => brk: {

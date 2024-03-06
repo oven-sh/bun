@@ -150,6 +150,12 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
+        pub fn allocatedSlice(this: *const ListType) []u8 {
+            if (this.cap == 0) return &.{};
+
+            return this.ptr[0..this.cap];
+        }
+
         pub fn update(this: *ListType, list_: anytype) void {
             this.* = .{
                 .ptr = list_.items.ptr,

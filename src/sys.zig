@@ -976,7 +976,7 @@ pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.
         return sys_uv.open(file_path, flags, perm);
     }
     // this is what open() does anyway.
-    return openat(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
+    return openat(bun.toFD(std.fs.cwd().fd), file_path, flags, perm);
 }
 
 /// This function will prevent stdout and stderr from being closed.

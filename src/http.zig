@@ -1545,6 +1545,7 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
     }
     this.unix_socket_path.deinit();
+    this.unix_socket_path = JSC.ZigString.Slice.empty;
 }
 
 pub fn isKeepAlivePossible(this: *HTTPClient) bool {
@@ -1747,6 +1748,8 @@ pub const AsyncHTTP = struct {
         this.response_headers = .{};
         this.request = null;
         this.response = null;
+        this.client.unix_socket_path.deinit();
+        this.client.unix_socket_path = JSC.ZigString.Slice.empty;
     }
 
     pub const State = enum(u32) {

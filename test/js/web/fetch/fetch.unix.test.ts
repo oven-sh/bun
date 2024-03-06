@@ -6,10 +6,10 @@ import { join } from "path";
 
 const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.unix.test"));
 
-let server: Server;
+let server_unix: Server;
 function startServerUnix({ fetch, ...options }: ServeOptions): string {
   const socketPath = join(tmp_dir, `socket-${Math.random().toString(36).slice(2)}`);
-  server = serve({
+  server_unix = serve({
     ...options,
     fetch,
     unix: socketPath,
@@ -17,7 +17,17 @@ function startServerUnix({ fetch, ...options }: ServeOptions): string {
   return socketPath;
 }
 
+let server: Server;
+function startServer({ fetch, ...options }: ServeOptions) {
+  server = serve({
+    ...options,
+    fetch,
+    port: 0,
+  });
+}
+
 afterEach(() => {
+  server_unix?.stop?.(true);
   server?.stop?.(true);
 });
 
@@ -37,4 +47,32 @@ it("provide body", async () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe(String(i));
   }
+});
+
+it("handle redirect to non-unix", async () => {
+  startServer({
+    fetch(req) {
+      console.log('ip', req.url);
+      if (req.url.endsWith("/world")) {
+        return new Response(req.body);
+      }
+      return new Response(null, { status: 404 });
+    }
+  })
+  const path = startServerUnix({
+    fetch(req) {
+      console.log('unix', req.url);
+      if (req.url.endsWith("/hello")) {
+        return new Response(null, { status: 302, headers: { Location: `http://${server.hostname}:${server.port}/world` } });
+      }
+      return new Response(null, { status: 404 });
+    },
+  });
+  // POST with body
+  for (let i = 0; i < 20; i++) {
+    const response = await fetch("http://localhost/hello", { method: "POST", body: String(i), unix: path, redirect: "follow", verbose: true });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(String(i));
+  }
+
 });

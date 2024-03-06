@@ -21,6 +21,10 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
 };
 
+if (isWindows) {
+  bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
+}
+
 for (let key in bunEnv) {
   if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
     delete bunEnv[key];

@@ -3724,10 +3724,7 @@ pub const FileReader = struct {
     }
 
     fn consumeReaderBuffer(this: *FileReader) void {
-        if (this.buffered.capacity > 0) {
-            // already buffered we just clean up the reader buffer
-            this.reader.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
-        } else {
+        if (this.buffered.capacity == 0) {
             this.buffered = this.reader.buffer().moveToUnmanaged();
         }
     }
@@ -3737,8 +3734,11 @@ pub const FileReader = struct {
         if (!this.isPulling()) {
             this.consumeReaderBuffer();
             if (this.pending.state == .pending) {
-                if (this.buffered.items.len > 0)
+                if (this.buffered.items.len > 0) {
                     this.pending.result = .{ .owned_and_done = bun.ByteList.fromList(this.buffered) };
+                } else {
+                    this.pending.result = .{ .done = {} };
+                }
                 this.buffered = .{};
                 this.pending.run();
             } else if (this.buffered.items.len > 0) {

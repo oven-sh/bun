@@ -223,7 +223,7 @@ ENABLE_MIMALLOC ?= 1
 
 # https://github.com/microsoft/mimalloc/issues/512
 # Linking mimalloc via object file on macOS x64 can cause heap corruption
-_MIMALLOC_FILE = libmimalloc.o
+_MIMALLOC_FILE = libmimalloc.a
 _MIMALLOC_INPUT_PATH = CMakeFiles/mimalloc-obj.dir/src/static.c.o
 _MIMALLOC_DEBUG_FILE = libmimalloc-debug.a
 _MIMALLOC_OBJECT_FILE = 1

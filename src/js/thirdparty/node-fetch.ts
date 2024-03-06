@@ -1,6 +1,13 @@
 import type * as s from "stream";
 
-const { Headers: WebHeaders, Request, Response: WebResponse, Blob, File = Blob, FormData } = globalThis as any;
+const {
+  Headers: WebHeaders,
+  Request: WebRequest,
+  Response: WebResponse,
+  Blob,
+  File = Blob,
+  FormData,
+} = globalThis as any;
 const nativeFetch = Bun.fetch;
 
 // node-fetch extends from URLSearchParams in their implementation...
@@ -115,6 +122,29 @@ class Response extends WebResponse {
   }
 }
 var ResponsePrototype = Response.prototype;
+
+const kUrl = Symbol("kUrl");
+
+class Request extends WebRequest {
+  [kUrl]: string;
+
+  constructor(input, init) {
+    // node-fetch is relaxed with the URL, for example, it allows "/" as a valid URL.
+    // If it's not a valid URL, use a placeholder URL during construction.
+    // See: https://github.com/oven-sh/bun/issues/4947
+    if (typeof input === "string" && !URL.canParse(input)) {
+      super(new URL(input, "http://localhost/"), init);
+      this[kUrl] = input;
+    } else {
+      super(input, init);
+      this[kUrl] = input.url;
+    }
+  }
+
+  get url() {
+    return this[kUrl];
+  }
+}
 
 /**
  * `node-fetch` works like the browser-fetch API, except it's a little more strict on some features,

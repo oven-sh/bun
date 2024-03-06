@@ -1,10 +1,11 @@
 import { expect, describe, it } from "bun:test";
-import { Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
+import { Stream, Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
 import { join } from "path";
 import { bunExe, bunEnv } from "harness";
 import { tmpdir } from "node:os";
 import { writeFileSync, mkdirSync } from "node:fs";
+import { spawn } from "node:child_process";
 
 const isWindows = process.platform === "win32";
 
@@ -184,6 +185,20 @@ describe("createReadStream", () => {
       done();
     });
   });
+
+  it("should emit readable on end", done => {
+    const testData = "Hello world";
+    const path = join(tmpdir(), `${Date.now()}-testEmitReadableOnEnd.txt`);
+    writeFileSync(path, testData);
+    const stream = createReadStream(path);
+
+    stream.on("readable", () => {
+      const chunk = stream.read();
+      if (!chunk) {
+        done();
+      }
+    });
+  });
 });
 
 describe("Duplex", () => {
@@ -228,6 +243,42 @@ describe("PassThrough", () => {
 
     const subclass = new Subclass();
     expect(subclass instanceof PassThrough).toBe(true);
+  });
+});
+
+const processStdInTest = `
+const { Transform } = require("node:stream");
+
+let totalChunkSize = 0;
+const transform = new Transform({
+  transform(chunk, _encoding, callback) {
+    totalChunkSize += chunk.length;
+    callback(null, "");
+  },
+});
+
+process.stdin.pipe(transform).pipe(process.stdout);
+process.stdin.on("end", () => console.log(totalChunkSize));
+`;
+describe("process.stdin", () => {
+  it("should pipe correctly", done => {
+    mkdirSync(join(tmpdir(), "process-stdin-test"), { recursive: true });
+    writeFileSync(join(tmpdir(), "process-stdin-test/process-stdin.test.js"), processStdInTest, {});
+
+    // A sufficiently large input to make at least four chunks
+    const ARRAY_SIZE = 8_388_628;
+    const typedArray = new Uint8Array(ARRAY_SIZE).fill(97);
+
+    const { stdout, exitCode, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), "test", "process-stdin.test.js"],
+      cwd: join(tmpdir(), "process-stdin-test"),
+      env: bunEnv,
+      stdin: typedArray,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(String(stdout)).toBe(`${ARRAY_SIZE}\n`);
+    done();
   });
 });
 
@@ -390,4 +441,29 @@ it("Readable.fromWeb", async () => {
     chunks.push(chunk);
   }
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
+});
+
+it("#9242.5 Stream has constructor", () => {
+  const s = new Stream({});
+  expect(s.constructor).toBe(Stream);
+});
+it("#9242.6 Readable has constructor", () => {
+  const r = new Readable({});
+  expect(r.constructor).toBe(Readable);
+});
+it("#9242.7 Writable has constructor", () => {
+  const w = new Writable({});
+  expect(w.constructor).toBe(Writable);
+});
+it("#9242.8 Duplex has constructor", () => {
+  const d = new Duplex({});
+  expect(d.constructor).toBe(Duplex);
+});
+it("#9242.9 Transform has constructor", () => {
+  const t = new Transform({});
+  expect(t.constructor).toBe(Transform);
+});
+it("#9242.10 PassThrough has constructor", () => {
+  const pt = new PassThrough({});
+  expect(pt.constructor).toBe(PassThrough);
 });

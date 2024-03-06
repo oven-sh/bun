@@ -610,15 +610,14 @@ pub const RunCommand = struct {
             const file_slice = target_path_buffer[0 .. prefix.len + len + file_name.len - "\x00".len];
             const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
 
-            const ImagePathName = std.os.windows.peb().ProcessParameters.ImagePathName;
-            std.debug.assert(ImagePathName.Buffer[ImagePathName.Length / 2] == 0); // trust windows
+            const image_path = bun.windows.exePathW();
 
             if (Environment.isDebug) {
                 // the link becomes out of date on rebuild
                 std.os.unlinkW(file_slice) catch {};
             }
 
-            if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), @ptrCast(ImagePathName.Buffer), null) == 0) {
+            if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), image_path.ptr, null) == 0) {
                 switch (std.os.windows.kernel32.GetLastError()) {
                     .ALREADY_EXISTS => {},
                     else => {
@@ -629,7 +628,7 @@ pub const RunCommand = struct {
                             target_path_buffer[dir_slice.len] = '\\';
                         }
 
-                        if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), @ptrCast(ImagePathName.Buffer), null) == 0) {
+                        if (bun.windows.CreateHardLinkW(@ptrCast(file_slice.ptr), image_path.ptr, null) == 0) {
                             return;
                         }
                     },
@@ -1271,6 +1270,7 @@ pub const RunCommand = struct {
             return true;
         }
 
+        // Run package.json script
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {
                 if (scripts.get(script_name_to_search)) |script_content| {
@@ -1322,27 +1322,30 @@ pub const RunCommand = struct {
                     }
 
                     return true;
-                } else if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
-                    (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
-                {
-                    Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
-                        if (Output.enable_ansi_colors) {
-                            ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                        } else {
-                            ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                        }
-
-                        Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                            std.fs.path.basename(script_name_to_search),
-                            @errorName(err),
-                        });
-                        if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpStackTrace(trace.*);
-                        }
-                        Global.exit(1);
-                    };
                 }
             }
+        }
+
+        // Run absolute/relative path
+        if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
+            (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
+        {
+            Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
+                if (Output.enable_ansi_colors) {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                    std.fs.path.basename(script_name_to_search),
+                    @errorName(err),
+                });
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpStackTrace(trace.*);
+                }
+                Global.exit(1);
+            };
         }
 
         if (Environment.isWindows) try_bunx_file: {
@@ -1376,7 +1379,7 @@ pub const RunCommand = struct {
             var command_line = DirectBinLaunch.direct_launch_buffer[l..];
 
             debug("Attempting to find and load bunx file: '{}'", .{
-                std.unicode.fmtUtf16le(path_to_use),
+                bun.fmt.utf16(path_to_use),
             });
             if (Environment.allow_assert) {
                 std.debug.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
@@ -1410,8 +1413,8 @@ pub const RunCommand = struct {
 
             if (Environment.isDebug) {
                 debug("run_ctx.handle: '{}'", .{bun.FDImpl.fromSystem(handle)});
-                debug("run_ctx.base_path: '{}'", .{std.unicode.fmtUtf16le(run_ctx.base_path)});
-                debug("run_ctx.arguments: '{}'", .{std.unicode.fmtUtf16le(run_ctx.arguments)});
+                debug("run_ctx.base_path: '{}'", .{bun.fmt.utf16(run_ctx.base_path)});
+                debug("run_ctx.arguments: '{}'", .{bun.fmt.utf16(run_ctx.arguments)});
                 debug("run_ctx.force_use_bun: '{}'", .{run_ctx.force_use_bun});
             }
 

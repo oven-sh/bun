@@ -224,7 +224,7 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
 // timer
 struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough,
                                    unsigned int ext_size) {
-  struct us_internal_callback_t *cb = malloc(
+  struct us_internal_callback_t *cb = us_calloc(1, 
       sizeof(struct us_internal_callback_t) + sizeof(uv_timer_t) + ext_size);
 
   cb->loop = loop;
@@ -287,7 +287,7 @@ struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
                                                    int fallthrough,
                                                    unsigned int ext_size) {
-  struct us_internal_callback_t *cb = malloc(
+  struct us_internal_callback_t *cb = us_calloc(1,
       sizeof(struct us_internal_callback_t) + sizeof(uv_async_t) + ext_size);
 
   cb->loop = loop;

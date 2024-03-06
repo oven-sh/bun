@@ -91,6 +91,7 @@ declare module "bun:test" {
 
   interface Jest {
     restoreAllMocks(): void;
+    clearAllMocks(): void;
     fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     setSystemTime(now?: number | Date): void;
   }
@@ -546,6 +547,16 @@ declare module "bun:test" {
      * ```
      */
     unreachable(msg?: string | Error): never;
+
+    /**
+     * Ensures that an assertion is made
+     */
+    hasAssertions(): void;
+
+    /**
+     * Ensures that a specific number of assertions are made
+     */
+    assertions(neededAssertions: number): void;
   }
 
   /**

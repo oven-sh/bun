@@ -1,5 +1,5 @@
 var foo = () => {
-  // biome-ignore: format ignore
+  // prettier-ignore
   var D = (i, r) => () => (r || i((r = { exports: {} }).exports, r), r.exports);
   return D;
 };

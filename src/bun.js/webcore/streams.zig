@@ -3514,13 +3514,11 @@ pub const FileReader = struct {
                     } else if (in_progress.len > 0 and !hasMore) {
                         this.read_inside_on_pull = .{ .temporary = buf };
                     } else if (hasMore and !bun.isSliceInBuffer(buf, this.buffered.allocatedSlice())) {
-                        log("onReadChunk() appendSlice", .{});
                         this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
                         this.read_inside_on_pull = .{ .use_buffered = buf.len };
                     }
                 },
                 .use_buffered => |original| {
-                    log("onReadChunk() appendSlice", .{});
                     this.buffered.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
                     this.read_inside_on_pull = .{ .use_buffered = buf.len + original };
                 },

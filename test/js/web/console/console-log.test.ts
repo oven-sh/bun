@@ -12,7 +12,7 @@ it("should log to console correctly", async () => {
       BUN_DEBUG_QUIET_LOGS: "1",
     },
   });
-  // expect(await exited).toBe(0);
+  expect(await exited).toBe(0);
   expect((await new Response(stderr).text()).replaceAll("\r\n", "\n")).toBe("uh oh\n");
   expect((await new Response(stdout).text()).replaceAll("\r\n", "\n")).toBe(
     (await new Response(file(join(import.meta.dir, "console-log.expected.txt"))).text()).replaceAll("\r\n", "\n"),

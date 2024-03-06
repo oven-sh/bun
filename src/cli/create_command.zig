@@ -1586,6 +1586,10 @@ pub const CreateCommand = struct {
 
         const create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
+        if (positionals.len == 0) {
+            bun.CLI.Command.Tag.printHelp(.CreateCommand, false);
+            Global.crash();
+        }
 
         var env_loader: DotEnv.Loader = brk: {
             const map = try ctx.allocator.create(DotEnv.Map);

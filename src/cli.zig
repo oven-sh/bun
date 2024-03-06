@@ -1538,7 +1538,7 @@ pub const Command = struct {
                 // if --help, print help and exit
                 const print_help = brk: {
                     for (bun.argv()) |arg| {
-                        if (strings.eqlComptime(arg, "--help")) {
+                        if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
                             break :brk true;
                         }
                     }
@@ -1568,7 +1568,8 @@ pub const Command = struct {
                 if (print_help or
                     // "bun create --"
                     // "bun create -abc --"
-                    positional_i == 0)
+                    positional_i == 0 or
+                    positionals[0].len == 0)
                 {
                     Command.Tag.printHelp(.CreateCommand, true);
                     Global.exit(0);

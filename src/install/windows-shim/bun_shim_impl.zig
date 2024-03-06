@@ -128,7 +128,7 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
     if (!is_standalone) {
         bunDebugMessage(fmt, args);
     } else {
-        std.debug.print(if (fmt[fmt.len - 1] == '\n') fmt else fmt ++ "\n", args);
+        std.log.debug(if (fmt[fmt.len - 1] == '\n') fmt else fmt ++ "\n", args);
     }
 }
 

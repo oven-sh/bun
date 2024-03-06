@@ -539,11 +539,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 @sizeOf(*anyopaque),
             ) orelse {
                 if (Environment.isWindows) {
-                    std.debug.print("Thread {d} Failure HTTP\n", .{std.Thread.getCurrentId()});
                     try bun.windows.WSAGetLastError();
                 } else {
-                    // TODO(@paperdave): is it reliable to read posix errno here?
-                    // I only verified this for windows.
+                    // TODO(@paperdave): On POSIX, this will call getaddrinfo + socket
+                    // the former of these does not set errno, and usockets does not have
+                    // a way to propogate the error.
+                    //
+                    // This is caught in the wild: https://github.com/oven-sh/bun/issues/6381
+                    // and we can definitely report a better here. It just is tricky.
                 }
                 return error.FailedToOpenSocket;
             };

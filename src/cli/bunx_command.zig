@@ -523,7 +523,7 @@ pub const BunxCommand = struct {
                     if (update_request.version.literal.isEmpty()) {
                         destination_ = bun.which(
                             &path_buf,
-                            PATH_FOR_BIN_DIRS,
+                            bunx_cache_dir,
                             if (ignore_cwd.len > 0) "" else this_bundler.fs.top_level_dir,
                             package_name_for_bin,
                         );

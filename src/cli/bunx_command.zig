@@ -12,6 +12,8 @@ const std = @import("std");
 const Command = @import("../cli.zig").Command;
 const Run = @import("./run_command.zig").RunCommand;
 
+const debug = Output.scoped(.bunx, false);
+
 pub const BunxCommand = struct {
     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
@@ -204,13 +206,13 @@ pub const BunxCommand = struct {
         ctx.debug.silent = true;
 
         var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, argv.len);
-        var package_name: ?string = null;
+        var maybe_package_name: ?string = null;
         var verbose_install = false;
         {
             var found_subcommand_name = false;
 
             for (argv) |positional| {
-                if (package_name != null) {
+                if (maybe_package_name != null) {
                     passthrough_list.appendAssumeCapacity(positional);
                     continue;
                 }
@@ -225,23 +227,24 @@ pub const BunxCommand = struct {
                     if (!found_subcommand_name) {
                         found_subcommand_name = true;
                     } else {
-                        package_name = positional;
+                        maybe_package_name = positional;
                     }
                 }
             }
         }
 
         // check if package_name_for_update_request is empty string or " "
-        if (package_name == null or package_name.?.len == 0) {
+        if (maybe_package_name == null or maybe_package_name.?.len == 0) {
             exitWithUsage();
         }
 
-        var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch
-            unreachable; // 0 is less than array maximum
+        const package_name = maybe_package_name.?;
+
+        var requests_buf = bun.PackageManager.UpdateRequest.Array{};
         const update_requests = bun.PackageManager.UpdateRequest.parse(
             ctx.allocator,
             ctx.log,
-            &.{package_name.?},
+            &.{package_name},
             &requests_buf,
             .add,
         );
@@ -268,6 +271,7 @@ pub const BunxCommand = struct {
             update_request.name[index + 1 ..]
         else
             update_request.name;
+        debug("initial_bin_name: {s}", .{initial_bin_name});
 
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
@@ -302,11 +306,8 @@ pub const BunxCommand = struct {
         else
             update_request.version.literal.slice(update_request.version_buf);
 
+        // package_fmt is used for the path to install in.
         const package_fmt = brk: {
-            if (update_request.version.tag == .github) {
-                break :brk update_request.version.literal.slice(update_request.version_buf);
-            }
-
             // Includes the delimiters because we use this as a part of $PATH
             const banned_path_chars = switch (Environment.os) {
                 .windows => ":*?<>|;",
@@ -333,6 +334,31 @@ pub const BunxCommand = struct {
                     display_version,
                 });
         };
+        debug("package_fmt: {s}", .{package_fmt});
+
+        // install_param -> used in command 'bun install {what}'
+        // result_package_name -> used for path 'node_modules/{what}/package.json'
+        const install_param, const result_package_name = if (update_request.name.len != 0)
+            .{
+                try std.fmt.allocPrint(ctx.allocator, "{s}@{s}", .{
+                    update_request.name,
+                    display_version,
+                }),
+                update_request.name,
+            }
+        else
+            // When there is not a clear package name (URL/GitHub/etc), we force the package name
+            // to be the same as the calculated initial bin name. This allows us to have a predictable
+            // node_modules folder structure.
+            .{
+                try std.fmt.allocPrint(ctx.allocator, "{s}@{s}", .{
+                    initial_bin_name,
+                    display_version,
+                }),
+                initial_bin_name,
+            };
+        debug("install_param: {s}", .{install_param});
+        debug("result_package_name: {s}", .{result_package_name});
 
         const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
 
@@ -362,7 +388,7 @@ pub const BunxCommand = struct {
 
         // The bunx cache path is at the following location
         //
-        //   <temp_dir>/bunx-<uid>-<package_name>/node_modules/.bin/<bin>
+        //   <temp_dir>/bunx-<uid>-<package_fmt>/node_modules/.bin/<bin>
         //
         // Reasoning:
         // - Prefix with "bunx" to identify the bunx cache, make it easier to "rm -r"
@@ -396,12 +422,14 @@ pub const BunxCommand = struct {
             package_fmt.len +
             std.fmt.count("{d}", .{uid})];
 
-        var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        debug("bunx_cache_dir: {s}", .{bunx_cache_dir});
+
+        var absolute_in_cache_dir_buf: bun.PathBuffer = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(
             &absolute_in_cache_dir_buf,
             bun.pathLiteral("{s}/node_modules/.bin/{s}"),
             .{ bunx_cache_dir, initial_bin_name },
-        ) catch unreachable;
+        ) catch return error.PathTooLong;
 
         const passthrough = passthrough_list.items;
 
@@ -522,7 +550,7 @@ pub const BunxCommand = struct {
                 }
             } else |err| {
                 if (err == error.NoBinFound) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> could not determine executable to run for package <r><b>{s}<r>", .{update_request.name});
+                    Output.errGeneric("could not determine executable to run for package <b>{s}<r>", .{update_request.name});
                     Global.exit(1);
                 }
             }
@@ -541,7 +569,7 @@ pub const BunxCommand = struct {
             try std.fs.selfExePathAlloc(ctx.allocator),
             "add",
             "--no-summary",
-            package_fmt,
+            install_param,
         }) catch
             unreachable; // upper bound is known
 
@@ -563,15 +591,13 @@ pub const BunxCommand = struct {
 
         const argv_to_use = args.slice();
 
-        if (Environment.isDebug) {
-            Output.debug("argv_to_use: {s}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
-        }
+        debug("installing package: {s}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
         var child_process = std.ChildProcess.init(argv_to_use, default_allocator);
         child_process.cwd_dir = bunx_install_dir;
+        debug("cwd: {}", .{bun.toFD(bunx_install_dir.fd)});
         // https://github.com/ziglang/zig/issues/5190
         if (Environment.isWindows) {
             child_process.cwd = bunx_cache_dir;
-            Output.debug("child_process.cwd: {?s}", .{child_process.cwd});
         }
         const env_map = try this_bundler.env.map.cloneToEnvMap(ctx.allocator);
         child_process.env_map = &env_map;
@@ -627,7 +653,7 @@ pub const BunxCommand = struct {
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-        if (getBinNameFromTempDirectory(&this_bundler, bunx_cache_dir, update_request.name)) |package_name_for_bin| {
+        if (getBinNameFromTempDirectory(&this_bundler, bunx_cache_dir, result_package_name)) |package_name_for_bin| {
             if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                 absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
@@ -652,7 +678,7 @@ pub const BunxCommand = struct {
             }
         } else |_| {}
 
-        Output.prettyErrorln("<r><red>error<r><d>:<r> could not determine executable to run for package <r><b>{s}<r>", .{update_request.name});
+        Output.errGeneric("could not determine executable to run for package <b>{s}<r>", .{update_request.name});
         Global.exit(1);
     }
 };

@@ -8719,7 +8719,8 @@ pub const Interpreter = struct {
         }
 
         pub fn __deinit(this: *@This()) void {
-            if (this.fd != bun.invalid_fd) {
+            // windows reader closes the file descriptor
+            if (this.fd != bun.invalid_fd and !bun.Environment.isWindows) {
                 log("IOReader(0x{x}) __deinit fd={}", .{ @intFromPtr(this), this.fd });
                 _ = bun.sys.close(this.fd);
             }

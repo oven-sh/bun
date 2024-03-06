@@ -1137,6 +1137,7 @@ pub const getcwd = std.os.getcwd;
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
     var temp: [MAX_PATH_BYTES]u8 = undefined;
+    @memset(temp[0..], 0);
     const temp_slice = try getcwd(&temp);
     return allocator.dupe(u8, temp_slice);
 }

@@ -1657,7 +1657,7 @@ class ClientRequest extends OutgoingMessage {
     this.#host = host;
     this.#protocol = protocol;
 
-    var timeout = options.timeout;
+    const timeout = options.timeout;
     if (timeout !== undefined && timeout !== 0) {
       this.setTimeout(timeout, undefined);
     }
@@ -1716,8 +1716,14 @@ class ClientRequest extends OutgoingMessage {
 
     // this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 
-    var { signal: _signal, ...optsWithoutSignal } = options;
+    const { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
+
+    // needs to run on the next tick so that consumer has time to register the event handler
+    process.nextTick(() => {
+      // this will be FakeSocket since we use fetch() atm under the hood.
+      this.emit("socket", this.socket);
+    });
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {

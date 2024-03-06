@@ -394,21 +394,9 @@ const NetworkTask = struct {
         this.allocator = allocator;
 
         const url = URL.parse(this.url_buf);
-        this.http = AsyncHTTP.init(
-            allocator,
-            .GET,
-            url,
-            header_builder.entries,
-            header_builder.content.ptr.?[0..header_builder.content.len],
-            &this.response_buffer,
-            "",
-            0,
-            this.getCompletionCallback(),
-            this.package_manager.httpProxy(url),
-            null,
-            HTTP.FetchRedirect.follow,
-            null,
-        );
+        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", 0, this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
+            .http_proxy = this.package_manager.httpProxy(url),
+        });
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
         if (PackageManager.verbose_install) {
@@ -478,21 +466,9 @@ const NetworkTask = struct {
 
         const url = URL.parse(this.url_buf);
 
-        this.http = AsyncHTTP.init(
-            allocator,
-            .GET,
-            url,
-            header_builder.entries,
-            header_buf,
-            &this.response_buffer,
-            "",
-            0,
-            this.getCompletionCallback(),
-            this.package_manager.httpProxy(url),
-            null,
-            HTTP.FetchRedirect.follow,
-            null,
-        );
+        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", 0, this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
+            .http_proxy = this.package_manager.httpProxy(url),
+        });
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
         if (PackageManager.verbose_install) {
             this.http.client.verbose = true;

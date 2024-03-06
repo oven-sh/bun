@@ -64,11 +64,24 @@ const pairs = [
   ["-sn--a5mlrn7s-.gevideo.com", "-sn--a5mlrn7s-.gevideo.com"],
 ];
 
+const invalids = [
+  ["@", ""],
+  ["a@b", ""],
+  [null, null],
+  [undefined, undefined],
+  ["2001:0db8:85a3:0000:0000:8a2e:0370:7334", ""],
+];
+
 describe("url.domainToASCII", () => {
   for (const [domain, ascii] of pairs) {
     test(`convert from '${domain}' to '${ascii}'`, () => {
       const domainConvertedToASCII = url.domainToASCII(domain);
       expect(domainConvertedToASCII).toEqual(ascii);
+    });
+  }
+  for (const [input, expected] of invalids) {
+    test(`-> '${input}' is '${expected}'`, () => {
+      expect(url.domainToASCII(input)).toEqual(expected);
     });
   }
 });
@@ -78,6 +91,11 @@ describe("url.domainToUnicode", () => {
     test(`convert from '${ascii}' to '${domain}'`, () => {
       const asciiConvertedToUnicode = url.domainToUnicode(ascii);
       expect(asciiConvertedToUnicode).toEqual(domain);
+    });
+  }
+  for (const [input, expected] of invalids) {
+    test(`-> '${input}' is '${expected}'`, () => {
+      expect(url.domainToASCII(input)).toEqual(expected);
     });
   }
 });

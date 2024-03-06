@@ -1789,15 +1789,47 @@ JSC_DEFINE_HOST_FUNCTION(functionDomainToASCII, (JSC::JSGlobalObject * globalObj
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (callFrame->argumentCount() < 1) {
+        throwTypeError(globalObject, scope, "domainToASCII needs 1 argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
     auto arg0 = callFrame->argument(0);
+    if (arg0.isUndefined())
+        return JSC::JSValue::encode(jsUndefined());
+    if (arg0.isNull())
+        return JSC::JSValue::encode(jsNull());
     if (!arg0.isString()) {
-        throwTypeError(globalObject, scope, "the \"domain\" argument is missing or not a string"_s);
+        throwTypeError(globalObject, scope, "the \"domain\" argument must be a string"_s);
         return JSC::JSValue::encode(jsUndefined());
     }
 
     auto domain = arg0.toWTFString(globalObject);
     if (domain.isNull())
         return JSC::JSValue::encode(jsUndefined());
+
+    // https://url.spec.whatwg.org/#forbidden-host-code-point
+    if (
+        domain.contains(0x0000) || // U+0000 NULL
+        domain.contains(0x0009) || // U+0009 TAB
+        domain.contains(0x000A) || // U+000A LF
+        domain.contains(0x000D) || // U+000D CR
+        domain.contains(0x0020) || // U+0020 SPACE
+        domain.contains(0x0023) || // U+0023 (#)
+        domain.contains(0x002F) || // U+002F (/)
+        domain.contains(0x003A) || // U+003A (:)
+        domain.contains(0x003C) || // U+003C (<)
+        domain.contains(0x003E) || // U+003E (>)
+        domain.contains(0x003F) || // U+003F (?)
+        domain.contains(0x0040) || // U+0040 (@)
+        domain.contains(0x005B) || // U+005B ([)
+        domain.contains(0x005C) || // U+005C (\)
+        domain.contains(0x005D) || // U+005D (])
+        domain.contains(0x005E) || // U+005E (^)
+        domain.contains(0x007C) // // U+007C (|).
+    )
+        return JSC::JSValue::encode(jsEmptyString(vm));
+
     if (domain.containsOnlyASCII())
         return JSC::JSValue::encode(arg0);
     if (domain.is8Bit())
@@ -1824,15 +1856,47 @@ JSC_DEFINE_HOST_FUNCTION(functionDomainToUnicode, (JSC::JSGlobalObject * globalO
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (callFrame->argumentCount() < 1) {
+        throwTypeError(globalObject, scope, "domainToUnicode needs 1 argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
     auto arg0 = callFrame->argument(0);
+    if (arg0.isUndefined())
+        return JSC::JSValue::encode(jsUndefined());
+    if (arg0.isNull())
+        return JSC::JSValue::encode(jsNull());
     if (!arg0.isString()) {
-        throwTypeError(globalObject, scope, "the \"domain\" argument is missing or not a string"_s);
+        throwTypeError(globalObject, scope, "the \"domain\" argument must be a string"_s);
         return JSC::JSValue::encode(jsUndefined());
     }
 
     auto domain = arg0.toWTFString(globalObject);
     if (domain.isNull())
         return JSC::JSValue::encode(jsUndefined());
+
+    // https://url.spec.whatwg.org/#forbidden-host-code-point
+    if (
+        domain.contains(0x0000) || // U+0000 NULL
+        domain.contains(0x0009) || // U+0009 TAB
+        domain.contains(0x000A) || // U+000A LF
+        domain.contains(0x000D) || // U+000D CR
+        domain.contains(0x0020) || // U+0020 SPACE
+        domain.contains(0x0023) || // U+0023 (#)
+        domain.contains(0x002F) || // U+002F (/)
+        domain.contains(0x003A) || // U+003A (:)
+        domain.contains(0x003C) || // U+003C (<)
+        domain.contains(0x003E) || // U+003E (>)
+        domain.contains(0x003F) || // U+003F (?)
+        domain.contains(0x0040) || // U+0040 (@)
+        domain.contains(0x005B) || // U+005B ([)
+        domain.contains(0x005C) || // U+005C (\)
+        domain.contains(0x005D) || // U+005D (])
+        domain.contains(0x005E) || // U+005E (^)
+        domain.contains(0x007C) // // U+007C (|).
+    )
+        return JSC::JSValue::encode(jsEmptyString(vm));
+
     if (!domain.is8Bit())
         return JSC::JSValue::encode(arg0);
 

@@ -1440,21 +1440,35 @@ class ClientRequest extends OutgoingMessage {
       url = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`;
     }
     try {
-      //@ts-ignore
-      this.#fetchRequest = fetch(url, {
+      const fetchOptions: any = {
         method,
         headers: this.getHeaders(),
         body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
         redirect: "manual",
-        verbose: !!$debug,
         signal: this[kAbortController].signal,
-        proxy: proxy,
 
         // Timeouts are handled via this.setTimeout.
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
-      })
+      };
+
+      if (!!$debug) {
+        fetchOptions.verbose = true;
+      }
+
+      if (proxy) {
+        fetchOptions.proxy = proxy;
+      }
+
+      const socketPath = this.#socketPath;
+
+      if (socketPath) {
+        fetchOptions.unix = socketPath;
+      }
+
+      //@ts-ignore
+      this.#fetchRequest = fetch(url, fetchOptions)
         .then(response => {
           const prevIsHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = response.url.startsWith("https:");

@@ -634,18 +634,13 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn connectSocket(this: *@This(), client: *HTTPClient, socket_path: []const u8) !HTTPSocket {
             client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
-
-            if (HTTPSocket.connectUnixAnon(
+            const socket = try HTTPSocket.connectUnixAnon(
                 socket_path,
                 this.us_socket_context,
-                undefined,
-            )) |socket| {
-                client.allow_retry = false;
-                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
-                return socket;
-            }
-
-            return error.FailedToOpenSocket;
+                ActiveSocket.init(client).ptr(),
+            );
+            client.allow_retry = false;
+            return socket;
         }
 
         pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !HTTPSocket {

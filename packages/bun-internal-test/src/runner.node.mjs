@@ -39,16 +39,7 @@ function maketemp() {
   return prevTmpdir;
 }
 
-function defaultConcurrency() {
-  // Concurrency causes more flaky tests, only enable it by default on windows
-  // See https://github.com/oven-sh/bun/issues/8071
-  if (windows) {
-    return Math.floor((cpus().length - 2) / 3);
-  }
-  return 1;
-}
-
-const run_concurrency = Math.max(Number(process.env["BUN_TEST_CONCURRENCY"] || defaultConcurrency(), 10), 1);
+const run_concurrency = 1;
 
 const extensions = [".js", ".ts", ".jsx", ".tsx"];
 
@@ -159,6 +150,23 @@ function getMaxFileDescriptor(path) {
 }
 let hasInitialMaxFD = false;
 
+const activeTests = new Map();
+
+function checkSlowTests() {
+  const now = Date.now();
+  for (const [path, start] of activeTests) {
+    if (now - start > 1000 * 60 * 1) {
+      console.error(
+        `\x1b[33mwarning\x1b[0;2m:\x1b[0m Test ${JSON.stringify(path)} has been running for ${Math.ceil(
+          (now - start) / 1000,
+        )}s`,
+      );
+    }
+  }
+}
+
+setInterval(checkSlowTests, 1000 * 60 * 1).unref();
+
 async function runTest(path) {
   const name = path.replace(cwd, "").slice(1);
   let exitCode, signal, err, output;
@@ -172,62 +180,68 @@ async function runTest(path) {
 
   const start = Date.now();
 
-  await new Promise((finish, reject) => {
-    const chunks = [];
-    process.stdout.write("\n\x1b[2K\r" + "Starting " + name + "...\n");
+  activeTests.set(path, start);
 
-    const proc = spawn(bunExe, ["test", resolve(path)], {
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 1000 * 60 * 3,
-      env: {
-        ...process.env,
-        FORCE_COLOR: "1",
-        BUN_GARBAGE_COLLECTOR_LEVEL: "1",
-        BUN_JSC_forceRAMSize: force_ram_size,
-        BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
-        // reproduce CI results locally
-        GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
-        BUN_DEBUG_QUIET_LOGS: "1",
-        TMPDIR: maketemp(),
-      },
-    });
-    proc.stdout.once("end", () => {
-      done();
-    });
+  try {
+    await new Promise((finish, reject) => {
+      const chunks = [];
+      process.stdout.write("\n\x1b[2K\r" + "Starting " + name + "...\n");
 
-    let doneCalls = 0;
-    let done = () => {
-      // TODO: wait for stderr as well
-      // spawn.test currently causes it to hang
-      if (doneCalls++ === 1) {
-        actuallyDone();
+      const proc = spawn(bunExe, ["test", resolve(path)], {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 1000 * 60 * 3,
+        env: {
+          ...process.env,
+          FORCE_COLOR: "1",
+          BUN_GARBAGE_COLLECTOR_LEVEL: "1",
+          BUN_JSC_forceRAMSize: force_ram_size,
+          BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+          // reproduce CI results locally
+          GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
+          BUN_DEBUG_QUIET_LOGS: "1",
+          TMPDIR: maketemp(),
+        },
+      });
+      proc.stdout.once("end", () => {
+        done();
+      });
+
+      let doneCalls = 0;
+      let done = () => {
+        // TODO: wait for stderr as well
+        // spawn.test currently causes it to hang
+        if (doneCalls++ === 1) {
+          actuallyDone();
+        }
+      };
+      function actuallyDone() {
+        output = Buffer.concat(chunks).toString();
+        finish();
       }
-    };
-    function actuallyDone() {
-      output = Buffer.concat(chunks).toString();
-      finish();
-    }
 
-    proc.stdout.on("data", chunk => {
-      chunks.push(chunk);
-      if (run_concurrency === 1) process.stdout.write(chunk);
-    });
-    proc.stderr.on("data", chunk => {
-      chunks.push(chunk);
-      if (run_concurrency === 1) process.stderr.write(chunk);
-    });
+      proc.stdout.on("data", chunk => {
+        chunks.push(chunk);
+        if (run_concurrency === 1) process.stdout.write(chunk);
+      });
+      proc.stderr.on("data", chunk => {
+        chunks.push(chunk);
+        if (run_concurrency === 1) process.stderr.write(chunk);
+      });
 
-    proc.once("exit", (code_, signal_) => {
-      exitCode = code_;
-      signal = signal_;
-      done();
+      proc.once("exit", (code_, signal_) => {
+        exitCode = code_;
+        signal = signal_;
+        done();
+      });
+      proc.once("error", err_ => {
+        err = err_;
+        done = () => {};
+        actuallyDone();
+      });
     });
-    proc.once("error", err_ => {
-      err = err_;
-      done = () => {};
-      actuallyDone();
-    });
-  });
+  } finally {
+    activeTests.delete(path);
+  }
 
   if (!hasInitialMaxFD) {
     getMaxFileDescriptor();

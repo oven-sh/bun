@@ -1270,6 +1270,7 @@ pub const RunCommand = struct {
             return true;
         }
 
+        // Run package.json script
         if (root_dir_info.enclosing_package_json) |package_json| {
             if (package_json.scripts) |scripts| {
                 if (scripts.get(script_name_to_search)) |script_content| {
@@ -1321,27 +1322,30 @@ pub const RunCommand = struct {
                     }
 
                     return true;
-                } else if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
-                    (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
-                {
-                    Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
-                        if (Output.enable_ansi_colors) {
-                            ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                        } else {
-                            ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                        }
-
-                        Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                            std.fs.path.basename(script_name_to_search),
-                            @errorName(err),
-                        });
-                        if (@errorReturnTrace()) |trace| {
-                            std.debug.dumpStackTrace(trace.*);
-                        }
-                        Global.exit(1);
-                    };
                 }
             }
+        }
+
+        // Run absolute/relative path
+        if ((script_name_to_search.len > 1 and script_name_to_search[0] == '/') or
+            (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
+        {
+            Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
+                if (Output.enable_ansi_colors) {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                    std.fs.path.basename(script_name_to_search),
+                    @errorName(err),
+                });
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpStackTrace(trace.*);
+                }
+                Global.exit(1);
+            };
         }
 
         if (Environment.isWindows) try_bunx_file: {

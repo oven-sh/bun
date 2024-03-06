@@ -639,7 +639,7 @@ describe("deno_task", () => {
       .error("Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.")
       .runAsTest("|& 2");
 
-    TestBuilder.command`echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)' > output.txt`
+    TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)' > output.txt`
       .fileEquals("output.txt", "1\n")
       .runAsTest("pipe with redirect to file");
 

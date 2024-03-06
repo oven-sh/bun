@@ -508,6 +508,12 @@ pub const EnvMap = struct {
         return .{ .map = MapType.init(alloc) };
     }
 
+    fn initWithCapacity(alloc: Allocator, cap: usize) EnvMap {
+        var map = MapType.init(alloc);
+        map.ensureTotalCapacity(cap) catch bun.outOfMemory();
+        return .{ .map = map };
+    }
+
     fn deinit(this: *EnvMap) void {
         this.derefStrings();
         this.map.deinit();
@@ -1017,9 +1023,8 @@ pub const Interpreter = struct {
         interpreter.allocator = allocator;
 
         const export_env = brk: {
-            var export_env = EnvMap.init(allocator);
             // This will be set in the shell builtin to `process.env`
-            if (event_loop == .js) break :brk export_env;
+            if (event_loop == .js) break :brk EnvMap.init(allocator);
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
                 if (event_loop == .js) {
@@ -1028,6 +1033,9 @@ pub const Interpreter = struct {
 
                 break :env_loader event_loop.env();
             };
+
+            // This will save ~2x memory
+            var export_env = EnvMap.initWithCapacity(allocator, env_loader.map.map.unmanaged.entries.len);
 
             var iter = env_loader.map.iter();
             while (iter.next()) |entry| {

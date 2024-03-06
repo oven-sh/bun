@@ -52,27 +52,35 @@ it("provide body", async () => {
 it("handle redirect to non-unix", async () => {
   startServer({
     fetch(req) {
-      console.log('ip', req.url);
+      console.log("ip", req.url);
       if (req.url.endsWith("/world")) {
         return new Response(req.body);
       }
       return new Response(null, { status: 404 });
-    }
-  })
+    },
+  });
   const path = startServerUnix({
     fetch(req) {
-      console.log('unix', req.url);
+      console.log("unix", req.url);
       if (req.url.endsWith("/hello")) {
-        return new Response(null, { status: 302, headers: { Location: `http://${server.hostname}:${server.port}/world` } });
+        return new Response(null, {
+          status: 302,
+          headers: { Location: `http://${server.hostname}:${server.port}/world` },
+        });
       }
       return new Response(null, { status: 404 });
     },
   });
   // POST with body
   for (let i = 0; i < 20; i++) {
-    const response = await fetch("http://localhost/hello", { method: "POST", body: String(i), unix: path, redirect: "follow", verbose: true });
+    const response = await fetch("http://localhost/hello", {
+      method: "POST",
+      body: String(i),
+      unix: path,
+      redirect: "follow",
+      verbose: true,
+    });
     expect(response.status).toBe(200);
     expect(await response.text()).toBe(String(i));
   }
-
 });

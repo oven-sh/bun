@@ -13,9 +13,9 @@ const body = await response.json();
 console.log(body); // { ... }
 ```
 
-The `unix` option is a string that specifies the local file path to a unix domain socket. The `fetch()` function will use the socket to send the request to the server instead of using a TCP network connection. `https` is also supported by using the `https://` protocol in the URL instead of `http://`.
-
 ---
+
+The `unix` option is a string that specifies the local file path to a unix domain socket. The `fetch()` function will use the socket to send the request to the server instead of using a TCP network connection. `https` is also supported by using the `https://` protocol in the URL instead of `http://`.
 
 To send a `POST` request to an API endpoint over a unix domain socket:
 

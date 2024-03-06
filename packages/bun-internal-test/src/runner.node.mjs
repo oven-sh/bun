@@ -174,6 +174,7 @@ async function runTest(path) {
 
   await new Promise((finish, reject) => {
     const chunks = [];
+    process.stdout.write("\n\x1b[2K\r" + "Starting " + name + "...\n");
 
     const proc = spawn(bunExe, ["test", resolve(path)], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -198,7 +199,7 @@ async function runTest(path) {
     let done = () => {
       // TODO: wait for stderr as well
       // spawn.test currently causes it to hang
-      if (doneCalls++ == 1) {
+      if (doneCalls++ === 1) {
         actuallyDone();
       }
     };

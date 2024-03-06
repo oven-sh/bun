@@ -27,7 +27,7 @@ for (let [gcTick, label] of [
       const hugeString = "hello".repeat(50000).slice();
 
       it("as an array", () => {
-        const { stdout } = spawnSync(["echo", "hi"]);
+        const { stdout } = spawnSync(["node", "-e", "console.log('hi')"]);
         gcTick();
         // stdout is a Buffer
         const text = stdout!.toString();
@@ -67,7 +67,7 @@ for (let [gcTick, label] of [
       it("throws errors for invalid arguments", async () => {
         expect(() => {
           spawnSync({
-            cmd: ["echo", "hi"],
+            cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
         }).toThrow("No such file or directory");
@@ -80,7 +80,7 @@ for (let [gcTick, label] of [
       it("as an array", async () => {
         gcTick();
         await (async () => {
-          const { stdout } = spawn(["echo", "hello"], {
+          const { stdout } = spawn(["node", "-e", "console.log('hello')"], {
             stdout: "pipe",
             stderr: "ignore",
             stdin: "ignore",
@@ -195,7 +195,7 @@ for (let [gcTick, label] of [
       it.skip("Uint8Array works as stdout", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(11);
-        const { stdout } = spawnSync(["echo", "hello world"], {
+        const { stdout } = spawnSync(["node", "-e", "console.log('hello world')"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
@@ -211,7 +211,7 @@ for (let [gcTick, label] of [
       it.skip("Uint8Array works as stdout when is smaller than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(5);
-        const { stdout } = spawnSync(["echo", "hello world"], {
+        const { stdout } = spawnSync(["node", "-e", "console.log('hello world')"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
@@ -227,7 +227,7 @@ for (let [gcTick, label] of [
       it.skip("Uint8Array works as stdout when is the exactly size than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(12);
-        const { stdout } = spawnSync(["echo", "hello world"], {
+        const { stdout } = spawnSync(["node", "-e", "console.log('hello world')"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
@@ -243,7 +243,7 @@ for (let [gcTick, label] of [
       it.skip("Uint8Array works as stdout when is larger than output", () => {
         gcTick();
         const stdout_buffer = new Uint8Array(15);
-        const { stdout } = spawnSync(["echo", "hello world"], {
+        const { stdout } = spawnSync(["node", "-e", "console.log('hello world')"], {
           stdout: stdout_buffer,
           stderr: null,
           stdin: null,
@@ -273,7 +273,7 @@ for (let [gcTick, label] of [
         rmSync(tmp + "out.123.txt", { force: true });
         gcTick();
         const { exited } = spawn({
-          cmd: ["echo", "hello"],
+          cmd: ["node", "-e", "console.log('hello')"],
           stdout: Bun.file(tmp + "out.123.txt"),
         });
 
@@ -404,7 +404,7 @@ for (let [gcTick, label] of [
 
         function helloWorld() {
           return spawn({
-            cmd: ["echo", "hello"],
+            cmd: ["node", "-e", "console.log('hello')"],
             stdout: "pipe",
             stdin: "ignore",
           });
@@ -478,7 +478,7 @@ for (let [gcTick, label] of [
       it("throws errors for invalid arguments", async () => {
         expect(() => {
           spawnSync({
-            cmd: ["echo", "hi"],
+            cmd: ["node", "-e", "console.log('hi')"],
             cwd: "./this-should-not-exist",
           });
         }).toThrow("No such file or directory");
@@ -667,7 +667,7 @@ it("#3480", async () => {
     var server = Bun.serve({
       port: 0,
       fetch: (req, res) => {
-        Bun.spawnSync(["echo", "1"], {});
+        Bun.spawnSync(["node", "-e", "console.log('1')"], {});
         return new Response("Hello world!");
       },
     });
@@ -692,14 +692,14 @@ describe("close handling", () => {
 
           function getExitPromise() {
             const { exited: proc1Exited } = spawn({
-              cmd: ["echo", "Executing test " + thisTest],
+              cmd: ["node", "-e", "console.log('" + "Executing test " + thisTest + "')"],
               stdin,
               stdout,
               stderr,
             });
 
             const { exited: proc2Exited } = spawn({
-              cmd: ["echo", "Executing test " + thisTest],
+              cmd: ["node", "-e", "console.log('" + "Executing test " + thisTest + "')"],
               stdin,
               stdout,
               stderr,

@@ -2178,6 +2178,9 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
 }
 
 pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    this.unix_socket_path.deinit();
+    this.unix_socket_path = JSC.ZigString.Slice.empty;
+
     this.state.response_message_buffer.deinit();
     // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
     socket.ext(**anyopaque).?.* = bun.cast(

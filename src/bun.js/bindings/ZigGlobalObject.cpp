@@ -1898,6 +1898,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDomainToUnicode, (JSC::JSGlobalObject * globalO
         return JSC::JSValue::encode(jsEmptyString(vm));
 
     if (!domain.is8Bit())
+        // this function is only for undoing punycode so its okay if utf-16 text makes it out unchanged.
         return JSC::JSValue::encode(arg0);
 
     domain.convertTo16Bit();

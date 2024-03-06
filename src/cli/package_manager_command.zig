@@ -227,7 +227,7 @@ pub const PackageManagerCommand = struct {
                         }
                     }
 
-                    Output.prettyln("Cleared {d} cached 'bunx' packages", .{ deleted  });
+                    Output.prettyln("Cleared {d} cached 'bunx' packages", .{deleted});
                 }
 
                 Global.exit(if (had_err) 1 else 0);

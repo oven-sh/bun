@@ -748,6 +748,25 @@ pub const FileSystem = struct {
             }
 
             if (Environment.isWindows) {
+                // 'false' is okay here because windows gives you a seemingly unlimited number of open
+                // file handles, while posix has a lower limit.
+                //
+                // This limit does not extend to the C-Runtime which is only 512 to 8196 or so,
+                // but we know that all resolver-related handles are not C-Runtime handles because
+                // `setMaxFd` on Windows (besides being a no-op) only takes in `HANDLE`.
+                //
+                // Handles are automatically closed when the process exits as stated here:
+                // https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process
+                // But in a crazy experiment to find the upper-bound of the number of open handles,
+                // I found that opening upwards of 500k to a million handles in a single process
+                // would cause the process to hang while closing. This might just be Windows slowly
+                // closing the handles, but I think it was a deadlock.
+                //
+                // If it is decided that not closing files ever is a bad idea. This should be
+                // replaced with some form of intelligent count of how many files we opened.
+                // On POSIX we can get away with measuring how high `fd` gets because it typically
+                // assigns these descriptors in ascending order (1 2 3 ...). Windows does not
+                // guarantee this.
                 return false;
             }
 

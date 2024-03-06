@@ -57,6 +57,7 @@
 #include <wtf/Vector.h>
 #include <variant>
 #include "GCDefferalContext.h"
+#include "wtf/StdLibExtras.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -278,7 +279,15 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_deleteBody(
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(WTFMove(name)); })));
+
+    String value;
+    EnsureStillAliveScope argument1 = callFrame->argument(1);
+    if (!argument1.value().isUndefined()) {
+        value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
+        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(WTFMove(name), WTFMove(value)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_delete, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -338,7 +347,15 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_hasBody(JSC
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(WTFMove(name)))));
+
+    String value;
+    EnsureStillAliveScope argument1 = callFrame->argument(1);
+    if (!argument1.value().isUndefined()) {
+        value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
+        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(WTFMove(name), WTFMove(value)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_has, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

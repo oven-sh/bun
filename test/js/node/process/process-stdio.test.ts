@@ -1,7 +1,7 @@
 // @known-failing-on-windows: 1 failing
 import { spawn, spawnSync } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { isatty } from "tty";
 
 test("process.stdin", () => {
@@ -17,10 +17,7 @@ test("process.stdin - read", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: null,
-    env: {
-      ...process.env,
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env: bunEnv,
   });
   expect(stdin).toBeDefined();
   expect(stdout).toBeDefined();

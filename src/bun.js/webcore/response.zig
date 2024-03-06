@@ -632,6 +632,7 @@ pub const Fetch = struct {
     pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";
     pub const fetch_error_blank_url = "fetch() URL must not be a blank string.";
     pub const fetch_error_unexpected_body = "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
+    pub const fetch_error_proxy_unix = "fetch() cannot use a proxy with a unix socket.";
     const JSTypeErrorEnum = std.enums.EnumArray(JSType, string);
     pub const fetch_type_error_names: JSTypeErrorEnum = brk: {
         var errors = JSTypeErrorEnum.initUndefined();
@@ -798,7 +799,6 @@ pub const Fetch = struct {
             this.request_headers = Headers{ .allocator = undefined };
 
             if (this.http != null) {
-                allocator.free(this.http.?.client.unix_socket_path);
                 this.http.?.clearData();
             }
 
@@ -1503,25 +1503,27 @@ pub const Fetch = struct {
                 ).init(
                     fetch_tasklet,
                 ),
-                proxy,
-
-                fetch_options.hostname,
                 fetch_options.redirect_type,
-                fetch_tasklet.signals,
+                .{
+                    .http_proxy = proxy,
+                    .hostname = fetch_options.hostname,
+                    .signals = fetch_tasklet.signals,
+                    .unix_socket_path = fetch_options.unix_socket_path,
+                    .disable_timeout = fetch_options.disable_timeout,
+                    .disable_keepalive = fetch_options.disable_keepalive,
+                    .disable_decompression = fetch_options.disable_decompression,
+                    .reject_unauthorized = fetch_options.reject_unauthorized,
+                    .verbose = fetch_options.verbose,
+                },
             );
 
+            // TODO is this necessary? the http client already sets the redirect type,
+            // so manually setting it here seems redundant
             if (fetch_options.redirect_type != FetchRedirect.follow) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
             }
 
-            fetch_tasklet.http.?.client.unix_socket_path = fetch_options.unix_socket_path;
-            fetch_tasklet.http.?.client.disable_timeout = fetch_options.disable_timeout;
-            fetch_tasklet.http.?.client.verbose = fetch_options.verbose;
-            fetch_tasklet.http.?.client.disable_keepalive = fetch_options.disable_keepalive;
-            fetch_tasklet.http.?.client.disable_decompression = fetch_options.disable_decompression;
-            fetch_tasklet.http.?.client.reject_unauthorized = fetch_options.reject_unauthorized;
-
-            // we wanna to return after headers are received
+            // we want to return after headers are received
             fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
 
             if (fetch_tasklet.request_body == .Sendfile) {
@@ -1569,7 +1571,7 @@ pub const Fetch = struct {
             hostname: ?[]u8 = null,
             memory_reporter: *JSC.MemoryReportingAllocator,
             check_server_identity: JSC.Strong = .{},
-            unix_socket_path: []const u8 = "",
+            unix_socket_path: ZigString.Slice,
         };
 
         pub fn queue(
@@ -1677,17 +1679,18 @@ pub const Fetch = struct {
         var exception_val = [_]JSC.C.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_val;
         var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch @panic("out of memory");
-        var free_memory_reporter = false;
+        // used to clean up dynamically allocated memory on error (a poor man's errdefer)
+        var is_error = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);
         defer {
             if (exception.* != null) {
-                free_memory_reporter = true;
+                is_error = true;
                 ctx.throwValue(JSC.JSValue.c(exception.*));
             }
 
             memory_reporter.report(globalThis.vm());
 
-            if (free_memory_reporter) bun.default_allocator.destroy(memory_reporter);
+            if (is_error) bun.default_allocator.destroy(memory_reporter);
         }
 
         if (arguments.len == 0) {
@@ -1731,7 +1734,7 @@ pub const Fetch = struct {
         var check_server_identity: JSValue = .zero;
 
         defer {
-            if (free_memory_reporter) {
+            if (is_error) {
                 unix_socket_path.deinit();
             }
         }
@@ -1748,7 +1751,7 @@ pub const Fetch = struct {
                     allocator.free(host);
                     hostname = null;
                 }
-                free_memory_reporter = true;
+                is_error = true;
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
 
@@ -1772,7 +1775,7 @@ pub const Fetch = struct {
                     allocator.free(host);
                     hostname = null;
                 }
-                free_memory_reporter = true;
+                is_error = true;
                 return JSPromise.rejectedPromiseValue(
                     globalThis,
                     err,
@@ -2130,7 +2133,7 @@ pub const Fetch = struct {
                                         hostname = null;
                                     }
                                     allocator.free(url_proxy_buffer);
-                                    free_memory_reporter = true;
+                                    is_error = true;
                                     return JSPromise.rejectedPromiseValue(globalThis, err);
                                 }
                                 defer href.deref();
@@ -2163,8 +2166,14 @@ pub const Fetch = struct {
         }
 
         if (url.isEmpty()) {
-            free_memory_reporter = true;
+            is_error = true;
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
+            return JSPromise.rejectedPromiseValue(globalThis, err);
+        }
+
+        if (proxy != null and unix_socket_path.length() > 0) {
+            is_error = true;
+            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_proxy_unix, .{}, ctx);
             return JSPromise.rejectedPromiseValue(globalThis, err);
         }
 
@@ -2261,7 +2270,7 @@ pub const Fetch = struct {
             if (!(url.isHTTP() or url.isHTTPS())) {
                 defer allocator.free(url_proxy_buffer);
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "protocol must be http: or https:", .{}, ctx);
-                free_memory_reporter = true;
+                is_error = true;
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
         }
@@ -2269,7 +2278,7 @@ pub const Fetch = struct {
         if (!method.hasRequestBody() and body.size() > 0) {
             defer allocator.free(url_proxy_buffer);
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
-            free_memory_reporter = true;
+            is_error = true;
             return JSPromise.rejectedPromiseValue(globalThis, err);
         }
 
@@ -2302,7 +2311,7 @@ pub const Fetch = struct {
                             headers_.buf.deinit(allocator);
                             headers_.entries.deinit(allocator);
                         }
-                        free_memory_reporter = true;
+                        is_error = true;
                         return rejected_value;
                     },
                     .result => |fd| fd,
@@ -2373,7 +2382,7 @@ pub const Fetch = struct {
                 switch (res) {
                     .err => |err| {
                         allocator.free(url_proxy_buffer);
-                        free_memory_reporter = true;
+                        is_error = true;
                         const rejected_value = JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
                         body.detach();
                         if (headers) |*headers_| {
@@ -2398,7 +2407,6 @@ pub const Fetch = struct {
 
         const promise_val = promise.value();
 
-        // var resolve = FetchTasklet.FetchResolver.Class.make(ctx: js.JSContextRef, ptr: *ZigType)
         _ = FetchTasklet.queue(
             allocator,
             globalThis,
@@ -2423,13 +2431,13 @@ pub const Fetch = struct {
                 .hostname = hostname,
                 .memory_reporter = memory_reporter,
                 .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .{} else JSC.Strong.create(check_server_identity, globalThis),
-                .unix_socket_path = unix_socket_path.slice(),
+                .unix_socket_path = unix_socket_path,
             },
             // Pass the Strong value instead of creating a new one, or else we
             // will leak it
             // see https://github.com/oven-sh/bun/issues/2985
             promise,
-        ) catch unreachable;
+        ) catch bun.outOfMemory();
 
         return promise_val;
     }

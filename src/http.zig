@@ -763,8 +763,8 @@ pub const HTTPThread = struct {
     }
 
     pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewHTTPContext(is_ssl).HTTPSocket {
-        if (client.unix_socket_path.len > 0) {
-            return try this.context(is_ssl).connectSocket(client, client.unix_socket_path);
+        if (client.unix_socket_path.length() > 0) {
+            return try this.context(is_ssl).connectSocket(client, client.unix_socket_path.slice());
         }
 
         if (client.http_proxy) |url| {
@@ -1529,28 +1529,7 @@ async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
 reject_unauthorized: bool = true,
 
-/// if empty, that means we are not using a unix socket
-unix_socket_path: []const u8 = "",
-
-pub fn init(
-    allocator: std.mem.Allocator,
-    method: Method,
-    url: URL,
-    header_entries: Headers.Entries,
-    header_buf: string,
-    hostname: ?[]u8,
-    signals: Signals,
-) HTTPClient {
-    return HTTPClient{
-        .allocator = allocator,
-        .method = method,
-        .url = url,
-        .header_entries = header_entries,
-        .header_buf = header_buf,
-        .hostname = hostname,
-        .signals = signals,
-    };
-}
+unix_socket_path: JSC.ZigString.Slice = JSC.ZigString.Slice.empty,
 
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect.len > 0) {
@@ -1565,6 +1544,7 @@ pub fn deinit(this: *HTTPClient) void {
         tunnel.deinit();
         this.proxy_tunnel = null;
     }
+    this.unix_socket_path.deinit();
 }
 
 pub fn isKeepAlivePossible(this: *HTTPClient) bool {
@@ -1778,6 +1758,18 @@ pub const AsyncHTTP = struct {
     };
     const AtomicState = std.atomic.Value(State);
 
+    pub const Options = struct {
+        http_proxy: ?URL = null,
+        hostname: ?[]u8 = null,
+        signals: ?Signals = null,
+        unix_socket_path: ?JSC.ZigString.Slice = null,
+        disable_timeout: ?bool = null,
+        verbose: ?bool = null,
+        disable_keepalive: ?bool = null,
+        disable_decompression: ?bool = null,
+        reject_unauthorized: ?bool = null,
+    };
+
     pub fn init(
         allocator: std.mem.Allocator,
         method: Method,
@@ -1788,10 +1780,8 @@ pub const AsyncHTTP = struct {
         request_body: []const u8,
         timeout: usize,
         callback: HTTPClientResult.Callback,
-        http_proxy: ?URL,
-        hostname: ?[]u8,
         redirect_type: FetchRedirect,
-        signals: ?Signals,
+        options: Options,
     ) AsyncHTTP {
         var this = AsyncHTTP{
             .allocator = allocator,
@@ -1802,19 +1792,46 @@ pub const AsyncHTTP = struct {
             .request_body = .{ .bytes = request_body },
             .response_buffer = response_buffer,
             .result_callback = callback,
-            .http_proxy = http_proxy,
-            .signals = signals orelse .{},
-            .async_http_id = if (signals != null and signals.?.aborted != null) async_http_id.fetchAdd(1, .Monotonic) else 0,
+            .http_proxy = options.http_proxy,
+            .signals = options.signals orelse .{},
+            .async_http_id = if (options.signals != null and options.signals.?.aborted != null) async_http_id.fetchAdd(1, .Monotonic) else 0,
+            .timeout = timeout,
         };
 
-        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, hostname, signals orelse this.signals);
-        this.client.async_http_id = this.async_http_id;
-        this.client.timeout = timeout;
-        this.client.http_proxy = this.http_proxy;
-        this.client.redirect_type = redirect_type;
-        this.timeout = timeout;
+        this.client = .{
+            .allocator = allocator,
+            .method = method,
+            .url = url,
+            .header_entries = headers,
+            .header_buf = headers_buf,
+            .hostname = options.hostname,
+            .signals = options.signals orelse this.signals,
+            .async_http_id = this.async_http_id,
+            .timeout = timeout,
+            .http_proxy = this.http_proxy,
+            .redirect_type = redirect_type,
+        };
+        if (options.unix_socket_path) |val| {
+            std.debug.assert(this.client.unix_socket_path.length() == 0);
+            this.client.unix_socket_path = val;
+        }
+        if (options.disable_timeout) |val| {
+            this.client.disable_timeout = val;
+        }
+        if (options.verbose) |val| {
+            this.client.verbose = val;
+        }
+        if (options.disable_decompression) |val| {
+            this.client.disable_decompression = val;
+        }
+        if (options.disable_keepalive) |val| {
+            this.client.disable_keepalive = val;
+        }
+        if (options.reject_unauthorized) |val| {
+            this.client.reject_unauthorized = val;
+        }
 
-        if (http_proxy) |proxy| {
+        if (options.http_proxy) |proxy| {
             // Username between 0 and 4096 chars
             if (proxy.username.len > 0 and proxy.username.len < 4096) {
                 // Password between 0 and 4096 chars
@@ -1874,21 +1891,10 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
-        return @This().init(
-            allocator,
-            method,
-            url,
-            headers,
-            headers_buf,
-            response_buffer,
-            request_body,
-            timeout,
-            undefined,
-            http_proxy,
-            hostname,
-            redirect_type,
-            null,
-        );
+        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, redirect_type, .{
+            .http_proxy = http_proxy,
+            .hostname = hostname,
+        });
     }
 
     fn reset(this: *AsyncHTTP) !void {
@@ -2001,6 +2007,8 @@ pub const AsyncHTTP = struct {
 
         var callback = this.result_callback;
         this.elapsed = http_thread.timer.read() -| this.elapsed;
+        // TODO: this condition seems wrong: if we started with a non-default value, we might
+        // report a redirect even if none happened
         this.redirected = this.client.remaining_redirect_count != default_redirect_count;
         if (result.isSuccess()) {
             this.err = null;
@@ -2189,6 +2197,8 @@ pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext
     this.remaining_redirect_count -|= 1;
     std.debug.assert(this.redirect_type == FetchRedirect.follow);
 
+    // TODO: should this check be before decrementing the redirect count?
+    // the current logic will allow one less redirect than requested
     if (this.remaining_redirect_count == 0) {
         this.fail(error.TooManyRedirects);
         return;

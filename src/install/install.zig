@@ -404,10 +404,10 @@ const NetworkTask = struct {
             "",
             0,
             this.getCompletionCallback(),
-            this.package_manager.httpProxy(url),
-            null,
             HTTP.FetchRedirect.follow,
-            null,
+            .{
+                .http_proxy = this.package_manager.httpProxy(url),
+            }
         );
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
@@ -488,10 +488,11 @@ const NetworkTask = struct {
             "",
             0,
             this.getCompletionCallback(),
-            this.package_manager.httpProxy(url),
-            null,
             HTTP.FetchRedirect.follow,
-            null,
+            .{
+
+                .http_proxy = this.package_manager.httpProxy(url),
+            }
         );
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
         if (PackageManager.verbose_install) {

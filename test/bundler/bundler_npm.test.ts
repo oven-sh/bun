@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
 import assert from "assert";
 import dedent from "dedent";
 import { ESBUILD, itBundled, testForFile } from "./expectBundled";
@@ -6,6 +5,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
   itBundled("npm/ReactSSR", {
+    todo: process.platform === "win32", // TODO(@paperdave)
     install: ["react@next", "react-dom@next"],
     files: {
       "/entry.tsx": /* tsx */ `

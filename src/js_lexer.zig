@@ -2001,7 +2001,7 @@ fn NewLexer_(
             }
 
             if (comptime Environment.allow_assert)
-                std.debug.assert(rest.len == 0 or bun.isSliceInBuffer(rest, text));
+                std.debug.assert(rest.len == 0 or bun.isSliceInBuffer(u8, rest, text));
 
             while (rest.len > 0) {
                 const c = rest[0];

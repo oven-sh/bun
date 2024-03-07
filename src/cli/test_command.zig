@@ -212,7 +212,7 @@ pub const CommandLineReporter = struct {
 
         if (this.jest.bail == this.summary.fail) {
             this.printSummary();
-            Output.prettyError("\nBailed out after {d} failures<r>\n", .{this.jest.bail});
+            Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.jest.bail, if (this.jest.bail == 1) "" else "s" });
             Global.exit(1);
         }
     }
@@ -719,11 +719,28 @@ pub const TestCommand = struct {
             // Treat arguments as filters and scan the codebase
             const filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..];
 
+            const filter_names_normalized = if (!Environment.isWindows)
+                filter_names
+            else brk: {
+                const normalized = try ctx.allocator.alloc([]const u8, filter_names.len);
+                for (filter_names, normalized) |in, *out| {
+                    const to_normalize = try ctx.allocator.dupe(u8, in);
+                    bun.path.posixToPlatformInPlace(u8, to_normalize);
+                    out.* = to_normalize;
+                }
+                break :brk normalized;
+            };
+            defer if (Environment.isWindows) {
+                for (filter_names_normalized) |i|
+                    ctx.allocator.free(i);
+                ctx.allocator.free(filter_names_normalized);
+            };
+
             var scanner = Scanner{
                 .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
                 .options = &vm.bundler.options,
                 .fs = vm.bundler.fs,
-                .filter_names = filter_names,
+                .filter_names = filter_names_normalized,
                 .results = &results,
             };
             const dir_to_scan = brk: {
@@ -1025,13 +1042,12 @@ pub const TestCommand = struct {
 
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    const result = promise.result(vm.global.vm());
-                    vm.runErrorHandler(result, null);
+                    vm.onUnhandledError(vm.global, promise.result(vm.global.vm()));
                     reporter.summary.fail += 1;
 
                     if (reporter.jest.bail == reporter.summary.fail) {
                         reporter.printSummary();
-                        Output.prettyError("\nBailed out after {d} failures<r>\n", .{reporter.jest.bail});
+                        Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
                         Global.exit(1);
                     }
 
@@ -1110,8 +1126,8 @@ pub const TestCommand = struct {
 
         if (is_last) {
             if (jest.Jest.runner != null) {
-                if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |after| {
-                    vm.global.bunVM().runErrorHandler(after, null);
+                if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |err| {
+                    vm.onUnhandledError(vm.global, err);
                 }
             }
         }

@@ -63,26 +63,26 @@ pub const ZigGlobalObject = extern struct {
     pub fn import(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String) callconv(.C) ErrorableString {
         JSC.markBinding(@src());
 
-        return @call(.always_inline, Interface.import, .{ global, specifier, source });
+        return @call(bun.callmod_inline, Interface.import, .{ global, specifier, source });
     }
     pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
         JSC.markBinding(@src());
-        @call(.always_inline, Interface.resolve, .{ res, global, specifier, source, query });
+        @call(bun.callmod_inline, Interface.resolve, .{ res, global, specifier, source, query });
     }
 
     pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        return @call(.always_inline, Interface.promiseRejectionTracker, .{ global, promise, rejection });
+        return @call(bun.callmod_inline, Interface.promiseRejectionTracker, .{ global, promise, rejection });
     }
 
     pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        return @call(.always_inline, Interface.reportUncaughtException, .{ global, exception });
+        return @call(bun.callmod_inline, Interface.reportUncaughtException, .{ global, exception });
     }
 
     pub fn onCrash() callconv(.C) void {
         JSC.markBinding(@src());
-        return @call(.always_inline, Interface.onCrash, .{});
+        return @call(bun.callmod_inline, Interface.onCrash, .{});
     }
 
     pub const Export = shim.exportFunctions(
@@ -924,5 +924,30 @@ comptime {
 
         TestScope.shim.ref();
         BodyValueBuffererContext.shim.ref();
+
+        _ = Bun__LoadLibraryBunString;
     }
+}
+
+/// Returns null on error. Use windows API to lookup the actual error.
+/// The reason this function is in zig is so that we can use our own utf16-conversion functions.
+///
+/// Using characters16() does not seem to always have the sentinel. or something else
+/// broke when I just used it. Not sure. ... but this works!
+pub export fn Bun__LoadLibraryBunString(str: *bun.String) ?*anyopaque {
+    var buf: bun.WPathBuffer = undefined;
+    const data = switch (str.encoding()) {
+        .utf8 => bun.strings.convertUTF8toUTF16InBuffer(&buf, str.utf8()),
+        .utf16 => brk: {
+            @memcpy(buf[0..str.length()], str.utf16());
+            break :brk buf[0..str.length()];
+        },
+        .latin1 => brk: {
+            bun.strings.copyU8IntoU16(&buf, str.latin1());
+            break :brk buf[0..str.length()];
+        },
+    };
+    buf[data.len] = 0;
+    const LOAD_WITH_ALTERED_SEARCH_PATH = 0x00000008;
+    return bun.windows.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
 }

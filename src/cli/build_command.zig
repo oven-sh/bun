@@ -107,15 +107,8 @@ pub const BuildCommand = struct {
                 return;
             }
 
-            // We never want to hit the filesystem for these files
-            // We use the `/$bunfs/` prefix to indicate that it's a virtual path
-            // It is `/$bunfs/` because:
-            //
-            // - `$` makes it unlikely to collide with a real path
-            // - `/$bunfs/` is 8 characters which is fast to compare for 64-bit CPUs
-            //
-            this_bundler.options.public_path = "/$bunfs/root/";
-            this_bundler.resolver.opts.public_path = "/$bunfs/root/";
+            this_bundler.options.public_path = bun.StandaloneModuleGraph.base_public_path ++ "root/";
+            this_bundler.resolver.opts.public_path = bun.StandaloneModuleGraph.base_public_path ++ "root/";
 
             if (outfile.len == 0) {
                 outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);

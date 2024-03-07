@@ -32,11 +32,7 @@ extern "C" void bun_warn_avx_missing(const char* url)
     strcpy(buf + len + strlen(url), "\n\0");
     write(STDERR_FILENO, buf, strlen(buf));
 }
-#else
-extern "C" void bun_warn_avx_missing(char* url)
-{
-}
-#endif // CPU(X86_64)
+#endif
 
 extern "C" int32_t get_process_priority(uint32_t pid)
 {
@@ -59,12 +55,9 @@ extern "C" int32_t set_process_priority(uint32_t pid, int32_t priority)
 #endif // OS(WINDOWS)
 }
 
+#if !OS(WINDOWS)
 extern "C" bool is_executable_file(const char* path)
 {
-#if OS(WINDOWS)
-    return false;
-#else
-
 #if defined(O_EXEC)
     // O_EXEC is macOS specific
     int fd = open(path, O_EXEC | O_CLOEXEC, 0);
@@ -80,8 +73,8 @@ extern "C" bool is_executable_file(const char* path)
 
     // regular file and user can execute
     return S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR);
-#endif // OS(WINDOWS)
 }
+#endif
 
 extern "C" void bun_ignore_sigpipe()
 {
@@ -166,8 +159,12 @@ extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 
 #include <sys/syscall.h>
 
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
+
 // close_range is glibc > 2.33, which is very new
-static ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
+extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
     return syscall(__NR_close_range, start, end, flags);
 }
@@ -176,11 +173,12 @@ extern "C" void on_before_reload_process_linux()
 {
     // close all file descriptors except stdin, stdout, stderr and possibly IPC.
     // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
-    bun_close_range(8, ~0U, 0U);
+    // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
+    bun_close_range(8, ~0U, CLOSE_RANGE_CLOEXEC);
 
     // reset all signals to default
     sigset_t signal_set;
-    sigfillset(&signal_set);
+    sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
 }
 

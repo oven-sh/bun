@@ -833,4 +833,6 @@ export default {
   pathToFileURL: Bun.pathToFileURL,
   fileURLToPath: Bun.fileURLToPath,
   urlToHttpOptions,
+  domainToASCII,
+  domainToUnicode,
 };

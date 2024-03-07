@@ -5275,8 +5275,13 @@ pub const NodeFS = struct {
                 // On Windows, we potentially mutate the path in posixToPlatformInPlace
                 // We cannot mutate JavaScript strings in-place. That will break many things.
                 // So we must always copy the path string on Windows.
-                path = args.file.path.sliceZWithForceCopy(pathbuf, Environment.isWindows);
-                bun.path.posixToPlatformInPlace(u8, @constCast(path));
+                path = path: {
+                    const temp_path = args.file.path.sliceZWithForceCopy(pathbuf, Environment.isWindows);
+                    if (Environment.isWindows) {
+                        bun.path.posixToPlatformInPlace(u8, temp_path);
+                    }
+                    break :path temp_path;
+                };
 
                 var is_dirfd_different = false;
                 var dirfd = args.dirfd;
@@ -6541,7 +6546,7 @@ pub const NodeFS = struct {
         }
 
         const open_flags = os.O.DIRECTORY | os.O.RDONLY;
-        const fd = switch (Syscall.openatOSPath(bun.invalid_fd, src, open_flags, 0)) {
+        const fd = switch (Syscall.openatOSPath(bun.toFD(std.fs.cwd().fd), src, open_flags, 0)) {
             .err => |err| {
                 task.finishConcurrently(.{ .err = err.withPath(this.osPathIntoSyncErrorBuf(src)) });
                 return false;

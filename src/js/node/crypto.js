@@ -511,6 +511,7 @@ var require_hash = __commonJS({
       for (
         var block = this._block, blockSize = this._blockSize, length = data.length, accum = this._len, offset = 0;
         offset < length;
+
       ) {
         for (
           var assigned = accum % blockSize, remainder = Math.min(length - offset, blockSize - assigned), i = 0;
@@ -2395,7 +2396,7 @@ var require_cfb1 = __commonJS({
         (pad = self2._cipher.encryptBlock(self2._prev)),
           (bit = byteParam & (1 << (7 - i)) ? 128 : 0),
           (value = pad[0] ^ bit),
-          (out += (value & 128) >> (i % 8)),
+          (out += (value & 128) >> i % 8),
           (self2._prev = shiftIn(self2._prev, decrypt ? bit : value));
       return out;
     }
@@ -3083,6 +3084,7 @@ var require_evp_bytestokey = __commonJS({
       for (
         var keyLen = keyBits / 8, key = Buffer2.alloc(keyLen), iv = Buffer2.alloc(ivLen || 0), tmp = Buffer2.alloc(0);
         keyLen > 0 || ivLen > 0;
+
       ) {
         var hash = new MD5();
         hash.update(tmp), hash.update(password), salt && hash.update(salt), (tmp = hash.digest());
@@ -5275,6 +5277,7 @@ var require_bn = __commonJS({
           for (
             var c = this.pow(z, q), r = this.pow(a, q.addn(1).iushrn(1)), t = this.pow(a, q), m = s;
             t.cmp(one) !== 0;
+
           ) {
             for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++) tmp = tmp.redSqr();
             assert(i < m);
@@ -6254,6 +6257,7 @@ var require_short = __commonJS({
           r,
           x;
         u.cmpn(0) !== 0;
+
       ) {
         var q = v.div(u);
         (r = v.sub(q.mul(u))), (x = x2.sub(q.mul(x1)));
@@ -9182,6 +9186,7 @@ var require_signature = __commonJS({
       for (
         r[0] & 128 && (r = [0].concat(r)), s[0] & 128 && (s = [0].concat(s)), r = rmPadding(r), s = rmPadding(s);
         !s[0] && !(s[1] & 128);
+
       )
         s = s.slice(1);
       var arr = [2];
@@ -9244,6 +9249,7 @@ var require_ec = __commonJS({
           bytes = this.n.byteLength(),
           ns2 = this.n.sub(new BN(2));
         ;
+
       ) {
         var priv = new BN(drbg.generate(bytes));
         if (!(priv.cmp(ns2) > 0)) return priv.iaddn(1), this.keyFromPrivate(priv);
@@ -11334,6 +11340,7 @@ var require_sign = __commonJS({
           s = !1,
           kv = getKey(x, q, hash, algo);
         s === !1;
+
       )
         (k = makeKey(q, kv, algo)),
           (r = makeR(g, k, p, q)),
@@ -12033,9 +12040,9 @@ function getCurves() {
   return harcoded_curves;
 }
 
-const kCryptoKey = Symbol.for("::bunKeyObjectCryptoKey::");
 class KeyObject {
-  [kCryptoKey];
+  // we use $bunNativePtr so that util.types.isKeyObject can detect it
+  $bunNativePtr = undefined;
   constructor(key) {
     // TODO: check why this is fails
     // if(!(key instanceof CryptoKey)) {
@@ -12044,7 +12051,7 @@ class KeyObject {
     if (typeof key !== "object") {
       throw new TypeError('The "key" argument must be an instance of CryptoKey.');
     }
-    this[kCryptoKey] = key;
+    this.$bunNativePtr = key;
   }
   toString() {
     return "[object KeyObject]";
@@ -12052,21 +12059,21 @@ class KeyObject {
 
   static from(key) {
     if (key instanceof KeyObject) {
-      key = key[kCryptoKey];
+      key = key.$bunNativePtr;
     }
     return new KeyObject(key);
   }
 
   get asymmetricKeyDetails() {
-    return asymmetricKeyDetails(this[kCryptoKey]);
+    return asymmetricKeyDetails(this.$bunNativePtr);
   }
 
   get symmetricKeySize() {
-    return symmetricKeySize(this[kCryptoKey]);
+    return symmetricKeySize(this.$bunNativePtr);
   }
 
   get asymmetricKeyType() {
-    return asymmetricKeyType(this[kCryptoKey]);
+    return asymmetricKeyType(this.$bunNativePtr);
   }
 
   ["export"](options) {
@@ -12104,18 +12111,18 @@ class KeyObject {
           }
         }
     }
-    return exports(this[kCryptoKey], options);
+    return exports(this.$bunNativePtr, options);
   }
 
   equals(otherKey) {
     if (!(otherKey instanceof KeyObject)) {
       throw new TypeError("otherKey must be a KeyObject");
     }
-    return equals(this[kCryptoKey], otherKey[kCryptoKey]);
+    return equals(this.$bunNativePtr, otherKey.$bunNativePtr);
   }
 
   get type() {
-    return this[kCryptoKey].type;
+    return this.$bunNativePtr.type;
   }
 }
 
@@ -12227,7 +12234,7 @@ function _createPublicKey(key) {
   } else if (typeof key === "object") {
     if (key instanceof KeyObject || key instanceof CryptoKey) {
       if (key.type === "private") {
-        return KeyObject.from(createPublicKey({ key: key[kCryptoKey] || key, format: "" }));
+        return KeyObject.from(createPublicKey({ key: key.$bunNativePtr || key, format: "" }));
       }
       const error = new TypeError(
         `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected private`,
@@ -12255,7 +12262,7 @@ function _createPublicKey(key) {
         key.key = actual_key;
       } else if (actual_key instanceof KeyObject || actual_key instanceof CryptoKey) {
         if (actual_key.type === "private") {
-          return KeyObject.from(createPublicKey({ key: actual_key[kCryptoKey] || actual_key, format: "" }));
+          return KeyObject.from(createPublicKey({ key: actual_key.$bunNativePtr || actual_key, format: "" }));
         }
         const error = new TypeError(
           `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${actual_key.type}, expected private`,
@@ -12316,7 +12323,7 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
           .update(data)
           .sign(key);
       } else {
-        result = nativeSign(key[kCryptoKey], data, algorithm, dsaEncoding, padding, saltLength);
+        result = nativeSign(key.$bunNativePtr, data, algorithm, dsaEncoding, padding, saltLength);
       }
       callback(null, result);
     } catch (err) {
@@ -12328,7 +12335,7 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
         .update(data)
         .sign(key);
     } else {
-      return nativeSign(key[kCryptoKey], data, algorithm, dsaEncoding, padding, saltLength);
+      return nativeSign(key.$bunNativePtr, data, algorithm, dsaEncoding, padding, saltLength);
     }
   }
 };
@@ -12359,7 +12366,7 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
           .update(data)
           .verify(key, signature);
       } else {
-        result = nativeVerify(key[kCryptoKey], data, signature, algorithm, dsaEncoding, padding, saltLength);
+        result = nativeVerify(key.$bunNativePtr, data, signature, algorithm, dsaEncoding, padding, saltLength);
       }
       callback(null, result);
     } catch (err) {
@@ -12371,7 +12378,7 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
         .update(data)
         .verify(key, signature);
     } else {
-      return nativeVerify(key[kCryptoKey], data, signature, algorithm, dsaEncoding, padding, saltLength);
+      return nativeVerify(key.$bunNativePtr, data, signature, algorithm, dsaEncoding, padding, saltLength);
     }
   }
 };

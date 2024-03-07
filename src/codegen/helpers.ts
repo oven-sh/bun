@@ -97,3 +97,11 @@ export function readdirRecursiveWithExclusionsAndExtensionsSync(
         : [];
   });
 }
+
+export function pathToUpperSnakeCase(filepath: string) {
+  return filepath
+    .replace(/^.*?:/, "")
+    .split(/[-_./\\]/g)
+    .join("_")
+    .toUpperCase();
+}

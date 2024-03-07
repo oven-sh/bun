@@ -352,8 +352,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
 
     if (millisecondsValue.inherits<JSC::DateInstance>()) {
         auto now = MonotonicTime::now();
-        auto milliseconds = jsCast<JSC::DateInstance*>(millisecondsValue)->internalNumber() - now.approximateWallTime().secondsSinceEpoch().milliseconds();
-        millisecondsValue = JSC::jsNumber(milliseconds > 0 ? milliseconds : 0);
+        double milliseconds = jsCast<JSC::DateInstance*>(millisecondsValue)->internalNumber() - now.approximateWallTime().secondsSinceEpoch().milliseconds();
+        millisecondsValue = JSC::jsNumber(milliseconds > 0 ? std::ceil(milliseconds) : 0);
     }
 
     if (!millisecondsValue.isNumber()) {
@@ -612,6 +612,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stderr                                         BunObject_getter_wrap_stderr                                        DontDelete|PropertyCallback
     stdin                                          BunObject_getter_wrap_stdin                                         DontDelete|PropertyCallback
     stdout                                         BunObject_getter_wrap_stdout                                        DontDelete|PropertyCallback
+    stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 2
     unsafe                                         BunObject_getter_wrap_unsafe                                        DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1

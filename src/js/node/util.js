@@ -240,6 +240,23 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
+function styleText(format, text) {
+  if (typeof text !== "string") {
+    const e = new Error(`The text argument must be of type string. Received type ${typeof text}`);
+    e.code = "ERR_INVALID_ARG_TYPE";
+    throw e;
+  }
+  const formatCodes = inspect.colors[format];
+  if (formatCodes == null) {
+    const e = new Error(
+      `The value "${typeof format === "symbol" ? format.description : format}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
+    );
+    e.code = "ERR_INVALID_ARG_VALUE";
+    throw e;
+  }
+  return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
+}
+
 export default Object.assign(cjs_exports, {
   format,
   formatWithOptions,
@@ -273,4 +290,5 @@ export default Object.assign(cjs_exports, {
   TextDecoder,
   TextEncoder,
   parseArgs,
+  styleText,
 });

@@ -27,6 +27,8 @@ else
 
 pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
 
+pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
+
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
@@ -68,6 +70,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     _,
 
     pub inline fn int(fd: FileDescriptor) FileDescriptorInt {
+        // TODO(@paperdave): make this a compile error to call on windows. every usage is incorrect.
         return @intFromEnum(fd);
     }
 
@@ -173,7 +176,7 @@ pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
-pub const WPathBuffer = [MAX_PATH_BYTES / 2]u16;
+pub const WPathBuffer = [std.os.windows.PATH_MAX_WIDE]u16;
 pub const OSPathChar = if (Environment.isWindows) u16 else u8;
 pub const OSPathSliceZ = [:0]const OSPathChar;
 pub const OSPathSlice = []const OSPathChar;
@@ -463,7 +466,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
     };
 
     const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    global_scope_log("poll({d}) readable: {any} ({d})", .{ fd, result, polls[0].revents });
+    global_scope_log("poll({}) readable: {any} ({d})", .{ fd, result, polls[0].revents });
     return if (result and polls[0].revents & std.os.POLL.HUP != 0)
         PollFlag.hup
     else if (result)
@@ -475,7 +478,24 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
 pub const PollFlag = enum { ready, not_ready, hup };
 pub fn isWritable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
-        @panic("TODO on Windows");
+        var polls = [_]std.os.windows.ws2_32.WSAPOLLFD{
+            .{
+                .fd = socketcast(fd),
+                .events = std.os.POLL.WRNORM,
+                .revents = 0,
+            },
+        };
+        const rc = std.os.windows.ws2_32.WSAPoll(&polls, 1, 0);
+        const result = (if (rc != std.os.windows.ws2_32.SOCKET_ERROR) @as(usize, @intCast(rc)) else 0) != 0;
+        global_scope_log("poll({}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
+        if (result and polls[0].revents & std.os.POLL.WRNORM != 0) {
+            return .hup;
+        } else if (result) {
+            return .ready;
+        } else {
+            return .not_ready;
+        }
+        return;
     }
 
     var polls = [_]std.os.pollfd{
@@ -487,13 +507,13 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
     };
 
     const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    global_scope_log("poll({d}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
+    global_scope_log("poll({}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
     if (result and polls[0].revents & std.os.POLL.HUP != 0) {
-        return PollFlag.hup;
+        return .hup;
     } else if (result) {
-        return PollFlag.ready;
+        return .ready;
     } else {
-        return PollFlag.not_ready;
+        return .not_ready;
     }
 }
 
@@ -549,9 +569,7 @@ pub fn isHeapMemory(memory: anytype) bool {
 
 pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
-pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
-    return slice.len > 0 and @intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and ((@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len));
-}
+pub const isSliceInBuffer = allocators.isSliceInBuffer;
 
 pub inline fn sliceInBuffer(stable: string, value: string) string {
     if (allocators.sliceRange(stable, value)) |_| {
@@ -564,7 +582,7 @@ pub inline fn sliceInBuffer(stable: string, value: string) string {
 }
 
 pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
-    if (!isSliceInBuffer(slice, buffer)) return null;
+    if (!isSliceInBuffer(u8, slice, buffer)) return null;
     const r = [_]u32{
         @as(u32, @truncate(@intFromPtr(slice.ptr) -| @intFromPtr(buffer.ptr))),
         @as(u32, @truncate(slice.len)),
@@ -1397,6 +1415,36 @@ pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
     .free = FailingAllocator.free,
 } };
 
+var __reload_in_progress__ = std.atomic.Value(bool).init(false);
+threadlocal var __reload_in_progress__on_current_thread = false;
+fn isProcessReloadInProgressOnAnotherThread() bool {
+    @fence(.Acquire);
+    return __reload_in_progress__.load(.Monotonic) and !__reload_in_progress__on_current_thread;
+}
+
+pub noinline fn maybeHandlePanicDuringProcessReload() void {
+    if (isProcessReloadInProgressOnAnotherThread()) {
+        Output.flush();
+        if (comptime Environment.isDebug) {
+            Output.debugWarn("panic() called during process reload, ignoring\n", .{});
+        }
+
+        exitThread();
+    }
+
+    // This shouldn't be reachable, but it can technically be because
+    // pthread_exit is a request and not guranteed.
+    if (isProcessReloadInProgressOnAnotherThread()) {
+        while (true) {
+            std.atomic.spinLoopHint();
+
+            if (comptime Environment.isPosix) {
+                std.os.nanosleep(1, 0);
+            }
+        }
+    }
+}
+
 /// Reload Bun's process
 ///
 /// This clones envp, argv, and gets the current executable path
@@ -1409,6 +1457,9 @@ pub fn reloadProcess(
     allocator: std.mem.Allocator,
     clear_terminal: bool,
 ) noreturn {
+    __reload_in_progress__.store(true, .Monotonic);
+    __reload_in_progress__on_current_thread = true;
+
     if (clear_terminal) {
         Output.flush();
         Output.disableBuffering();
@@ -1954,12 +2005,12 @@ pub const win32 = struct {
     ) !void {
         const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT;
 
-        const image_path = &w.peb().ProcessParameters.ImagePathName;
+        const image_path = windows.exePathW();
         var wbuf: WPathBuffer = undefined;
-        @memcpy(wbuf[0..image_path.Length], image_path.Buffer);
-        wbuf[image_path.Length] = 0;
+        @memcpy(wbuf[0..image_path.len], image_path);
+        wbuf[image_path.len] = 0;
 
-        const image_pathZ = wbuf[0..image_path.Length :0];
+        const image_pathZ = wbuf[0..image_path.len :0];
 
         const kernelenv = w.kernel32.GetEnvironmentStringsW();
         defer {
@@ -2011,7 +2062,7 @@ pub const win32 = struct {
             .hStdError = std.io.getStdErr().handle,
         };
         const rc = w.kernel32.CreateProcessW(
-            image_pathZ,
+            image_pathZ.ptr,
             w.kernel32.GetCommandLineW(),
             null,
             null,

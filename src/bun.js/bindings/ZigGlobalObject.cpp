@@ -1,10 +1,10 @@
+
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "helpers.h"
 #include "BunClientData.h"
-
-#include "JavaScriptCore/AggregateError.h"
+#include "JavaScriptCore/JSObjectInlines.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CallFrameInlines.h"
@@ -24,7 +24,6 @@
 #include "JavaScriptCore/IteratorOperations.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSGlobalProxyInlines.h"
-
 #include "JavaScriptCore/JSCallbackConstructor.h"
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSCast.h"
@@ -61,6 +60,7 @@
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "wtf/Gigacage.h"
 #include "wtf/URL.h"
+#include "wtf/URLParser.h"
 #include "wtf/text/ExternalStringImpl.h"
 #include "wtf/text/StringCommon.h"
 #include "wtf/text/StringImpl.h"
@@ -140,6 +140,8 @@
 #include "JSDOMFile.h"
 
 #include "ProcessBindingConstants.h"
+
+#include <unicode/uidna.h>
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -1704,6 +1706,142 @@ JSC_DEFINE_CUSTOM_SETTER(noop_setter,
 // it is moved to JS2Native.cpp, and is called $cpp and $zig
 // see <todo>.md for more information
 
+JSC_DEFINE_HOST_FUNCTION(functionDomainToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        throwTypeError(globalObject, scope, "domainToASCII needs 1 argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto arg0 = callFrame->argument(0);
+    if (arg0.isUndefined())
+        return JSC::JSValue::encode(jsUndefined());
+    if (arg0.isNull())
+        return JSC::JSValue::encode(jsNull());
+    if (!arg0.isString()) {
+        throwTypeError(globalObject, scope, "the \"domain\" argument must be a string"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    auto domain = arg0.toWTFString(globalObject);
+    if (domain.isNull())
+        return JSC::JSValue::encode(jsUndefined());
+
+    // https://url.spec.whatwg.org/#forbidden-host-code-point
+    if (
+        domain.contains(0x0000) || // U+0000 NULL
+        domain.contains(0x0009) || // U+0009 TAB
+        domain.contains(0x000A) || // U+000A LF
+        domain.contains(0x000D) || // U+000D CR
+        domain.contains(0x0020) || // U+0020 SPACE
+        domain.contains(0x0023) || // U+0023 (#)
+        domain.contains(0x002F) || // U+002F (/)
+        domain.contains(0x003A) || // U+003A (:)
+        domain.contains(0x003C) || // U+003C (<)
+        domain.contains(0x003E) || // U+003E (>)
+        domain.contains(0x003F) || // U+003F (?)
+        domain.contains(0x0040) || // U+0040 (@)
+        domain.contains(0x005B) || // U+005B ([)
+        domain.contains(0x005C) || // U+005C (\)
+        domain.contains(0x005D) || // U+005D (])
+        domain.contains(0x005E) || // U+005E (^)
+        domain.contains(0x007C) // // U+007C (|).
+    )
+        return JSC::JSValue::encode(jsEmptyString(vm));
+
+    if (domain.containsOnlyASCII())
+        return JSC::JSValue::encode(arg0);
+    if (domain.is8Bit())
+        domain.convertTo16Bit();
+
+    constexpr static int allowedNameToASCIIErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
+    constexpr static size_t hostnameBufferLength = 2048;
+
+    auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
+    UChar hostnameBuffer[hostnameBufferLength];
+    UErrorCode error = U_ZERO_ERROR;
+    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
+    int32_t numCharactersConverted = uidna_nameToASCII(encoder, StringView(domain).characters16(), domain.length(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
+
+    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted) {
+        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(hostnameBuffer, numCharactersConverted)));
+    }
+    throwTypeError(globalObject, scope, "domainToASCII failed"_s);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionDomainToUnicode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        throwTypeError(globalObject, scope, "domainToUnicode needs 1 argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    auto arg0 = callFrame->argument(0);
+    if (arg0.isUndefined())
+        return JSC::JSValue::encode(jsUndefined());
+    if (arg0.isNull())
+        return JSC::JSValue::encode(jsNull());
+    if (!arg0.isString()) {
+        throwTypeError(globalObject, scope, "the \"domain\" argument must be a string"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    auto domain = arg0.toWTFString(globalObject);
+    if (domain.isNull())
+        return JSC::JSValue::encode(jsUndefined());
+
+    // https://url.spec.whatwg.org/#forbidden-host-code-point
+    if (
+        domain.contains(0x0000) || // U+0000 NULL
+        domain.contains(0x0009) || // U+0009 TAB
+        domain.contains(0x000A) || // U+000A LF
+        domain.contains(0x000D) || // U+000D CR
+        domain.contains(0x0020) || // U+0020 SPACE
+        domain.contains(0x0023) || // U+0023 (#)
+        domain.contains(0x002F) || // U+002F (/)
+        domain.contains(0x003A) || // U+003A (:)
+        domain.contains(0x003C) || // U+003C (<)
+        domain.contains(0x003E) || // U+003E (>)
+        domain.contains(0x003F) || // U+003F (?)
+        domain.contains(0x0040) || // U+0040 (@)
+        domain.contains(0x005B) || // U+005B ([)
+        domain.contains(0x005C) || // U+005C (\)
+        domain.contains(0x005D) || // U+005D (])
+        domain.contains(0x005E) || // U+005E (^)
+        domain.contains(0x007C) // // U+007C (|).
+    )
+        return JSC::JSValue::encode(jsEmptyString(vm));
+
+    if (!domain.is8Bit())
+        // this function is only for undoing punycode so its okay if utf-16 text makes it out unchanged.
+        return JSC::JSValue::encode(arg0);
+
+    domain.convertTo16Bit();
+
+    constexpr static int allowedNameToUnicodeErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
+    constexpr static int hostnameBufferLength = 2048;
+
+    auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
+    UChar hostnameBuffer[hostnameBufferLength];
+    UErrorCode error = U_ZERO_ERROR;
+    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
+
+    int32_t numCharactersConverted = uidna_nameToUnicode(encoder, StringView(domain).characters16(), domain.length(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
+
+    if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToUnicodeErrors) && numCharactersConverted) {
+        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(hostnameBuffer, numCharactersConverted)));
+    }
+    throwTypeError(globalObject, scope, "domainToUnicode failed"_s);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 static inline JSC::EncodedJSValue jsFunctionAddEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, Zig::GlobalObject* castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1951,19 +2089,69 @@ extern "C" bool ReadableStream__isLocked(JSC__JSValue possibleReadableStream, Zi
     return stream != nullptr && ReadableStream::isLocked(globalObject, stream);
 }
 
-extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue possibleReadableStream, JSValue* ptr);
-extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue possibleReadableStream, JSValue* ptr)
+extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue* possibleReadableStream, JSValue* ptr)
 {
     ASSERT(globalObject);
-    JSC::JSObject* object = JSValue::decode(possibleReadableStream).getObject();
-    if (!object || !object->inherits<JSReadableStream>()) {
+    JSC::JSObject* object = JSValue::decode(*possibleReadableStream).getObject();
+    if (!object) {
         *ptr = JSC::JSValue();
         return -1;
     }
 
-    auto* readableStream = jsCast<JSReadableStream*>(object);
     auto& vm = globalObject->vm();
-    auto& builtinNames = WebCore::clientData(vm)->builtinNames();
+    const auto& builtinNames = WebCore::builtinNames(vm);
+
+    if (!object->inherits<JSReadableStream>()) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        JSValue target = object;
+        JSValue fn = JSValue();
+        auto* function = jsDynamicCast<JSC::JSFunction*>(object);
+        if (function && function->jsExecutable() && function->jsExecutable()->isAsyncGenerator()) {
+            fn = object;
+            target = jsUndefined();
+        } else if (auto iterable = object->getIfPropertyExists(globalObject, vm.propertyNames->asyncIteratorSymbol)) {
+            if (iterable.isCallable()) {
+                fn = iterable;
+            }
+        }
+
+        if (UNLIKELY(throwScope.exception())) {
+            *ptr = JSC::JSValue();
+            return -1;
+        }
+
+        if (fn.isEmpty()) {
+            *ptr = JSC::JSValue();
+            return -1;
+        }
+
+        auto* createIterator = globalObject->builtinInternalFunctions().readableStreamInternals().m_readableStreamFromAsyncIteratorFunction.get();
+
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(target);
+        arguments.append(fn);
+
+        JSC::JSValue result = profiledCall(globalObject, JSC::ProfilingReason::API, createIterator, JSC::getCallData(createIterator), JSC::jsUndefined(), arguments);
+
+        if (UNLIKELY(throwScope.exception())) {
+            return -1;
+        }
+
+        if (!result.isObject()) {
+            *ptr = JSC::JSValue();
+            return -1;
+        }
+
+        object = result.getObject();
+
+        ASSERT(object->inherits<JSReadableStream>());
+        *possibleReadableStream = JSValue::encode(object);
+        *ptr = JSValue();
+        ensureStillAliveHere(object);
+        return 0;
+    }
+
+    auto* readableStream = jsCast<JSReadableStream*>(object);
 
     int32_t num = 0;
     if (JSValue numberValue = readableStream->getDirect(vm, builtinNames.bunNativeTypePrivateName())) {
@@ -3307,6 +3495,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGetDirectStreamDetails, (JSC::JSGlobalObject * 
 
     return JSC::JSValue::encode(resultObject);
 }
+
 JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(

@@ -242,7 +242,8 @@ const codes = {}; // exported from errors.js
     if (!ArrayIsArray(expected)) expected = [expected];
 
     let msg = "The ";
-    if (StringPrototypeEndsWith(name, " argument")) msg += `${name} `; // For cases like 'first argument'
+    if (StringPrototypeEndsWith(name, " argument"))
+      msg += `${name} `; // For cases like 'first argument'
     else msg += `"${name}" ${StringPrototypeIncludes(name, ".") ? "property" : "argument"} `;
     msg += "must be ";
 
@@ -1760,7 +1761,7 @@ function formatError(err, constructor, tag, ctx, keys) {
           if (workingDirectory !== undefined) {
             let newLine = markCwd(ctx, line, workingDirectory);
             if (newLine === line) {
-              esmWorkingDirectory ??= pathToFileURL(workingDirectory);
+              esmWorkingDirectory ??= pathToFileURL(workingDirectory).href;
               newLine = markCwd(ctx, line, esmWorkingDirectory);
             }
             line = newLine;

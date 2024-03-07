@@ -6399,7 +6399,7 @@ pub const DeclaredSymbol = struct {
         // TODO: SIMD
         for (is_top_level, refs) |top, ref| {
             if (top) {
-                @call(.always_inline, Fn, .{ ctx, ref });
+                @call(bun.callmod_inline, Fn, .{ ctx, ref });
             }
         }
     }
@@ -6607,7 +6607,7 @@ pub const Scope = struct {
         loc: logger.Loc,
 
         pub fn eql(a: Member, b: Member) bool {
-            return @call(.always_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
+            return @call(bun.callmod_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
         }
     };
 
@@ -6819,7 +6819,7 @@ pub const Macro = struct {
                                 source,
                                 import_range,
                                 log.msgs.allocator,
-                                "Macro \"{any}\" not found",
+                                "Macro \"{s}\" not found",
                                 .{import_record_path},
                                 .stmt,
                                 err,
@@ -7049,8 +7049,8 @@ pub const Macro = struct {
                             this.source,
                             this.caller.loc,
                             this.allocator,
-                            "cannot coerce {s} to Bun's AST. Please return a simpler type",
-                            .{@tagName(value.jsType())},
+                            "cannot coerce {s} ({s}) to Bun's AST. Please return a simpler type",
+                            .{ value.getClassInfoName() orelse "unknown", @tagName(value.jsType()) },
                         ) catch unreachable;
                         break :brk error.MacroFailed;
                     },

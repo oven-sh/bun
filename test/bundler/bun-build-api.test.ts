@@ -1,8 +1,10 @@
-// @known-failing-on-windows: 1 failing
 import { test, expect, describe } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
+
+// TODO(@paperdave)
+const todoOnWindows = process.platform === "win32" ? test.todo : test;
 
 describe("Bun.build", () => {
   test("passing undefined doesnt segfault", () => {
@@ -77,7 +79,7 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  test("rebuilding busts the directory entries cache", () => {
+  todoOnWindows("rebuilding busts the directory entries cache", () => {
     Bun.gc(true);
     const { exitCode, stderr } = Bun.spawnSync({
       cmd: [bunExe(), join(import.meta.dir, "bundler-reloader-script.ts")],

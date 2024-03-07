@@ -5,6 +5,8 @@ import { TestBuilder, redirect } from "./util";
 
 const BUN = process.argv0;
 
+$.nothrow();
+
 describe("lex shell", () => {
   test("basic", () => {
     const expected = [{ "Text": "next" }, { "Delimit": {} }, { "Text": "dev" }, { "Delimit": {} }, { "Eof": {} }];
@@ -311,7 +313,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": true, "stdout": false, "stderr": false, "append": false, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": true,
+          "stdout": false,
+          "stderr": false,
+          "append": false,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -322,7 +333,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": false, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": true,
+          "stderr": false,
+          "append": false,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -333,7 +353,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": false, "stderr": true, "append": false, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": false,
+          "stderr": true,
+          "append": false,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -344,7 +373,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": true, "stderr": true, "append": false, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": true,
+          "stderr": true,
+          "append": false,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -355,7 +393,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": true, "stderr": false, "append": true, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": true,
+          "stderr": false,
+          "append": true,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -366,7 +413,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": false, "stderr": true, "append": true, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": false,
+          "stderr": true,
+          "append": true,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -377,7 +433,16 @@ describe("lex shell", () => {
     expected = [
       { "Text": "cmd1" },
       { "Delimit": {} },
-      { "Redirect": { "stdin": false, "stdout": true, "stderr": true, "append": true, "__unused": 0 } },
+      {
+        "Redirect": {
+          "stdin": false,
+          "stdout": true,
+          "stderr": true,
+          "append": true,
+          duplicate_out: false,
+          "__unused": 0,
+        },
+      },
       { "Text": "file.txt" },
       { "Delimit": {} },
       { "Eof": {} },
@@ -680,8 +745,8 @@ describe("lex shell", () => {
         .exitCode(1)
         .run();
 
-      await TestBuilder.command`echo hi && \`echo uh oh`.error("Unclosed command substitution").run();
-      await TestBuilder.command`echo hi && \`echo uh oh\``
+      await TestBuilder.command`echo hi && ${{ raw: "`echo uh oh" }}`.error("Unclosed command substitution").run();
+      await TestBuilder.command`echo hi && ${{ raw: "`echo uh oh`" }}`
         .stdout("hi\n")
         .stderr("bun: command not found: uh\n")
         .exitCode(1)

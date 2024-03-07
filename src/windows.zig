@@ -3,7 +3,9 @@ const windows = std.os.windows;
 const win32 = windows;
 pub const PATH_MAX_WIDE = windows.PATH_MAX_WIDE;
 pub const MAX_PATH = windows.MAX_PATH;
+pub const WORD = windows.WORD;
 pub const DWORD = windows.DWORD;
+pub const CHAR = windows.CHAR;
 pub const BOOL = windows.BOOL;
 pub const LPVOID = windows.LPVOID;
 pub const LPCVOID = windows.LPCVOID;
@@ -15,11 +17,13 @@ pub const LPCSTR = windows.LPCSTR;
 pub const PWSTR = windows.PWSTR;
 pub const FALSE = windows.FALSE;
 pub const TRUE = windows.TRUE;
+pub const COORD = windows.COORD;
 pub const INVALID_HANDLE_VALUE = windows.INVALID_HANDLE_VALUE;
 pub const FILE_BEGIN = windows.FILE_BEGIN;
 pub const FILE_END = windows.FILE_END;
 pub const FILE_CURRENT = windows.FILE_CURRENT;
 pub const ULONG = windows.ULONG;
+pub const UINT = windows.UINT;
 pub const LARGE_INTEGER = windows.LARGE_INTEGER;
 pub const UNICODE_STRING = windows.UNICODE_STRING;
 pub const NTSTATUS = windows.NTSTATUS;
@@ -68,6 +72,7 @@ pub const nt_maxpath_prefix = [4]u16{ '\\', '\\', '?', '\\' };
 
 const std = @import("std");
 const Environment = bun.Environment;
+
 pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
 pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
 
@@ -2941,6 +2946,10 @@ pub const Win32Error = enum(u16) {
         return @enumFromInt(@intFromEnum(bun.windows.kernel32.GetLastError()));
     }
 
+    pub fn int(this: Win32Error) u16 {
+        return @intFromEnum(this);
+    }
+
     pub fn unwrap(this: @This()) !void {
         if (this == .SUCCESS) return;
         if (this.toSystemErrno()) |err| {
@@ -2975,6 +2984,8 @@ pub fn GetProcAddressA(
 pub extern fn LoadLibraryA(
     [*:0]const u8,
 ) ?*anyopaque;
+
+pub extern fn LoadLibraryExW([*:0]const u16, ?HANDLE, DWORD) ?*anyopaque;
 
 pub extern "kernel32" fn CreateHardLinkW(
     newFileName: LPCWSTR,
@@ -3081,3 +3092,90 @@ pub extern "kernel32" fn OpenProcess(
 
 // https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
 pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
+
+pub fn exePathW() [:0]const u16 {
+    const image_path_unicode_string = &std.os.windows.peb().ProcessParameters.ImagePathName;
+    return image_path_unicode_string.Buffer[0 .. image_path_unicode_string.Length / 2 :0];
+}
+
+pub const KEY_EVENT_RECORD = extern struct {
+    bKeyDown: BOOL,
+    wRepeatCount: WORD,
+    wVirtualKeyCode: WORD,
+    wVirtualScanCode: WORD,
+    uChar: extern union {
+        UnicodeChar: WCHAR,
+        AsciiChar: CHAR,
+    },
+    dwControlKeyState: DWORD,
+};
+
+pub const MOUSE_EVENT_RECORD = extern struct {
+    dwMousePosition: COORD,
+    dwButtonState: COORD,
+    dwControlKeyState: DWORD,
+    dwEventFlags: DWORD,
+};
+
+pub const WINDOW_BUFFER_SIZE_EVENT = extern struct {
+    dwSize: COORD,
+};
+
+pub const MENU_EVENT_RECORD = extern struct {
+    dwCommandId: UINT,
+};
+
+pub const FOCUS_EVENT_RECORD = extern struct {
+    bSetFocus: BOOL,
+};
+
+pub const INPUT_RECORD = extern struct {
+    EventType: WORD,
+    Event: extern union {
+        KeyEvent: KEY_EVENT_RECORD,
+        MouseEvent: MOUSE_EVENT_RECORD,
+        WindowBufferSizeEvent: WINDOW_BUFFER_SIZE_EVENT,
+        MenuEvent: MENU_EVENT_RECORD,
+        FocusEvent: FOCUS_EVENT_RECORD,
+    },
+};
+
+fn Bun__UVSignalHandle__init(
+    global: *bun.JSC.JSGlobalObject,
+    signal_num: i32,
+    callback: *const fn (sig: *libuv.uv_signal_t, num: c_int) callconv(.C) void,
+) callconv(.C) ?*libuv.uv_signal_t {
+    const signal = bun.new(libuv.uv_signal_t, undefined);
+
+    var rc = libuv.uv_signal_init(global.bunVM().uvLoop(), signal);
+    if (rc.errno()) |_| {
+        bun.destroy(signal);
+        return null;
+    }
+
+    rc = libuv.uv_signal_start(signal, callback, signal_num);
+    if (rc.errno()) |_| {
+        libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
+        return null;
+    }
+
+    libuv.uv_unref(@ptrCast(signal));
+
+    return signal;
+}
+
+fn freeWithDefaultAllocator(signal: *anyopaque) callconv(.C) void {
+    bun.destroy(@as(*libuv.uv_signal_t, @alignCast(@ptrCast(signal))));
+}
+
+fn Bun__UVSignalHandle__close(signal: *libuv.uv_signal_t) callconv(.C) void {
+    _ = libuv.uv_signal_stop(signal);
+    libuv.uv_close(@ptrCast(signal), &freeWithDefaultAllocator);
+}
+
+comptime {
+    if (Environment.isWindows) {
+        @export(Bun__UVSignalHandle__init, .{ .name = "Bun__UVSignalHandle__init" });
+        @export(Bun__UVSignalHandle__close, .{ .name = "Bun__UVSignalHandle__close" });
+    }
+}

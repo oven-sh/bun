@@ -202,6 +202,9 @@ var access = function access(...args) {
   open = function open(...args) {
     callbackify(fs.open, args);
   },
+  fdatasync = function fdatasync(...args) {
+    callbackify(fs.fdatasync, args);
+  },
   read = function read(fd, buffer, offsetOrOptions, length, position, callback) {
     let offset = offsetOrOptions;
     let params = null;
@@ -312,6 +315,7 @@ var access = function access(...args) {
   writeSync = fs.writeSync.bind(fs),
   readdirSync = fs.readdirSync.bind(fs),
   readFileSync = fs.readFileSync.bind(fs),
+  fdatasyncSync = fs.fdatasyncSync.bind(fs),
   writeFileSync = fs.writeFileSync.bind(fs),
   readlinkSync = fs.readlinkSync.bind(fs),
   realpathSync = fs.realpathSync.bind(fs),
@@ -366,6 +370,8 @@ var access = function access(...args) {
 
 // TODO: make symbols a separate export somewhere
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
+
+exists[kCustomPromisifiedSymbol] = path => new Promise(resolve => exists(path, resolve));
 
 read[kCustomPromisifiedSymbol] = async function (fd, bufferOrOptions, ...rest) {
   const { isArrayBufferView } = require("node:util/types");
@@ -1331,6 +1337,8 @@ export default {
   writeSync,
   writev,
   writevSync,
+  fdatasync,
+  fdatasyncSync,
   [Symbol.for("::bunternal::")]: {
     ReadStreamClass,
     WriteStreamClass,

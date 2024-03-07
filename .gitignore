@@ -5,6 +5,7 @@ packages/*/*.wasm
 *.a
 profile.json
 
+.env
 node_modules
 .envrc
 .swcrc
@@ -165,4 +166,3 @@ x64
 **/.verdaccio-db.json
 /test-report.md
 /test-report.json
-/src/bun.js/bindings/GeneratedJS2Native.zig

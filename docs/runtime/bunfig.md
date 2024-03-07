@@ -298,7 +298,7 @@ Valid values are:
 ---
 
 - `"fallback"`
-- Check local `node_modules` first, the auto-install any packages that aren't found. You can enable this from the CLI with `bun -i`.
+- Check local `node_modules` first, then auto-install any packages that aren't found. You can enable this from the CLI with `bun -i`.
 
 {% /table %}
 

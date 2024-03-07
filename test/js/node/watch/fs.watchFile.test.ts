@@ -1,15 +1,13 @@
-// @known-failing-on-windows: 1 failing
-import fs, { FSWatcher } from "node:fs";
+import fs from "node:fs";
 import path from "path";
-import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
-import { pathToFileURL } from "bun";
+import { tempDirWithFiles } from "harness";
 
 import { describe, expect, test } from "bun:test";
 // Because macOS (and possibly other operating systems) can return a watcher
 // before it is actually watching, we need to repeat the operation to avoid
 // a race condition.
 function repeat(fn: any) {
-  const interval = setInterval(fn, 20);
+  const interval = setInterval(fn, 20).unref();
   return interval;
 }
 const encodingFileName = `新建文夹件.txt`;
@@ -45,7 +43,7 @@ describe("fs.watchFile", () => {
       increment++;
       fs.writeFileSync(path.join(testDir, "watch.txt"), "hello" + increment);
     });
-    await Bun.sleep(200);
+    await Bun.sleep(300);
     clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, "watch.txt"));
@@ -67,7 +65,7 @@ describe("fs.watchFile", () => {
       increment++;
       fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
     });
-    await Bun.sleep(200);
+    await Bun.sleep(300);
     clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, encodingFileName));
@@ -90,7 +88,7 @@ describe("fs.watchFile", () => {
       increment++;
       fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
     });
-    await Bun.sleep(200);
+    await Bun.sleep(300);
     clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, encodingFileName));

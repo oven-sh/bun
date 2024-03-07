@@ -2012,6 +2012,7 @@ var require_legacy = __commonJS({
     }
     Stream.prototype = {};
     ObjectSetPrototypeOf(Stream.prototype, EE.prototype);
+    Stream.prototype.constructor = Stream; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Stream, EE);
 
     Stream.prototype.pipe = function (dest, options) {
@@ -2289,6 +2290,7 @@ var require_readable = __commonJS({
     }
     Readable.prototype = {};
     ObjectSetPrototypeOf(Readable.prototype, Stream.prototype);
+    Readable.prototype.constructor = Readable; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Readable, Stream);
 
     Readable.prototype.on = function (ev, fn) {
@@ -2518,10 +2520,13 @@ var require_readable = __commonJS({
     function maybeReadMore(stream, state) {
       process.nextTick(_maybeReadMore, stream, state);
     }
-    // REVERT ME
     function emitReadable(stream, state) {
       $debug("NativeReadable - emitReadable", stream.__id);
-      _emitReadable(stream, state);
+      state.needReadable = false;
+      if (!state.emittedReadable) {
+        state.emittedReadable = true;
+        process.nextTick(_emitReadable, stream, state);
+      }
     }
     var destroyImpl = require_destroy();
     var {
@@ -2629,6 +2634,27 @@ var require_readable = __commonJS({
       }
       $debug("about to maybereadmore");
       maybeReadMore(stream, state);
+    }
+    function onEofChunk(stream, state) {
+      if (state.ended) return;
+
+      const decoder = state.decoder;
+      if (decoder) {
+        const chunk = decoder.end();
+        const chunkLength = chunk?.length;
+        if (chunkLength) {
+          state.buffer.push(chunk);
+          state.length += state.objectMode ? 1 : chunkLength;
+        }
+      }
+      state.ended = true;
+      if (state.sync) {
+        emitReadable(stream, state);
+      } else {
+        state.needReadable = false;
+        state.emittedReadable = true;
+        _emitReadable(stream, state);
+      }
     }
     Readable.prototype.isPaused = function () {
       const state = this._readableState;
@@ -3450,6 +3476,7 @@ var require_writable = __commonJS({
     }
     Writable.prototype = {};
     ObjectSetPrototypeOf(Writable.prototype, Stream.prototype);
+    Writable.prototype.constructor = Writable; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Writable, Stream);
     module.exports = Writable;
 
@@ -4412,6 +4439,7 @@ var require_duplex = __commonJS({
     Duplex.prototype = {};
     module.exports = Duplex;
     ObjectSetPrototypeOf(Duplex.prototype, Readable.prototype);
+    Duplex.prototype.constructor = Duplex; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Duplex, Readable);
 
     {
@@ -4488,6 +4516,7 @@ var require_transform = __commonJS({
     }
     Transform.prototype = {};
     ObjectSetPrototypeOf(Transform.prototype, Duplex.prototype);
+    Transform.prototype.constructor = Transform; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Transform, Duplex);
 
     module.exports = Transform;
@@ -4576,6 +4605,7 @@ var require_passthrough = __commonJS({
     PassThrough.prototype = {};
 
     ObjectSetPrototypeOf(PassThrough.prototype, Transform.prototype);
+    PassThrough.prototype.constructor = PassThrough; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(PassThrough, Transform);
 
     PassThrough.prototype._transform = function (chunk, encoding, cb) {

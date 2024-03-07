@@ -32,6 +32,7 @@
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSSet.h"
 #include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Microtask.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ParserError.h"
@@ -44,6 +45,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 
+#include "wtf/Assertions.h"
 #include "wtf/text/ExternalStringImpl.h"
 #include "wtf/text/StringCommon.h"
 #include "wtf/text/StringImpl.h"
@@ -99,6 +101,14 @@
 #include "AsyncContextFrame.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "wtf/text/StringToIntegerConversion.h"
+
+#include "JavaScriptCore/GetterSetter.h"
+#include "JavaScriptCore/CustomGetterSetter.h"
+
+static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
+{
+    return sv.substring(start, end - start);
+}
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -2488,9 +2498,13 @@ JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue 
 bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key)
 {
     JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue value = JSC::JSValue::decode(jsValue);
-    return value.toObject(globalObject)->hasOwnProperty(globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(key))));
+    JSObject* obj = value.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    RELEASE_AND_RETURN(scope, JSC::objectPrototypeHasOwnProperty(globalObject, obj, JSC::Identifier::fromString(vm, Zig::toString(key))));
 }
 
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
@@ -2865,6 +2879,9 @@ void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* globalObj
 {
     JSValue value = JSC::JSValue::decode(JSValue2);
     auto& vm = globalObject->vm();
+    ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
+    ASSERT_WITH_MESSAGE(arg0->status(vm) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
+
     JSC::Exception* exception = nullptr;
     if (!value.inherits<JSC::Exception>()) {
         exception = JSC::Exception::create(vm, value, JSC::Exception::StackCaptureAction::CaptureStack);
@@ -2877,6 +2894,9 @@ void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* globalObj
 void JSC__JSPromise__rejectAsHandled(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
 {
+    ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
+    ASSERT_WITH_MESSAGE(arg0->status(arg0->vm()) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
+
     arg0->rejectAsHandled(arg1, JSC::JSValue::decode(JSValue2));
 }
 void JSC__JSPromise__rejectAsHandledException(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
@@ -2899,6 +2919,9 @@ void JSC__JSPromise__rejectWithCaughtException(JSC__JSPromise* arg0, JSC__JSGlob
 void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
 {
+    ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
+    ASSERT_WITH_MESSAGE(arg0->status(arg0->vm()) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
+
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
 }
 
@@ -3316,6 +3339,10 @@ JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
 }
+JSC__JSValue JSC__JSValue__jsEmptyString(JSC__JSGlobalObject* arg0)
+{
+    return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));
+};
 JSC__JSValue JSC__JSValue__jsNull() { return JSC::JSValue::encode(JSC::jsNull()); };
 JSC__JSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0)
 {
@@ -4037,6 +4064,7 @@ public:
         StringView line = stack.substring(start, end - start);
         offset = end;
 
+        // the proper singular spelling is parenthesis
         auto openingParenthese = line.reverseFind('(');
         auto closingParenthese = line.reverseFind(')');
 
@@ -4048,38 +4076,78 @@ public:
             return false;
         }
 
-        auto firstColon = line.find(':', openingParenthese + 1);
+        auto lineInner = StringView_slice(line, openingParenthese + 1, closingParenthese);
 
-        // if there is no colon, that means we only have a filename and no line number
+        {
+            auto marker1 = 0;
+            auto marker2 = lineInner.find(':', marker1);
 
-        //   at foo (native)
-        if (firstColon == WTF::notFound) {
-            frame.sourceURL = line.substring(openingParenthese + 1, closingParenthese - openingParenthese - 1);
-        } else {
-            // at foo (/path/to/file.js:
-            frame.sourceURL = line.substring(openingParenthese + 1, firstColon - openingParenthese - 1);
-        }
+            if (marker2 == WTF::notFound) {
+                frame.sourceURL = lineInner;
+                goto done_block;
+            }
 
-        if (firstColon != WTF::notFound) {
+            auto marker3 = lineInner.find(':', marker2 + 1);
+            if (marker3 == WTF::notFound) {
+                // /path/to/file.js:
+                // /path/to/file.js:1
+                // node:child_process
+                // C:\Users\dave\bun\file.js
 
-            auto secondColon = line.find(':', firstColon + 1);
-            // at foo (/path/to/file.js:1)
-            if (secondColon == WTF::notFound) {
-                if (auto lineNumber = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(line.substring(firstColon + 1, closingParenthese - firstColon - 1))) {
-                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(lineNumber.value());
+                marker3 = lineInner.length();
+
+                auto segment1 = StringView_slice(lineInner, marker1, marker2);
+                auto segment2 = StringView_slice(lineInner, marker2 + 1, marker3);
+
+                if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
+                    frame.sourceURL = segment1;
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
+                } else {
+                    frame.sourceURL = StringView_slice(lineInner, marker1, marker3);
+                }
+                goto done_block;
+            }
+
+            // /path/to/file.js:1:
+            // /path/to/file.js:1:2
+            // node:child_process:1:2
+            // C:\Users\dave\bun\file.js:
+            // C:\Users\dave\bun\file.js:1
+            // C:\Users\dave\bun\file.js:1:2
+
+            while (true) {
+                auto newcolon = lineInner.find(':', marker3 + 1);
+                if (newcolon == WTF::notFound)
+                    break;
+                marker2 = marker3;
+                marker3 = newcolon;
+            }
+
+            auto marker4 = lineInner.length();
+
+            auto segment1 = StringView_slice(lineInner, marker1, marker2);
+            auto segment2 = StringView_slice(lineInner, marker2 + 1, marker3);
+            auto segment3 = StringView_slice(lineInner, marker3 + 1, marker4);
+
+            if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
+                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment3)) {
+                    frame.sourceURL = segment1;
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
+                    frame.columnNumber = WTF::OrdinalNumber::fromOneBasedInt(int2.value());
+                } else {
+                    frame.sourceURL = segment1;
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
                 }
             } else {
-                // at foo (/path/to/file.js:1:)
-                if (auto lineNumber = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(line.substring(firstColon + 1, secondColon - firstColon - 1))) {
-                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(lineNumber.value());
-                }
-
-                // at foo (/path/to/file.js:1:2)
-                if (auto columnNumber = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(line.substring(secondColon + 1, closingParenthese - secondColon - 1))) {
-                    frame.columnNumber = WTF::OrdinalNumber::fromOneBasedInt(columnNumber.value());
+                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment3)) {
+                    frame.sourceURL = StringView_slice(lineInner, marker1, marker3);
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int2.value());
+                } else {
+                    frame.sourceURL = StringView_slice(lineInner, marker1, marker4);
                 }
             }
         }
+    done_block:
 
         StringView functionName = line.substring(0, openingParenthese - 1);
 
@@ -4382,6 +4450,15 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
     *arg2 = Zig::toZigString(view);
 }
 
+bool JSC__JSValue__getClassInfoName(JSValue value, BunString* out)
+{
+    if (auto info = value.classInfoOrNull()) {
+        *out = Bun::toString(info->className);
+        return true;
+    }
+    return false;
+}
+
 void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2)
 {
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
@@ -4663,6 +4740,7 @@ enum class BuiltinNamesMap : uint8_t {
     toString,
     redirect,
     inspectCustom,
+    asyncIterator,
 };
 
 static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -4699,6 +4777,9 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::inspectCustom: {
         return Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
+    }
+    case BuiltinNamesMap::asyncIterator: {
+        return vm.propertyNames->asyncIteratorSymbol;
     }
     }
 }
@@ -5360,19 +5441,48 @@ extern "C" EncodedJSValue JSFunction__createFromZig(
     ImplementationVisibility implementation_visibility,
     Intrinsic intrinsic,
     NativeFunction constructorOrNull,
-    const DOMJIT::Signature* domjit
-) {
-    VM&vm = global->vm();
+    const DOMJIT::Signature* domjit)
+{
+    VM& vm = global->vm();
     auto name = fn_name.toWTFString();
     return JSValue::encode(JSFunction::create(
         vm,
         global,
         arg_count,
-        name, 
-        implementation, 
+        name,
+        implementation,
         implementation_visibility,
         intrinsic,
         constructorOrNull ? constructorOrNull : JSC::callHostFunctionAsConstructor,
-        domjit
-    ));
+        domjit));
+}
+
+extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
+{
+    return DECLARE_CATCH_SCOPE(globalObject->vm()).exception() != 0;
+}
+
+CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter* gettersetter)
+{
+    return gettersetter->isGetterNull();
+}
+
+CPP_DECL bool JSC__GetterSetter__isSetterNull(JSC__GetterSetter* gettersetter)
+{
+    return gettersetter->isSetterNull();
+}
+
+CPP_DECL bool JSC__CustomGetterSetter__isGetterNull(JSC__CustomGetterSetter* gettersetter)
+{
+    return gettersetter->getter() == nullptr;
+}
+
+CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter* gettersetter)
+{
+    return gettersetter->setter() == nullptr;
+}
+
+CPP_DECL JSC__JSValue Bun__ProxyObject__getInternalField(JSC__JSValue value, uint32_t id)
+{
+    return JSValue::encode(jsCast<ProxyObject*>(JSValue::decode(value))->internalField((ProxyObject::Field)id).get());
 }

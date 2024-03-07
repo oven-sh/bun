@@ -144,58 +144,6 @@ declare interface Error {
   code?: string;
 }
 
-/**
- * Directly call the internal binding generator. Please do not use this, use $zig or $cpp to ensure your binding is actually generated.
- */
-function $lazy(id: number): any;
-
-// interface BunLazyModules {
-//   "bun:jsc": Omit<typeof import("bun:jsc"), "jscDescribe" | "jscDescribeArray"> & {
-//     describe: typeof import("bun:jsc").jscDescribe;
-//     describeArray: typeof import("bun:jsc").jscDescribe;
-//   };
-//   "bun:stream": {
-//     maybeReadMore: Function;
-//     resume: Function;
-//     emitReadable: Function;
-//     onEofChunk: Function;
-//     ReadableState: Function;
-//   };
-//   sqlite: any;
-//   "vm": {
-//     createContext: Function;
-//     isContext: Function;
-//     Script: typeof import("node:vm").Script;
-//     runInNewContext: Function;
-//     runInThisContext: Function;
-//   };
-//   /** typeof === 'undefined', but callable -> throws not implemented */
-//   "masqueradesAsUndefined": (...args: any) => any;
-//   pathToFileURL: typeof import("node:url").pathToFileURL;
-//   fileURLToPath: typeof import("node:url").fileURLToPath;
-//   noop: {
-//     getterSetter: any;
-//     function: any;
-//     functionRegular: any;
-//     callback: any;
-//   };
-//   "async_hooks": {
-//     cleanupLater: () => void;
-//     setAsyncHooksEnabled: (enabled: boolean) => void;
-//   };
-//   "worker_threads": [workerData: any, threadId: number, _receiveMessageOnPort: (port: MessagePort) => any];
-//   "tty": {
-//     ttySetMode: (fd: number, mode: number) => number;
-//     isatty: (fd: number) => boolean;
-//     getWindowSize: (fd: number, out: number[2]) => boolean;
-//   };
-
-//   // ReadableStream related
-//   [1]: any;
-//   [2]: any;
-//   [4]: any;
-// }
-
 interface CommonJSModuleRecord {
   $require(id: string, mod: any, args_count: number, args: Array): any;
   children: CommonJSModuleRecord[];

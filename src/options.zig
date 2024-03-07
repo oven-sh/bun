@@ -932,6 +932,18 @@ pub const ESMConditions = struct {
             .require = require_condition_map,
         };
     }
+
+    pub fn appendSlice(self: *ESMConditions, conditions: []const string) !void {
+        try self.default.ensureUnusedCapacity(conditions.len);
+        try self.import.ensureUnusedCapacity(conditions.len);
+        try self.require.ensureUnusedCapacity(conditions.len);
+
+        for (conditions) |condition| {
+            self.default.putAssumeCapacityNoClobber(condition, {});
+            self.import.putAssumeCapacityNoClobber(condition, {});
+            self.require.putAssumeCapacityNoClobber(condition, {});
+        }
+    }
 };
 
 pub const JSX = struct {
@@ -1684,6 +1696,10 @@ pub const BundleOptions = struct {
         }
 
         opts.conditions = try ESMConditions.init(allocator, Target.DefaultConditions.get(opts.target));
+
+        if (transform.conditions.len > 0) {
+            opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();
+        }
 
         switch (opts.target) {
             .node => {
@@ -2587,11 +2603,24 @@ pub const PathTemplate = struct {
         return strings.contains(this.data, comptime "[" ++ @tagName(field) ++ "]");
     }
 
+    inline fn writeReplacingSlashesOnWindows(w: anytype, slice: []const u8) !void {
+        if (Environment.isWindows) {
+            var remain = slice;
+            while (strings.indexOfChar(remain, '/')) |i| {
+                try w.writeAll(remain[0..i]);
+                try w.writeByte('\\');
+                remain = remain[i + 1 ..];
+            }
+            try w.writeAll(remain);
+        } else {
+            try w.writeAll(slice);
+        }
+    }
+
     pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var remain = self.data;
-        bun.path.posixToPlatformInPlace(u8, @constCast(remain));
         while (strings.indexOfChar(remain, '[')) |j| {
-            try writer.writeAll(remain[0..j]);
+            try writeReplacingSlashesOnWindows(writer, remain[0..j]);
             remain = remain[j + 1 ..];
             if (remain.len == 0) {
                 // TODO: throw error
@@ -2618,15 +2647,15 @@ pub const PathTemplate = struct {
             const placeholder = remain[0..end_len];
 
             const field = PathTemplate.Placeholder.map.get(placeholder) orelse {
-                try writer.writeAll(placeholder);
+                try writeReplacingSlashesOnWindows(writer, placeholder);
                 remain = remain[end_len..];
                 continue;
             };
 
             switch (field) {
-                .dir => try writer.writeAll(if (self.placeholder.dir.len > 0) self.placeholder.dir else "."),
-                .name => try writer.writeAll(self.placeholder.name),
-                .ext => try writer.writeAll(self.placeholder.ext),
+                .dir => try writeReplacingSlashesOnWindows(writer, if (self.placeholder.dir.len > 0) self.placeholder.dir else "."),
+                .name => try writeReplacingSlashesOnWindows(writer, self.placeholder.name),
+                .ext => try writeReplacingSlashesOnWindows(writer, self.placeholder.ext),
                 .hash => {
                     if (self.placeholder.hash) |hash| {
                         try writer.print("{any}", .{(hashFormatter(hash))});
@@ -2636,7 +2665,7 @@ pub const PathTemplate = struct {
             remain = remain[end_len + 1 ..];
         }
 
-        try writer.writeAll(remain);
+        try writeReplacingSlashesOnWindows(writer, remain);
     }
 
     pub const hashFormatter = bun.fmt.hexIntLower;

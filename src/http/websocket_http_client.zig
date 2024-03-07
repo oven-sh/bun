@@ -163,21 +163,47 @@ const CppWebSocket = opaque {
     extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, clone: bool, text: *const JSC.ZigString) void;
     extern fn WebSocket__didReceiveBytes(websocket_context: *CppWebSocket, bytes: [*]const u8, byte_len: usize, opcode: u8) void;
     extern fn WebSocket__rejectUnauthorized(websocket_context: *CppWebSocket) bool;
-    pub const didConnect = WebSocket__didConnect;
-    pub const didAbruptClose = WebSocket__didAbruptClose;
-    pub const didClose = WebSocket__didClose;
-    pub const didReceiveText = WebSocket__didReceiveText;
-    pub const didReceiveBytes = WebSocket__didReceiveBytes;
+    pub fn didAbruptClose(this: *CppWebSocket, reason: ErrorCode) void {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didAbruptClose(this, reason);
+    }
+    pub fn didClose(this: *CppWebSocket, code: u16, reason: *const bun.String) void {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didClose(this, code, reason);
+    }
+    pub fn didReceiveText(this: *CppWebSocket, clone: bool, text: *const JSC.ZigString) void {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didReceiveText(this, clone, text);
+    }
+    pub fn didReceiveBytes(this: *CppWebSocket, bytes: [*]const u8, byte_len: usize, opcode: u8) void {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didReceiveBytes(this, bytes, byte_len, opcode);
+    }
+    pub fn rejectUnauthorized(this: *CppWebSocket) bool {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        return WebSocket__rejectUnauthorized(this);
+    }
+    pub fn didConnect(this: *CppWebSocket, socket: *uws.Socket, buffered_data: ?[*]u8, buffered_len: usize) void {
+        const loop = JSC.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didConnect(this, socket, buffered_data, buffered_len);
+    }
     extern fn WebSocket__incrementPendingActivity(websocket_context: *CppWebSocket) void;
     extern fn WebSocket__decrementPendingActivity(websocket_context: *CppWebSocket) void;
     pub fn ref(this: *CppWebSocket) void {
         JSC.markBinding(@src());
         WebSocket__incrementPendingActivity(this);
-    }
-
-    pub fn rejectUnauthorized(this: *CppWebSocket) bool {
-        JSC.markBinding(@src());
-        return WebSocket__rejectUnauthorized(this);
     }
 
     pub fn unref(this: *CppWebSocket) void {
@@ -344,6 +370,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             if (this.outgoing_websocket) |ws| {
                 this.outgoing_websocket = null;
+
                 ws.didAbruptClose(ErrorCode.ended);
             }
 
@@ -409,11 +436,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleData(this: *HTTPClient, socket: Socket, data: []const u8) void {
             log("onData", .{});
-            defer JSC.VirtualMachine.get().drainMicrotasks();
             if (this.outgoing_websocket == null) {
                 this.clearData();
                 return;
             }
+
             std.debug.assert(socket.socket == this.tcp.?.socket);
 
             if (comptime Environment.allow_assert)
@@ -912,6 +939,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         header_fragment: ?u8 = null,
 
+        payload_length_frame_bytes: [8]u8 = [_]u8{0} ** 8,
+        payload_length_frame_len: u8 = 0,
+
         initial_data_handler: ?*InitialDataHandler = null,
         event_loop: *JSC.EventLoop = undefined,
 
@@ -980,6 +1010,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.outgoing_websocket) |ws| {
                 this.outgoing_websocket = null;
                 log("fail ({s})", .{@tagName(code)});
+
                 ws.didAbruptClose(code);
             }
 
@@ -1055,19 +1086,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.clearData();
                 return;
             };
-            if (comptime Environment.isDebug) {
-                this.event_loop.debug.enter();
-            }
-            defer {
-                if (comptime Environment.isDebug) {
-                    this.event_loop.debug.enter();
-                }
-            }
 
             switch (kind) {
                 .Text => {
-                    defer this.event_loop.drainMicrotasks();
-
                     // this function encodes to UTF-16 if > 127
                     // so we don't need to worry about latin1 non-ascii code points
                     // we avoid trim since we wanna keep the utf8 validation intact
@@ -1088,7 +1109,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     }
                 },
                 .Binary, .Ping, .Pong => {
-                    defer this.event_loop.drainMicrotasks();
                     JSC.markBinding(@src());
                     out.didReceiveBytes(data_.ptr, data_.len, @as(u8, @intFromEnum(kind)));
                 },
@@ -1138,9 +1158,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // after receiving close we should ignore the data
             if (this.close_received) return;
 
-            // This is the start of a task, so we need to drain the microtask queue at the end
-            defer JSC.VirtualMachine.get().drainMicrotasks();
-
             // Due to scheduling, it is possible for the websocket onData
             // handler to run with additional data before the microtask queue is
             // drained.
@@ -1179,6 +1196,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             }
 
             var header_bytes: [@sizeOf(usize)]u8 = [_]u8{0} ** @sizeOf(usize);
+
+            // In the WebSocket specification, control frames may not be fragmented.
+            // However, the frame parser should handle fragmented control frames nonetheless.
+            // Whether or not the frame parser is given a set of fragmented bytes to parse is subject
+            // to the strategy in which the client buffers and coalesces received bytes.
+
             while (true) {
                 log("onData ({s})", .{@tagName(receive_state)});
 
@@ -1309,22 +1332,33 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                             .extended_payload_length_16 => @as(usize, 2),
                             else => unreachable,
                         };
-                        // we need to wait for more data
-                        if (data.len == 0) return;
 
-                        if (data.len < byte_size) {
-                            this.terminate(ErrorCode.control_frame_is_fragmented);
-                            terminated = true;
+                        // we need to wait for more data
+                        if (data.len == 0) {
+                            break;
+                        }
+
+                        // copy available payload length bytes to a buffer held on this client instance
+                        const total_received = @min(byte_size - this.payload_length_frame_len, data.len);
+                        @memcpy(this.payload_length_frame_bytes[this.payload_length_frame_len..][0..total_received], data[0..total_received]);
+                        this.payload_length_frame_len += @intCast(total_received);
+                        data = data[total_received..];
+
+                        // short read on payload length - we need to wait for more data
+                        // whatever bytes were returned from the short read are kept in `payload_length_frame_bytes`
+                        if (this.payload_length_frame_len < byte_size) {
                             break;
                         }
 
                         // Multibyte length quantities are expressed in network byte order
                         receive_body_remain = switch (byte_size) {
-                            8 => @as(usize, std.mem.readInt(u64, data[0..8], .big)),
-                            2 => @as(usize, std.mem.readInt(u16, data[0..2], .big)),
+                            8 => @as(usize, std.mem.readInt(u64, this.payload_length_frame_bytes[0..8], .big)),
+                            2 => @as(usize, std.mem.readInt(u16, this.payload_length_frame_bytes[0..2], .big)),
                             else => unreachable,
                         };
-                        data = data[byte_size..];
+
+                        this.payload_length_frame_len = 0;
+
                         receive_state = .need_body;
 
                         if (receive_body_remain == 0) {

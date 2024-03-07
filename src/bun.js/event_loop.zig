@@ -177,7 +177,7 @@ pub const AnyTask = struct {
             }
 
             pub fn wrap(this: ?*anyopaque) void {
-                @call(.always_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
+                @call(bun.callmod_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
             }
         };
     }
@@ -211,7 +211,7 @@ pub const ManagedTask = struct {
             }
 
             pub fn wrap(this: ?*anyopaque) void {
-                @call(.always_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
+                @call(bun.callmod_inline, Callback, .{@as(*Type, @ptrCast(@alignCast(this.?)))});
             }
         };
     }
@@ -636,7 +636,7 @@ comptime {
 
 pub const DeferredRepeatingTask = *const (fn (*anyopaque) bool);
 pub const EventLoop = struct {
-    tasks: if (JSC.is_bindgen) void else Queue = undefined,
+    tasks: Queue = undefined,
 
     /// setImmediate() gets it's own two task queues
     /// When you call `setImmediate` in JS, it queues to the start of the next tick

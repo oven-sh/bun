@@ -132,6 +132,7 @@ export function getStdinStream(fd) {
   const originalOn = stream.on;
 
   let stream_destroyed = false;
+  let stream_endEmitted = false;
   stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
@@ -190,7 +191,10 @@ export function getStdinStream(fd) {
 
         if (shouldUnref) unref();
       } else {
-        stream.emit("end");
+        if (!stream_endEmitted) {
+          stream_endEmitted = true;
+          stream.emit("end");
+        }
         if (!stream_destroyed) {
           stream_destroyed = true;
           stream.destroy();
@@ -204,10 +208,9 @@ export function getStdinStream(fd) {
 
   stream._read = function (size) {
     $debug("_read();", reader);
-    if (!reader) {
-      // TODO: this is wrong
-      this.push(null);
-    } else if (!shouldUnref) {
+    if (!reader) return;
+
+    if (!shouldUnref) {
       internalRead(this);
     }
   };
@@ -353,31 +356,46 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
   //
   // it throws "Cannot convert a Symbol value to a string"
 
+  (internalEnv as any)[Bun.inspect.custom] = () => {
+    let o = {};
+    for (let k of envMapList) {
+      o[k] = internalEnv[k.toUpperCase()];
+    }
+    return o;
+  };
+
   return new Proxy(internalEnv, {
     get(_, p) {
-      return typeof p === "string" ? Reflect.get(internalEnv, p.toUpperCase()) : undefined;
+      return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
     },
     set(_, p, value) {
-      var k = String(p).toUpperCase();
+      const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!Reflect.has(internalEnv, k)) {
+      value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
+      if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
-      return Reflect.set(internalEnv, k, String(value));
+      internalEnv[k] = value;
+      return true;
     },
     has(_, p) {
-      return typeof p === "string" ? Reflect.has(internalEnv, p.toUpperCase()) : false;
+      return typeof p !== "symbol" ? String(p).toUpperCase() in internalEnv : false;
     },
     deleteProperty(_, p) {
-      return typeof p === "string" ? Reflect.deleteProperty(internalEnv, p.toUpperCase()) : true;
+      const k = String(p).toUpperCase();
+      const i = envMapList.findIndex(x => x.toUpperCase() === k);
+      if (i !== -1) {
+        envMapList.splice(i, 1);
+      }
+      return typeof p !== "symbol" ? delete internalEnv[k] : false;
     },
     defineProperty(_, p, attributes) {
-      var k = String(p).toUpperCase();
+      const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!Reflect.has(internalEnv, k)) {
+      if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
-      return Reflect.defineProperty(internalEnv, k, attributes);
+      return $Object.$defineProperty(internalEnv, k, attributes);
     },
     getOwnPropertyDescriptor(target, p) {
       return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p.toUpperCase()) : undefined;

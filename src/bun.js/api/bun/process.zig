@@ -1128,7 +1128,7 @@ pub fn spawnProcessPosix(
     const stdios: [3]*?bun.FileDescriptor = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
 
     var dup_stdout_to_stderr: bool = false;
-    var stderr_write_end: ?bun.FileDescriptor = null;
+
     for (0..3) |i| {
         const stdio = stdios[i];
         const fileno = bun.toFD(i);
@@ -1164,11 +1164,47 @@ pub fn spawnProcessPosix(
                         return error.SystemResources;
                     }
 
-                    const before = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.GETFL);
+                    var before = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.GETFL);
+
                     _ = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.SETFL, before | bun.C.FD_CLOEXEC);
+
+                    if (comptime Environment.isMac) {
+                        // SO_NOSIGPIPE
+                        before = 1;
+                        _ = std.c.setsockopt(fds_[if (i == 0) 1 else 0], std.os.SOL.SOCKET, std.os.SO.NOSIGPIPE, &before, @sizeOf(c_int));
+                    }
 
                     break :brk .{ bun.toFD(fds_[if (i == 0) 1 else 0]), bun.toFD(fds_[if (i == 0) 0 else 1]) };
                 };
+
+                if (i == 0) {
+                    // their copy of stdin should be readable
+                    _ = std.c.shutdown(@intCast(fds[1].cast()), std.os.SHUT.WR);
+
+                    // our copy of stdin should be writable
+                    _ = std.c.shutdown(@intCast(fds[0].cast()), std.os.SHUT.RD);
+
+                    if (comptime Environment.isMac) {
+                        // macOS seems to default to around 8 KB for the buffer size
+                        // this is comically small.
+                        const so_recvbuf: c_int = 1024 * 512;
+                        const so_sendbuf: c_int = 1024 * 512;
+                        _ = std.c.setsockopt(fds[1].cast(), std.os.SOL.SOCKET, std.os.SO.RCVBUF, &so_recvbuf, @sizeOf(c_int));
+                        _ = std.c.setsockopt(fds[0].cast(), std.os.SOL.SOCKET, std.os.SO.SNDBUF, &so_sendbuf, @sizeOf(c_int));
+                    }
+                } else {
+
+                    // their copy of stdout or stderr should be writable
+                    _ = std.c.shutdown(@intCast(fds[1].cast()), std.os.SHUT.RD);
+
+                    // our copy of stdout or stderr should be readable
+                    _ = std.c.shutdown(@intCast(fds[0].cast()), std.os.SHUT.WR);
+
+                    const so_recvbuf: c_int = 1024 * 512;
+                    const so_sendbuf: c_int = 1024 * 512;
+                    _ = std.c.setsockopt(fds[0].cast(), std.os.SOL.SOCKET, std.os.SO.RCVBUF, &so_recvbuf, @sizeOf(c_int));
+                    _ = std.c.setsockopt(fds[1].cast(), std.os.SOL.SOCKET, std.os.SO.SNDBUF, &so_sendbuf, @sizeOf(c_int));
+                }
 
                 try to_close_at_end.append(fds[1]);
                 try to_close_on_error.append(fds[0]);
@@ -1177,9 +1213,6 @@ pub fn spawnProcessPosix(
                 try actions.close(fds[1]);
 
                 stdio.* = fds[0];
-                if (i == 2) {
-                    stderr_write_end = fds[1];
-                }
             },
             .pipe => |fd| {
                 try actions.dup2(fd, fileno);
@@ -1189,7 +1222,6 @@ pub fn spawnProcessPosix(
     }
 
     if (dup_stdout_to_stderr) {
-        // try actions.dup2(stderr_write_end.?, stdio_options[1].dup2.out.toFd());
         try actions.dup2(stdio_options[1].dup2.to.toFd(), stdio_options[1].dup2.out.toFd());
     }
 
@@ -1217,9 +1249,14 @@ pub fn spawnProcessPosix(
                     }
 
                     // enable non-block
-                    const before = std.c.fcntl(fds_[0], std.os.F.GETFL);
+                    var before = std.c.fcntl(fds_[0], std.os.F.GETFL);
 
                     _ = std.c.fcntl(fds_[0], std.os.F.SETFL, before | std.os.O.NONBLOCK | bun.C.FD_CLOEXEC);
+
+                    if (comptime Environment.isMac) {
+                        // SO_NOSIGPIPE
+                        _ = std.c.setsockopt(fds_[if (i == 0) 1 else 0], std.os.SOL.SOCKET, std.os.SO.NOSIGPIPE, &before, @sizeOf(c_int));
+                    }
 
                     break :brk .{ bun.toFD(fds_[0]), bun.toFD(fds_[1]) };
                 };

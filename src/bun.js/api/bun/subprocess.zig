@@ -234,6 +234,11 @@ pub const Subprocess = struct {
             return true;
         }
 
+        // TODO: investigate further if we can free the Subprocess before the process has exited.
+        if (!this.process.hasExited()) {
+            return true;
+        }
+
         if (comptime Environment.isWindows) {
             if (this.process.poller == .uv) {
                 if (this.process.poller.uv.isActive()) {
@@ -336,7 +341,7 @@ pub const Subprocess = struct {
     }
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
-    pub fn unref(this: *Subprocess, comptime _: bool) void {
+    pub fn unref(this: *Subprocess) void {
         this.process.disableKeepingEventLoopAlive();
 
         if (!this.hasCalledGetter(.stdin)) {
@@ -613,7 +618,7 @@ pub const Subprocess = struct {
     }
 
     pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
-        this.unref(false);
+        this.unref();
         return JSC.JSValue.jsUndefined();
     }
 
@@ -905,8 +910,8 @@ pub const Subprocess = struct {
                 .result => {
                     if (comptime Environment.isPosix) {
                         const poll = this.reader.handle.poll;
-                        poll.flags.insert(.nonblocking);
                         poll.flags.insert(.socket);
+                        this.reader.flags.socket = true;
                     }
 
                     return .{ .result = {} };

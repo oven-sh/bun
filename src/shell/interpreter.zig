@@ -1037,8 +1037,7 @@ pub const Interpreter = struct {
             // This will save ~2x memory
             var export_env = EnvMap.initWithCapacity(allocator, env_loader.map.map.unmanaged.entries.len);
 
-            var iter = env_loader.iterator();
-
+            var iter = env_loader.map.iterator();
             while (iter.next()) |entry| {
                 const value = EnvStr.initSlice(entry.value_ptr.value);
                 const key = EnvStr.initSlice(entry.key_ptr.*);

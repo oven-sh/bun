@@ -3958,14 +3958,6 @@ pub const JSValue = enum(JSValueReprInt) {
                 else => jsNumberFromInt64(@as(i64, @intCast(number))),
             },
             else => {
-                // windows
-                if (comptime Number == std.os.fd_t) {
-                    return jsNumber(bun.toFD(number));
-                }
-                if (Number == bun.FileDescriptor) {
-                    return jsNumber(number.int());
-                }
-
                 @compileError("Type transformation missing for number of type: " ++ @typeName(Number));
             },
         };

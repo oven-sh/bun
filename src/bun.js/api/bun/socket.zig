@@ -1172,23 +1172,23 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost, socket_ctx: *uws.SocketContext) !void {
             switch (connection) {
                 .host => |c| {
-                    _ = This.Socket.connectPtr(
+                    _ = try This.Socket.connectPtr(
                         normalizeHost(c.host),
                         c.port,
                         socket_ctx,
                         This,
                         this,
                         "socket",
-                    ) orelse return error.ConnectionFailed;
+                    );
                 },
                 .unix => |u| {
-                    _ = This.Socket.connectUnixPtr(
+                    _ = try This.Socket.connectUnixPtr(
                         u,
                         socket_ctx,
                         This,
                         this,
                         "socket",
-                    ) orelse return error.ConnectionFailed;
+                    );
                 },
                 .fd => |f| {
                     const socket = This.Socket.fromFd(socket_ctx, f, This, this, "socket") orelse return error.ConnectionFailed;

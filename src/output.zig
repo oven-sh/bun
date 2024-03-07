@@ -404,9 +404,9 @@ pub noinline fn println(comptime fmt: string, args: anytype) void {
 
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
-pub inline fn debug(comptime fmt: string, args: anytype) void {
+pub fn debug(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isRelease) return;
-    prettyErrorln("\n<d>DEBUG:<r> " ++ fmt, args);
+    prettyErrorln("<d>DEBUG:<r> " ++ fmt, args);
     flush();
 }
 

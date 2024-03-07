@@ -1194,7 +1194,9 @@ pub const Fetch = struct {
             }
             return null;
         }
+
         pub fn onReject(this: *FetchTasklet) JSValue {
+            std.debug.assert(this.result.fail != null);
             log("onReject", .{});
 
             if (this.getAbortError()) |err| {
@@ -1211,20 +1213,17 @@ pub const Fetch = struct {
                 return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
             }
 
-            var path: bun.String = undefined;
-
             // some times we don't have metadata so we also check http.url
-            if (this.metadata) |metadata| {
-                path = bun.String.createUTF8(metadata.url);
-            } else if (this.http) |http_| {
-                path = bun.String.createUTF8(http_.url.href);
-            } else {
-                path = bun.String.empty;
-            }
+            const path = if (this.metadata) |metadata|
+                bun.String.createUTF8(metadata.url)
+            else if (this.http) |http_|
+                bun.String.createUTF8(http_.url.href)
+            else
+                bun.String.empty;
 
             const fetch_error = JSC.SystemError{
-                .code = bun.String.static(@errorName(this.result.fail)),
-                .message = switch (this.result.fail) {
+                .code = bun.String.static(@errorName(this.result.fail.?)),
+                .message = switch (this.result.fail.?) {
                     error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
                     error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                     error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),

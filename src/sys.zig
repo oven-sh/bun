@@ -274,9 +274,7 @@ pub const Error = struct {
         }
 
         if (this.fd != bun.invalid_fd) {
-            if (this.fd.int() <= std.math.maxInt(i32)) {
-                err.fd = this.fd;
-            }
+            err.fd = this.fd;
         }
 
         return err;

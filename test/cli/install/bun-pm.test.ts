@@ -330,7 +330,7 @@ it("should remove all cache", async () => {
   expect(stderr2).toBeDefined();
   expect(await new Response(stderr2).text()).toBe("");
   expect(stdout2).toBeDefined();
-  expect(await new Response(stdout2).text()).toBe("Cache directory deleted:\n  " + cache_dir + "\n");
+  expect(await new Response(stdout2).text()).toInclude("Cleared 'bun install' cache\n");
   expect(await exited2).toBe(0);
   expect(await exists(cache_dir)).toBeFalse();
 });

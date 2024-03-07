@@ -273,7 +273,7 @@ pub const Loader = struct {
         prefix: string,
         allocator: std.mem.Allocator,
     ) !void {
-        var iter = this.map.iter();
+        var iter = this.map.iterator();
         var key_count: usize = 0;
         var string_map_hashes = try allocator.alloc(u64, framework_defaults.keys.len);
         defer allocator.free(string_map_hashes);
@@ -1032,7 +1032,7 @@ const Parser = struct {
             };
         }
         if (comptime !is_process) {
-            var it = map.iter();
+            var it = map.iterator();
             while (it.next()) |entry| {
                 if (count > 0) {
                     count -= 1;
@@ -1095,34 +1095,75 @@ pub const Map = struct {
         return envp_buf;
     }
 
-    pub fn cloneToEnvMap(this: *Map, allocator: std.mem.Allocator) !std.process.EnvMap {
+    /// Returns a wrapper around the std.process.EnvMap that does not duplicate the memory of
+    /// the keys and values, but instead points into the memory of the bun env map.
+    ///
+    /// To prevent
+    pub fn stdEnvMap(this: *Map, allocator: std.mem.Allocator) !StdEnvMapWrapper {
         var env_map = std.process.EnvMap.init(allocator);
 
-        var iter_ = this.map.iterator();
-        while (iter_.next()) |entry| {
+        var iter = this.map.iterator();
+        while (iter.next()) |entry| {
             // Allow var from .env.development or .env.production to be loaded again
             if (!entry.value_ptr.conditional) {
-                // TODO(@paperdave): this crashes on windows. i remember there being a merge conflict with these two implementations. not sure what we should keep
-                if (Environment.isWindows) {
-                    try env_map.put(@constCast(entry.key_ptr.*), @constCast(entry.value_ptr.value));
-                } else {
-                    try env_map.putMove(@constCast(entry.key_ptr.*), @constCast(entry.value_ptr.value));
-                }
+                try env_map.hash_map.put(entry.key_ptr.*, entry.value_ptr.value);
             }
         }
 
-        return env_map;
+        return .{ .unsafe_map = env_map };
+    }
+
+    pub const StdEnvMapWrapper = struct {
+        unsafe_map: std.process.EnvMap,
+
+        pub fn get(this: *const StdEnvMapWrapper) *const std.process.EnvMap {
+            return &this.unsafe_map;
+        }
+
+        pub fn deinit(this: *StdEnvMapWrapper) void {
+            this.unsafe_map.hash_map.deinit();
+        }
+    };
+
+    /// Write the Windows environment block into a buffer
+    /// This can be passed to CreateProcessW's lpEnvironment parameter
+    pub fn writeWindowsEnvBlock(this: *Map, result: *[32767]u16) ![*]const u16 {
+        var it = this.map.iterator();
+        var i: usize = 0;
+        while (it.next()) |pair| {
+            i += bun.strings.convertUTF8toUTF16InBuffer(result[i..], pair.key_ptr.*).len;
+            if (i + 7 >= result.len) return error.TooManyEnvironmentVariables;
+            result[i] = '=';
+            i += 1;
+            i += bun.strings.convertUTF8toUTF16InBuffer(result[i..], pair.value_ptr.*.value).len;
+            if (i + 5 >= result.len) return error.TooManyEnvironmentVariables;
+            result[i] = 0;
+            i += 1;
+        }
+        result[i] = 0;
+        i += 1;
+        result[i] = 0;
+        i += 1;
+        result[i] = 0;
+        i += 1;
+        result[i] = 0;
+        i += 1;
+
+        return result[0..].ptr;
     }
 
     pub inline fn init(allocator: std.mem.Allocator) Map {
         return Map{ .map = HashTable.init(allocator) };
     }
 
-    pub inline fn iter(this: *Map) HashTable.Iterator {
+    pub inline fn iterator(this: *Map) HashTable.Iterator {
         return this.map.iterator();
     }
 
     pub inline fn put(this: *Map, key: string, value: string) !void {
+        if (Environment.isWindows and Environment.allow_assert) {
+            std.debug.assert(bun.strings.indexOfChar(key, '\x00') == null);
+        }
         try this.map.put(key, .{
             .value = value,
             .conditional = false,
@@ -1163,10 +1204,10 @@ pub const Map = struct {
     }
 
     pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
-        var iterator = self.map.iterator();
+        var iter = self.map.iterator();
 
         _ = try writer.write("{");
-        while (iterator.next()) |entry| {
+        while (iter.next()) |entry| {
             _ = try writer.write("\n    ");
 
             writer.write(entry.key_ptr.*) catch unreachable;
@@ -1175,7 +1216,7 @@ pub const Map = struct {
 
             writer.write(entry.value_ptr.*) catch unreachable;
 
-            if (iterator.index <= self.map.count() - 1) {
+            if (iter.index <= self.map.count() - 1) {
                 _ = try writer.write(", ");
             }
         }
@@ -1202,6 +1243,10 @@ pub const Map = struct {
             .value = value,
             .conditional = false,
         });
+    }
+
+    pub fn remove(this: *Map, key: string) void {
+        this.map.remove(key);
     }
 };
 

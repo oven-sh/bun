@@ -185,17 +185,54 @@ pub const PackageManagerCommand = struct {
                 Global.crash();
             };
 
-            // outpath = Path.normalizeString(outpath, true, .auto);
-
             if (pm.options.positionals.len > 1 and strings.eqlComptime(pm.options.positionals[1], "rm")) {
                 fd.close();
+
+                var had_err = false;
+
                 std.fs.deleteTreeAbsolute(outpath) catch |err| {
-                    Output.prettyErrorln("{s} deleting cache directory", .{@errorName(err)});
-                    Global.crash();
+                    Output.err(err, "Could not delete {s}", .{outpath});
+                    had_err = true;
                 };
-                Output.prettyln("Cache directory deleted:\n  {s}", .{outpath});
-                Global.exit(0);
+                Output.prettyln("Cleared 'bun install' cache", .{});
+
+                bunx: {
+                    const tmp = bun.fs.FileSystem.RealFS.platformTempDir();
+                    const tmp_dir = std.fs.openDirAbsolute(tmp, .{ .iterate = true }) catch |err| {
+                        Output.err(err, "Could not open {s}", .{tmp});
+                        had_err = true;
+                        break :bunx;
+                    };
+                    var iter = tmp_dir.iterate();
+
+                    // This is to match 'bunx_command.BunxCommand.exec's logic
+                    const prefix = try std.fmt.allocPrint(ctx.allocator, "bunx-{d}-", .{
+                        if (bun.Environment.isPosix) bun.C.getuid() else bun.windows.userUniqueId(),
+                    });
+
+                    var deleted: usize = 0;
+                    while (iter.next() catch |err| {
+                        Output.err(err, "Could not read {s}", .{tmp});
+                        had_err = true;
+                        break :bunx;
+                    }) |entry| {
+                        if (std.mem.startsWith(u8, entry.name, prefix)) {
+                            tmp_dir.deleteTree(entry.name) catch |err| {
+                                Output.err(err, "Could not delete {s}", .{entry.name});
+                                had_err = true;
+                                continue;
+                            };
+
+                            deleted += 1;
+                        }
+                    }
+
+                    Output.prettyln("Cleared {d} cached 'bunx' packages", .{deleted});
+                }
+
+                Global.exit(if (had_err) 1 else 0);
             }
+
             Output.writer().writeAll(outpath) catch {};
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "ls")) {

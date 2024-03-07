@@ -2108,7 +2108,7 @@ pub const BundleV2 = struct {
                 }
 
                 if (this.bun_watcher != null) {
-                    if (empty_result.watcher_data.fd.int() > 0 and empty_result.watcher_data.fd != bun.invalid_fd) {
+                    if (empty_result.watcher_data.fd != .zero and empty_result.watcher_data.fd != bun.invalid_fd) {
                         this.bun_watcher.?.addFile(
                             empty_result.watcher_data.fd,
                             input_files.items(.source)[empty_result.source_index.get()].path.text,
@@ -2127,7 +2127,7 @@ pub const BundleV2 = struct {
                 {
                     // to minimize contention, we add watcher here
                     if (this.bun_watcher != null) {
-                        if (result.watcher_data.fd.int() > 0 and result.watcher_data.fd != bun.invalid_fd) {
+                        if (result.watcher_data.fd != .zero and result.watcher_data.fd != bun.invalid_fd) {
                             this.bun_watcher.?.addFile(
                                 result.watcher_data.fd,
                                 result.source.path.text,
@@ -2784,7 +2784,7 @@ pub const ParseTask = struct {
                     file_path.text,
                     task.contents_or_fd.fd.dir,
                     false,
-                    if (task.contents_or_fd.fd.file.int() > 0)
+                    if (task.contents_or_fd.fd.file != .zero)
                         task.contents_or_fd.fd.file
                     else
                         null,
@@ -2821,12 +2821,12 @@ pub const ParseTask = struct {
 
         errdefer if (task.contents_or_fd == .fd) entry.deinit(allocator);
 
-        const will_close_file_descriptor = task.contents_or_fd == .fd and entry.fd.int() > 2 and this.ctx.bun_watcher == null;
+        const will_close_file_descriptor = task.contents_or_fd == .fd and !entry.fd.isStdio() and this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
         }
 
-        if (!will_close_file_descriptor and entry.fd.int() > 2) task.contents_or_fd = .{
+        if (!will_close_file_descriptor and !entry.fd.isStdio()) task.contents_or_fd = .{
             .fd = .{
                 .file = entry.fd,
                 .dir = bun.invalid_fd,

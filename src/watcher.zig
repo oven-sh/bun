@@ -949,7 +949,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             }
 
             const fd = brk: {
-                if (stored_fd.int() > 0) break :brk stored_fd;
+                if (stored_fd != .zero) break :brk stored_fd;
                 const dir = try std.fs.cwd().openDir(file_path, .{});
                 break :brk bun.toFD(dir.fd);
             };
@@ -1048,7 +1048,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (autowatch_parent_dir) {
                 var watchlist_slice = this.watchlist.slice();
 
-                if (dir_fd.int() > 0) {
+                if (dir_fd != .zero) {
                     const fds = watchlist_slice.items(.fd);
                     if (std.mem.indexOfScalar(bun.FileDescriptor, fds, dir_fd)) |i| {
                         parent_watch_item = @as(WatchItemIndex, @truncate(i));

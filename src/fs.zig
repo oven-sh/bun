@@ -7,7 +7,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptor = bun.FileDescriptor;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
@@ -66,7 +66,7 @@ pub const FileSystem = struct {
         return tmpdir_handle.?;
     }
 
-    pub fn getFdPath(this: *const FileSystem, fd: FileDescriptorType) ![]const u8 {
+    pub fn getFdPath(this: *const FileSystem, fd: FileDescriptor) ![]const u8 {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const dir = try bun.getFdPath(fd, &buf);
         return try this.dirname_store.append([]u8, dir);
@@ -83,18 +83,18 @@ pub const FileSystem = struct {
         });
     }
 
-    pub var max_fd: FileDescriptorType = .zero;
+    pub var max_fd: std.os.fd_t = 0;
 
-    pub inline fn setMaxFd(fd: anytype) void {
+    pub inline fn setMaxFd(fd: std.os.fd_t) void {
+        if (Environment.isWindows) {
+            return;
+        }
+
         if (!FeatureFlags.store_file_descriptors) {
             return;
         }
 
-        if (comptime @TypeOf(fd) == *anyopaque) {
-            max_fd = @enumFromInt(@max(@intFromPtr(fd), max_fd.int()));
-        } else {
-            max_fd = @enumFromInt(@max(fd, max_fd.int()));
-        }
+        max_fd = @max(fd, max_fd);
     }
     pub var instance_loaded: bool = false;
     pub var instance: FileSystem = undefined;
@@ -747,8 +747,31 @@ pub const FileSystem = struct {
                 return true;
             }
 
+            if (Environment.isWindows) {
+                // 'false' is okay here because windows gives you a seemingly unlimited number of open
+                // file handles, while posix has a lower limit.
+                //
+                // This limit does not extend to the C-Runtime which is only 512 to 8196 or so,
+                // but we know that all resolver-related handles are not C-Runtime handles because
+                // `setMaxFd` on Windows (besides being a no-op) only takes in `HANDLE`.
+                //
+                // Handles are automatically closed when the process exits as stated here:
+                // https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process
+                // But in a crazy experiment to find the upper-bound of the number of open handles,
+                // I found that opening upwards of 500k to a million handles in a single process
+                // would cause the process to hang while closing. This might just be Windows slowly
+                // closing the handles, not sure. This is likely not something to worry about.
+                //
+                // If it is decided that not closing files ever is a bad idea. This should be
+                // replaced with some form of intelligent count of how many files we opened.
+                // On POSIX we can get away with measuring how high `fd` gets because it typically
+                // assigns these descriptors in ascending order (1 2 3 ...). Windows does not
+                // guarantee this.
+                return false;
+            }
+
             // If we're not near the max amount of open files, don't worry about it.
-            return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd.int() + 1) * 2);
+            return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd + 1) * 2);
         }
 
         /// Returns `true` if an entry was removed

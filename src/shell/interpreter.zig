@@ -972,7 +972,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                     break :env_loader global.env.?;
                 };
 
-                var iter = env_loader.map.iter();
+                var iter = env_loader.map.iterator();
                 while (iter.next()) |entry| {
                     const value = EnvStr.initSlice(entry.value_ptr.value);
                     const key = EnvStr.initSlice(entry.key_ptr.*);

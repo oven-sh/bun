@@ -1633,8 +1633,11 @@ pub const Formatter = struct {
                 } else if (Environment.isDebug and is_private_symbol) {
                     this.addForNewLine(1 + "$:".len + key.len);
                     writer.print(
-                        comptime Output.prettyFmt("<r><magenta>${any}<r><d>:<r> ", enable_ansi_colors),
-                        .{key},
+                        comptime Output.prettyFmt("<r><magenta>{s}{any}<r><d>:<r> ", enable_ansi_colors),
+                        .{
+                            if (key.len > 0 and key.charAt(0) == '#') "" else "$",
+                            key,
+                        },
                     );
                 } else {
                     this.addForNewLine(1 + "[Symbol()]:".len + key.len);

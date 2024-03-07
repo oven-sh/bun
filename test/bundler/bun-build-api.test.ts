@@ -3,9 +3,6 @@ import { readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
-// TODO(@paperdave)
-const todoOnWindows = process.platform === "win32" ? test.todo : test;
-
 describe("Bun.build", () => {
   test("passing undefined doesnt segfault", () => {
     try {
@@ -79,7 +76,7 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  todoOnWindows("rebuilding busts the directory entries cache", () => {
+  test("rebuilding busts the directory entries cache", () => {
     Bun.gc(true);
     const { exitCode, stderr } = Bun.spawnSync({
       cmd: [bunExe(), join(import.meta.dir, "bundler-reloader-script.ts")],

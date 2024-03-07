@@ -162,7 +162,7 @@ pub const FDImpl = packed struct {
     }
 
     pub fn decode(fd: bun.FileDescriptor) FDImpl {
-        return @bitCast(fd.int());
+        return @bitCast(@intFromEnum(fd));
     }
 
     /// When calling this function, you should consider the FD struct to now be invalid.

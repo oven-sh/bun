@@ -1,7 +1,8 @@
 const std = @import("std");
 
+/// TODO(@paperdave): properly integrate this with the rest of Bun's build system.
+/// There is no reason that this is a separate Zig project with build artifacts committed.
 pub fn build(b: *std.Build) void {
-    // TODO(@paperdave): arm support
     const target = b.standardTargetOptions(.{
         .default_target = .{
             .cpu_model = .{ .explicit = &std.Target.x86.cpu.nehalem },

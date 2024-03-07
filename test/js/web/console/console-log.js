@@ -53,6 +53,8 @@ console.log("Is it a bug or a feature that formatting numbers like %d is colored
 
 console.log("String %s should be 2nd word, 456 == %s and percent s %s == %s", "123", "456", "%s", "What", "okay");
 
+console.log("%s%s without space should work", "123", "456");
+
 const infinteLoop = {
   foo: {
     name: "baz",

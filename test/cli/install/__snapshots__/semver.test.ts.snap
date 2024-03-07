@@ -236,6 +236,7 @@ exports[`Bun.semver.satisfies() pre-release snapshot 1`] = `
   "1.0.0-beta.7-alpha.594d939c",
   "1.0.0-beta.7-alpha.60d2ce84",
   "1.0.0-beta.7-alpha.7dc2afa2",
+  "1.2.3-alpha-beta+377ecc6",
   "1.10.0-alpha.1460dad9",
   "1.10.0-alpha.5db7a275",
   "1.10.0-alpha.76b32701",

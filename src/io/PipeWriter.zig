@@ -454,6 +454,10 @@ pub fn PosixStreamingWriter(
             }
         }
 
+        pub fn hasPendingData(this: *const PosixWriter) bool {
+            return this.buffer.items.len > 0;
+        }
+
         fn closeWithoutReporting(this: *PosixWriter) void {
             if (this.getFd() != bun.invalid_fd) {
                 std.debug.assert(!this.closed_without_reporting);
@@ -1071,7 +1075,7 @@ pub fn WindowsStreamingWriter(
             return .{ .result = {} };
         }
 
-        fn hasPendingData(this: *WindowsWriter) bool {
+        pub fn hasPendingData(this: *const WindowsWriter) bool {
             return (this.outgoing.isNotEmpty() or this.current_payload.isNotEmpty());
         }
 

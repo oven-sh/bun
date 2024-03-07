@@ -54,12 +54,13 @@ pub const TaggedPointer = packed struct {
     }
 };
 
+const TypeMapT = struct {
+    value: TagSize,
+    ty: type,
+    name: []const u8,
+};
 pub fn TypeMap(comptime Types: anytype) type {
-    return [Types.len]struct {
-        value: TagSize,
-        ty: type,
-        name: []const u8,
-    };
+    return [Types.len]TypeMapT;
 }
 
 pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
@@ -68,7 +69,9 @@ pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
 } {
     var typeMap: TypeMap(Types) = undefined;
     var enumFields: [Types.len]std.builtin.Type.EnumField = undefined;
-    var decls = [_]std.builtin.Type.Declaration{};
+
+    @memset(&enumFields, std.mem.zeroes(std.builtin.Type.EnumField));
+    @memset(&typeMap, TypeMapT{ .value = 0, .ty = void, .name = "" });
 
     inline for (Types, 0..) |field, i| {
         const name = comptime typeBaseName(@typeName(field));
@@ -84,7 +87,7 @@ pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
             .Enum = .{
                 .tag_type = TagSize,
                 .fields = &enumFields,
-                .decls = &decls,
+                .decls = &.{},
                 .is_exhaustive = false,
             },
         }),
@@ -104,6 +107,10 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         repr: TaggedPointer,
 
         pub const Null = .{ .repr = .{ ._ptr = 0, .data = 0 } };
+
+        pub fn clear(this: *@This()) void {
+            this.* = Null;
+        }
 
         pub fn typeFromTag(comptime the_tag: comptime_int) type {
             for (type_map) |entry| {

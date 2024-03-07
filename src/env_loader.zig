@@ -57,6 +57,11 @@ pub const Loader = struct {
         return strings.eqlComptime(env, "production");
     }
 
+    pub fn isTest(this: *const Loader) bool {
+        const env = this.get("BUN_ENV") orelse this.get("NODE_ENV") orelse return false;
+        return strings.eqlComptime(env, "test");
+    }
+
     pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *bun.PathBuffer) ?[:0]const u8 {
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
             @memcpy(buf[0..node.len], node);

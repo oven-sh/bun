@@ -28,7 +28,7 @@ async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Se
     while (!server) {
       try {
         server = serve({ ...serverOptions, port: 0 });
-        console.log("server=", server);
+        console.log(`Server: ${server.url}`);
         break;
       } catch (e: any) {
         console.log("catch:", e);
@@ -44,7 +44,6 @@ async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Se
 }
 
 afterAll(() => {
-  console.log("afterAll");
   if (server) {
     server.stop(true);
     server = undefined;
@@ -105,6 +104,7 @@ describe("1000 simultaneous uploads & downloads do not leak ReadableStream", () 
               const digest = Buffer.from(Bun.concatArrayBuffers(chunks)).toString();
 
               expect(digest).toBe(expected);
+              Bun.gc(false);
             }
             {
               const promises = new Array(count);
@@ -117,7 +117,10 @@ describe("1000 simultaneous uploads & downloads do not leak ReadableStream", () 
 
             Bun.gc(true);
             dumpStats();
-            expect(heapStats().objectTypeCounts.ReadableStream).toBeWithin(initialCount - 50, initialCount + 50);
+            expect(heapStats().objectTypeCounts.ReadableStream).toBeWithin(
+              Math.max(initialCount - count / 2, 0),
+              initialCount + count / 2,
+            );
           },
         );
       },

@@ -598,12 +598,11 @@ describe("EventEmitter.on", () => {
       for await (const line of interfaced) {
         output.push(line);
       }
-    } catch (e) {
-      expect(output).toBe([
-        "// TODO - bun has no `send` method in the process",
-        "process?.send({ env: process.env });",
-      ]);
-    }
+    } catch (e) {}
+    expect(output).toEqual([
+      "// TODO - bun has no `send` method in the process",
+      "process?.send({ env: process.env });",
+    ]);
   });
 });
 

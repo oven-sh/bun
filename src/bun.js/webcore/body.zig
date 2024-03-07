@@ -141,6 +141,26 @@ pub const Body = struct {
             return this.toAnyBlobAllowPromise();
         }
 
+        pub fn isDisturbed(this: *const PendingValue, comptime T: type, globalObject: *JSC.JSGlobalObject, this_value: JSC.JSValue) bool {
+            if (this.promise != null) {
+                return true;
+            }
+
+            if (T.bodyGetCached(this_value)) |body_value| {
+                if (JSC.WebCore.ReadableStream.isDisturbedValue(body_value, globalObject)) {
+                    return true;
+                }
+
+                return false;
+            }
+
+            if (this.readable.get()) |readable| {
+                return readable.isDisturbed(globalObject);
+            }
+
+            return false;
+        }
+
         pub fn hasPendingPromise(this: *PendingValue) bool {
             const promise = this.promise orelse return false;
 
@@ -934,7 +954,7 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getText(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
@@ -942,7 +962,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.promise != null) {
+                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
 
@@ -988,7 +1008,7 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getJSON(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
@@ -996,7 +1016,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.promise != null) {
+                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
                 return value.Locked.setPromise(globalObject, .{ .getJSON = {} });
@@ -1018,7 +1038,7 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getArrayBuffer(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
@@ -1027,7 +1047,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.promise != null) {
+                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
                 return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} });
@@ -1041,7 +1061,7 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getFormData(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
@@ -1050,7 +1070,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.promise != null) {
+                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
             }

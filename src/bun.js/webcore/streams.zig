@@ -230,7 +230,12 @@ pub const ReadableStream = struct {
 
     pub fn isDisturbed(this: *const ReadableStream, globalObject: *JSGlobalObject) bool {
         JSC.markBinding(@src());
-        return ReadableStream__isDisturbed(this.value, globalObject);
+        return isDisturbedValue(this.value, globalObject);
+    }
+
+    pub fn isDisturbedValue(value: JSC.JSValue, globalObject: *JSGlobalObject) bool {
+        JSC.markBinding(@src());
+        return ReadableStream__isDisturbed(value, globalObject);
     }
 
     pub fn isLocked(this: *const ReadableStream, globalObject: *JSGlobalObject) bool {

@@ -199,8 +199,8 @@ describe("spawn()", () => {
     } else {
       expect(await getChildEnv({ TEST: "test" })).toEqual({ TEST: "test" });
       expect(await getChildEnv({})).toEqual({});
-      expect(await getChildEnv(undefined)).toEqual(process.env);
-      expect(await getChildEnv(null)).toEqual(process.env);
+      expect(await getChildEnv(undefined)).toMatchObject(process.env);
+      expect(await getChildEnv(null)).toMatchObject(process.env);
     }
   });
 

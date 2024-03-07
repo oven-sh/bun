@@ -4690,7 +4690,7 @@ pub const PackageManager = struct {
                                     null,
                                     logger.Loc.Empty,
                                     manager.allocator,
-                                    "{s}  downloading package manifest <b>{s}<r>",
+                                    "{s} downloading package manifest <b>{s}<r>",
                                     .{ bun.span(@errorName(err)), name.slice() },
                                 ) catch unreachable;
                             }

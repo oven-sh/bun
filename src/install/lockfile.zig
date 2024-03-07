@@ -2341,6 +2341,14 @@ pub const Package = extern struct {
 
     meta: Meta = .{},
     bin: Bin = .{},
+
+    /// If any of these scripts run, they will run in order:
+    /// 1. preinstall
+    /// 2. install
+    /// 3. postinstall
+    /// 4. preprepare
+    /// 5. prepare
+    /// 6. postprepare
     scripts: Package.Scripts = .{},
 
     pub const Scripts = extern struct {

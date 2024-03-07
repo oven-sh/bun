@@ -60,6 +60,7 @@
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
+#include "wtf/Assertions.h"
 #include "wtf/Gigacage.h"
 #include "wtf/URL.h"
 #include "wtf/URLParser.h"
@@ -2196,6 +2197,8 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
         return JSC::JSValue::encode(JSC::jsUndefined());
 #endif
     }
+        // silence warning
+        RELEASE_ASSERT_NOT_REACHED();
     }
 }
 

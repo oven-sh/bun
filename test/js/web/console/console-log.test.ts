@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 it("should log to console correctly", async () => {
   const { stdout, stderr, exited } = spawn({
@@ -8,9 +8,7 @@ it("should log to console correctly", async () => {
     stdin: null,
     stdout: "pipe",
     stderr: "pipe",
-    env: {
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env: bunEnv,
   });
   expect(await exited).toBe(0);
   expect((await new Response(stderr).text()).replaceAll("\r\n", "\n")).toBe("uh oh\n");

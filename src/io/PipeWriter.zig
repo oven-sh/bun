@@ -46,6 +46,10 @@ pub fn PosixPipeWriter(
                             return .{ .pending = buf_.len - buf.len };
                         }
 
+                        if (err.getErrno() == .PIPE) {
+                            return .{ .done = buf_.len - buf.len };
+                        }
+
                         return .{ .err = err };
                     },
 
@@ -87,14 +91,13 @@ pub fn PosixPipeWriter(
             const buffer = getBuffer(parent);
 
             if (buffer.len == 0 and !received_hup) {
-                onWrite(parent, 0, false);
                 return;
             }
 
             switch (drainBufferedData(
                 parent,
                 buffer,
-                if (size_hint > 0) @intCast(size_hint) else std.math.maxInt(usize),
+                if (size_hint > 0 and getFileType(parent).isBlocking()) @intCast(size_hint) else std.math.maxInt(usize),
                 received_hup,
             )) {
                 .pending => |wrote| {

@@ -1767,7 +1767,6 @@ pub const Blob = struct {
                             }
                         };
 
-                        // use real libuv async
                         const rc = libuv.uv_fs_open(
                             this.loop,
                             &this.req,

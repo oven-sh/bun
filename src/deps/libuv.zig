@@ -1717,13 +1717,16 @@ pub const fs_t = extern struct {
     file: union_unnamed_450,
     fs: union_unnamed_451,
     pub usingnamespace ReqMixin(@This());
+    const UV_FS_CLEANEDUP = 0x0010;
 
     pub inline fn deinit(this: *fs_t) void {
-        this.assert();
+        this.assertInitialized();
         uv_fs_req_cleanup(this);
+        this.assertCleanedUp();
     }
 
-    pub inline fn assert(this: *fs_t) void {
+    // This assertion tripping is a sign that .deinit() is going to cause invalid memory access
+    pub inline fn assertInitialized(this: *const fs_t) void {
         if (bun.Environment.allow_assert) {
             if (@intFromPtr(this.loop) == 0xAAAAAAAAAAAA0000) {
                 @panic("uv_fs_t was not initialized");
@@ -1731,8 +1734,21 @@ pub const fs_t = extern struct {
         }
     }
 
+    // This assertion tripping is a sign that a memory leak may happen
+    pub inline fn assertCleanedUp(this: *const fs_t) void {
+        if (bun.Environment.allow_assert) {
+            if (@intFromPtr(this.loop) == 0xAAAAAAAAAAAA0000) {
+                return;
+            }
+            if ((this.flags & UV_FS_CLEANEDUP) != 0) {
+                return;
+            }
+            @panic("uv_fs_t was not cleaned up. it is expected to call .deinit() on the fs_t here.");
+        }
+    }
+
     pub inline fn ptrAs(this: *fs_t, comptime T: type) T {
-        this.assert();
+        this.assertInitialized();
         return @ptrCast(this.ptr);
     }
 

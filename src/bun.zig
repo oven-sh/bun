@@ -698,7 +698,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
             const key = line[0..key_end];
-            if (strings.eqlLong(key, path_, true)) {
+            if (strings.eqlInsensitive(key, path_)) {
                 return line[@min(key_end + 1, line.len)..];
             }
         }

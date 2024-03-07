@@ -809,12 +809,6 @@ const PosixBufferedReader = struct {
         if (!poll.flags.contains(.was_ever_registered))
             poll.enableKeepingProcessAlive(this.eventLoop());
 
-        if (comptime bun.Environment.isMac) {
-            if (poll.isRegistered() and !poll.flags.contains(.needs_rearm)) {
-                return;
-            }
-        }
-
         switch (poll.registerWithFd(this.loop(), .readable, .dispatch, poll.fd)) {
             .err => |err| {
                 this.onError(err);

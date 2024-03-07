@@ -1187,6 +1187,7 @@ pub fn spawnProcessPosix(
                     if (comptime Environment.isMac) {
                         // macOS seems to default to around 8 KB for the buffer size
                         // this is comically small.
+                        // TODO: investigate if this should be adjusted on Linux.
                         const so_recvbuf: c_int = 1024 * 512;
                         const so_sendbuf: c_int = 1024 * 512;
                         _ = std.c.setsockopt(fds[1].cast(), std.os.SOL.SOCKET, std.os.SO.RCVBUF, &so_recvbuf, @sizeOf(c_int));
@@ -1200,10 +1201,15 @@ pub fn spawnProcessPosix(
                     // our copy of stdout or stderr should be readable
                     _ = std.c.shutdown(@intCast(fds[0].cast()), std.os.SHUT.WR);
 
-                    const so_recvbuf: c_int = 1024 * 512;
-                    const so_sendbuf: c_int = 1024 * 512;
-                    _ = std.c.setsockopt(fds[0].cast(), std.os.SOL.SOCKET, std.os.SO.RCVBUF, &so_recvbuf, @sizeOf(c_int));
-                    _ = std.c.setsockopt(fds[1].cast(), std.os.SOL.SOCKET, std.os.SO.SNDBUF, &so_sendbuf, @sizeOf(c_int));
+                    if (comptime Environment.isMac) {
+                        // macOS seems to default to around 8 KB for the buffer size
+                        // this is comically small.
+                        // TODO: investigate if this should be adjusted on Linux.
+                        const so_recvbuf: c_int = 1024 * 512;
+                        const so_sendbuf: c_int = 1024 * 512;
+                        _ = std.c.setsockopt(fds[0].cast(), std.os.SOL.SOCKET, std.os.SO.RCVBUF, &so_recvbuf, @sizeOf(c_int));
+                        _ = std.c.setsockopt(fds[1].cast(), std.os.SOL.SOCKET, std.os.SO.SNDBUF, &so_sendbuf, @sizeOf(c_int));
+                    }
                 }
 
                 try to_close_at_end.append(fds[1]);

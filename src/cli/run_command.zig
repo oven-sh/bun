@@ -736,6 +736,7 @@ pub const RunCommand = struct {
         this_bundler: *bundler.Bundler,
         env: ?*DotEnv.Loader,
         log_errors: bool,
+        store_root_fd: bool,
     ) !*DirInfo {
         const args = ctx.args;
         this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, env);
@@ -745,7 +746,7 @@ pub const RunCommand = struct {
 
         this_bundler.resolver.care_about_bin_folder = true;
         this_bundler.resolver.care_about_scripts = true;
-        this_bundler.resolver.store_fd = true;
+        this_bundler.resolver.store_fd = store_root_fd;
 
         this_bundler.resolver.opts.load_tsconfig_json = false;
         this_bundler.options.load_tsconfig_json = false;
@@ -772,6 +773,8 @@ pub const RunCommand = struct {
             Output.flush();
             return error.CouldntReadCurrentDirectory;
         };
+
+        this_bundler.resolver.store_fd = false;
 
         if (env == null) {
             this_bundler.env.loadProcess();
@@ -1342,7 +1345,7 @@ pub const RunCommand = struct {
 
         var ORIGINAL_PATH: string = "";
         var this_bundler: bundler.Bundler = undefined;
-        const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors);
+        const root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, log_errors, false);
         try configurePathForRun(ctx, root_dir_info, &this_bundler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_bundler.env.map.put("npm_lifecycle_event", script_name_to_search) catch unreachable;
 

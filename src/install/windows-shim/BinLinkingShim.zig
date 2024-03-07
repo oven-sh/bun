@@ -207,21 +207,6 @@ pub const Shebang = struct {
         return try Shebang.init(line, false);
     }
 
-    pub fn coerceNodeToBun(self: Shebang, buf: *[32766]u8) Shebang {
-        if (self.is_bun and !bun.strings.hasPrefixComptime(self.launcher, "bun ")) {
-            const args = self.launcher[if (bun.strings.indexOfChar(self.launcher, ' ')) |i| i + 1 else self.launcher.len..];
-            @memcpy(buf[0..4], "bun ");
-            @memcpy(buf[4..][0..args.len], args);
-            return Shebang{
-                .launcher = "bun " ++ self.launcher,
-                .utf16_len = self.utf16_len,
-                .is_bun = true,
-                .is_node = false,
-            };
-        }
-        return self;
-    }
-
     pub fn encodedLength(shebang: Shebang) usize {
         return (" ".len + shebang.utf16_len) * @sizeOf(u16) +
             @sizeOf(u32) * 2;

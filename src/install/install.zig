@@ -2123,6 +2123,7 @@ pub const PackageManager = struct {
             this_bundler,
             this.env,
             log_level != .silent,
+            false,
         );
 
         const init_cwd_gop = try this.env.map.getOrPutWithoutValue("INIT_CWD");

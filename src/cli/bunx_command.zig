@@ -286,6 +286,7 @@ pub const BunxCommand = struct {
             &this_bundler,
             null,
             true,
+            true,
         );
 
         try Run.configurePathForRun(

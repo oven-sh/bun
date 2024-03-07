@@ -1036,6 +1036,9 @@ const AddCompletions = @import("./cli/add_completions.zig");
 /// - `node scripts/postinstall` -> `bun run ./scripts/postinstall`
 pub var pretend_to_be_node = false;
 
+/// This is set `true` during `Command.which()` if argv0 is "bunx"
+pub var is_bunx_exe = false;
+
 pub const Command = struct {
     var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
@@ -1198,7 +1201,20 @@ pub const Command = struct {
             argv0;
 
         // symlink is argv[0]
-        if (isBunX(without_exe)) return .BunxCommand;
+        if (isBunX(without_exe)) {
+            // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
+            // want to recursively run bunx. so this check lets us peek back into bun install.
+            if (args_iter.next()) |next| {
+                if (bun.strings.eqlComptime(next, "add") and
+                    bun.getenvZ("BUN_INTERNAL_BUNX_INSTALL") != null)
+                {
+                    return .AddCommand;
+                }
+            }
+
+            is_bunx_exe = true;
+            return .BunxCommand;
+        }
 
         if (isNode(without_exe)) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
@@ -1378,7 +1394,7 @@ pub const Command = struct {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BunxCommand);
 
-                try BunxCommand.exec(ctx, bun.argv()[1..]);
+                try BunxCommand.exec(ctx, bun.argv()[if (is_bunx_exe) 0 else 1..]);
                 return;
             },
             .ReplCommand => {
@@ -1386,8 +1402,8 @@ pub const Command = struct {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 var ctx = try Command.Context.create(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
-                var args = bun.argv()[1..];
-                args[0] = @constCast("bun-repl");
+                var args = bun.argv()[0..];
+                args[1] = @constCast("bun-repl");
                 try BunxCommand.exec(ctx, args);
                 return;
             },

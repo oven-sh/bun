@@ -511,8 +511,11 @@ pub const PackageManagerCommand = struct {
                         switch (pm.options.log_level) {
                             inline else => |log_level| try pm.spawnPackageLifecycleScripts(ctx, scripts_list, log_level),
                         }
-                        scripts_node.activate();
-                        progress.refresh();
+
+                        if (pm.options.log_level.showProgress()) {
+                            scripts_node.activate();
+                            progress.refresh();
+                        }
                     }
 
                     while (pm.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {

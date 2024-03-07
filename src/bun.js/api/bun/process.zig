@@ -1374,10 +1374,11 @@ pub fn spawnProcessWindows(
     const stdio_options: [3]WindowsSpawnOptions.Stdio = .{ options.stdin, options.stdout, options.stderr };
     const pipe_flags = uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE;
 
-    // On Windows we don't have a dup2 equivalent
-    // So we create a pipe with `uv_pipe(fds, 0, 0)`
-    // And give the write end to stdout/stderr
-    // And the read end we use to buffer the output
+    // On Windows it seems don't have a dup2 equivalent with pipes
+    // So we need to use file descriptors.
+    // We can create a pipe with `uv_pipe(fds, 0, 0)` and get a read fd and write fd.
+    // We give the write fd to stdout/stderr
+    // And use the read fd to read from the output.
     var dup_fds: [2]uv.uv_file = undefined;
     var dup_src: ?u32 = null;
     var dup_tgt: ?u32 = null;

@@ -2586,7 +2586,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
     });
 
-    test("auto node-gyp scripts work when scripts exists other than `install` and `postinstall`", async () => {
+    test("auto node-gyp scripts work when scripts exists other than `install` and `preinstall`", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -2596,7 +2596,7 @@ for (const forceWaiterThread of [false, true]) {
             "node-gyp": "1.5.0",
           },
           scripts: {
-            preinstall: "exit 0",
+            postinstall: "exit 0",
             prepare: "exit 0",
             postprepare: "exit 0",
           },
@@ -2629,7 +2629,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
     });
 
-    for (const script of ["install", "postinstall"]) {
+    for (const script of ["install", "preinstall"]) {
       test(`does not add auto node-gyp script when ${script} script exists`, async () => {
         const packageJSON: any = {
           name: "foo",

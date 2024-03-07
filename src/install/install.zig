@@ -394,21 +394,9 @@ const NetworkTask = struct {
         this.allocator = allocator;
 
         const url = URL.parse(this.url_buf);
-        this.http = AsyncHTTP.init(
-            allocator,
-            .GET,
-            url,
-            header_builder.entries,
-            header_builder.content.ptr.?[0..header_builder.content.len],
-            &this.response_buffer,
-            "",
-            0,
-            this.getCompletionCallback(),
-            this.package_manager.httpProxy(url),
-            null,
-            HTTP.FetchRedirect.follow,
-            null,
-        );
+        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", 0, this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
+            .http_proxy = this.package_manager.httpProxy(url),
+        });
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
         if (PackageManager.verbose_install) {
@@ -478,21 +466,9 @@ const NetworkTask = struct {
 
         const url = URL.parse(this.url_buf);
 
-        this.http = AsyncHTTP.init(
-            allocator,
-            .GET,
-            url,
-            header_builder.entries,
-            header_buf,
-            &this.response_buffer,
-            "",
-            0,
-            this.getCompletionCallback(),
-            this.package_manager.httpProxy(url),
-            null,
-            HTTP.FetchRedirect.follow,
-            null,
-        );
+        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", 0, this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
+            .http_proxy = this.package_manager.httpProxy(url),
+        });
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
         if (PackageManager.verbose_install) {
             this.http.client.verbose = true;
@@ -8391,7 +8367,7 @@ pub const PackageManager = struct {
             if (scripts.hasAny()) {
                 const add_node_gyp_rebuild_script = if (this.lockfile.hasTrustedDependency(folder_name) and
                     scripts.install.isEmpty() and
-                    scripts.postinstall.isEmpty())
+                    scripts.preinstall.isEmpty())
                 brk: {
                     const binding_dot_gyp_path = Path.joinAbsStringZ(
                         this.node_modules_folder_path.items,
@@ -9474,7 +9450,7 @@ pub const PackageManager = struct {
             .auto,
         );
         if (root.scripts.hasAny()) {
-            const add_node_gyp_rebuild_script = root.scripts.install.isEmpty() and root.scripts.postinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
+            const add_node_gyp_rebuild_script = root.scripts.install.isEmpty() and root.scripts.preinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
 
             manager.root_lifecycle_scripts = root.scripts.enqueue(
                 manager.lockfile,

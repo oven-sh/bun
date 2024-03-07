@@ -14,7 +14,10 @@ beforeAll(() => {
 });
 
 function createHugeString() {
-  return ("hello".repeat(100).repeat(500).repeat(1) + "hey").slice();
+  const buf = Buffer.allocUnsafe("hello".length * 100 * 500 + "hey".length);
+  buf.fill("hello");
+  buf.write("hey", buf.length - "hey".length);
+  return buf.toString();
 }
 
 for (let [gcTick, label] of [
@@ -549,10 +552,7 @@ describe("spawn unref and kill should not hang", () => {
 
       proc.kill();
       proc.unref();
-      await Bun.sleep(100);
       await proc.exited;
-
-      console.log("exited");
     }
 
     expect().pass();

@@ -94,20 +94,20 @@ pub const PackageManagerCommand = struct {
         Output.prettyln(
             \\<b><blue>bun pm<r>: Package manager utilities
             \\
-            \\  bun pm <b>bin<r>              print the path to bin folder
-            \\  <d>└<r>  <cyan>-g<r> bin               print the <b>global<r> path to bin folder
-            \\  bun pm <b>ls<r>               list the dependency tree according to the current lockfile
-            \\  <d>└<r>  <cyan>--all<r>                list the entire dependency tree according to the current lockfile
-            \\  bun pm <b>hash<r>             generate & print the hash of the current lockfile
-            \\  bun pm <b>hash-string<r>      print the string used to hash the lockfile
-            \\  bun pm <b>hash-print<r>       print the hash stored in the current lockfile
-            \\  bun pm <b>cache<r>            print the path to the cache folder
-            \\  bun pm <b>cache rm<r>         clear the cache
-            \\  bun pm <b>migrate<r>          migrate another package manager's lockfile without installing anything
-            \\  bun pm <b>trust(ed)<r>        print current trusted and untrusted dependencies with scripts
-            \\  <d>├<r>  \<dependencies...\>    trust dependencies and run scripts
-            \\  <d>├<r>  <cyan>--all<r>                trust all untrusted dependencies and run their scripts 
-            \\  <d>└<r>  <cyan>--default<r>            print the list of default trusted dependencies
+            \\  bun pm <b>bin<r>            print the path to bin folder
+            \\  <d>└<r>  <cyan>-g<r> bin             print the <b>global<r> path to bin folder
+            \\  bun pm <b>ls<r>             list the dependency tree according to the current lockfile
+            \\  <d>└<r>  <cyan>--all<r>              list the entire dependency tree according to the current lockfile
+            \\  bun pm <b>hash<r>           generate & print the hash of the current lockfile
+            \\  bun pm <b>hash-string<r>    print the string used to hash the lockfile
+            \\  bun pm <b>hash-print<r>     print the hash stored in the current lockfile
+            \\  bun pm <b>cache<r>          print the path to the cache folder
+            \\  bun pm <b>cache rm<r>       clear the cache
+            \\  bun pm <b>migrate<r>        migrate another package manager's lockfile without installing anything
+            \\  bun pm <b>trust(ed)<r>      print current trusted and untrusted dependencies with scripts
+            \\  <d>├<r>  \<packages, ...\>    trust dependencies and run scripts
+            \\  <d>├<r>  <cyan>--all<r>              trust all untrusted dependencies and run their scripts 
+            \\  <d>└<r>  <cyan>--default<r>          print the list of default trusted dependencies
             \\
             \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>
             \\
@@ -237,7 +237,7 @@ pub const PackageManagerCommand = struct {
                 const scripts: []Lockfile.Package.Scripts = packages.items(.scripts);
                 const resolutions: []Install.Resolution = packages.items(.resolution);
 
-                var trusted_set: std.StringArrayHashMapUnmanaged(void) = .{};
+                var trusted_set: std.AutoArrayHashMapUnmanaged(u64, String) = .{};
                 var untrusted_dep_ids: std.AutoArrayHashMapUnmanaged(DependencyID, void) = .{};
                 defer untrusted_dep_ids.deinit(ctx.allocator);
 
@@ -255,7 +255,8 @@ pub const PackageManagerCommand = struct {
                     if (metas[package_id].hasInstallScript()) {
                         if (pm.lockfile.trusted_dependencies) |trusted_dependencies| {
                             if (trusted_dependencies.contains(name_hash)) {
-                                try trusted_set.put(ctx.allocator, alias, {});
+                                // can't put alias directly because it might be inline
+                                try trusted_set.put(ctx.allocator, dep.name_hash, dep.name);
                             } else {
                                 try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
                             }
@@ -268,20 +269,22 @@ pub const PackageManagerCommand = struct {
                     }
                 }
 
-                const Sorter = struct {
-                    pub fn lessThan(_: void, rhs: string, lhs: string) bool {
-                        return std.mem.order(u8, rhs, lhs) == .lt;
-                    }
-                };
-
                 {
-                    const aliases = trusted_set.keys();
-                    std.sort.pdq(string, aliases, {}, Sorter.lessThan);
+                    const Sorter = struct {
+                        buf: string,
+                        pub fn lessThan(this: @This(), rhs: String, lhs: String) bool {
+                            return rhs.order(&lhs, this.buf, this.buf) == .lt;
+                        }
+                    };
+                    const aliases = trusted_set.values();
+                    std.sort.pdq(String, aliases, Sorter{ .buf = buf }, Sorter.lessThan);
+
                     Output.pretty("Trusted dependencies ({d}):\n", .{aliases.len});
                     for (aliases) |alias| {
-                        Output.pretty(" <d>-<r> {s}\n", .{alias});
+                        Output.pretty(" <d>-<r> {s}\n", .{alias.slice(buf)});
+                    } else {
+                        Output.pretty("\n", .{});
                     }
-                    Output.pretty("\n", .{});
 
                     trusted_set.deinit(ctx.allocator);
                 }
@@ -348,6 +351,12 @@ pub const PackageManagerCommand = struct {
                     Output.print("Untrusted dependencies (0):\n", .{});
                     Global.exit(0);
                 }
+
+                const Sorter = struct {
+                    pub fn lessThan(_: void, rhs: string, lhs: string) bool {
+                        return std.mem.order(u8, rhs, lhs) == .lt;
+                    }
+                };
 
                 const aliases = untrusted_with_scripts.keys();
                 std.sort.pdq(string, aliases, {}, Sorter.lessThan);
@@ -475,7 +484,7 @@ pub const PackageManagerCommand = struct {
                             }
                             scripts_count += scripts_list.total;
                             try entry.value_ptr.append(ctx.allocator, scripts_list);
-                            try package_names_to_add.put(ctx.allocator, alias, {});
+                            try package_names_to_add.put(ctx.allocator, try ctx.allocator.dupe(u8, alias), {});
                         }
                     }
                 }

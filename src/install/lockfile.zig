@@ -2453,7 +2453,7 @@ pub const Package = extern struct {
                 {
                     script_index += 1;
                     const entry: Lockfile.Scripts.Entry = .{
-                        .script = lockfile.allocator.dupe(u8, "node-gyp rebuild") catch unreachable,
+                        .script = allocator.dupe(u8, "node-gyp rebuild") catch unreachable,
                     };
                     if (first_script_index == -1) first_script_index = @intCast(script_index);
                     scripts[script_index] = entry;
@@ -2471,14 +2471,6 @@ pub const Package = extern struct {
                     counter += 1;
                 }
                 script_index += 1;
-
-                const entry: Lockfile.Scripts.Entry = .{
-                    .script = allocator.dupe(u8, "node-gyp rebuild") catch unreachable,
-                };
-                if (first_script_index == -1) first_script_index = @intCast(script_index);
-                scripts[script_index] = entry;
-                script_index += 2;
-                counter += 1;
             } else {
                 const install_scripts = .{
                     "preinstall",

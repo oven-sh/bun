@@ -564,7 +564,7 @@ pub const ReadFileUV = struct {
     on_complete_fn: ReadFile.OnReadFileCallback,
     is_regular_file: bool = false,
 
-    req: libuv.fs_t = libuv.fs_t.uninitialized,
+    req: libuv.fs_t = std.mem.zeroes(libuv.fs_t),
 
     pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
         log("ReadFileUV.start", .{});
@@ -630,7 +630,8 @@ pub const ReadFileUV = struct {
             return;
         }
 
-        this.req.assertCleanedUp();
+        this.req.deinit();
+        this.req.data = this;
 
         if (libuv.uv_fs_fstat(this.loop, &this.req, bun.uvfdcast(opened_fd), &onFileInitialStat).errEnum()) |errno| {
             this.errno = bun.errnoToZigErr(errno);

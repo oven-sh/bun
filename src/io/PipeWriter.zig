@@ -1092,6 +1092,7 @@ pub fn WindowsStreamingWriter(
                 this.closeWithoutReporting();
                 return;
             }
+
             // success means that we send all the data inside current_payload
             const written = this.current_payload.size();
             this.current_payload.reset();

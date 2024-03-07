@@ -1217,7 +1217,6 @@ class ChildProcess extends EventEmitter {
 
     // TODO: better ipc support
     const ipc = $isArray(stdio) && stdio[3] === "ipc";
-
     var env = options.envPairs || undefined;
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
@@ -1595,7 +1594,7 @@ const validateObject = (value, name, options = null) => {
   const nullable = options?.nullable ?? false;
   if (
     (!nullable && value === null) ||
-    (!allowArray && ArrayIsArray.$call(value)) ||
+    (!allowArray && $isJSArray(value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
     throw new ERR_INVALID_ARG_TYPE(name, "object", value);

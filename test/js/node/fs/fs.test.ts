@@ -1481,7 +1481,7 @@ describe("rmdirSync", () => {
   });
 });
 
-describe.skipIf(isWindows)("createReadStream", () => {
+describe("createReadStream", () => {
   it("works (1 chunk)", async () => {
     return await new Promise((resolve, reject) => {
       var stream = createReadStream(import.meta.dir + "/readFileSync.txt", {});

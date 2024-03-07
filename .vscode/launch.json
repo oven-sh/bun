@@ -431,8 +431,12 @@
           "value": "1"
         },
         {
+          "name": "BUN_DEBUG_jest",
+          "value": "1"
+        },
+        {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2"
+          "value": "1"
         }
       ]
     },
@@ -450,6 +454,18 @@
         },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
+          "value": "1"
+        },
+        {
+          "name": "BUN_DEBUG_EventLoop",
+          "value": "1"
+        },
+        {
+          "name": "BUN_DEBUG_SYS",
+          "value": "1"
+        },
+        {
+          "name": "BUN_DEBUG_PipeWriter",
           "value": "1"
         },
         {

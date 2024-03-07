@@ -215,7 +215,7 @@ pub const PackageManagerCommand = struct {
             // do this before loading lockfile because you don't need a lockfile
             // to see the default trusted dependencies
             if (strings.leftHasAnyInRight(args, &.{"--default"})) {
-                Output.print("Default trusted dependencies <d>({d})<r>:\n", .{Lockfile.default_trusted_dependencies_list.len});
+                Output.print("Default trusted dependencies ({d}):\n", .{Lockfile.default_trusted_dependencies_list.len});
                 for (Lockfile.default_trusted_dependencies_list) |name| {
                     Output.pretty(" <d>-<r> {s}\n", .{name});
                 }
@@ -237,13 +237,10 @@ pub const PackageManagerCommand = struct {
                 const scripts: []Lockfile.Package.Scripts = packages.items(.scripts);
                 const resolutions: []Install.Resolution = packages.items(.resolution);
 
-                var trusted_dedupe_set: std.AutoArrayHashMapUnmanaged(Install.TruncatedPackageNameHash, void) = .{};
-                defer trusted_dedupe_set.deinit(ctx.allocator);
-
+                var trusted_set: std.StringArrayHashMapUnmanaged(void) = .{};
                 var untrusted_dep_ids: std.AutoArrayHashMapUnmanaged(DependencyID, void) = .{};
                 defer untrusted_dep_ids.deinit(ctx.allocator);
 
-                var first = true;
                 // loop through all dependencies, print all the trusted packages, and collect
                 // untrusted packages with lifecycle scripts
                 for (pm.lockfile.buffers.dependencies.items, 0..) |dep, i| {
@@ -258,14 +255,7 @@ pub const PackageManagerCommand = struct {
                     if (metas[package_id].hasInstallScript()) {
                         if (pm.lockfile.trusted_dependencies) |trusted_dependencies| {
                             if (trusted_dependencies.contains(name_hash)) {
-                                const gop = trusted_dedupe_set.getOrPut(ctx.allocator, name_hash) catch bun.outOfMemory();
-                                if (!gop.found_existing) {
-                                    if (first) {
-                                        Output.print("Trusted:\n", .{});
-                                        first = false;
-                                    }
-                                    Output.pretty(" <d>-<r> {s}\n", .{alias});
-                                }
+                                try trusted_set.put(ctx.allocator, alias, {});
                             } else {
                                 try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
                             }
@@ -278,7 +268,28 @@ pub const PackageManagerCommand = struct {
                     }
                 }
 
-                if (untrusted_dep_ids.count() == 0) Global.exit(0);
+                const Sorter = struct {
+                    pub fn lessThan(_: void, rhs: string, lhs: string) bool {
+                        return std.mem.order(u8, rhs, lhs) == .lt;
+                    }
+                };
+
+                {
+                    const aliases = trusted_set.keys();
+                    std.sort.pdq(string, aliases, {}, Sorter.lessThan);
+                    Output.pretty("Trusted dependencies ({d}):\n", .{aliases.len});
+                    for (aliases) |alias| {
+                        Output.pretty(" <d>-<r> {s}\n", .{alias});
+                    }
+                    Output.pretty("\n", .{});
+
+                    trusted_set.deinit(ctx.allocator);
+                }
+
+                if (untrusted_dep_ids.count() == 0) {
+                    Output.print("Untrusted dependencies (0):\n", .{});
+                    Global.exit(0);
+                }
 
                 var untrusted_with_scripts: std.StringArrayHashMapUnmanaged(std.ArrayListUnmanaged(struct {
                     dep_id: DependencyID,
@@ -333,18 +344,16 @@ pub const PackageManagerCommand = struct {
                     }
                 }
 
-                if (untrusted_with_scripts.count() == 0) Global.exit(0);
-
-                first = true;
-                const Sorter = struct {
-                    pub fn lessThan(_: void, rhs: string, lhs: string) bool {
-                        return std.mem.order(u8, rhs, lhs) == .lt;
-                    }
-                };
+                if (untrusted_with_scripts.count() == 0) {
+                    Output.print("Untrusted dependencies (0):\n", .{});
+                    Global.exit(0);
+                }
 
                 const aliases = untrusted_with_scripts.keys();
                 std.sort.pdq(string, aliases, {}, Sorter.lessThan);
                 untrusted_with_scripts.reIndex(ctx.allocator) catch bun.outOfMemory();
+
+                Output.print("Untrusted dependencies ({d}):\n", .{aliases.len});
 
                 for (aliases) |alias| {
                     const _entry = untrusted_with_scripts.get(alias);
@@ -356,11 +365,6 @@ pub const PackageManagerCommand = struct {
                     if (_entry) |entry| {
                         if (comptime bun.Environment.allow_assert) {
                             std.debug.assert(entry.items.len > 0);
-                        }
-
-                        if (first) {
-                            Output.print("Untrusted <d>({d})<r>:\n", .{aliases.len});
-                            first = false;
                         }
 
                         Output.pretty(" <d>-<r> {s}\n", .{alias});

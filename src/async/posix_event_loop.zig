@@ -130,7 +130,7 @@ pub const FilePoll = struct {
 
     fd: bun.FileDescriptor = invalid_fd,
     flags: Flags.Set = Flags.Set{},
-    owner: Owner = undefined,
+    owner: Owner = Owner.Null,
 
     /// We re-use FilePoll objects to avoid allocating new ones.
     ///
@@ -164,9 +164,6 @@ pub const FilePoll = struct {
     const FileSink = JSC.WebCore.FileSink.Poll;
     const DNSResolver = JSC.DNS.DNSResolver;
     const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
-    const Deactivated = opaque {
-        pub var owner: Owner = Owner.init(@as(*Deactivated, @ptrFromInt(@as(usize, 0xDEADBEEF))));
-    };
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
     const BufferedReader = bun.io.BufferedReader;
     pub const Owner = bun.TaggedPointerUnion(.{
@@ -189,7 +186,6 @@ pub const FilePoll = struct {
 
         BufferedReader,
 
-        Deactivated,
         DNSResolver,
         GetAddrInfoRequest,
         // LifecycleScriptSubprocessOutputReader,
@@ -234,12 +230,12 @@ pub const FilePoll = struct {
     }
 
     pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.os.system.kevent64_s) void {
-        log("onKqueueEvent(0x{x}, generation_number={d}, ext={d}, fd={})", .{ @intFromPtr(poll), poll.generation_number, kqueue_event.ext[0], poll.fd });
+        poll.updateFlags(Flags.fromKQueueEvent(kqueue_event.*));
+        log("onKQueueEvent: {}", .{poll});
+
         if (KQueueGenerationNumber != u0)
             std.debug.assert(poll.generation_number == kqueue_event.ext[0]);
 
-        poll.updateFlags(Flags.fromKQueueEvent(kqueue_event.*));
-        log("onKQueueEvent: {}", .{poll});
         poll.onUpdate(kqueue_event.data);
     }
 
@@ -315,7 +311,7 @@ pub const FilePoll = struct {
     fn deinitPossiblyDefer(this: *FilePoll, vm: anytype, loop: *Loop, polls: *FilePoll.Store, force_unregister: bool) void {
         _ = this.unregister(loop, force_unregister);
 
-        this.owner = Deactivated.owner;
+        this.owner.clear();
         const was_ever_registered = this.flags.contains(.was_ever_registered);
         this.flags = Flags.Set{};
         this.fd = invalid_fd;
@@ -340,7 +336,9 @@ pub const FilePoll = struct {
             poll.flags.insert(.needs_rearm);
         }
 
-        var ptr = poll.owner;
+        const ptr = poll.owner;
+        std.debug.assert(!ptr.isNull());
+
         switch (ptr.tag()) {
             // @field(Owner.Tag, bun.meta.typeBaseName(@typeName(FIFO))) => {
             //     log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) FIFO", .{poll.fd});
@@ -504,15 +502,12 @@ pub const FilePoll = struct {
                 }
             } else if (kqueue_event.filter == std.os.system.EVFILT_WRITE) {
                 flags.insert(Flags.writable);
-                log("writable", .{});
                 if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
                 }
             } else if (kqueue_event.filter == std.os.system.EVFILT_PROC) {
-                log("proc", .{});
                 flags.insert(Flags.process);
             } else if (kqueue_event.filter == std.os.system.EVFILT_MACHPORT) {
-                log("machport", .{});
                 flags.insert(Flags.machport);
             }
             return flags;
@@ -522,19 +517,15 @@ pub const FilePoll = struct {
             var flags = Flags.Set{};
             if (epoll.events & std.os.linux.EPOLL.IN != 0) {
                 flags.insert(Flags.readable);
-                log("readable", .{});
             }
             if (epoll.events & std.os.linux.EPOLL.OUT != 0) {
                 flags.insert(Flags.writable);
-                log("writable", .{});
             }
             if (epoll.events & std.os.linux.EPOLL.ERR != 0) {
                 flags.insert(Flags.eof);
-                log("eof", .{});
             }
             if (epoll.events & std.os.linux.EPOLL.HUP != 0) {
                 flags.insert(Flags.hup);
-                log("hup", .{});
             }
             return flags;
         }
@@ -780,7 +771,6 @@ pub const FilePoll = struct {
 
     const Pollable = bun.TaggedPointerUnion(.{
         FilePoll,
-        Deactivated,
     });
 
     comptime {

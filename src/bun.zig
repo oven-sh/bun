@@ -133,7 +133,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     }
 
     pub fn isStdio(fd: FileDescriptor) bool {
-        fd.assertValid();
+        // fd.assertValid();
         const decoded = FDImpl.decode(fd);
         return switch (Environment.os) {
             else => decoded.value.as_system < 3,

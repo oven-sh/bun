@@ -8772,8 +8772,8 @@ pub const PackageManager = struct {
 
                         const name_hash: TruncatedPackageNameHash = @truncate(this.lockfile.buffers.dependencies.items[dependency_id].name_hash);
                         const is_trusted, const is_trusted_through_update_request = brk: {
-                            if (this.lockfile.hasTrustedDependency(alias)) break :brk .{ true, false };
                             if (this.trusted_dependencies_from_update_requests.contains(name_hash)) break :brk .{ true, true };
+                            if (this.lockfile.hasTrustedDependency(alias)) break :brk .{ true, false };
                             break :brk .{ false, false };
                         };
 
@@ -8930,12 +8930,13 @@ pub const PackageManager = struct {
             } else {
                 const name_hash: TruncatedPackageNameHash = @truncate(this.lockfile.buffers.dependencies.items[dependency_id].name_hash);
                 const is_trusted, const is_trusted_through_update_request, const add_to_lockfile = brk: {
+                    // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
+                    if (this.trusted_dependencies_from_update_requests.contains(name_hash)) break :brk .{ true, true, true };
+
                     if (this.manager.summary.added_trusted_dependencies.get(name_hash)) |should_add_to_lockfile| {
                         // is a new trusted dependency. need to enqueue scripts and maybe add to lockfile
                         break :brk .{ true, false, should_add_to_lockfile };
                     }
-                    // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
-                    if (this.trusted_dependencies_from_update_requests.contains(name_hash)) break :brk .{ true, true, true };
                     break :brk .{ false, false, false };
                 };
 

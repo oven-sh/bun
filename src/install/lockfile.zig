@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bun = @import("root").bun;
+const FeatureFlags = bun.FeatureFlags;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -5330,9 +5331,6 @@ pub const Serializer = struct {
                     trusted_dependencies.keys(),
                 );
             } else {
-                // this is needed because before 1.1 the list was not serialized if it was empty so
-                // there was not a way to differentiate an empty trustedDependencies list and
-                // a non existent one.
                 try writer.writeAll(std.mem.asBytes(&has_empty_trusted_dependencies_tag));
             }
         }
@@ -5779,12 +5777,21 @@ const default_trusted_dependencies = brk: {
 };
 
 pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
-    if (this.trusted_dependencies) |trusted_dependencies| {
-        const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
-        return trusted_dependencies.contains(hash);
-    }
+    if (comptime FeatureFlags.bun_install_breaking_changes_1_1) {
+        if (this.trusted_dependencies) |trusted_dependencies| {
+            const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
+            return trusted_dependencies.contains(hash);
+        }
 
-    return default_trusted_dependencies.has(name);
+        return default_trusted_dependencies.has(name);
+    } else {
+        if (this.trusted_dependencies) |trusted_dependencies| {
+            const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
+            return trusted_dependencies.contains(hash) or default_trusted_dependencies.has(name);
+        }
+
+        return default_trusted_dependencies.has(name);
+    }
 }
 
 pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependency, res: ?PackageID) !void {

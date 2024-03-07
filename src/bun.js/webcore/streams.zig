@@ -2920,11 +2920,13 @@ pub const FileSink = struct {
         // but:
         // 1) We haven't finished writing yet
         // 2) We haven't received EOF
-        if (this.done and !done and this.writer.hasPendingData()) {
-            if (this.pending.state == .pending) {
-                this.pending.consumed += @truncate(amount);
+        if (Environment.isPosix) {
+            if (this.done and !done and this.writer.hasPendingData()) {
+                if (this.pending.state == .pending) {
+                    this.pending.consumed += @truncate(amount);
+                }
+                return;
             }
-            return;
         }
 
         if (this.pending.state == .pending) {
@@ -2937,7 +2939,7 @@ pub const FileSink = struct {
 
             this.runPending();
 
-            if (this.done and !done and this.writer.getBuffer().len == 0) {
+            if (this.done and !done and (Environment.isWindows or !this.writer.hasPendingData())) {
                 // if we call end/endFromJS and we have some pending returned from .flush() we should call writer.end()
                 this.writer.end();
             }

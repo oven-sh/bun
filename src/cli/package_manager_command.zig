@@ -1,4 +1,5 @@
 const std = @import("std");
+const Progress = std.Progress;
 const bun = @import("root").bun;
 const Global = bun.Global;
 const Output = bun.Output;
@@ -93,17 +94,20 @@ pub const PackageManagerCommand = struct {
         Output.prettyln(
             \\<b><blue>bun pm<r>: Package manager utilities
             \\
-            \\  bun pm <b>bin<r>          print the path to bin folder
-            \\  bun pm <b>-g bin<r>       print the <b>global<r> path to bin folder
-            \\  bun pm <b>ls<r>           list the dependency tree according to the current lockfile
-            \\  bun pm <b>ls<r> <cyan>--all<r>     list the entire dependency tree according to the current lockfile
-            \\  bun pm <b>hash<r>         generate & print the hash of the current lockfile
-            \\  bun pm <b>hash-string<r>  print the string used to hash the lockfile
-            \\  bun pm <b>hash-print<r>   print the hash stored in the current lockfile
-            \\  bun pm <b>cache<r>        print the path to the cache folder
-            \\  bun pm <b>cache rm<r>     clear the cache
-            \\  bun pm <b>migrate<r>      migrate another package manager's lockfile without installing anything
-            \\  bun pm <b>trust(ed)<r>    print, add, and run scripts for trusted dependencies
+            \\  bun pm <b>bin<r>              print the path to bin folder
+            \\  <d>└<r>  <cyan>-g<r> bin               print the <b>global<r> path to bin folder
+            \\  bun pm <b>ls<r>               list the dependency tree according to the current lockfile
+            \\  <d>└<r>  <cyan>--all<r>                list the entire dependency tree according to the current lockfile
+            \\  bun pm <b>hash<r>             generate & print the hash of the current lockfile
+            \\  bun pm <b>hash-string<r>      print the string used to hash the lockfile
+            \\  bun pm <b>hash-print<r>       print the hash stored in the current lockfile
+            \\  bun pm <b>cache<r>            print the path to the cache folder
+            \\  bun pm <b>cache rm<r>         clear the cache
+            \\  bun pm <b>migrate<r>          migrate another package manager's lockfile without installing anything
+            \\  bun pm <b>trust(ed)<r>        print current trusted and untrusted dependencies with scripts
+            \\  <d>├<r>  \<dependencies...\>    trust dependencies and run scripts
+            \\  <d>├<r>  <cyan>--all<r>                trust all untrusted dependencies and run their scripts 
+            \\  <d>└<r>  <cyan>--default<r>            print the list of default trusted dependencies
             \\
             \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>
             \\
@@ -207,9 +211,23 @@ pub const PackageManagerCommand = struct {
             Output.writer().writeAll(outpath) catch {};
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "trusted") or (strings.eqlComptime(subcommand, "trust"))) {
+
+            // do this before loading lockfile because you don't need a lockfile
+            // to see the default trusted dependencies
+            if (strings.leftHasAnyInRight(args, &.{"--default"})) {
+                Output.print("Default trusted dependencies <d>({d})<r>:\n", .{Lockfile.default_trusted_dependencies_list.len});
+                for (Lockfile.default_trusted_dependencies_list) |name| {
+                    Output.pretty(" <d>-<r> {s}\n", .{name});
+                }
+
+                Global.exit(0);
+            }
+
             const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
             handleLoadLockfileErrors(load_lockfile, pm);
-            try pm.updateLockfileIfNeeded(load_lockfile, .silent);
+            switch (pm.options.log_level) {
+                inline else => |log_level| try pm.updateLockfileIfNeeded(load_lockfile, log_level),
+            }
             const buf = pm.lockfile.buffers.string_bytes.items;
 
             if (args.len == 2) {
@@ -229,7 +247,7 @@ pub const PackageManagerCommand = struct {
                 // loop through all dependencies, print all the trusted packages, and collect
                 // untrusted packages with lifecycle scripts
                 for (pm.lockfile.buffers.dependencies.items, 0..) |dep, i| {
-                    const dep_id: u32 = @intCast(i);
+                    const dep_id: DependencyID = @intCast(i);
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
                     if (package_id == Install.invalid_package_id) continue;
 
@@ -243,10 +261,10 @@ pub const PackageManagerCommand = struct {
                                 const gop = trusted_dedupe_set.getOrPut(ctx.allocator, name_hash) catch bun.outOfMemory();
                                 if (!gop.found_existing) {
                                     if (first) {
-                                        Output.print("Trusted dependencies:\n", .{});
+                                        Output.print("Trusted:\n", .{});
                                         first = false;
                                     }
-                                    Output.print(" - {s}\n", .{alias});
+                                    Output.pretty(" <d>-<r> {s}\n", .{alias});
                                 }
                             } else {
                                 try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
@@ -260,107 +278,95 @@ pub const PackageManagerCommand = struct {
                     }
                 }
 
+                if (untrusted_dep_ids.count() == 0) Global.exit(0);
+
                 var untrusted_with_scripts: std.StringArrayHashMapUnmanaged(std.ArrayListUnmanaged(struct {
                     dep_id: DependencyID,
                     scripts_list: Lockfile.Package.Scripts.List,
                 })) = .{};
                 defer untrusted_with_scripts.deinit(ctx.allocator);
 
-                if (untrusted_dep_ids.count() > 0) {
-                    var tree_iterator = Lockfile.Tree.Iterator.init(pm.lockfile);
+                var tree_iterator = Lockfile.Tree.Iterator.init(pm.lockfile);
 
-                    const top_level_without_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
-                    var abs_node_modules_path: std.ArrayListUnmanaged(u8) = .{};
-                    defer abs_node_modules_path.deinit(ctx.allocator);
-                    abs_node_modules_path.appendSlice(ctx.allocator, top_level_without_trailing_slash) catch bun.outOfMemory();
-                    abs_node_modules_path.append(ctx.allocator, std.fs.path.sep) catch bun.outOfMemory();
+                const top_level_without_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
+                var abs_node_modules_path: std.ArrayListUnmanaged(u8) = .{};
+                defer abs_node_modules_path.deinit(ctx.allocator);
+                try abs_node_modules_path.appendSlice(ctx.allocator, top_level_without_trailing_slash);
+                try abs_node_modules_path.append(ctx.allocator, std.fs.path.sep);
 
-                    while (tree_iterator.nextNodeModulesFolder(null)) |node_modules| {
-                        // + 1 because we want to keep the path separator
-                        abs_node_modules_path.items.len = top_level_without_trailing_slash.len + 1;
-                        abs_node_modules_path.appendSlice(ctx.allocator, node_modules.relative_path) catch bun.outOfMemory();
+                while (tree_iterator.nextNodeModulesFolder(null)) |node_modules| {
+                    // + 1 because we want to keep the path separator
+                    abs_node_modules_path.items.len = top_level_without_trailing_slash.len + 1;
+                    try abs_node_modules_path.appendSlice(ctx.allocator, node_modules.relative_path);
 
-                        var node_modules_dir = std.fs.Dir.openDir(std.fs.cwd(), node_modules.relative_path, .{}) catch |err| {
-                            if (err == error.ENOENT) continue;
-                            return err;
-                        };
-                        defer node_modules_dir.close();
+                    var node_modules_dir = bun.openDir(std.fs.cwd(), node_modules.relative_path) catch |err| {
+                        if (err == error.ENOENT) continue;
+                        return err;
+                    };
+                    defer node_modules_dir.close();
 
-                        for (node_modules.dependencies) |dep_id| {
-                            if (untrusted_dep_ids.contains(dep_id)) {
-                                const dep = pm.lockfile.buffers.dependencies.items[dep_id];
-                                const alias = dep.name.slice(buf);
-                                const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
-                                const resolution = &resolutions[package_id];
-                                var package_scripts = scripts[package_id];
+                    for (node_modules.dependencies) |dep_id| {
+                        if (untrusted_dep_ids.contains(dep_id)) {
+                            const dep = pm.lockfile.buffers.dependencies.items[dep_id];
+                            const alias = dep.name.slice(buf);
+                            const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
+                            const resolution = &resolutions[package_id];
+                            var package_scripts = scripts[package_id];
 
-                                if (try package_scripts.getList(
-                                    pm.log,
-                                    pm.lockfile,
-                                    node_modules_dir,
-                                    abs_node_modules_path.items,
-                                    alias,
-                                    resolution,
-                                )) |scripts_list| {
-                                    const gop = untrusted_with_scripts.getOrPut(ctx.allocator, ctx.allocator.dupe(u8, alias) catch bun.outOfMemory()) catch bun.outOfMemory();
-                                    if (!gop.found_existing) {
-                                        gop.value_ptr.* = .{};
-                                    }
-
-                                    gop.value_ptr.append(ctx.allocator, .{ .dep_id = dep_id, .scripts_list = scripts_list }) catch bun.outOfMemory();
+                            if (try package_scripts.getList(
+                                pm.log,
+                                pm.lockfile,
+                                node_modules_dir,
+                                abs_node_modules_path.items,
+                                alias,
+                                resolution,
+                            )) |scripts_list| {
+                                if (scripts_list.items.len == 0) continue;
+                                const gop = untrusted_with_scripts.getOrPut(ctx.allocator, ctx.allocator.dupe(u8, alias) catch bun.outOfMemory()) catch bun.outOfMemory();
+                                if (!gop.found_existing) {
+                                    gop.value_ptr.* = .{};
                                 }
+
+                                gop.value_ptr.append(ctx.allocator, .{ .dep_id = dep_id, .scripts_list = scripts_list }) catch bun.outOfMemory();
                             }
                         }
                     }
                 }
+
+                if (untrusted_with_scripts.count() == 0) Global.exit(0);
 
                 first = true;
-                if (untrusted_with_scripts.count() > 0) {
-                    const Sorter = struct {
-                        pub fn lessThan(_: void, rhs: string, lhs: string) bool {
-                            return std.mem.order(u8, rhs, lhs) == .lt;
-                        }
-                    };
+                const Sorter = struct {
+                    pub fn lessThan(_: void, rhs: string, lhs: string) bool {
+                        return std.mem.order(u8, rhs, lhs) == .lt;
+                    }
+                };
 
-                    const aliases = untrusted_with_scripts.keys();
-                    std.sort.pdq(string, aliases, {}, Sorter.lessThan);
-                    untrusted_with_scripts.reIndex(ctx.allocator) catch bun.outOfMemory();
+                const aliases = untrusted_with_scripts.keys();
+                std.sort.pdq(string, aliases, {}, Sorter.lessThan);
+                untrusted_with_scripts.reIndex(ctx.allocator) catch bun.outOfMemory();
 
-                    for (aliases) |alias| {
-                        const _entry = untrusted_with_scripts.get(alias);
+                for (aliases) |alias| {
+                    const _entry = untrusted_with_scripts.get(alias);
 
+                    if (comptime bun.Environment.allow_assert) {
+                        std.debug.assert(_entry != null);
+                    }
+
+                    if (_entry) |entry| {
                         if (comptime bun.Environment.allow_assert) {
-                            std.debug.assert(_entry != null);
+                            std.debug.assert(entry.items.len > 0);
                         }
 
-                        if (_entry) |entry| {
-                            if (comptime bun.Environment.allow_assert) {
-                                std.debug.assert(entry.items.len > 0);
-                            }
-                            if (entry.items.len == 0) continue;
-
-                            if (first) {
-                                Output.print("{d} untrusted dependencies:\n", .{untrusted_with_scripts.count()});
-                                first = false;
-                            }
-
-                            Output.print(" - {s}:\n", .{alias});
-
-                            for (entry.items) |entry_info| {
-                                // const dep_id = entry_info.dep_id;
-                                const scripts_list = entry_info.scripts_list;
-
-                                for (scripts_list.items, 0..) |maybe_script, script_i| {
-                                    if (maybe_script) |script| {
-                                        Output.print("   [{s}]: {s}\n", .{ Lockfile.Scripts.names[script_i], script.script });
-                                    }
-                                }
-                            }
+                        if (first) {
+                            Output.print("Untrusted <d>({d})<r>:\n", .{aliases.len});
+                            first = false;
                         }
+
+                        Output.pretty(" <d>-<r> {s}\n", .{alias});
                     }
                 }
 
-                Output.flush();
                 Global.exit(0);
             }
 
@@ -431,11 +437,13 @@ pub const PackageManagerCommand = struct {
                 package_names_to_add.deinit(ctx.allocator);
             }
 
+            var scripts_count: usize = 0;
+
             while (tree_iter.nextNodeModulesFolder(null)) |node_modules| {
                 abs_node_modules_path.items.len = top_level_without_trailing_slash.len + 1;
                 try abs_node_modules_path.appendSlice(ctx.allocator, node_modules.relative_path);
 
-                var node_modules_dir = std.fs.Dir.openDir(std.fs.cwd(), node_modules.relative_path, .{}) catch |err| {
+                var node_modules_dir = bun.openDir(std.fs.cwd(), node_modules.relative_path) catch |err| {
                     if (err == error.ENOENT) continue;
                     return err;
                 };
@@ -461,6 +469,7 @@ pub const PackageManagerCommand = struct {
                             if (!entry.found_existing) {
                                 entry.value_ptr.* = .{};
                             }
+                            scripts_count += scripts_list.total;
                             try entry.value_ptr.append(ctx.allocator, scripts_list);
                             try package_names_to_add.put(ctx.allocator, alias, {});
                         }
@@ -470,6 +479,18 @@ pub const PackageManagerCommand = struct {
 
             if (scripts_at_depth.count() == 0) Global.exit(0);
 
+            var root_node: *Progress.Node = undefined;
+            var scripts_node: Progress.Node = undefined;
+            var progress = &pm.progress;
+
+            if (pm.options.log_level.showProgress()) {
+                root_node = progress.start("", 0);
+                progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+
+                scripts_node = root_node.start(PackageManager.ProgressStrings.script(), scripts_count);
+                pm.scripts_node = &scripts_node;
+            }
+
             var depth = scripts_at_depth.count();
             while (depth > 0) {
                 depth -= 1;
@@ -478,17 +499,23 @@ pub const PackageManagerCommand = struct {
                     std.debug.assert(_entry != null);
                 }
                 if (_entry) |entry| {
-                    //
-                    // TODO: logging and limiting number of active scripts
-                    //
                     for (entry.items) |scripts_list| {
-                        try pm.spawnPackageLifecycleScripts(ctx, scripts_list, .silent);
+                        switch (pm.options.log_level) {
+                            inline else => |log_level| try pm.spawnPackageLifecycleScripts(ctx, scripts_list, log_level),
+                        }
+                        scripts_node.activate();
+                        progress.refresh();
                     }
 
                     while (pm.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
                         pm.uws_event_loop.tick();
                     }
                 }
+            }
+
+            if (pm.options.log_level.showProgress()) {
+                progress.root.end();
+                progress.* = .{};
             }
 
             const package_json_contents = try pm.root_package_json_file.readToEndAlloc(ctx.allocator, try pm.root_package_json_file.getEndPos());
@@ -546,7 +573,6 @@ pub const PackageManagerCommand = struct {
             std.os.ftruncate(pm.root_package_json_file.handle, new_package_json_contents.len) catch {};
             pm.root_package_json_file.close();
 
-            Output.flush();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "ls")) {
             const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");

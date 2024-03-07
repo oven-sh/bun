@@ -3591,117 +3591,121 @@ pub const PackageManager = struct {
         load_lockfile_result: Lockfile.LoadFromDiskResult,
         comptime log_level: Options.LogLevel,
     ) !void {
-        if (load_lockfile_result == .ok and load_lockfile_result.ok.serializer_result.packages_need_update) {
+        _ = manager;
+        _ = load_lockfile_result;
+        _ = log_level;
+        return;
 
-            // update packages with missing fields
-            const lockfile = manager.lockfile;
-            const slice = lockfile.packages.slice();
-            for (slice.items(.name), slice.items(.resolution), slice.items(.meta), 0..) |name, _resolution, *meta, package_id| {
+        // if (load_lockfile_result == .ok and load_lockfile_result.ok.serializer_result.packages_need_update) {
+        //     std.debug.print("Updating packages...\n", .{});
 
-                // make sure each is set
-                meta.setHasInstallScript(false);
+        //     // update packages with missing fields
+        //     const lockfile = manager.lockfile;
+        //     const slice = lockfile.packages.slice();
+        //     for (slice.items(.name), slice.items(.resolution), slice.items(.meta), 0..) |name, _resolution, *meta, package_id| {
 
-                const resolution: Resolution = _resolution;
-                switch (resolution.tag) {
-                    .npm => {
-                        const version = resolution.value.npm.version;
-                        const name_str = lockfile.str(&name);
-                        const task_id = Task.Id.forManifest(name_str);
+        //         // make sure each is set
+        //         meta.setHasInstallScript(false);
 
-                        if (comptime Environment.allow_assert) std.debug.assert(task_id != 0);
+        //         const resolution: Resolution = _resolution;
+        //         switch (resolution.tag) {
+        //             .npm => {
+        //                 const version = resolution.value.npm.version;
+        //                 const name_str = lockfile.str(&name);
+        //                 const task_id = Task.Id.forManifest(name_str);
 
-                        const network_entry = manager.network_dedupe_map.getOrPutContext(manager.allocator, task_id, .{}) catch bun.outOfMemory();
-                        if (!network_entry.found_existing) {
-                            var loaded_manifest: ?Npm.PackageManifest = null;
-                            if (manager.options.enable.manifest_cache) {
-                                if (Npm.PackageManifest.Serializer.load(manager.allocator, manager.getCacheDirectory(), name_str) catch null) |manifest_| {
-                                    const manifest: Npm.PackageManifest = manifest_;
-                                    loaded_manifest = manifest;
+        //                 if (comptime Environment.allow_assert) std.debug.assert(task_id != 0);
 
-                                    if (manager.options.enable.manifest_cache_control and manifest.pkg.public_max_age > manager.timestamp_for_manifest_cache_control) {
-                                        if (loaded_manifest.?.findByVersion(version)) |find_result| {
-                                            slice.items(.meta)[package_id].setHasInstallScript(find_result.package.has_install_script);
-                                            _ = manager.network_dedupe_map.remove(task_id);
-                                            continue;
-                                        }
-                                    }
-                                }
-                            }
+        //                 const network_entry = manager.network_dedupe_map.getOrPutContext(manager.allocator, task_id, .{}) catch bun.outOfMemory();
+        //                 if (!network_entry.found_existing) {
+        //                     var loaded_manifest: ?Npm.PackageManifest = null;
+        //                     if (manager.options.enable.manifest_cache) {
+        //                         if (Npm.PackageManifest.Serializer.load(manager.allocator, manager.getCacheDirectory(), name_str) catch null) |manifest_| {
+        //                             const manifest: Npm.PackageManifest = manifest_;
+        //                             loaded_manifest = manifest;
 
-                            if (PackageManager.verbose_install) {
-                                Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name_str});
-                            }
+        //                             if (manager.options.enable.manifest_cache_control and manifest.pkg.public_max_age > manager.timestamp_for_manifest_cache_control) {
+        //                                 if (loaded_manifest.?.findByVersion(version)) |find_result| {
+        //                                     slice.items(.meta)[package_id].setHasInstallScript(find_result.package.has_install_script);
+        //                                     _ = manager.network_dedupe_map.remove(task_id);
+        //                                     continue;
+        //                                 }
+        //                             }
+        //                         }
+        //                     }
 
-                            var network_task = manager.getNetworkTask();
-                            network_task.* = .{
-                                .package_manager = &PackageManager.instance,
-                                .callback = undefined,
-                                .task_id = task_id,
-                                .allocator = manager.allocator,
-                            };
-                            try network_task.forManifest(
-                                name_str,
-                                manager.allocator,
-                                manager.scopeForPackageName(name_str),
-                                loaded_manifest,
-                                true,
-                                true,
-                            );
-                            manager.enqueueNetworkTask(network_task);
-                        }
+        //                     if (PackageManager.verbose_install) {
+        //                         Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name_str});
+        //                     }
 
-                        const manifest_entry_parse = manager.task_queue.getOrPutContext(manager.allocator, task_id, .{}) catch bun.outOfMemory();
-                        if (!manifest_entry_parse.found_existing) {
-                            manifest_entry_parse.value_ptr.* = .{};
-                        }
+        //                     var network_task = manager.getNetworkTask();
+        //                     network_task.* = .{
+        //                         .package_manager = &PackageManager.instance,
+        //                         .callback = undefined,
+        //                         .task_id = task_id,
+        //                         .allocator = manager.allocator,
+        //                     };
+        //                     try network_task.forManifest(
+        //                         name_str,
+        //                         manager.allocator,
+        //                         manager.scopeForPackageName(name_str),
+        //                         loaded_manifest,
+        //                         true,
+        //                         true,
+        //                     );
+        //                     manager.enqueueNetworkTask(network_task);
+        //                 }
 
-                        manifest_entry_parse.value_ptr.append(
-                            manager.allocator,
-                            .{ .update_package_id = @intCast(package_id) },
-                        ) catch bun.outOfMemory();
-                    },
-                    else => {
-                        // TODO: update local packages
-                    },
-                }
-            }
+        //                 const manifest_entry_parse = manager.task_queue.getOrPutContext(manager.allocator, task_id, .{}) catch bun.outOfMemory();
+        //                 if (!manifest_entry_parse.found_existing) {
+        //                     manifest_entry_parse.value_ptr.* = .{};
+        //                 }
 
-            manager.flushNetworkQueue();
-            _ = manager.scheduleTasks();
+        //                 manifest_entry_parse.value_ptr.append(
+        //                     manager.allocator,
+        //                     .{ .update_package_id = @intCast(package_id) },
+        //                 ) catch bun.outOfMemory();
+        //             },
+        //             else => {},
+        //         }
+        //     }
 
-            if (manager.pending_tasks > 0) {
-                if (comptime log_level.showProgress()) {
-                    manager.startProgressBar();
-                }
-                while (manager.pending_tasks > 0) {
-                    try manager.runTasks(
-                        *PackageManager,
-                        manager,
-                        .{
-                            .onExtract = {},
-                            .onResolve = {},
-                            .onPackageManifestError = {},
-                            .onPackageDownloadError = {},
-                            .progress_bar = true,
-                        },
-                        false,
-                        log_level,
-                        false,
-                    );
+        //     manager.flushNetworkQueue();
+        //     _ = manager.scheduleTasks();
 
-                    if (PackageManager.verbose_install and manager.pending_tasks > 0) {
-                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
-                    }
+        //     if (manager.pending_tasks > 0) {
+        //         if (comptime log_level.showProgress()) {
+        //             manager.startProgressBar();
+        //         }
+        //         while (manager.pending_tasks > 0) {
+        //             try manager.runTasks(
+        //                 *PackageManager,
+        //                 manager,
+        //                 .{
+        //                     .onExtract = {},
+        //                     .onResolve = {},
+        //                     .onPackageManifestError = {},
+        //                     .onPackageDownloadError = {},
+        //                     .progress_bar = true,
+        //                 },
+        //                 false,
+        //                 log_level,
+        //                 false,
+        //             );
 
-                    if (manager.pending_tasks > 0)
-                        manager.sleep();
+        //             if (PackageManager.verbose_install and manager.pending_tasks > 0) {
+        //                 if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{manager.pending_tasks});
+        //             }
 
-                    if (manager.pending_tasks == 0) {
-                        _ = manager.scheduleTasks();
-                    }
-                }
-            }
-        }
+        //             if (manager.pending_tasks > 0)
+        //                 manager.sleep();
+
+        //             if (manager.pending_tasks == 0) {
+        //                 _ = manager.scheduleTasks();
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     pub fn writeYarnLock(this: *PackageManager) !void {
@@ -6157,7 +6161,7 @@ pub const PackageManager = struct {
                 if (package_json.asProperty(trusted_dependencies_string)) |query| {
                     if (query.expr.data == .e_array) {
                         needs_new_trusted_dependencies_list = false;
-                        break :brk Expr.empty;
+                        break :brk query.expr;
                     }
                 }
 
@@ -6171,6 +6175,7 @@ pub const PackageManager = struct {
             };
 
             if (trusted_dependencies_to_add > 0 and new_trusted_deps.len > 0) {
+                trusted_dependencies_array.data.e_array.items = JSAst.ExprNodeList.init(new_trusted_deps);
                 if (comptime Environment.allow_assert) {
                     for (trusted_dependencies_array.data.e_array.items.slice()) |item| {
                         std.debug.assert(item.data == .e_string);
@@ -8772,7 +8777,7 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (!is_trusted and this.lockfile.packages.get(package_id).meta.hasInstallScript()) {
+                        if (resolution.tag != .workspace and !is_trusted and this.lockfile.packages.get(package_id).meta.hasInstallScript()) {
                             std.debug.print("skipped: {s}@{s}\n", .{ alias, resolution.fmt(this.lockfile.buffers.string_bytes.items) });
                             this.summary.packages_with_skipped_scripts_set.put(this.manager.allocator, name_hash, {}) catch bun.outOfMemory();
                         }
@@ -8905,8 +8910,10 @@ pub const PackageManager = struct {
                 const name_hash: TruncatedPackageNameHash = @truncate(this.lockfile.buffers.dependencies.items[dependency_id].name_hash);
                 const is_trusted, const is_trusted_through_update_request, const add_to_lockfile = brk: {
                     if (this.manager.summary.added_trusted_dependencies.get(name_hash)) |should_add_to_lockfile| {
+                        // is a new trusted dependency. need to enqueue scripts and maybe add to lockfile
                         break :brk .{ true, false, should_add_to_lockfile };
                     }
+                    // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
                     if (this.trusted_dependencies_from_update_requests.contains(name_hash)) break :brk .{ true, true, true };
                     break :brk .{ false, false, false };
                 };
@@ -10186,24 +10193,6 @@ pub const PackageManager = struct {
                     },
                 }
 
-                // print warnings for long scripts and skipped scripts
-                {
-                    manager.lifecycle_script_time_log.printAndDeinit(manager.lockfile.allocator);
-
-                    // as long as the name isn't trusted, multiple versions of the same
-                    // package could have skipped scripts, so we need a dedupe set
-                    var dedupe_set = bun.StringHashMap(void).init(manager.allocator);
-                    defer dedupe_set.deinit();
-
-                    if (install_summary.packages_with_skipped_scripts_set.count() > 0) {
-                        // should change this to name hash to dedupe on put
-                        Output.prettyError("<d>info: skipped {d}+ scripts. Run the following command to list all:\n  bun pm ls --untrusted<r>\n\n", .{
-                            install_summary.packages_with_skipped_scripts_set.count(),
-                        });
-                        Output.flush();
-                    }
-                }
-
                 if (!did_meta_hash_change) {
                     manager.summary.remove = 0;
                     manager.summary.add = 0;
@@ -10222,6 +10211,7 @@ pub const PackageManager = struct {
                     Output.pretty(" <green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
+                    printSkippedScripts(install_summary);
                     Output.pretty("<r>\n", .{});
 
                     if (manager.summary.remove > 0) {
@@ -10237,6 +10227,7 @@ pub const PackageManager = struct {
                     Output.pretty(" <r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
+                    printSkippedScripts(install_summary);
                     Output.pretty("<r>\n", .{});
                 } else if (install_summary.skipped > 0 and install_summary.fail == 0 and manager.package_json_updates.len == 0) {
                     const count = @as(PackageID, @truncate(manager.lockfile.packages.len));
@@ -10249,6 +10240,7 @@ pub const PackageManager = struct {
                         });
                         Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                         printed_timestamp = true;
+                        printSkippedScripts(install_summary);
                         Output.pretty("<r>\n", .{});
                     } else {
                         Output.pretty("<r> <green>Done<r>! Checked {d} package{s}<r> <d>(no changes)<r> ", .{
@@ -10257,6 +10249,7 @@ pub const PackageManager = struct {
                         });
                         Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                         printed_timestamp = true;
+                        printSkippedScripts(install_summary);
                         Output.pretty("<r>\n", .{});
                     }
                 }
@@ -10279,6 +10272,17 @@ pub const PackageManager = struct {
         }
 
         Output.flush();
+    }
+
+    fn printSkippedScripts(summary: PackageInstall.Summary) void {
+        const count = summary.packages_with_skipped_scripts_set.count();
+        if (count > 0) {
+            Output.pretty("\n\n<d> Skipped {s}{d} script{s}. Run `bun pm trusted` for more information.", .{
+                if (count > 1) "~" else "",
+                count,
+                if (count > 1) "s" else "",
+            });
+        }
     }
 
     pub fn spawnPackageLifecycleScripts(

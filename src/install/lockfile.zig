@@ -1569,7 +1569,6 @@ pub fn verifyData(this: *const Lockfile) !void {
             std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
             std.debug.assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
         }
-        std.debug.assert(package.meta.__has_install_script != 0);
     }
 }
 
@@ -4833,8 +4832,14 @@ pub const Package = extern struct {
 
             inline for (FieldsEnum.fields) |field| {
                 const value = sliced.items(@field(Lockfile.Package.List.Field, field.name));
-                if (comptime Environment.allow_assert)
+                if (comptime Environment.allow_assert) {
                     debug("save(\"{s}\") = {d} bytes", .{ field.name, std.mem.sliceAsBytes(value).len });
+                    if (comptime strings.eqlComptime(field.name, "meta")) {
+                        for (value) |meta| {
+                            std.debug.assert(meta.__has_install_script != 0);
+                        }
+                    }
+                }
                 comptime assertNoUninitializedPadding(@TypeOf(value));
                 try writer.writeAll(std.mem.sliceAsBytes(value));
             }
@@ -5715,10 +5720,36 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
     return null;
 }
 
+const max_default_trusted_dependencies = 512;
+
+pub const default_trusted_dependencies_list: []string = brk: {
+    // This file contains a list of dependencies that Bun runs `postinstall` on by default.
+    const data = @embedFile("./default-trusted-dependencies.txt");
+    @setEvalBranchQuota(999999);
+    var buf: [max_default_trusted_dependencies]string = undefined;
+    var i: usize = 0;
+    var iter = std.mem.tokenizeAny(u8, data, " \n\t");
+    while (iter.next()) |dep| {
+        buf[i] = dep;
+        i += 1;
+    }
+
+    const Sorter = struct {
+        pub fn lessThan(_: void, lhs: string, rhs: string) bool {
+            return std.mem.order(u8, lhs, rhs) == .lt;
+        }
+    };
+
+    const names = buf[0..i];
+
+    // alphabetical so we don't need to sort in `bun pm trusted --default`
+    std.sort.pdq(string, names, {}, Sorter.lessThan);
+
+    break :brk names;
+};
+
 /// The default list of trusted dependencies is a static hashmap
 const default_trusted_dependencies = brk: {
-    const max_values = 512;
-
     const StringHashContext = struct {
         pub fn hash(_: @This(), s: []const u8) u64 {
             @setEvalBranchQuota(999999);
@@ -5731,22 +5762,17 @@ const default_trusted_dependencies = brk: {
         }
     };
 
-    var map: StaticHashMap([]const u8, u0, StringHashContext, max_values) = .{};
+    var map: StaticHashMap([]const u8, void, StringHashContext, max_default_trusted_dependencies) = .{};
 
-    // This file contains a list of dependencies that Bun runs `postinstall` on by default.
-    const data = @embedFile("./default-trusted-dependencies.txt");
-    @setEvalBranchQuota(99999);
-
-    var iter = std.mem.tokenizeAny(u8, data, " \n\t");
-    while (iter.next()) |dep| {
-        if (map.len == max_values) {
-            @compileError("default-trusted-dependencies.txt is too large, please increase 'max_values' in lockfile.zig");
+    for (default_trusted_dependencies_list) |dep| {
+        if (map.len == max_default_trusted_dependencies) {
+            @compileError("default-trusted-dependencies.txt is too large, please increase 'max_default_trusted_dependencies' in lockfile.zig");
         }
 
         // just in case there's duplicates from truncating
         if (map.has(dep)) @compileError("Duplicate hash due to u64 -> u32 truncation");
 
-        map.putAssumeCapacity(dep, 0);
+        map.putAssumeCapacity(dep, {});
     }
 
     break :brk &map;

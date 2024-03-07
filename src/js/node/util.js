@@ -240,6 +240,20 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
+function ERR_INVALID_ARG_VALUE(name, value, reason) {
+  return new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
+}
+
+function styleText(format, text) {
+  const formatCodes = inspect.colors[format];
+  if (formatCodes == null) {
+    throw new Error(
+      `The value "${format}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
+    );
+  }
+  return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
+}
+
 export default Object.assign(cjs_exports, {
   format,
   formatWithOptions,

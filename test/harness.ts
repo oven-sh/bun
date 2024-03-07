@@ -510,3 +510,17 @@ export function dumpStats() {
     protected: Object.fromEntries(Object.entries(protectedObjectTypeCounts).sort()),
   });
 }
+
+export function fillRepeating(dstBuffer: NodeJS.TypedArray, start: number, end: number) {
+  let len = dstBuffer.length, // important: use indices length, not byte-length
+    sLen = end - start,
+    p = sLen; // set initial position = source sequence length
+
+  // step 2: copy existing data doubling segment length per iteration
+  while (p < len) {
+    if (p + sLen > len) sLen = len - p; // if not power of 2, truncate last segment
+    dstBuffer.copyWithin(p, start, sLen); // internal copy
+    p += sLen; // add current length to offset
+    sLen <<= 1; // double length for next segment
+  }
+}

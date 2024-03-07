@@ -12,6 +12,12 @@ const debug = process.env.DEBUG ? console.log : () => {};
 const originalProcessEnv = process.env;
 beforeEach(() => {
   process.env = { ...bunEnv };
+  // Github actions might filter these out
+  for (const key in process.env) {
+    if (key.toUpperCase().startsWith("TLS_")) {
+      delete process.env[key];
+    }
+  }
 });
 
 afterAll(() => {

@@ -700,6 +700,9 @@ if(NOT NO_CODEGEN)
 
     add_custom_command(
         OUTPUT
+
+        "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.cpp"
+        "${BUN_WORKDIR}/codegen/WebCoreJSBuiltins.h"
         "${BUN_WORKDIR}/codegen/InternalModuleRegistryConstants.h"
         "${BUN_WORKDIR}/codegen/InternalModuleRegistry+createInternalModuleById.h"
         "${BUN_WORKDIR}/codegen/InternalModuleRegistry+enum.h"

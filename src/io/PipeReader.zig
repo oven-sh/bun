@@ -94,7 +94,7 @@ pub fn PosixPipeReader(
         }
 
         fn readSocket(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
-            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .file, bun.sys.recvNonBlock);
+            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .socket, bun.sys.recvNonBlock);
         }
 
         fn readPipe(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
@@ -632,6 +632,7 @@ const PosixBufferedReader = struct {
         is_done: bool = false,
         pollable: bool = false,
         nonblocking: bool = false,
+        socket: bool = false,
         received_eof: bool = false,
         closed_without_reporting: bool = false,
         close_handle: bool = true,
@@ -688,8 +689,13 @@ const PosixBufferedReader = struct {
     });
 
     fn getFileType(this: *const PosixBufferedReader) FileType {
-        if (this.flags.pollable) {
-            if (this.flags.nonblocking) {
+        const flags = this.flags;
+        if (flags.socket) {
+            return .socket;
+        }
+
+        if (flags.pollable) {
+            if (flags.nonblocking) {
                 return .nonblocking_pipe;
             }
 
@@ -802,6 +808,12 @@ const PosixBufferedReader = struct {
 
         if (!poll.flags.contains(.was_ever_registered))
             poll.enableKeepingProcessAlive(this.eventLoop());
+
+        if (comptime bun.Environment.isMac) {
+            if (poll.isRegistered() and !poll.flags.contains(.needs_rearm)) {
+                return;
+            }
+        }
 
         switch (poll.registerWithFd(this.loop(), .readable, .dispatch, poll.fd)) {
             .err => |err| {

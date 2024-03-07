@@ -79,13 +79,13 @@ describe("process.stdin", () => {
   });
 
   it("should allow us to read > 65kb from stdin", done => {
-    const numReps = Math.ceil((66 * 1024) / 5);
+    const numReps = Math.ceil((1024 * 1024) / 5);
     const input = Buffer.alloc("hello".length * numReps)
       .fill("hello")
       .toString();
     // Child should read from stdin and write it back
     const child = spawn(bunExe(), [CHILD_PROCESS_FILE, "STDIN", "FLOWING"], {
-      env: bunEnv,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "0", BUN_DEBUG: "/tmp/out.log" },
       stdio: ["pipe", "pipe", "inherit"],
     });
     let data = "";

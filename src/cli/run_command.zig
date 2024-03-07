@@ -341,9 +341,9 @@ pub const RunCommand = struct {
 
         var child_process = std.ChildProcess.init(&argv, allocator);
 
-        var buf_map = try env.map.cloneToEnvMap(allocator);
-
-        child_process.env_map = &buf_map;
+        var buf_map = try env.map.stdEnvMap(allocator);
+        defer buf_map.deinit();
+        child_process.env_map = buf_map.get();
         child_process.cwd = cwd;
         child_process.stderr_behavior = .Inherit;
         child_process.stdin_behavior = .Inherit;
@@ -472,9 +472,10 @@ pub const RunCommand = struct {
 
         var child_process = std.ChildProcess.init(argv, ctx.allocator);
 
-        var buf_map = try env.map.cloneToEnvMap(ctx.allocator);
+        var buf_map = try env.map.stdEnvMap(ctx.allocator);
+        defer buf_map.deinit();
         child_process.cwd = cwd;
-        child_process.env_map = &buf_map;
+        child_process.env_map = buf_map.get();
         child_process.stderr_behavior = .Inherit;
         child_process.stdin_behavior = .Inherit;
         child_process.stdout_behavior = .Inherit;

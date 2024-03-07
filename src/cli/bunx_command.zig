@@ -603,9 +603,10 @@ pub const BunxCommand = struct {
         if (Environment.isWindows) {
             child_process.cwd = bunx_cache_dir;
         }
-        var env_map = try this_bundler.env.map.cloneToEnvMap(ctx.allocator);
-        env_map.put("BUN_INTERNAL_BUNX_INSTALL", "true") catch bun.outOfMemory();
-        child_process.env_map = &env_map;
+        this_bundler.env.map.put("BUN_INTERNAL_BUNX_INSTALL", "true") catch bun.outOfMemory();
+        var env_map = try this_bundler.env.map.stdEnvMap(ctx.allocator);
+        defer env_map.deinit();
+        child_process.env_map = env_map.get();
         child_process.stderr_behavior = .Inherit;
         child_process.stdin_behavior = .Inherit;
         child_process.stdout_behavior = .Inherit;

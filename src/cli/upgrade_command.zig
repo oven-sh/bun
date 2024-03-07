@@ -889,13 +889,14 @@ pub const UpgradeCommand = struct {
                 };
 
                 env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch bun.outOfMemory();
-                var buf_map = try env_loader.map.cloneToEnvMap(ctx.allocator);
+                var std_map = try env_loader.map.stdEnvMap(ctx.allocator);
+                defer std_map.deinit();
                 _ = std.ChildProcess.run(.{
                     .allocator = ctx.allocator,
                     .argv = &completions_argv,
                     .cwd = target_dirname,
                     .max_output_bytes = 4096,
-                    .env_map = &buf_map,
+                    .env_map = std_map.get(),
                 }) catch {};
             }
 

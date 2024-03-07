@@ -590,7 +590,7 @@ describe("EventEmitter.on", () => {
     const path = require("node:path");
 
     const fpath = path.join(__filename, "..", "..", "child_process", "fixtures", "child-process-echo-options.js");
-    console.log(fpath);
+    const text = await Bun.file(fpath).text();
     const interfaced = createInterface(createReadStream(fpath));
     const output = [];
 
@@ -599,10 +599,8 @@ describe("EventEmitter.on", () => {
         output.push(line);
       }
     } catch (e) {}
-    expect(output).toEqual([
-      "// TODO - bun has no `send` method in the process",
-      "process?.send({ env: process.env });",
-    ]);
+    const out = text.replaceAll("\r\n", "\n").trim().split("\n");
+    expect(output).toEqual(out);
   });
 });
 

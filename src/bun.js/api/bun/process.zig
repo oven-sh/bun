@@ -940,6 +940,7 @@ pub const WindowsSpawnOptions = struct {
         ignore: void,
         buffer: *bun.windows.libuv.Pipe,
         pipe: bun.FileDescriptor,
+        dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
 
         pub fn deinit(this: *const Stdio) void {
             if (this.* == .buffer) {
@@ -1378,6 +1379,10 @@ pub fn spawnProcessWindows(
         const flag = comptime if (fd_i == 0) @as(u32, uv.O.RDONLY) else @as(u32, uv.O.WRONLY);
 
         switch (stdio_options[fd_i]) {
+            .dup2 => |dup2| {
+                stdio.flags = uv.UV_INHERIT_FD;
+                stdio.data = .{ .fd = dup2.to.toNum() };
+            },
             .inherit => {
                 stdio.flags = uv.UV_INHERIT_FD;
                 stdio.data.fd = fd_i;
@@ -1417,6 +1422,7 @@ pub fn spawnProcessWindows(
         const flag = @as(u32, uv.O.RDWR);
 
         switch (ipc) {
+            .dup2 => @panic("TODO dup2 extra fd"),
             .inherit => {
                 stdio.flags = uv.StdioFlags.inherit_fd;
                 stdio.data.fd = @intCast(3 + i);

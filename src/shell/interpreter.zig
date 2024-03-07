@@ -2374,6 +2374,7 @@ pub const Interpreter = struct {
         }
 
         pub fn deinitFromInterpreter(this: *Script) void {
+            log("Script(0x{x}) deinitFromInterpreter", .{@intFromPtr(this)});
             // Let the interpreter deinitialize the shell state
             this.io.deinit();
             // this.base.shell.deinitImpl(false, false);
@@ -2637,6 +2638,7 @@ pub const Interpreter = struct {
         }
 
         pub fn deinit(this: *Stmt) void {
+            log("Stmt(0x{x}) deinit", .{@intFromPtr(this)});
             this.io.deinit();
             if (this.currently_executing) |child| {
                 child.deinit();
@@ -3944,7 +3946,17 @@ pub const Interpreter = struct {
                     // pub fn
                 };
 
-                pub fn deinit(this: *Output) void {
+                pub fn ref(this: *Output) *Output {
+                    switch (this.*) {
+                        .fd => {
+                            this.fd.writer.ref();
+                        },
+                        else => {},
+                    }
+                    return this;
+                }
+
+                pub fn deref(this: *Output) void {
                     switch (this.*) {
                         .fd => {
                             this.fd.writer.deref();
@@ -3985,7 +3997,17 @@ pub const Interpreter = struct {
                 blob: *bun.JSC.WebCore.Blob,
                 ignore,
 
-                pub fn deinit(this: *Input) void {
+                pub fn ref(this: *Input) *Input {
+                    switch (this.*) {
+                        .fd => {
+                            this.fd.ref();
+                        },
+                        else => {},
+                    }
+                    return this;
+                }
+
+                pub fn deref(this: *Input) void {
                     switch (this.*) {
                         .fd => {
                             this.fd.deref();
@@ -4065,11 +4087,9 @@ pub const Interpreter = struct {
             export_env: *EnvMap,
             cmd_local_env: *EnvMap,
             cwd: bun.FileDescriptor,
-            io_: *IO,
+            io: *IO,
             comptime in_cmd_subst: bool,
         ) CoroutineResult {
-            const io = io_.*;
-
             const stdin: BuiltinIO.Input = switch (io.stdin) {
                 .fd => |fd| .{ .fd = fd.refSelf() },
                 .ignore => .ignore,
@@ -4211,12 +4231,15 @@ pub const Interpreter = struct {
                             // cmd.redirection_fd = redirfd;
                         };
                         if (node.redirect.stdin) {
+                            cmd.exec.bltn.stdin.deref();
                             cmd.exec.bltn.stdin = .{ .fd = IOReader.init(redirfd, cmd.base.eventLoop()) };
                         }
                         if (node.redirect.stdout) {
+                            cmd.exec.bltn.stdout.deref();
                             cmd.exec.bltn.stdout = .{ .fd = .{ .writer = IOWriter.init(redirfd, cmd.base.eventLoop()) } };
                         }
                         if (node.redirect.stderr) {
+                            cmd.exec.bltn.stderr.deref();
                             cmd.exec.bltn.stderr = .{ .fd = .{ .writer = IOWriter.init(redirfd, cmd.base.eventLoop()) } };
                         }
                     },
@@ -4229,28 +4252,34 @@ pub const Interpreter = struct {
                             }, .i = 0 };
 
                             if (node.redirect.stdin) {
+                                cmd.exec.bltn.stdin.deref();
                                 cmd.exec.bltn.stdin = .{ .arraybuf = arraybuf };
                             }
 
                             if (node.redirect.stdout) {
+                                cmd.exec.bltn.stdout.deref();
                                 cmd.exec.bltn.stdout = .{ .arraybuf = arraybuf };
                             }
 
                             if (node.redirect.stderr) {
+                                cmd.exec.bltn.stderr.deref();
                                 cmd.exec.bltn.stderr = .{ .arraybuf = arraybuf };
                             }
                         } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
                             const theblob: *bun.JSC.WebCore.Blob = bun.newWithAlloc(arena.allocator(), JSC.WebCore.Blob, blob.dupe());
 
                             if (node.redirect.stdin) {
+                                cmd.exec.bltn.stdin.deref();
                                 cmd.exec.bltn.stdin = .{ .blob = theblob };
                             }
 
                             if (node.redirect.stdout) {
+                                cmd.exec.bltn.stdout.deref();
                                 cmd.exec.bltn.stdout = .{ .blob = theblob };
                             }
 
                             if (node.redirect.stderr) {
+                                cmd.exec.bltn.stderr.deref();
                                 cmd.exec.bltn.stderr = .{ .blob = theblob };
                             }
                         } else {
@@ -4262,11 +4291,13 @@ pub const Interpreter = struct {
                 }
             } else if (node.redirect.duplicate_out) {
                 if (node.redirect.stdout) {
-                    cmd.exec.bltn.stderr = cmd.exec.bltn.stdout;
+                    cmd.exec.bltn.stderr.deref();
+                    cmd.exec.bltn.stderr = cmd.exec.bltn.stdout.ref().*;
                 }
 
                 if (node.redirect.stderr) {
-                    cmd.exec.bltn.stdout = cmd.exec.bltn.stderr;
+                    cmd.exec.bltn.stdout.deref();
+                    cmd.exec.bltn.stdout = cmd.exec.bltn.stderr.ref().*;
                 }
             }
 
@@ -4334,9 +4365,9 @@ pub const Interpreter = struct {
             // No need to free it because it belongs to the parent cmd
             // _ = Syscall.close(this.cwd);
 
-            this.stdout.deinit();
-            this.stderr.deinit();
-            this.stdin.deinit();
+            this.stdout.deref();
+            this.stderr.deref();
+            this.stdin.deref();
 
             // this.arena.deinit();
         }
@@ -8716,14 +8747,21 @@ pub const Interpreter = struct {
         }
 
         pub fn asyncDeinit(this: *@This()) void {
+            log("IOReader(0x{x}) asyncDeinit", .{@intFromPtr(this)});
             this.async_deinit.schedule();
         }
 
         pub fn __deinit(this: *@This()) void {
-            // windows reader closes the file descriptor
-            if (this.fd != bun.invalid_fd and !bun.Environment.isWindows) {
-                log("IOReader(0x{x}) __deinit fd={}", .{ @intFromPtr(this), this.fd });
-                _ = bun.sys.close(this.fd);
+            if (this.fd != bun.invalid_fd) {
+                // windows reader closes the file descriptor
+                if (bun.Environment.isWindows) {
+                    if (this.reader.source != null and !this.reader.source.?.isClosed()) {
+                        this.reader.closeImpl(false);
+                    }
+                } else {
+                    log("IOReader(0x{x}) __deinit fd={}", .{ @intFromPtr(this), this.fd });
+                    _ = bun.sys.close(this.fd);
+                }
             }
             this.buf.deinit(bun.default_allocator);
             this.reader.disableKeepingProcessAlive({});
@@ -9119,6 +9157,7 @@ pub const Interpreter = struct {
         }
 
         pub fn asyncDeinit(this: *@This()) void {
+            print("IOWriter(0x{x}, fd={}) asyncDeinit", .{ @intFromPtr(this), this.fd });
             this.async_deinit.schedule();
         }
 

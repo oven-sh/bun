@@ -143,6 +143,14 @@ pub const Subprocess = struct {
                 .stderr => bun.STDERR_FD,
             };
         }
+
+        pub fn toNum(this: @This()) c_int {
+            return switch (this) {
+                .stdin => 0,
+                .stdout => 1,
+                .stderr => 2,
+            };
+        }
     };
     process: *Process = undefined,
     stdin: Writable,

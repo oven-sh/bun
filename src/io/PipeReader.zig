@@ -449,8 +449,7 @@ pub fn WindowsPipeReader(
             return .{ .result = {} };
         }
 
-        pub fn close(this: *This) void {
-            _ = this.stopReading();
+        pub fn closeImpl(this: *This, comptime callDone: bool) void {
             if (this.source) |source| {
                 switch (source) {
                     .file => |file| {
@@ -468,8 +467,13 @@ pub fn WindowsPipeReader(
                     },
                 }
                 this.source = null;
-                done(this);
+                if (comptime callDone) done(this);
             }
+        }
+
+        pub fn close(this: *This) void {
+            _ = this.stopReading();
+            this.closeImpl(true);
         }
 
         const vtable = .{

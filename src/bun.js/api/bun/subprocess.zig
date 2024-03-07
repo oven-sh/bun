@@ -482,7 +482,7 @@ pub const Subprocess = struct {
                 .memfd => return this.toBufferedValue(globalThis),
 
                 .fd => |fd| {
-                    return JSValue.jsNumber(fd);
+                    return fd.toJS(globalThis);
                 },
                 .pipe => |pipe| {
                     defer pipe.detach();
@@ -508,7 +508,7 @@ pub const Subprocess = struct {
         pub fn toBufferedValue(this: *Readable, globalThis: *JSC.JSGlobalObject) JSValue {
             switch (this.*) {
                 .fd => |fd| {
-                    return JSValue.jsNumber(fd);
+                    return fd.toJS(globalThis);
                 },
                 .memfd => |fd| {
                     if (comptime !Environment.isPosix) {
@@ -1226,7 +1226,7 @@ pub const Subprocess = struct {
 
         pub fn toJS(this: *Writable, globalThis: *JSC.JSGlobalObject, subprocess: *Subprocess) JSValue {
             return switch (this.*) {
-                .fd => |fd| JSValue.jsNumber(fd),
+                .fd => |fd| fd.toJS(globalThis),
                 .memfd, .ignore => JSValue.jsUndefined(),
                 .buffer, .inherit => JSValue.jsUndefined(),
                 .pipe => |pipe| {
@@ -2125,7 +2125,6 @@ pub const Subprocess = struct {
     }
 
     pub fn handleIPCClose(this: *Subprocess) void {
-        // uSocket is already freed so calling .close() on the socket can segfault
         this.ipc_mode = .none;
         this.updateHasPendingActivity();
     }

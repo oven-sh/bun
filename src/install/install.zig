@@ -668,9 +668,7 @@ const Task = struct {
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
-                            _ = trace; // autofix
-
-                            // std.debug.dumpStackTrace(trace.*);
+                            std.debug.dumpStackTrace(trace.*);
                         }
                     }
 
@@ -2076,6 +2074,7 @@ pub const PackageManager = struct {
             this_bundler,
             this.env,
             log_level != .silent,
+            false,
         );
 
         const init_cwd_gop = try this.env.map.getOrPutWithoutValue("INIT_CWD");
@@ -4652,7 +4651,7 @@ pub const PackageManager = struct {
                                     null,
                                     logger.Loc.Empty,
                                     manager.allocator,
-                                    "<r><yellow>warn:<r> {s} downloading package manifest <b>{s}<r>",
+                                    "{s} downloading package manifest <b>{s}<r>",
                                     .{ bun.span(@errorName(err)), name.slice() },
                                 ) catch unreachable;
                             }

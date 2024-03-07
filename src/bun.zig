@@ -613,6 +613,7 @@ pub fn isHeapMemory(memory: anytype) bool {
 pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
+pub const isSliceInBufferT = allocators.isSliceInBufferT;
 
 pub inline fn sliceInBuffer(stable: string, value: string) string {
     if (allocators.sliceRange(stable, value)) |_| {

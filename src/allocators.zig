@@ -5,16 +5,14 @@ const Environment = @import("./env.zig");
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const bun = @import("root").bun;
 
-inline fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
+pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
         (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len));
 }
 
-/// LMLJLSDKFjlsdkjflsdkjf
 /// Checks if a slice's pointer is contained within another slice.
-///
 /// If you need to make this generic, use isSliceInBufferT.
-pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
+pub fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
     return isSliceInBufferT(u8, slice, buffer);
 }
 

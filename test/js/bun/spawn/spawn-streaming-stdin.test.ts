@@ -13,7 +13,7 @@ test("spawn can write to stdin multiple chunks", async () => {
 
   const maxFD = openSync(devNull, "w");
   const concurrency = 10;
-  const delay = 8 * (Bun.version.includes("-debug") ? 12 : 1);
+  const delay = 8 * 12;
 
   var remaining = N;
   while (remaining > 0) {

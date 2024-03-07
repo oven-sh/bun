@@ -250,21 +250,13 @@ pub const PackageManagerCommand = struct {
 
                     // called alias because a dependency name is not always the package name
                     const alias = dep.name.slice(buf);
-                    const name_hash: u32 = @truncate(dep.name_hash);
 
                     if (metas[package_id].hasInstallScript()) {
-                        if (pm.lockfile.trusted_dependencies) |trusted_dependencies| {
-                            if (trusted_dependencies.contains(name_hash)) {
-                                // can't put alias directly because it might be inline
-                                try trusted_set.put(ctx.allocator, dep.name_hash, dep.name);
-                            } else {
-                                try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
-                            }
+                        if (pm.lockfile.hasTrustedDependency(alias)) {
+                            // can't put alias directly because it might be inline
+                            try trusted_set.put(ctx.allocator, dep.name_hash, dep.name);
                         } else {
-                            // default trusted dependencies are used, but we still want to find untrusted packages with scripts
-                            if (!pm.lockfile.hasTrustedDependency(alias)) {
-                                try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
-                            }
+                            try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
                         }
                     }
                 }
@@ -336,12 +328,15 @@ pub const PackageManagerCommand = struct {
                                 resolution,
                             )) |scripts_list| {
                                 if (scripts_list.items.len == 0) continue;
-                                const gop = untrusted_with_scripts.getOrPut(ctx.allocator, ctx.allocator.dupe(u8, alias) catch bun.outOfMemory()) catch bun.outOfMemory();
+                                const key = try ctx.allocator.dupe(u8, alias);
+                                const gop = try untrusted_with_scripts.getOrPut(ctx.allocator, key);
                                 if (!gop.found_existing) {
                                     gop.value_ptr.* = .{};
+                                } else {
+                                    ctx.allocator.free(key);
                                 }
 
-                                gop.value_ptr.append(ctx.allocator, .{ .dep_id = dep_id, .scripts_list = scripts_list }) catch bun.outOfMemory();
+                                try gop.value_ptr.append(ctx.allocator, .{ .dep_id = dep_id, .scripts_list = scripts_list });
                             }
                         }
                     }
@@ -360,7 +355,7 @@ pub const PackageManagerCommand = struct {
 
                 const aliases = untrusted_with_scripts.keys();
                 std.sort.pdq(string, aliases, {}, Sorter.lessThan);
-                untrusted_with_scripts.reIndex(ctx.allocator) catch bun.outOfMemory();
+                try untrusted_with_scripts.reIndex(ctx.allocator);
 
                 Output.print("Untrusted dependencies ({d}):\n", .{aliases.len});
 
@@ -396,10 +391,10 @@ pub const PackageManagerCommand = struct {
             defer untrusted_dep_ids.deinit(ctx.allocator);
 
             // .1 go through all installed dependencies and find untrusted ones with scripts
-            //     - if packages are passed through cli, only use those dependencies
+            //    from packages through cli, or all if --all.
             // .2 iterate through node_modules folder and spawn lifecycle scripts for each
-            //    untrusted dependency from step 1
-            // .3 add the untrusted dependencies to package.json and lockfile.trusted_dependencies
+            //    untrusted dependency from step 1.
+            // .3 add the untrusted dependencies to package.json and lockfile.trusted_dependencies.
 
             for (pm.lockfile.buffers.dependencies.items, 0..) |dep, i| {
                 const dep_id: u32 = @intCast(i);

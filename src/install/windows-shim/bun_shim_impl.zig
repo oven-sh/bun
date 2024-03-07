@@ -665,8 +665,9 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 // as we do not have to launch a second process.
                 if (dbg) debug("direct_launch_with_bun_js\n", .{});
                 // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
-                //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^       ^ read_ptr
-                const launch_slice = buf1_u16[nt_object_prefix.len..][0 .. (@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) / 2 - shebang_arg_len_u8 - "\"".len];
+                //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^  ^ read_ptr
+                const len = (@intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - shebang_arg_len_u8) / 2 - nt_object_prefix.len - "\"\x00".len;
+                const launch_slice = buf1_u16[nt_object_prefix.len..][0..len :'"'];
                 bun_ctx.direct_launch_with_bun_js(
                     launch_slice,
                     bun_ctx.cli_context,
@@ -688,20 +689,20 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^   ^ read_ptr
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
-            const length_of_filename_u8 = @intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - nt_object_prefix.len - 6;
+            const length_of_filename_u8 = @intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - nt_object_prefix.len - shebang_arg_len_u8 + "\"".len * 2;
             @memcpy(
                 buf2_u8[shebang_arg_len_u8 + 2 * "\"".len ..][0..length_of_filename_u8],
                 buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8],
             );
+            read_ptr = @ptrFromInt(@intFromPtr(buf2_u8) + length_of_filename_u8 + 2 * ("\"".len + nt_object_prefix.len));
 
-            // Copy the user arguments in:
-            // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags!!!!!!!!!!!'
-            //        ^~~~~X^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
-            //        |    |filename_len                                         where the user args go
-            //        |    the quote
-            //        shebang_arg_len
-            read_ptr = @ptrFromInt(@intFromPtr(buf2_u8) + length_of_filename_u8 + 2 * "\"\"".len + 2 * nt_object_prefix.len);
             if (user_arguments_u8.len > 0) {
+                // Copy the user arguments in:
+                // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags!!!!!!!!!!!'
+                //        ^~~~~X^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+                //        |    |filename_len                                         where the user args go
+                //        |    the quote
+                //        shebang_arg_len
                 @memcpy(@as([*]u8, @ptrCast(read_ptr)), user_arguments_u8);
                 read_ptr = @ptrFromInt(@intFromPtr(read_ptr) + user_arguments_u8.len);
             }

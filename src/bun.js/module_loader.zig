@@ -1494,8 +1494,8 @@ pub const ModuleLoader = struct {
                 var package_json: ?*PackageJSON = null;
 
                 if (jsc_vm.bun_watcher.indexOf(hash)) |index| {
-                    const _fd = jsc_vm.bun_watcher.watchlist().items(.fd)[index];
-                    fd = if (_fd.int() > 0) _fd else null;
+                    const maybe_fd = jsc_vm.bun_watcher.watchlist().items(.fd)[index];
+                    fd = if (maybe_fd != .zero) maybe_fd else null;
                     package_json = jsc_vm.bun_watcher.watchlist().items(.package_json)[index];
                 }
 

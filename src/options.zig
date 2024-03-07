@@ -2057,7 +2057,7 @@ pub const OutputFile = struct {
             .noop => JSC.JSValue.undefined,
             .copy => |copy| brk: {
                 const file_blob = JSC.WebCore.Blob.Store.initFile(
-                    if (copy.fd.int() != 0)
+                    if (copy.fd != .zero)
                         JSC.Node.PathOrFileDescriptor{
                             .fd = copy.fd,
                         }

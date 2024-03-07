@@ -165,7 +165,6 @@ function spawn(file, args, options) {
           child.emit("error", err);
         }
       }
-
     }, timeout).unref();
 
     child.once("exit", () => {

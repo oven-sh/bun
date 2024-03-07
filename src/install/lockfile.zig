@@ -2341,6 +2341,14 @@ pub const Package = extern struct {
 
     meta: Meta = .{},
     bin: Bin = .{},
+
+    /// If any of these scripts run, they will run in order:
+    /// 1. preinstall
+    /// 2. install
+    /// 3. postinstall
+    /// 4. preprepare
+    /// 5. prepare
+    /// 6. postprepare
     scripts: Package.Scripts = .{},
 
     pub const Scripts = extern struct {
@@ -2405,8 +2413,25 @@ pub const Package = extern struct {
             var counter: u8 = 0;
 
             if (add_node_gyp_rebuild_script) {
-                // missing install and postinstall, only need to check preinstall
-                if (!this.preinstall.isEmpty()) {
+                {
+                    script_index += 1;
+                    const entry: Lockfile.Scripts.Entry = .{
+                        .cwd = cwd orelse brk: {
+                            cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
+                            break :brk cwd.?;
+                        },
+                        .script = lockfile.allocator.dupe(u8, "node-gyp rebuild") catch unreachable,
+                        .package_name = package_name,
+                    };
+                    if (first_script_index == -1) first_script_index = @intCast(script_index);
+                    scripts[script_index] = entry;
+                    script_index += 1;
+                    lockfile.scripts.install.append(lockfile.allocator, entry) catch unreachable;
+                    counter += 1;
+                }
+
+                // missing install and preinstall, only need to check postinstall
+                if (!this.postinstall.isEmpty()) {
                     const entry: Lockfile.Scripts.Entry = .{
                         .cwd = cwd orelse brk: {
                             cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
@@ -2417,24 +2442,10 @@ pub const Package = extern struct {
                     };
                     if (first_script_index == -1) first_script_index = @intCast(script_index);
                     scripts[script_index] = entry;
-                    lockfile.scripts.preinstall.append(lockfile.allocator, entry) catch unreachable;
+                    lockfile.scripts.postinstall.append(lockfile.allocator, entry) catch unreachable;
                     counter += 1;
                 }
                 script_index += 1;
-
-                const entry: Lockfile.Scripts.Entry = .{
-                    .cwd = cwd orelse brk: {
-                        cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
-                        break :brk cwd.?;
-                    },
-                    .script = lockfile.allocator.dupe(u8, "node-gyp rebuild") catch unreachable,
-                    .package_name = package_name,
-                };
-                if (first_script_index == -1) first_script_index = @intCast(script_index);
-                scripts[script_index] = entry;
-                script_index += 2;
-                lockfile.scripts.install.append(lockfile.allocator, entry) catch unreachable;
-                counter += 1;
             } else {
                 const install_scripts = .{
                     "preinstall",
@@ -2608,7 +2619,7 @@ pub const Package = extern struct {
 
             const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name) and
                 this.install.isEmpty() and
-                this.postinstall.isEmpty())
+                this.preinstall.isEmpty())
             brk: {
                 const binding_dot_gyp_path = Path.joinAbsStringZ(
                     cwd,

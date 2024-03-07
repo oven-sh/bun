@@ -6,6 +6,7 @@
 
 #include "ZigGlobalObject.h"
 #include "GeneratedJS2Native.h"
+#include "wtf/Assertions.h"
 
 extern "C" JSC::EncodedJSValue ByteBlob__JSReadableStreamSource__load(JSC::JSGlobalObject* global);
 extern "C" JSC::EncodedJSValue FileReader__JSReadableStreamSource__load(JSC::JSGlobalObject* global);
@@ -39,37 +40,40 @@ enum ReadableStreamTag : int32_t {
 };
 
 // This is the implementation of the generated $lazy
-JSC_DEFINE_HOST_FUNCTION(jsDollarLazy, (JSC::JSGlobalObject *lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsDollarLazy, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-  JSC::JSValue target = callFrame->uncheckedArgument(0);
-
-  int id = target.asInt32();
-  if (LIKELY(id < 0)) {
-    return JSValue::encode(JS2NativeGenerated::js2nativePointers[-id - 1](
-      static_cast<Zig::GlobalObject*>(lexicalGlobalObject))
-    );
-  }
-
-  switch(id) {
-    case ReadableStreamTag::Blob: {
-      return ByteBlob__JSReadableStreamSource__load(lexicalGlobalObject);
-    }
-    case ReadableStreamTag::File: {
-      return FileReader__JSReadableStreamSource__load(lexicalGlobalObject);
-    }
-    case ReadableStreamTag::Bytes: {
-      return ByteStream__JSReadableStreamSource__load(lexicalGlobalObject);
-    }
-  }
+    JSC::JSValue target = callFrame->uncheckedArgument(0);
 
 #if BUN_DEBUG
-  // in release, it is most likely that a negative int will be hit,
-  // and a segfault will happen instead of this message.
-  //
-  // that is ok considering we do not expose this function to the public
-  CRASH_WITH_INFO("Invalid call to @native. If you aren't calling this directly then bug @paperdave as they made a mistake in the code generator");
+    ASSERT_WITH_MESSAGE(target.isInt32(), "In call to $lazy: expected Int32, got %s", target.toWTFString(lexicalGlobalObject).utf8().data());
+#endif
+
+    int id = target.asInt32();
+    if (LIKELY(id < 0)) {
+        return JSValue::encode(JS2NativeGenerated::js2nativePointers[-id - 1](
+            static_cast<Zig::GlobalObject*>(lexicalGlobalObject)));
+    }
+
+    switch (id) {
+    case ReadableStreamTag::Blob: {
+        return ByteBlob__JSReadableStreamSource__load(lexicalGlobalObject);
+    }
+    case ReadableStreamTag::File: {
+        return FileReader__JSReadableStreamSource__load(lexicalGlobalObject);
+    }
+    case ReadableStreamTag::Bytes: {
+        return ByteStream__JSReadableStreamSource__load(lexicalGlobalObject);
+    }
+    }
+
+#if BUN_DEBUG
+    // in release, it is most likely that a negative int will be hit,
+    // and a segfault will happen instead of this message.
+    //
+    // that is ok considering we do not expose this function to the public
+    CRASH_WITH_INFO("Invalid call to @native. If you aren't calling this directly then bug @paperdave as they made a mistake in the code generator");
 #else
-  CRASH_WITH_INFO("Invalid call to @native. This should never be reached and is a bug in Bun or you got a handle to our internal code.");
+    CRASH_WITH_INFO("Invalid call to @native. This should never be reached and is a bug in Bun or you got a handle to our internal code.");
 #endif
 }
 

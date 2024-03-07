@@ -198,18 +198,17 @@ EncodedJSValue emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stre
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsReadable_emitReadable_, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsReadable_emitReadable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    JSReadableHelper_EXTRACT_STREAM_STATE
-
-        RELEASE_AND_RETURN(throwScope, emitReadable_(lexicalGlobalObject, stream, state));
+    JSReadableHelper_EXTRACT_STREAM_STATE;
+    RELEASE_AND_RETURN(throwScope, emitReadable_(lexicalGlobalObject, stream, state));
 }
 
 #undef JSReadableHelper_EXTRACT_STREAM_STATE
 
-
-JSValue createNodeStreamBinding(Zig::GlobalObject* globalObject) {
-    VM&vm = globalObject->vm();
+JSValue createNodeStreamBinding(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
     auto* obj = constructEmptyObject(globalObject);
     obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "BufferList"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferList(), 0);
     obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "ReadableState"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSReadableState(), 0);
@@ -222,9 +221,9 @@ JSValue createNodeStreamBinding(Zig::GlobalObject* globalObject) {
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "emitReadable"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "emitReadable"_s, jsReadable_emitReadable, ImplementationVisibility::Public), 0);
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "onEofChunk"_s)),
-        JSC::JSFunction::create(vm, globalObject, 0, "onEofChunk"_s, jsReadable_onEofChunk, ImplementationVisibility::Public), 0);
+    // obj->putDirect(
+    //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "onEofChunk"_s)),
+    //     JSC::JSFunction::create(vm, globalObject, 0, "onEofChunk"_s, jsReadable_onEofChunk, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "EE"_s)),
         WebCore::JSEventEmitter::getConstructor(vm, globalObject), 0);

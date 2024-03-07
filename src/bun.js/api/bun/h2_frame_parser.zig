@@ -2530,7 +2530,7 @@ pub const H2FrameParser = struct {
 };
 
 pub fn createNodeHttp2Binding(global: *JSC.JSGlobalObject) JSC.JSValue {
-    return JSC.JSArray.createComptime(global, .{
+    return JSC.JSArray.createInline(global, .{
         H2FrameParser.getConstructor(global),
         JSC.JSFunction.create(global, "getPackedSettings", jsGetPackedSettings, 0, .{}),
         JSC.JSFunction.create(global, "getUnpackedSettings", jsGetUnpackedSettings, 0, .{}),

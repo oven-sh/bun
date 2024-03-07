@@ -1,6 +1,6 @@
 #include "root.h"
 
-#include "NodeVMScript.h"
+#include "NodeVM.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "wtf/text/ExternalStringImpl.h"
 
@@ -599,7 +599,9 @@ void NodeVMScript::destroy(JSCell* cell)
 } // namespace WebCore
 
 namespace Bun {
-JSC::JSValue createNodeVMBinding(Zig::GlobalObject*globalObject) {
+
+JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
+{
     VM& vm = globalObject->vm();
     auto* obj = constructEmptyObject(globalObject);
     obj->putDirect(
@@ -619,4 +621,5 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject*globalObject) {
         JSC::JSFunction::create(vm, globalObject, 0, "runInThisContext"_s, vmModuleRunInThisContext, ImplementationVisibility::Public), 0);
     return obj;
 }
-}
+
+} // namespace Bun

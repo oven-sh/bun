@@ -39,5 +39,5 @@ const win32 = {
   _makeLong: toNamespacedPathWin32,
 };
 posix.win32 = win32.win32 = win32;
-win32.posix = posix;
+posix.posix = posix;
 export default process.platform === "win32" ? win32 : posix;

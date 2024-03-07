@@ -5770,11 +5770,18 @@ pub const JSArray = struct {
         return JSC.JSValue.c(JSC.C.JSObjectMakeArray(globalThis, arguments.len, @as(?[*]const JSC.C.JSObjectRef, @ptrCast(arguments.ptr)), null));
     }
 
+    pub fn create(global: *JSGlobalObject, items: []JSValue) JSValue {
+        // TODO(@paperdave): make this use JSArray::constructArray and initializeIndex instead
+        const a = JSValue.createEmptyArray(global, items.len);
+        for (items, 0..) |item, i| {
+            a.putIndex(global, i, item);
+        }
+        return a;
+    }
+
     /// Must be called with a tuple of JSValue
-    pub inline fn createComptime(
-        global: *JSGlobalObject,
-        items: anytype,
-    ) JSValue {
+    pub inline fn createInline(global: *JSGlobalObject, items: anytype) JSValue {
+        // TODO(@paperdave): make this use JSArray::constructArray and initializeIndex instead
         const a = JSValue.createEmptyArray(global, comptime items.len);
         inline for (items, 0..) |item, i| {
             a.putIndex(global, i, item);

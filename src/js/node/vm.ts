@@ -1,7 +1,7 @@
 // Hardcoded module "node:vm"
 const { throwNotImplemented } = require("internal/shared");
 
-const vm = $lazy("vm");
+const vm = $cpp("NodeVM.cpp", "Bun::createNodeVMBinding");
 
 const { createContext, isContext, Script, runInNewContext, runInThisContext } = vm;
 

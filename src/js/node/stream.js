@@ -10,7 +10,7 @@ const {
   maybeReadMore: _maybeReadMore,
   resume,
   emitReadable: _emitReadable,
-  onEofChunk,
+  // onEofChunk,
   EE,
 } = $cpp("JSReadableHelper.cpp", "createNodeStreamBinding");
 

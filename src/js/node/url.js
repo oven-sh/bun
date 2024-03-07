@@ -24,6 +24,7 @@
 "use strict";
 
 const { URL, URLSearchParams } = globalThis;
+const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 
 function Url() {
   this.protocol = null;

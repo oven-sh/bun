@@ -12,7 +12,8 @@ test("spawn can write to stdin multiple chunks", async () => {
   const interval = setInterval(dumpStats, 1000).unref();
 
   const maxFD = openSync(devNull, "w");
-  const concurrency = 7;
+  const concurrency = 10;
+  const delay = 8 * (Bun.version.includes("-debug") ? 12 : 1);
 
   var remaining = N;
   while (remaining > 0) {
@@ -24,7 +25,7 @@ test("spawn can write to stdin multiple chunks", async () => {
           stdout: "pipe",
           stdin: "pipe",
           stderr: "inherit",
-          env: bunEnv,
+          env: { ...bunEnv },
         });
 
         const prom2 = (async function () {
@@ -32,7 +33,7 @@ test("spawn can write to stdin multiple chunks", async () => {
           while (true) {
             proc.stdin!.write("Wrote to stdin!\n");
             await proc.stdin!.flush();
-            await Bun.sleep(32);
+            await Bun.sleep(delay);
 
             if (inCounter++ === 3) break;
           }
@@ -56,6 +57,7 @@ test("spawn can write to stdin multiple chunks", async () => {
         })();
 
         const [chunks, , exitCode] = await Promise.all([prom, prom2, proc.exited]);
+
         expect(chunks).toBe("Wrote to stdin!\n".repeat(4).trim());
         expect(exitCode).toBe(0);
       })();

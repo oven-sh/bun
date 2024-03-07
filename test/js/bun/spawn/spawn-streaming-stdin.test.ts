@@ -35,7 +35,7 @@ test("spawn can write to stdin multiple chunks", async () => {
             await proc.stdin!.flush();
             await Bun.sleep(delay);
 
-            if (inCounter++ === 3) break;
+            if (inCounter++ === 7) break;
           }
           await proc.stdin!.end();
           return inCounter;
@@ -45,6 +45,7 @@ test("spawn can write to stdin multiple chunks", async () => {
           let chunks: any[] = [];
 
           try {
+            const decoder = new TextDecoder();
             for await (var chunk of proc.stdout) {
               chunks.push(chunk);
             }
@@ -58,7 +59,7 @@ test("spawn can write to stdin multiple chunks", async () => {
 
         const [chunks, , exitCode] = await Promise.all([prom, prom2, proc.exited]);
 
-        expect(chunks).toBe("Wrote to stdin!\n".repeat(4).trim());
+        expect(chunks).toBe("Wrote to stdin!\n".repeat(8).trim());
         expect(exitCode).toBe(0);
       })();
     }

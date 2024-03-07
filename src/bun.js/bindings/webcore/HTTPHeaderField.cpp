@@ -32,6 +32,15 @@ namespace RFC7230 {
 
 bool isTokenCharacter(UChar c)
 {
+    return c < 0x80 && isTokenCharacter(static_cast<LChar>(c));
+}
+bool isDelimiter(UChar c)
+{
+    return c < 0x80 && isDelimiter(static_cast<LChar>(c));
+}
+
+bool isTokenCharacter(LChar c)
+{
     return isASCIIAlpha(c) || isASCIIDigit(c)
         || c == '!' || c == '#' || c == '$'
         || c == '%' || c == '&' || c == '\''
@@ -40,7 +49,7 @@ bool isTokenCharacter(UChar c)
         || c == '`' || c == '|' || c == '~';
 }
 
-bool isDelimiter(UChar c)
+bool isDelimiter(LChar c)
 {
     return c == '(' || c == ')' || c == ','
         || c == '/' || c == ':' || c == ';'

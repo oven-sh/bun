@@ -154,8 +154,7 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
 
 bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task)
 {
-    Locker locker { allScriptExecutionContextsMapLock };
-    auto* context = allScriptExecutionContextsMap().get(1);
+    auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
 
     if (!context) {
         return false;
@@ -163,6 +162,12 @@ bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionCon
 
     context->postTaskConcurrently(WTFMove(task));
     return true;
+}
+
+ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionContext()
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    return allScriptExecutionContextsMap().get(1);
 }
 
 void ScriptExecutionContext::processMessageWithMessagePortsSoon(CompletionHandler<void()>&& completionHandler)

@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { basename, join, resolve } from "path";
 
 it("process", () => {
@@ -10,9 +10,11 @@ it("process", () => {
 
   if (!isNode && process.platform !== "win32" && process.title !== "bun") throw new Error("process.title is not 'bun'");
 
-  if (typeof process.env.USER !== "string") throw new Error("process.env is not an object");
+  if (process.platform !== "win32" && typeof process.env.USER !== "string")
+    throw new Error("process.env is not an object");
 
-  if (process.env.USER.length === 0) throw new Error("process.env is missing a USER property");
+  if (process.platform !== "win32" && process.env.USER.length === 0)
+    throw new Error("process.env is missing a USER property");
 
   if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32")
     throw new Error("process.platform is invalid");
@@ -98,7 +100,7 @@ it("process.env is spreadable and editable", () => {
   expect(process.env).toEqual(process.env);
   eval(`globalThis.process.env.USER = 'bun';`);
   expect(eval(`globalThis.process.env.USER`)).toBe("bun");
-  expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(orig);
+  expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
 it("process.env.TZ", () => {
@@ -535,3 +537,10 @@ it("process.report", () => {
 it("process.exit with jsDoubleNumber that is an integer", () => {
   expect([join(import.meta.dir, "./process-exit-decimal-fixture.js")]).toRun();
 });
+
+if (isWindows) {
+  it("ownKeys trap windows process.env", () => {
+    expect(() => Object.keys(process.env)).not.toThrow();
+    expect(() => Object.getOwnPropertyDescriptors(process.env)).not.toThrow();
+  });
+}

@@ -40,6 +40,9 @@ const JSTypeOfMap = bun.ComptimeStringMap([]const u8, .{
 });
 
 pub var active_test_expectation_counter: Counter = .{};
+pub var is_expecting_assertions: bool = false;
+pub var is_expecting_assertions_count: bool = false;
+pub var expected_assertions_number: u32 = 0;
 
 const log = bun.Output.scoped(.expect, false);
 
@@ -4319,9 +4322,50 @@ pub const Expect = struct {
         return thisValue;
     }
 
-    pub const assertions = notImplementedStaticFn;
-    pub const hasAssertions = notImplementedStaticFn;
     pub const addSnapshotSerializer = notImplementedStaticFn;
+
+    pub fn hasAssertions(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        _ = callFrame;
+        defer globalObject.bunVM().autoGarbageCollect();
+
+        is_expecting_assertions = true;
+
+        return .undefined;
+    }
+
+    pub fn assertions(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer globalObject.bunVM().autoGarbageCollect();
+
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("expect.assertions() takes 1 argument", .{});
+            return .zero;
+        }
+
+        const expected: JSValue = arguments[0];
+
+        if (!expected.isNumber()) {
+            var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
+            return .zero;
+        }
+
+        const expected_assertions: f64 = expected.asNumber();
+        if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0) {
+            var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
+            return .zero;
+        }
+
+        const unsigned_expected_assertions: u32 = @intFromFloat(expected_assertions);
+
+        is_expecting_assertions_count = true;
+        expected_assertions_number = unsigned_expected_assertions;
+
+        return .undefined;
+    }
 
     pub fn notImplementedJSCFn(_: *Expect, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         globalObject.throw("Not implemented", .{});

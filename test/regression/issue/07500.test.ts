@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { test, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { tmpdir } from "os";
@@ -11,11 +10,11 @@ test("7500 - Bun.stdin.text() doesn't read all data", async () => {
     .split(" ")
     .join("\n");
   await Bun.write(filename, text);
-  const cat = isWindows ? "Get-Content" : "cat";
+  const cat = "cat";
   const bunCommand = `${bunExe()} ${join(import.meta.dir, "7500-repro-fixture.js")}`;
   const shellCommand = `${cat} ${filename} | ${bunCommand}`.replace(/\\/g, "\\\\");
 
-  const cmd = isWindows ? ["pwsh.exe", "/C", shellCommand] : ["bash", "-c", shellCommand];
+  const cmd = isWindows ? (["pwsh.exe", "/C", shellCommand] as const) : (["bash", "-c", shellCommand] as const);
 
   const proc = Bun.spawnSync(cmd, {
     stdin: "inherit",

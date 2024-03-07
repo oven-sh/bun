@@ -1,4 +1,5 @@
 const bun = @import("root").bun;
+const FeatureFlags = bun.FeatureFlags;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -885,7 +886,7 @@ pub const PackageInstall = struct {
         skipped: u32 = 0,
         successfully_installed: ?Bitset = null,
 
-        // deduplicate names with set
+        // deduplicated
         packages_with_skipped_scripts_set: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) = .{},
     };
 
@@ -2053,7 +2054,7 @@ pub const PackageManager = struct {
     // name hash from alias package name -> aliased package dependency version info
     known_npm_aliases: NpmAliasMap = .{},
 
-    // During `installPackages` we learn exactly what dependencies from --trusted
+    // During `installPackages` we learn exactly what dependencies from --trust
     // actually have scripts to run, and we add them to this list
     trusted_deps_to_add_to_package_json: std.ArrayListUnmanaged(string) = .{},
 
@@ -3591,9 +3592,15 @@ pub const PackageManager = struct {
         load_lockfile_result: Lockfile.LoadFromDiskResult,
         comptime log_level: Options.LogLevel,
     ) !void {
-        _ = manager;
-        _ = load_lockfile_result;
         _ = log_level;
+        if (load_lockfile_result == .ok and load_lockfile_result.ok.serializer_result.packages_need_update) {
+            const slice = manager.lockfile.packages.slice();
+            for (slice.items(.meta)) |*meta| {
+                // these are possibly updated later, but need to make sure non are zero
+                meta.setHasInstallScript(false);
+            }
+        }
+
         return;
 
         // if (load_lockfile_result == .ok and load_lockfile_result.ok.serializer_result.packages_need_update) {
@@ -6587,17 +6594,29 @@ pub const PackageManager = struct {
             for (updates) |*request| {
                 if (request.e_string) |e_string| {
                     e_string.data = switch (request.resolution.tag) {
-                        .npm => if (request.version.tag == .dist_tag)
-                            if (options.exact_versions)
-                                std.fmt.allocPrint(allocator, "{}", .{
-                                    request.resolution.value.npm.version.fmt(request.version_buf),
-                                }) catch unreachable
-                            else
-                                std.fmt.allocPrint(allocator, "^{}", .{
-                                    request.resolution.value.npm.version.fmt(request.version_buf),
-                                }) catch unreachable
-                        else
-                            null,
+                        .npm => brk: {
+                            if (comptime FeatureFlags.bun_install_breaking_changes_1_1) {
+                                if (request.version.tag == .dist_tag) {
+                                    const fmt = if (options.exact_versions) "{}" else "^{}";
+                                    break :brk try std.fmt.allocPrint(allocator, fmt, .{
+                                        request.resolution.value.npm.version.fmt(request.version_buf),
+                                    });
+                                }
+                                break :brk null;
+                            } else {
+                                break :brk if (request.version.tag == .dist_tag and request.version.literal.isEmpty())
+                                    switch (options.exact_versions) {
+                                        false => std.fmt.allocPrint(allocator, "^{}", .{
+                                            request.resolution.value.npm.version.fmt(request.version_buf),
+                                        }) catch unreachable,
+                                        true => std.fmt.allocPrint(allocator, "{}", .{
+                                            request.resolution.value.npm.version.fmt(request.version_buf),
+                                        }) catch unreachable,
+                                    }
+                                else
+                                    null;
+                            }
+                        },
                         .uninitialized => switch (request.version.tag) {
                             .uninitialized => try allocator.dupe(u8, latest),
                             else => null,

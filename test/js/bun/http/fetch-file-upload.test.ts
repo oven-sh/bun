@@ -77,7 +77,7 @@ test("req.formData throws error when stream is in use", async () => {
     development: false,
     error(fail) {
       pass = true;
-      if (fail.toString().includes("is already used")) {
+      if (fail.toString().includes("already used")) {
         return new Response("pass");
       }
       return new Response("fail");
@@ -100,6 +100,7 @@ test("req.formData throws error when stream is in use", async () => {
 
   // but it does for Response
   expect(await res.text()).toBe("pass");
+  expect(pass).toBe(true);
   server.stop(true);
 });
 

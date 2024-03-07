@@ -8367,7 +8367,7 @@ pub const PackageManager = struct {
             if (scripts.hasAny()) {
                 const add_node_gyp_rebuild_script = if (this.lockfile.hasTrustedDependency(folder_name) and
                     scripts.install.isEmpty() and
-                    scripts.postinstall.isEmpty())
+                    scripts.preinstall.isEmpty())
                 brk: {
                     const binding_dot_gyp_path = Path.joinAbsStringZ(
                         this.node_modules_folder_path.items,
@@ -9450,7 +9450,7 @@ pub const PackageManager = struct {
             .auto,
         );
         if (root.scripts.hasAny()) {
-            const add_node_gyp_rebuild_script = root.scripts.install.isEmpty() and root.scripts.postinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
+            const add_node_gyp_rebuild_script = root.scripts.install.isEmpty() and root.scripts.preinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
 
             manager.root_lifecycle_scripts = root.scripts.enqueue(
                 manager.lockfile,

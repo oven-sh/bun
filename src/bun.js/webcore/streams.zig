@@ -3523,6 +3523,8 @@ pub const FileReader = struct {
             this.lazy.blob.deref();
             this.lazy = .none;
         }
+
+        this.parent().destroy();
     }
 
     pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState) bool {

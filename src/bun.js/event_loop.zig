@@ -359,6 +359,7 @@ const ShellMkdirTask = bun.shell.Interpreter.Builtin.Mkdir.ShellMkdirTask;
 const ShellTouchTask = bun.shell.Interpreter.Builtin.Touch.ShellTouchTask;
 // const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
 const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinit;
+const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
@@ -373,6 +374,7 @@ pub const Task = TaggedPointerUnion(.{
     AnyTask,
     ManagedTask,
     ShellIOReaderAsyncDeinit,
+    ShellIOWriterAsyncDeinit,
     napi_async_work,
     ThreadSafeFunction,
     CppTask,
@@ -880,6 +882,11 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
+                @field(Task.Tag, typeBaseName(@typeName(ShellIOWriterAsyncDeinit))) => {
+                    var shell_ls_task: *ShellIOWriterAsyncDeinit = task.get(ShellIOWriterAsyncDeinit).?;
+                    shell_ls_task.runFromMainThread();
+                    // shell_ls_task.deinit();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(ShellIOReaderAsyncDeinit))) => {
                     var shell_ls_task: *ShellIOReaderAsyncDeinit = task.get(ShellIOReaderAsyncDeinit).?;
                     shell_ls_task.runFromMainThread();
@@ -1691,11 +1698,13 @@ pub const MiniEventLoop = struct {
     pipe_read_buffer: ?*PipeReadBuffer = null,
     const PipeReadBuffer = [256 * 1024]u8;
 
+    pub threadlocal var globalInitialized: bool = false;
     pub threadlocal var global: *MiniEventLoop = undefined;
 
     pub const ConcurrentTaskQueue = UnboundedQueue(AnyTaskWithExtraContext, .next);
 
     pub fn initGlobal(env: ?*bun.DotEnv.Loader) *MiniEventLoop {
+        if (globalInitialized) return global;
         const loop = MiniEventLoop.init(bun.default_allocator);
         global = bun.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
         global.* = loop;
@@ -1707,6 +1716,7 @@ pub const MiniEventLoop = struct {
             loader.* = bun.DotEnv.Loader.init(map, bun.default_allocator);
             break :env_loader loader;
         };
+        globalInitialized = true;
         return global;
     }
 
@@ -1750,11 +1760,17 @@ pub const MiniEventLoop = struct {
     pub fn init(
         allocator: std.mem.Allocator,
     ) MiniEventLoop {
-        return .{
+        var mini = MiniEventLoop{
             .tasks = Queue.init(allocator),
             .allocator = allocator,
             .loop = uws.Loop.get(),
         };
+
+        if (comptime Environment.isWindows) {
+            mini.loop.uv_loop = bun.windows.libuv.Loop.get();
+        }
+
+        return mini;
     }
 
     pub fn deinit(this: *MiniEventLoop) void {

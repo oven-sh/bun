@@ -305,26 +305,25 @@ pub const RunCommand = struct {
         }
 
         if (Environment.isWindows and !use_native_shell) {
-            @panic("TODO: Windows shell support");
-            // if (!silent) {
-            //     if (Environment.isDebug) {
-            //         Output.prettyError("[bun shell] ", .{});
-            //     }
-            //     Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
-            //     Output.flush();
-            // }
+            if (!silent) {
+                if (Environment.isDebug) {
+                    Output.prettyError("[bun shell] ", .{});
+                }
+                Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
+                Output.flush();
+            }
 
-            // const mini = bun.JSC.MiniEventLoop.initGlobal(env);
-            // bun.shell.ShellSubprocessMini.initAndRunFromSource(mini, name, combined_script) catch |err| {
-            //     if (!silent) {
-            //         Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
-            //     }
+            const mini = bun.JSC.MiniEventLoop.initGlobal(env);
+            bun.shell.Interpreter.initAndRunFromSource(mini, name, combined_script) catch |err| {
+                if (!silent) {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+                }
 
-            //     Output.flush();
-            //     Global.exit(1);
-            // };
+                Output.flush();
+                Global.exit(1);
+            };
 
-            // return true;
+            return true;
         }
 
         var argv = [_]string{

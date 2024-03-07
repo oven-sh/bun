@@ -1220,7 +1220,7 @@ pub const Interpreter = struct {
         };
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
-        var interp = switch (ThisInterpreter.init(mini, bun.default_allocator, &arena, script_heap, jsobjs)) {
+        var interp = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return;
@@ -1239,6 +1239,7 @@ pub const Interpreter = struct {
         interp.done = &is_done.done;
         try interp.run();
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
+        interp.deinit();
     }
 
     pub fn run(this: *ThisInterpreter) !void {
@@ -8737,6 +8738,37 @@ pub const Interpreter = struct {
         pub const Readers = SmolList(ChildPtr, 4);
     };
 
+    pub const AsyncDeinitWriter = struct {
+        task: WorkPoolTask = .{ .callback = &runFromThreadPool },
+
+        pub fn runFromThreadPool(task: *WorkPoolTask) void {
+            var this = @fieldParentPtr(@This(), "task", task);
+            var iowriter = this.writer();
+            if (iowriter.evtloop == .js) {
+                iowriter.evtloop.js.enqueueTaskConcurrent(iowriter.concurrent_task.js.from(this, .manual_deinit));
+            } else {
+                iowriter.evtloop.mini.enqueueTaskConcurrent(iowriter.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+            }
+        }
+
+        pub fn writer(this: *@This()) *IOWriter {
+            return @fieldParentPtr(IOWriter, "async_deinit", this);
+        }
+
+        pub fn runFromMainThread(this: *@This()) void {
+            const ioreader = @fieldParentPtr(IOWriter, "async_deinit", this);
+            ioreader.__deinit();
+        }
+
+        pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
+            this.runFromMainThread();
+        }
+
+        pub fn schedule(this: *@This()) void {
+            WorkPool.schedule(&this.task);
+        }
+    };
+
     pub const AsyncDeinit = struct {
         task: WorkPoolTask = .{ .callback = &runFromThreadPool },
 
@@ -8780,7 +8812,9 @@ pub const Interpreter = struct {
         ref_count: u32 = 1,
         err: ?JSC.SystemError = null,
         evtloop: JSC.EventLoopHandle,
+        concurrent_task: JSC.EventLoopTask,
         is_writing: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
+        async_deinit: AsyncDeinitWriter = .{},
 
         pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOWriterRefCount";
 
@@ -8796,7 +8830,7 @@ pub const Interpreter = struct {
 
         pub const auto_poll = false;
 
-        usingnamespace bun.NewRefCounted(@This(), This.deinit);
+        usingnamespace bun.NewRefCounted(@This(), asyncDeinit);
         const This = @This();
         pub const WriterImpl = bun.io.BufferedWriter(
             This,
@@ -8820,6 +8854,7 @@ pub const Interpreter = struct {
             const this = IOWriter.new(.{
                 .fd = fd,
                 .evtloop = evtloop,
+                .concurrent_task = JSC.EventLoopTask.fromEventLoop(evtloop),
             });
 
             this.writer.parent = this;
@@ -9083,7 +9118,11 @@ pub const Interpreter = struct {
             this.write();
         }
 
-        pub fn deinit(this: *This) void {
+        pub fn asyncDeinit(this: *@This()) void {
+            this.async_deinit.schedule();
+        }
+
+        pub fn __deinit(this: *This) void {
             print("IOWriter(0x{x}, fd={}) deinit", .{ @intFromPtr(this), this.fd });
             if (bun.Environment.allow_assert) std.debug.assert(this.ref_count == 0);
             this.buf.deinit(bun.default_allocator);

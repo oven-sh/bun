@@ -2453,17 +2453,11 @@ pub const Package = extern struct {
                 {
                     script_index += 1;
                     const entry: Lockfile.Scripts.Entry = .{
-                        .cwd = cwd orelse brk: {
-                            cwd = lockfile.allocator.dupe(u8, _cwd) catch unreachable;
-                            break :brk cwd.?;
-                        },
                         .script = lockfile.allocator.dupe(u8, "node-gyp rebuild") catch unreachable,
-                        .package_name = package_name,
                     };
                     if (first_script_index == -1) first_script_index = @intCast(script_index);
                     scripts[script_index] = entry;
                     script_index += 1;
-                    lockfile.scripts.install.append(lockfile.allocator, entry) catch unreachable;
                     counter += 1;
                 }
 
@@ -2610,7 +2604,7 @@ pub const Package = extern struct {
             if (this.hasAny()) {
                 const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name) and
                     this.install.isEmpty() and
-                    this.postinstall.isEmpty())
+                    this.preinstall.isEmpty())
                 brk: {
                     const binding_dot_gyp_path = Path.joinAbsStringZ(
                         abs_node_modules_path,

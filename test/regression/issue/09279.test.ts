@@ -7,9 +7,7 @@ test.if(!!which("sleep"))("child_process.spawn({ timeout }) should not exit inst
   await new Promise<void>((resolve, reject) => {
     const child = spawn("sleep", ["1000"], { timeout: 100 });
     child.on("error", reject);
-    child.on("exit", (exitCode, signalCode) => {
-      resolve();
-    });
+    child.on("exit", resolve);
   });
   const end = performance.now();
   expect(end - start).toBeGreaterThanOrEqual(100);

@@ -17,7 +17,8 @@ const debug = Output.scoped(.bunx, false);
 pub const BunxCommand = struct {
     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-    /// clones the string
+    /// Adds `create-` to the string, but also handles scoped packages correctly.
+    /// Always clones the string in the process.
     pub fn addCreatePrefix(allocator: std.mem.Allocator, input: []const u8) ![:0]const u8 {
         const prefixLength = "create-".len;
 
@@ -56,7 +57,9 @@ pub const BunxCommand = struct {
         return new_str;
     }
 
-    const seconds_cache_valid = 60 * 60 * 24; // 1 day
+    /// 1 day
+    const seconds_cache_valid = 60 * 60 * 24;
+    /// 1 day
     const nanoseconds_cache_valid = seconds_cache_valid * 1000000000;
 
     fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {

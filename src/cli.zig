@@ -1622,9 +1622,10 @@ pub const Command = struct {
                     example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {
-                    const bunx_args = try allocator.alloc([:0]const u8, args.len - template_name_start);
-                    bunx_args[0] = try BunxCommand.addCreatePrefix(allocator, template_name);
-                    for (bunx_args[1..], args[template_name_start + 1 ..]) |*dest, src| {
+                    const bunx_args = try allocator.alloc([:0]const u8, 1 + args.len - template_name_start);
+                    bunx_args[0] = "bunx";
+                    bunx_args[1] = try BunxCommand.addCreatePrefix(allocator, template_name);
+                    for (bunx_args[2..], args[template_name_start + 1 ..]) |*dest, src| {
                         dest.* = src;
                     }
 

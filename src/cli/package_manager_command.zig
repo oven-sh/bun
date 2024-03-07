@@ -194,7 +194,7 @@ pub const PackageManagerCommand = struct {
                     Output.err(err, "Could not delete {s}", .{outpath});
                     had_err = true;
                 };
-                Output.prettyln("Cleared 'bun install' cache ", .{});
+                Output.prettyln("Cleared 'bun install' cache", .{});
 
                 bunx: {
                     const tmp = bun.fs.FileSystem.RealFS.platformTempDir();

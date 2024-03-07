@@ -2142,7 +2142,6 @@ pub const Resolver = struct {
             dir_entries_ptr.* = new_entry;
 
             if (r.store_fd) {
-                Fs.FileSystem.setMaxFd(open_dir.fd);
                 dir_entries_ptr.fd = bun.toFD(open_dir.fd);
             }
 

@@ -12,55 +12,56 @@ test("spawn can write to stdin multiple chunks", async () => {
   const interval = setInterval(dumpStats, 1000).unref();
 
   const maxFD = openSync(devNull, "w");
-  for (let i = 0; i < N; i++) {
-    var exited;
-    await (async function () {
-      const tmperr = join(tmpdir(), "stdin-repro-error.log." + i);
+  const concurrency = 7;
 
-      const proc = spawn({
-        cmd: [bunExe(), join(import.meta.dir, "stdin-repro.js")],
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "inherit",
-        env: {
-          ...bunEnv,
-        },
-      });
-      exited = proc.exited;
-      var counter = 0;
-      var inCounter = 0;
-      var chunks: any[] = [];
-      const prom = (async function () {
-        try {
-          for await (var chunk of proc.stdout) {
-            chunks.push(chunk);
+  var remaining = N;
+  while (remaining > 0) {
+    const proms = new Array(concurrency);
+    for (let i = 0; i < concurrency; i++) {
+      proms[i] = (async function () {
+        const proc = spawn({
+          cmd: [bunExe(), join(import.meta.dir, "stdin-repro.js")],
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "inherit",
+          env: bunEnv,
+        });
+
+        const prom2 = (async function () {
+          let inCounter = 0;
+          while (true) {
+            proc.stdin!.write("Wrote to stdin!\n");
+            await proc.stdin!.flush();
+            await Bun.sleep(32);
+
+            if (inCounter++ === 3) break;
           }
-        } catch (e: any) {
-          console.log(e.stack);
-          throw e;
-        }
-        console.count("Finished stdout");
+          await proc.stdin!.end();
+          return inCounter;
+        })();
+
+        const prom = (async function () {
+          let chunks: any[] = [];
+
+          try {
+            for await (var chunk of proc.stdout) {
+              chunks.push(chunk);
+            }
+          } catch (e: any) {
+            console.log(e.stack);
+            throw e;
+          }
+
+          return Buffer.concat(chunks).toString().trim();
+        })();
+
+        const [chunks, , exitCode] = await Promise.all([prom, prom2, proc.exited]);
+        expect(chunks).toBe("Wrote to stdin!\n".repeat(4).trim());
+        expect(exitCode).toBe(0);
       })();
-
-      const prom2 = (async function () {
-        while (true) {
-          proc.stdin!.write("Wrote to stdin!\n");
-          await new Promise(resolve => setTimeout(resolve, 8));
-
-          if (inCounter++ === 3) break;
-        }
-        await proc.stdin!.end();
-        console.count("Finished stdin");
-      })();
-
-      await Promise.all([prom, prom2]);
-      expect(Buffer.concat(chunks).toString().trim()).toBe("Wrote to stdin!\n".repeat(4).trim());
-      await proc.exited;
-
-      try {
-        unlinkSync(tmperr);
-      } catch (e) {}
-    })();
+    }
+    await Promise.all(proms);
+    remaining -= concurrency;
   }
 
   closeSync(maxFD);

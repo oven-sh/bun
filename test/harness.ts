@@ -26,6 +26,10 @@ if (isWindows) {
 }
 
 for (let key in bunEnv) {
+  if (bunEnv[key] === undefined) {
+    delete bunEnv[key];
+  }
+
   if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
     delete bunEnv[key];
   }

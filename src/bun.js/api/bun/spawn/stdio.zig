@@ -16,7 +16,10 @@ pub const Stdio = union(enum) {
     capture: struct { fd: bun.FileDescriptor, buf: *bun.ByteList },
     ignore: void,
     fd: bun.FileDescriptor,
-    dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
+    dup2: struct {
+        out: bun.JSC.Subprocess.StdioKind,
+        to: bun.JSC.Subprocess.StdioKind,
+    },
     path: JSC.Node.PathLike,
     blob: JSC.WebCore.AnyBlob,
     array_buffer: JSC.ArrayBuffer.Strong,
@@ -30,16 +33,25 @@ pub const Stdio = union(enum) {
         err: ToSpawnOptsError,
     };
 
+    pub fn ResultT(comptime T: type) type {
+        return union(enum) {
+            result: T,
+            err: ToSpawnOptsError,
+        };
+    }
+
     pub const ToSpawnOptsError = union(enum) {
         stdin_used_as_out,
         out_used_as_stdin,
         blob_used_as_out,
+        uv_pipe: bun.C.E,
 
         pub fn toStr(this: *const @This()) []const u8 {
             return switch (this.*) {
                 .stdin_used_as_out => "Stdin cannot be used for stdout or stderr",
                 .out_used_as_stdin => "Stdout and stderr cannot be used for stdin",
                 .blob_used_as_out => "Blobs are immutable, and cannot be used for stdout/stderr",
+                .uv_pipe => @panic("TODO"),
             };
         }
 

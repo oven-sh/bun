@@ -895,6 +895,7 @@ pub const WindowsSpawnResult = struct {
         unavailable: void,
 
         buffer: *bun.windows.libuv.Pipe,
+        buffer_fd: bun.FileDescriptor,
     };
 
     pub fn toProcess(
@@ -1371,17 +1372,32 @@ pub fn spawnProcessWindows(
 
     const stdios = .{ &stdio_containers.items[0], &stdio_containers.items[1], &stdio_containers.items[2] };
     const stdio_options: [3]WindowsSpawnOptions.Stdio = .{ options.stdin, options.stdout, options.stderr };
-    const pipe_flags = uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE | uv.UV_WRITABLE_PIPE;
+    const pipe_flags = uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE;
 
+    // On Windows we don't have a dup2 equivalent
+    // So we create a pipe with `uv_pipe(fds, 0, 0)`
+    // And give the write end to stdout/stderr
+    // And the read end we use to buffer the output
+    var dup_fds: [2]uv.uv_file = undefined;
+    var dup_src: ?u32 = null;
+    var dup_tgt: ?u32 = null;
     inline for (0..3) |fd_i| {
         const stdio: *uv.uv_stdio_container_t = stdios[fd_i];
 
         const flag = comptime if (fd_i == 0) @as(u32, uv.O.RDONLY) else @as(u32, uv.O.WRONLY);
 
-        switch (stdio_options[fd_i]) {
-            .dup2 => |dup2| {
-                stdio.flags = uv.UV_INHERIT_FD;
-                stdio.data = .{ .fd = dup2.to.toNum() };
+        var treat_as_dup: bool = false;
+
+        if (fd_i == 1 and stdio_options[2] == .dup2) {
+            treat_as_dup = true;
+            dup_tgt = fd_i;
+        } else if (fd_i == 2 and stdio_options[1] == .dup2) {
+            treat_as_dup = true;
+            dup_tgt = fd_i;
+        } else switch (stdio_options[fd_i]) {
+            .dup2 => {
+                treat_as_dup = true;
+                dup_src = fd_i;
             },
             .inherit => {
                 stdio.flags = uv.UV_INHERIT_FD;
@@ -1413,6 +1429,17 @@ pub fn spawnProcessWindows(
                 stdio.flags = uv.UV_INHERIT_FD;
                 stdio.data.fd = bun.uvfdcast(fd);
             },
+        }
+
+        if (treat_as_dup) {
+            if (fd_i == 1) {
+                if (uv.uv_pipe(&dup_fds, 0, 0).errEnum()) |e| {
+                    return .{ .err = bun.sys.Error.fromCode(e, .pipe) };
+                }
+            }
+
+            stdio.flags = uv.UV_INHERIT_FD;
+            stdio.data = .{ .fd = dup_fds[1] };
         }
     }
 
@@ -1475,6 +1502,19 @@ pub fn spawnProcessWindows(
     errdefer failed = true;
     process.poller = .{ .uv = std.mem.zeroes(uv.Process) };
 
+    defer {
+        if (dup_src != null) {
+            if (Environment.allow_assert) std.debug.assert(dup_src != null and dup_tgt != null);
+        }
+
+        if (failed) {
+            const r = bun.FDImpl.fromUV(dup_fds[0]).encode();
+            _ = bun.sys.close(r);
+        }
+
+        const w = bun.FDImpl.fromUV(dup_fds[1]).encode();
+        _ = bun.sys.close(w);
+    }
     if (process.poller.uv.spawn(loop, &uv_process_options).toError(.posix_spawn)) |err| {
         failed = true;
         return .{ .err = err };
@@ -1493,7 +1533,13 @@ pub fn spawnProcessWindows(
         const stdio = stdio_containers.items[i];
         const result_stdio: *WindowsSpawnResult.StdioResult = result_stdios[i];
 
-        switch (stdio_options[i]) {
+        if (dup_src != null and i == dup_src.?) {
+            result_stdio.* = .unavailable;
+        } else if (dup_tgt != null and i == dup_tgt.?) {
+            result_stdio.* = .{
+                .buffer_fd = bun.FDImpl.fromUV(dup_fds[0]).encode(),
+            };
+        } else switch (stdio_options[i]) {
             .buffer => {
                 result_stdio.* = .{ .buffer = @ptrCast(stdio.data.stream) };
             },

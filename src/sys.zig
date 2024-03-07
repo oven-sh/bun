@@ -242,6 +242,30 @@ pub const Error = struct {
         };
     }
 
+    pub fn name(this: *const Error) []const u8 {
+        if (comptime Environment.isWindows) {
+            const system_errno = brk: {
+                // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
+                @setRuntimeSafety(false);
+                if (this.from_libuv) {
+                    break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(this.errno))));
+                }
+
+                break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
+            };
+            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+                return errname;
+            }
+        } else if (this.errno > 0 and this.errno < C.SystemErrno.max) {
+            const system_errno = @as(C.SystemErrno, @enumFromInt(this.errno));
+            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+                return errname;
+            }
+        }
+
+        return "UNKNOWN";
+    }
+
     pub fn toSystemError(this: Error) SystemError {
         var err = SystemError{
             .errno = @as(c_int, this.errno) * -1,
@@ -1344,22 +1368,25 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
 
     if (comptime Environment.isMac) {
         const rc = system.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
-        log("recv({}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
 
         if (Maybe(usize).errnoSys(rc, .recv)) |err| {
+            log("recv({}, {d}, {d}) = {s}", .{ fd, adjusted_len, flag, err.err.name() });
             return err;
         }
+
+        log("recv({}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
 
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
             const rc = linux.recvfrom(fd.cast(), buf.ptr, adjusted_len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
-            log("recv({}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
 
             if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
+                log("recv({}, {d}, {d}) = {s}", .{ fd, adjusted_len, flag, err.err.name() });
                 return err;
             }
+            log("recv({}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
@@ -1373,23 +1400,25 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = system.@"sendto$NOCANCEL"(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
-        syslog("send({}, {d}) = {d}", .{ fd, buf.len, rc });
-
         if (Maybe(usize).errnoSys(rc, .send)) |err| {
+            syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
             return err;
         }
+
+        syslog("send({}, {d}) = {d}", .{ fd, buf.len, rc });
+
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
             const rc = linux.sendto(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
-            syslog("send({}, {d}) = {d}", .{ fd, buf.len, rc });
-
             if (Maybe(usize).errnoSys(rc, .send)) |err| {
                 if (err.getErrno() == .INTR) continue;
+                syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
                 return err;
             }
 
+            syslog("send({}, {d}) = {d}", .{ fd, buf.len, rc });
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }

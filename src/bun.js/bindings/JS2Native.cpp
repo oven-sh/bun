@@ -50,8 +50,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDollarLazy, (JSC::JSGlobalObject * lexicalGlobalObjec
 
     int id = target.asInt32();
     if (LIKELY(id < 0)) {
-        return JSValue::encode(JS2NativeGenerated::js2nativePointers[-id - 1](
-            static_cast<Zig::GlobalObject*>(lexicalGlobalObject)));
+#if BUN_DEBUG
+        ASSERT_WITH_MESSAGE("In call to $lazy: expected int in range, got %d. This is a bug in JS2Native code generator.", id);
+#endif
+        return JSValue::encode(JS2NativeGenerated::js2nativePointers[-id - 1](jsCast<Zig::GlobalObject*>(lexicalGlobalObject)));
     }
 
     switch (id) {
@@ -67,13 +69,11 @@ JSC_DEFINE_HOST_FUNCTION(jsDollarLazy, (JSC::JSGlobalObject * lexicalGlobalObjec
     }
 
 #if BUN_DEBUG
-    // in release, it is most likely that a negative int will be hit,
+    // In release, it is most likely that a negative int will be hit,
     // and a segfault will happen instead of this message.
-    //
-    // that is ok considering we do not expose this function to the public
-    CRASH_WITH_INFO("Invalid call to @native. If you aren't calling this directly then bug @paperdave as they made a mistake in the code generator");
+    CRASH_WITH_INFO("Invalid call to $lazy If you aren't calling this directly then bug @paperdave as they made a mistake in the code generator");
 #else
-    CRASH_WITH_INFO("Invalid call to @native. This should never be reached and is a bug in Bun or you got a handle to our internal code.");
+    CRASH_WITH_INFO("Invalid call to $lazy. This should never be reached and is a bug in Bun.");
 #endif
 }
 

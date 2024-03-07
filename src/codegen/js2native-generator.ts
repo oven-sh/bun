@@ -3,7 +3,7 @@
 //
 // For the actual parsing, see replacements.ts
 
-import path, { basename } from "path";
+import path, { basename, sep } from "path";
 import { readdirRecursiveWithExclusionsAndExtensionsSync } from "./helpers";
 
 //
@@ -47,7 +47,7 @@ function resolveNativeFileId(call_type: NativeCallType, filename: string) {
     );
   }
 
-  const resolved = sourceFiles.find(file => file.endsWith("/" + filename));
+  const resolved = sourceFiles.find(file => file.endsWith(sep + filename));
   if (!resolved) {
     throw new Error(`Could not find file ${filename} in $${call_type} call`);
   }

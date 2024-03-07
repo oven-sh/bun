@@ -429,7 +429,9 @@ console.timeEnd(timeString);
 console.log(
   `  %s kb`,
   Math.floor(
-    (moduleList.reduce((a, b) => a + outputs.get(b.slice(0, -3)).length, 0) + globalThis.internalFunctionJSSize) / 1000,
+    (moduleList.reduce((a, b) => a + outputs.get(b.slice(0, -3).replaceAll("/", path.sep)).length, 0) +
+      globalThis.internalFunctionJSSize) /
+      1000,
   ),
 );
 console.log(`  %s internal modules`, moduleList.length);

@@ -4678,8 +4678,18 @@ pub const PackageManager = struct {
                     Global.crash();
                 };
 
-                package.meta.setHasInstallScript(package.scripts.hasAny());
-                // TODO: check for binding.gyp file if hasInstallScript is false
+                const has_scripts = package.scripts.hasAny() or brk: {
+                    const dir = std.fs.path.dirname(data.json_path) orelse "/";
+                    const binding_dot_gyp_path = Path.joinAbsStringZ(
+                        dir,
+                        &[_]string{"binding.gyp"},
+                        .auto,
+                    );
+
+                    break :brk Syscall.exists(binding_dot_gyp_path);
+                };
+
+                package.meta.setHasInstallScript(has_scripts);
 
                 package = manager.lockfile.appendPackage(package) catch unreachable;
                 package_id.* = package.meta.id;
@@ -4719,8 +4729,18 @@ pub const PackageManager = struct {
                     Global.crash();
                 };
 
-                package.meta.setHasInstallScript(package.scripts.hasAny());
-                // TODO: check for binding.gyp file if hasInstallScript is false
+                const has_scripts = package.scripts.hasAny() or brk: {
+                    const dir = std.fs.path.dirname(data.json_path) orelse "/";
+                    const binding_dot_gyp_path = Path.joinAbsStringZ(
+                        dir,
+                        &[_]string{"binding.gyp"},
+                        .auto,
+                    );
+
+                    break :brk Syscall.exists(binding_dot_gyp_path);
+                };
+
+                package.meta.setHasInstallScript(has_scripts);
 
                 package = manager.lockfile.appendPackage(package) catch unreachable;
                 package_id.* = package.meta.id;

@@ -10298,7 +10298,7 @@ pub const PackageManager = struct {
     fn printSkippedScripts(summary: PackageInstall.Summary) void {
         const count = summary.packages_with_skipped_scripts_set.count();
         if (count > 0) {
-            Output.pretty("\n\n<d> Skipped {s}{d} script{s}. Run `bun pm trusted` for more information.", .{
+            Output.pretty("\n\n<d> Skipped {s}{d} script{s}. Run `bun pm trusted` for details.", .{
                 if (count > 1) "~" else "",
                 count,
                 if (count > 1) "s" else "",

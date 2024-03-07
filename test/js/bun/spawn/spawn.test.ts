@@ -490,7 +490,8 @@ for (let [gcTick, label] of [
   });
 }
 
-if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) {
+// This is a posix only test
+if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && !isWindows) {
   it("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
     const result = spawnSync({
       cmd: [bunExe(), "test", path.resolve(import.meta.path)],

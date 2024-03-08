@@ -367,19 +367,17 @@ pub const FilePoll = struct {
 };
 
 pub const Waker = struct {
-    loop: *bun.uws.UVLoop,
+    loop: *bun.uws.WindowsLoop,
 
-    pub fn init(_: std.mem.Allocator) !Waker {
-        return .{ .loop = bun.uws.UVLoop.init() };
+    pub fn init() !Waker {
+        return .{ .loop = bun.uws.WindowsLoop.get() };
     }
 
-    pub fn getFd(this: *const Waker) bun.FileDescriptor {
-        _ = this;
-
+    pub fn getFd(_: *const Waker) bun.FileDescriptor {
         @compileError("Waker.getFd is unsupported on Windows");
     }
 
-    pub fn initWithFileDescriptor(_: std.mem.Allocator, _: bun.FileDescriptor) Waker {
+    pub fn initWithFileDescriptor(_: bun.FileDescriptor) Waker {
         @compileError("Waker.initWithFileDescriptor is unsupported on Windows");
     }
 

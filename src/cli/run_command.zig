@@ -273,7 +273,7 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         silent: bool,
-        use_native_shell: bool,
+        use_system_shell: bool,
     ) !bool {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
@@ -306,7 +306,7 @@ pub const RunCommand = struct {
             combined_script = combined_script_buf;
         }
 
-        if (Environment.isWindows and !use_native_shell) {
+        if (!use_system_shell) {
             if (!silent) {
                 if (Environment.isDebug) {
                     Output.prettyError("[bun shell] ", .{});
@@ -1382,7 +1382,7 @@ pub const RunCommand = struct {
                             this_bundler.env,
                             &.{},
                             ctx.debug.silent,
-                            ctx.debug.use_native_shell,
+                            ctx.debug.use_system_shell,
                         )) {
                             return false;
                         }
@@ -1396,7 +1396,7 @@ pub const RunCommand = struct {
                         this_bundler.env,
                         passthrough,
                         ctx.debug.silent,
-                        ctx.debug.use_native_shell,
+                        ctx.debug.use_system_shell,
                     )) return false;
 
                     temp_script_buffer[0.."post".len].* = "post".*;
@@ -1410,7 +1410,7 @@ pub const RunCommand = struct {
                             this_bundler.env,
                             &.{},
                             ctx.debug.silent,
-                            ctx.debug.use_native_shell,
+                            ctx.debug.use_system_shell,
                         )) {
                             return false;
                         }

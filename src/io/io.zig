@@ -38,7 +38,7 @@ pub const Loop = struct {
 
         if (!@atomicRmw(bool, &has_loaded_loop, std.builtin.AtomicRmwOp.Xchg, true, .Monotonic)) {
             loop = Loop{
-                .waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("failed to initialize waker"),
+                .waker = bun.Async.Waker.init() catch @panic("failed to initialize waker"),
             };
             if (comptime Environment.isLinux) {
                 loop.epoll_fd = bun.toFD(std.os.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));

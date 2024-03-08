@@ -1526,7 +1526,7 @@ pub const EventLoop = struct {
         JSC.markBinding(@src());
         if (this.virtual_machine.event_loop_handle == null) {
             if (comptime Environment.isWindows) {
-                this.uws_loop = bun.uws.Loop.init();
+                this.uws_loop = bun.uws.Loop.get();
                 this.virtual_machine.event_loop_handle = Async.Loop.get();
             } else {
                 this.virtual_machine.event_loop_handle = bun.Async.Loop.get();
@@ -1760,17 +1760,11 @@ pub const MiniEventLoop = struct {
     pub fn init(
         allocator: std.mem.Allocator,
     ) MiniEventLoop {
-        var mini = MiniEventLoop{
+        return .{
             .tasks = Queue.init(allocator),
             .allocator = allocator,
             .loop = uws.Loop.get(),
         };
-
-        if (comptime Environment.isWindows) {
-            mini.loop.uv_loop = bun.windows.libuv.Loop.get();
-        }
-
-        return mini;
     }
 
     pub fn deinit(this: *MiniEventLoop) void {

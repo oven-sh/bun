@@ -467,4 +467,20 @@ describe("Bun.serve error handling", () => {
     expect(await response.text()).toBe("woops!\nGET");
     server.stop(true);
   });
+
+  test("the request headers survive", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        throw new Error("woops!");
+      },
+      error(error, req) {
+        return new Response(`${req.headers.get("x-foo")}`);
+      },
+    });
+
+    const response = await fetch(`http://${server.hostname}:${server.port}`, { headers: { "x-foo": "1" } });
+    expect(await response.text()).toBe("1");
+    server.stop(true);
+  });
 });

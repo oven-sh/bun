@@ -164,4 +164,4 @@ pub const disable_auto_js_to_ts_in_node_modules = true;
 
 pub const runtime_transpiler_cache = true;
 
-pub const bun_install_breaking_changes_1_1 = false;
+pub const breaking_changes_1_1_0 = false;

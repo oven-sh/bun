@@ -793,7 +793,6 @@ pub const ModuleLoader = struct {
                         },
                         true,
                         PackageManager.Options.LogLevel.default,
-                        true,
                     ) catch unreachable;
                 } else {
                     pm.runTasks(
@@ -807,7 +806,6 @@ pub const ModuleLoader = struct {
                         },
                         true,
                         PackageManager.Options.LogLevel.default_no_progress,
-                        true,
                     ) catch unreachable;
                 }
             }

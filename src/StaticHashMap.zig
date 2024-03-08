@@ -267,7 +267,7 @@ fn HashMapMixin(
                 }
             }
 
-            unreachable;
+            return false;
         }
 
         pub fn hasContext(self: *Self, key: K, ctx: Context) bool {

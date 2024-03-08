@@ -5788,7 +5788,7 @@ const default_trusted_dependencies = brk: {
 };
 
 pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
-    if (comptime FeatureFlags.bun_install_breaking_changes_1_1) {
+    if (comptime FeatureFlags.breaking_changes_1_1_0) {
         if (this.trusted_dependencies) |trusted_dependencies| {
             const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
             return trusted_dependencies.contains(hash);

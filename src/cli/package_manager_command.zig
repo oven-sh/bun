@@ -262,9 +262,7 @@ pub const PackageManagerCommand = struct {
 
             const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
             handleLoadLockfileErrors(load_lockfile, pm);
-            switch (pm.options.log_level) {
-                inline else => |log_level| try pm.updateLockfileIfNeeded(load_lockfile, log_level),
-            }
+            try pm.updateLockfileIfNeeded(load_lockfile);
             const buf = pm.lockfile.buffers.string_bytes.items;
 
             if (args.len == 2) {

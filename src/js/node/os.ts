@@ -90,7 +90,7 @@ function bound(obj) {
     availableParallelism: () => navigator.hardwareConcurrency,
     arch: () => process.arch,
     cpus: lazyCpus(obj),
-    endianness: () => "LE",
+    endianness: () => (process.arch === "arm64" || process.arch === "x64" ? "LE" : $bundleError("TODO: endianness")),
     freemem: obj.freemem.bind(obj),
     getPriority: obj.getPriority.bind(obj),
     homedir: obj.homedir.bind(obj),
@@ -111,7 +111,7 @@ function bound(obj) {
           ? "Darwin"
           : process.platform === "linux"
             ? "Linux"
-            : process.platform,
+            : $bundleError("TODO: type"),
     uptime: obj.uptime.bind(obj),
     userInfo: obj.userInfo.bind(obj),
     version: obj.version.bind(obj),

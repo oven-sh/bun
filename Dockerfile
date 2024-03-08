@@ -414,7 +414,7 @@ COPY --from=bun-codegen-for-zig ${BUN_DIR}/packages/bun-error/dist ${BUN_DIR}/pa
 WORKDIR $BUN_DIR
 
 RUN mkdir -p build \
-  && bun run $BUN_DIR/src/codegen/bundle-modules-fast.ts $BUN_DIR/build \
+  && bun run $BUN_DIR/src/codegen/bundle-modules.ts --debug=OFF $BUN_DIR/build \
   && cd build \
   && cmake .. \
   -G Ninja \

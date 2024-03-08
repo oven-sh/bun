@@ -212,6 +212,11 @@ $$capture_start$$(${fn.async ? "async " : ""}${
         .replace(/__intrinsic__/g, "@")
         .replace(/__no_intrinsic__/g, "") + "\n";
 
+    const errors = [...finalReplacement.matchAll(/@bundleError\((.*)\)/g)];
+    if (errors.length) {
+      throw new Error(`Errors in ${basename}.ts:\n${errors.map(x => x[1]).join("\n")}`);
+    }
+
     bundledFunctions.push({
       name: fn.name,
       directives: fn.directives,

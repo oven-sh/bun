@@ -5,6 +5,11 @@ type BunFSWatchOptions = { encoding?: BufferEncoding; persistent?: boolean; recu
 type BunWatchEventType = "rename" | "change" | "error" | "close";
 type BunWatchListener<T> = (event: WatchEventType, filename: T | undefined) => void;
 
+/**
+ * If this is not tree-shaken away, the bundle will fail.
+ */
+declare function $bundleError(...message: any[]): never;
+
 interface BunFSWatcher {
   /**
    * Stop watching for changes on the given `BunFSWatcher`. Once stopped, the `BunFSWatcher` object is no longer usable.

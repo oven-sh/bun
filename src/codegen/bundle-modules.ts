@@ -231,6 +231,11 @@ for (const entrypoint of bundledEntryPoints) {
         : "") +
       (usesAssert ? createAssertClientJS(idToPublicSpecifierOrEnumName(file_path).replace(/^node:|^bun:/, "")) : ""),
   );
+  const errors = [...captured.matchAll(/@bundleError\((.*)\)/g)];
+  if (errors.length) {
+    throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
+  }
+
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, captured);

@@ -51,9 +51,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDollarLazy, (JSC::JSGlobalObject * lexicalGlobalObjec
     int id = target.asInt32();
     if (LIKELY(id < 0)) {
 #if BUN_DEBUG
-        ASSERT_WITH_MESSAGE("In call to $lazy: expected int in range, got %d. This is a bug in JS2Native code generator.", id);
+        ASSERT_WITH_MESSAGE(id >= -JS2NATIVE_COUNT, "In call to $lazy: expected int in range, got %d. This is a bug in JS2Native code generator.", id);
 #endif
-        return JSValue::encode(JS2NativeGenerated::js2nativePointers[-id - 1](jsCast<Zig::GlobalObject*>(lexicalGlobalObject)));
+        Zig::GlobalObject* ptr = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+        return JSValue::encode(JS2NativeGenerated::js2nativePointers[-id - 1](ptr));
     }
 
     switch (id) {

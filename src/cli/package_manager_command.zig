@@ -554,7 +554,7 @@ pub const PackageManagerCommand = struct {
                     }
 
                     while (pm.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-                        pm.uws_event_loop.tick();
+                        pm.event_loop.tick();
                     }
                 }
             }

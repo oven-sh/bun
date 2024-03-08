@@ -1551,33 +1551,32 @@ pub const Command = struct {
                     return;
                 }
 
-                // iterate over args
-                // if --help, print help and exit
-                const print_help = brk: {
-                    for (bun.argv()) |arg| {
-                        if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
-                            break :brk true;
-                        }
-                    }
-                    break :brk false;
-                };
-
                 var template_name_start: usize = 0;
                 var positionals: [2]string = .{ "", "" };
-
                 var positional_i: usize = 0;
 
+                var dash_dash_bun = false;
+                var print_help = false;
                 if (args.len > 2) {
-                    const remainder = args[2..];
+                    const remainder = args[1..];
                     var remainder_i: usize = 0;
                     while (remainder_i < remainder.len and positional_i < positionals.len) : (remainder_i += 1) {
-                        const slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n;");
-                        if (slice.len > 0 and !strings.hasPrefixComptime(slice, "--")) {
-                            if (positional_i == 0) {
-                                template_name_start = remainder_i + 2;
+                        const slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n");
+                        if (slice.len > 0) {
+                            if (!strings.hasPrefixComptime(slice, "--")) {
+                                if (positional_i == 1) {
+                                    template_name_start = remainder_i + 2;
+                                }
+                                positionals[positional_i] = slice;
+                                positional_i += 1;
                             }
-                            positionals[positional_i] = slice;
-                            positional_i += 1;
+                            if (slice[0] == '-') {
+                                if (strings.eqlComptime(slice, "--bun")) {
+                                    dash_dash_bun = true;
+                                } else if (strings.eqlComptime(slice, "--help") or strings.eqlComptime(slice, "-h")) {
+                                    print_help = true;
+                                }
+                            }
                         }
                     }
                 }
@@ -1586,14 +1585,14 @@ pub const Command = struct {
                     // "bun create --"
                     // "bun create -abc --"
                     positional_i == 0 or
-                    positionals[0].len == 0)
+                    positionals[1].len == 0)
                 {
                     Command.Tag.printHelp(.CreateCommand, true);
                     Global.exit(0);
                     return;
                 }
 
-                const template_name = positionals[0];
+                const template_name = positionals[1];
 
                 // if template_name is "react"
                 // print message telling user to use "bun create vite" instead
@@ -1639,10 +1638,13 @@ pub const Command = struct {
                     example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {
-                    const bunx_args = try allocator.alloc([:0]const u8, 1 + args.len - template_name_start);
+                    const bunx_args = try allocator.alloc([:0]const u8, 2 + args.len - template_name_start + @intFromBool(dash_dash_bun));
                     bunx_args[0] = "bunx";
-                    bunx_args[1] = try BunxCommand.addCreatePrefix(allocator, template_name);
-                    for (bunx_args[2..], args[template_name_start + 1 ..]) |*dest, src| {
+                    if (dash_dash_bun) {
+                        bunx_args[1] = "--bun";
+                    }
+                    bunx_args[1 + @as(usize, @intFromBool(dash_dash_bun))] = try BunxCommand.addCreatePrefix(allocator, template_name);
+                    for (bunx_args[2 + @as(usize, @intFromBool(dash_dash_bun)) ..], args[template_name_start..]) |*dest, src| {
                         dest.* = src;
                     }
 

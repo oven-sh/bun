@@ -434,6 +434,7 @@
           "name": "BUN_DEBUG_jest",
           "value": "1"
         },
+
         {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "1"
@@ -458,6 +459,10 @@
         },
         {
           "name": "BUN_DEBUG_EventLoop",
+          "value": "1"
+        },
+        {
+          "name": "BUN_DEBUG_uv",
           "value": "1"
         },
         {

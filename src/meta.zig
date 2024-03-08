@@ -11,6 +11,11 @@ pub fn ReturnOfType(comptime Type: type) type {
     return typeinfo.return_type orelse void;
 }
 
+pub fn typeName(comptime Type: type) []const u8 {
+    const name = @typeName(Type);
+    return typeBaseName(name);
+}
+
 // partially emulates behaviour of @typeName in previous Zig versions,
 // converting "some.namespace.MyType" to "MyType"
 pub fn typeBaseName(comptime fullname: []const u8) []const u8 {

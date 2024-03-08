@@ -417,6 +417,8 @@ fn HandleMixin(comptime Type: type) type {
             uv_handle_set_data(@ptrCast(handle), ptr);
         }
         pub fn close(this: *Type, cb: *const fn (*Type) callconv(.C) void) void {
+            if (comptime Env.isDebug)
+                log("{s}.close({})", .{ bun.meta.typeName(Type), fd(this) });
             uv_close(@ptrCast(this), @ptrCast(cb));
         }
 
@@ -425,10 +427,14 @@ fn HandleMixin(comptime Type: type) type {
         }
 
         pub fn ref(this: *Type) void {
+            if (comptime Env.isDebug)
+                log("{s}.ref({})", .{ bun.meta.typeName(Type), if (comptime Type != Process) fd(this) else Process.getPid(this) });
             uv_ref(@ptrCast(this));
         }
 
         pub fn unref(this: *Type) void {
+            if (comptime Env.isDebug)
+                log("{s}.unref({})", .{ bun.meta.typeName(Type), if (comptime Type != Process) fd(this) else Process.getPid(this) });
             uv_unref(@ptrCast(this));
         }
 

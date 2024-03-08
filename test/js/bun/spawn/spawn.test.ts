@@ -552,8 +552,10 @@ describe("spawn unref and kill should not hang", () => {
       });
 
       proc.kill();
-      proc.unref();
+      if (!isWindows) proc.unref();
+
       await proc.exited;
+      console.count("Finished");
     }
 
     expect().pass();

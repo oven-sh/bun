@@ -1619,7 +1619,7 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
     if (any_failed) Global.crash();
 }
 
-pub fn saveToDisk(this: *const Lockfile, filename: stringZ) void {
+pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     if (comptime Environment.allow_assert) {
         this.verifyData() catch |err| {
             Output.prettyErrorln("<r><red>error:<r> failed to verify lockfile: {s}", .{@errorName(err)});
@@ -5260,7 +5260,14 @@ pub const Serializer = struct {
     const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*));
     const has_overrides_tag: u64 = @bitCast(@as([8]u8, "oVeRriDs".*));
 
-    pub fn save(this: *const Lockfile, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
+    pub fn save(this: *Lockfile, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
+
+        // we clone packages with the z_allocator to make sure bytes are zeroed.
+        // TODO: investigate if we still need this now that we have `padding_checker.zig`
+        var old_packages_list = this.packages;
+        this.packages = try this.packages.clone(z_allocator);
+        old_packages_list.deinit(this.allocator);
+
         var writer = bytes.writer();
         try writer.writeAll(header_bytes);
         try writer.writeInt(u32, @intFromEnum(this.format), .little);

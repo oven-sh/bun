@@ -15,7 +15,7 @@ const Process = bun.spawn.Process;
 pub const LifecycleScriptSubprocess = struct {
     package_name: []const u8,
 
-    scripts: [6]?Lockfile.Scripts.Entry,
+    scripts: Lockfile.Package.Scripts.List,
     current_script_index: u8 = 0,
 
     remaining_fds: i8 = 0,
@@ -92,8 +92,8 @@ pub const LifecycleScriptSubprocess = struct {
         errdefer _ = alive_count.fetchSub(1, .Monotonic);
 
         const manager = this.manager;
-        const original_script = this.scripts[next_script_index].?;
-        const cwd = bun.path.z(original_script.cwd, &cwd_z_buf);
+        const original_script = this.scripts.items[next_script_index].?;
+        const cwd = bun.path.z(this.scripts.cwd, &cwd_z_buf);
         const env = manager.env;
         this.stdout.setParent(this);
         this.stderr.setParent(this);
@@ -101,7 +101,7 @@ pub const LifecycleScriptSubprocess = struct {
         if (manager.scripts_node) |scripts_node| {
             manager.setNodeName(
                 scripts_node,
-                original_script.package_name,
+                this.package_name,
                 PackageManager.ProgressStrings.script_emoji,
                 true,
             );
@@ -111,7 +111,6 @@ pub const LifecycleScriptSubprocess = struct {
             }
         }
 
-        this.package_name = original_script.package_name;
         this.current_script_index = next_script_index;
         this.has_called_process_exit = false;
 
@@ -268,7 +267,7 @@ pub const LifecycleScriptSubprocess = struct {
                 }
 
                 for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
-                    if (this.scripts[new_script_index] != null) {
+                    if (this.scripts.items[new_script_index] != null) {
                         this.resetPolls();
                         this.spawnNextScript(@intCast(new_script_index)) catch |err| {
                             Output.errGeneric("Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
@@ -358,13 +357,13 @@ pub const LifecycleScriptSubprocess = struct {
         var lifecycle_subprocess = LifecycleScriptSubprocess.new(.{
             .manager = manager,
             .envp = envp,
-            .scripts = list.items,
-            .package_name = list.first().package_name,
+            .scripts = list,
+            .package_name = list.package_name,
         });
 
         if (comptime log_level.isVerbose()) {
             Output.prettyErrorln("<d>[LifecycleScriptSubprocess]<r> Starting scripts for <b>\"{s}\"<r>", .{
-                list.first().package_name,
+                list.package_name,
             });
         }
 

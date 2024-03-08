@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { spawn, spawnSync } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
@@ -23,7 +22,6 @@ test("process.stdin - read", async () => {
     stderr: "inherit",
     env: {
       ...bunEnv,
-      BUN_DEBUG_QUIET_LOGS: path.join(process.cwd(), "out.log"),
     },
   });
   expect(stdin).toBeDefined();

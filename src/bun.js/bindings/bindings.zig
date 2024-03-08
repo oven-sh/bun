@@ -3766,6 +3766,18 @@ pub const JSValue = enum(JSValueReprInt) {
             return FetchHeaders.cast(value);
         }
 
+        if (comptime ZigType == JSC.WebCore.Body.Value) {
+            if (value.as(JSC.WebCore.Request)) |req| {
+                return req.getBodyValue();
+            }
+
+            if (value.as(JSC.WebCore.Response)) |res| {
+                return res.getBodyValue();
+            }
+
+            return null;
+        }
+
         if (comptime @hasDecl(ZigType, "fromJS") and @TypeOf(ZigType.fromJS) == fn (JSC.JSValue) ?*ZigType) {
             if (comptime ZigType == JSC.WebCore.Blob) {
                 if (ZigType.fromJS(value)) |blob| {

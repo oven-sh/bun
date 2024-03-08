@@ -1037,7 +1037,8 @@ pub const Interpreter = struct {
             // This will save ~2x memory
             var export_env = EnvMap.initWithCapacity(allocator, env_loader.map.map.unmanaged.entries.len);
 
-            var iter = env_loader.map.iterator();
+            var iter = env_loader.iterator();
+
             while (iter.next()) |entry| {
                 const value = EnvStr.initSlice(entry.value_ptr.value);
                 const key = EnvStr.initSlice(entry.key_ptr.*);
@@ -4265,7 +4266,39 @@ pub const Interpreter = struct {
                                 cmd.exec.bltn.stderr.deref();
                                 cmd.exec.bltn.stderr = .{ .arraybuf = arraybuf };
                             }
+                        } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Body.Value)) |body| {
+                            if ((node.redirect.stdout or node.redirect.stderr) and !(body.* == .Blob and !body.Blob.needsToReadFile())) {
+                                // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
+                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{});
+                                return .yield;
+                            }
+
+                            var original_blob = body.use();
+                            defer original_blob.deinit();
+
+                            const blob: *bun.JSC.WebCore.Blob = bun.newWithAlloc(arena.allocator(), JSC.WebCore.Blob, original_blob.dupe());
+
+                            if (node.redirect.stdin) {
+                                cmd.exec.bltn.stdin.deref();
+                                cmd.exec.bltn.stdin = .{ .blob = blob };
+                            }
+
+                            if (node.redirect.stdout) {
+                                cmd.exec.bltn.stdout.deref();
+                                cmd.exec.bltn.stdout = .{ .blob = blob };
+                            }
+
+                            if (node.redirect.stderr) {
+                                cmd.exec.bltn.stderr.deref();
+                                cmd.exec.bltn.stderr = .{ .blob = blob };
+                            }
                         } else if (interpreter.jsobjs[file.jsbuf.idx].as(JSC.WebCore.Blob)) |blob| {
+                            if ((node.redirect.stdout or node.redirect.stderr) and !blob.needsToReadFile()) {
+                                // TODO: Locked->stream -> file -> blob conversion via .toBlobIfPossible() except we want to avoid modifying the Response/Request if unnecessary.
+                                cmd.base.interpreter.event_loop.js.global.throw("Cannot redirect stdout/stderr to an immutable blob. Expected a file", .{});
+                                return .yield;
+                            }
+
                             const theblob: *bun.JSC.WebCore.Blob = bun.newWithAlloc(arena.allocator(), JSC.WebCore.Blob, blob.dupe());
 
                             if (node.redirect.stdin) {

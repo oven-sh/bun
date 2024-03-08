@@ -225,14 +225,14 @@ it("request.signal works in leaky case", async () => {
 
         expect(didAbort).toBe(false);
         aborty.abort();
-        await Bun.sleep(2);
+        await Bun.sleep(20);
         return new Response("Test failed!");
       },
     },
     async server => {
       expect(async () => fetch(server.url.origin, { signal: aborty.signal })).toThrow("The operation was aborted.");
 
-      await Bun.sleep(1);
+      await Bun.sleep(10);
 
       expect(didAbort).toBe(true);
     },

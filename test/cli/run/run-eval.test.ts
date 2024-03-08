@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, sep } from "path";
 
 describe("bun -e", () => {
   test("it works", async () => {
@@ -57,7 +57,7 @@ describe("echo | bun run -", () => {
       env: bunEnv,
       stdin: Buffer.from("console.log(import.meta.path)"),
     });
-    expect(stdout.toString("utf8")).toEndWith("/[stdin]\n");
+    expect(stdout.toString("utf8")).toEndWith(sep + "[stdin]\n");
   });
 
   test("it can require", async () => {

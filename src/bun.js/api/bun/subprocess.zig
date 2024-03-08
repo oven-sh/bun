@@ -242,21 +242,12 @@ pub const Subprocess = struct {
             return true;
         }
 
-        // TODO: investigate further if we can free the Subprocess before the process has exited.
-        if (!this.process.hasExited()) {
-            return true;
-        }
-
         if (comptime Environment.isWindows) {
-            if (this.process.poller == .uv) {
-                if (this.process.poller.uv.isActive()) {
-                    return true;
-                }
-
-                return this.process.poller.uv.hasRef();
+            if (this.process.hasExited()) {
+                return false;
             }
 
-            return false;
+            return this.process.hasRef();
         } else {
             return this.process.hasRef();
         }
@@ -633,6 +624,8 @@ pub const Subprocess = struct {
     pub fn onStdinDestroyed(this: *Subprocess) void {
         this.flags.has_stdin_destructor_called = true;
         this.weak_file_sink_stdin_ptr = null;
+
+        this.updateHasPendingActivity();
     }
 
     pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
@@ -1061,8 +1054,9 @@ pub const Subprocess = struct {
 
         pub fn hasPendingActivity(this: *const Writable) bool {
             return switch (this.*) {
+                .pipe => false,
+
                 // we mark them as .ignore when they are closed, so this must be true
-                .pipe => true,
                 .buffer => true,
                 else => false,
             };
@@ -1095,6 +1089,14 @@ pub const Subprocess = struct {
         // When the stream has closed we need to be notified to prevent a use-after-free
         // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
         pub fn onClose(this: *Writable, _: ?bun.sys.Error) void {
+            const process = @fieldParentPtr(Subprocess, "stdin", this);
+
+            if (process.this_jsvalue != .zero) {
+                if (Subprocess.stdinGetCached(process.this_jsvalue)) |existing_value| {
+                    JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
+                }
+            }
+
             switch (this.*) {
                 .buffer => {
                     this.buffer.deref();
@@ -1104,6 +1106,9 @@ pub const Subprocess = struct {
                 },
                 else => {},
             }
+
+            process.onStdinDestroyed();
+
             this.* = .{
                 .ignore = {},
             };
@@ -1237,6 +1242,9 @@ pub const Subprocess = struct {
                     } else {
                         subprocess.flags.has_stdin_destructor_called = false;
                         subprocess.weak_file_sink_stdin_ptr = pipe;
+                        if (@intFromPtr(pipe.signal.ptr) == @intFromPtr(subprocess)) {
+                            pipe.signal.clear();
+                        }
                         return pipe.toJSWithDestructor(
                             globalThis,
                             JSC.WebCore.SinkDestructor.Ptr.init(subprocess),
@@ -1298,18 +1306,33 @@ pub const Subprocess = struct {
         this_jsvalue.ensureStillAlive();
         this.pid_rusage = rusage.*;
         const is_sync = this.flags.is_sync;
-        if (this.weak_file_sink_stdin_ptr) |pipe| {
-            this.weak_file_sink_stdin_ptr = null;
-            this.flags.has_stdin_destructor_called = true;
-            if (this_jsvalue != .zero) {
-                if (JSC.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
-                    JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
+
+        var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
+        var existing_stdin_value = JSC.JSValue.zero;
+        if (this_jsvalue != .zero) {
+            if (JSC.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
+                if (existing_stdin_value.isCell()) {
+                    if (stdin == null) {
+                        stdin = @as(?*JSC.WebCore.FileSink, @alignCast(@ptrCast(JSC.WebCore.FileSink.JSSink.fromJS(globalThis, existing_value))));
+                    }
+
+                    existing_stdin_value = existing_value;
                 }
             }
+        }
 
-            pipe.onAttachedProcessExit();
-        } else if (this.stdin == .buffer) {
+        if (this.stdin == .buffer) {
             this.stdin.buffer.close();
+        }
+
+        if (existing_stdin_value != .zero) {
+            JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_stdin_value, 0);
+        }
+
+        if (stdin) |pipe| {
+            this.weak_file_sink_stdin_ptr = null;
+            this.flags.has_stdin_destructor_called = true;
+            pipe.onAttachedProcessExit();
         }
 
         var did_update_has_pending_activity = false;

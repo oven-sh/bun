@@ -383,6 +383,8 @@ pub const Process = struct {
         const signal_code: ?bun.SignalCode = if (term_signal > 0 and term_signal < @intFromEnum(bun.SignalCode.SIGSYS)) @enumFromInt(term_signal) else null;
         const rusage = uv_getrusage(process);
 
+        bun.windows.libuv.log("Process.onExit({d}) code: {d}, signal: {?}", .{ process.pid, exit_code, signal_code });
+
         if (exit_code >= 0) {
             this.close();
             this.onExit(
@@ -411,6 +413,8 @@ pub const Process = struct {
     fn onCloseUV(uv_handle: *uv.uv_process_t) callconv(.C) void {
         const poller = @fieldParentPtr(Poller, "uv", uv_handle);
         var this = @fieldParentPtr(Process, "poller", poller);
+        bun.windows.libuv.log("Process.onClose({d})", .{uv_handle.pid});
+
         if (this.poller == .uv) {
             this.poller = .{ .detached = {} };
         }
@@ -437,7 +441,6 @@ pub const Process = struct {
                     if (comptime !Environment.isWindows) {
                         unreachable;
                     }
-                    process.unref();
 
                     if (process.isClosed()) {
                         this.poller = .{ .detached = {} };
@@ -596,7 +599,7 @@ pub const PollerWindows = union(enum) {
 
     pub fn deinit(this: *PollerWindows) void {
         if (this.* == .uv) {
-            std.debug.assert(!this.uv.isActive());
+            std.debug.assert(this.uv.isClosed());
         }
     }
 
@@ -1378,7 +1381,7 @@ pub fn spawnProcessWindows(
     // We can create a pipe with `uv_pipe(fds, 0, 0)` and get a read fd and write fd.
     // We give the write fd to stdout/stderr
     // And use the read fd to read from the output.
-    var dup_fds: [2]uv.uv_file = undefined;
+    var dup_fds: [2]uv.uv_file = .{ -1, -1 };
     var dup_src: ?u32 = null;
     var dup_tgt: ?u32 = null;
     inline for (0..3) |fd_i| {
@@ -1509,20 +1512,24 @@ pub fn spawnProcessWindows(
         }
 
         if (failed) {
-            const r = bun.FDImpl.fromUV(dup_fds[0]).encode();
-            _ = bun.sys.close(r);
+            if (dup_fds[0] != -1) {
+                const r = bun.FDImpl.fromUV(dup_fds[0]).encode();
+                _ = bun.sys.close(r);
+            }
         }
 
-        const w = bun.FDImpl.fromUV(dup_fds[1]).encode();
-        _ = bun.sys.close(w);
+        if (dup_fds[1] != -1) {
+            const w = bun.FDImpl.fromUV(dup_fds[1]).encode();
+            _ = bun.sys.close(w);
+        }
     }
     if (process.poller.uv.spawn(loop, &uv_process_options).toError(.posix_spawn)) |err| {
         failed = true;
         return .{ .err = err };
     }
 
-    process.pid = process.poller.uv.getPid();
-    process.poller.uv.setData(process);
+    process.pid = process.poller.uv.pid;
+    std.debug.assert(process.poller.uv.exit_cb == &Process.onExitUV);
 
     var result = WindowsSpawnResult{
         .process_ = process,

@@ -1459,12 +1459,11 @@ pub const E = struct {
             return array;
         }
 
-        /// debug.assert the array only contains strings before calling
-        /// this function
+        /// Assumes each item in the array is a string
         pub fn alphabetizeStrings(this: *Array) void {
-            for (this.items.slice()) |item| {
-                if (item.data != .e_string) {
-                    return;
+            if (comptime Environment.allow_assert) {
+                for (this.items.slice()) |item| {
+                    std.debug.assert(item.data == .e_string);
                 }
             }
             std.sort.pdq(Expr, this.items.slice(), {}, Sorter.isLessThan);
@@ -2087,7 +2086,13 @@ pub const E = struct {
             return null;
         }
 
+        /// Assumes each key in the property is a string
         pub fn alphabetizeProperties(this: *Object) void {
+            if (comptime Environment.allow_assert) {
+                for (this.properties.slice()) |prop| {
+                    std.debug.assert(prop.key.?.data == .e_string);
+                }
+            }
             std.sort.pdq(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
         }
 

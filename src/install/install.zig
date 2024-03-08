@@ -6021,11 +6021,6 @@ pub const PackageManager = struct {
 
             if (trusted_dependencies_to_add > 0 and new_trusted_deps.len > 0) {
                 trusted_dependencies_array.data.e_array.items = JSAst.ExprNodeList.init(new_trusted_deps);
-                if (comptime Environment.allow_assert) {
-                    for (trusted_dependencies_array.data.e_array.items.slice()) |item| {
-                        std.debug.assert(item.data == .e_string);
-                    }
-                }
                 trusted_dependencies_array.data.e_array.alphabetizeStrings();
             }
 
@@ -6338,11 +6333,6 @@ pub const PackageManager = struct {
                 if (options.add_trusted_dependencies and trusted_dependencies_to_add > 0) {
                     trusted_dependencies_array.data.e_array.items = JSAst.ExprNodeList.init(new_trusted_deps);
                     if (new_trusted_deps.len > 1) {
-                        if (comptime Environment.allow_assert) {
-                            for (trusted_dependencies_array.data.e_array.items.slice()) |item| {
-                                std.debug.assert(item.data == .e_string);
-                            }
-                        }
                         trusted_dependencies_array.data.e_array.alphabetizeStrings();
                     }
                 }

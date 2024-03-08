@@ -483,4 +483,21 @@ describe("Bun.serve error handling", () => {
     expect(await response.text()).toBe("1");
     server.stop(true);
   });
+
+  test("the request url survives", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        throw new Error("woops!");
+      },
+      error(error, req) {
+        return new Response(`${req.url}`);
+      },
+    });
+
+    const url = `http://${server.hostname}:${server.port}/`;
+    const response = await fetch(url);
+    expect(await response.text()).toBe(url);
+    server.stop(true);
+  });
 });

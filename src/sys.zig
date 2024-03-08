@@ -2207,6 +2207,10 @@ pub const File = struct {
             return other;
         }
 
+        if (T == std.os.fd_t) {
+            return File{ .handle = bun.toFD(other) };
+        }
+
         if (T == bun.FileDescriptor) {
             return File{ .handle = other };
         }
@@ -2221,6 +2225,12 @@ pub const File = struct {
 
         if (comptime Environment.isWindows) {
             if (T == bun.windows.HANDLE) {
+                return File{ .handle = bun.toFD(other) };
+            }
+        }
+
+        if (comptime Environment.isLinux) {
+            if (T == u64) {
                 return File{ .handle = bun.toFD(other) };
             }
         }

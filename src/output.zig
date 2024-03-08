@@ -865,5 +865,5 @@ pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
 /// This struct is a workaround a Windows terminal bug.
 /// TODO: when https://github.com/microsoft/terminal/issues/16606 is resolved, revert this commit.
 pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
-    .unbuffered_reader = File.Reader{ .context = .{ .handle = if (Environment.isWindows) undefined else 0 } },
+    .unbuffered_reader = File.Reader{ .context = .{ .handle = if (Environment.isWindows) undefined else bun.toFD(0) } },
 };

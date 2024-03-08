@@ -1158,18 +1158,16 @@ pub const PipeReader = struct {
             if (comptime Environment.isWindows) {
                 if (this.captured_writer.writer.source == null) {
                     if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
-                        const writer = std.io.getStdOut().writer();
-                        e.format("Yoops ", .{}, writer) catch @panic("oops");
-                        @panic("TODO SHELL SUBPROC onReadChunk error");
+                        _ = e; // autofix
+                        Output.panic("TODO SHELL SUBPROC onReadChunk error", .{});
                     }
                 }
 
                 this.captured_writer.writer.outgoing.write(chunk) catch bun.outOfMemory();
             } else if (this.captured_writer.writer.getPoll() == null) {
                 if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
-                    const writer = std.io.getStdOut().writer();
-                    e.format("Yoops ", .{}, writer) catch @panic("oops");
-                    @panic("TODO SHELL SUBPROC onReadChunk error");
+                    _ = e; // autofix
+                    Output.panic("TODO SHELL SUBPROC onReadChunk error", .{});
                 }
             }
 

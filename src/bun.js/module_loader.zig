@@ -2141,6 +2141,10 @@ pub const ModuleLoader = struct {
                 virtual_source = eval_script;
                 loader = .tsx;
             }
+            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
+                virtual_source = eval_script;
+                loader = .tsx;
+            }
         }
 
         if (type_attribute) |attribute| {

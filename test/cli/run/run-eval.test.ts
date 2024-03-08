@@ -40,3 +40,47 @@ describe("bun -e", () => {
     expect(stderr.toString("utf8")).toInclude("Unexpected throw");
   });
 });
+
+describe("echo | bun run -", () => {
+  test("it works", async () => {
+    let { stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "run", "-"],
+      env: bunEnv,
+      stdin: Buffer.from('console.log("hello world")'),
+    });
+    expect(stdout.toString("utf8")).toEqual("hello world\n");
+  });
+
+  test("it gets a correct specifer", async () => {
+    let { stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "run", "-"],
+      env: bunEnv,
+      stdin: Buffer.from("console.log(import.meta.path)"),
+    });
+    expect(stdout.toString("utf8")).toEndWith("/[stdin]\n");
+  });
+
+  test("it can require", async () => {
+    let { stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "run", "-"],
+      env: bunEnv,
+      stdin: Buffer.from(`
+        const process = require("node:process");
+        console.log(process.platform);
+      `),
+    });
+    expect(stdout.toString("utf8")).toEqual(process.platform + "\n");
+  });
+
+  test("it can import", async () => {
+    let { stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "run", "-"],
+      env: bunEnv,
+      stdin: Buffer.from(`
+        import * as process from "node:process";
+        console.log(process.platform);
+      `),
+    });
+    expect(stdout.toString("utf8")).toEqual(process.platform + "\n");
+  });
+});

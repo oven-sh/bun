@@ -1441,6 +1441,41 @@ pub const RunCommand = struct {
             };
         }
 
+        if (script_name_to_search.len == 1 and script_name_to_search[0] == '-') {
+            // read from stdin
+
+            var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+            var list = std.ArrayList(u8).init(stack_fallback.get());
+            errdefer list.deinit();
+
+            std.io.getStdIn().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
+            ctx.runtime_options.eval_script = list.items;
+
+            const trigger = bun.pathLiteral("/[stdin]");
+            var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+            const cwd = try std.os.getcwd(&entry_point_buf);
+            @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+            const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
+
+            Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false) catch |err| {
+                if (Output.enable_ansi_colors) {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                    std.fs.path.basename(script_name_to_search),
+                    @errorName(err),
+                });
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpStackTrace(trace.*);
+                }
+                Global.exit(1);
+            };
+            return true;
+        }
+
         if (Environment.isWindows) try_bunx_file: {
             // Attempt to find a ".bunx" file on disk, and run it, skipping the
             // wrapper exe.  we build the full exe path even though we could do

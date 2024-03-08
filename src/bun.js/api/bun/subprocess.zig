@@ -1862,7 +1862,7 @@ pub const Subprocess = struct {
             // behavior, where this workaround suffices.
             //
             // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
-            env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            env_array.ensureUnusedCapacity(allocator, 2) catch |err| return globalThis.handleError(err, "in Bun.spawn");
             if (Environment.isPosix) {
                 env_array.appendAssumeCapacity("BUN_INTERNAL_IPC_FD=3");
             } else {

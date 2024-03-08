@@ -1523,7 +1523,7 @@ pub fn spawnProcessWindows(
             _ = bun.sys.close(w);
         }
     }
-    if (process.poller.uv.spawn(loop, &uv_process_options).toError(.posix_spawn)) |err| {
+    if (process.poller.uv.spawn(loop, &uv_process_options).toError(.uv_spawn)) |err| {
         failed = true;
         return .{ .err = err };
     }

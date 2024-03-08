@@ -44,3 +44,13 @@ pub fn enumFieldNames(comptime Type: type) []const []const u8 {
     }
     return names[0..i];
 }
+
+pub fn banFieldType(comptime Container: type, comptime T: type) void {
+    comptime {
+        for (std.meta.fields(Container)) |field| {
+            if (field.type == T) {
+                @compileError(std.fmt.comptimePrint(typeName(T) ++ " field \"" ++ field.name ++ "\" not allowed in " ++ typeName(Container), .{}));
+            }
+        }
+    }
+}

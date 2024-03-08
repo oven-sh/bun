@@ -1331,7 +1331,7 @@ pub fn spawnProcessWindows(
     uv_process_options.env = envp;
     uv_process_options.file = options.argv0 orelse argv[0].?;
     uv_process_options.exit_cb = &Process.onExitUV;
-    var stack_allocator = std.heap.stackFallback(2048, bun.default_allocator);
+    var stack_allocator = std.heap.stackFallback(8192, bun.default_allocator);
     const allocator = stack_allocator.get();
     const loop = options.windows.loop.platformEventLoop().uv_loop;
 
@@ -1372,7 +1372,6 @@ pub fn spawnProcessWindows(
 
     const stdios = .{ &stdio_containers.items[0], &stdio_containers.items[1], &stdio_containers.items[2] };
     const stdio_options: [3]WindowsSpawnOptions.Stdio = .{ options.stdin, options.stdout, options.stderr };
-    const pipe_flags = uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE;
 
     // On Windows it seems don't have a dup2 equivalent with pipes
     // So we need to use file descriptors.
@@ -1383,6 +1382,7 @@ pub fn spawnProcessWindows(
     var dup_src: ?u32 = null;
     var dup_tgt: ?u32 = null;
     inline for (0..3) |fd_i| {
+        const pipe_flags = uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE | uv.UV_WRITABLE_PIPE;
         const stdio: *uv.uv_stdio_container_t = stdios[fd_i];
 
         const flag = comptime if (fd_i == 0) @as(u32, uv.O.RDONLY) else @as(u32, uv.O.WRONLY);
@@ -1474,7 +1474,7 @@ pub fn spawnProcessWindows(
             },
             .buffer => |my_pipe| {
                 try my_pipe.init(loop, false).unwrap();
-                stdio.flags = pipe_flags;
+                stdio.flags = uv.UV_CREATE_PIPE | uv.UV_WRITABLE_PIPE | uv.UV_READABLE_PIPE | uv.UV_OVERLAPPED_PIPE;
                 stdio.data.stream = @ptrCast(my_pipe);
             },
             .pipe => |fd| {

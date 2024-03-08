@@ -78,7 +78,7 @@ describe("process.stdin", () => {
     child.stdin.end(input);
   });
 
-  it.only("should allow us to read > 65kb from stdin", done => {
+  it("should allow us to read > 65kb from stdin", done => {
     const numReps = Math.ceil((1024 * 1024) / 5);
     const input = Buffer.alloc("hello".length * numReps)
       .fill("hello")

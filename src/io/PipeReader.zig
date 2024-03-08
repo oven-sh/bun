@@ -370,8 +370,8 @@ pub fn WindowsPipeReader(
         fn onFileRead(fs: *uv.fs_t) callconv(.C) void {
             var this: *This = bun.cast(*This, fs.data);
             const nread_int = fs.result.int();
-            const continue_reading = !this.is_paused;
-            this.is_paused = true;
+            const continue_reading = !this.flags.is_paused;
+            this.flags.is_paused = true;
             bun.sys.syslog("onFileRead() = {d}", .{nread_int});
 
             switch (nread_int) {
@@ -410,8 +410,8 @@ pub fn WindowsPipeReader(
         }
 
         pub fn startReading(this: *This) bun.JSC.Maybe(void) {
-            if (this.flags.is_done or !this.is_paused) return .{ .result = {} };
-            this.is_paused = false;
+            if (this.flags.is_done or !this.flags.is_paused) return .{ .result = {} };
+            this.flags.is_paused = false;
             const source: Source = this.source orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.BADF, .read) };
 
             switch (source) {
@@ -426,6 +426,7 @@ pub fn WindowsPipeReader(
                 },
                 else => {
                     if (uv.uv_read_start(source.toStream(), &onStreamAlloc, @ptrCast(&onStreamRead)).toError(.open)) |err| {
+                        bun.windows.libuv.log("uv_read_start() = {s}", .{err.name()});
                         return .{ .err = err };
                     }
                 },
@@ -435,8 +436,8 @@ pub fn WindowsPipeReader(
         }
 
         pub fn stopReading(this: *This) bun.JSC.Maybe(void) {
-            if (this.flags.is_done or this.is_paused) return .{ .result = {} };
-            this.is_paused = true;
+            if (this.flags.is_done or this.flags.is_paused) return .{ .result = {} };
+            this.flags.is_paused = true;
             const source = this.source orelse return .{ .result = {} };
             switch (source) {
                 .file => |file| {
@@ -866,6 +867,10 @@ const PosixBufferedReader = struct {
     pub fn eventLoop(this: *const PosixBufferedReader) JSC.EventLoopHandle {
         return this.vtable.eventLoop();
     }
+
+    comptime {
+        bun.meta.banFieldType(@This(), bool); // put them in flags instead.
+    }
 };
 
 const JSC = bun.JSC;
@@ -888,8 +893,6 @@ pub const WindowsBufferedReader = struct {
     // for compatibility with Linux
     flags: Flags = .{},
 
-    has_inflight_read: bool = false,
-    is_paused: bool = true,
     parent: *anyopaque = undefined,
     vtable: WindowsOutputReaderVTable = undefined,
     ref_count: u32 = 1,
@@ -904,6 +907,9 @@ pub const WindowsBufferedReader = struct {
         received_eof: bool = false,
         closed_without_reporting: bool = false,
         close_handle: bool = true,
+
+        is_paused: bool = true,
+        has_inflight_read: bool = false,
     };
 
     pub fn init(comptime Type: type) WindowsOutputReader {
@@ -926,7 +932,6 @@ pub const WindowsBufferedReader = struct {
             .vtable = to.vtable,
             .flags = other.flags,
             ._buffer = other.buffer().*,
-            .has_inflight_read = other.has_inflight_read,
             .source = other.source,
         };
         other.flags.is_done = true;
@@ -996,11 +1001,11 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn hasPendingRead(this: *const WindowsOutputReader) bool {
-        return this.has_inflight_read;
+        return this.flags.has_inflight_read;
     }
 
     fn _onReadChunk(this: *WindowsOutputReader, buf: []u8, hasMore: ReadState) bool {
-        this.has_inflight_read = false;
+        this.flags.has_inflight_read = false;
         if (hasMore == .eof) {
             this.flags.received_eof = true;
         }
@@ -1010,7 +1015,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     fn finish(this: *WindowsOutputReader) void {
-        this.has_inflight_read = false;
+        this.flags.has_inflight_read = false;
         this.flags.is_done = true;
     }
 
@@ -1028,7 +1033,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn getReadBufferWithStableMemoryAddress(this: *WindowsOutputReader, suggested_size: usize) []u8 {
-        this.has_inflight_read = true;
+        this.flags.has_inflight_read = true;
         this._buffer.ensureUnusedCapacity(suggested_size) catch bun.outOfMemory();
         const res = this._buffer.allocatedSlice()[this._buffer.items.len..];
         return res;
@@ -1067,6 +1072,10 @@ pub const WindowsBufferedReader = struct {
         switch (source) {
             inline else => |ptr| bun.default_allocator.destroy(ptr),
         }
+    }
+
+    comptime {
+        bun.meta.banFieldType(WindowsOutputReader, bool); // Don't increase the size of the struct. Put them in flags instead.
     }
 };
 

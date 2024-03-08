@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { isatty } from "tty";
-
+import path from "path";
 test("process.stdin", () => {
   expect(process.stdin).toBeDefined();
   expect(process.stdin.isTTY).toBe(isatty(0) ? true : undefined);
@@ -11,13 +11,20 @@ test("process.stdin", () => {
   expect(process.stdin.once("end", function () {})).toBe(process.stdin);
 });
 
+const files = {
+  echo: path.join(import.meta.dir, "process-stdin-echo.js"),
+};
+
 test("process.stdin - read", async () => {
   const { stdin, stdout } = spawn({
-    cmd: [bunExe(), import.meta.dir + "/process-stdin-echo.js"],
+    cmd: [bunExe(), files.echo],
     stdout: "pipe",
     stdin: "pipe",
-    stderr: null,
-    env: bunEnv,
+    stderr: "inherit",
+    env: {
+      ...bunEnv,
+      BUN_DEBUG_QUIET_LOGS: path.join(process.cwd(), "out.log"),
+    },
   });
   expect(stdin).toBeDefined();
   expect(stdout).toBeDefined();
@@ -39,7 +46,7 @@ test("process.stdin - read", async () => {
 
 test("process.stdin - resume", async () => {
   const { stdin, stdout } = spawn({
-    cmd: [bunExe(), import.meta.dir + "/process-stdin-echo.js", "resume"],
+    cmd: [bunExe(), files.echo, "resume"],
     stdout: "pipe",
     stdin: "pipe",
     stderr: null,
@@ -68,7 +75,7 @@ test("process.stdin - resume", async () => {
 
 test("process.stdin - close(#6713)", async () => {
   const { stdin, stdout } = spawn({
-    cmd: [bunExe(), import.meta.dir + "/process-stdin-echo.js", "close-event"],
+    cmd: [bunExe(), files.echo, "close-event"],
     stdout: "pipe",
     stdin: "pipe",
     stderr: null,
@@ -107,7 +114,7 @@ test("process.stderr", () => {
 
 test("process.stdout - write", () => {
   const { stdout } = spawnSync({
-    cmd: [bunExe(), import.meta.dir + "/stdio-test-instance.js"],
+    cmd: [bunExe(), path.join(import.meta.dir, "stdio-test-instance.js")],
     stdout: "pipe",
     stdin: null,
     stderr: null,
@@ -122,7 +129,7 @@ test("process.stdout - write", () => {
 
 test("process.stdout - write a lot (string)", () => {
   const { stdout } = spawnSync({
-    cmd: [bunExe(), import.meta.dir + "/stdio-test-instance-a-lot.js"],
+    cmd: [bunExe(), path.join(import.meta.dir, "stdio-test-instance-a-lot.js")],
     stdout: "pipe",
     stdin: null,
     stderr: null,
@@ -140,7 +147,7 @@ test("process.stdout - write a lot (string)", () => {
 
 test("process.stdout - write a lot (bytes)", () => {
   const { stdout } = spawnSync({
-    cmd: [bunExe(), import.meta.dir + "/stdio-test-instance-a-lot.js"],
+    cmd: [bunExe(), path.join(import.meta.dir, "stdio-test-instance-a-lot.js")],
     stdout: "pipe",
     stdin: null,
     stderr: null,

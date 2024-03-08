@@ -25,7 +25,7 @@ const sockaddr_un = std.os.linux.sockaddr_un;
 const BOOL = windows.BOOL;
 const Env = bun.Environment;
 
-const log = bun.Output.scoped(.uv, false);
+pub const log = bun.Output.scoped(.uv, false);
 
 pub const CHAR = u8;
 pub const SHORT = c_short;
@@ -2506,7 +2506,9 @@ pub fn uv_is_closed(handle: *const uv_handle_t) bool {
     return (handle.flags & UV_HANDLE_CLOSED != 0);
 }
 
-pub fn translateUVErrorToE(code: anytype) bun.C.E {
+pub fn translateUVErrorToE(code_in: anytype) bun.C.E {
+    const code: c_int = @intCast(code_in);
+
     return switch (code) {
         UV_EPERM => bun.C.E.PERM,
         UV_ENOENT => bun.C.E.NOENT,

@@ -1,7 +1,7 @@
 const std = @import("std");
 const pathRel = std.fs.path.relative;
 const builtin = @import("builtin");
-const Wyhash = @import("./src/wyhash.zig").Wyhash;
+const Wyhash11 = @import("./src/wyhash.zig").Wyhash11;
 
 const zig_version = builtin.zig_version;
 
@@ -84,7 +84,7 @@ const BunBuildOptions = struct {
     pub fn updateRuntime(this: *BunBuildOptions) anyerror!void {
         if (std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only })) |file| {
             defer file.close();
-            const runtime_hash = Wyhash.hash(
+            const runtime_hash = Wyhash11.hash(
                 0,
                 try file.readToEndAlloc(std.heap.page_allocator, try file.getEndPos()),
             );
@@ -97,7 +97,7 @@ const BunBuildOptions = struct {
 
         if (std.fs.cwd().openFile("src/fallback.out.js", .{ .mode = .read_only })) |file| {
             defer file.close();
-            const fallback_hash = Wyhash.hash(
+            const fallback_hash = Wyhash11.hash(
                 0,
                 try file.readToEndAlloc(std.heap.page_allocator, try file.getEndPos()),
             );

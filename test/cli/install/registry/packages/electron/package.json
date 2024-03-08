@@ -1,0 +1,41 @@
+{
+	"name": "electron",
+	"versions": {
+		"1.0.0": {
+			"name": "electron",
+			"version": "1.0.0",
+			"scripts": {
+				"preinstall": "bun index.js"
+			},
+			"_id": "electron@1.0.0",
+			"_nodeVersion": "21.6.0",
+			"_npmVersion": "10.2.4",
+			"dist": {
+				"integrity": "sha512-GkuwCdn6o8Krsxb3DIIqYP+TAi8Y5jYUadmseZ6nR2op2k5ssdKRYo4JjYDGopa1ACrGAcQuWViz/+vX/WjYnA==",
+				"shasum": "f1b8bc2c23cd7e4f1500669dfaf8757578d2e391",
+				"tarball": "http://localhost:4873/electron/-/electron-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-02-15T01:16:09.439Z",
+		"created": "2024-02-15T01:16:09.439Z",
+		"1.0.0": "2024-02-15T01:16:09.439Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"electron-1.0.0.tgz": {
+			"shasum": "f1b8bc2c23cd7e4f1500669dfaf8757578d2e391",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "electron",
+	"readme": "ERROR: No README data found!"
+}

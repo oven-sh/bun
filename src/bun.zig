@@ -1805,7 +1805,7 @@ pub const WTF = struct {
 
 pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 
-pub const Wyhash = @import("./wyhash.zig").Wyhash;
+pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
 pub inline fn assertComptime() void {

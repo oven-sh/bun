@@ -1,6 +1,8 @@
 const std = @import("std");
 const PackageID = @import("../install.zig").PackageID;
 const Lockfile = @import("../install.zig").Lockfile;
+const initializeStore = @import("../install.zig").initializeStore;
+const json_parser = bun.JSON;
 const PackageManager = @import("../install.zig").PackageManager;
 const Npm = @import("../npm.zig");
 const logger = @import("root").bun.logger;
@@ -107,7 +109,10 @@ pub const FolderResolution = union(Tag) {
         var abs: string = "";
         var rel: string = "";
         // We consider it valid if there is a package.json in the folder
-        const normalized = std.mem.trimRight(u8, normalize(non_normalized_path), std.fs.path.sep_str);
+        const normalized = if (non_normalized_path.len == 1 and non_normalized_path[0] == '.')
+            non_normalized_path
+        else
+            std.mem.trimRight(u8, normalize(non_normalized_path), std.fs.path.sep_str);
 
         if (strings.startsWithChar(normalized, '.')) {
             var tempcat: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -183,6 +188,18 @@ pub const FolderResolution = union(Tag) {
             resolver,
             features,
         );
+
+        const has_scripts = package.scripts.hasAny() or brk: {
+            const dir = std.fs.path.dirname(abs) orelse "";
+            const binding_dot_gyp_path = bun.path.joinAbsStringZ(
+                dir,
+                &[_]string{"binding.gyp"},
+                .auto,
+            );
+            break :brk bun.sys.exists(binding_dot_gyp_path);
+        };
+
+        package.meta.setHasInstallScript(has_scripts);
 
         if (manager.lockfile.getPackageID(package.name_hash, version, &package.resolution)) |existing_id| {
             package.meta.id = existing_id;

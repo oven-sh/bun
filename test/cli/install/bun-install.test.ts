@@ -6287,7 +6287,10 @@ it("should handle trustedDependencies", async () => {
     " + bar@bar",
     " + moo@moo",
     "",
-    " 2 packages installed",
+    expect.stringContaining(" 2 packages installed"),
+    "",
+    " Skipped ~1 script. Run `bun pm trusted` for details.",
+    "",
   ]);
   expect(await exited).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "moo"]);

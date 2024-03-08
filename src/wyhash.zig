@@ -135,21 +135,21 @@ const WyhashStateless = struct {
 
 /// Fast non-cryptographic 64bit hash function.
 /// See https://github.com/wangyi-fudan/wyhash
-pub const Wyhash = struct {
+pub const Wyhash11 = struct {
     state: WyhashStateless,
 
     buf: [32]u8,
     buf_len: usize,
 
-    pub fn init(seed: u64) Wyhash {
-        return Wyhash{
+    pub fn init(seed: u64) Wyhash11 {
+        return Wyhash11{
             .state = WyhashStateless.init(seed),
             .buf = undefined,
             .buf_len = 0,
         };
     }
 
-    pub fn update(self: *Wyhash, b: []const u8) void {
+    pub fn update(self: *Wyhash11, b: []const u8) void {
         var off: usize = 0;
 
         if (self.buf_len != 0 and self.buf_len + b.len >= 32) {
@@ -167,7 +167,7 @@ pub const Wyhash = struct {
         self.buf_len += @as(u8, @intCast(b[off + aligned_len ..].len));
     }
 
-    pub fn final(self: *Wyhash) u64 {
+    pub fn final(self: *Wyhash11) u64 {
         const rem_key = self.buf[0..self.buf_len];
 
         return self.state.final(rem_key);

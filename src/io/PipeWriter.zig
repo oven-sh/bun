@@ -1085,9 +1085,10 @@ pub fn WindowsStreamingWriter(
         }
 
         fn onWriteComplete(this: *WindowsWriter, status: uv.ReturnCode) void {
-            log("onWriteComplete (status = {d})", .{@intFromEnum(status)});
             if (status.toError(.write)) |err| {
                 this.last_write_result = .{ .err = err };
+                log("onWrite() = {s}", .{err.name()});
+
                 onError(this.parent, err);
                 this.closeWithoutReporting();
                 return;
@@ -1099,7 +1100,11 @@ pub fn WindowsStreamingWriter(
 
             // if we dont have more outgoing data we report done in onWrite
             const done = this.outgoing.isEmpty();
-            if (this.is_done and done) {
+            const was_done = this.is_done;
+
+            log("onWrite({d}) ({d} left)", .{ written, this.outgoing.size() });
+
+            if (was_done and done) {
                 // we already call .end lets close the connection
                 this.last_write_result = .{ .done = written };
                 onWrite(this.parent, written, true);

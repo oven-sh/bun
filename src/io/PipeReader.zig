@@ -516,7 +516,7 @@ pub fn WindowsPipeReader(
                     // we call drained so we know if we should stop here
                     const keep_reading = onReadChunk(this, slice, hasMore);
                     if (!keep_reading) {
-                        close(this);
+                        this.pause();
                     }
                 },
                 else => {
@@ -530,17 +530,14 @@ pub fn WindowsPipeReader(
                     buffer.items.len += amount.result;
                     const keep_reading = onReadChunk(this, slice, hasMore);
                     if (!keep_reading) {
-                        close(this);
+                        this.pause();
                     }
                 },
             }
         }
 
         pub fn pause(this: *This) void {
-            const pipe = this._pipe() orelse return;
-            if (pipe.isActive()) {
-                this.stopReading().unwrap() catch unreachable;
-            }
+            _ = this.stopReading();
         }
 
         pub fn unpause(this: *This) void {
@@ -1067,11 +1064,11 @@ pub const WindowsBufferedReader = struct {
     pub fn deinit(this: *WindowsOutputReader) void {
         this.buffer().deinit();
         const source = this.source orelse return;
-        std.debug.assert(source.isClosed());
-        this.source = null;
-        switch (source) {
-            inline else => |ptr| bun.default_allocator.destroy(ptr),
+        if (!source.isClosed()) {
+            // closeImpl will take care of freeing the source
+            this.closeImpl(false);
         }
+        this.source = null;
     }
 
     comptime {

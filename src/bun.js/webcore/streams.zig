@@ -2874,6 +2874,7 @@ pub const FileSink = struct {
     signal: Signal = Signal{},
     done: bool = false,
     started: bool = false,
+    must_be_kept_alive_until_eof: bool = false,
 
     // TODO: these fields are duplicated on writer()
     // we should not duplicate these fields...
@@ -2894,6 +2895,15 @@ pub const FileSink = struct {
         log("onAttachedProcessExit()", .{});
         this.done = true;
         this.writer.close();
+
+        this.pending.result = .{ .err = Syscall.Error.fromCode(.PIPE, .write) };
+
+        this.runPending();
+
+        if (this.must_be_kept_alive_until_eof) {
+            this.must_be_kept_alive_until_eof = false;
+            this.deref();
+        }
     }
 
     fn runPending(this: *FileSink) void {
@@ -2931,7 +2941,9 @@ pub const FileSink = struct {
 
         if (this.pending.state == .pending) {
             this.pending.consumed += @truncate(amount);
-            if (this.done) {
+
+            // when "done" is true, we will never receive more data.
+            if (this.done or done) {
                 this.pending.result = .{ .owned_and_done = this.pending.consumed };
             } else {
                 this.pending.result = .{ .owned = this.pending.consumed };
@@ -2942,11 +2954,33 @@ pub const FileSink = struct {
             if (this.done and !done and (Environment.isWindows or !this.writer.hasPendingData())) {
                 // if we call end/endFromJS and we have some pending returned from .flush() we should call writer.end()
                 this.writer.end();
+            } else if (this.done and done and !this.writer.hasPendingData()) {
+                this.writer.close();
             }
+
+            if (this.must_be_kept_alive_until_eof) {
+                if (done) {
+                    this.signal.close(null);
+                }
+
+                this.must_be_kept_alive_until_eof = false;
+                this.deref();
+            }
+
+            if (done) {
+                this.signal.close(null);
+            }
+
+            return;
         }
 
         if (done) {
             this.signal.close(null);
+
+            if (this.must_be_kept_alive_until_eof) {
+                this.must_be_kept_alive_until_eof = false;
+                this.deref();
+            }
         }
     }
 
@@ -3180,7 +3214,7 @@ pub const FileSink = struct {
             },
             .pending => |pending_written| {
                 _ = pending_written; // autofix
-                this.ref();
+
                 this.done = true;
                 this.writer.close();
                 return .{ .result = {} };
@@ -3225,6 +3259,10 @@ pub const FileSink = struct {
             },
             .pending => |pending_written| {
                 this.written += @truncate(pending_written);
+                if (!this.must_be_kept_alive_until_eof) {
+                    this.must_be_kept_alive_until_eof = true;
+                    this.ref();
+                }
                 this.done = true;
                 this.pending.result = .{ .owned = @truncate(pending_written) };
                 return .{ .result = this.pending.promise(globalThis).asValue(globalThis) };

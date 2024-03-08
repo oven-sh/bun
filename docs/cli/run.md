@@ -83,6 +83,15 @@ In memory-constrained environments, use the `--smol` flag to reduce memory usage
 $ bun --smol run index.tsx
 ```
 
+### `-`
+
+Execute code from the CLI without storing it in a file first by piping Javascript or Typescript directly to Bun.
+
+```bash
+$ echo "console.log('Hello')" | bun run -
+Hello
+```
+
 ## Run a `package.json` script
 
 {% note %}
@@ -95,7 +104,7 @@ $ bun [bun flags] run <script> [script flags]
 
 Your `package.json` can define a number of named `"scripts"` that correspond to shell commands.
 
-```jsonc
+```json
 {
   // ... other fields
   "scripts": {

@@ -1223,7 +1223,7 @@ pub const Command = struct {
         }
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
-        while (next_arg[0] == '-' and !(next_arg.len > 1 and next_arg[1] == 'e')) {
+        while (next_arg.len > 0 and next_arg[0] == '-' and !(next_arg.len > 1 and next_arg[1] == 'e')) {
             next_arg = ((args_iter.next()) orelse return .AutoCommand);
         }
 

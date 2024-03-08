@@ -258,6 +258,18 @@ fn HashMapMixin(
             return self.hasContext(key, undefined);
         }
 
+        pub fn hasWithHash(self: *Self, key_hash: u64) bool {
+            assert(key_hash != Self.empty_hash);
+
+            for (self.entries[key_hash >> self.shift ..]) |entry| {
+                if (entry.hash >= key_hash) {
+                    return entry.hash == key_hash;
+                }
+            }
+
+            return false;
+        }
+
         pub fn hasContext(self: *Self, key: K, ctx: Context) bool {
             const hash = ctx.hash(key);
             assert(hash != Self.empty_hash);

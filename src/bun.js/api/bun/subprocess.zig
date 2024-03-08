@@ -593,7 +593,7 @@ pub const Subprocess = struct {
                 .memfd => return this.toBufferedValue(globalThis),
 
                 .fd => |fd| {
-                    return JSValue.jsNumber(fd);
+                    return fd.toJS(globalThis);
                 },
                 .pipe => {
                     return this.pipe.toJS(this, globalThis, exited);
@@ -607,7 +607,7 @@ pub const Subprocess = struct {
         pub fn toBufferedValue(this: *Readable, globalThis: *JSC.JSGlobalObject) JSValue {
             switch (this.*) {
                 .fd => |fd| {
-                    return JSValue.jsNumber(fd);
+                    return fd.toJS(globalThis);
                 },
                 .memfd => |fd| {
                     if (comptime !Environment.isPosix) {
@@ -1739,7 +1739,7 @@ pub const Subprocess = struct {
         pub fn toJS(this: Writable, globalThis: *JSC.JSGlobalObject) JSValue {
             return switch (this) {
                 .pipe => |pipe| pipe.toJS(globalThis),
-                .fd => |fd| JSValue.jsNumber(fd),
+                .fd => |fd| fd.toJS(globalThis),
                 .memfd, .ignore => JSValue.jsUndefined(),
                 .inherit => JSValue.jsUndefined(),
                 .buffered_input => JSValue.jsUndefined(),
@@ -3287,7 +3287,7 @@ pub const Subprocess = struct {
             return true;
         } else if (value.isNumber()) {
             const fd = value.asFileDescriptor();
-            if (fd.int() < 0) {
+            if (bun.uvfdcast(fd) < 0) {
                 globalThis.throwInvalidArguments("file descriptor must be a positive integer", .{});
                 return false;
             }

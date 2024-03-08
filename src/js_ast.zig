@@ -1458,6 +1458,22 @@ pub const E = struct {
 
             return array;
         }
+
+        /// Assumes each item in the array is a string
+        pub fn alphabetizeStrings(this: *Array) void {
+            if (comptime Environment.allow_assert) {
+                for (this.items.slice()) |item| {
+                    std.debug.assert(item.data == .e_string);
+                }
+            }
+            std.sort.pdq(Expr, this.items.slice(), {}, Sorter.isLessThan);
+        }
+
+        const Sorter = struct {
+            pub fn isLessThan(ctx: void, lhs: Expr, rhs: Expr) bool {
+                return strings.cmpStringsAsc(ctx, lhs.data.e_string.data, rhs.data.e_string.data);
+            }
+        };
     };
 
     pub const Unary = struct {
@@ -2070,7 +2086,13 @@ pub const E = struct {
             return null;
         }
 
+        /// Assumes each key in the property is a string
         pub fn alphabetizeProperties(this: *Object) void {
+            if (comptime Environment.allow_assert) {
+                for (this.properties.slice()) |prop| {
+                    std.debug.assert(prop.key.?.data == .e_string);
+                }
+            }
             std.sort.pdq(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
         }
 
@@ -3037,6 +3059,8 @@ pub const Stmt = struct {
 pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
+
+    pub const empty = Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = logger.Loc.Empty };
 
     pub fn isAnonymousNamed(expr: Expr) bool {
         return switch (expr.data) {

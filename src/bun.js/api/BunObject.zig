@@ -2979,6 +2979,10 @@ pub fn serve(
             return .undefined;
         }
 
+        if (globalObject.hasException()) {
+            return .zero;
+        }
+
         break :brk config_;
     };
 

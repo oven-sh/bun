@@ -4703,11 +4703,8 @@ pub const Package = extern struct {
     pub const List = bun.MultiArrayList(Lockfile.Package);
 
     pub const Meta = extern struct {
-        pub const no_install_script = 1;
-        pub const has_install_script = 2;
-
         // TODO: when we bump the lockfile version, we should reorder this to:
-        // id(32), arch(16), os(16), id(8), man_dir(8), integrity(72 align 8)
+        // id(32), arch(16), os(16), id(8), man_dir(8), __has_install_script(8), integrity(72 align 8)
         // should allow us to remove padding bytes
 
         // TODO: remove origin. it doesnt do anything and can be inferred from the resolution
@@ -4723,10 +4720,17 @@ pub const Package = extern struct {
         man_dir: String = String{},
         integrity: Integrity = Integrity{},
 
-        // 0 - package from old lockfile, needs update
-        // 1 - does not have install scripts
-        // 2 - has install scripts
-        __has_install_script: u8,
+        /// Shouldn't be used directly. Use `Meta.hasInstallScript()` and
+        /// `Meta.setHasInstallScript()` instead.
+        ///
+        /// `.old` represents the value of this field before it was used
+        /// in the lockfile and should never be saved to a new lockfile.
+        /// There is a debug assert for this in `Lockfile.Package.Serializer.save()`.
+        __has_install_script: enum(u8) {
+            old,
+            false,
+            true,
+        },
 
         _padding_integrity: [2]u8 = .{0} ** 2,
 
@@ -4737,15 +4741,15 @@ pub const Package = extern struct {
         }
 
         pub fn hasInstallScript(this: *const Meta) bool {
-            return this.__has_install_script == has_install_script;
+            return this.__has_install_script == .old;
         }
 
         pub fn setHasInstallScript(this: *Meta, has_script: bool) void {
-            this.__has_install_script = if (has_script) has_install_script else no_install_script;
+            this.__has_install_script = if (has_script) .true else .false;
         }
 
         pub fn needsUpdate(this: *const Meta) bool {
-            return this.__has_install_script == 0;
+            return this.__has_install_script == .old;
         }
 
         pub fn count(this: *const Meta, buf: []const u8, comptime StringBuilderType: type, builder: StringBuilderType) void {
@@ -4754,7 +4758,7 @@ pub const Package = extern struct {
 
         pub fn init() Meta {
             return .{
-                .__has_install_script = no_install_script,
+                .__has_install_script = .false,
             };
         }
 
@@ -4848,7 +4852,7 @@ pub const Package = extern struct {
                     debug("save(\"{s}\") = {d} bytes", .{ field.name, std.mem.sliceAsBytes(value).len });
                     if (comptime strings.eqlComptime(field.name, "meta")) {
                         for (value) |meta| {
-                            std.debug.assert(meta.__has_install_script != 0);
+                            std.debug.assert(meta.__has_install_script != .old);
                         }
                     }
                 }

@@ -490,10 +490,10 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 .__has_install_script = if (pkg.get("hasInstallScript")) |has_install_script_expr| brk: {
                     if (has_install_script_expr.data != .e_boolean) return error.InvalidNPMLockfile;
                     break :brk if (has_install_script_expr.data.e_boolean.value)
-                        Lockfile.Package.Meta.has_install_script
+                        .true
                     else
-                        Lockfile.Package.Meta.no_install_script;
-                } else Lockfile.Package.Meta.no_install_script,
+                        .false;
+                } else .false,
 
                 .integrity = if (pkg.get("integrity")) |integrity|
                     try Integrity.parse(

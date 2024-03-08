@@ -16,7 +16,7 @@ ARG BUILD_MACHINE_ARCH=x86_64
 ARG BUILDARCH=amd64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG GIT_SHA=""
-ARG BUN_VERSION="bun-v1.0.7"
+ARG BUN_VERSION="bun-v1.0.30"
 ARG BUN_DOWNLOAD_URL_BASE="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${BUN_VERSION}"
 ARG CANARY=0
 ARG ASSERTIONS=OFF
@@ -116,7 +116,7 @@ RUN apt-get update -y \
   && case "${arch##*-}" in \
   amd64) variant="x64";; \
   arm64) variant="aarch64";; \
-  *) echo "error: unsupported architecture: $arch"; exit 1 ;; \
+  *) echo "unsupported architecture: $arch"; exit 1 ;; \
   esac \
   && wget "${BUN_DOWNLOAD_URL_BASE}/bun-linux-${variant}.zip" \
   && unzip bun-linux-${variant}.zip \

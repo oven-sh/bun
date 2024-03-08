@@ -395,9 +395,9 @@ function sectionLink(linkTo) {
 }
 
 const failingTestDisplay = failing_tests
-  .filter(({ reason }) => !regressions.some(({ path }) => path === path))
   .map(({ path, reason }) => `- [\`${path}\`](${sectionLink(path)})${reason ? ` ${reason}` : ""}`)
   .join("\n");
+
 // const passingTestDisplay = passing_tests.map(path => `- \`${path}\``).join("\n");
 
 rmSync("report.md", { force: true });
@@ -470,7 +470,7 @@ if (regressions.length > 0) {
 }
 
 if (failingTestDisplay.length > 0) {
-  report += `## ${windows ? "Known " : ""}Failing tests\n\n`;
+  report += `## Failing tests\n\n`;
   report += failingTestDisplay;
   report += "\n\n";
 }

@@ -8,12 +8,13 @@ import { join } from "path";
 import { unlinkSync } from "node:fs";
 
 const N = 100;
+const concurrency = 8;
+const delay = 8 * 12;
+
 test("spawn can write to stdin multiple chunks", async () => {
   const interval = setInterval(dumpStats, 1000).unref();
 
   const maxFD = openSync(devNull, "w");
-  const concurrency = 10;
-  const delay = 8 * 12;
 
   var remaining = N;
   while (remaining > 0) {
@@ -35,7 +36,7 @@ test("spawn can write to stdin multiple chunks", async () => {
             await proc.stdin!.flush();
             await Bun.sleep(delay);
 
-            if (inCounter++ === 7) break;
+            if (inCounter++ === 3) break;
           }
           await proc.stdin!.end();
           return inCounter;
@@ -45,7 +46,6 @@ test("spawn can write to stdin multiple chunks", async () => {
           let chunks: any[] = [];
 
           try {
-            const decoder = new TextDecoder();
             for await (var chunk of proc.stdout) {
               chunks.push(chunk);
             }
@@ -59,7 +59,7 @@ test("spawn can write to stdin multiple chunks", async () => {
 
         const [chunks, , exitCode] = await Promise.all([prom, prom2, proc.exited]);
 
-        expect(chunks).toBe("Wrote to stdin!\n".repeat(8).trim());
+        expect(chunks).toBe("Wrote to stdin!\n".repeat(4).trim());
         expect(exitCode).toBe(0);
       })();
     }

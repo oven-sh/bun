@@ -317,6 +317,7 @@ describe("Server", () => {
       server.stop(true);
     }
   });
+
   test("abort signal on server with stream", async () => {
     {
       let signalOnServer = false;
@@ -421,6 +422,39 @@ describe("Server", () => {
     });
     expect(stderr).toBeEmpty();
     expect(exitCode).toBe(0);
+  });
+
+  test("supports error handling", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        throw new Error("woops!");
+      },
+      error(error) {
+        return new Response(`${error.message}`);
+      },
+    });
+
+    const response = await fetch(`http://${server.hostname}:${server.port}`);
+    expect(await response.text()).toBe("woops!");
+    server.stop(true);
+  });
+
+  test("supports reading the Request in error handling", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        throw new Error("woops!");
+      },
+      error(error, req) {
+        if (req === undefined) return new Response(`${error.message}`);
+        return new Response(`${error.message}\n${req.method}`);
+      },
+    });
+
+    const response = await fetch(`http://${server.hostname}:${server.port}`);
+    expect(await response.text()).toBe("woops!\nGET");
+    server.stop(true);
   });
 });
 

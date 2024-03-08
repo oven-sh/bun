@@ -14,7 +14,7 @@ const Timer = std.time.Timer;
 pub const LifecycleScriptSubprocess = struct {
     package_name: []const u8,
 
-    scripts: [6]?Lockfile.Scripts.Entry,
+    scripts: Lockfile.Package.Scripts.List,
     current_script_index: u8 = 0,
 
     finished_fds: u8 = 0,
@@ -158,14 +158,14 @@ pub const LifecycleScriptSubprocess = struct {
         errdefer _ = alive_count.fetchSub(1, .Monotonic);
 
         const manager = this.manager;
-        const original_script = this.scripts[next_script_index].?;
-        const cwd = original_script.cwd;
+        const original_script = this.scripts.items[next_script_index].?;
+        const cwd = this.scripts.cwd;
         const env = manager.env;
 
         if (manager.scripts_node) |scripts_node| {
             manager.setNodeName(
                 scripts_node,
-                original_script.package_name,
+                this.package_name,
                 PackageManager.ProgressStrings.script_emoji,
                 true,
             );
@@ -175,7 +175,6 @@ pub const LifecycleScriptSubprocess = struct {
             }
         }
 
-        this.package_name = original_script.package_name;
         this.current_script_index = next_script_index;
         this.waitpid_result = null;
         this.finished_fds = 0;
@@ -478,7 +477,7 @@ pub const LifecycleScriptSubprocess = struct {
             }
 
             for (this.current_script_index + 1..Lockfile.Scripts.names.len) |new_script_index| {
-                if (this.scripts[new_script_index] != null) {
+                if (this.scripts.items[new_script_index] != null) {
                     this.resetPolls();
                     this.spawnNextScript(@intCast(new_script_index)) catch |err| {
                         Output.errGeneric("Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
@@ -576,13 +575,14 @@ pub const LifecycleScriptSubprocess = struct {
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
         var lifecycle_subprocess = try manager.allocator.create(LifecycleScriptSubprocess);
-        lifecycle_subprocess.scripts = list.items;
+        lifecycle_subprocess.scripts = list;
         lifecycle_subprocess.manager = manager;
         lifecycle_subprocess.envp = envp;
+        lifecycle_subprocess.package_name = list.package_name;
 
         if (comptime log_level.isVerbose()) {
             Output.prettyErrorln("<d>[LifecycleScriptSubprocess]<r> Starting scripts for <b>\"{s}\"<r>", .{
-                list.first().package_name,
+                list.package_name,
             });
         }
 

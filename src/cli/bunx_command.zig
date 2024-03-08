@@ -243,7 +243,8 @@ pub const BunxCommand = struct {
 
         const package_name = maybe_package_name.?;
 
-        var requests_buf = bun.PackageManager.UpdateRequest.Array{};
+        var requests_buf = bun.PackageManager.UpdateRequest.Array.initCapacity(ctx.allocator, 64) catch bun.outOfMemory();
+        defer requests_buf.deinit(ctx.allocator);
         const update_requests = bun.PackageManager.UpdateRequest.parse(
             ctx.allocator,
             ctx.log,

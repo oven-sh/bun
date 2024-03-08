@@ -8743,7 +8743,9 @@ pub const Interpreter = struct {
             if (should_continue) {
                 if (this.readers.len() > 0) {
                     this.setReading(true);
-                    if (bun.Environment.isPosix) this.reader.registerPoll() else switch (this.reader.startWithCurrentPipe()) {
+                    if (bun.Environment.isPosix)
+                        this.reader.registerPoll()
+                    else switch (this.reader.startWithCurrentPipe()) {
                         .err => |e| {
                             const writer = std.io.getStdOut().writer();
                             e.format("Yoops ", .{}, writer) catch @panic("oops");

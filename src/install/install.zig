@@ -8626,7 +8626,7 @@ pub const PackageManager = struct {
 
                         if (resolution.tag != .workspace and !is_trusted and this.lockfile.packages.get(package_id).meta.hasInstallScript()) {
                             if (comptime log_level.isVerbose()) {
-                                Output.prettyError("Skipped scripts for: {s}@{}\n", .{ alias, resolution.fmt(this.lockfile.buffers.string_bytes.items) });
+                                Output.prettyError("Blocked scripts for: {s}@{}\n", .{ alias, resolution.fmt(this.lockfile.buffers.string_bytes.items) });
                             }
                             this.summary.packages_with_skipped_scripts_set.put(this.manager.allocator, name_hash, {}) catch bun.outOfMemory();
                         }

@@ -4850,7 +4850,7 @@ pub const Package = extern struct {
                     debug("save(\"{s}\") = {d} bytes", .{ field.name, std.mem.sliceAsBytes(value).len });
                     if (comptime strings.eqlComptime(field.name, "meta")) {
                         for (value) |meta| {
-                            std.debug.assert(meta.__has_install_script != .old);
+                            std.debug.assert(meta.has_install_script != .old);
                         }
                     }
                 }

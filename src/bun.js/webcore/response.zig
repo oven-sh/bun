@@ -1228,6 +1228,7 @@ pub const Fetch = struct {
                     error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                     error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
                     error.ConnectionRefused => bun.String.static("Unable to connect. Is the computer able to access the url?"),
+                    error.RedirectURLInvalid => bun.String.static("Redirect URL in Location header is invalid."),
 
                     error.UNABLE_TO_GET_ISSUER_CERT => bun.String.static("unable to get issuer certificate"),
                     error.UNABLE_TO_GET_CRL => bun.String.static("unable to get certificate CRL"),

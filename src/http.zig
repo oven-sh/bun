@@ -3568,6 +3568,10 @@ pub fn handleResponseMetadata(
 
                             const normalized_url = JSC.URL.hrefFromString(bun.String.fromBytes(string_builder.allocatedSlice()));
                             defer normalized_url.deref();
+                            if (normalized_url.tag == .Dead) {
+                                // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
+                                return error.RedirectURLInvalid;
+                            }
                             const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
 
                             const new_url = URL.parse(normalized_url_str);

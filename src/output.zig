@@ -772,7 +772,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
                 }
 
                 // TODO: convert zig errors to errno for better searchability?
-                if (errors.len == 1) break :display_name .{ comptime @errorName(errors[0]), true };
+                if (errors.len == 1) break :display_name .{ errors[0].name, true };
             }
 
             break :display_name .{ @errorName(error_name), false };

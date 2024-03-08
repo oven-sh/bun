@@ -263,24 +263,31 @@ process.stdin.pipe(transform).pipe(process.stdout);
 process.stdin.on("end", () => console.log(totalChunkSize));
 `;
 describe("process.stdin", () => {
-  it("should pipe correctly", done => {
-    mkdirSync(join(tmpdir(), "process-stdin-test"), { recursive: true });
-    writeFileSync(join(tmpdir(), "process-stdin-test/process-stdin.test.js"), processStdInTest, {});
+  it("should pipe correctly", async () => {
+    const dir = join(tmpdir(), "process-stdin-test");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "process-stdin-test.js"), processStdInTest, {});
 
     // A sufficiently large input to make at least four chunks
     const ARRAY_SIZE = 8_388_628;
     const typedArray = new Uint8Array(ARRAY_SIZE).fill(97);
 
-    const { stdout, exitCode, stderr } = Bun.spawnSync({
-      cmd: [bunExe(), "test", "process-stdin.test.js"],
-      cwd: join(tmpdir(), "process-stdin-test"),
+    const { stdout, exited, stdin } = Bun.spawn({
+      cmd: [bunExe(), "process-stdin-test.js"],
+      cwd: dir,
       env: bunEnv,
-      stdin: typedArray,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
     });
 
-    expect(exitCode).toBe(0);
-    expect(String(stdout)).toBe(`${ARRAY_SIZE}\n`);
-    done();
+    stdin.write(typedArray);
+    await stdin.end();
+    await stdin.close();
+    console.log("Ended");
+
+    expect(await exited).toBe(0);
+    expect(await new Response(stdout).text()).toBe(`${ARRAY_SIZE}\n`);
   });
 });
 

@@ -2965,6 +2965,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             JSC.markBinding(@src());
             if (!this.server.config.onError.isEmpty() and !this.flags.has_called_error_handler) {
                 this.flags.has_called_error_handler = true;
+
+                if (Environment.allow_assert) std.debug.assert(request_value != .zero);
                 const result = this.server.config.onError.callWithThis(
                     this.server.globalThis,
                     this.server.thisObject,

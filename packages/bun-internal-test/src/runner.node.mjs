@@ -394,6 +394,9 @@ function sectionLink(linkTo) {
   return "#" + linkTo.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
 }
 
+failing_tests.sort((a, b) => a.path.localeCompare(b.path));
+passing_tests.sort((a, b) => a.localeCompare(b));
+
 const failingTestDisplay = failing_tests
   .map(({ path, reason }) => `- [\`${path}\`](${sectionLink(path)})${reason ? ` ${reason}` : ""}`)
   .join("\n");

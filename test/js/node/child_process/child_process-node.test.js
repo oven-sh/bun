@@ -369,10 +369,8 @@ describe("child_process cwd", () => {
 
 describe("child_process default options", () => {
   it("should use process.env as default env", done => {
-    const origTmpDir = globalThis.process.env.TMPDIR;
-    globalThis.process.env.TMPDIR = platformTmpDir;
+    process.env.TMPDIR = platformTmpDir;
     let child = spawn("printenv", [], {});
-    globalThis.process.env.TMPDIR = origTmpDir;
     let response = "";
 
     child.stdout.setEncoding("utf8");

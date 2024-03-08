@@ -283,8 +283,6 @@ describe("process.stdin", () => {
 
     stdin.write(typedArray);
     await stdin.end();
-    await stdin.close();
-    console.log("Ended");
 
     expect(await exited).toBe(0);
     expect(await new Response(stdout).text()).toBe(`${ARRAY_SIZE}\n`);

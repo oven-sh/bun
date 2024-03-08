@@ -4741,7 +4741,7 @@ pub const Package = extern struct {
         }
 
         pub fn hasInstallScript(this: *const Meta) bool {
-            return this.__has_install_script == .old;
+            return this.__has_install_script == .true;
         }
 
         pub fn setHasInstallScript(this: *Meta, has_script: bool) void {

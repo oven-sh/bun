@@ -423,7 +423,18 @@ describe("Server", () => {
     expect(stderr).toBeEmpty();
     expect(exitCode).toBe(0);
   });
+});
 
+// By not timing out, this test passes.
+test("Bun.serve().unref() works", async () => {
+  expect([path.join(import.meta.dir, "unref-fixture.ts")]).toRun();
+});
+
+test("unref keeps process alive for ongoing connections", async () => {
+  expect([path.join(import.meta.dir, "unref-fixture-2.ts")]).toRun();
+});
+
+describe("Bun.serve error handling", () => {
   test("supports error handling", async () => {
     const server = Bun.serve({
       port: 0,
@@ -456,13 +467,4 @@ describe("Server", () => {
     expect(await response.text()).toBe("woops!\nGET");
     server.stop(true);
   });
-});
-
-// By not timing out, this test passes.
-test("Bun.serve().unref() works", async () => {
-  expect([path.join(import.meta.dir, "unref-fixture.ts")]).toRun();
-});
-
-test("unref keeps process alive for ongoing connections", async () => {
-  expect([path.join(import.meta.dir, "unref-fixture-2.ts")]).toRun();
 });

@@ -682,7 +682,10 @@ pub fn format2(
         const tag = ConsoleObject.Formatter.Tag.get(vals[0], global);
 
         var unbuffered_writer = if (comptime Writer != RawWriter)
-            writer.context.unbuffered_writer.context.writer()
+            if (@hasDecl(@TypeOf(writer.context.unbuffered_writer.context), "quietWriter"))
+                writer.context.unbuffered_writer.context.quietWriter()
+            else
+                writer.context.unbuffered_writer.context.writer()
         else
             writer;
 

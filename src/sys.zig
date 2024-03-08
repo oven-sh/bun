@@ -1079,8 +1079,8 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                 &bytes_written,
                 null,
             );
-            log("WriteFile({}, {d}) = {d} (written: {d}) {}", .{ fd, adjusted_len, rc, bytes_written, debug_timer });
             if (rc == 0) {
+                log("WriteFile({}, {d}) = {s}", .{ fd, adjusted_len, @tagName(bun.windows.getLastErrno()) });
                 return .{
                     .err = Syscall.Error{
                         .errno = @intFromEnum(bun.windows.getLastErrno()),
@@ -1089,6 +1089,9 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                     },
                 };
             }
+
+            log("WriteFile({}, {d}) = {d}", .{ fd, adjusted_len, bytes_written });
+
             return Maybe(usize){ .result = bytes_written };
         },
         else => @compileError("Not implemented yet"),
@@ -1345,7 +1348,30 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
                 return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
             }
         },
-        .windows => sys_uv.read(fd, buf),
+        .windows => if (bun.FDImpl.decode(fd).kind == .uv)
+            sys_uv.read(fd, buf)
+        else {
+            var amount_read: u32 = 0;
+            const rc = kernel32.ReadFile(fd.cast(), buf.ptr, @as(u32, @intCast(adjusted_len)), &amount_read, null);
+            if (rc == windows.FALSE) {
+                const ret = .{
+                    .err = Syscall.Error{
+                        .errno = @intFromEnum(bun.windows.getLastErrno()),
+                        .syscall = .read,
+                        .fd = fd,
+                    },
+                };
+
+                if (comptime Environment.isDebug) {
+                    log("ReadFile({}, {d}) = {s} ({})", .{ fd, adjusted_len, ret.err.name(), debug_timer });
+                }
+
+                return ret;
+            }
+            log("ReadFile({}, {d}) = {d} ({})", .{ fd, adjusted_len, amount_read, debug_timer });
+
+            return Maybe(usize){ .result = amount_read };
+        },
         else => @compileError("read is not implemented on this platform"),
     };
 }
@@ -2167,3 +2193,111 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
 pub fn isPollable(mode: mode_t) bool {
     return os.S.ISFIFO(mode) or os.S.ISSOCK(mode);
 }
+
+const This = @This();
+
+pub const File = struct {
+    // "handle" matches std.fs.File
+    handle: bun.FileDescriptor,
+
+    pub fn from(other: anytype) File {
+        const T = @TypeOf(other);
+
+        if (T == File) {
+            return other;
+        }
+
+        if (T == bun.FileDescriptor) {
+            return File{ .handle = other };
+        }
+
+        if (T == std.fs.File) {
+            return File{ .handle = bun.toFD(other.handle) };
+        }
+
+        if (T == std.fs.Dir) {
+            return File{ .handle = bun.toFD(other.handle) };
+        }
+
+        if (comptime Environment.isWindows) {
+            if (T == bun.windows.HANDLE) {
+                return File{ .handle = bun.toFD(other) };
+            }
+        }
+
+        @compileError("Unsupported type " ++ bun.meta.typeName(T));
+    }
+
+    pub fn write(self: File, buf: []const u8) Maybe(usize) {
+        return This.write(self.handle, buf);
+    }
+
+    pub fn read(self: File, buf: []u8) Maybe(usize) {
+        return This.read(self.handle, buf);
+    }
+
+    pub fn writeAll(self: File, buf: []const u8) Maybe(void) {
+        var remain = buf;
+        while (remain.len > 0) {
+            const rc = This.write(self.handle, remain);
+            switch (rc) {
+                .err => |err| return .{ .err = err },
+                .result => |amt| {
+                    if (amt == 0) {
+                        return .{ .result = {} };
+                    }
+                    remain = remain[amt..];
+                },
+            }
+        }
+
+        return .{ .result = {} };
+    }
+
+    pub const ReadError = anyerror;
+
+    fn stdIoRead(this: File, buf: []u8) ReadError!usize {
+        return try this.read(buf).unwrap();
+    }
+
+    pub const Reader = std.io.Reader(File, anyerror, stdIoRead);
+
+    pub fn reader(self: File) Reader {
+        return Reader{ .context = self };
+    }
+
+    pub const WriteError = anyerror;
+    fn stdIoWrite(this: File, bytes: []const u8) WriteError!usize {
+        try this.writeAll(bytes).unwrap();
+
+        return bytes.len;
+    }
+
+    fn stdIoWriteQuietDebug(this: File, bytes: []const u8) WriteError!usize {
+        bun.Output.disableScopedDebugWriter();
+        defer bun.Output.enableScopedDebugWriter();
+        try this.writeAll(bytes).unwrap();
+
+        return bytes.len;
+    }
+
+    pub const Writer = std.io.Writer(File, anyerror, stdIoWrite);
+    pub const QuietWriter = if (Environment.isDebug) std.io.Writer(File, anyerror, stdIoWriteQuietDebug) else Writer;
+
+    pub fn writer(self: File) Writer {
+        return Writer{ .context = self };
+    }
+
+    pub fn quietWriter(self: File) QuietWriter {
+        return QuietWriter{ .context = self };
+    }
+
+    pub fn isTty(self: File) bool {
+        return std.os.isatty(self.handle.cast());
+    }
+
+    pub fn close(self: File) void {
+        // TODO: probably return the error? we have a lot of code paths which do not so we are keeping for now
+        _ = This.close(self.handle);
+    }
+};

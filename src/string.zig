@@ -672,7 +672,7 @@ pub const String = extern struct {
         return "";
     }
 
-    pub fn encoding(self: String) bun.strings.Encoding {
+    pub fn encoding(self: String) bun.strings.EncodingNonAscii {
         if (self.isUTF16()) {
             return .utf16;
         }
@@ -733,8 +733,10 @@ pub const String = extern struct {
     }
 
     pub inline fn utf8(self: String) []const u8 {
-        if (comptime bun.Environment.allow_assert)
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(self.tag == .ZigString or self.tag == .StaticZigString);
             std.debug.assert(self.canBeUTF8());
+        }
         return self.value.ZigString.slice();
     }
 

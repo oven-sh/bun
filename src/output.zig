@@ -404,9 +404,9 @@ pub noinline fn println(comptime fmt: string, args: anytype) void {
 
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
-pub inline fn debug(comptime fmt: string, args: anytype) void {
+pub fn debug(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isRelease) return;
-    prettyErrorln("\n<d>DEBUG:<r> " ++ fmt, args);
+    prettyErrorln("<d>DEBUG:<r> " ++ fmt, args);
     flush();
 }
 
@@ -477,7 +477,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                 {
                     really_disable = false;
                 } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS")) |val| {
-                    really_disable = !strings.eqlComptime(val, "0");
+                    really_disable = really_disable or !strings.eqlComptime(val, "0");
                 }
             }
 
@@ -772,7 +772,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
                 }
 
                 // TODO: convert zig errors to errno for better searchability?
-                if (errors.len == 1) break :display_name .{ comptime @errorName(errors[0]), true };
+                if (errors.len == 1) break :display_name .{ errors[0].name, true };
             }
 
             break :display_name .{ @errorName(error_name), false };
@@ -829,7 +829,7 @@ fn scopedWriter() std.fs.File.Writer {
                     std.fs.cwd().fd,
                     path,
                     std.os.O.TRUNC | std.os.O.CREAT | std.os.O.WRONLY,
-                    0o644,
+                    if (Environment.isWindows) 0 else 0o644,
                 ) catch |err_| {
                     // Ensure we don't panic inside panic
                     Scoped.loaded_env = false;

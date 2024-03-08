@@ -1890,7 +1890,10 @@ pub const Blob = struct {
                         }
                     }
 
-                    if (is_allowed_to_close_fd and this.opened_fd.int() > 2 and this.opened_fd != invalid_fd) {
+                    if (is_allowed_to_close_fd and
+                        this.opened_fd != invalid_fd and
+                        !this.opened_fd.isStdio())
+                    {
                         if (comptime Environment.isWindows) {
                             bun.Async.Closer.close(bun.uvfdcast(this.opened_fd), this.loop);
                         } else {

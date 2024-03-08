@@ -1,34 +1,95 @@
 #!/usr/bin/env pwsh
 param(
   # TODO: change this to 'latest' when Bun for Windows is stable.
-  [string]$Version = "canary"
+  [String]$Version = "canary",
+  # Forces installing the baseline build regardless of what CPU you are actually using.
+  [Switch]$ForceBaseline = $false,
+  # Skips adding the bun.exe directory to the user's %PATH%
+  [Switch]$NoPathUpdate = $false,
+  # Skips adding the bun to the list of installed programs
+  [Switch]$NoRegisterInstallation = $false
 );
+
+# filter out 32 bit + ARM
+if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
+  Write-Output "Install Failed:"
+  Write-Output "Bun for Windows is only available for x86 64-bit Windows.`n"
+  exit 1
+}
+
+# This corresponds to .win10_rs5 in build.zig
+$MinBuild = 17763;
+$MinBuildName = "Windows 10 1809"
+
+$WinVer = [System.Environment]::OSVersion.Version
+if ($WinVer.Major -lt 10 -or ($WinVer.Major -eq 10 -and $WinVer.Build -lt $MinBuild)) {
+  Write-Warning "Bun requires at ${MinBuildName} or newer.`n`nThe install will still continue but it may not work.`n"
+  exit 1
+}
 
 $ErrorActionPreference = "Stop"
 
-# This is a functions so that in the unlikely case the baseline check fails but is is needed, we can do a recursive call.
+# These three environment functions are roughly copied from https://github.com/prefix-dev/pixi/pull/692
+# They are used instead of `SetEnvironmentVariable` because of unwanted variable expansions.
+function Publish-Env {
+  if (-not ("Win32.NativeMethods" -as [Type])) {
+    Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @"
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+public static extern IntPtr SendMessageTimeout(
+    IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam,
+    uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+"@
+  }
+  $HWND_BROADCAST = [IntPtr] 0xffff
+  $WM_SETTINGCHANGE = 0x1a
+  $result = [UIntPtr]::Zero
+  [Win32.NativeMethods]::SendMessageTimeout($HWND_BROADCAST,
+    $WM_SETTINGCHANGE,
+    [UIntPtr]::Zero,
+    "Environment",
+    2,
+    5000,
+    [ref] $result
+  ) | Out-Null
+}
+
+function Write-Env {
+  param([String]$Key, [String]$Value)
+
+  $RegisterKey = Get-Item -Path 'HKCU:'
+
+  $EnvRegisterKey = $RegisterKey.OpenSubKey('Environment', $true)
+  if ($null -eq $Value) {
+    $EnvRegisterKey.DeleteValue($Key)
+  } else {
+    $RegistryValueKind = if ($Value.Contains('%')) {
+      [Microsoft.Win32.RegistryValueKind]::ExpandString
+    } elseif ($EnvRegisterKey.GetValue($Key)) {
+      $EnvRegisterKey.GetValueKind($Key)
+    } else {
+      [Microsoft.Win32.RegistryValueKind]::String
+    }
+    $EnvRegisterKey.SetValue($Key, $Value, $RegistryValueKind)
+  }
+
+  Publish-Env
+}
+
+function Get-Env {
+  param([String] $Key)
+
+  $RegisterKey = Get-Item -Path 'HKCU:'
+  $EnvRegisterKey = $RegisterKey.OpenSubKey('Environment')
+  $EnvRegisterKey.GetValue($Key, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+}
+
+# The installation of bun is it's own function so that in the unlikely case the $IsBaseline check fails, we can do a recursive call.
 # There are also lots of sanity checks out of fear of anti-virus software or other weird Windows things happening.
 function Install-Bun {
   param(
-    [string]$Version
+    [string]$Version,
     [bool]$ForceBaseline = $False
   );
-
-  # filter out 32 bit and arm
-  if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
-    Write-Output "Install Failed:"
-    Write-Output "Bun for Windows is only available for x86 64-bit Windows.`n"
-    exit 1
-  }
-
-  # .win10_rs5
-  $MinBuild = 17763;
-  $MinBuildName = "Windows 10 1809"
-  $WinVer = [System.Environment]::OSVersion.Version
-  if ($WinVer.Major -lt 10 -or ($WinVer.Major -eq 10 -and $WinVer.Build -lt $MinBuild)) {
-    Write-Warning "Bun requires at $($MinBuildName) or newer.`n`nThe install will still continue but it may not work.`n"
-    exit 1
-  }
 
   # if a semver is given, we need to adjust it to this format: bun-v0.0.0
   if ($Version -match "^\d+\.\d+\.\d+$") {
@@ -44,15 +105,34 @@ function Install-Bun {
 
   $Arch = "x64"
   $IsBaseline = $ForceBaseline
-
-  $EnabledXStateFeatures = ( `
-    Add-Type -MemberDefinition '[DllImport("kernel32.dll")]public static extern long GetEnabledXStateFeatures();' `
-      -Name 'Kernel32' -Namespace 'Win32' -PassThru `
-  )::GetEnabledXStateFeatures();
-  $IsBaseline = ($EnabledXStateFeatures -band 4) -neq 4;
+  if (!$IsBaseline) {
+    $IsBaseline = !( `
+      Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);' `
+        -Name 'Kernel32' -Namespace 'Win32' -PassThru `
+    )::IsProcessorFeaturePresent(40);
+  }
 
   $BunRoot = if ($env:BUN_INSTALL) { $env:BUN_INSTALL } else { "${Home}\.bun" }
   $BunBin = mkdir -Force "${BunRoot}\bin"
+
+  try {
+    Remove-Item "${BunBin}\bun.exe" -Force
+  } catch [System.Management.Automation.ItemNotFoundException] {
+    # ignore
+  } catch [System.UnauthorizedAccessException] {
+    $openProcesses = Get-Process -Name bun | Where-Object { $_.Path -eq "${BunBin}\bun.exe" }
+    if ($openProcesses.Count -gt 0) {
+      Write-Output "Install Failed - An older installation exists and is open. Please close open Bun processes and try again."
+      exit 1
+    }
+    Write-Output "Install Failed - An unknown error occurred while trying to remove the existing installation"
+    Write-Output $_
+    exit 1
+  } catch {
+    Write-Output "Install Failed - An unknown error occurred while trying to remove the existing installation"
+    Write-Output $_
+    exit 1
+  }
 
   $Target = "bun-windows-$Arch"
   if ($IsBaseline) {
@@ -72,12 +152,16 @@ function Install-Bun {
 
   $null = mkdir -Force $BunBin
   Remove-Item -Force $ZipPath -ErrorAction SilentlyContinue
+
+  # curl.exe is faster than PowerShell 5's 'Invoke-WebRequest'
+  # note: 'curl' is an alias to 'Invoke-WebRequest'. so the exe suffix is required
   curl.exe "-#SfLo" "$ZipPath" "$URL" 
   if ($LASTEXITCODE -ne 0) {
     Write-Output "Install Failed - could not download $URL"
     Write-Output "The command 'curl.exe $URL -o $ZipPath' exited with code ${LASTEXITCODE}`n"
     exit 1
   }
+
   if (!(Test-Path $ZipPath)) {
     Write-Output "Install Failed - could not download $URL"
     Write-Output "The file '$ZipPath' does not exist. Did an antivirus delete it?`n"
@@ -90,14 +174,14 @@ function Install-Bun {
     Expand-Archive "$ZipPath" "$BunBin" -Force
     $global:ProgressPreference = $lastProgressPreference
     if (!(Test-Path "${BunBin}\$Target\bun.exe")) {
-      throw "The file '${BunBin}\$Target\bun.exe' does not exist. Download is corrupt / Antivirus intercepted?`n"
+      throw "The file '${BunBin}\$Target\bun.exe' does not exist. Download is corrupt or intercepted Antivirus?`n"
     }
   } catch {
     Write-Output "Install Failed - could not unzip $ZipPath"
     Write-Error $_
     exit 1
   }
-  Remove-Item "${BunBin}\bun.exe" -ErrorAction SilentlyContinue
+
   Move-Item "${BunBin}\$Target\bun.exe" "${BunBin}\bun.exe" -Force
 
   Remove-Item "${BunBin}\$Target" -Recurse -Force
@@ -117,10 +201,10 @@ function Install-Bun {
     Install-Bun -Version $Version -ForceBaseline $True
     exit 1
   }
-  if (($LASTEXITCODE -eq 3221225781) # STATUS_DLL_NOT_FOUND
+  # '-1073741515' was spotted in the wild, but not clearly documented as a status code:
   # https://discord.com/channels/876711213126520882/1149339379446325248/1205194965383250081
   # http://community.sqlbackupandftp.com/t/error-1073741515-solved/1305
-  || ($LASTEXITCODE -eq 1073741515))
+  if (($LASTEXITCODE -eq 3221225781) -or ($LASTEXITCODE -eq -1073741515)) # STATUS_DLL_NOT_FOUND
   { 
     Write-Output "Install Failed - You are missing a DLL required to run bun.exe"
     Write-Output "This can be solved by installing the Visual C++ Redistributable from Microsoft:`nSee https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`nDirect Download -> https://aka.ms/vs/17/release/vc_redist.x64.exe`n`n"
@@ -132,6 +216,16 @@ function Install-Bun {
     Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
     exit 1
   }
+
+  $env:IS_BUN_AUTO_UPDATE = "1"
+  $null = "$(& "${BunBin}\bun.exe" completions)"
+  # if ($LASTEXITCODE -ne 0) {
+  #   Write-Output "Install Failed - could not finalize installation"
+  #   Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
+  #   exit 1
+  # }
+  $env:IS_BUN_AUTO_UPDATE = $null
+
   $DisplayVersion = if ($BunRevision -like "*-canary.*") {
     "${BunRevision}"
   } else {
@@ -140,18 +234,6 @@ function Install-Bun {
 
   $C_RESET = [char]27 + "[0m"
   $C_GREEN = [char]27 + "[1;32m"
-
-  # delete bunx if it exists already. this happens if you re-install
-  # we don't want to hit an "already exists" error.
-  Remove-Item "${BunBin}\bunx.exe" -ErrorAction SilentlyContinue
-  Remove-Item "${BunBin}\bunx.cmd" -ErrorAction SilentlyContinue
-
-  try {
-    $null = New-Item -ItemType HardLink -Path "${BunBin}\bunx.exe" -Target "${BunBin}\bun.exe" -Force
-  } catch {
-    Write-Warning "Could not create a hard link for bunx, falling back to a cmd script`n"
-    Set-Content -Path "${BunBin}\bunx.cmd" -Value "@%~dp0bun.exe x %*"
-  }
 
   Write-Output "${C_GREEN}Bun ${DisplayVersion} was installed successfully!${C_RESET}"
   Write-Output "The binary is located at ${BunBin}\bun.exe`n"
@@ -167,17 +249,36 @@ function Install-Bun {
     }
   } catch {}
 
-  $User = [System.EnvironmentVariableTarget]::User
-  $Path = [System.Environment]::GetEnvironmentVariable('Path', $User) -split ';'
-  if ($Path -notcontains $BunBin) {
-    $Path += $BunBin
-    [System.Environment]::SetEnvironmentVariable('Path', $Path -join ';', $User)
-  }
-  if ($env:PATH -notcontains ";${BunBin}") {
-    $env:PATH = "${env:Path};${BunBin}"
+  if (-not $NoRegisterInstallation) {
+    $rootKey = $null
+    try {
+      $RegistryKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Bun"  
+      $rootKey = New-Item -Path $RegistryKey -Force
+      New-ItemProperty -Path $RegistryKey -Name "DisplayName" -Value "Bun" -PropertyType String -Force | Out-Null
+      New-ItemProperty -Path $RegistryKey -Name "InstallLocation" -Value "${BunRoot}" -PropertyType String -Force | Out-Null
+      New-ItemProperty -Path $RegistryKey -Name "DisplayIcon" -Value $BunBin\bun.exe -PropertyType String -Force | Out-Null
+      New-ItemProperty -Path $RegistryKey -Name "UninstallString" -Value "powershell -c `"& `'$BunRoot\uninstall.ps1`' -PauseOnError`"" -PropertyType String -Force | Out-Null
+    } catch {
+      if ($rootKey -ne $null) {
+        Remove-Item -Path $RegistryKey -Force
+      }
+    }
   }
 
   if(!$hasExistingOther) {
+    # Only try adding to path if there isn't already a bun.exe in the path
+    $Path = (Get-Env -Key "Path") -split ';'
+    if ($Path -notcontains $BunBin) {
+      if (-not $NoPathUpdate) {
+        $Path += $BunBin
+        Write-Env -Key 'Path' -Value ($Path -join ';')
+      } else {
+        Write-Output "Skipping adding '${BunBin}' to the user's %PATH%`n"
+      }
+    }
+
     Write-Output "To get started, restart your terminal/editor, then type `"bun`"`n"
   }
 }
+
+Install-Bun -Version $Version -ForceBaseline $ForceBaseline

@@ -1089,10 +1089,10 @@ pub fn normalizeStringBuf(
     str: []const u8,
     buf: []u8,
     comptime allow_above_root: bool,
-    comptime _platform: Platform,
+    comptime platform: Platform,
     comptime preserve_trailing_slash: bool,
 ) []u8 {
-    return normalizeStringBufT(u8, str, buf, allow_above_root, _platform, preserve_trailing_slash);
+    return normalizeStringBufT(u8, str, buf, allow_above_root, platform, preserve_trailing_slash);
 }
 
 pub fn normalizeStringBufT(
@@ -1100,12 +1100,10 @@ pub fn normalizeStringBufT(
     str: []const T,
     buf: []T,
     comptime allow_above_root: bool,
-    comptime _platform: Platform,
+    comptime platform: Platform,
     comptime preserve_trailing_slash: bool,
 ) []T {
-    const platform = comptime _platform.resolve();
-
-    switch (comptime platform) {
+    switch (comptime platform.resolve()) {
         .auto => @compileError("unreachable"),
 
         .windows => {

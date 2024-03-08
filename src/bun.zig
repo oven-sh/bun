@@ -40,7 +40,7 @@ pub const meta = @import("./meta.zig");
 pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
-pub const resolver = @import("./resolver//resolver.zig");
+pub const resolver = @import("./resolver/resolver.zig");
 pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
@@ -66,16 +66,29 @@ else
     std.os.fd_t;
 
 pub const FileDescriptor = enum(FileDescriptorInt) {
-    zero,
+    /// Zero is used in old filesystem code to indicate "no file descriptor"
+    /// This is problematic because on POSIX, this is ambiguous with stdin being 0.
+    /// All code that uses this should migrate to invalid_fd to represent invalid states.
+    zero = 0,
+    // Represents an invalid file descriptor. This is used instead of null to
+    // avoid an extra bit.
+    // invalid = @intFromEnum(invalid_fd),
     _,
 
-    pub inline fn int(fd: FileDescriptor) FileDescriptorInt {
-        // TODO(@paperdave): make this a compile error to call on windows. every usage is incorrect.
-        return @intFromEnum(fd);
+    /// Do not use this function in new code.
+    ///
+    /// Interpreting a FD as an integer is almost certainly a mistake.
+    /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
+    ///
+    /// TODO(@paperdave): remove this API.
+    pub inline fn int(self: FileDescriptor) std.os.fd_t {
+        if (Environment.isWindows)
+            @compileError("FileDescriptor.int() is not allowed on Windows.");
+        return @intFromEnum(self);
     }
 
     pub inline fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
-        try writer.writeInt(FileDescriptorInt, fd.int(), endian);
+        try writer.writeInt(FileDescriptorInt, @intFromEnum(fd), endian);
     }
 
     pub inline fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
@@ -121,6 +134,24 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn cwd() FileDescriptor {
         return toFD(std.fs.cwd().fd);
+    }
+
+    pub fn isStdio(fd: FileDescriptor) bool {
+        // fd.assertValid();
+        const decoded = FDImpl.decode(fd);
+        return switch (Environment.os) {
+            else => decoded.value.as_system < 3,
+            .windows => switch (decoded.kind) {
+                .system => fd == win32.STDIN_FD or
+                    fd == win32.STDOUT_FD or
+                    fd == win32.STDERR_FD,
+                .uv => decoded.value.as_uv < 3,
+            },
+        };
+    }
+
+    pub fn toJS(value: FileDescriptor, global: *JSC.JSGlobalObject) JSC.JSValue {
+        return FDImpl.decode(value).toJS(global);
     }
 };
 
@@ -180,7 +211,7 @@ pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
-pub const WPathBuffer = [windows.PATH_MAX_WIDE]u16;
+pub const WPathBuffer = [std.os.windows.PATH_MAX_WIDE]u16;
 pub const OSPathChar = if (Environment.isWindows) u16 else u8;
 pub const OSPathSliceZ = [:0]const OSPathChar;
 pub const OSPathSlice = []const OSPathChar;
@@ -1778,7 +1809,7 @@ pub const WTF = struct {
 
 pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 
-pub const Wyhash = @import("./wyhash.zig").Wyhash;
+pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
 pub inline fn assertComptime() void {
@@ -2009,12 +2040,12 @@ pub const win32 = struct {
     ) !void {
         const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT;
 
-        const image_path = &w.peb().ProcessParameters.ImagePathName;
+        const image_path = windows.exePathW();
         var wbuf: WPathBuffer = undefined;
-        @memcpy(wbuf[0..image_path.Length], image_path.Buffer);
-        wbuf[image_path.Length] = 0;
+        @memcpy(wbuf[0..image_path.len], image_path);
+        wbuf[image_path.len] = 0;
 
-        const image_pathZ = wbuf[0..image_path.Length :0];
+        const image_pathZ = wbuf[0..image_path.len :0];
 
         const kernelenv = w.kernel32.GetEnvironmentStringsW();
         defer {
@@ -2066,7 +2097,7 @@ pub const win32 = struct {
             .hStdError = std.io.getStdErr().handle,
         };
         const rc = w.kernel32.CreateProcessW(
-            image_pathZ,
+            image_pathZ.ptr,
             w.kernel32.GetCommandLineW(),
             null,
             null,
@@ -2417,7 +2448,7 @@ pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdo
 
 /// Globally-allocate a value on the heap.
 ///
-/// When used, yuo must call `bun.destroy` to free the memory.
+/// When used, you must call `bun.destroy` to free the memory.
 /// default_allocator.destroy should not be used.
 ///
 /// On macOS, you can use `Bun.DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump()`
@@ -2691,3 +2722,5 @@ pub var buffered_stdin = std.io.BufferedReader(4096, std.fs.File.Reader){
 };
 
 pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");
+
+pub const exe_suffix = if (Environment.isWindows) ".exe" else "";

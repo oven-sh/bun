@@ -22,6 +22,9 @@ it("JSON strings escaped properly", async () => {
     env: bunEnv,
     cwd: testDir,
   });
+  if (exitCode !== 0) {
+    console.log(stderr.toString("utf8"));
+  }
   expect(exitCode).toBe(0);
 
   const packageContents = readFileSync(join(testDir, "package.json"), { encoding: "utf8" });

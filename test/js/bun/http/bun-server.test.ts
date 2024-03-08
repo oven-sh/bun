@@ -447,7 +447,7 @@ describe("Server", () => {
         throw new Error("woops!");
       },
       error(error, req) {
-        if (req === undefined) return new Response(`${error.message}`);
+        if (req === null) return new Response(`${error.message}`);
         return new Response(`${error.message}\n${req.method}`);
       },
     });

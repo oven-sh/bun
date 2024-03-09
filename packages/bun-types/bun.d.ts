@@ -2194,7 +2194,7 @@ declare module "bun" {
      */
     development?: boolean;
 
-    error?: (this: Server, error: ErrorLike, request: Request | null) => Response | Promise<Response>;
+    error?: (this: Server, request: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
 
     /**
      * Uniquely identify a server instance with an ID

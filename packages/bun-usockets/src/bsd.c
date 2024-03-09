@@ -591,12 +591,13 @@ static int bsd_create_unix_socket_address(const char *path, size_t path_len, int
 
             // if the path is just a single character, or the path is too long, we cannot use this method
             if (dirname_len < 2 || (path_len - dirname_len + 1) >= sizeof(server_address->sun_path)) {
+                errno = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
 
-            char dirname_buf[1024];
+            char dirname_buf[4096];
             if (dirname_len + 1 > sizeof(dirname_buf)) {
-                // path is too long
+                errno = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
 
@@ -605,22 +606,25 @@ static int bsd_create_unix_socket_address(const char *path, size_t path_len, int
 
             int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_PATH | O_DIRECTORY, 0700);
             if (socket_dir_fd == -1) {
+                errno = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
 
             int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%s", socket_dir_fd, path + dirname_len);
             if (sun_path_len >= sizeof(server_address->sun_path) || sun_path_len < 0) {
                 close(socket_dir_fd);
-                *dirfd_to_close = -1;
+                errno = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;
             }
 
-            *dirfd_to_close = socket_dir_fd;
+            *dirfd_linux_workaround_for_unix_path_len = socket_dir_fd;
             return 0;
         } else if (path_len < sizeof(server_address->sun_path)) {
             memcpy(server_address->sun_path, path, path_len);
-            if (server_address.sun_path[0] == 0) {
-                addrlen = offsetof(struct sockaddr_un, sun_path) + path_len;
+
+            // abstract domain sockets
+            if (server_address->sun_path[0] == 0) {
+                *addrlen = offsetof(struct sockaddr_un, sun_path) + path_len;
             }
 
             return 0;

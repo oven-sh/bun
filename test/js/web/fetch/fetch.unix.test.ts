@@ -4,6 +4,7 @@ import { mkdtempSync, realpathSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { request } from "http";
+import { isWindows } from "harness";
 const tmp_dir = join(realpathSync(tmpdir()));
 
 it("throws ENAMETOOLONG when socket path exceeds platform-specific limit", () => {
@@ -35,9 +36,25 @@ it("throws ENAMETOOLONG when socket path exceeds platform-specific limit", () =>
   ).toThrow("too long");
 });
 
+it("throws an error when the directory is not found", () => {
+  // this must be the filename specifically, because we add a workaround for the length limit on linux
+  const unix = isWindows
+    ? join("C:\\notfound", Math.random().toString(36).slice(2))
+    : join("/notfound", Math.random().toString(36).slice(2));
+
+  expect(() =>
+    serve({
+      unix,
+      fetch(req) {
+        return new Response("hello");
+      },
+    }),
+  ).toThrow("No such file or directory");
+});
+
 if (process.platform === "linux") {
   it("works with abstract namespace", async () => {
-    const unix = "\0" + Math.random().toString(36).slice(2).repeat(100).slice(0, 106);
+    const unix = "\0" + Math.random().toString(36).slice(2).repeat(100).slice(0, 105);
     const server = Bun.serve({
       unix,
       fetch(req) {
@@ -45,9 +62,11 @@ if (process.platform === "linux") {
       },
     });
 
+    expect(server.url.toString()).toBe(`abstract://${unix.slice(1)}/`);
+
     // POST with body
     for (let i = 0; i < 20; i++) {
-      const response = await fetch("http://localhost/hello", { method: "POST", body: String(i), unix: path });
+      const response = await fetch("http://localhost/hello", { method: "POST", body: String(i), unix });
       expect(response.status).toBe(200);
       expect(await response.text()).toBe(String(i));
     }
@@ -56,7 +75,15 @@ if (process.platform === "linux") {
   });
 
   it("can workaround socket path length limit via /proc/self/fd/NN/ trick", async () => {
-    const unix = join(tmp_dir, "." + Math.random().toString(36).slice(2).repeat(100).slice(0, 106));
+    const unix = join(
+      "/tmp",
+      "." +
+        Math.random()
+          .toString(36)
+          .slice(2)
+          .repeat(100)
+          .slice(0, 105 - 4),
+    );
     const server = Bun.serve({
       unix,
       fetch(req) {
@@ -66,12 +93,15 @@ if (process.platform === "linux") {
 
     // POST with body
     for (let i = 0; i < 20; i++) {
-      const response = await fetch("http://localhost/hello", { method: "POST", body: String(i), unix: path });
+      const response = await fetch("http://localhost/hello", { method: "POST", body: String(i), unix });
       expect(response.status).toBe(200);
       expect(await response.text()).toBe(String(i));
     }
 
     server.stop(true);
+    try {
+      rmSync(unix, {});
+    } catch (e) {}
   });
 }
 

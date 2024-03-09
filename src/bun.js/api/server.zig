@@ -5496,9 +5496,19 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn getURL(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
             const fmt = switch (this.config.address) {
-                .unix => |unix| bun.fmt.URLFormatter{
-                    .proto = .unix,
-                    .hostname = unix,
+                .unix => |unix| brk: {
+                    if (unix.len > 1 and unix[0] == 0) {
+                        // abstract domain socket, let's give it an "abstract" URL
+                        break :brk bun.fmt.URLFormatter{
+                            .proto = .abstract,
+                            .hostname = unix[1..],
+                        };
+                    }
+
+                    break :brk bun.fmt.URLFormatter{
+                        .proto = .unix,
+                        .hostname = unix,
+                    };
                 },
                 .tcp => |tcp| blk: {
                     var port: u16 = tcp.port;

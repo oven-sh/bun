@@ -13,8 +13,7 @@ const run_start = new Date();
 const TIMEOUT_DURATION = 1000 * 60 * 5;
 const SHORT_TIMEOUT_DURATION = Math.ceil(TIMEOUT_DURATION / 5);
 function defaultConcurrency() {
-  return 1;
-  // return Math.floor((cpus().length - 2) / 2);
+  return Math.min(Math.floor((cpus().length - 2) / 2), 2);
 }
 
 const windows = process.platform === "win32";
@@ -234,15 +233,12 @@ Starting "${name}"
       proc.stdout.once("end", () => {
         done();
       });
-      proc.stderr.once("end", () => {
-        done();
-      });
 
       let doneCalls = 0;
       var done = () => {
         // TODO: wait for stderr as well
         // spawn.test currently causes it to hang
-        if (doneCalls++ === 2) {
+        if (doneCalls++ === 1) {
           actuallyDone();
         }
       };

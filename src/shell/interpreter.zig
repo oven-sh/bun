@@ -3278,7 +3278,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                         const err = switch (this.state) {
                             .expanding_redirect => this.state.expanding_redirect.expansion.state.err,
                             .expanding_args => this.state.expanding_args.expansion.state.err,
-                            else => @panic("Invalid state"),
+                            else => |t| std.debug.panic("Unexpected state .{s} in Bun shell", .{@tagName(t)}),
                         };
                         defer err.deinit(bun.default_allocator);
                         const buf = err.fmt();
@@ -6082,7 +6082,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                             this.bltn.done(this.state.waiting_write_err.exit_code);
                             return;
                         },
-                        else => @panic("Invalid state"),
+                        else => |t| std.debug.panic("Unexpected state .{s} in Bun shell 'mv' builtin.", .{@tagName(t)}),
                     }
                 }
 
@@ -6732,7 +6732,7 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                 pub fn onAsyncTaskDone(this: *Rm, task: *ShellRmTask) void {
                     var exec = &this.state.exec;
                     const tasks_done = switch (exec.state) {
-                        .idle => @panic("Invalid state"),
+                        .idle => @panic("Unexpected state .idle in Bun shell 'rm' builtin."),
                         .waiting => brk: {
                             exec.state.waiting.tasks_done += 1;
                             const amt = exec.state.waiting.tasks_done;

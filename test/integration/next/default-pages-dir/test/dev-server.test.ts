@@ -35,6 +35,7 @@ async function getDevServerURL() {
     })
     .finally(() => {
       dev_server = undefined;
+      dev_server_pid = undefined;
     });
 
   async function readStream() {

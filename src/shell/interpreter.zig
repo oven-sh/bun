@@ -3937,7 +3937,7 @@ pub const Interpreter = struct {
                 /// array list not owned by this type
                 buf: std.ArrayList(u8),
                 arraybuf: ArrayBuf,
-                blob: *bun.JSC.WebCore.Blob,
+                blob: *Blob,
                 ignore,
 
                 const FdOutput = struct {
@@ -3952,6 +3952,7 @@ pub const Interpreter = struct {
                         .fd => {
                             this.fd.writer.ref();
                         },
+                        .blob => this.blob.ref(),
                         else => {},
                     }
                     return this;
@@ -3962,6 +3963,7 @@ pub const Interpreter = struct {
                         .fd => {
                             this.fd.writer.deref();
                         },
+                        .blob => this.blob.deref(),
                         else => {},
                     }
                 }
@@ -3995,7 +3997,7 @@ pub const Interpreter = struct {
                 /// array list not ownedby this type
                 buf: std.ArrayList(u8),
                 arraybuf: ArrayBuf,
-                blob: *bun.JSC.WebCore.Blob,
+                blob: *Blob,
                 ignore,
 
                 pub fn ref(this: *Input) *Input {
@@ -4003,6 +4005,7 @@ pub const Interpreter = struct {
                         .fd => {
                             this.fd.ref();
                         },
+                        .blob => this.blob.ref(),
                         else => {},
                     }
                     return this;
@@ -4013,6 +4016,7 @@ pub const Interpreter = struct {
                         .fd => {
                             this.fd.deref();
                         },
+                        .blob => this.blob.deref(),
                         else => {},
                     }
                 }
@@ -4028,6 +4032,17 @@ pub const Interpreter = struct {
             const ArrayBuf = struct {
                 buf: JSC.ArrayBuffer.Strong,
                 i: u32 = 0,
+            };
+
+            const Blob = struct {
+                ref_count: usize = 1,
+                blob: bun.JSC.WebCore.Blob,
+                pub usingnamespace bun.NewRefCounted(Blob, Blob.deinit);
+
+                pub fn deinit(this: *Blob) void {
+                    this.blob.deinit();
+                    bun.destroy(this);
+                }
             };
         };
 
@@ -4276,7 +4291,9 @@ pub const Interpreter = struct {
                             var original_blob = body.use();
                             defer original_blob.deinit();
 
-                            const blob: *bun.JSC.WebCore.Blob = bun.newWithAlloc(arena.allocator(), JSC.WebCore.Blob, original_blob.dupe());
+                            const blob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{
+                                .blob = original_blob.dupe(),
+                            });
 
                             if (node.redirect.stdin) {
                                 cmd.exec.bltn.stdin.deref();
@@ -4299,19 +4316,15 @@ pub const Interpreter = struct {
                                 return .yield;
                             }
 
-                            const theblob: *bun.JSC.WebCore.Blob = bun.newWithAlloc(arena.allocator(), JSC.WebCore.Blob, blob.dupe());
+                            const theblob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{ .blob = blob.dupe() });
 
                             if (node.redirect.stdin) {
                                 cmd.exec.bltn.stdin.deref();
                                 cmd.exec.bltn.stdin = .{ .blob = theblob };
-                            }
-
-                            if (node.redirect.stdout) {
+                            } else if (node.redirect.stdout) {
                                 cmd.exec.bltn.stdout.deref();
                                 cmd.exec.bltn.stdout = .{ .blob = theblob };
-                            }
-
-                            if (node.redirect.stderr) {
+                            } else if (node.redirect.stderr) {
                                 cmd.exec.bltn.stderr.deref();
                                 cmd.exec.bltn.stderr = .{ .blob = theblob };
                             }
@@ -4438,7 +4451,7 @@ pub const Interpreter = struct {
             return switch (this.stdin) {
                 .arraybuf => |buf| buf.buf.slice(),
                 .buf => |buf| buf.items[0..],
-                .blob => |blob| blob.sharedView(),
+                .blob => |blob| blob.blob.sharedView(),
                 else => "",
             };
         }

@@ -2921,22 +2921,19 @@ pub const FileSink = struct {
 
         this.written += amount;
 
+        // TODO: on windows done means ended (no pending data on the buffer) on unix we can still have pending data on the buffer
+        // we should unify the behaviors to simplify this
+        const has_pending_data = this.writer.hasPendingData();
         // Only keep the event loop ref'd while there's a pending write in progress.
         // If there's no pending write, no need to keep the event loop ref'd.
-        this.writer.updateRef(this.eventLoop(), false);
+        this.writer.updateRef(this.eventLoop(), has_pending_data);
 
-        // If the developer requested to close the writer (.end() in node streams)
-        //
-        // but:
-        // 1) We haven't finished writing yet
-        // 2) We haven't received EOF
-        if (Environment.isPosix) {
-            if (this.done and !done and this.writer.hasPendingData()) {
-                if (this.pending.state == .pending) {
-                    this.pending.consumed += @truncate(amount);
-                }
-                return;
+        // if we are not done yet and has pending data we just wait so we do not runPending twice
+        if (!done and has_pending_data) {
+            if (this.pending.state == .pending) {
+                this.pending.consumed += @truncate(amount);
             }
+            return;
         }
 
         if (this.pending.state == .pending) {
@@ -2951,36 +2948,23 @@ pub const FileSink = struct {
 
             this.runPending();
 
-            if (this.done and !done and (Environment.isWindows or !this.writer.hasPendingData())) {
+            // this.done == true means ended was called
+            const ended_and_done = this.done and done;
+
+            if (!ended_and_done and (Environment.isWindows or !has_pending_data)) {
                 // if we call end/endFromJS and we have some pending returned from .flush() we should call writer.end()
                 this.writer.end();
-            } else if (this.done and done and !this.writer.hasPendingData()) {
+            } else if (ended_and_done and !has_pending_data) {
                 this.writer.close();
             }
-
-            if (this.must_be_kept_alive_until_eof) {
-                if (done) {
-                    this.signal.close(null);
-                }
-
-                this.must_be_kept_alive_until_eof = false;
-                this.deref();
-            }
-
-            if (done) {
-                this.signal.close(null);
-            }
-
-            return;
         }
 
         if (done) {
-            this.signal.close(null);
-
             if (this.must_be_kept_alive_until_eof) {
                 this.must_be_kept_alive_until_eof = false;
                 this.deref();
             }
+            this.signal.close(null);
         }
     }
 
@@ -3143,9 +3127,24 @@ pub const FileSink = struct {
         if (this.done or this.pending.state == .pending) {
             return .{ .result = JSC.JSValue.jsUndefined() };
         }
-        return switch (this.toResult(this.writer.flush())) {
-            .err => |err| .{ .err = err },
-            else => |rc| .{ .result = rc.toJS(globalThis) },
+        const rc = this.writer.flush();
+        switch (rc) {
+            .done => |written| {
+                this.written += @truncate(written);
+            },
+            .pending => |written| {
+                this.written += @truncate(written);
+            },
+            .wrote => |written| {
+                this.written += @truncate(written);
+            },
+            .err => |err| {
+                return .{ .err = err };
+            },
+        }
+        return switch (this.toResult(rc)) {
+            .err => unreachable,
+            else => |result| .{ .result = result.toJS(globalThis) },
         };
     }
 
@@ -3205,22 +3204,26 @@ pub const FileSink = struct {
         _ = err; // autofix
 
         switch (this.writer.flush()) {
-            .done => {
+            .done => |written| {
+                this.written += @truncate(written);
                 this.writer.end();
                 return .{ .result = {} };
             },
             .err => |e| {
+                this.writer.close();
                 return .{ .err = e };
             },
-            .pending => |pending_written| {
-                _ = pending_written; // autofix
-
+            .pending => |written| {
+                this.written += @truncate(written);
+                if (!this.must_be_kept_alive_until_eof) {
+                    this.must_be_kept_alive_until_eof = true;
+                    this.ref();
+                }
                 this.done = true;
-                this.writer.close();
                 return .{ .result = {} };
             },
             .wrote => |written| {
-                _ = written; // autofix
+                this.written += @truncate(written);
                 this.writer.end();
                 return .{ .result = {} };
             },
@@ -3248,10 +3251,10 @@ pub const FileSink = struct {
         }
 
         switch (this.writer.flush()) {
-            .done => {
+            .done => |written| {
                 this.updateRef(false);
                 this.writer.end();
-                return .{ .result = JSValue.jsNumber(this.written) };
+                return .{ .result = JSValue.jsNumber(written) };
             },
             .err => |err| {
                 this.writer.close();
@@ -3307,10 +3310,10 @@ pub const FileSink = struct {
                 return .{ .err = err };
             },
             .pending => |pending_written| {
-                if (!this.has_js_called_unref)
-                    // Pending writes keep the event loop ref'd
-                    this.writer.updateRef(this.eventLoop(), true);
-
+                if (!this.must_be_kept_alive_until_eof) {
+                    this.must_be_kept_alive_until_eof = true;
+                    this.ref();
+                }
                 this.pending.consumed += @truncate(pending_written);
                 this.pending.result = .{ .owned = @truncate(pending_written) };
                 return .{ .pending = &this.pending };

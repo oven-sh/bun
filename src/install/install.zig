@@ -9015,7 +9015,8 @@ pub const PackageManager = struct {
             if (package_id == invalid_package_id) continue;
 
             const dependency_slice = lockfile.packages.items(.dependencies)[package_id];
-            addDependencyAndDependenciesToSet(name_hash_set, lockfile, dep.name_hash, dependency_slice);
+            const entry = name_hash_set.getOrPut(lockfile.allocator, @truncate(dep.name_hash)) catch bun.outOfMemory();
+            if (!entry.found_existing) addDependencyAndDependenciesToSet(name_hash_set, lockfile, dep.name_hash, dependency_slice);
         }
     }
 

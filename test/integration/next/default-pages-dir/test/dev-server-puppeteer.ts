@@ -17,7 +17,11 @@ const b = await launch({
 });
 
 const p = await b.newPage();
-// p.on("console", msg => console.log("[browser]", msg.text()));
+console.error("Loaded puppeteer");
+
+p.on("console", msg => {
+  console.error(msg.text());
+});
 
 function waitForConsoleMessage(page: Page, regex: RegExp) {
   const { resolve, promise } = Promise.withResolvers<void>();
@@ -35,10 +39,11 @@ function waitForConsoleMessage(page: Page, regex: RegExp) {
 await p.goto(url);
 await waitForConsoleMessage(p, /counter a/);
 
+console.error("Loaded page");
 assert.strictEqual(await p.$eval("code.font-bold", x => x.innerText), Bun.version);
 
 let counter_root = (await p.$("#counter-fixture"))!;
-
+console.error("Loaded counter");
 {
   const [has_class, style_json_string] = await counter_root.evaluate(
     x => [(x as HTMLElement).classList.contains("rounded-bl-full"), JSON.stringify(getComputedStyle(x))] as const,
@@ -99,3 +104,4 @@ assert.strictEqual(await getCount(), "Count B: 3");
 }
 
 await b.close();
+console.error("Finished dev-server-puppeteer.ts");

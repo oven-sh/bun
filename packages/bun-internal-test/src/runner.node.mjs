@@ -10,9 +10,16 @@ import { fileURLToPath } from "url";
 import PQueue from "p-queue";
 
 const run_start = new Date();
-
+const TIMEOUT_DURATION = 1000 * 60 * 5;
+const SHORT_TIMEOUT_DURATION = Math.ceil(TIMEOUT_DURATION / 5);
 function defaultConcurrency() {
-  return Math.floor((cpus().length - 2) / 2);
+  // This causes instability due to the number of open file descriptors / sockets in some tests
+  // Windows has higher limits
+  if (process.platform !== "win32") {
+    return 1;
+  }
+
+  return Math.min(Math.floor((cpus().length - 2) / 2), 2);
 }
 
 const windows = process.platform === "win32";
@@ -160,8 +167,15 @@ function checkSlowTests() {
   const now = Date.now();
   const prevSlowTestCount = slowTestCount;
   slowTestCount = 0;
-  for (const [path, start] of activeTests) {
-    if (now - start > 1000 * 60 * 1) {
+  for (const [path, { start, proc }] of activeTests) {
+    if (proc && now - start >= TIMEOUT_DURATION) {
+      console.error(
+        `\x1b[31merror\x1b[0;2m:\x1b[0m Killing test ${JSON.stringify(path)} after ${Math.ceil((now - start) / 1000)}s`,
+      );
+      proc?.stdout?.destroy?.();
+      proc?.stderr?.destroy?.();
+      proc?.kill?.();
+    } else if (now - start > SHORT_TIMEOUT_DURATION) {
       console.error(
         `\x1b[33mwarning\x1b[0;2m:\x1b[0m Test ${JSON.stringify(path)} has been running for ${Math.ceil(
           (now - start) / 1000,
@@ -176,7 +190,7 @@ function checkSlowTests() {
   }
 }
 
-setInterval(checkSlowTests, 1000 * 30).unref();
+setInterval(checkSlowTests, SHORT_TIMEOUT_DURATION).unref();
 var currentTestNumber = 0;
 async function runTest(path) {
   const thisTestNumber = currentTestNumber++;
@@ -192,22 +206,24 @@ async function runTest(path) {
 
   const start = Date.now();
 
-  activeTests.set(path, start);
+  const activeTestObject = { start, proc: undefined };
+  activeTests.set(path, activeTestObject);
 
   try {
     await new Promise((finish, reject) => {
       const chunks = [];
-      process.stdout.write(
+      process.stderr.write(
         `
-[file ${thisTestNumber.toString().padStart(total.toString().length, "0")}/${total}, ${
-          failing_tests.length
-        } failing files]: Starting "${name}"
+at ${((start - run_start.getTime()) / 1000).toFixed(2)}s, file ${thisTestNumber
+          .toString()
+          .padStart(total.toString().length, "0")}/${total}, ${failing_tests.length} failing files
+Starting "${name}"
+
 `,
       );
       const TMPDIR = maketemp();
       const proc = spawn(bunExe, ["test", resolve(path)], {
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 1000 * 60 * 3,
         env: {
           ...process.env,
           FORCE_COLOR: "1",
@@ -219,10 +235,8 @@ async function runTest(path) {
           [windows ? "TEMP" : "TMPDIR"]: TMPDIR,
         },
       });
+      activeTestObject.proc = proc;
       proc.stdout.once("end", () => {
-        done();
-      });
-      proc.stderr.once("end", () => {
         done();
       });
 
@@ -230,14 +244,15 @@ async function runTest(path) {
       var done = () => {
         // TODO: wait for stderr as well
         // spawn.test currently causes it to hang
-        if (doneCalls++ === 2) {
+        if (doneCalls++ === 1) {
           actuallyDone();
         }
       };
       var actuallyDone = function () {
         actuallyDone = done = () => {};
-        if (!KEEP_TMPDIR)
-          process.nextTick(TMPDIR => rm(TMPDIR, { recursive: true, force: true }).catch(() => {}), TMPDIR);
+        proc?.stderr?.unref?.();
+        proc?.stdout?.unref?.();
+        proc?.unref?.();
         output = Buffer.concat(chunks).toString();
         finish();
       };
@@ -256,7 +271,12 @@ async function runTest(path) {
         if (run_concurrency === 1) process.stderr.write(chunk);
       });
 
+      proc.once("close", () => {
+        activeTestObject.proc = undefined;
+      });
+
       proc.once("exit", (code_, signal_) => {
+        activeTestObject.proc = undefined;
         exitCode = code_;
         signal = signal_;
         if (signal || exitCode !== 0) {
@@ -266,6 +286,7 @@ async function runTest(path) {
         }
       });
       proc.once("error", err_ => {
+        activeTestObject.proc = undefined;
         err = err_;
         actuallyDone();
       });

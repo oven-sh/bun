@@ -2042,7 +2042,8 @@ pub const VirtualMachine = struct {
         this.runErrorHandler(result, exception_list);
     }
 
-    pub fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+    pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+        @setCold(true);
         if (!result.isEmptyOrUndefinedOrNull())
             this.last_reported_error_for_dedupe = result;
 
@@ -2050,20 +2051,28 @@ pub const VirtualMachine = struct {
         this.had_errors = false;
         defer this.had_errors = prev_had_errors;
 
+        const error_writer = Output.errorWriter();
+        var buffered_writer = std.io.bufferedWriter(error_writer);
+        defer {
+            buffered_writer.flush() catch {};
+        }
+
+        const writer = buffered_writer.writer();
+
         if (result.isException(this.global.vm())) {
             const exception = @as(*Exception, @ptrCast(result.asVoid()));
 
             this.printException(
                 exception,
                 exception_list,
-                @TypeOf(Output.errorWriter()),
-                Output.errorWriter(),
+                @TypeOf(writer),
+                writer,
                 true,
             );
         } else if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), true, true);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(writer), writer, true, true);
         } else {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), false, true);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(writer), writer, false, true);
         }
     }
 

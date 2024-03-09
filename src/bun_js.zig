@@ -107,22 +107,10 @@ pub const Run = struct {
         b.options.env.behavior = .load_all_without_inlining;
 
         b.configureRouter(false) catch {
-            if (Output.enable_ansi_colors_stderr) {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-            Output.prettyErrorln("\n", .{});
-            Global.exit(1);
+            failWithBuildError(vm);
         };
         b.configureDefines() catch {
-            if (Output.enable_ansi_colors_stderr) {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-            Output.prettyErrorln("\n", .{});
-            Global.exit(1);
+            failWithBuildError(vm);
         };
 
         AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
@@ -241,22 +229,10 @@ pub const Run = struct {
         }
 
         b.configureRouter(false) catch {
-            if (Output.enable_ansi_colors_stderr) {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-            Output.prettyErrorln("\n", .{});
-            Global.exit(1);
+            failWithBuildError(vm);
         };
         b.configureDefines() catch {
-            if (Output.enable_ansi_colors_stderr) {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-            Output.prettyErrorln("\n", .{});
-            Global.exit(1);
+            failWithBuildError(vm);
         };
 
         AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
@@ -321,25 +297,16 @@ pub const Run = struct {
             _ = promise.result(vm.global.vm());
 
             if (vm.log.msgs.items.len > 0) {
-                if (Output.enable_ansi_colors) {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                }
+                dumpBuildError(vm);
                 vm.log.msgs.items.len = 0;
-                Output.prettyErrorln("\n", .{});
-                Output.flush();
             }
         } else |err| {
             if (vm.log.msgs.items.len > 0) {
-                if (Output.enable_ansi_colors) {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                }
-                Output.flush();
+                dumpBuildError(vm);
+                vm.log.msgs.items.len = 0;
             } else {
                 Output.prettyErrorln("Error occurred loading entry point: {s}", .{@errorName(err)});
+                Output.flush();
             }
 
             if (vm.hot_reload != .none) {
@@ -408,12 +375,7 @@ pub const Run = struct {
             }
 
             if (vm.log.msgs.items.len > 0) {
-                if (Output.enable_ansi_colors) {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                }
-                Output.prettyErrorln("\n", .{});
+                dumpBuildError(vm);
                 Output.flush();
             }
         }
@@ -431,3 +393,27 @@ pub const Run = struct {
         Global.exit(exit_code);
     }
 };
+
+noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
+    @setCold(true);
+
+    Output.flush();
+
+    const error_writer = Output.errorWriter();
+    var buffered_writer = std.io.bufferedWriter(error_writer);
+    defer {
+        buffered_writer.flush() catch {};
+    }
+
+    const writer = buffered_writer.writer();
+
+    switch (Output.enable_ansi_colors_stderr) {
+        inline else => |enable_colors| vm.log.printForLogLevelWithEnableAnsiColors(writer, enable_colors) catch {},
+    }
+}
+
+noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
+    @setCold(true);
+    dumpBuildError(vm);
+    Global.exit(1);
+}

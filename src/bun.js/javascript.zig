@@ -2042,7 +2042,8 @@ pub const VirtualMachine = struct {
         this.runErrorHandler(result, exception_list);
     }
 
-    pub fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+    pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+        @setCold(true);
         if (!result.isEmptyOrUndefinedOrNull())
             this.last_reported_error_for_dedupe = result;
 
@@ -2050,20 +2051,28 @@ pub const VirtualMachine = struct {
         this.had_errors = false;
         defer this.had_errors = prev_had_errors;
 
+        const error_writer = Output.errorWriter();
+        var buffered_writer = std.io.bufferedWriter(error_writer);
+        defer {
+            buffered_writer.flush() catch {};
+        }
+
+        const writer = buffered_writer.writer();
+
         if (result.isException(this.global.vm())) {
             const exception = @as(*Exception, @ptrCast(result.asVoid()));
 
             this.printException(
                 exception,
                 exception_list,
-                @TypeOf(Output.errorWriter()),
-                Output.errorWriter(),
+                @TypeOf(writer),
+                writer,
                 true,
             );
         } else if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), true, true);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(writer), writer, true, true);
         } else {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), false, true);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(writer), writer, false, true);
         }
     }
 
@@ -3010,13 +3019,21 @@ pub const VirtualMachine = struct {
 
     // In Github Actions, emit an annotation that renders the error and location.
     // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
-    pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
+    pub noinline fn printGithubAnnotation(exception: *JSC.ZigException) void {
+        @setCold(true);
         const name = exception.name;
         const message = exception.message;
         const frames = exception.stack.frames();
         const top_frame = if (frames.len > 0) frames[0] else null;
         const dir = bun.getenvZ("GITHUB_WORKSPACE") orelse bun.fs.FileSystem.instance.top_level_dir;
         const allocator = bun.default_allocator;
+        Output.flush();
+
+        var buffered_writer = std.io.bufferedWriter(Output.errorWriter());
+        var writer = buffered_writer.writer();
+        defer {
+            buffered_writer.flush() catch {};
+        }
 
         var has_location = false;
 
@@ -3025,23 +3042,23 @@ pub const VirtualMachine = struct {
                 const source_url = frame.source_url.toUTF8(allocator);
                 defer source_url.deinit();
                 const file = bun.path.relative(dir, source_url.slice());
-                Output.printError("\n::error file={s},line={d},col={d},title=", .{
+                writer.print("\n::error file={s},line={d},col={d},title=", .{
                     file,
                     frame.position.line_start + 1,
                     frame.position.column_start,
-                });
+                }) catch {};
                 has_location = true;
             }
         }
 
         if (!has_location) {
-            Output.printError("\n::error title=", .{});
+            writer.print("\n::error title=", .{}) catch {};
         }
 
         if (name.isEmpty() or name.eqlComptime("Error")) {
-            Output.printError("error", .{});
+            writer.print("error", .{}) catch {};
         } else {
-            Output.printError("{s}", .{name.githubAction()});
+            writer.print("{s}", .{name.githubAction()}) catch {};
         }
 
         if (!message.isEmpty()) {
@@ -3054,11 +3071,11 @@ pub const VirtualMachine = struct {
                 cursor = i + 1;
                 if (msg[i] == '\n') {
                     const first_line = bun.String.fromUTF8(msg[0..i]);
-                    Output.printError(": {s}::", .{first_line.githubAction()});
+                    writer.print(": {s}::", .{first_line.githubAction()}) catch {};
                     break;
                 }
             } else {
-                Output.printError(": {s}::", .{message.githubAction()});
+                writer.print(": {s}::", .{message.githubAction()}) catch {};
             }
 
             while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
@@ -3069,11 +3086,11 @@ pub const VirtualMachine = struct {
             }
 
             if (cursor > 0) {
-                const body = ZigString.init(msg[cursor..]);
-                Output.printError("{s}", .{body.githubAction()});
+                const body = ZigString.initUTF8(msg[cursor..]);
+                writer.print("{s}", .{body.githubAction()}) catch {};
             }
         } else {
-            Output.printError("::", .{});
+            writer.print("::", .{}) catch {};
         }
 
         // TODO: cleanup and refactor to use printStackTrace()
@@ -3097,7 +3114,7 @@ pub const VirtualMachine = struct {
 
                 // %0A = escaped newline
                 if (has_name) {
-                    Output.printError(
+                    writer.print(
                         "%0A      at {any} ({any})",
                         .{
                             frame.nameFormatter(false),
@@ -3108,9 +3125,9 @@ pub const VirtualMachine = struct {
                                 false,
                             ),
                         },
-                    );
+                    ) catch {};
                 } else {
-                    Output.printError(
+                    writer.print(
                         "%0A      at {any}",
                         .{
                             frame.sourceURLFormatter(
@@ -3120,13 +3137,12 @@ pub const VirtualMachine = struct {
                                 false,
                             ),
                         },
-                    );
+                    ) catch {};
                 }
             }
         }
 
-        Output.printError("\n", .{});
-        Output.flush();
+        writer.print("\n", .{}) catch {};
     }
 
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;

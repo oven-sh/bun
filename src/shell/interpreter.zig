@@ -5981,9 +5981,10 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                     return this.writeFailingError(buf, 1);
                                 }
 
+                                const count_per_task = ShellMvBatchedTask.BATCH_SIZE;
                                 const task_count = brk: {
                                     const sources_len: f64 = @floatFromInt(this.args.sources.len);
-                                    const batch_size: f64 = @floatFromInt(ShellMvBatchedTask.BATCH_SIZE);
+                                    const batch_size: f64 = @floatFromInt(count_per_task);
                                     const task_count: usize = @intFromFloat(@ceil(sources_len / batch_size));
                                     break :brk task_count;
                                 };
@@ -5993,31 +5994,11 @@ pub fn NewInterpreter(comptime EventLoopKind: JSC.EventLoopKind) type {
                                 const tasks = this.bltn.arena.allocator().alloc(ShellMvBatchedTask, task_count) catch bun.outOfMemory();
                                 // Initialize tasks
                                 {
-                                    var count = task_count;
-                                    const count_per_task = this.args.sources.len / ShellMvBatchedTask.BATCH_SIZE;
                                     var i: usize = 0;
-                                    var j: usize = 0;
-                                    while (i < tasks.len -| 1) : (i += 1) {
-                                        j += count_per_task;
-                                        const sources = this.args.sources[j .. j + count_per_task];
-                                        count -|= count_per_task;
-                                        tasks[i] = ShellMvBatchedTask{
-                                            .mv = this,
-                                            .cwd = cwd_fd,
-                                            .target = this.args.target,
-                                            .target_fd = this.args.target_fd,
-                                            .sources = sources,
-                                            // We set this later
-                                            .error_signal = undefined,
-                                            .task = .{
-                                                .event_loop = event_loop_ref.get(),
-                                            },
-                                        };
-                                    }
-
-                                    // Give remainder to last task
-                                    if (count > 0) {
-                                        const sources = this.args.sources[j .. j + count];
+                                    while (i < tasks.len) : (i += 1) {
+                                        const start_idx = i * count_per_task;
+                                        const end_idx = @min(start_idx + count_per_task, this.args.sources.len);
+                                        const sources = this.args.sources[start_idx..end_idx];
                                         tasks[i] = ShellMvBatchedTask{
                                             .mv = this,
                                             .cwd = cwd_fd,

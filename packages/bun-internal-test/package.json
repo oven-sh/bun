@@ -7,7 +7,8 @@
     "runners/qunit"
   ],
   "dependencies": {
-    "@actions/core": "latest"
+    "@actions/core": "latest",
+    "p-queue": "^8.0.1"
   },
   "devDependencies": {
     "bun-types": "canary",

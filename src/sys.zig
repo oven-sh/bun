@@ -116,6 +116,7 @@ pub const Tag = enum(u8) {
     truncate,
     realpath,
     futime,
+    listen,
 
     kevent,
     kqueue,

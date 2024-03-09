@@ -4,21 +4,131 @@ import { mkdtempSync, realpathSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { request } from "http";
-const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.unix.test"));
+import { isWindows } from "harness";
+const tmp_dir = join(realpathSync(tmpdir()));
 
-let server_unix: Server;
+it("throws ENAMETOOLONG when socket path exceeds platform-specific limit", () => {
+  // this must be the filename specifically, because we add a workaround for the length limit on linux
+  const path = "a".repeat(
+    {
+      darwin: 104,
+      linux: 108,
+      win32: 260,
+      sunos: 104,
+      aix: 104,
+      freebsd: 104,
+      openbsd: 104,
+      netbsd: 104,
+      plan9: 104,
+      android: 104,
+      haiku: 104,
+      cygwin: 260,
+    }[process.platform],
+  );
+
+  expect(() =>
+    serve({
+      unix: path,
+      fetch(req) {
+        return new Response("hello");
+      },
+    }),
+  ).toThrow("too long");
+});
+
+it("throws an error when the directory is not found", () => {
+  // this must be the filename specifically, because we add a workaround for the length limit on linux
+  const unix = isWindows
+    ? join("C:\\notfound", Math.random().toString(36).slice(2))
+    : join("/notfound", Math.random().toString(36).slice(2));
+
+  expect(() =>
+    serve({
+      unix,
+      fetch(req) {
+        return new Response("hello");
+      },
+    }),
+  ).toThrow("No such file or directory");
+});
+
+if (process.platform === "linux") {
+  it("works with abstract namespace", async () => {
+    const unix = "\0" + Math.random().toString(36).slice(2).repeat(100).slice(0, 105);
+    const server = Bun.serve({
+      unix,
+      fetch(req) {
+        return new Response(req.body);
+      },
+    });
+
+    expect(server.url.toString()).toBe(`abstract://${unix.slice(1)}/`);
+
+    // POST with body
+    for (let i = 0; i < 20; i++) {
+      const response = await fetch("http://localhost/hello", { method: "POST", body: String(i), unix });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe(String(i));
+    }
+
+    server.stop(true);
+  });
+
+  it("can workaround socket path length limit via /proc/self/fd/NN/ trick", async () => {
+    const unix = join(
+      "/tmp",
+      "." +
+        Math.random()
+          .toString(36)
+          .slice(2)
+          .repeat(100)
+          .slice(0, 105 - 4),
+    );
+    const server = Bun.serve({
+      unix,
+      fetch(req) {
+        return new Response(req.body);
+      },
+    });
+
+    // POST with body
+    for (let i = 0; i < 20; i++) {
+      const response = await fetch("http://localhost/hello", { method: "POST", body: String(i), unix });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe(String(i));
+    }
+
+    server.stop(true);
+    try {
+      rmSync(unix, {});
+    } catch (e) {}
+  });
+}
+
+let server_unix: Server,
+  socketPath: string = "";
+
 function startServerUnix({ fetch, ...options }: ServeOptions): string {
-  const socketPath = join(tmp_dir, `socket-${Math.random().toString(36).slice(2)}`);
+  if (socketPath) {
+    server_unix.reload({ ...options, fetch });
+    return socketPath;
+  }
+  const unix = `.${Math.random().toString(36).slice(2)}-socket`.slice(0, 103);
   server_unix = serve({
     ...options,
     fetch,
-    unix: socketPath,
+    unix,
   });
-  return socketPath;
+  return (socketPath = unix);
 }
 
 let server: Server;
+
 function startServer({ fetch, ...options }: ServeOptions) {
+  if (server) {
+    server.reload({ ...options, fetch });
+    return;
+  }
   server = serve({
     ...options,
     fetch,
@@ -26,7 +136,7 @@ function startServer({ fetch, ...options }: ServeOptions) {
   });
 }
 
-afterEach(() => {
+afterAll(() => {
   server_unix?.stop?.(true);
   server?.stop?.(true);
 });

@@ -596,8 +596,8 @@ async function connect(server: Server): Promise<void> {
   const client = spawn({
     cmd: [nodeExe() ?? bunExe(), pathname, url],
     cwd: import.meta.dir,
-    env: bunEnv,
-    stdio: ["pipe", "pipe", "ignore"],
+    env: { ...bunEnv, "LOG_MESSAGES": "0" },
+    stdio: ["inherit", "pipe", "inherit"],
   });
   clients.push(client);
   for await (const chunk of client.stdout) {

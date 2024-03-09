@@ -236,8 +236,9 @@ async function runTest(path) {
       };
       var actuallyDone = function () {
         actuallyDone = done = () => {};
-        if (!KEEP_TMPDIR)
-          process.nextTick(TMPDIR => rm(TMPDIR, { recursive: true, force: true }).catch(() => {}), TMPDIR);
+        proc?.stderr?.unref?.();
+        proc?.stdout?.unref?.();
+        proc?.unref?.();
         output = Buffer.concat(chunks).toString();
         finish();
       };
@@ -254,6 +255,10 @@ async function runTest(path) {
       proc.stderr.on("data", chunk => {
         chunks.push(chunk);
         if (run_concurrency === 1) process.stderr.write(chunk);
+      });
+
+      proc.once("close", () => {
+        process.nextTick(TMPDIR => rm(TMPDIR, { recursive: true, force: true }).catch(() => {}), TMPDIR);
       });
 
       proc.once("exit", (code_, signal_) => {

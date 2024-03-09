@@ -1330,7 +1330,7 @@ pub fn spawnProcessWindows(
 
     var uv_process_options = std.mem.zeroes(uv.uv_process_options_t);
 
-    uv_process_options.args = @ptrCast(argv);
+    uv_process_options.args = argv;
     uv_process_options.env = envp;
     uv_process_options.file = options.argv0 orelse argv[0].?;
     uv_process_options.exit_cb = &Process.onExitUV;
@@ -1523,7 +1523,7 @@ pub fn spawnProcessWindows(
             _ = bun.sys.close(w);
         }
     }
-    if (process.poller.uv.spawn(loop, &uv_process_options).toError(.posix_spawn)) |err| {
+    if (process.poller.uv.spawn(loop, &uv_process_options).toError(.uv_spawn)) |err| {
         failed = true;
         return .{ .err = err };
     }

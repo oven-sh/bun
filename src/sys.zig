@@ -64,6 +64,7 @@ else
 
 pub const Tag = enum(u8) {
     TODO,
+
     dup,
     access,
     chmod,
@@ -116,9 +117,7 @@ pub const Tag = enum(u8) {
     truncate,
     realpath,
     futime,
-
     pidfd_open,
-
     kevent,
     kqueue,
     epoll_ctl,
@@ -131,15 +130,18 @@ pub const Tag = enum(u8) {
     readv,
     preadv,
     ioctl_ficlone,
-
     accept,
     bind2,
     connect2,
     listen,
     pipe,
     try_write,
+
     uv_spawn,
     uv_pipe,
+
+    // Below this line are Windows API calls only.
+
     WriteFile,
     NtQueryDirectoryFile,
     NtSetInformationFile,

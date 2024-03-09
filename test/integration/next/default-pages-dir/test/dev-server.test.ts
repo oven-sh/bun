@@ -5,15 +5,33 @@ import { Subprocess } from "bun";
 import { copyFileSync, rmSync } from "fs";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
+import { cp, rm } from "fs/promises";
 
-const root = join(import.meta.dir, "../");
+import { tmpdir } from "node:os";
+
+let root = join(
+  tmpdir(),
+  "bun-next-default-pages-dir-" + Math.random().toString(36).slice(2) + "-" + Date.now().toString(36),
+);
+
+beforeAll(async () => {
+  await rm(root, { recursive: true, force: true });
+  await cp(join(import.meta.dir, "../"), root, { recursive: true, force: true });
+  await rm(join(root, ".next"), { recursive: true, force: true });
+  console.log("Copied to:", root);
+});
+
 let dev_server: undefined | Subprocess<"ignore", "pipe", "inherit">;
 let baseUrl: string;
 let dev_server_pid: number | undefined = undefined;
 async function getDevServerURL() {
   dev_server = Bun.spawn([bunExe(), "--bun", "node_modules/.bin/next", "dev"], {
     cwd: root,
-    env: bunEnv,
+    env: {
+      ...bunEnv,
+      // Print lots of debug logs in next.js:
+      // "DEBUG": "*",
+    },
     stdio: ["ignore", "pipe", "inherit"],
   });
   dev_server.unref();
@@ -64,7 +82,6 @@ async function getDevServerURL() {
 }
 
 beforeAll(async () => {
-  rmSync(join(root, ".next"), { recursive: true, force: true });
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
   const install = Bun.spawnSync([bunExe(), "i"], {

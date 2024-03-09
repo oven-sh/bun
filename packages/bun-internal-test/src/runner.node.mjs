@@ -13,7 +13,13 @@ const run_start = new Date();
 const TIMEOUT_DURATION = 1000 * 60 * 5;
 const SHORT_TIMEOUT_DURATION = Math.ceil(TIMEOUT_DURATION / 5);
 function defaultConcurrency() {
-  return Math.min(Math.floor((cpus().length - 2) / 2), 4);
+  // This causes instability due to the number of open file descriptors / sockets in some tests
+  // Windows has higher limits
+  if (process.platform !== "win32") {
+    return 1;
+  }
+
+  return Math.min(Math.floor((cpus().length - 2) / 2), 2);
 }
 
 const windows = process.platform === "win32";

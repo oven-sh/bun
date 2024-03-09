@@ -41,46 +41,77 @@ describe("bun -e", () => {
   });
 });
 
-describe("echo | bun run -", () => {
+function group(run: (code: string) => ReturnType<typeof Bun.spawnSync>) {
   test("it works", async () => {
-    let { stdout } = Bun.spawnSync({
-      cmd: [bunExe(), "run", "-"],
-      env: bunEnv,
-      stdin: Buffer.from('console.log("hello world")'),
-    });
+    const { stdout } = run('console.log("hello world")');
     expect(stdout.toString("utf8")).toEqual("hello world\n");
   });
 
   test("it gets a correct specifer", async () => {
-    let { stdout } = Bun.spawnSync({
-      cmd: [bunExe(), "run", "-"],
-      env: bunEnv,
-      stdin: Buffer.from("console.log(import.meta.path)"),
-    });
+    const { stdout } = run("console.log(import.meta.path)");
     expect(stdout.toString("utf8")).toEndWith(sep + "[stdin]\n");
   });
 
   test("it can require", async () => {
-    let { stdout } = Bun.spawnSync({
-      cmd: [bunExe(), "run", "-"],
-      env: bunEnv,
-      stdin: Buffer.from(`
+    const { stdout } = run(`
         const process = require("node:process");
         console.log(process.platform);
-      `),
-    });
+      `);
     expect(stdout.toString("utf8")).toEqual(process.platform + "\n");
   });
 
   test("it can import", async () => {
-    let { stdout } = Bun.spawnSync({
-      cmd: [bunExe(), "run", "-"],
-      env: bunEnv,
-      stdin: Buffer.from(`
+    const { stdout } = run(`
         import * as process from "node:process";
         console.log(process.platform);
-      `),
-    });
+      `);
     expect(stdout.toString("utf8")).toEqual(process.platform + "\n");
   });
+}
+
+describe("bun run - < file-path.js", () => {
+  function run(code: string) {
+    const file = join(tmpdir(), "bun-run-eval-test.js");
+    require("fs").writeFileSync(file, code);
+    try {
+      const result = Bun.spawnSync({
+        cmd: ["bash", "-c", `${bunExe()} run - < ${file}`],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+
+      if (!result.success) {
+        queueMicrotask(() => {
+          throw new Error("bun run - < file-path.js failed");
+        });
+      }
+
+      return result;
+    } finally {
+      try {
+        require("fs").unlinkSync(file);
+      } catch (e) {}
+    }
+  }
+
+  group(run);
+});
+
+describe("echo | bun run -", () => {
+  function run(code: string) {
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "run", "-"],
+      env: bunEnv,
+      stdin: Buffer.from(code),
+    });
+    if (!result.success) {
+      queueMicrotask(() => {
+        throw new Error("bun run - failed");
+      });
+    }
+
+    return result;
+  }
+
+  group(run);
 });

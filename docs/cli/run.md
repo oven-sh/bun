@@ -83,14 +83,24 @@ In memory-constrained environments, use the `--smol` flag to reduce memory usage
 $ bun --smol run index.tsx
 ```
 
-### `-`
+### `bun run -` to pipe code from stdin
 
-Execute code from the CLI without storing it in a file first by piping Javascript or Typescript directly to Bun.
+`bun run -` lets you read JavaScript, TypeScript, TSX, or JSX from stdin and execute it without writing to a temporary file first.
 
 ```bash
 $ echo "console.log('Hello')" | bun run -
 Hello
 ```
+
+You can also use `bun run -` to redirect files into Bun. For example, to run a `.js` file as if it were a `.ts` file:
+
+```bash
+$ echo "console.log!('This is TypeScript!' as any)" > secretly-typescript.js
+$ bun run - < secretly-typescript.js
+Hello
+```
+
+For convenience, all code is treated as TypeScript with JSX support when using `bun run -`.
 
 ## Run a `package.json` script
 

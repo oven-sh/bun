@@ -88,9 +88,8 @@ pub fn PosixPipeWriter(
         }
 
         pub fn onPoll(parent: *This, size_hint: isize, received_hup: bool) void {
-            
             const buffer = getBuffer(parent);
-            log("onPoll({})", .{ buffer.len });
+            log("onPoll({})", .{buffer.len});
             if (buffer.len == 0 and !received_hup) {
                 return;
             }
@@ -102,7 +101,6 @@ pub fn PosixPipeWriter(
                 received_hup,
             )) {
                 .pending => |wrote| {
-                    
                     if (wrote > 0)
                         onWrite(parent, wrote, false);
 
@@ -582,11 +580,10 @@ pub fn PosixStreamingWriter(
             this.head = 0;
             switch (rc) {
                 .pending => |amt| {
-                    
                     this.buffer.appendSlice(buf[amt..]) catch {
                         return .{ .err = bun.sys.Error.oom };
                     };
-                    
+
                     onWrite(this.parent, amt, false);
 
                     registerPoll(this);
@@ -632,7 +629,7 @@ pub fn PosixStreamingWriter(
                 break :brk false;
             });
             // update head
-            switch(rc) {
+            switch (rc) {
                 .pending => |written| {
                     this.head += written;
                 },
@@ -642,7 +639,7 @@ pub fn PosixStreamingWriter(
                 .done => |written| {
                     this.head += written;
                 },
-                else => {}
+                else => {},
             }
             return rc;
         }

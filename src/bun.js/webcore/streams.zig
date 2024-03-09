@@ -2932,9 +2932,9 @@ pub const FileSink = struct {
         // 2) We haven't received EOF
         if (Environment.isPosix) {
             //TODO: we should match behavior on windows after linux is stable, now is just confusing
-            // if we dont wait for the pending to be done, we maybe resolve pending twice 
+            // if we dont wait for the pending to be done, we maybe resolve pending twice
             if (!done and this.writer.hasPendingData()) {
-            // if (this.done and !done and this.writer.hasPendingData()) {
+                // if (this.done and !done and this.writer.hasPendingData()) {
                 if (this.pending.state == .pending) {
                     this.pending.consumed += @truncate(amount);
                 }

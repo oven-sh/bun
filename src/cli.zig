@@ -55,17 +55,13 @@ pub const Cli = struct {
         var panicker = MainPanicHandler.init(log);
         MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
-            switch (err) {
-                else => {
-                    if (Output.enable_ansi_colors_stderr) {
-                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                    } else {
-                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                    }
+            log.printForLogLevel(Output.errorWriter()) catch {};
 
-                    Reporter.globalError(err, @errorReturnTrace());
-                },
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
             }
+
+            Reporter.globalError(err, null);
         };
     }
 
@@ -980,7 +976,7 @@ pub const HelpCommand = struct {
             .explicit => {
                 Output.pretty(
                     "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
-                        Global.package_json_version_with_sha ++
+                        Global.package_json_version_with_revision ++
                         ")<r>\n\n" ++
                         cli_helptext_fmt,
                     args,
@@ -1743,7 +1739,7 @@ pub const Command = struct {
                     }
 
                     if (extension.len > 0) {
-                        if (strings.endsWithComptime(ctx.args.entry_points[0], ".bun.sh")) {
+                        if (strings.endsWithComptime(ctx.args.entry_points[0], ".sh")) {
                             break :brk options.Loader.bunsh;
                         }
 

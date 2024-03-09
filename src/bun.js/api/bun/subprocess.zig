@@ -1910,7 +1910,6 @@ pub const Subprocess = struct {
             .windows = if (Environment.isWindows) .{
                 .hide_window = windows_hide,
                 .loop = JSC.EventLoopHandle.init(jsc_vm),
-                .verbatim_arguments = true,
             } else {},
         };
 

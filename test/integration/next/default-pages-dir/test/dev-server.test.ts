@@ -25,10 +25,11 @@ let dev_server: undefined | Subprocess<"ignore", "pipe", "inherit">;
 let baseUrl: string;
 let dev_server_pid: number | undefined = undefined;
 async function getDevServerURL() {
-  dev_server = Bun.spawn([bunExe(), "--bun", "node_modules/.bin/next", "dev"], {
+  dev_server = Bun.spawn([bunExe(), "--bun", "node_modules/.bin/next", "dev", "--port=0"], {
     cwd: root,
     env: {
       ...bunEnv,
+      NEXT_TELEMETRY_DISABLED: "1",
       // Print lots of debug logs in next.js:
       // "DEBUG": "*",
     },

@@ -78,7 +78,7 @@ Bun.serve({
   fetch(req) {
     throw new Error("woops!");
   },
-  error(error: Error, req: Request | null) {
+  error(error) {
     return new Response(`<pre>${error}\n${error.stack}</pre>`, {
       headers: {
         "Content-Type": "text/html",

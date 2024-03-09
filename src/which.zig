@@ -15,6 +15,10 @@ fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u8 {
+    if (bin.len == 0) return null;
+    if (bun.strings.indexOfChar(bin, '/') != null) return null; // invalid exe. TODO: should be assertion?
+    if (bun.Environment.os == .windows and bun.strings.indexOfChar(bin, '\\') != null) return null; // invalid exe. TODO: should be assertion?
+
     if (bun.Environment.os == .windows) {
         var convert_buf: bun.WPathBuffer = undefined;
         const result = whichWin(&convert_buf, path, cwd, bin) orelse return null;
@@ -23,7 +27,6 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
         std.debug.assert(result_converted.ptr == buf.ptr);
         return buf[0..result_converted.len :0];
     }
-    if (bin.len == 0) return null;
 
     // handle absolute paths
     if (std.fs.path.isAbsolute(bin)) {

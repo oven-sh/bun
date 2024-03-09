@@ -857,8 +857,10 @@ pub const PackageInstall = struct {
         skipped: u32 = 0,
         successfully_installed: ?Bitset = null,
 
-        // deduplicated
-        packages_with_blocked_scripts: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) = .{},
+        /// Package name hash -> number of scripts skipped.
+        /// Multiple versions of the same package might add to the count, and each version
+        /// might have a different number of scripts
+        packages_with_blocked_scripts: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, usize) = .{},
     };
 
     pub const Method = enum {
@@ -8710,9 +8712,16 @@ pub const PackageManager = struct {
                             // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
                             const count = this.getInstalledPackageScriptsCount(alias, package_id, resolution.tag, log_level);
                             if (count > 0) {
-                                Output.prettyError("Blocked scripts for: {s}@{}\n", .{ alias, resolution.fmt(this.lockfile.buffers.string_bytes.items) });
-                                if (comptime log_level.isVerbose()) {}
-                                this.summary.packages_with_blocked_scripts.put(this.manager.allocator, name_hash, {}) catch bun.outOfMemory();
+                                if (comptime log_level.isVerbose()) {
+                                    Output.prettyError("Blocked scripts for: {s}@{}\n", .{
+                                        alias,
+                                        resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                    });
+                                }
+
+                                const entry = this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, name_hash) catch bun.outOfMemory();
+                                if (!entry.found_existing) entry.value_ptr.* = 0;
+                                entry.value_ptr.* += count;
                             }
                         }
 
@@ -9537,9 +9546,9 @@ pub const PackageManager = struct {
             &[_]string{"binding.gyp"},
             .auto,
         );
-        if (comptime Environment.allow_assert) {
-            std.debug.assert(root_package.scripts.filled);
-        }
+
+        // might need to read scripts from disk if we are migrating from package-lock.json
+
         if (root_package.scripts.hasAny()) {
             const add_node_gyp_rebuild_script = root_package.scripts.install.isEmpty() and root_package.scripts.preinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
 
@@ -10202,11 +10211,21 @@ pub const PackageManager = struct {
     }
 
     fn printBlockedPackagesInfo(summary: PackageInstall.Summary) void {
-        const count = summary.packages_with_blocked_scripts.count();
-        if (count > 0) {
-            Output.prettyln("\n\n<d> Blocked {d} package{s} with scripts. Run `bun pm trusted` for details.<r>\n", .{
-                count,
-                if (count > 1) "s" else "",
+        const packages_count = summary.packages_with_blocked_scripts.count();
+        var scripts_count: usize = 0;
+        for (summary.packages_with_blocked_scripts.values()) |count| scripts_count += count;
+
+        if (comptime Environment.allow_assert) {
+            // if packages_count is greater than 0, scripts_count must also be greater than 0.
+            std.debug.assert(packages_count == 0 or scripts_count > 0);
+            // if scripts_count is 1, it's only possible for packages_count to be 1.
+            std.debug.assert(scripts_count != 1 or packages_count == 1);
+        }
+
+        if (packages_count > 0) {
+            Output.prettyln("\n\n<d> Blocked scripts from {d} package{s}. Run `bun pm trusted` for details.<r>\n", .{
+                packages_count,
+                if (packages_count > 1) "s" else "",
             });
         } else {
             Output.pretty("<r>\n", .{});

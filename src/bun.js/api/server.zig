@@ -87,7 +87,6 @@ const SendfileContext = struct {
     has_set_on_writable: bool = false,
     auto_close: bool = false,
 };
-const DateTime = bun.DateTime;
 const linux = std.os.linux;
 const Async = bun.Async;
 

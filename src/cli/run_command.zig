@@ -1223,11 +1223,7 @@ pub const RunCommand = struct {
             (script_name_to_search.len == 2 and @as(u16, @bitCast(script_name_to_search[0..2].*)) == @as(u16, @bitCast([_]u8{ '.', '/' }))))
         {
             Run.boot(ctx, ".") catch |err| {
-                if (Output.enable_ansi_colors) {
-                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                }
+                ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     script_name_to_search,
@@ -1323,11 +1319,7 @@ pub const RunCommand = struct {
                     Global.configureAllocator(.{ .long_running = true });
                     const out_path = ctx.allocator.dupe(u8, file_path) catch unreachable;
                     Run.boot(ctx, out_path) catch |err| {
-                        if (Output.enable_ansi_colors) {
-                            ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                        } else {
-                            ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                        }
+                        ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                         Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                             std.fs.path.basename(file_path),
@@ -1426,11 +1418,7 @@ pub const RunCommand = struct {
             (script_name_to_search.len > 2 and script_name_to_search[0] == '.' and script_name_to_search[1] == '/'))
         {
             Run.boot(ctx, ctx.allocator.dupe(u8, script_name_to_search) catch unreachable) catch |err| {
-                if (Output.enable_ansi_colors) {
-                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                } else {
-                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                }
+                ctx.log.printForLogLevel(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                     std.fs.path.basename(script_name_to_search),
@@ -1441,6 +1429,37 @@ pub const RunCommand = struct {
                 }
                 Global.exit(1);
             };
+        }
+
+        if (script_name_to_search.len == 1 and script_name_to_search[0] == '-') {
+            // read from stdin
+
+            var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+            var list = std.ArrayList(u8).init(stack_fallback.get());
+            errdefer list.deinit();
+
+            std.io.getStdIn().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
+            ctx.runtime_options.eval_script = list.items;
+
+            const trigger = bun.pathLiteral("/[stdin]");
+            var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+            const cwd = try std.os.getcwd(&entry_point_buf);
+            @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+            const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
+
+            Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false) catch |err| {
+                ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                    std.fs.path.basename(script_name_to_search),
+                    @errorName(err),
+                });
+                if (@errorReturnTrace()) |trace| {
+                    std.debug.dumpStackTrace(trace.*);
+                }
+                Global.exit(1);
+            };
+            return true;
         }
 
         if (Environment.isWindows) try_bunx_file: {

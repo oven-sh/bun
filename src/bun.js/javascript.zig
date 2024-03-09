@@ -1607,6 +1607,10 @@ pub const VirtualMachine = struct {
                 virtual_source = eval_script;
                 loader = .tsx;
             }
+            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
+                virtual_source = eval_script;
+                loader = .tsx;
+            }
         }
 
         defer jsc_vm.module_loader.resetArena(jsc_vm);
@@ -1678,7 +1682,10 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = result.path;
             return;
-        } else if (jsc_vm.module_loader.eval_script != null and strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+        } else if (jsc_vm.module_loader.eval_script != null and
+            (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]")) or
+            strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
+        {
             ret.result = null;
             ret.path = specifier;
             return;

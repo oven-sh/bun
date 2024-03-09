@@ -991,6 +991,9 @@ pub fn getMain(
             if (strings.hasSuffixComptime(vm.main, "[eval]")) {
                 break :use_resolved_path;
             }
+            if (strings.hasSuffixComptime(vm.main, "[stdin]")) {
+                break :use_resolved_path;
+            }
 
             const fd = bun.sys.openatA(
                 if (comptime Environment.isWindows) bun.invalid_fd else bun.toFD(std.fs.cwd().fd),

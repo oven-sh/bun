@@ -13,7 +13,7 @@ const run_start = new Date();
 const TIMEOUT_DURATION = 1000 * 60 * 5;
 const SHORT_TIMEOUT_DURATION = Math.ceil(TIMEOUT_DURATION / 5);
 function defaultConcurrency() {
-  return Math.min(Math.floor((cpus().length - 2) / 2), 2);
+  return Math.min(Math.floor((cpus().length - 2) / 2), 4);
 }
 
 const windows = process.platform === "win32";

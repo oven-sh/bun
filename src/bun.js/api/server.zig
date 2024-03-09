@@ -124,7 +124,7 @@ pub const ServerConfig = struct {
             port: u16 = 0,
             hostname: ?[*:0]const u8 = null,
         },
-        unix: [*:0]const u8,
+        unix: [:0]const u8,
 
         pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
             switch (this.*) {
@@ -134,7 +134,7 @@ pub const ServerConfig = struct {
                     }
                 },
                 .unix => |addr| {
-                    allocator.free(bun.sliceTo(addr, 0));
+                    allocator.free(addr);
                 },
             }
         }
@@ -5466,7 +5466,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
             switch (this.config.address) {
                 .unix => |unix| {
-                    var value = bun.String.createUTF8(bun.sliceTo(@constCast(unix), 0));
+                    var value = bun.String.createUTF8(unix);
                     defer value.deref();
                     return value.toJS(globalThis);
                 },
@@ -5498,7 +5498,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const fmt = switch (this.config.address) {
                 .unix => |unix| bun.fmt.URLFormatter{
                     .proto = .unix,
-                    .hostname = bun.sliceTo(@constCast(unix), 0),
+                    .hostname = unix,
                 },
                 .tcp => |tcp| blk: {
                     var port: u16 = tcp.port;
@@ -5765,11 +5765,20 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         }
                     },
                     .unix => |unix| {
-                        error_instance = (JSC.SystemError{
-                            .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {}", .{bun.fmt.QuotedFormatter{ .text = bun.sliceTo(unix, 0) }}) catch "Failed to start server"),
-                            .code = bun.String.static("EADDRINUSE"),
-                            .syscall = bun.String.static("listen"),
-                        }).toErrorInstance(this.globalThis);
+                        switch (std.c.getErrno(-1)) {
+                            .SUCCESS => {
+                                error_instance = (JSC.SystemError{
+                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {}", .{bun.fmt.QuotedFormatter{ .text = unix }}) catch "Failed to start server"),
+                                    .code = bun.String.static("EADDRINUSE"),
+                                    .syscall = bun.String.static("listen"),
+                                }).toErrorInstance(this.globalThis);
+                            },
+                            else => |e| {
+                                var sys_err = bun.sys.Error.fromCode(e, .listen);
+                                sys_err.path = unix;
+                                error_instance = sys_err.toJSC(this.globalThis);
+                            },
+                        }
                     },
                 }
             }
@@ -5854,6 +5863,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.pending_requests += 1;
             defer this.pending_requests -= 1;
             req.setYield(false);
+
             if (req.header("open-in-editor") == null) {
                 resp.writeStatus("501 Not Implemented");
                 resp.end("Viewing source without opening in editor is not implemented yet!", false);

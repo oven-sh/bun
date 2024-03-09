@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, sep } from "path";
 
 describe("bun -e", () => {
   test("it works", async () => {
@@ -38,5 +38,49 @@ describe("bun -e", () => {
     });
     expect(stderr.toString("utf8")).toInclude('"hi" as 2');
     expect(stderr.toString("utf8")).toInclude("Unexpected throw");
+  });
+});
+
+describe("echo | bun run -", () => {
+  test("it works", async () => {
+    let { stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "run", "-"],
+      env: bunEnv,
+      stdin: Buffer.from('console.log("hello world")'),
+    });
+    expect(stdout.toString("utf8")).toEqual("hello world\n");
+  });
+
+  test("it gets a correct specifer", async () => {
+    let { stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "run", "-"],
+      env: bunEnv,
+      stdin: Buffer.from("console.log(import.meta.path)"),
+    });
+    expect(stdout.toString("utf8")).toEndWith(sep + "[stdin]\n");
+  });
+
+  test("it can require", async () => {
+    let { stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "run", "-"],
+      env: bunEnv,
+      stdin: Buffer.from(`
+        const process = require("node:process");
+        console.log(process.platform);
+      `),
+    });
+    expect(stdout.toString("utf8")).toEqual(process.platform + "\n");
+  });
+
+  test("it can import", async () => {
+    let { stdout } = Bun.spawnSync({
+      cmd: [bunExe(), "run", "-"],
+      env: bunEnv,
+      stdin: Buffer.from(`
+        import * as process from "node:process";
+        console.log(process.platform);
+      `),
+    });
+    expect(stdout.toString("utf8")).toEqual(process.platform + "\n");
   });
 });

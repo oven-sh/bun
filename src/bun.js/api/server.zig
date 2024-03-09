@@ -1373,6 +1373,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!has_responded)
                 ctx.runErrorHandler(
                     value,
+                    JSValue.jsNull(),
                 );
 
             if (ctx.flags.aborted) {
@@ -1998,18 +1999,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 file.pathlike.fd
             else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
-                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toSystemError().toErrorInstance(
-                    this.server.globalThis,
-                )),
+                .err => |err| return this.runErrorHandler(
+                    err.withPath(file.pathlike.path.slice()).toSystemError().toErrorInstance(this.server.globalThis),
+                    JSValue.jsNull(),
+                ),
             };
 
             // stat only blocks if the target is a file descriptor
             const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    this.runErrorHandler(err.withPathLike(file.pathlike).toSystemError().toErrorInstance(
-                        this.server.globalThis,
-                    ));
+                    this.runErrorHandler(
+                        err.withPathLike(file.pathlike).toSystemError().toErrorInstance(this.server.globalThis),
+                        JSValue.jsNull(),
+                    );
                     if (auto_close) {
                         _ = bun.sys.close(fd);
                     }
@@ -2029,9 +2032,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
                     sys.message = bun.String.static("MacOS does not support sending non-regular files");
-                    this.runErrorHandler(sys.toErrorInstance(
-                        this.server.globalThis,
-                    ));
+                    this.runErrorHandler(
+                        sys.toErrorInstance(this.server.globalThis),
+                        JSValue.jsNull(),
+                    );
                     return;
                 }
             }
@@ -2048,9 +2052,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
                     sys.message = bun.String.static("File must be regular or FIFO");
-                    this.runErrorHandler(sys.toErrorInstance(
-                        this.server.globalThis,
-                    ));
+                    this.runErrorHandler(
+                        sys.toErrorInstance(this.server.globalThis),
+                        JSValue.jsNull(),
+                    );
                     return;
                 }
             }
@@ -2127,7 +2132,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (result == .err) {
-                this.runErrorHandler(result.err.toErrorInstance(this.server.globalThis));
+                this.runErrorHandler(
+                    result.err.toErrorInstance(this.server.globalThis),
+                    JSValue.jsNull(),
+                );
                 return;
             }
 
@@ -2451,7 +2459,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (response_value.toError()) |err_value| {
-                ctx.runErrorHandler(err_value);
+                ctx.runErrorHandler(err_value, request_value);
                 return;
             }
 
@@ -2666,7 +2674,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         this.finalizeForAbort();
                         return;
                     }
-                    this.runErrorHandler(err);
+                    this.runErrorHandler(
+                        err,
+                        JSC.JSValue.jsNull(),
+                    );
                     return;
                 },
                 // .InlineBlob,
@@ -2698,7 +2709,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 .message = bun.String.static("Stream already used, please create a new one"),
                             };
                             stream.value.unprotect();
-                            this.runErrorHandler(err.toErrorInstance(this.server.globalThis));
+                            this.runErrorHandler(
+                                err.toErrorInstance(this.server.globalThis),
+                                JSC.JSValue.jsNull(),
+                            );
                             return;
                         }
 
@@ -2882,8 +2896,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn runErrorHandler(
             this: *RequestContext,
             value: JSC.JSValue,
+            request_value: JSValue,
         ) void {
-            runErrorHandlerWithStatusCode(this, value, 500);
+            runErrorHandlerWithStatusCode(this, value, 500, request_value);
         }
 
         const PathnameFormatter = struct {
@@ -2944,14 +2959,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this: *RequestContext,
             value: JSC.JSValue,
             status: u16,
+            request_value: JSValue,
         ) void {
             JSC.markBinding(@src());
             if (!this.server.config.onError.isEmpty() and !this.flags.has_called_error_handler) {
                 this.flags.has_called_error_handler = true;
+
+                if (Environment.allow_assert) std.debug.assert(request_value != .zero);
                 const result = this.server.config.onError.callWithThis(
                     this.server.globalThis,
                     this.server.thisObject,
-                    &.{value},
+                    &.{
+                        value,
+                        request_value,
+                    },
                 );
                 defer result.ensureStillAlive();
                 if (!result.isEmptyOrUndefinedOrNull()) {
@@ -3044,11 +3065,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this: *RequestContext,
             value: JSC.JSValue,
             status: u16,
+            request_value: JSValue,
         ) void {
             JSC.markBinding(@src());
             if (this.resp == null or this.resp.?.hasResponded()) return;
 
-            runErrorHandlerWithStatusCodeDontCheckResponded(this, value, status);
+            runErrorHandlerWithStatusCodeDontCheckResponded(this, value, status, request_value);
         }
 
         pub fn renderMetadata(this: *RequestContext) void {
@@ -3342,6 +3364,24 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn getRemoteSocketInfo(this: *RequestContext) ?uws.SocketAddress {
             return (this.resp orelse return null).getRemoteSocketInfo();
+        }
+
+        pub fn toRequestObject(this: *RequestContext, globalThis: *JSGlobalObject) !*JSC.WebCore.Request {
+            if (Environment.allow_assert) std.debug.assert(this.signal == null);
+            this.signal = JSC.WebCore.AbortSignal.new(globalThis);
+
+            if (Environment.allow_assert) std.debug.assert(this.request_body == null);
+            this.request_body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
+
+            const request_object = try this.allocator.create(JSC.WebCore.Request);
+            request_object.* = .{
+                .method = this.method,
+                .request_context = AnyRequestContext.init(this),
+                .https = ssl_enabled,
+                .signal = this.signal.?.ref(),
+                .body = this.request_body.?.ref(),
+            };
+            return request_object;
         }
 
         pub const Export = shim.exportFunctions(.{
@@ -5859,20 +5899,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));
-            var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
-            var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
-
-            ctx.request_body = body;
-            var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
-            ctx.signal = signal;
-
-            request_object.* = .{
-                .method = ctx.method,
-                .request_context = AnyRequestContext.init(ctx),
-                .https = ssl_enabled,
-                .signal = signal.ref(),
-                .body = body.ref(),
-            };
+            const request_object = ctx.toRequestObject(this.globalThis) catch unreachable;
 
             if (comptime debug_mode) {
                 ctx.flags.is_web_browser_navigation = brk: {
@@ -5930,10 +5957,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 request_object.toJS(this.globalThis),
                 this.thisObject,
             };
-
             const request_value = args[0];
             request_value.ensureStillAlive();
-
             const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
             defer {
                 // uWS request will not live longer than this function
@@ -5977,21 +6002,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             req.setYield(false);
             var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
-            var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
-            var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
-
-            ctx.request_body = body;
-            var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
-            ctx.signal = signal;
-
-            request_object.* = .{
-                .method = ctx.method,
-                .request_context = AnyRequestContext.init(ctx),
-                .upgrader = ctx,
-                .https = ssl_enabled,
-                .signal = signal.ref(),
-                .body = body.ref(),
-            };
+            const request_object = ctx.toRequestObject(this.globalThis) catch unreachable;
             ctx.upgrade_context = upgrade_ctx;
 
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.

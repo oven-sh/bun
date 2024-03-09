@@ -276,9 +276,7 @@ pub const Error = struct {
         }
 
         if (this.fd != bun.invalid_fd) {
-            if (this.fd.int() <= std.math.maxInt(i32)) {
-                err.fd = this.fd;
-            }
+            err.fd = this.fd;
         }
 
         return err;
@@ -941,8 +939,6 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
             },
         };
     }
-
-    unreachable;
 }
 
 pub fn openat(dirfd: bun.FileDescriptor, file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {

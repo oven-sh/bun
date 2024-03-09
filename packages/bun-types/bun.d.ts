@@ -1444,6 +1444,14 @@ declare module "bun" {
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
     sourcemap?: "none" | "inline" | "external"; // default: "none"
+    /**
+     * package.json `exports` conditions used when resolving imports
+     *
+     * Equivalent to `--conditions` in `bun build` or `bun run`.
+     *
+     * https://nodejs.org/api/packages.html#exports
+     */
+    conditions?: Array<string> | string;
     minify?:
       | boolean
       | {
@@ -2186,7 +2194,7 @@ declare module "bun" {
      */
     development?: boolean;
 
-    error?: (this: Server, request: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
+    error?: (this: Server, error: ErrorLike, request: Request | null) => Response | Promise<Response>;
 
     /**
      * Uniquely identify a server instance with an ID

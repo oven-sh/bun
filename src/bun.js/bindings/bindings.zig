@@ -3958,14 +3958,6 @@ pub const JSValue = enum(JSValueReprInt) {
                 else => jsNumberFromInt64(@as(i64, @intCast(number))),
             },
             else => {
-                // windows
-                if (comptime Number == std.os.fd_t) {
-                    return jsNumber(bun.toFD(number));
-                }
-                if (Number == bun.FileDescriptor) {
-                    return jsNumber(number.int());
-                }
-
                 @compileError("Type transformation missing for number of type: " ++ @typeName(Number));
             },
         };
@@ -5321,6 +5313,20 @@ pub const JSValue = enum(JSValueReprInt) {
     /// Asserts `this` is a proxy
     pub fn getProxyInternalField(this: JSValue, field: ProxyInternalField) JSValue {
         return Bun__ProxyObject__getInternalField(this, field);
+    }
+
+    extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *bun.String) bool;
+
+    /// Returned memory is read-only memory of the s_info assigned to a JSCell
+    pub fn getClassInfoName(this: JSValue) ?[]const u8 {
+        var out: bun.String = undefined;
+        if (!JSC__JSValue__getClassInfoName(this, &out)) return null;
+        // we assume the class name is ASCII text
+        const data = out.latin1();
+        if (bun.Environment.allow_assert) {
+            std.debug.assert(bun.strings.isAllASCII(data));
+        }
+        return data;
     }
 };
 

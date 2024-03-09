@@ -228,10 +228,14 @@ public:
     using Base = JSC::InternalFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSMockFunction* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, CallbackKind kind = CallbackKind::Call)
+    static JSMockFunction* create(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::Structure* structure, CallbackKind kind = CallbackKind::Call)
     {
         JSMockFunction* function = new (NotNull, JSC::allocateCell<JSMockFunction>(vm)) JSMockFunction(vm, structure, kind);
         function->finishCreation(vm);
+
+        // Do not forget to set the original name: https://github.com/oven-sh/bun/issues/8794
+        function->m_originalName.set(vm, function, globalObject->commonStrings().mockedFunctionString(globalObject));
+
         return function;
     }
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -267,7 +271,12 @@ public:
     void setName(const WTF::String& name)
     {
         auto& vm = this->vm();
-        this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+        auto* nameStr = jsString(vm, name);
+
+        // Do not forget to set the original name: https://github.com/oven-sh/bun/issues/8794
+        m_originalName.set(vm, this, nameStr);
+
+        this->putDirect(vm, vm.propertyNames->name, nameStr, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
     }
 
     void copyNameAndLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
@@ -733,8 +742,10 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
     JSMockModule mock;
     mock.mockFunctionStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            auto* prototype = JSMockFunctionPrototype::create(init.vm, init.owner, JSMockFunctionPrototype::createStructure(init.vm, init.owner, init.owner->functionPrototype()));
-            init.set(JSMockFunction::createStructure(init.vm, init.owner, prototype));
+            auto& vm = init.vm;
+            auto* prototype = JSMockFunctionPrototype::create(vm, init.owner, JSMockFunctionPrototype::createStructure(vm, init.owner, init.owner->functionPrototype()));
+            auto* structure = JSMockFunction::createStructure(vm, init.owner, prototype);
+            init.set(structure);
         });
     mock.mockResultStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {

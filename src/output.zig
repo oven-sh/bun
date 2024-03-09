@@ -404,9 +404,9 @@ pub noinline fn println(comptime fmt: string, args: anytype) void {
 
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
-pub inline fn debug(comptime fmt: string, args: anytype) void {
+pub fn debug(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isRelease) return;
-    prettyErrorln("\n<d>DEBUG:<r> " ++ fmt, args);
+    prettyErrorln("<d>DEBUG:<r> " ++ fmt, args);
     flush();
 }
 
@@ -772,7 +772,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
                 }
 
                 // TODO: convert zig errors to errno for better searchability?
-                if (errors.len == 1) break :display_name .{ comptime @errorName(errors[0]), true };
+                if (errors.len == 1) break :display_name .{ errors[0].name, true };
             }
 
             break :display_name .{ @errorName(error_name), false };

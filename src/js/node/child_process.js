@@ -163,7 +163,7 @@ function spawn(file, args, options) {
         }
         timeoutId = null;
       }
-    });
+    }, options.timeout);
 
     child.once("exit", () => {
       if (timeoutId) {

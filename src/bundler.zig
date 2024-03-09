@@ -540,7 +540,7 @@ pub const Bundler = struct {
                     this.options.setProduction(true);
                 }
 
-                if (!has_production_env and this.options.isTest()) {
+                if (this.options.isTest() or this.env.isTest()) {
                     try this.env.load(dir, this.options.env.files, .@"test");
                 } else if (this.options.production) {
                     try this.env.load(dir, this.options.env.files, .production);

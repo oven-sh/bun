@@ -300,7 +300,7 @@ pub const String = extern struct {
         pub const StringPool = std.HashMap(u64, String, IdentityContext(u64), 80);
 
         pub inline fn stringHash(buf: []const u8) u64 {
-            return bun.Wyhash.hash(0, buf);
+            return bun.Wyhash11.hash(0, buf);
         }
 
         pub inline fn count(this: *Builder, slice_: string) void {
@@ -578,7 +578,7 @@ pub const SlicedString = struct {
             std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
         }
 
-        return ExternalString.init(this.buf, this.slice, bun.Wyhash.hash(0, this.slice));
+        return ExternalString.init(this.buf, this.slice, bun.Wyhash11.hash(0, this.slice));
     }
 
     pub inline fn value(this: SlicedString) String {
@@ -976,9 +976,6 @@ pub const Version = extern struct {
                         // qualifier  ::= ( '-' pre )? ( '+' build )?
                         if (state == .pre or state == .none and initial_pre_count > 0) {
                             result.tag.pre = sliced_string.sub(input[start..i]).external();
-                            if (comptime Environment.isDebug) {
-                                std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                            }
                         }
 
                         if (state != .build) {

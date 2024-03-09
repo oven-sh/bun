@@ -10,6 +10,8 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const Syscall = bun.sys;
 
+const exe_suffix = bun.exe_suffix;
+
 const w = std.os.windows;
 
 pub const StandaloneModuleGraph = struct {
@@ -661,8 +663,6 @@ pub const StandaloneModuleGraph = struct {
 
         return try StandaloneModuleGraph.fromBytes(allocator, to_read, offsets);
     }
-
-    const exe_suffix = if (Environment.isWindows) ".exe" else "";
 
     fn isBuiltInExe(argv0: []const u8) bool {
         if (argv0.len == 0) return false;

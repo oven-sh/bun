@@ -777,12 +777,15 @@ pub const Arguments = struct {
 
         if (cmd == .AutoCommand or cmd == .RunCommand) {
             ctx.debug.silent = args.flag("--silent");
-            ctx.debug.run_in_bun = args.flag("--bun") or ctx.debug.run_in_bun;
 
             if (opts.define) |define| {
                 if (define.keys.len > 0)
                     bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             }
+        }
+
+        if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .BunxCommand) {
+            ctx.debug.run_in_bun = args.flag("--bun") or ctx.debug.run_in_bun;
         }
 
         opts.resolve = Api.ResolveMode.lazy;
@@ -1034,6 +1037,9 @@ const AddCompletions = @import("./cli/add_completions.zig");
 /// - `node scripts/postinstall` -> `bun run ./scripts/postinstall`
 pub var pretend_to_be_node = false;
 
+/// This is set `true` during `Command.which()` if argv0 is "bunx"
+pub var is_bunx_exe = false;
+
 pub const Command = struct {
     var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
@@ -1196,7 +1202,20 @@ pub const Command = struct {
             argv0;
 
         // symlink is argv[0]
-        if (isBunX(without_exe)) return .BunxCommand;
+        if (isBunX(without_exe)) {
+            // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
+            // want to recursively run bunx. so this check lets us peek back into bun install.
+            if (args_iter.next()) |next| {
+                if (bun.strings.eqlComptime(next, "add") and
+                    bun.getenvZ("BUN_INTERNAL_BUNX_INSTALL") != null)
+                {
+                    return .AddCommand;
+                }
+            }
+
+            is_bunx_exe = true;
+            return .BunxCommand;
+        }
 
         if (isNode(without_exe)) {
             @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
@@ -1205,7 +1224,7 @@ pub const Command = struct {
         }
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
-        while (next_arg[0] == '-' and !(next_arg.len > 1 and next_arg[1] == 'e')) {
+        while (next_arg.len > 0 and next_arg[0] == '-' and !(next_arg.len > 1 and next_arg[1] == 'e')) {
             next_arg = ((args_iter.next()) orelse return .AutoCommand);
         }
 
@@ -1376,7 +1395,7 @@ pub const Command = struct {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BunxCommand);
 
-                try BunxCommand.exec(ctx, bun.argv()[1..]);
+                try BunxCommand.exec(ctx, bun.argv()[if (is_bunx_exe) 0 else 1..]);
                 return;
             },
             .ReplCommand => {
@@ -1384,8 +1403,8 @@ pub const Command = struct {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 var ctx = try Command.Context.create(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
-                var args = bun.argv()[1..];
-                args[0] = @constCast("bun-repl");
+                var args = bun.argv()[0..];
+                args[1] = @constCast("bun-repl");
                 try BunxCommand.exec(ctx, args);
                 return;
             },
@@ -1536,7 +1555,7 @@ pub const Command = struct {
                 // if --help, print help and exit
                 const print_help = brk: {
                     for (bun.argv()) |arg| {
-                        if (strings.eqlComptime(arg, "--help")) {
+                        if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
                             break :brk true;
                         }
                     }
@@ -1566,7 +1585,8 @@ pub const Command = struct {
                 if (print_help or
                     // "bun create --"
                     // "bun create -abc --"
-                    positional_i == 0)
+                    positional_i == 0 or
+                    positionals[0].len == 0)
                 {
                     Command.Tag.printHelp(.CreateCommand, true);
                     Global.exit(0);
@@ -1619,9 +1639,10 @@ pub const Command = struct {
                     example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {
-                    const bunx_args = try allocator.alloc([:0]const u8, args.len - template_name_start);
-                    bunx_args[0] = try BunxCommand.addCreatePrefix(allocator, template_name);
-                    for (bunx_args[1..], args[template_name_start + 1 ..]) |*dest, src| {
+                    const bunx_args = try allocator.alloc([:0]const u8, 1 + args.len - template_name_start);
+                    bunx_args[0] = "bunx";
+                    bunx_args[1] = try BunxCommand.addCreatePrefix(allocator, template_name);
+                    for (bunx_args[2..], args[template_name_start + 1 ..]) |*dest, src| {
                         dest.* = src;
                     }
 

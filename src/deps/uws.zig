@@ -444,8 +444,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime Context: type,
             ctx: *Context,
             comptime socket_field_name: []const u8,
-        ) ?*Context {
-            const this_socket = connectAnon(host, port, socket_ctx, ctx) orelse return null;
+        ) !*Context {
+            const this_socket = try connectAnon(host, port, socket_ctx, ctx);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
         }
@@ -478,8 +478,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime Context: type,
             ctx: *Context,
             comptime socket_field_name: []const u8,
-        ) ?*Context {
-            const this_socket = connectUnixAnon(path, socket_ctx, ctx) orelse return null;
+        ) !*Context {
+            const this_socket = try connectUnixAnon(path, socket_ctx, ctx);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
         }
@@ -488,56 +488,78 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             path: []const u8,
             socket_ctx: *SocketContext,
             ctx: *anyopaque,
-        ) ?ThisSocket {
+        ) !ThisSocket {
             debug("connect(unix:{s})", .{path});
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
-            const path_ = allocator.dupeZ(u8, path) catch return null;
+            const path_ = allocator.dupeZ(u8, path) catch bun.outOfMemory();
             defer allocator.free(path_);
 
-            const socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, 0, 8) orelse return null;
+            const socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, 0, 8) orelse
+                return error.FailedToOpenSocket;
 
             const socket_ = ThisSocket{ .socket = socket };
             const holder = socket_.ext(*anyopaque) orelse {
                 if (comptime bun.Environment.allow_assert) unreachable;
                 _ = us_socket_close_connecting(comptime ssl_int, socket);
-                return null;
+                return error.FailedToOpenSocket;
             };
             holder.* = ctx;
             return socket_;
         }
 
         pub fn connectAnon(
-            host: []const u8,
+            raw_host: []const u8,
             port: i32,
             socket_ctx: *SocketContext,
             ptr: *anyopaque,
-        ) ?ThisSocket {
-            debug("connect({s}, {d})", .{ host, port });
+        ) !ThisSocket {
+            debug("connect({s}, {d})", .{ raw_host, port });
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
 
-            const host_: ?[*:0]u8 = brk: {
+            const host: ?[*:0]u8 = brk: {
                 // getaddrinfo expects `node` to be null if localhost
-                if (host.len < 6 and (bun.strings.eqlComptime(host, "[::1]") or bun.strings.eqlComptime(host, "[::]"))) {
+                if (raw_host.len < 6 and (bun.strings.eqlComptime(raw_host, "[::1]") or bun.strings.eqlComptime(raw_host, "[::]"))) {
                     break :brk null;
                 }
 
-                break :brk allocator.dupeZ(u8, host) catch return null;
+                break :brk allocator.dupeZ(u8, raw_host) catch bun.outOfMemory();
             };
 
-            defer if (host_) |host__| allocator.free(host__[0..host.len]);
+            defer if (host) |allocated_host| allocator.free(allocated_host[0..raw_host.len]);
 
-            const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, null, 0, @sizeOf(*anyopaque)) orelse return null;
-            const socket_ = ThisSocket{ .socket = socket };
+            const us_socket = us_socket_context_connect(
+                comptime ssl_int,
+                socket_ctx,
+                host,
+                port,
+                null,
+                0,
+                @sizeOf(*anyopaque),
+            ) orelse {
+                if (Environment.isWindows) {
+                    try bun.windows.WSAGetLastError();
+                } else {
+                    // TODO(@paperdave): On POSIX, this will call getaddrinfo + socket
+                    // the former of these does not set errno, and usockets does not have
+                    // a way to propogate the error.
+                    //
+                    // This is caught in the wild: https://github.com/oven-sh/bun/issues/6381
+                    // and we can definitely report a better here. It just is tricky.
+                }
+                return error.FailedToOpenSocket;
+            };
 
-            const holder = socket_.ext(*anyopaque) orelse {
+            const socket = ThisSocket{ .socket = us_socket };
+
+            const holder = socket.ext(*anyopaque) orelse {
                 if (comptime bun.Environment.allow_assert) unreachable;
-                _ = us_socket_close_connecting(comptime ssl_int, socket);
-                return null;
+                _ = us_socket_close_connecting(comptime ssl_int, us_socket);
+                return error.FailedToOpenSocket;
             };
             holder.* = ptr;
-            return socket_;
+            return socket;
         }
 
         pub fn unsafeConfigure(

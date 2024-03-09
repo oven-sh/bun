@@ -206,12 +206,13 @@ async function runTest(path) {
   try {
     await new Promise((finish, reject) => {
       const chunks = [];
-      process.stdout.write(
+      process.stderr.write(
         `
-  at ${((start - run_start.getTime()) / 1000).toFixed(2)}s, file ${thisTestNumber
+at ${((start - run_start.getTime()) / 1000).toFixed(2)}s, file ${thisTestNumber
           .toString()
           .padStart(total.toString().length, "0")}/${total}, ${failing_tests.length} failing files
-  Starting "${name}"
+Starting "${name}"
+
 `,
       );
       const TMPDIR = maketemp();

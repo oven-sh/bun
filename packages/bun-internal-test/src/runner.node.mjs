@@ -259,7 +259,11 @@ async function runTest(path) {
       proc.once("exit", (code_, signal_) => {
         exitCode = code_;
         signal = signal_;
-        done();
+        if (signal) {
+          actuallyDone();
+        } else {
+          done();
+        }
       });
       proc.once("error", err_ => {
         err = err_;

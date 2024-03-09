@@ -98,7 +98,9 @@ describe("process.stdin", () => {
       })
       .on("end", function () {
         try {
-          expect(data).toBe(`data: ${input}`);
+          const expected = "data: " + input;
+          expect(data.length).toBe(expected.length);
+          expect(data).toBe(expected);
           done();
         } catch (err) {
           done(err);

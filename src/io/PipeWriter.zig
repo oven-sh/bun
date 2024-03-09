@@ -88,8 +88,9 @@ pub fn PosixPipeWriter(
         }
 
         pub fn onPoll(parent: *This, size_hint: isize, received_hup: bool) void {
+            
             const buffer = getBuffer(parent);
-
+            log("onPoll({})", .{ buffer.len });
             if (buffer.len == 0 and !received_hup) {
                 return;
             }
@@ -101,11 +102,13 @@ pub fn PosixPipeWriter(
                 received_hup,
             )) {
                 .pending => |wrote| {
+                    
+                    if (wrote > 0)
+                        onWrite(parent, wrote, false);
+
                     if (comptime registerPoll) |register| {
                         register(parent);
                     }
-                    if (wrote > 0)
-                        onWrite(parent, wrote, false);
                 },
                 .wrote => |amt| {
                     onWrite(parent, amt, false);
@@ -578,12 +581,15 @@ pub fn PosixStreamingWriter(
             const rc = @This()._tryWrite(this, buf);
             this.head = 0;
             switch (rc) {
-                .pending => |pending| {
-                    registerPoll(this);
-
-                    this.buffer.appendSlice(buf[pending..]) catch {
+                .pending => |amt| {
+                    
+                    this.buffer.appendSlice(buf[amt..]) catch {
                         return .{ .err = bun.sys.Error.oom };
                     };
+                    
+                    onWrite(this.parent, amt, false);
+
+                    registerPoll(this);
                 },
                 .wrote => |amt| {
                     if (amt < buf.len) {
@@ -596,6 +602,7 @@ pub fn PosixStreamingWriter(
                     onWrite(this.parent, amt, false);
                 },
                 .done => |amt| {
+                    this.buffer.clearRetainingCapacity();
                     onWrite(this.parent, amt, true);
                     return .{ .done = amt };
                 },
@@ -617,13 +624,27 @@ pub fn PosixStreamingWriter(
                 return .{ .wrote = 0 };
             }
 
-            return this.drainBufferedData(buffer, std.math.maxInt(usize), brk: {
+            const rc = this.drainBufferedData(buffer, std.math.maxInt(usize), brk: {
                 if (this.getPoll()) |poll| {
                     break :brk poll.flags.contains(.hup);
                 }
 
                 break :brk false;
             });
+            // update head
+            switch(rc) {
+                .pending => |written| {
+                    this.head += written;
+                },
+                .wrote => |written| {
+                    this.head += written;
+                },
+                .done => |written| {
+                    this.head += written;
+                },
+                else => {}
+            }
+            return rc;
         }
 
         pub fn deinit(this: *PosixWriter) void {

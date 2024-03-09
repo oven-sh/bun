@@ -108,6 +108,7 @@ beforeAll(async () => {
 afterAll(() => {
   if (dev_server_pid) {
     process?.kill?.(dev_server_pid);
+    dev_server_pid = undefined;
   }
 });
 
@@ -149,17 +150,27 @@ test("ssr works for 100-ish requests", async () => {
 test("hot reloading works on the client (+ tailwind hmr)", async () => {
   expect(dev_server).not.toBeUndefined();
   expect(baseUrl).not.toBeUndefined();
+  var pid: number, exited;
+  let timeout = setTimeout(() => {
+    if (timeout && pid) {
+      process.kill?.(pid);
+      pid = 0;
 
-  const { exited, pid } = Bun.spawn([bunExe(), "test/dev-server-puppeteer.ts", baseUrl], {
+      if (dev_server_pid) {
+        process?.kill?.(dev_server_pid);
+        dev_server_pid = undefined;
+      }
+    }
+  }, 30000).unref();
+
+  ({ exited, pid } = Bun.spawn([bunExe(), "test/dev-server-puppeteer.ts", baseUrl], {
     cwd: root,
     env: bunEnv,
     stdio: ["ignore", "inherit", "inherit"],
-  });
+  }));
 
-  let timeout = setTimeout(() => {
-    timeout && process.kill(pid);
-  }, 30000).unref();
   expect(await exited).toBe(0);
+  pid = 0;
   clearTimeout(timeout);
   // @ts-expect-error
   timeout = undefined;

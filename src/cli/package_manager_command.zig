@@ -317,7 +317,7 @@ pub const PackageManagerCommand = struct {
                 }
 
                 if (untrusted_dep_ids.count() == 0) {
-                    Output.print("Untrusted dependencies (0):\n", .{});
+                    Output.print("Blocked dependencies (0):\n", .{});
                     Global.exit(0);
                 }
 

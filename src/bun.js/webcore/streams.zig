@@ -2920,14 +2920,14 @@ pub const FileSink = struct {
         log("onWrite({d}, {any})", .{ amount, done });
 
         this.written += amount;
-        
+
         // TODO: on windows done means ended (no pending data on the buffer) on unix we can still have pending data on the buffer
         // we should unify the behaviors to simplify this
         const has_pending_data = this.writer.hasPendingData();
         // Only keep the event loop ref'd while there's a pending write in progress.
         // If there's no pending write, no need to keep the event loop ref'd.
         this.writer.updateRef(this.eventLoop(), has_pending_data);
-        
+
         // if we are not done yet and has pending data we just wait so we do not runPending twice
         if (!done and has_pending_data) {
             if (this.pending.state == .pending) {
@@ -2935,7 +2935,6 @@ pub const FileSink = struct {
             }
             return;
         }
-        
 
         if (this.pending.state == .pending) {
             this.pending.consumed += @truncate(amount);
@@ -2948,7 +2947,7 @@ pub const FileSink = struct {
             }
 
             this.runPending();
-              
+
             // this.done == true means ended was called
             const ended_and_done = this.done and done;
 

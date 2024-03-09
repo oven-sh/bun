@@ -193,7 +193,7 @@ pub const URLFormatter = struct {
             .http => "http",
             .https => "https",
             .unix => "unix",
-            .abstract => "abstract"
+            .abstract => "abstract",
         }});
 
         if (this.hostname) |hostname| {

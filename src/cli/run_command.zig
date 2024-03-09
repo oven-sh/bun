@@ -1483,7 +1483,6 @@ pub const RunCommand = struct {
         }
 
         if (path_for_which.len > 0) {
-            // TODO(@paperdave): double-check the PATH on windows is correct. there may be something incorrect here
             if (which(&path_buf, path_for_which, this_bundler.fs.top_level_dir, script_name_to_search)) |destination| {
                 const out = bun.asByteSlice(destination);
                 return try runBinaryWithoutBunxPath(

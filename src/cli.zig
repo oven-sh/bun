@@ -1740,7 +1740,7 @@ pub const Command = struct {
 
                     if (extension.len > 0) {
                         if (strings.endsWithComptime(ctx.args.entry_points[0], ".sh")) {
-                            break :brk .bunsh;
+                            break :brk options.Loader.bunsh;
                         }
 
                         if (!ctx.debug.loaded_bunfig) {
@@ -1748,7 +1748,7 @@ pub const Command = struct {
                         }
 
                         if (ctx.preloads.len > 0)
-                            break :brk .js;
+                            break :brk options.Loader.js;
                     }
 
                     break :brk null;
@@ -1812,7 +1812,6 @@ pub const Command = struct {
     }
 
     fn maybeOpenWithBunJS(ctx: *Command.Context) bool {
-        const debug = bun.Output.scoped(.maybeOpenWithBunJS, false);
         if (ctx.args.entry_points.len == 0)
             return false;
 
@@ -1830,7 +1829,6 @@ pub const Command = struct {
                     if (comptime Environment.isWindows) {
                         resolved = resolve_path.normalizeString(resolved, true, .windows);
                     }
-                    debug("absolute path = {s}", .{resolved});
                     break :brk bun.openFile(
                         resolved,
                         .{ .mode = .read_only },
@@ -1841,7 +1839,7 @@ pub const Command = struct {
                         script_name_buf[file_path.len] = 0;
                         break :brk2 script_name_buf[0..file_path.len :0];
                     };
-                    debug("relative with dots file_path = {s}", .{file_pathZ});
+
                     break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
                 } else {
                     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1854,7 +1852,6 @@ pub const Command = struct {
                         &parts,
                         .auto,
                     );
-                    debug("relative file_path = {s}", .{file_path});
                     if (file_path.len == 0) return false;
                     script_name_buf[file_path.len] = 0;
                     const file_pathZ = script_name_buf[0..file_path.len :0];
@@ -1894,7 +1891,11 @@ pub const Command = struct {
             ctx.*,
             absolute_script_path.?,
         ) catch |err| {
-            ctx.log.printForLogLevel(Output.errorWriter()) catch {};
+            if (Output.enable_ansi_colors) {
+                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+            } else {
+                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            }
 
             Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
                 std.fs.path.basename(file_path),

@@ -747,6 +747,10 @@ pub const ZigException = extern struct {
         this.name.deref();
         this.message.deref();
 
+        for (this.stack.source_lines_ptr[0..this.stack.source_lines_len]) |*line| {
+            line.deref();
+        }
+
         for (this.stack.frames_ptr[0..this.stack.frames_len]) |*frame| {
             frame.deinit();
         }
@@ -764,6 +768,7 @@ pub const ZigException = extern struct {
         frames: [frame_count]ZigStackFrame,
         loaded: bool,
         zig_exception: ZigException,
+        need_to_clear_parser_arena_on_deinit: bool = false,
 
         pub const Zero: Holder = Holder{
             .frames = brk: {
@@ -790,8 +795,11 @@ pub const ZigException = extern struct {
             return Holder.Zero;
         }
 
-        pub fn deinit(this: *Holder) void {
+        pub fn deinit(this: *Holder, vm: *JSC.VirtualMachine) void {
             this.zigException().deinit();
+            if (this.need_to_clear_parser_arena_on_deinit) {
+                vm.module_loader.resetArena(vm);
+            }
         }
 
         pub fn zigException(this: *Holder) *ZigException {

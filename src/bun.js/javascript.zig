@@ -1613,7 +1613,11 @@ pub const VirtualMachine = struct {
             }
         }
 
-        defer jsc_vm.module_loader.resetArena(jsc_vm);
+        // .print_source, which is used by exceptions avoids duplicating the entire source code
+        // but that means we have to be careful of the lifetime of the source code
+        // so we only want to reset the arena once its done freeing it.
+        defer if (flags != .print_source) jsc_vm.module_loader.resetArena(jsc_vm);
+        errdefer if (flags == .print_source) jsc_vm.module_loader.resetArena(jsc_vm);
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
@@ -2409,7 +2413,7 @@ pub const VirtualMachine = struct {
                 if (exception) |exception_| {
                     var holder = ZigException.Holder.init();
                     var zig_exception: *ZigException = holder.zigException();
-                    defer zig_exception.deinit();
+                    holder.deinit(this);
                     exception_.getStackTrace(&zig_exception.stack);
                     if (zig_exception.stack.frames_len > 0) {
                         if (allow_ansi_color) {
@@ -2617,12 +2621,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn remapZigException(
-        this: *VirtualMachine,
-        exception: *ZigException,
-        error_instance: JSValue,
-        exception_list: ?*ExceptionList,
-    ) void {
+    pub fn remapZigException(this: *VirtualMachine, exception: *ZigException, error_instance: JSValue, exception_list: ?*ExceptionList, must_reset_parser_arena_later: *bool) void {
         error_instance.toZigException(this.global, exception);
         // defer this so that it copies correctly
         defer {
@@ -2719,6 +2718,7 @@ pub const VirtualMachine = struct {
         if (mapping_) |mapping| {
             var log = logger.Log.init(default_allocator);
             var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
+            must_reset_parser_arena_later.* = true;
             const code = original_source.source_code.toUTF8(bun.default_allocator);
             defer code.deinit();
 
@@ -2785,8 +2785,8 @@ pub const VirtualMachine = struct {
     pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) anyerror!void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
-        defer exception_holder.deinit();
-        this.remapZigException(exception, error_instance, exception_list);
+        defer exception_holder.deinit(this);
+        this.remapZigException(exception, error_instance, exception_list, &exception_holder.need_to_clear_parser_arena_on_deinit);
         const prev_had_errors = this.had_errors;
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;

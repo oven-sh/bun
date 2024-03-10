@@ -4,42 +4,46 @@ import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
-describe("bun -e", () => {
-  test("it works", async () => {
-    let { stdout } = Bun.spawnSync({
-      cmd: [bunExe(), "-e", 'console.log("hello world")'],
-      env: bunEnv,
+for (const flag of ["-e", "--print"]) {
+  describe(`bun ${flag}`, () => {
+    test("it works", async () => {
+      const input = flag === "--print" ? '"hello world"' : 'console.log("hello world")';
+      let { stdout } = Bun.spawnSync({
+        cmd: [bunExe(), flag, input],
+        env: bunEnv,
+      });
+      expect(stdout.toString("utf8")).toEqual("hello world\n");
     });
-    expect(stdout.toString("utf8")).toEqual("hello world\n");
-  });
 
-  test("import, tsx, require in esm, import.meta", async () => {
-    const ref = await import("react");
-    let { stdout } = Bun.spawnSync({
-      cmd: [
-        bunExe(),
-        "-e",
-        'import {version} from "react"; console.log(JSON.stringify({version,file:import.meta.path,require:require("react").version})); console.log(<hello>world</hello>);',
-      ],
-      env: bunEnv,
-    });
-    const json = {
-      version: ref.version,
-      file: join(process.cwd(), "[eval]"),
-      require: ref.version,
-    };
-    expect(stdout.toString("utf8")).toEqual(JSON.stringify(json) + "\n<hello>world</hello>\n");
-  });
+    test("import, tsx, require in esm, import.meta", async () => {
+      const ref = await import("react");
+      const input =
+        flag === "--print"
+          ? 'import {version} from "react"; console.log(JSON.stringify({version,file:import.meta.path,require:require("react").version})); <hello>world</hello>'
+          : 'import {version} from "react"; console.log(JSON.stringify({version,file:import.meta.path,require:require("react").version})); console.log(<hello>world</hello>);';
 
-  test("error has source map info 1", async () => {
-    let { stdout, stderr } = Bun.spawnSync({
-      cmd: [bunExe(), "-e", '(throw new Error("hi" as 2))'],
-      env: bunEnv,
+      let { stdout } = Bun.spawnSync({
+        cmd: [bunExe(), flag, input],
+        env: bunEnv,
+      });
+      const json = {
+        version: ref.version,
+        file: join(process.cwd(), "[eval]"),
+        require: ref.version,
+      };
+      expect(stdout.toString("utf8")).toEqual(JSON.stringify(json) + "\n<hello>world</hello>\n");
     });
-    expect(stderr.toString("utf8")).toInclude('"hi" as 2');
-    expect(stderr.toString("utf8")).toInclude("Unexpected throw");
+
+    test("error has source map info 1", async () => {
+      let { stderr } = Bun.spawnSync({
+        cmd: [bunExe(), flag, '(throw new Error("hi" as 2))'],
+        env: bunEnv,
+      });
+      expect(stderr.toString("utf8")).toInclude('"hi" as 2');
+      expect(stderr.toString("utf8")).toInclude("Unexpected throw");
+    });
   });
-});
+}
 
 function group(run: (code: string) => ReturnType<typeof Bun.spawnSync>) {
   test("it works", async () => {

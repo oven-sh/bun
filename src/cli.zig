@@ -577,11 +577,11 @@ pub const Arguments = struct {
                 ctx.preloads = preloads;
             }
 
-            if (args.option("--eval")) |script| {
-                ctx.runtime_options.eval.script = script;
-            } else if (args.option("--print")) |script| {
+            if (args.option("--print")) |script| {
                 ctx.runtime_options.eval.script = script;
                 ctx.runtime_options.eval.eval_and_print = true;
+            } else if (args.option("--eval")) |script| {
+                ctx.runtime_options.eval.script = script;
             }
             ctx.runtime_options.if_present = args.flag("--if-present");
             ctx.runtime_options.smol = args.flag("--smol");

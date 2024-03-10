@@ -21274,7 +21274,7 @@ fn NewParser_(
                 // if this fails it means that scope pushing/popping is not balanced
                 assert(p.current_scope == initial_scope);
 
-            if (!p.options.features.minify_syntax) {
+            if (!p.options.features.minify_syntax or !p.options.features.dead_code_elimination) {
                 return;
             }
 

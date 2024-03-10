@@ -2748,6 +2748,8 @@ pub const VirtualMachine = struct {
                 lines = lines[0..@min(@as(usize, lines.len), source_lines.len)];
                 var current_line_number: i32 = @intCast(last_line);
                 for (lines, source_lines[0..lines.len], source_line_numbers[0..lines.len]) |line, *line_dest, *line_number| {
+                    // To minimize duplicate allocations, we use the same slice as above
+                    // it should virtually always be UTF-8 and thus not cloned
                     line_dest.* = String.init(line);
                     line_number.* = current_line_number;
                     current_line_number -= 1;

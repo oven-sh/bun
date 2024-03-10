@@ -574,6 +574,8 @@ pub const VirtualMachine = struct {
     rare_data: ?*JSC.RareData = null,
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,
+    entry_point_result: JSC.Strong = .{},
+
     auto_install_dependencies: bool = false,
 
     onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
@@ -893,8 +895,13 @@ pub const VirtualMachine = struct {
         return .running;
     }
 
+    pub fn setEntryPointResult(this: *VirtualMachine, value: JSValue) callconv(.C) void {
+        this.entry_point_result.set(this.global, value);
+    }
+
     comptime {
         @export(scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
+        @export(setEntryPointResult, .{ .name = "Bun__VM__setEntryPointResult" });
     }
 
     pub fn onExit(this: *VirtualMachine) void {
@@ -1594,13 +1601,13 @@ pub const VirtualMachine = struct {
             break :brk options.Loader.file;
         };
 
-        if (jsc_vm.module_loader.eval_script) |eval_script| {
+        if (jsc_vm.module_loader.eval_source) |eval_source| {
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                virtual_source = eval_script;
+                virtual_source = eval_source;
                 loader = .tsx;
             }
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
-                virtual_source = eval_script;
+                virtual_source = eval_source;
                 loader = .tsx;
             }
         }
@@ -1674,7 +1681,7 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = result.path;
             return;
-        } else if (jsc_vm.module_loader.eval_script != null and
+        } else if (jsc_vm.module_loader.eval_source != null and
             (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]")) or
             strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
         {

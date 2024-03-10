@@ -5438,6 +5438,11 @@ extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
     return DECLARE_CATCH_SCOPE(globalObject->vm()).exception() != 0;
 }
 
+extern "C" void JSGlobalObject__setupModuleLoaderEvaluateForEval(JSC::JSGlobalObject* globalObject)
+{
+    reinterpret_cast<Zig::GlobalObject*>(globalObject)->setupModuleLoaderEvaluateForEval();
+}
+
 CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter* gettersetter)
 {
     return gettersetter->isGetterNull();

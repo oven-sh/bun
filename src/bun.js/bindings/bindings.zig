@@ -14,6 +14,7 @@ const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const JSC = @import("root").bun.JSC;
 const Shimmer = JSC.Shimmer;
+const ConsoleObject = JSC.ConsoleObject;
 const FFI = @import("./FFI.zig");
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
 const MutableString = bun.MutableString;
@@ -2622,6 +2623,11 @@ pub const JSGlobalObject = extern struct {
         return @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(globalThis))));
     }
 
+    extern fn JSGlobalObject__setupModuleLoaderEvaluateForEval(*JSGlobalObject) void;
+    pub fn setupModuleLoaderEvaluateForEval(this: *JSGlobalObject) void {
+        JSGlobalObject__setupModuleLoaderEvaluateForEval(this);
+    }
+
     pub fn throwInvalidArguments(
         this: *JSGlobalObject,
         comptime fmt: string,
@@ -4041,6 +4047,22 @@ pub const JSValue = enum(JSValueReprInt) {
             strings_count,
             clone,
         });
+    }
+
+    pub fn print(
+        this: JSValue,
+        globalObject: *JSGlobalObject,
+        message_type: ConsoleObject.MessageType,
+        message_level: ConsoleObject.MessageLevel,
+    ) void {
+        JSC.ConsoleObject.messageWithTypeAndLevel(
+            undefined,
+            message_type,
+            message_level,
+            globalObject,
+            &[_]JSC.JSValue{this},
+            1,
+        );
     }
 
     /// Create a JSValue string from a zig format-print (fmt + args)

@@ -654,7 +654,7 @@ pub const RuntimeTranspilerStore = struct {
 
 pub const ModuleLoader = struct {
     transpile_source_code_arena: ?*bun.ArenaAllocator = null,
-    eval_script: ?*logger.Source = null,
+    eval_source: ?*logger.Source = null,
 
     const debug = Output.scoped(.ModuleLoader, true);
 
@@ -2136,13 +2136,13 @@ pub const ModuleLoader = struct {
         // The concurrent one only handles javascript-like loaders right now.
         var loader: ?options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext);
 
-        if (jsc_vm.module_loader.eval_script) |eval_script| {
+        if (jsc_vm.module_loader.eval_source) |eval_source| {
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                virtual_source = eval_script;
+                virtual_source = eval_source;
                 loader = .tsx;
             }
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
-                virtual_source = eval_script;
+                virtual_source = eval_source;
                 loader = .tsx;
             }
         }

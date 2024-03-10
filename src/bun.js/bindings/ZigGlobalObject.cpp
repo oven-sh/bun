@@ -974,7 +974,7 @@ JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGloba
     }
 }
 
-const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
+JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &supportsRichSourceInfo,
     &shouldInterruptScript,
     &javaScriptRuntimeFlags,
@@ -990,10 +990,10 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &reportUncaughtExceptionAtEventLoop,
     &currentScriptExecutionOwner,
     &scriptExecutionStatus,
+    nullptr, // reportViolationForUnsafeEval
     nullptr, // defaultLanguage
     nullptr, // compileStreaming
     nullptr, // instantiateStreaming
-    nullptr,
     &Zig::deriveShadowRealmGlobalObject
 };
 
@@ -4552,6 +4552,33 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
         scriptFetcher, sentValue, resumeMode);
 
     return result;
+}
+
+extern "C" void Bun__VM__setEntryPointResult(void*, EncodedJSValue);
+
+JSC::JSValue GlobalObject::moduleLoaderEvaluateForEval(JSGlobalObject* globalObject,
+    JSModuleLoader* moduleLoader, JSValue key,
+    JSValue moduleRecordValue, JSValue scriptFetcher,
+    JSValue sentValue, JSValue resumeMode)
+{
+    s_globalObjectMethodTable.moduleLoaderEvaluate = &moduleLoaderEvaluate;
+
+    if (UNLIKELY(scriptFetcher && scriptFetcher.isObject())) {
+        Bun__VM__setEntryPointResult(jsCast<Zig::GlobalObject*>(globalObject)->bunVM(), JSValue::encode(scriptFetcher));
+        return scriptFetcher;
+    }
+
+    JSC::JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue,
+        scriptFetcher, sentValue, resumeMode);
+
+    Bun__VM__setEntryPointResult(jsCast<Zig::GlobalObject*>(globalObject)->bunVM(), JSValue::encode(result));
+
+    return result;
+}
+
+void GlobalObject::setupModuleLoaderEvaluateForEval()
+{
+    s_globalObjectMethodTable.moduleLoaderEvaluate = &moduleLoaderEvaluateForEval;
 }
 
 GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))

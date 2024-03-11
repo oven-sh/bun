@@ -214,7 +214,7 @@ const FailReason = enum {
                     \\
                     ,
                     else =>
-                    \\Bun failed to remap this bin to it's proper location within node_modules.
+                    \\Bun failed to remap this bin to its proper location within node_modules.
                     \\This is an indication of a corrupted node_modules directory.
                     \\
                     \\Please run 'bun install --force' in the project root and try
@@ -689,7 +689,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             // BUF1: '\??\C:\Users\dave\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^   ^ read_ptr
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
-            const length_of_filename_u8 = @intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - nt_object_prefix.len - shebang_arg_len_u8 + "\"".len * 2;
+            const length_of_filename_u8 = @intFromPtr(read_ptr) - @intFromPtr(buf1_u8) - shebang_arg_len_u8;
             @memcpy(
                 buf2_u8[shebang_arg_len_u8 + 2 * "\"".len ..][0..length_of_filename_u8],
                 buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8],

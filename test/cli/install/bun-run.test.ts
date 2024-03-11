@@ -126,16 +126,10 @@ for (let withRun of [false, true]) {
 
       it("exit signal works", async () => {
         {
-          let signalCode: any;
-          let exitCode: any;
-          const { stdout, stderr } = spawnSync({
+          const { stdout, stderr, exitCode, signalCode } = spawnSync({
             cmd: [bunExe(), "run", "bash", "-c", "kill -4 $$"],
             cwd: run_dir,
             env: bunEnv,
-            onExit(subprocess, exitCode2, signalCode2, error) {
-              exitCode = exitCode2;
-              signalCode = signalCode2;
-            },
           });
 
           expect(stderr.toString()).toBe("");
@@ -143,16 +137,10 @@ for (let withRun of [false, true]) {
           expect(exitCode).toBe(null);
         }
         {
-          let signalCode: any;
-          let exitCode: any;
-          const { stdout, stderr } = spawnSync({
+          const { stdout, stderr, exitCode, signalCode } = spawnSync({
             cmd: [bunExe(), "run", "bash", "-c", "kill -9 $$"],
             cwd: run_dir,
             env: bunEnv,
-            onExit(subprocess, exitCode2, signalCode2, error) {
-              exitCode = exitCode2;
-              signalCode = signalCode2;
-            },
           });
 
           expect(stderr.toString()).toBe("");
@@ -269,7 +257,7 @@ console.log(minify("print(6 * 7)").code);
   } = spawn({
     cmd: [bunExe(), "run", "test.js"],
     cwd: run_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {
@@ -295,7 +283,7 @@ console.log(minify("print(6 * 7)").code);
   } = spawn({
     cmd: [bunExe(), "test.js"],
     cwd: run_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {
@@ -335,7 +323,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   } = spawn({
     cmd: [bunExe(), "test.js"],
     cwd: run_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {
@@ -375,7 +363,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   } = spawn({
     cmd: [bunExe(), "run", "test.js"],
     cwd: run_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {

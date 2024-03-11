@@ -221,7 +221,7 @@ pub const WebWorker = struct {
         const Writer = @TypeOf(writer);
         // we buffer this because it'll almost always be < 4096
         // when it's under 4096, we want to avoid the dynamic allocation
-        bun.JSC.ConsoleObject.format(
+        bun.JSC.ConsoleObject.format2(
             .Debug,
             globalObject,
             &[_]JSC.JSValue{error_instance},
@@ -362,6 +362,7 @@ pub const WebWorker = struct {
         var vm_to_deinit: ?*JSC.VirtualMachine = null;
         if (this.vm) |vm| {
             this.vm = null;
+            vm.is_shutting_down = true;
             vm.onExit();
             exit_code = vm.exit_handler.exit_code;
             globalObject = vm.global;

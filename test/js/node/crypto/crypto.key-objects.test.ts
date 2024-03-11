@@ -25,13 +25,21 @@ import { test, it, expect, describe } from "bun:test";
 import { createContext, Script } from "node:vm";
 import fs from "fs";
 import path from "path";
+import { isWindows } from "harness";
 
-const publicPem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_public.pem"), "ascii");
-const privatePem = fs.readFileSync(path.join(import.meta.dir, "fixtures", "rsa_private.pem"), "ascii");
-const privateEncryptedPem = fs.readFileSync(
-  path.join(import.meta.dir, "fixtures", "rsa_private_encrypted.pem"),
-  "ascii",
-);
+function readFile(...args) {
+  const result = fs.readFileSync(...args);
+
+  if (isWindows) {
+    return result.replace(/\r\n/g, "\n");
+  }
+
+  return result;
+}
+
+const publicPem = readFile(path.join(import.meta.dir, "fixtures", "rsa_public.pem"), "ascii");
+const privatePem = readFile(path.join(import.meta.dir, "fixtures", "rsa_private.pem"), "ascii");
+const privateEncryptedPem = readFile(path.join(import.meta.dir, "fixtures", "rsa_private_encrypted.pem"), "ascii");
 
 // Constructs a regular expression for a PEM-encoded key with the given label.
 function getRegExpForPEM(label: string, cipher?: string) {
@@ -337,8 +345,8 @@ describe("crypto.KeyObjects", () => {
 
   [
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ed25519_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ed25519_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "ed25519_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "ed25519_public.pem"), "ascii"),
       keyType: "ed25519",
       jwk: {
         crv: "Ed25519",
@@ -348,8 +356,8 @@ describe("crypto.KeyObjects", () => {
       },
     },
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ed448_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ed448_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "ed448_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "ed448_public.pem"), "ascii"),
       keyType: "ed448",
       jwk: {
         crv: "Ed448",
@@ -359,8 +367,8 @@ describe("crypto.KeyObjects", () => {
       },
     },
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x25519_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x25519_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "x25519_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "x25519_public.pem"), "ascii"),
       keyType: "x25519",
       jwk: {
         crv: "X25519",
@@ -370,8 +378,8 @@ describe("crypto.KeyObjects", () => {
       },
     },
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x448_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "x448_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "x448_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "x448_public.pem"), "ascii"),
       keyType: "x448",
       jwk: {
         crv: "X448",
@@ -431,8 +439,8 @@ describe("crypto.KeyObjects", () => {
 
   [
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p256_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p256_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "ec_p256_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "ec_p256_public.pem"), "ascii"),
       keyType: "ec",
       namedCurve: "prime256v1",
       jwk: {
@@ -444,8 +452,8 @@ describe("crypto.KeyObjects", () => {
       },
     },
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_secp256k1_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_secp256k1_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "ec_secp256k1_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "ec_secp256k1_public.pem"), "ascii"),
       keyType: "ec",
       namedCurve: "secp256k1",
       jwk: {
@@ -457,8 +465,8 @@ describe("crypto.KeyObjects", () => {
       },
     },
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p384_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p384_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "ec_p384_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "ec_p384_public.pem"), "ascii"),
       keyType: "ec",
       namedCurve: "secp384r1",
       jwk: {
@@ -470,8 +478,8 @@ describe("crypto.KeyObjects", () => {
       },
     },
     {
-      private: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p521_private.pem"), "ascii"),
-      public: fs.readFileSync(path.join(import.meta.dir, "fixtures", "ec_p521_public.pem"), "ascii"),
+      private: readFile(path.join(import.meta.dir, "fixtures", "ec_p521_private.pem"), "ascii"),
+      public: readFile(path.join(import.meta.dir, "fixtures", "ec_p521_public.pem"), "ascii"),
       keyType: "ec",
       namedCurve: "secp521r1",
       jwk: {
@@ -581,11 +589,8 @@ describe("crypto.KeyObjects", () => {
   [2048, 4096].forEach(suffix => {
     test(`RSA-${suffix} should work`, async () => {
       {
-        const publicPem = fs.readFileSync(path.join(import.meta.dir, "fixtures", `rsa_public_${suffix}.pem`), "ascii");
-        const privatePem = fs.readFileSync(
-          path.join(import.meta.dir, "fixtures", `rsa_private_${suffix}.pem`),
-          "ascii",
-        );
+        const publicPem = readFile(path.join(import.meta.dir, "fixtures", `rsa_public_${suffix}.pem`), "ascii");
+        const privatePem = readFile(path.join(import.meta.dir, "fixtures", `rsa_private_${suffix}.pem`), "ascii");
         const publicKey = createPublicKey(publicPem);
         const expectedKeyDetails = {
           modulusLength: suffix,

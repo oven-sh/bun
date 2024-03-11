@@ -15,6 +15,7 @@ export class TestBuilder {
   private expected_exit_code: number = 0;
   private expected_error: ShellError | string | boolean | undefined = undefined;
   private file_equals: { [filename: string]: string } = {};
+  private _doesNotExist: string[] = [];
 
   private tempdir: string | undefined = undefined;
   private _env: { [key: string]: string } | undefined = undefined;
@@ -44,6 +45,11 @@ export class TestBuilder {
   directory(path: string): this {
     const tempdir = this.getTempDir();
     fs.mkdirSync(join(tempdir, path), { recursive: true });
+    return this;
+  }
+
+  doesNotExist(path: string): this {
+    this._doesNotExist.push(path);
     return this;
   }
 
@@ -174,7 +180,19 @@ export class TestBuilder {
       expect(actual).toEqual(expected);
     }
 
+    for (const fsname of this._doesNotExist) {
+      expect(fs.existsSync(join(this.tempdir!, fsname))).toBeFalsy();
+    }
+
     // return output;
+  }
+
+  runAsTest(name: string) {
+    // biome-ignore lint/complexity/noUselessThisAlias: <explanation>
+    const tb = this;
+    test(name, async () => {
+      await tb.run();
+    });
   }
 
   // async run(): Promise<undefined> {

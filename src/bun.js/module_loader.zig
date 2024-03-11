@@ -1475,10 +1475,14 @@ pub const ModuleLoader = struct {
                 defer {
                     if (give_back_arena) {
                         if (jsc_vm.module_loader.transpile_source_code_arena == null) {
-                            if (jsc_vm.smol) {
-                                _ = arena_.?.reset(.free_all);
-                            } else {
-                                _ = arena_.?.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                            // when .print_source is used
+                            // caller is responsible for freeing the arena
+                            if (flags != .print_source) {
+                                if (jsc_vm.smol) {
+                                    _ = arena_.?.reset(.free_all);
+                                } else {
+                                    _ = arena_.?.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                                }
                             }
 
                             jsc_vm.module_loader.transpile_source_code_arena = arena_;
@@ -2140,6 +2144,10 @@ pub const ModuleLoader = struct {
 
         if (jsc_vm.module_loader.eval_script) |eval_script| {
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+                virtual_source = eval_script;
+                loader = .tsx;
+            }
+            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
                 virtual_source = eval_script;
                 loader = .tsx;
             }

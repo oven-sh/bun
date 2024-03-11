@@ -843,7 +843,7 @@ pub fn inspect(
     const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
-    ConsoleObject.format(
+    ConsoleObject.format2(
         .Debug,
         globalThis,
         @as([*]const JSValue, @ptrCast(&value)),
@@ -978,6 +978,9 @@ pub fn getMain(
         if (vm.main_resolved_path.isEmpty()) {
             // If it's from eval, don't try to resolve it.
             if (strings.hasSuffixComptime(vm.main, "[eval]")) {
+                break :use_resolved_path;
+            }
+            if (strings.hasSuffixComptime(vm.main, "[stdin]")) {
                 break :use_resolved_path;
             }
 

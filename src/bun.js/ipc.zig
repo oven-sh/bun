@@ -167,8 +167,8 @@ const NamedPipeIPCData = struct {
         context: *anyopaque,
     };
 
-    fn onWrite(_: *NamedPipeIPCData, amount: usize, done: bool) void {
-        log("onWrite {d} {}", .{ amount, done });
+    fn onWrite(_: *NamedPipeIPCData, amount: usize, status: bun.io.WriteStatus) void {
+        log("onWrite {d} {}", .{ amount, status });
     }
 
     fn onError(_: *NamedPipeIPCData, err: bun.sys.Error) void {

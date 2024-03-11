@@ -954,8 +954,11 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getText(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            call_frame: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
+            const maybe_stream = this.tryGetBodyReadableStream(globalObject, call_frame.this());
+            if (maybe_stream) |stream| return globalObject.readableStreamToText(stream);
+
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
@@ -1008,8 +1011,11 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getJSON(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            call_frame: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
+            const maybe_stream = this.tryGetBodyReadableStream(globalObject, call_frame.this());
+            if (maybe_stream) |stream| return globalObject.readableStreamToJSON(stream);
+
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
@@ -1038,8 +1044,11 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getArrayBuffer(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            call_frame: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
+            const maybe_stream = this.tryGetBodyReadableStream(globalObject, call_frame.this());
+            if (maybe_stream) |stream| return globalObject.readableStreamToArrayBuffer(stream);
+
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1061,8 +1070,11 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getFormData(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            call_frame: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
+            const maybe_stream = this.tryGetBodyReadableStream(globalObject, call_frame.this());
+            if (maybe_stream) |stream| return globalObject.readableStreamToFormData(stream, .undefined);
+
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {

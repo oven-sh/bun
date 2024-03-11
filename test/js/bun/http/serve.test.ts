@@ -1403,7 +1403,7 @@ it("should support promise returned from error", async () => {
   server.stop(true);
 });
 
-if (process.platform === "linux")
+if (process.platform === "linux") {
   it("should use correct error when using a root range port(#7187)", () => {
     expect(() => {
       const server = Bun.serve({
@@ -1414,3 +1414,194 @@ if (process.platform === "linux")
       });
     }).toThrow("permission denied 0.0.0.0:1003");
   });
+}
+
+it("should allow cloning the request body", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const a = await Bun.readableStreamToJSON(request.clone().body);
+      const b = await Bun.readableStreamToJSON(request.body);
+      try {
+        expect(a).toEqual(b);
+      } catch (e) {
+        console.error(e);
+        return new Response("FAIL", { status: 500 });
+      }
+      return new Response("OK");
+    },
+  });
+  try {
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: JSON.stringify({ a: 1, b: [{ c: 2 }] }),
+    });
+    expect(response.status).toBe(200);
+  } finally {
+    server.stop(true);
+  }
+});
+
+it("should allow cloning the request body with .json", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const a = await request.clone().json();
+      const b = await request.json();
+      try {
+        expect(a).toEqual(b);
+      } catch (e) {
+        console.error(e);
+        return new Response("FAIL", { status: 500 });
+      }
+      return new Response("OK");
+    },
+  });
+  try {
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: JSON.stringify({ a: 1, b: [{ c: 2 }] }),
+    });
+    expect(response.status).toBe(200);
+  } finally {
+    server.stop(true);
+  }
+});
+
+it("should allow cloning the request body with .text", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const a = await request.clone().text();
+      const b = await request.text();
+      try {
+        expect(a).toEqual(b);
+      } catch (e) {
+        console.error(e);
+        return new Response("FAIL", { status: 500 });
+      }
+      return new Response("OK");
+    },
+  });
+  try {
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: JSON.stringify({ a: 1, b: [{ c: 2 }] }),
+    });
+    expect(response.status).toBe(200);
+  } finally {
+    server.stop(true);
+  }
+});
+
+it("should allow cloning the request body with .arrayBuffer", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const a = await request.clone().arrayBuffer();
+      const b = await request.arrayBuffer();
+      try {
+        expect(a).toEqual(b);
+      } catch (e) {
+        console.error(e);
+        return new Response("FAIL", { status: 500 });
+      }
+      return new Response("OK");
+    },
+  });
+  try {
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: JSON.stringify({ a: 1, b: [{ c: 2 }] }),
+    });
+    expect(response.status).toBe(200);
+  } finally {
+    server.stop(true);
+  }
+});
+
+it("should allow cloning the request body with .formData", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const a = await request.clone().formData();
+      const b = await request.formData();
+      try {
+        expect(a).toEqual(b);
+      } catch (e) {
+        console.error(e);
+        return new Response("FAIL", { status: 500 });
+      }
+      return new Response("OK");
+    },
+  });
+  try {
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: new FormData(),
+    });
+    expect(response.status).toBe(200);
+  } finally {
+    server.stop(true);
+  }
+});
+
+/** prng function */
+function createPRNG(seed?: number) {
+  let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
+  return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
+}
+
+it.only("should allow really silly cloning stuff", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      try {
+        let clones = [];
+
+        let cloned;
+        for (let i = 0; i < 100; i++) {
+          console.log(i);
+          Bun.gc(true);
+          cloned = request.clone();
+          clones.push(cloned);
+          Bun.gc(true);
+        }
+
+        let hashes = [];
+        const hash = new Bun.CryptoHasher("sha1");
+        for (let i = 0; i < clones.length; i++) {
+          console.log(i);
+          const cloned = clones[i];
+          Bun.gc(true);
+          const buffer = await cloned.arrayBuffer();
+          Bun.gc(true);
+          hash.update(buffer);
+          expect(hash.digest("hex")).toBe("16bca1c75327123ff45860425490e830fb527260");
+        }
+
+        return new Response("OK");
+      } catch (e) {
+        console.error(e);
+        return new Response("FAIL", { status: 500 });
+      }
+    },
+  });
+
+  try {
+    // 10mb request body of psuedo random data
+    const random_buffer = new Uint8Array(10 * 1024 * 1024);
+    let prng = createPRNG(12);
+    for (let i = 0; i < random_buffer.length; i++) {
+      random_buffer[i] = (prng() * 256) | 0;
+    }
+
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: random_buffer,
+    });
+    expect(response.status).toBe(200);
+  } finally {
+    server?.stop(true);
+  }
+});

@@ -56,6 +56,13 @@ for (let [gcTick, label] of [
           });
         }).toThrow("No such file or directory");
       });
+
+      it("does not throw for command not existing", async () => {
+        const { success } = spawnSync({
+          cmd: ["doesnotexist"],
+        });
+        expect(success).toBe(false);
+      });
     });
 
     describe("spawn", () => {

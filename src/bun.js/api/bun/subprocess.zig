@@ -2029,14 +2029,20 @@ pub const Subprocess = struct {
                     var arg0 = first_cmd.toSlice(globalThis, allocator);
                     defer arg0.deinit();
                     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
-                        globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
-                        return .zero;
-                    };
-                    argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved)) catch {
-                        globalThis.throwOutOfMemory();
-                        return .zero;
-                    });
+
+                    const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice());
+
+                    if (resolved) |resolved_| {
+                        argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved_)) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        });
+                    } else {
+                        // unable to resolve cmd, exit with failure
+                        const sync_value = JSC.JSValue.createEmptyObject(globalThis, 1);
+                        sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(false));
+                        return sync_value;
+                    }
                 }
 
                 while (cmds_array.next()) |value| {

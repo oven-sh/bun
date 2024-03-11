@@ -214,7 +214,7 @@ const FailReason = enum {
                     \\
                     ,
                     else =>
-                    \\Bun failed to remap this bin to it's proper location within node_modules.
+                    \\Bun failed to remap this bin to its proper location within node_modules.
                     \\This is an indication of a corrupted node_modules directory.
                     \\
                     \\Please run 'bun install --force' in the project root and try

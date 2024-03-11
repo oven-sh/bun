@@ -28,6 +28,10 @@ pub const Resolution = extern struct {
         return this.tag.isGit();
     }
 
+    pub fn isLocal(this: *const Resolution) bool {
+        return this.tag.isLocal();
+    }
+
     pub fn order(
         lhs: *const Resolution,
         rhs: *const Resolution,
@@ -323,6 +327,10 @@ pub const Resolution = extern struct {
 
         pub fn isGit(this: Tag) bool {
             return this == .git or this == .github or this == .gitlab;
+        }
+
+        pub fn isLocal(this: Tag) bool {
+            return this == .local_tarball or this == .folder or this == .symlink or this == .workspace or this == .root;
         }
     };
 };

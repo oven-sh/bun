@@ -266,7 +266,7 @@ const Handlers = struct {
             .{ "onHandshake", "handshake" },
         };
         inline for (pairs) |pair| {
-            if (opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
+            if (opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
                 if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
                     exception.* = JSC.toInvalidArguments(comptime std.fmt.comptimePrint("Expected \"{s}\" callback to be a function", .{pair.@"1"}), .{}, globalObject).asObjectRef();
                     return null;
@@ -409,12 +409,22 @@ pub const SocketConfig = struct {
                     }
                 }
 
-                if (port_value.isEmptyOrUndefinedOrNull() or !port_value.isNumber() or port_value.toInt64() > std.math.maxInt(u16) or port_value.toInt64() < 0) {
+                if (port_value.isEmptyOrUndefinedOrNull()) {
                     exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
                     return null;
                 }
 
-                port = port_value.toU16();
+                const porti32 = port_value.coerceToInt32(globalObject);
+                if (globalObject.hasException()) {
+                    return null;
+                }
+
+                if (porti32 < 0 or porti32 > 65535) {
+                    exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
+                    return null;
+                }
+
+                port = @intCast(porti32);
 
                 if (hostname_or_unix.len == 0) {
                     exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
@@ -440,7 +450,7 @@ pub const SocketConfig = struct {
             return null;
         };
 
-        if (opts.getTruthy(globalObject, "data")) |default_data_value| {
+        if (opts.fastGet(globalObject, .data)) |default_data_value| {
             default_data = default_data_value;
         }
 
@@ -693,7 +703,7 @@ pub const Listener = struct {
                 .unix => |u| {
                     const host = bun.default_allocator.dupeZ(u8, u) catch unreachable;
                     defer bun.default_allocator.free(host);
-                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, socket_flags, 8);
+                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8);
                 },
                 .fd => {
                     // don't call listen() on an fd
@@ -1162,23 +1172,23 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost, socket_ctx: *uws.SocketContext) !void {
             switch (connection) {
                 .host => |c| {
-                    _ = This.Socket.connectPtr(
+                    _ = try This.Socket.connectPtr(
                         normalizeHost(c.host),
                         c.port,
                         socket_ctx,
                         This,
                         this,
                         "socket",
-                    ) orelse return error.ConnectionFailed;
+                    );
                 },
                 .unix => |u| {
-                    _ = This.Socket.connectUnixPtr(
+                    _ = try This.Socket.connectUnixPtr(
                         u,
                         socket_ctx,
                         This,
                         this,
                         "socket",
-                    ) orelse return error.ConnectionFailed;
+                    );
                 },
                 .fd => |f| {
                     const socket = This.Socket.fromFd(socket_ctx, f, This, this, "socket") orelse return error.ConnectionFailed;
@@ -2802,7 +2812,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var default_data = JSValue.zero;
-            if (opts.getTruthy(globalObject, "data")) |default_data_value| {
+            if (opts.fastGet(globalObject, .data)) |default_data_value| {
                 default_data = default_data_value;
                 default_data.ensureStillAlive();
             }

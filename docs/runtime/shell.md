@@ -67,9 +67,20 @@ console.log(exitCode); // 0
 
 ## Redirection
 
-Bun Shell supports redirection with `<`, `>`, and `|` operators.
+A command's _input_ or _output_ may be _redirected_ using the typical Bash operators:
+- `<`           redirect stdin 
+- `>` or `1>`   redirect stdout
+- `2>`          redirect stderr
+- `&>`          redirect both stdout and stderr
+- `>>` or `1>>` redirect stdout, _appending_ to the destination, instead of overwriting
+- `2>>`         redirect stderr, _appending_ to the destination, instead of overwriting
+- `&>>`         redirect both stdout and stderr, _appending_ to the destination, instead of overwriting
+- `1>&2`        redirect stdout to stderr (all writes to stdout will instead be in stderr)
+- `2>&1`        redirect stderr to stdout (all writes to stderr will instead be in stdout)
 
-### To JavaScript objects (`>`)
+Bun Shell also supports redirecting from and to JavaScript objects.
+
+### Example: Redirect output to JavaScript objects (`>`)
 
 To redirect stdout to a JavaScript object, use the `>` operator:
 
@@ -88,7 +99,7 @@ The following JavaScript objects are supported for redirection to:
 - `Buffer`, `Uint8Array`, `Uint16Array`, `Uint32Array`, `Int8Array`, `Int16Array`, `Int32Array`, `Float32Array`, `Float64Array`, `ArrayBuffer`, `SharedArrayBuffer` (writes to the underlying buffer)
 - `Bun.file(path)`, `Bun.file(fd)` (writes to the file)
 
-### From JavaScript objects (`<`)
+### Example: Redirect input from JavaScript objects (`<`)
 
 To redirect the output from JavaScript objects to stdin, use the `<` operator:
 
@@ -108,7 +119,52 @@ The following JavaScript objects are supported for redirection from:
 - `Bun.file(path)`, `Bun.file(fd)` (reads from the file)
 - `Response` (reads from the body)
 
-### Piping (`|`)
+### Example: Redirect stdin -> file
+
+```js
+import { $ } from "bun"
+
+await $`cat < myfile.txt`
+```
+
+### Example: Redirect stdout -> file
+
+```js
+import { $ } from "bun"
+
+await $`echo bun! > greeting.txt`
+```
+
+### Example: Redirect stderr -> file
+
+```js
+import { $ } from "bun"
+
+await $`bun run index.ts 2> errors.txt`
+```
+
+
+### Example: Redirect stdout -> stderr
+
+```js
+import { $ } from "bun"
+
+// redirects stderr to stdout, so all output
+// will be available on stdout
+await $`bun run ./index.ts 2>&1`
+```
+
+### Example: Redirect stderr -> stdout
+
+```js
+import { $ } from "bun"
+
+// redirects stdout to stderr, so all output
+// will be available on stderr
+await $`bun run ./index.ts 1>&2`
+```
+
+## Piping (`|`)
 
 Like in bash, you can pipe the output of one command to another:
 
@@ -344,25 +400,26 @@ await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`
 // => baz
 ```
 
-## .bun.sh file loader
+## .sh file loader
 
-For simple shell scripts, instead of `sh`, you can use Bun Shell to run shell scripts.
+For simple shell scripts, instead of `/bin/sh`, you can use Bun Shell to run shell scripts.
 
-To do that, run any file with bun that ends with `.bun.sh`:
+To do so, just run the script with `bun` on a file with the `.sh` extension.
 
-```sh
-$ echo "echo Hello World!" > script.bun.sh
-$ bun ./script.bun.sh
-> Hello World!
+```sh#script.sh
+echo "Hello World! pwd=$(pwd)"
 ```
 
-On Windows, Bun Shell is used automatically to run `.sh` files when using Bun:
-
 ```sh
-$ echo "echo Hello World!" > script.sh
-# On windows, .bun.sh is not needed, just .sh
 $ bun ./script.sh
-> Hello World!
+Hello World! pwd=/home/demo
+```
+
+Scripts with Bun Shell are cross platform, which means they work on Windows:
+
+```
+PS C:\Users\Demo> bun .\script.sh
+Hello World! pwd=C:\Users\Demo
 ```
 
 ## Credits

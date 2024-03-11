@@ -932,6 +932,18 @@ pub const ESMConditions = struct {
             .require = require_condition_map,
         };
     }
+
+    pub fn appendSlice(self: *ESMConditions, conditions: []const string) !void {
+        try self.default.ensureUnusedCapacity(conditions.len);
+        try self.import.ensureUnusedCapacity(conditions.len);
+        try self.require.ensureUnusedCapacity(conditions.len);
+
+        for (conditions) |condition| {
+            self.default.putAssumeCapacityNoClobber(condition, {});
+            self.import.putAssumeCapacityNoClobber(condition, {});
+            self.require.putAssumeCapacityNoClobber(condition, {});
+        }
+    }
 };
 
 pub const JSX = struct {
@@ -1685,6 +1697,10 @@ pub const BundleOptions = struct {
 
         opts.conditions = try ESMConditions.init(allocator, Target.DefaultConditions.get(opts.target));
 
+        if (transform.conditions.len > 0) {
+            opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();
+        }
+
         switch (opts.target) {
             .node => {
                 opts.import_path_format = .relative;
@@ -2041,7 +2057,7 @@ pub const OutputFile = struct {
             .noop => JSC.JSValue.undefined,
             .copy => |copy| brk: {
                 const file_blob = JSC.WebCore.Blob.Store.initFile(
-                    if (copy.fd.int() != 0)
+                    if (copy.fd != .zero)
                         JSC.Node.PathOrFileDescriptor{
                             .fd = copy.fd,
                         }

@@ -110,7 +110,8 @@ pub const Repository = extern struct {
         cwd: if (Environment.isWindows) string else std.fs.Dir,
         argv: []const string,
     ) !string {
-        var buf_map = try env.map.cloneToEnvMap(allocator);
+        var std_map = try env.map.stdEnvMap(allocator);
+        defer std_map.deinit();
 
         const result = if (comptime Environment.isWindows)
             try std.ChildProcess.run(.{
@@ -118,15 +119,14 @@ pub const Repository = extern struct {
                 .argv = argv,
                 // windows `std.ChildProcess.run` uses `cwd` instead of `cwd_dir`
                 .cwd = cwd,
-                .env_map = &buf_map,
+                .env_map = std_map.get(),
             })
         else
             try std.ChildProcess.run(.{
                 .allocator = allocator,
                 .argv = argv,
                 .cwd_dir = cwd,
-
-                .env_map = &buf_map,
+                .env_map = std_map.get(),
             });
 
         switch (result.term) {

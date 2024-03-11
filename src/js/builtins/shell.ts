@@ -6,17 +6,21 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     return this.toString();
   }
   class ShellError extends Error {
-    #output: ShellOutput;
-    constructor(output: ShellOutput, code: number) {
-      super(`Failed with exit code ${code}`);
+    #output?: ShellOutput = undefined;
+    constructor() {
+      super("");
+    }
+
+    initialize(output: ShellOutput, code: number) {
+      this.message = `Failed with exit code ${code}`;
       this.#output = output;
       this.name = "ShellError";
 
       // Maybe we should just print all the properties on the Error instance
       // instead of speical ones
       this.info = {
-        stderr: output.stderr,
         exitCode: code,
+        stderr: output.stderr,
         stdout: output.stdout,
       };
 
@@ -84,19 +88,30 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     #throws: boolean = true;
     // #immediate;
     constructor(core: ShellInterpreter, throws: boolean) {
+      // Create the error immediately so it captures the stacktrace at the point
+      // of the shell script's invocation. Just creating the error should be
+      // relatively cheap, the costly work is actually computing the stacktrace
+      // (`computeErrorInfo()` in ZigGlobalObject.cpp)
+      let potentialError = new ShellError();
       let resolve, reject;
 
       super((res, rej) => {
         resolve = code => {
           const out = new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code);
           if (this.#throws && code !== 0) {
-            rej(new ShellError(out, code));
+            potentialError.initialize(out, code);
+            rej(potentialError);
           } else {
+            // Set to undefined to hint to the GC that this is unused so it can
+            // potentially GC it earlier
+            potentialError = undefined;
             res(out);
           }
         };
-        reject = code =>
-          rej(new ShellError(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code), code));
+        reject = code => {
+          potentialError.initialize(new ShellOutput(core.getBufferedStdout(), core.getBufferedStderr(), code), code);
+          rej(potentialError);
+        };
       });
 
       this.#throws = throws;

@@ -139,7 +139,7 @@ export function readableByteStreamControllerClose(controller) {
     }
   }
 
-  $readableStreamClose($getByIdDirectPrivate(controller, "controlledReadableStream"));
+  $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
 }
 
 export function readableByteStreamControllerClearPendingPullIntos(controller) {
@@ -177,7 +177,7 @@ export function readableByteStreamControllerHandleQueueDrain(controller) {
     $getByIdDirectPrivate($getByIdDirectPrivate(controller, "controlledReadableStream"), "state") === $streamReadable,
   );
   if (!$getByIdDirectPrivate(controller, "queue").size && $getByIdDirectPrivate(controller, "closeRequested"))
-    $readableStreamClose($getByIdDirectPrivate(controller, "controlledReadableStream"));
+    $readableStreamCloseIfPossible($getByIdDirectPrivate(controller, "controlledReadableStream"));
   else $readableByteStreamControllerCallPullIfNeeded(controller);
 }
 
@@ -222,18 +222,18 @@ export function readableByteStreamControllerPull(controller) {
 }
 
 export function readableByteStreamControllerShouldCallPull(controller) {
+  $assert(controller);
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+  if (!stream) {
+    return false;
+  }
 
   if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return false;
   if ($getByIdDirectPrivate(controller, "closeRequested")) return false;
   if (!($getByIdDirectPrivate(controller, "started") > 0)) return false;
   const reader = $getByIdDirectPrivate(stream, "reader");
 
-  if (
-    reader &&
-    ($getByIdDirectPrivate(reader, "readRequests")?.isNotEmpty() || !!$getByIdDirectPrivate(reader, "bunNativePtr"))
-  )
-    return true;
+  if (reader && ($getByIdDirectPrivate(reader, "readRequests")?.isNotEmpty() || !!reader.$bunNativePtr)) return true;
   if (
     $readableStreamHasBYOBReader(stream) &&
     $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "readIntoRequests")?.isNotEmpty()
@@ -244,6 +244,7 @@ export function readableByteStreamControllerShouldCallPull(controller) {
 }
 
 export function readableByteStreamControllerCallPullIfNeeded(controller) {
+  $assert(controller);
   if (!$readableByteStreamControllerShouldCallPull(controller)) return;
 
   if ($getByIdDirectPrivate(controller, "pulling")) {
@@ -280,7 +281,7 @@ export function transferBufferToCurrentRealm(buffer) {
 }
 
 export function readableStreamReaderKind(reader) {
-  if (!!$getByIdDirectPrivate(reader, "readRequests")) return $getByIdDirectPrivate(reader, "bunNativePtr") ? 3 : 1;
+  if (!!$getByIdDirectPrivate(reader, "readRequests")) return reader.$bunNativePtr ? 3 : 1;
 
   if (!!$getByIdDirectPrivate(reader, "readIntoRequests")) return 2;
 
@@ -385,7 +386,6 @@ export function readableByteStreamControllerRespondInternal(controller, bytesWri
   let stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
 
   if ($getByIdDirectPrivate(stream, "state") === $streamClosed) {
-    if (bytesWritten !== 0) throw new TypeError("bytesWritten is different from 0 even though stream is closed");
     $readableByteStreamControllerRespondInClosedState(controller, firstDescriptor);
   } else {
     $assert($getByIdDirectPrivate(stream, "state") === $streamReadable);

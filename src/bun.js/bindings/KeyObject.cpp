@@ -239,7 +239,7 @@ int PasswordCallback(char* buf, int size, int rwflag, void* u)
             size_t len = result->length();
             if (buflen < len)
                 return -1;
-            memcpy(buf, result->data(), buflen);
+            memcpy(buf, result->data(), len);
             return len;
         }
     }
@@ -470,6 +470,7 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     if (format == "pem"_s) {
+        ASSERT(data);
         auto bio = BIOPtr(BIO_new_mem_buf(const_cast<char*>((char*)data), byteLength));
         auto pkey = EvpPKeyPtr(PEM_read_bio_PrivateKey(bio.get(), nullptr, PasswordCallback, &passphrase));
 

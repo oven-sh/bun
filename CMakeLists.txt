@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.28")
-set(WEBKIT_TAG c3712c13dcdc091cfe4c7cb8f2c1fd16472e6f92)
+set(Bun_VERSION "1.0.30")
+set(WEBKIT_TAG 089023cc9078b3aa173869fd6685f3e7bed2a994)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -41,7 +41,11 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         # it is enabled for the time being to make sure to catch more bugs in the experimental windows builds
         set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
     else()
-        set(bun "bun-profile")
+        if(ZIG_OPTIMIZE STREQUAL "Debug")
+            set(bun "bun-debug")
+        else()
+            set(bun "bun-profile")
+        endif()
     endif()
 endif()
 
@@ -227,6 +231,13 @@ set(DEFAULT_USE_DEBUG_JSC, OFF)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEFAULT_USE_DEBUG_JSC ON)
+    set(DEFAULT_LTO OFF)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    if(CI)
+        set(DEFAULT_LTO ON)
+    else()
+        set(DEFAULT_LTO OFF)
+    endif()
 endif()
 
 if(WIN32)
@@ -234,7 +245,7 @@ if(WIN32)
 endif()
 
 if(UNIX AND NOT APPLE)
-    execute_process(COMMAND cat /etc/os-release COMMAND head -n1 OUTPUT_VARIABLE LINUX_DISTRO)
+    execute_process(COMMAND grep -w "NAME" /etc/os-release OUTPUT_VARIABLE LINUX_DISTRO)
 
     if(${LINUX_DISTRO} MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux\"\n")
         set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
@@ -263,6 +274,8 @@ option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore"
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
+option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
 if(USE_VALGRIND)
     # Disable SIMD
     set(USE_BASELINE_BUILD ON)
@@ -285,9 +298,11 @@ endif()
 set(ERROR_LIMIT 100 CACHE STRING "Maximum number of errors to show when compiling C++ code")
 
 set(ARCH x86_64)
+set(HOMEBREW_PREFIX "/usr/local")
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
     set(ARCH aarch64)
+    set(HOMEBREW_PREFIX "/opt/homebrew")
 endif()
 
 if(NOT CPU_TARGET)
@@ -428,7 +443,13 @@ if(NOT WEBKIT_DIR)
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
         set(ASSERT_ENABLED "1")
     elseif(NOT DEBUG AND NOT WIN32)
-        set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-lto")
+        # Avoid waiting for LTO in local release builds outside of CI
+        if(USE_LTO)
+            set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-lto")
+        else()
+            set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "")
+        endif()
+
         set(ASSERT_ENABLED "0")
     endif()
 
@@ -463,6 +484,13 @@ if(NOT WEBKIT_DIR)
     endif()
 
     set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include")
+
+    if(APPLE)
+        set(ICU_INCLUDE_DIR "${HOMEBREW_PREFIX}/opt/icu4c/include")
+    else()
+        set(ICU_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include/wtf/unicode")
+    endif()
+
     set(WEBKIT_LIB_DIR "${BUN_WORKDIR}/bun-webkit/lib")
 elseif(WEBKIT_DIR STREQUAL "omit")
     message(STATUS "Not using WebKit. This is only valid if you are only trying to build Zig code")
@@ -879,6 +907,10 @@ else()
     add_compile_definitions("ASSERT_ENABLED=1")
 endif()
 
+if(ICU_INCLUDE_DIR)
+    include_directories(${ICU_INCLUDE_DIR})
+endif()
+
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/packages/
     ${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets
@@ -945,15 +977,28 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 
     add_compile_definitions("BUN_DEBUG=1")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(LTO_FLAG "")
+
     if(NOT WIN32)
-        target_compile_options(${bun} PUBLIC -O3 -flto=full -emit-llvm -g1
+        if(USE_LTO)
+            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
+        endif()
+
+        target_compile_options(${bun} PUBLIC -O3 ${LTO_FLAG} -g1
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
         )
     else()
-        target_compile_options(${bun} PUBLIC /O2 -flto=full /DEBUG /Z7)
-        target_link_options(${bun} PUBLIC /LTCG /DEBUG)
+        set(LTO_LINK_FLAG "")
+
+        if(USE_LTO)
+            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
+            list(APPEND LTO_LINK_FLAG "/LTCG")
+        endif()
+
+        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG /Z7)
+        target_link_options(${bun} PUBLIC ${LTO_LINK_FLAG} /DEBUG)
     endif()
 endif()
 
@@ -1005,10 +1050,14 @@ else()
 endif()
 
 if(APPLE)
+    # this is gated to avoid the following warning when developing on modern versions of macOS.
+    # ld: warning: object file (/opt/homebrew/opt/icu4c/lib/libicudata.a[2](icudt73l_dat.o)) was built for newer 'macOS' version (14.0) than being linked (11.0)
+    if(DEFINED ENV{CI})
     if(ARCH STREQUAL "x86_64")
         set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
     else()
         set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
+    endif()
     endif()
 
     target_link_options(${bun} PUBLIC "-dead_strip")

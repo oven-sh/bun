@@ -560,7 +560,7 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
 void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
   if (!loop->data.ssl_data) {
     struct loop_ssl_data *loop_ssl_data =
-        us_malloc(sizeof(struct loop_ssl_data));
+        us_calloc(1, sizeof(struct loop_ssl_data));
     loop_ssl_data->ssl_read_input_length = 0;
     loop_ssl_data->ssl_read_input_offset = 0;
     loop_ssl_data->last_write_was_msg_more = 0;
@@ -1446,9 +1446,9 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
 }
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *path,
+    struct us_internal_ssl_socket_context_t *context, const char *path, size_t pathlen,
     int options, int socket_ext_size) {
-  return us_socket_context_listen_unix(0, &context->sc, path, options,
+  return us_socket_context_listen_unix(0, &context->sc, path, pathlen, options,
                                        sizeof(struct us_internal_ssl_socket_t) -
                                            sizeof(struct us_socket_t) +
                                            socket_ext_size);
@@ -1464,10 +1464,10 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(
 }
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *server_path,
+    struct us_internal_ssl_socket_context_t *context, const char *server_path, size_t pathlen,
     int options, int socket_ext_size) {
   return (struct us_internal_ssl_socket_t *)us_socket_context_connect_unix(
-      0, &context->sc, server_path, options,
+      0, &context->sc, server_path, pathlen, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
           socket_ext_size);
 }

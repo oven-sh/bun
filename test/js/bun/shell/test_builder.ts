@@ -11,10 +11,11 @@ export class TestBuilder {
   private _testName: string | undefined = undefined;
 
   private expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
-  private expected_stderr: string = "";
+  private expected_stderr: string | ((stderr: string, tempdir: string) => void) = "";
   private expected_exit_code: number = 0;
   private expected_error: ShellError | string | boolean | undefined = undefined;
   private file_equals: { [filename: string]: string } = {};
+  private _doesNotExist: string[] = [];
 
   private tempdir: string | undefined = undefined;
   private _env: { [key: string]: string } | undefined = undefined;
@@ -47,6 +48,11 @@ export class TestBuilder {
     return this;
   }
 
+  doesNotExist(path: string): this {
+    this._doesNotExist.push(path);
+    return this;
+  }
+
   file(path: string, contents: string): this {
     const tempdir = this.getTempDir();
     fs.writeFileSync(join(tempdir, path), contents);
@@ -75,7 +81,7 @@ export class TestBuilder {
     return this;
   }
 
-  stderr(expected: string): this {
+  stderr(expected: string | ((stderr: string, tempDir: string) => void)): this {
     this.expected_stderr = expected;
     return this;
   }
@@ -160,8 +166,13 @@ export class TestBuilder {
         this.expected_stdout(stdout.toString(), tempdir);
       }
     }
-    if (this.expected_stderr !== undefined)
-      expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
+    if (this.expected_stderr !== undefined) {
+      if (typeof this.expected_stderr === "string") {
+        expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
+      } else {
+        this.expected_stderr(stderr.toString(), tempdir);
+      }
+    }
     if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
 
     for (const [filename, expected] of Object.entries(this.file_equals)) {
@@ -169,7 +180,19 @@ export class TestBuilder {
       expect(actual).toEqual(expected);
     }
 
+    for (const fsname of this._doesNotExist) {
+      expect(fs.existsSync(join(this.tempdir!, fsname))).toBeFalsy();
+    }
+
     // return output;
+  }
+
+  runAsTest(name: string) {
+    // biome-ignore lint/complexity/noUselessThisAlias: <explanation>
+    const tb = this;
+    test(name, async () => {
+      await tb.run();
+    });
   }
 
   // async run(): Promise<undefined> {

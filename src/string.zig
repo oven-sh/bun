@@ -370,7 +370,7 @@ pub const String = extern struct {
 
     pub fn createUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
-        if (bun.strings.firstNonASCII16CheckMin([]const u16, bytes, false) == null) {
+        if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {
             return BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len);
         }
         return BunString__fromUTF16(bytes.ptr, bytes.len);
@@ -672,7 +672,7 @@ pub const String = extern struct {
         return "";
     }
 
-    pub fn encoding(self: String) bun.strings.Encoding {
+    pub fn encoding(self: String) bun.strings.EncodingNonAscii {
         if (self.isUTF16()) {
             return .utf16;
         }
@@ -733,8 +733,10 @@ pub const String = extern struct {
     }
 
     pub inline fn utf8(self: String) []const u8 {
-        if (comptime bun.Environment.allow_assert)
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(self.tag == .ZigString or self.tag == .StaticZigString);
             std.debug.assert(self.canBeUTF8());
+        }
         return self.value.ZigString.slice();
     }
 
@@ -938,23 +940,23 @@ pub const String = extern struct {
         };
     }
 
-    pub fn visibleWidth(this: *const String) usize {
+    pub fn visibleWidth(this: *const String, ambiguousAsWide: bool) usize {
         if (this.isUTF8()) {
             return bun.strings.visible.width.utf8(this.utf8());
         } else if (this.isUTF16()) {
-            return bun.strings.visible.width.utf16(this.utf16());
+            return bun.strings.visible.width.utf16(this.utf16(), ambiguousAsWide);
         } else {
-            return bun.strings.visible.width.ascii(this.latin1());
+            return bun.strings.visible.width.latin1(this.latin1());
         }
     }
 
-    pub fn visibleWidthExcludeANSIColors(this: *const String) usize {
+    pub fn visibleWidthExcludeANSIColors(this: *const String, ambiguousAsWide: bool) usize {
         if (this.isUTF8()) {
             return bun.strings.visible.width.exclude_ansi_colors.utf8(this.utf8());
         } else if (this.isUTF16()) {
-            return bun.strings.visible.width.exclude_ansi_colors.utf16(this.utf16());
+            return bun.strings.visible.width.exclude_ansi_colors.utf16(this.utf16(), ambiguousAsWide);
         } else {
-            return bun.strings.visible.width.exclude_ansi_colors.ascii(this.latin1());
+            return bun.strings.visible.width.exclude_ansi_colors.latin1(this.latin1());
         }
     }
 
@@ -1166,7 +1168,7 @@ pub const String = extern struct {
             return JSC.jsNumber(@as(i32, 0));
         }
 
-        const width = str.visibleWidth();
+        const width = str.visibleWidth(false);
         return JSC.jsNumber(width);
     }
 };

@@ -5,10 +5,15 @@ const Environment = @import("./env.zig");
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const bun = @import("root").bun;
 
-/// Checks if a slice's pointer is contained within another slice.
-pub inline fn isSliceInBuffer(comptime T: type, slice: []const T, buffer: []const T) bool {
+pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {
     return (@intFromPtr(buffer.ptr) <= @intFromPtr(slice.ptr) and
         (@intFromPtr(slice.ptr) + slice.len) <= (@intFromPtr(buffer.ptr) + buffer.len));
+}
+
+/// Checks if a slice's pointer is contained within another slice.
+/// If you need to make this generic, use isSliceInBufferT.
+pub fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
+    return isSliceInBufferT(u8, slice, buffer);
 }
 
 pub fn sliceRange(slice: []const u8, buffer: []const u8) ?[2]u32 {
@@ -309,7 +314,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         pub fn exists(self: *const Self, value: ValueType) bool {
-            return isSliceInBuffer(u8, value, &self.backing_buf);
+            return isSliceInBuffer(value, &self.backing_buf);
         }
 
         pub fn editableSlice(slice: []const u8) []u8 {

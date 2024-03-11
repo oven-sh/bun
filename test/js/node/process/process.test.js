@@ -1,8 +1,10 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { basename, join, resolve } from "path";
+
+const process_sleep = join(import.meta.dir, "process-sleep.js");
 
 it("process", () => {
   // this property isn't implemented yet but it should at least return a string
@@ -10,9 +12,11 @@ it("process", () => {
 
   if (!isNode && process.platform !== "win32" && process.title !== "bun") throw new Error("process.title is not 'bun'");
 
-  if (typeof process.env.USER !== "string") throw new Error("process.env is not an object");
+  if (process.platform !== "win32" && typeof process.env.USER !== "string")
+    throw new Error("process.env is not an object");
 
-  if (process.env.USER.length === 0) throw new Error("process.env is missing a USER property");
+  if (process.platform !== "win32" && process.env.USER.length === 0)
+    throw new Error("process.env is missing a USER property");
 
   if (process.platform !== "darwin" && process.platform !== "linux" && process.platform !== "win32")
     throw new Error("process.platform is invalid");
@@ -70,9 +74,10 @@ it("process.release", () => {
   expect(process.release.name).toBe("node");
   const platform = process.platform == "win32" ? "windows" : process.platform;
   const arch = { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch;
-  expect(process.release.sourceUrl).toEqual(
-    `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}.zip`,
-  );
+  const nonbaseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}.zip`;
+  const baseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}-baseline.zip`;
+
+  expect(process.release.sourceUrl).toBeOneOf([nonbaseline, baseline]);
 });
 
 it("process.env", () => {
@@ -97,7 +102,7 @@ it("process.env is spreadable and editable", () => {
   expect(process.env).toEqual(process.env);
   eval(`globalThis.process.env.USER = 'bun';`);
   expect(eval(`globalThis.process.env.USER`)).toBe("bun");
-  expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(orig);
+  expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
 it("process.env.TZ", () => {
@@ -406,9 +411,9 @@ if (process.platform !== "win32") {
   });
 }
 
-describe.skipIf(process.platform === "win32")("signal", () => {
+describe("signal", () => {
   const fixture = join(import.meta.dir, "./process-signal-handler.fixture.js");
-  it("simple case works", async () => {
+  it.skipIf(isWindows)("simple case works", async () => {
     const child = Bun.spawn({
       cmd: [bunExe(), fixture, "SIGUSR1"],
       env: bunEnv,
@@ -417,7 +422,7 @@ describe.skipIf(process.platform === "win32")("signal", () => {
     expect(await child.exited).toBe(0);
     expect(await new Response(child.stdout).text()).toBe("PASS\n");
   });
-  it("process.emit will call signal events", async () => {
+  it.skipIf(isWindows)("process.emit will call signal events", async () => {
     const child = Bun.spawn({
       cmd: [bunExe(), fixture, "SIGUSR2"],
       env: bunEnv,
@@ -429,26 +434,38 @@ describe.skipIf(process.platform === "win32")("signal", () => {
 
   it("process.kill(2) works", async () => {
     const child = Bun.spawn({
-      cmd: ["bash", "-c", "sleep 1000000"],
+      cmd: [bunExe(), process_sleep, "1000000"],
       stdout: "pipe",
+      env: bunEnv,
     });
     const prom = child.exited;
     const ret = process.kill(child.pid, "SIGTERM");
     expect(ret).toBe(true);
     await prom;
-    expect(child.signalCode).toBe("SIGTERM");
+    if (process.platform === "win32") {
+      expect(child.exitCode).toBe(1);
+    } else {
+      expect(child.signalCode).toBe("SIGTERM");
+    }
   });
 
   it("process._kill(2) works", async () => {
     const child = Bun.spawn({
-      cmd: ["bash", "-c", "sleep 1000000"],
+      cmd: [bunExe(), process_sleep, "1000000"],
       stdout: "pipe",
+      env: bunEnv,
     });
     const prom = child.exited;
-    const ret = process.kill(child.pid, "SIGKILL");
-    expect(ret).toBe(true);
+    // SIGKILL as a number
+    const SIGKILL = 9;
+    process._kill(child.pid, SIGKILL);
     await prom;
-    expect(child.signalCode).toBe("SIGKILL");
+
+    if (process.platform === "win32") {
+      expect(child.exitCode).toBe(1);
+    } else {
+      expect(child.signalCode).toBe("SIGKILL");
+    }
   });
 
   it("process.kill(2) throws on invalid input", async () => {
@@ -534,3 +551,10 @@ it("process.report", () => {
 it("process.exit with jsDoubleNumber that is an integer", () => {
   expect([join(import.meta.dir, "./process-exit-decimal-fixture.js")]).toRun();
 });
+
+if (isWindows) {
+  it("ownKeys trap windows process.env", () => {
+    expect(() => Object.keys(process.env)).not.toThrow();
+    expect(() => Object.getOwnPropertyDescriptors(process.env)).not.toThrow();
+  });
+}

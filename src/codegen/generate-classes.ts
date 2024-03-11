@@ -567,9 +567,6 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     obj.estimatedSize
       ? `
       auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-#if ASSERT_ENABLED
-      ASSERT(size > 0);
-#endif
       vm.heap.reportExtraMemoryAllocated(instance, size);`
       : ""
   }
@@ -1035,6 +1032,12 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
           if (lastFileName != fileName) {
             lastFileName = fileName;
           }
+
+          JSC::EncodedJSValue result = ${symbolName(typeName, proto[name].fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+
+          ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or DECLARE_CATCH_SCOPE(vm).exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
+
+          return result;
         #endif
 
         return ${symbolName(typeName, proto[name].fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame);
@@ -1231,9 +1234,6 @@ void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
       estimatedSize
         ? `if (auto* ptr = thisObject->wrapped()) {
             auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-#if ASSERT_ENABLED
-            ASSERT(size > 0);
-#endif
 visitor.reportExtraMemoryVisited(size);
 }`
         : ""
@@ -1404,9 +1404,6 @@ extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, v
     obj.estimatedSize
       ? `
       auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-#if ASSERT_ENABLED
-      ASSERT(size > 0);
-#endif
       vm.heap.reportExtraMemoryAllocated(instance, size);`
       : ""
   }
@@ -1779,9 +1776,9 @@ function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {}, zi
   if (zigOnly) return "";
 
   return `
-  JSC::Structure* ${className(typeName)}Structure() { return m_${className(typeName)}.getInitializedOnMainThread(this); }
-  JSC::JSObject* ${className(typeName)}Constructor() { return m_${className(typeName)}.constructorInitializedOnMainThread(this); }
-  JSC::JSValue ${className(typeName)}Prototype() { return m_${className(typeName)}.prototypeInitializedOnMainThread(this); }
+  JSC::Structure* ${className(typeName)}Structure() const { return m_${className(typeName)}.getInitializedOnMainThread(this); }
+  JSC::JSObject* ${className(typeName)}Constructor() const { return m_${className(typeName)}.constructorInitializedOnMainThread(this); }
+  JSC::JSValue ${className(typeName)}Prototype() const { return m_${className(typeName)}.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_${className(typeName)};
     `.trim();
 }
@@ -1798,8 +1795,8 @@ function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {}, noCo
                    noConstructor
                      ? ""
                      : `init.setConstructor(WebCore::${className(
-                          typeName,
-                        )}::createConstructor(init.vm, init.global, init.prototype));`
+                         typeName,
+                       )}::createConstructor(init.vm, init.global, init.prototype));`
                  }
               });
 

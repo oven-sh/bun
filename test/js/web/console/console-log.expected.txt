@@ -48,6 +48,7 @@ FooWithProp {
 /FooRegex/
 Is it a bug or a feature that formatting numbers like 123 is colored
 String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
+123456 without space should work
 {
   foo: {
     name: "baz",
@@ -244,3 +245,8 @@ myCustomName {
 {
   "": "",
 }
+{
+  hello: 2,
+}
+<Revoked Proxy>
+custom inspect

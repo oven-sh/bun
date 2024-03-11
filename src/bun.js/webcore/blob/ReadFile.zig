@@ -214,7 +214,7 @@ pub const ReadFile = struct {
     pub fn doRead(this: *ReadFile, buffer: []u8, read_len: *usize, retry: *bool) bool {
         const result: JSC.Maybe(usize) = brk: {
             if (std.os.S.ISSOCK(this.file_store.mode)) {
-                break :brk bun.sys.recv(this.opened_fd, buffer, std.os.SOCK.NONBLOCK);
+                break :brk bun.sys.recvNonBlock(this.opened_fd, buffer);
             }
 
             break :brk bun.sys.read(this.opened_fd, buffer);

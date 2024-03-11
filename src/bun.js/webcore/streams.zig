@@ -2916,8 +2916,8 @@ pub const FileSink = struct {
         this.pending.run();
     }
 
-    pub fn onWrite(this: *FileSink, amount: usize, done: bool) void {
-        log("onWrite({d}, {any})", .{ amount, done });
+    pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void {
+        log("onWrite({d}, {any})", .{ amount, status });
 
         this.written += amount;
 
@@ -2929,7 +2929,7 @@ pub const FileSink = struct {
         this.writer.updateRef(this.eventLoop(), has_pending_data);
 
         // if we are not done yet and has pending data we just wait so we do not runPending twice
-        if (!done and has_pending_data) {
+        if (status == .pending and has_pending_data) {
             if (this.pending.state == .pending) {
                 this.pending.consumed += @truncate(amount);
             }
@@ -2940,7 +2940,7 @@ pub const FileSink = struct {
             this.pending.consumed += @truncate(amount);
 
             // when "done" is true, we will never receive more data.
-            if (this.done or done) {
+            if (this.done or status == .end_of_file) {
                 this.pending.result = .{ .owned_and_done = this.pending.consumed };
             } else {
                 this.pending.result = .{ .owned = this.pending.consumed };
@@ -2949,9 +2949,9 @@ pub const FileSink = struct {
             this.runPending();
 
             // this.done == true means ended was called
-            const ended_and_done = this.done and done;
+            const ended_and_done = this.done and status == .end_of_file;
 
-            if (!ended_and_done and (Environment.isWindows or !has_pending_data)) {
+            if (this.done and status == .drained) {
                 // if we call end/endFromJS and we have some pending returned from .flush() we should call writer.end()
                 this.writer.end();
             } else if (ended_and_done and !has_pending_data) {
@@ -2959,7 +2959,7 @@ pub const FileSink = struct {
             }
         }
 
-        if (done) {
+        if (status == .end_of_file) {
             if (this.must_be_kept_alive_until_eof) {
                 this.must_be_kept_alive_until_eof = false;
                 this.deref();

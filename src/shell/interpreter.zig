@@ -9045,9 +9045,9 @@ pub const Interpreter = struct {
             return;
         }
 
-        pub fn onWrite(this: *This, amount: usize, done: bool) void {
+        pub fn onWrite(this: *This, amount: usize, status: bun.io.WriteStatus) void {
             this.setWriting(false);
-            print("IOWriter(0x{x}, fd={}) write(amount={d}, done={})", .{ @intFromPtr(this), this.fd, amount, done });
+            print("IOWriter(0x{x}, fd={}) write({d}, {})", .{ @intFromPtr(this), this.fd, amount, status });
             if (this.__idx >= this.writers.len()) return;
             const child = this.writers.get(this.__idx);
             if (child.isDead()) {
@@ -9059,7 +9059,7 @@ pub const Interpreter = struct {
                 }
                 this.total_bytes_written += amount;
                 child.written += amount;
-                if (done) {
+                if (status == .end_of_file) {
                     const not_fully_written = !this.isLastIdx(this.__idx) or child.written < child.len;
                     if (bun.Environment.allow_assert and not_fully_written) {
                         bun.Output.debugWarn("IOWriter(0x{x}) received done without fully writing data, check that onError is thrown", .{@intFromPtr(this)});

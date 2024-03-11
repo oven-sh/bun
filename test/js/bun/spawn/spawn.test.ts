@@ -1,11 +1,12 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { gcTick as _gcTick, bunExe, bunEnv, isWindows } from "harness";
+import { closeSync, fstatSync, openSync } from "fs";
+import { gcTick as _gcTick, bunEnv, bunExe, isWindows, withoutAggressiveGC } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import path from "path";
-import { openSync, fstatSync, closeSync } from "fs";
 import { tmpdir } from "node:os";
+import path from "path";
 let tmp;
+
 beforeAll(() => {
   tmp = path.join(tmpdir(), "bun-spawn-" + Date.now().toString(32)) + path.sep;
   rmSync(tmp, { force: true, recursive: true });
@@ -318,22 +319,36 @@ for (let [gcTick, label] of [
         await Bun.write(tmp + "out.txt", hugeString);
         gcTick();
         const promises = new Array(10);
+        const statusCodes = new Array(10);
         for (let i = 0; i < promises.length; i++) {
-          const { stdout } = spawn({
+          const { stdout, exited } = spawn({
             cmd: ["cat", tmp + "out.txt"],
             stdout: "pipe",
+            stdin: "ignore",
+            stderr: "inherit",
           });
 
           gcTick();
 
           promises[i] = readableStreamToText(stdout!);
+          statusCodes[i] = exited;
           gcTick();
         }
 
         const outputs = await Promise.all(promises);
-        for (let output of outputs) {
-          expect(output).toBe(hugeString);
-        }
+        const statuses = await Promise.all(statusCodes);
+
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < outputs.length; i++) {
+            const output = outputs[i];
+            const status = statuses[i];
+            expect(status).toBe(0);
+            if (output !== hugeString) {
+              expect(output.length).toBe(hugeString.length);
+            }
+            expect(output).toBe(hugeString);
+          }
+        });
       });
 
       it("kill(SIGKILL) works", async () => {

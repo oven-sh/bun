@@ -1,7 +1,7 @@
-import { it, test, expect } from "bun:test";
 import { spawn } from "bun";
-import { bunExe, bunEnv, gcTick, dumpStats, expectMaxObjectTypeCount } from "harness";
+import { expect, test } from "bun:test";
 import { closeSync, openSync } from "fs";
+import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, gcTick } from "harness";
 import { devNull } from "os";
 
 test("spawn can read from stdout multiple chunks", async () => {
@@ -9,7 +9,7 @@ test("spawn can read from stdout multiple chunks", async () => {
   var maxFD: number = -1;
   let concurrency = 7;
   const count = 100;
-  const interval = setInterval(dumpStats, 1000);
+  const interval = setInterval(dumpStats, 1000).unref();
   for (let i = 0; i < count; ) {
     const promises = new Array(concurrency);
     for (let j = 0; j < concurrency; j++) {

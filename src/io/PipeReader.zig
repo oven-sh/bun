@@ -669,9 +669,9 @@ const PosixBufferedReader = struct {
         other.flags.is_done = true;
         other.handle = .{ .closed = {} };
         to.handle.setOwner(to);
-        if (to._buffer.items.len > 0) {
-            _ = to.drainChunk(to._buffer.items[0..], .progress);
-        }
+
+        // note: the caller is supposed to drain the buffer themselves
+        // doing it here automatically makes it very easy to end up reading from the same buffer multiple times.
     }
 
     pub fn setParent(this: *PosixBufferedReader, parent_: *anyopaque) void {

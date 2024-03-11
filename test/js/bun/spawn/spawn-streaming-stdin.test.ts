@@ -1,13 +1,12 @@
-import { it, test, expect } from "bun:test";
 import { spawn } from "bun";
-import { bunExe, bunEnv, gcTick, dumpStats, expectMaxObjectTypeCount } from "harness";
+import { expect, test } from "bun:test";
 import { closeSync, openSync } from "fs";
-import { tmpdir, devNull } from "node:os";
+import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount } from "harness";
+import { devNull } from "node:os";
 import { join } from "path";
-import { unlinkSync } from "node:fs";
 
 const N = 100;
-const concurrency = 8;
+const concurrency = 16;
 const delay = 8 * 12;
 
 test("spawn can write to stdin multiple chunks", async () => {
@@ -35,7 +34,7 @@ test("spawn can write to stdin multiple chunks", async () => {
             await proc.stdin!.flush();
             await Bun.sleep(delay);
 
-            if (inCounter++ === 3) break;
+            if (inCounter++ === 6) break;
           }
           await proc.stdin!.end();
           return inCounter;
@@ -58,7 +57,7 @@ test("spawn can write to stdin multiple chunks", async () => {
 
         const [chunks, , exitCode] = await Promise.all([prom, prom2, proc.exited]);
 
-        expect(chunks).toBe("Wrote to stdin!\n".repeat(4).trim());
+        expect(chunks).toBe("Wrote to stdin!\n".repeat(7).trim());
         expect(exitCode).toBe(0);
       })();
     }

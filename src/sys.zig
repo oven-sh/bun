@@ -1387,6 +1387,7 @@ pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
 
 pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
+    const debug_timer = bun.Output.DebugTimer.start();
     if (comptime Environment.allow_assert) {
         if (adjusted_len == 0) {
             bun.Output.debugWarn("recv() called with 0 length buffer", .{});
@@ -1397,23 +1398,23 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
         const rc = system.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
 
         if (Maybe(usize).errnoSys(rc, .recv)) |err| {
-            log("recv({}, {d}, {d}) = {s}", .{ fd, adjusted_len, flag, err.err.name() });
+            log("recv({}, {d}) = {s} {}", .{ fd, adjusted_len, err.err.name(), debug_timer });
             return err;
         }
 
-        log("recv({}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
+        log("recv({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
 
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = linux.recvfrom(fd.cast(), buf.ptr, adjusted_len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
+            const rc = linux.recvfrom(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
 
             if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
-                log("recv({}, {d}, {d}) = {s}", .{ fd, adjusted_len, flag, err.err.name() });
+                log("recv({}, {d}) = {s} {}", .{ fd, adjusted_len, err.err.name(), debug_timer });
                 return err;
             }
-            log("recv({}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
+            log("recv({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }

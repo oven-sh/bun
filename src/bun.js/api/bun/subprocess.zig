@@ -242,15 +242,11 @@ pub const Subprocess = struct {
             return true;
         }
 
-        if (comptime Environment.isWindows) {
-            if (this.process.hasExited()) {
-                return false;
-            }
-
-            return this.process.hasRef();
-        } else {
-            return this.process.hasRef();
+        if (!this.process.hasExited()) {
+            return true;
         }
+
+        return false;
     }
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
@@ -807,10 +803,10 @@ pub const Subprocess = struct {
                 }
             }
 
-            pub fn onWrite(this: *This, amount: usize, is_done: bool) void {
-                log("StaticPipeWriter(0x{x}) onWrite(amount={d} is_done={any})", .{ @intFromPtr(this), amount, is_done });
+            pub fn onWrite(this: *This, amount: usize, status: bun.io.WriteStatus) void {
+                log("StaticPipeWriter(0x{x}) onWrite(amount={d} {})", .{ @intFromPtr(this), amount, status });
                 this.buffer = this.buffer[@min(amount, this.buffer.len)..];
-                if (is_done or this.buffer.len == 0) {
+                if (status == .end_of_file or this.buffer.len == 0) {
                     this.writer.close();
                 }
             }

@@ -1047,10 +1047,11 @@ pub const PipeReader = struct {
             return this.written + just_written >= p.buffered_output.slice().len;
         }
 
-        pub fn onWrite(this: *CapturedWriter, amount: usize, done: bool) void {
-            log("CapturedWriter({x}, {s}) onWrite({d}, {any}) total_written={d} total_to_write={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), amount, done, this.written + amount, this.parent().buffered_output.slice().len });
+        pub fn onWrite(this: *CapturedWriter, amount: usize, status: bun.io.WriteStatus) void {
+            log("CapturedWriter({x}, {s}) onWrite({d}, {any}) total_written={d} total_to_write={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), amount, status, this.written + amount, this.parent().buffered_output.slice().len });
             this.written += amount;
-            if (done) return;
+            // TODO: @zackradisic is this right?
+            if (status == .end_of_file) return;
             if (this.written >= this.parent().buffered_output.slice().len) {
                 this.writer.end();
             }

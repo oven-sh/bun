@@ -541,7 +541,13 @@ pub const Arguments = struct {
             }
 
             if (args.option("--port")) |port_str| {
-                opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
+                if (comptime cmd == .RunAsNodeCommand) {
+                    // TODO: prevent `node --port <script>` from working
+                    ctx.runtime_options.eval.script = port_str;
+                    ctx.runtime_options.eval.eval_and_print = true;
+                } else {
+                    opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
+                }
             }
 
             ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))

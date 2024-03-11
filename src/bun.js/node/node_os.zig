@@ -385,7 +385,7 @@ pub const OS = struct {
         JSC.markBinding(@src());
 
         const result = C.getSystemLoadavg();
-        return JSC.JSArray.from(globalThis, &.{
+        return JSC.JSArray.create(globalThis, &.{
             JSC.JSValue.jsNumber(result[0]),
             JSC.JSValue.jsNumber(result[1]),
             JSC.JSValue.jsNumber(result[2]),

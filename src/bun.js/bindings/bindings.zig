@@ -2574,7 +2574,6 @@ pub const JSFunction = extern struct {
         implementation_visibility: ImplementationVisibility = .public,
         intrinsic: Intrinsic = .none,
         constructor: ?*const JSHostFunctionType = null,
-        domjit: ?*const anyopaque = null,
     };
 
     extern fn JSFunction__createFromZig(
@@ -2585,14 +2584,13 @@ pub const JSFunction = extern struct {
         implementation_visibility: ImplementationVisibility,
         intrinsic: Intrinsic,
         constructor: ?*const JSHostFunctionType,
-        domjit: ?*const anyopaque,
     ) JSValue;
 
     pub fn create(
         global: *JSGlobalObject,
         fn_name: anytype,
         implementation: *const JSHostFunctionType,
-        arg_count: u32,
+        function_length: u32,
         options: CreateJSFunctionOptions,
     ) JSValue {
         return JSFunction__createFromZig(
@@ -2602,11 +2600,10 @@ pub const JSFunction = extern struct {
                 else => bun.String.init(fn_name),
             },
             implementation,
-            arg_count,
+            function_length,
             options.implementation_visibility,
             options.intrinsic,
             options.constructor,
-            options.domjit,
         );
     }
 
@@ -5829,27 +5826,11 @@ pub const JSHostFunctionPtr = *const JSHostFunctionType;
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
 pub const JSArray = struct {
-    pub fn from(globalThis: *JSGlobalObject, arguments: []const JSC.JSValue) JSValue {
-        return JSC.JSValue.c(JSC.C.JSObjectMakeArray(globalThis, arguments.len, @as(?[*]const JSC.C.JSObjectRef, @ptrCast(arguments.ptr)), null));
-    }
+    // TODO(@paperdave): this can throw
+    extern fn JSArray__constructArray(*JSGlobalObject, [*]const JSValue, usize) JSValue;
 
-    pub fn create(global: *JSGlobalObject, items: []JSValue) JSValue {
-        // TODO(@paperdave): make this use JSArray::constructArray and initializeIndex instead
-        const a = JSValue.createEmptyArray(global, items.len);
-        for (items, 0..) |item, i| {
-            a.putIndex(global, i, item);
-        }
-        return a;
-    }
-
-    /// Must be called with a tuple of JSValue
-    pub inline fn createInline(global: *JSGlobalObject, items: anytype) JSValue {
-        // TODO(@paperdave): make this use JSArray::constructArray and initializeIndex instead
-        const a = JSValue.createEmptyArray(global, comptime items.len);
-        inline for (items, 0..) |item, i| {
-            a.putIndex(global, i, item);
-        }
-        return a;
+    pub fn create(global: *JSGlobalObject, items: []const JSValue) JSValue {
+        return JSArray__constructArray(global, items.ptr, items.len);
     }
 };
 

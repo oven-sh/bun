@@ -1,5 +1,8 @@
 #include "root.h"
 
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSGlobalObject.h"
+
 #include "headers.h"
 
 #include "BunClientData.h"
@@ -44,6 +47,7 @@
 #include "JavaScriptCore/Watchdog.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
+#include "JavaScriptCore/JSObjectInlines.h"
 
 #include "wtf/Assertions.h"
 #include "wtf/text/ExternalStringImpl.h"
@@ -5477,8 +5481,7 @@ extern "C" EncodedJSValue JSFunction__createFromZig(
     unsigned arg_count,
     ImplementationVisibility implementation_visibility,
     Intrinsic intrinsic,
-    NativeFunction constructorOrNull,
-    const DOMJIT::Signature* domjit)
+    NativeFunction constructorOrNull)
 {
     VM& vm = global->vm();
     auto name = fn_name.toWTFString();
@@ -5491,7 +5494,16 @@ extern "C" EncodedJSValue JSFunction__createFromZig(
         implementation_visibility,
         intrinsic,
         constructorOrNull ? constructorOrNull : JSC::callHostFunctionAsConstructor,
-        domjit));
+        nullptr));
+}
+
+extern "C" EncodedJSValue JSArray__constructArray(
+    JSC::JSGlobalObject* global,
+    const JSValue* values,
+    size_t values_len)
+{
+    return JSValue::encode(
+        JSC::constructArray(global, (ArrayAllocationProfile*)nullptr, values, values_len));
 }
 
 extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)

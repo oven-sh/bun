@@ -163,6 +163,16 @@ These environment variables are read by Bun and configure aspects of its behavio
 
 ---
 
+- `BUN_CONFIG_MAX_HTTP_REQUESTS`
+- Control the maximum number of concurrent HTTP requests sent by fetch and `bun install`. Defaults to `256`. If you are running into rate limits or connection issues, you can reduce this number.
+
+---
+
+- `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD`
+- If `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD=1`, then `bun --watch` will not clear the console on reload
+
+---
+
 - `DO_NOT_TRACK`
 - Telemetry is not sent yet as of November 28th, 2023, but we are planning to add telemetry in the coming months. If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data. Equivalent of `telemetry=false` in bunfig.
 

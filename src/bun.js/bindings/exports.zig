@@ -132,17 +132,11 @@ pub const ZigErrorType = extern struct {
 
 pub const NodePath = JSC.Node.Path;
 
-// Web Streams
-pub const JSReadableStreamBlob = JSC.WebCore.ByteBlobLoader.Source.JSReadableStreamSource;
-pub const JSReadableStreamFile = JSC.WebCore.FileReader.Source.JSReadableStreamSource;
-pub const JSReadableStreamBytes = JSC.WebCore.ByteStream.Source.JSReadableStreamSource;
-
 // Sinks
 pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSSink;
 pub const JSHTTPSResponseSink = JSC.WebCore.HTTPSResponseSink.JSSink;
 pub const JSHTTPResponseSink = JSC.WebCore.HTTPResponseSink.JSSink;
 pub const JSFileSink = JSC.WebCore.FileSink.JSSink;
-pub const JSUVStreamSink = JSC.WebCore.UVStreamSink.JSSink;
 
 // WebSocket
 pub const WebSocketHTTPClient = @import("../../http/websocket_http_client.zig").WebSocketHTTPClient;
@@ -753,6 +747,10 @@ pub const ZigException = extern struct {
         this.name.deref();
         this.message.deref();
 
+        for (this.stack.source_lines_ptr[0..this.stack.source_lines_len]) |*line| {
+            line.deref();
+        }
+
         for (this.stack.frames_ptr[0..this.stack.frames_len]) |*frame| {
             frame.deinit();
         }
@@ -770,6 +768,7 @@ pub const ZigException = extern struct {
         frames: [frame_count]ZigStackFrame,
         loaded: bool,
         zig_exception: ZigException,
+        need_to_clear_parser_arena_on_deinit: bool = false,
 
         pub const Zero: Holder = Holder{
             .frames = brk: {
@@ -796,8 +795,11 @@ pub const ZigException = extern struct {
             return Holder.Zero;
         }
 
-        pub fn deinit(this: *Holder) void {
+        pub fn deinit(this: *Holder, vm: *JSC.VirtualMachine) void {
             this.zigException().deinit();
+            if (this.need_to_clear_parser_arena_on_deinit) {
+                vm.module_loader.resetArena(vm);
+            }
         }
 
         pub fn zigException(this: *Holder) *ZigException {
@@ -911,14 +913,11 @@ comptime {
         _ = Process.setTitle;
         Bun.Timer.shim.ref();
         NodePath.shim.ref();
-        JSReadableStreamBlob.shim.ref();
         JSArrayBufferSink.shim.ref();
         JSHTTPResponseSink.shim.ref();
         JSHTTPSResponseSink.shim.ref();
         JSFileSink.shim.ref();
-        JSUVStreamSink.shim.ref();
-        JSReadableStreamBytes.shim.ref();
-        JSReadableStreamFile.shim.ref();
+        JSFileSink.shim.ref();
         _ = ZigString__free;
         _ = ZigString__free_global;
 

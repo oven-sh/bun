@@ -115,6 +115,8 @@ const SourceMap = @import("../sourcemap/sourcemap.zig");
 const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
 
+const uv = bun.windows.libuv;
+
 pub const SavedSourceMap = struct {
     pub const vlq_offset = 24;
 
@@ -506,7 +508,7 @@ pub const VirtualMachine = struct {
     hide_bun_stackframes: bool = true,
 
     is_printing_plugin: bool = false,
-
+    is_shutting_down: bool = false,
     plugin_runner: ?PluginRunner = null,
     is_main_thread: bool = false,
     last_reported_error_for_dedupe: JSValue = .zero,
@@ -623,6 +625,10 @@ pub const VirtualMachine = struct {
 
     pub fn isInspectorEnabled(this: *const VirtualMachine) bool {
         return this.debugger != null;
+    }
+
+    pub inline fn isShuttingDown(this: *const VirtualMachine) bool {
+        return this.is_shutting_down;
     }
 
     const VMHolder = struct {
@@ -753,7 +759,9 @@ pub const VirtualMachine = struct {
         }
 
         if (map.map.fetchSwapRemove("BUN_INTERNAL_IPC_FD")) |kv| {
-            if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
+            if (Environment.isWindows) {
+                this.initIPCInstance(kv.value.value);
+            } else if (std.fmt.parseInt(i32, kv.value.value, 10) catch null) |fd| {
                 this.initIPCInstance(bun.toFD(fd));
             } else {
                 Output.printErrorln("Failed to parse BUN_INTERNAL_IPC_FD", .{});
@@ -765,7 +773,7 @@ pub const VirtualMachine = struct {
             // lookups on start for obscure flags which we do not want others to
             // depend on.
             if (map.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
-                JSC.Subprocess.WaiterThread.setShouldUseWaiterThread();
+                bun.spawn.WaiterThread.setShouldUseWaiterThread();
             }
 
             if (strings.eqlComptime(gc_level, "1")) {
@@ -1605,7 +1613,11 @@ pub const VirtualMachine = struct {
             }
         }
 
-        defer jsc_vm.module_loader.resetArena(jsc_vm);
+        // .print_source, which is used by exceptions avoids duplicating the entire source code
+        // but that means we have to be careful of the lifetime of the source code
+        // so we only want to reset the arena once its done freeing it.
+        defer if (flags != .print_source) jsc_vm.module_loader.resetArena(jsc_vm);
+        errdefer if (flags == .print_source) jsc_vm.module_loader.resetArena(jsc_vm);
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
@@ -2401,7 +2413,7 @@ pub const VirtualMachine = struct {
                 if (exception) |exception_| {
                     var holder = ZigException.Holder.init();
                     var zig_exception: *ZigException = holder.zigException();
-                    defer zig_exception.deinit();
+                    holder.deinit(this);
                     exception_.getStackTrace(&zig_exception.stack);
                     if (zig_exception.stack.frames_len > 0) {
                         if (allow_ansi_color) {
@@ -2609,12 +2621,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn remapZigException(
-        this: *VirtualMachine,
-        exception: *ZigException,
-        error_instance: JSValue,
-        exception_list: ?*ExceptionList,
-    ) void {
+    pub fn remapZigException(this: *VirtualMachine, exception: *ZigException, error_instance: JSValue, exception_list: ?*ExceptionList, must_reset_parser_arena_later: *bool) void {
         error_instance.toZigException(this.global, exception);
         // defer this so that it copies correctly
         defer {
@@ -2711,6 +2718,7 @@ pub const VirtualMachine = struct {
         if (mapping_) |mapping| {
             var log = logger.Log.init(default_allocator);
             var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
+            must_reset_parser_arena_later.* = true;
             const code = original_source.source_code.toUTF8(bun.default_allocator);
             defer code.deinit();
 
@@ -2740,6 +2748,8 @@ pub const VirtualMachine = struct {
                 lines = lines[0..@min(@as(usize, lines.len), source_lines.len)];
                 var current_line_number: i32 = @intCast(last_line);
                 for (lines, source_lines[0..lines.len], source_line_numbers[0..lines.len]) |line, *line_dest, *line_number| {
+                    // To minimize duplicate allocations, we use the same slice as above
+                    // it should virtually always be UTF-8 and thus not cloned
                     line_dest.* = String.init(line);
                     line_number.* = current_line_number;
                     current_line_number -= 1;
@@ -2777,8 +2787,8 @@ pub const VirtualMachine = struct {
     pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) anyerror!void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
-        defer exception_holder.deinit();
-        this.remapZigException(exception, error_instance, exception_list);
+        defer exception_holder.deinit(this);
+        this.remapZigException(exception, error_instance, exception_list, &exception_holder.need_to_clear_parser_arena_on_deinit);
         const prev_had_errors = this.had_errors;
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;
@@ -2919,7 +2929,7 @@ pub const VirtualMachine = struct {
 
         if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {
             inline for (extra_fields) |field| {
-                if (error_instance.getTruthy(this.global, field)) |value| {
+                if (error_instance.getTruthyComptime(this.global, field)) |value| {
                     const kind = value.jsType();
                     if (kind.isStringLike()) {
                         if (value.toStringOrNull(this.global)) |str| {
@@ -3150,8 +3160,10 @@ pub const VirtualMachine = struct {
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
-        uws_context: *uws.SocketContext,
+        context: if (Environment.isPosix) *uws.SocketContext else u0,
         ipc: IPC.IPCData,
+
+        pub usingnamespace bun.New(@This());
 
         pub fn handleIPCMessage(
             this: *IPCInstance,
@@ -3173,36 +3185,54 @@ pub const VirtualMachine = struct {
             }
         }
 
-        pub fn handleIPCClose(this: *IPCInstance, _: IPC.Socket) void {
+        pub fn handleIPCClose(this: *IPCInstance) void {
             JSC.markBinding(@src());
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;
                 Process__emitDisconnectEvent(global);
             }
-            uws.us_socket_context_free(0, this.uws_context);
-            bun.default_allocator.destroy(this);
+            if (Environment.isPosix) {
+                uws.us_socket_context_free(0, this.context);
+            }
+            this.destroy();
         }
 
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
     };
 
-    pub fn initIPCInstance(this: *VirtualMachine, fd: bun.FileDescriptor) void {
+    const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
+    pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType) void {
         if (Environment.isWindows) {
-            Output.warn("IPC is not supported on Windows", .{});
+            var instance = IPCInstance.new(.{
+                .globalThis = this.global,
+                .context = 0,
+                .ipc = .{},
+            });
+            instance.ipc.configureClient(IPCInstance, instance, info) catch {
+                instance.destroy();
+                Output.printErrorln("Unable to start IPC pipe", .{});
+                return;
+            };
+
+            this.ipc = instance;
+            instance.ipc.writeVersionPacket();
             return;
         }
         this.event_loop.ensureWaker();
         const context = uws.us_create_socket_context(0, this.event_loop_handle.?, @sizeOf(usize), .{}).?;
         IPC.Socket.configure(context, true, *IPCInstance, IPCInstance.Handlers);
 
-        var instance = bun.default_allocator.create(IPCInstance) catch @panic("OOM");
-        instance.* = .{
+        var instance = IPCInstance.new(.{
             .globalThis = this.global,
-            .uws_context = context,
+            .context = context,
             .ipc = undefined,
+        });
+        const socket = IPC.Socket.fromFd(context, info, IPCInstance, instance, null) orelse {
+            instance.destroy();
+            Output.printErrorln("Unable to start IPC socket", .{});
+            return;
         };
-        const socket = IPC.Socket.fromFd(context, fd, IPCInstance, instance, null) orelse @panic("Unable to start IPC");
         socket.setTimeout(0);
         instance.ipc = .{ .socket = socket };
 

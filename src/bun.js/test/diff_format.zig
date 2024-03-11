@@ -102,7 +102,7 @@ pub const DiffFormatter = struct {
                 .quote_strings = true,
                 .max_depth = 100,
             };
-            ConsoleObject.format(
+            ConsoleObject.format2(
                 .Debug,
                 this.globalObject,
                 @as([*]const JSValue, @ptrCast(&received)),
@@ -116,7 +116,7 @@ pub const DiffFormatter = struct {
 
             buffered_writer_.context = &expected_buf;
 
-            ConsoleObject.format(
+            ConsoleObject.format2(
                 .Debug,
                 this.globalObject,
                 @as([*]const JSValue, @ptrCast(&this.expected)),

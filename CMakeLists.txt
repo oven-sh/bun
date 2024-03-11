@@ -41,7 +41,11 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         # it is enabled for the time being to make sure to catch more bugs in the experimental windows builds
         set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
     else()
-        set(bun "bun-profile")
+        if(ZIG_OPTIMIZE STREQUAL "Debug")
+            set(bun "bun-debug")
+        else()
+            set(bun "bun-profile")
+        endif()
     endif()
 endif()
 
@@ -227,6 +231,13 @@ set(DEFAULT_USE_DEBUG_JSC, OFF)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEFAULT_USE_DEBUG_JSC ON)
+    set(DEFAULT_LTO OFF)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    if(CI)
+        set(DEFAULT_LTO ON)
+    else()
+        set(DEFAULT_LTO OFF)
+    endif()
 endif()
 
 if(WIN32)
@@ -262,6 +273,8 @@ option(ZIG_OPTIMIZE "Optimization level for Zig" ${DEFAULT_ZIG_OPTIMIZE})
 option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" ${DEFAULT_USE_DEBUG_JSC})
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
+
+option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
 
 if(USE_VALGRIND)
     # Disable SIMD
@@ -430,7 +443,13 @@ if(NOT WEBKIT_DIR)
         set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-debug")
         set(ASSERT_ENABLED "1")
     elseif(NOT DEBUG AND NOT WIN32)
-        set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-lto")
+        # Avoid waiting for LTO in local release builds outside of CI
+        if(USE_LTO)
+            set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "-lto")
+        else()
+            set(BUN_WEBKIT_PACKAGE_NAME_SUFFIX "")
+        endif()
+
         set(ASSERT_ENABLED "0")
     endif()
 
@@ -958,15 +977,28 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 
     add_compile_definitions("BUN_DEBUG=1")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(LTO_FLAG "")
+
     if(NOT WIN32)
-        target_compile_options(${bun} PUBLIC -O3 -flto=full -emit-llvm -g1
+        if(USE_LTO)
+            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
+        endif()
+
+        target_compile_options(${bun} PUBLIC -O3 ${LTO_FLAG} -g1
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
         )
     else()
-        target_compile_options(${bun} PUBLIC /O2 -flto=full /DEBUG /Z7)
-        target_link_options(${bun} PUBLIC /LTCG /DEBUG)
+        set(LTO_LINK_FLAG "")
+
+        if(USE_LTO)
+            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
+            list(APPEND LTO_LINK_FLAG "/LTCG")
+        endif()
+
+        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG /Z7)
+        target_link_options(${bun} PUBLIC ${LTO_LINK_FLAG} /DEBUG)
     endif()
 endif()
 
@@ -1018,10 +1050,14 @@ else()
 endif()
 
 if(APPLE)
+    # this is gated to avoid the following warning when developing on modern versions of macOS.
+    # ld: warning: object file (/opt/homebrew/opt/icu4c/lib/libicudata.a[2](icudt73l_dat.o)) was built for newer 'macOS' version (14.0) than being linked (11.0)
+    if(DEFINED ENV{CI})
     if(ARCH STREQUAL "x86_64")
         set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
     else()
         set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
+    endif()
     endif()
 
     target_link_options(${bun} PUBLIC "-dead_strip")

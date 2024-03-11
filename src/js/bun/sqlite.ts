@@ -187,6 +187,12 @@ class Database {
     if (typeof options === "object" && options) {
       flags = 0;
 
+      if(!options.fileMustExist) {
+        options.create = true;
+      } else {
+        options.create = false;
+      }
+      
       if (options.readonly) {
         flags = constants.SQLITE_OPEN_READONLY;
       }

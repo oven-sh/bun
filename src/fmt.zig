@@ -232,6 +232,7 @@ pub const URLFormatter = struct {
         http,
         https,
         unix,
+        abstract,
     };
 
     pub fn format(this: URLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -239,6 +240,7 @@ pub const URLFormatter = struct {
             .http => "http",
             .https => "https",
             .unix => "unix",
+            .abstract => "abstract",
         }});
 
         if (this.hostname) |hostname| {

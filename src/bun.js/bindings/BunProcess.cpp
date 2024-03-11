@@ -3,6 +3,7 @@
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
+#include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "node_api.h"
 #include "ZigGlobalObject.h"
@@ -707,22 +708,25 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
     if (UNLIKELY(!context))
         return;
 
-    JSGlobalObject* lexicalGlobalObject = context->jsGlobalObject();
-    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    // signal handlers can be run on any thread
+    context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
+        JSGlobalObject* lexicalGlobalObject = context.jsGlobalObject();
+        Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
-    Process* process = jsCast<Process*>(globalObject->processObject());
+        Process* process = jsCast<Process*>(globalObject->processObject());
 
-    String signalName = signalNumberToNameMap->get(signalNumber);
-    Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
-    MarkedArgumentBuffer args;
-    args.append(jsNumber(signalNumber));
-    // TODO(@paperdave): add an ASSERT(isMainThread());
-    // This should be true on posix if I understand sigaction right
-    // On Windows it should be true if the uv_signal is created on the main thread's loop
-    //
-    // I would like to assert this because if that assumption is not true,
-    // this call will probably cause very confusing bugs.
-    process->wrapped().emitForBindings(signalNameIdentifier, args);
+        String signalName = signalNumberToNameMap->get(signalNumber);
+        Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
+        MarkedArgumentBuffer args;
+        args.append(jsNumber(signalNumber));
+        // TODO(@paperdave): add an ASSERT(isMainThread());
+        // This should be true on posix if I understand sigaction right
+        // On Windows it should be true if the uv_signal is created on the main thread's loop
+        //
+        // I would like to assert this because if that assumption is not true,
+        // this call will probably cause very confusing bugs.
+        process->wrapped().emitForBindings(signalNameIdentifier, args);
+    });
 };
 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)

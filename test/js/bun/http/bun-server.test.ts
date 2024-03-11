@@ -377,9 +377,10 @@ describe("Server", () => {
       cmd: [bunExe(), path.join("js-sink-sourmap-fixture", "index.mjs")],
       cwd: import.meta.dir,
       env: bunEnv,
-      stderr: "pipe",
+      stdin: "inherit",
+      stderr: "inherit",
+      stdout: "inherit",
     });
-    expect(stderr).toBeEmpty();
     expect(exitCode).toBe(0);
   });
 

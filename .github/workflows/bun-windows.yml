@@ -417,6 +417,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: secondlife/setup-cygwin@v1
+        with:
+          packages: bash
       - name: Install dependencies
         run: |
           # bun install --verbose
@@ -434,12 +437,12 @@ jobs:
           TMPDIR: ${{runner.temp}}
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
+          SHELLOPTS: igncr
+          BUN_PATH_BASE: ${{runner.temp}}
+          BUN_PATH: release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile/bun.exe
         run: |
-          try {
-            $ErrorActionPreference = "SilentlyContinue"
-            $null = node packages/bun-internal-test/src/runner.node.mjs ${{runner.temp}}/release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile/bun.exe || $true
-          } catch {}
-          $ErrorActionPreference = "Stop"
+          node packages/bun-internal-test/src/runner.node.mjs  || true
+        shell: bash
       - uses: sarisia/actions-status-discord@v1
         if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         with:

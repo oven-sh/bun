@@ -3692,6 +3692,9 @@ for (const forceWaiterThread of [false, true]) {
         }),
       );
 
+      const originalPath = env.PATH;
+      env.PATH = "";
+
       let { exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
@@ -3700,6 +3703,8 @@ for (const forceWaiterThread of [false, true]) {
         stderr: "pipe",
         env,
       });
+
+      env.PATH = originalPath;
 
       expect(await exited).toBe(0);
 

@@ -10,10 +10,7 @@ it("#imports", async () => {
   const baz = import.meta.resolveSync("#foo", join(import.meta.resolveSync("package-json-imports/baz"), "../"));
   expect(baz).toBe(resolve(import.meta.dir, "node_modules/package-json-imports/foo/private-foo.js"));
 
-  const subpath = import.meta.resolveSync(
-    "#foo/bar",
-    join(import.meta.resolveSync("package-json-imports/baz"), "../"),
-  );
+  const subpath = import.meta.resolveSync("#foo/bar", join(import.meta.resolveSync("package-json-imports/baz"), "../"));
   expect(subpath).toBe(resolve(import.meta.dir, "node_modules/package-json-imports/foo/private-foo.js"));
 
   const react = import.meta.resolveSync(
@@ -62,7 +59,7 @@ it("import.meta.resolveSync", async () => {
   ).toBe(import.meta.path);
 
   // can be a package path
-  expect((import.meta.resolveSync("react", import.meta.path)).length > 0).toBe(true);
+  expect(import.meta.resolveSync("react", import.meta.path).length > 0).toBe(true);
 
   // file extensions are optional
   expect(import.meta.resolveSync("./resolve-test")).toBe(import.meta.path);

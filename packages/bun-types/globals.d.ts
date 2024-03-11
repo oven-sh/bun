@@ -1760,7 +1760,7 @@ declare global {
     readonly env: NodeJS.ProcessEnv;
 
     /**
-      * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead
+     * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead
      *
      * Resolve a module ID the same as if you imported it
      *

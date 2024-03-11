@@ -1776,9 +1776,9 @@ function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {}, zi
   if (zigOnly) return "";
 
   return `
-  JSC::Structure* ${className(typeName)}Structure() { return m_${className(typeName)}.getInitializedOnMainThread(this); }
-  JSC::JSObject* ${className(typeName)}Constructor() { return m_${className(typeName)}.constructorInitializedOnMainThread(this); }
-  JSC::JSValue ${className(typeName)}Prototype() { return m_${className(typeName)}.prototypeInitializedOnMainThread(this); }
+  JSC::Structure* ${className(typeName)}Structure() const { return m_${className(typeName)}.getInitializedOnMainThread(this); }
+  JSC::JSObject* ${className(typeName)}Constructor() const { return m_${className(typeName)}.constructorInitializedOnMainThread(this); }
+  JSC::JSValue ${className(typeName)}Prototype() const { return m_${className(typeName)}.prototypeInitializedOnMainThread(this); }
   JSC::LazyClassStructure m_${className(typeName)};
     `.trim();
 }

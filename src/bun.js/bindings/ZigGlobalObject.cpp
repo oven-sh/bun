@@ -4,6 +4,8 @@
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "helpers.h"
 #include "BunClientData.h"
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/BytecodeIndex.h"
@@ -58,6 +60,7 @@
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
+#include "wtf/Assertions.h"
 #include "wtf/Gigacage.h"
 #include "wtf/URL.h"
 #include "wtf/URLParser.h"
@@ -1941,30 +1944,10 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
     default: {
         JSC::JSValue moduleName = callFrame->argument(0);
         if (moduleName.isNumber()) {
-            switch (moduleName.toInt32(globalObject)) {
-            case 0: {
-                JSC::throwTypeError(globalObject, scope, "$lazy expects a string"_s);
-                scope.release();
-                return JSC::JSValue::encode(JSC::JSValue {});
-            }
-
-            case ReadableStreamTag::Blob: {
-                return ByteBlob__JSReadableStreamSource__load(globalObject);
-            }
-            case ReadableStreamTag::File: {
-                return FileReader__JSReadableStreamSource__load(globalObject);
-            }
-            case ReadableStreamTag::Bytes: {
-                return ByteStream__JSReadableStreamSource__load(globalObject);
-            }
-
-            default: {
-                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-                JSC::throwTypeError(globalObject, scope, "$lazy expects a string"_s);
-                scope.release();
-                return JSC::JSValue::encode(JSC::JSValue {});
-            }
-            }
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            JSC::throwTypeError(globalObject, scope, "$lazy expects a string"_s);
+            scope.release();
+            return JSC::JSValue::encode(JSC::JSValue {});
         }
 
         auto string = moduleName.toWTFString(globalObject);
@@ -2214,6 +2197,8 @@ JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
         return JSC::JSValue::encode(JSC::jsUndefined());
 #endif
     }
+        // silence warning
+        RELEASE_ASSERT_NOT_REACHED();
     }
 }
 
@@ -2437,17 +2422,18 @@ extern "C" void ReadableStream__cancel(JSC__JSValue possibleReadableStream, Zig:
     ReadableStream::cancel(*globalObject, readableStream, exception);
 }
 
-extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
 extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
-    auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
+    auto value = JSC::JSValue::decode(possibleReadableStream);
+    if (value.isEmpty() || !value.isCell())
+        return;
+
+    auto* readableStream = static_cast<JSReadableStream*>(value.asCell());
     if (UNLIKELY(!readableStream))
         return;
-    auto& vm = globalObject->vm();
-    auto clientData = WebCore::clientData(vm);
-    readableStream->putDirect(vm, clientData->builtinNames().bunNativePtrPrivateName(), jsNumber(-1), 0);
-    readableStream->putDirect(vm, clientData->builtinNames().bunNativeTypePrivateName(), jsNumber(0), 0);
-    readableStream->putDirect(vm, clientData->builtinNames().disturbedPrivateName(), jsBoolean(true), 0);
+    readableStream->setNativePtr(globalObject->vm(), jsNumber(-1));
+    readableStream->setNativeType(0);
+    readableStream->setDisturbed(true);
 }
 extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
 extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
@@ -2464,12 +2450,12 @@ extern "C" bool ReadableStream__isLocked(JSC__JSValue possibleReadableStream, Zi
     return stream != nullptr && ReadableStream::isLocked(globalObject, stream);
 }
 
-extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue* possibleReadableStream, JSValue* ptr)
+extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue* possibleReadableStream, void** ptr)
 {
     ASSERT(globalObject);
     JSC::JSObject* object = JSValue::decode(*possibleReadableStream).getObject();
     if (!object) {
-        *ptr = JSC::JSValue();
+        *ptr = nullptr;
         return -1;
     }
 
@@ -2491,12 +2477,12 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
         }
 
         if (UNLIKELY(throwScope.exception())) {
-            *ptr = JSC::JSValue();
+            *ptr = nullptr;
             return -1;
         }
 
         if (fn.isEmpty()) {
-            *ptr = JSC::JSValue();
+            *ptr = nullptr;
             return -1;
         }
 
@@ -2513,7 +2499,7 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
         }
 
         if (!result.isObject()) {
-            *ptr = JSC::JSValue();
+            *ptr = nullptr;
             return -1;
         }
 
@@ -2521,26 +2507,37 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
 
         ASSERT(object->inherits<JSReadableStream>());
         *possibleReadableStream = JSValue::encode(object);
-        *ptr = JSValue();
+        *ptr = nullptr;
         ensureStillAliveHere(object);
         return 0;
     }
 
     auto* readableStream = jsCast<JSReadableStream*>(object);
 
-    int32_t num = 0;
-    if (JSValue numberValue = readableStream->getDirect(vm, builtinNames.bunNativeTypePrivateName())) {
-        num = numberValue.toInt32(globalObject);
-    }
-
-    // If this type is outside the expected range, it means something is wrong.
-    if (UNLIKELY(!(num > 0 && num < 5))) {
-        *ptr = JSC::JSValue();
+    JSValue nativePtrHandle = readableStream->nativePtr();
+    if (nativePtrHandle.isEmpty() || !nativePtrHandle.isCell()) {
+        *ptr = nullptr;
         return 0;
     }
 
-    *ptr = readableStream->getDirect(vm, builtinNames.bunNativePtrPrivateName());
-    return num;
+    JSCell* cell = nativePtrHandle.asCell();
+
+    if (auto* casted = jsDynamicCast<JSBlobInternalReadableStreamSource*>(cell)) {
+        *ptr = casted->wrapped();
+        return 1;
+    }
+
+    if (auto* casted = jsDynamicCast<JSFileInternalReadableStreamSource*>(cell)) {
+        *ptr = casted->wrapped();
+        return 2;
+    }
+
+    if (auto* casted = jsDynamicCast<JSBytesInternalReadableStreamSource*>(cell)) {
+        *ptr = casted->wrapped();
+        return 4;
+    }
+
+    return 0;
 }
 
 extern "C" JSC__JSValue ReadableStream__consume(Zig::GlobalObject* globalObject, JSC__JSValue stream, JSC__JSValue nativeType, JSC__JSValue nativePtr);
@@ -2564,8 +2561,7 @@ extern "C" JSC__JSValue ReadableStream__consume(Zig::GlobalObject* globalObject,
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativeType, JSC__JSValue nativePtr);
-extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativeType, JSC__JSValue nativePtr)
+extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativePtr)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2575,7 +2571,6 @@ extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalO
 
     auto function = globalObject->getDirect(vm, builtinNames.createNativeReadableStreamPrivateName()).getObject();
     JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(nativeType));
     arguments.append(JSValue::decode(nativePtr));
 
     auto callData = JSC::getCallData(function);
@@ -3314,12 +3309,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(prototype);
         });
 
-    m_JSUVStreamSinkControllerPrototype.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::UVStreamSink);
-            init.set(prototype);
-        });
-
     m_performanceObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
@@ -3488,11 +3477,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
-    m_JSUVStreamSinkClassStructure.initLater(
+    m_JSFileSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
-            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::UVStreamSink);
-            auto* structure = JSUVStreamSink::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSUVStreamSinkConstructor::create(init.vm, init.global, JSUVStreamSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
+            auto* structure = JSFileSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSFileSinkConstructor::create(init.vm, init.global, JSFileSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
@@ -3828,49 +3817,6 @@ JSC_DEFINE_CUSTOM_GETTER(functionLazyNavigatorGetter,
     return JSC::JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->navigatorObject());
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionGetDirectStreamDetails, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto argCount = callFrame->argumentCount();
-    if (argCount != 1) {
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    auto stream = callFrame->argument(0);
-    if (!stream.isObject()) {
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    auto* streamObject = stream.getObject();
-    auto* readableStream = jsDynamicCast<WebCore::JSReadableStream*>(streamObject);
-    if (!readableStream) {
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    auto clientData = WebCore::clientData(vm);
-
-    JSValue ptrValue = readableStream->get(globalObject, clientData->builtinNames().bunNativePtrPrivateName());
-    JSValue typeValue = readableStream->get(globalObject, clientData->builtinNames().bunNativeTypePrivateName());
-    auto result = ptrValue.asAnyInt();
-
-    if (result == 0 || !typeValue.isNumber()) {
-        return JSC::JSValue::encode(JSC::jsNull());
-    }
-
-    readableStream->putDirect(vm, clientData->builtinNames().bunNativePtrPrivateName(), jsNumber(0), 0);
-    // -1 === detached
-    readableStream->putDirect(vm, clientData->builtinNames().bunNativeTypePrivateName(), jsNumber(-1), 0);
-    readableStream->putDirect(vm, clientData->builtinNames().disturbedPrivateName(), jsBoolean(true), 0);
-
-    auto* resultObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-    resultObject->putDirect(vm, clientData->builtinNames().streamPublicName(), ptrValue, 0);
-    resultObject->putDirect(vm, clientData->builtinNames().dataPublicName(), typeValue, 0);
-
-    return JSC::JSValue::encode(resultObject);
-}
-
 JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(
@@ -3936,7 +3882,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.getInternalWritableStreamPrivateName(), JSFunction::create(vm, this, 1, String(), getInternalWritableStream, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.directPrivateName(), JSFunction::create(vm, this, 1, String(), functionGetDirectStreamDetails, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(vm.propertyNames->builtinNames().ArrayBufferPrivateName(), arrayBufferConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.LoaderPrivateName(), this->moduleLoader(), PropertyAttribute::DontDelete | 0),
         GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
@@ -4089,77 +4034,71 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_nextTickQueue);
     visitor.append(thisObject->m_errorConstructorPrepareStackTraceValue);
 
+    thisObject->m_asyncBoundFunctionStructure.visit(visitor);
+    thisObject->m_bunObject.visit(visitor);
+    thisObject->m_bunSleepThenCallback.visit(visitor);
+    thisObject->m_cachedGlobalObjectStructure.visit(visitor);
+    thisObject->m_cachedGlobalProxyStructure.visit(visitor);
+    thisObject->m_callSiteStructure.visit(visitor);
+    thisObject->m_commonJSModuleObjectStructure.visit(visitor);
+    thisObject->m_cryptoObject.visit(visitor);
+    thisObject->m_emitReadableNextTickFunction.visit(visitor);
+    thisObject->m_encodeIntoObjectStructure.visit(visitor);
+    thisObject->m_errorConstructorPrepareStackTraceInternalValue.visit(visitor);
+    thisObject->m_esmRegistryMap.visit(visitor);
+    thisObject->m_importMetaObjectStructure.visit(visitor);
+    thisObject->m_internalModuleRegistry.visit(visitor);
+    thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
+    thisObject->m_JSBufferClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);
+    thisObject->m_JSBufferSubclassStructure.visit(visitor);
+    thisObject->m_JSCryptoKey.visit(visitor);
+    thisObject->m_JSDOMFileConstructor.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
     thisObject->m_JSFileSinkClassStructure.visit(visitor);
+    thisObject->m_JSFileSinkControllerPrototype.visit(visitor);
+    thisObject->m_JSHTTPResponseController.visit(visitor);
     thisObject->m_JSHTTPResponseSinkClassStructure.visit(visitor);
+    thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSReadableStateClassStructure.visit(visitor);
+    thisObject->m_JSSocketAddressStructure.visit(visitor);
+    thisObject->m_JSSQLStatementStructure.visit(visitor);
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);
+    thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
+    thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
+    thisObject->m_lazyRequireCacheObject.visit(visitor);
+    thisObject->m_lazyTestModuleObject.visit(visitor);
+    thisObject->m_memoryFootprintStructure.visit(visitor);
     thisObject->m_NapiClassStructure.visit(visitor);
-    thisObject->m_JSBufferClassStructure.visit(visitor);
+    thisObject->m_NapiExternalStructure.visit(visitor);
+    thisObject->m_NAPIFunctionStructure.visit(visitor);
+    thisObject->m_NapiPrototypeStructure.visit(visitor);
+    thisObject->m_nativeMicrotaskTrampoline.visit(visitor);
+    thisObject->m_navigatorObject.visit(visitor);
     thisObject->m_NodeVMScriptClassStructure.visit(visitor);
-
     thisObject->m_pendingVirtualModuleResultStructure.visit(visitor);
+    thisObject->m_performanceObject.visit(visitor);
     thisObject->m_performMicrotaskFunction.visit(visitor);
     thisObject->m_performMicrotaskVariadicFunction.visit(visitor);
+    thisObject->m_processEnvObject.visit(visitor);
+    thisObject->m_processObject.visit(visitor);
+    thisObject->m_requireFunctionUnbound.visit(visitor);
+    thisObject->m_requireMap.visit(visitor);
+    thisObject->m_requireResolveFunctionUnbound.visit(visitor);
+    thisObject->m_subtleCryptoObject.visit(visitor);
+    thisObject->m_testMatcherUtilsObject.visit(visitor);
     thisObject->m_utilInspectFunction.visit(visitor);
     thisObject->m_utilInspectStylizeColorFunction.visit(visitor);
     thisObject->m_utilInspectStylizeNoColorFunction.visit(visitor);
-    thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
-    thisObject->m_requireMap.visit(visitor);
-    thisObject->m_esmRegistryMap.visit(visitor);
-    thisObject->m_encodeIntoObjectStructure.visit(visitor);
-    thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
-    thisObject->m_JSFileSinkControllerPrototype.visit(visitor);
-    thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
-    thisObject->m_JSUVStreamSinkControllerPrototype.visit(visitor);
-    thisObject->m_navigatorObject.visit(visitor);
-    thisObject->m_nativeMicrotaskTrampoline.visit(visitor);
-    thisObject->m_performanceObject.visit(visitor);
-    thisObject->m_processEnvObject.visit(visitor);
-    thisObject->m_processObject.visit(visitor);
-    thisObject->m_bunObject.visit(visitor);
-    thisObject->m_subtleCryptoObject.visit(visitor);
-    thisObject->m_JSHTTPResponseController.visit(visitor);
-    thisObject->m_callSiteStructure.visit(visitor);
-    thisObject->m_emitReadableNextTickFunction.visit(visitor);
-    thisObject->m_JSBufferSubclassStructure.visit(visitor);
-    thisObject->m_JSCryptoKey.visit(visitor);
-
-    thisObject->m_cryptoObject.visit(visitor);
-    thisObject->m_JSDOMFileConstructor.visit(visitor);
-
-    thisObject->m_requireFunctionUnbound.visit(visitor);
-    thisObject->m_requireResolveFunctionUnbound.visit(visitor);
-    thisObject->m_importMetaObjectStructure.visit(visitor);
-    thisObject->m_asyncBoundFunctionStructure.visit(visitor);
-    thisObject->m_internalModuleRegistry.visit(visitor);
-
-    thisObject->m_lazyRequireCacheObject.visit(visitor);
     thisObject->m_vmModuleContextMap.visit(visitor);
-    thisObject->m_errorConstructorPrepareStackTraceInternalValue.visit(visitor);
-    thisObject->m_bunSleepThenCallback.visit(visitor);
-    thisObject->m_lazyTestModuleObject.visit(visitor);
-    thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
-    thisObject->m_testMatcherUtilsObject.visit(visitor);
-    thisObject->m_commonJSModuleObjectStructure.visit(visitor);
-    thisObject->m_JSSQLStatementStructure.visit(visitor);
-    thisObject->m_memoryFootprintStructure.visit(visitor);
-    thisObject->m_JSSocketAddressStructure.visit(visitor);
-    thisObject->m_cachedGlobalObjectStructure.visit(visitor);
-    thisObject->m_cachedGlobalProxyStructure.visit(visitor);
-    thisObject->m_NapiExternalStructure.visit(visitor);
-    thisObject->m_NapiPrototypeStructure.visit(visitor);
-    thisObject->m_NAPIFunctionStructure.visit(visitor);
-
-    thisObject->mockModule.mockFunctionStructure.visit(visitor);
-    thisObject->mockModule.mockResultStructure.visit(visitor);
-    thisObject->mockModule.mockImplementationStructure.visit(visitor);
-    thisObject->mockModule.mockObjectStructure.visit(visitor);
-    thisObject->mockModule.mockModuleStructure.visit(visitor);
     thisObject->mockModule.activeSpySetStructure.visit(visitor);
+    thisObject->mockModule.mockFunctionStructure.visit(visitor);
+    thisObject->mockModule.mockImplementationStructure.visit(visitor);
+    thisObject->mockModule.mockModuleStructure.visit(visitor);
+    thisObject->mockModule.mockObjectStructure.visit(visitor);
+    thisObject->mockModule.mockResultStructure.visit(visitor);
     thisObject->mockModule.mockWithImplementationCleanupDataStructure.visit(visitor);
     thisObject->mockModule.withImplementationCleanupFunction.visit(visitor);
 

@@ -2,7 +2,7 @@
 name: bun
 appspec: { version: "0.001" }
 plugins: [-Meta]
-title: A tool for installing and managing Python packages
+title: A tool for installing and managing JavaScript packages
 
 options:
   - version|V                  --Show version and exit

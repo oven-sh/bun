@@ -11,6 +11,11 @@ pub fn ReturnOfType(comptime Type: type) type {
     return typeinfo.return_type orelse void;
 }
 
+pub fn typeName(comptime Type: type) []const u8 {
+    const name = @typeName(Type);
+    return typeBaseName(name);
+}
+
 // partially emulates behaviour of @typeName in previous Zig versions,
 // converting "some.namespace.MyType" to "MyType"
 pub fn typeBaseName(comptime fullname: []const u8) []const u8 {
@@ -38,4 +43,14 @@ pub fn enumFieldNames(comptime Type: type) []const []const u8 {
         i += 1;
     }
     return names[0..i];
+}
+
+pub fn banFieldType(comptime Container: type, comptime T: type) void {
+    comptime {
+        for (std.meta.fields(Container)) |field| {
+            if (field.type == T) {
+                @compileError(std.fmt.comptimePrint(typeName(T) ++ " field \"" ++ field.name ++ "\" not allowed in " ++ typeName(Container), .{}));
+            }
+        }
+    }
 }

@@ -66,7 +66,7 @@ describe("chooses", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -158,7 +158,7 @@ registry = "http://${server.hostname}:${server.port}/"
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -192,7 +192,7 @@ it("should handle missing package", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install", "foo"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -244,7 +244,7 @@ foo = { token = "bar" }
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install", "@foo/bar"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -282,7 +282,7 @@ it("should handle empty string in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -362,7 +362,7 @@ it("should handle workspaces", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -411,7 +411,7 @@ it("should handle workspaces", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -477,7 +477,7 @@ it("should handle `workspace:` specifier", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -507,7 +507,7 @@ it("should handle `workspace:` specifier", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -550,7 +550,7 @@ it("should handle workspaces with packages array", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -609,7 +609,7 @@ it("should handle inter-dependency between workspaces", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -668,7 +668,7 @@ it("should handle inter-dependency between workspaces (devDependencies)", async 
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -727,7 +727,7 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -785,7 +785,7 @@ it("should ignore peerDependencies within workspaces", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -828,7 +828,7 @@ it("should handle installing the same peerDependency with different versions", a
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -867,7 +867,7 @@ it("should handle installing the same peerDependency with the same version", asy
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -917,7 +917,7 @@ it("should handle life-cycle scripts within workspaces", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -982,7 +982,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1015,7 +1015,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1049,7 +1049,7 @@ it("should handle life-cycle scripts during re-installation", async () => {
   } = spawn({
     cmd: [bunExe(), "install", "--production"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1109,7 +1109,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1159,7 +1159,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1195,7 +1195,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
   } = spawn({
     cmd: [bunExe(), "install", "--production"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1256,7 +1256,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1309,7 +1309,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1348,7 +1348,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
   } = spawn({
     cmd: [bunExe(), "install", "--production"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1396,7 +1396,7 @@ it("should ignore workspaces within workspaces", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1435,7 +1435,7 @@ it("should handle ^0 in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1479,7 +1479,7 @@ it("should handle ^1 in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1516,7 +1516,7 @@ it("should handle ^0.0 in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1560,7 +1560,7 @@ it("should handle ^0.1 in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1597,7 +1597,7 @@ it("should handle ^0.0.0 in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1634,7 +1634,7 @@ it("should handle ^0.0.2 in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1702,7 +1702,7 @@ it("should handle matching workspaces from dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1736,7 +1736,7 @@ it("should edit package json correctly with git dependencies", async () => {
   var { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "i", "dylan-conway/install-test2"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1756,7 +1756,7 @@ it("should edit package json correctly with git dependencies", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "i", "dylan-conway/install-test2#HEAD"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1776,7 +1776,7 @@ it("should edit package json correctly with git dependencies", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "i", "github:dylan-conway/install-test2"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1796,7 +1796,7 @@ it("should edit package json correctly with git dependencies", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "i", "github:dylan-conway/install-test2#HEAD"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1831,7 +1831,7 @@ it("should handle ^0.0.2-rc in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1876,7 +1876,7 @@ it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1921,7 +1921,7 @@ it("should choose the right version with prereleases", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1966,7 +1966,7 @@ it("should handle ^0.0.2rc1 in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2011,7 +2011,7 @@ it("should handle ^0.0.2_pre3 in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2056,7 +2056,7 @@ it("should handle ^0.0.2b_4+cafe_b0ba in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2101,7 +2101,7 @@ it("should handle caret range in dependencies when the registry has prereleased 
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2160,7 +2160,7 @@ it("should prefer latest-tagged dependency", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2213,7 +2213,7 @@ it("should install latest with prereleases", async () => {
   var { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install", "baz"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2246,7 +2246,7 @@ it("should install latest with prereleases", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2278,7 +2278,7 @@ it("should install latest with prereleases", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2311,7 +2311,7 @@ it("should install latest with prereleases", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2355,7 +2355,7 @@ it("should handle dependency aliasing", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2412,7 +2412,7 @@ it("should handle dependency aliasing (versioned)", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2469,7 +2469,7 @@ it("should handle dependency aliasing (dist-tagged)", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2530,7 +2530,7 @@ it("should not reinstall aliased dependencies", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2570,7 +2570,7 @@ it("should not reinstall aliased dependencies", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2637,7 +2637,7 @@ it("should handle aliased & direct dependency references", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2719,7 +2719,7 @@ it("should not hoist if name collides with alias", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2799,7 +2799,7 @@ it("should get npm alias with matching version", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2853,7 +2853,7 @@ it("should not apply overrides to package name of aliased package", async () => 
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2900,7 +2900,7 @@ it("should handle unscoped alias on scoped dependency", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -2961,7 +2961,7 @@ it("should handle scoped alias on unscoped dependency", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3032,7 +3032,7 @@ it("should handle aliased dependency with existing lockfile", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3094,7 +3094,7 @@ it("should handle aliased dependency with existing lockfile", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3161,7 +3161,7 @@ it("should handle GitHub URL in dependencies (user/repo)", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3214,7 +3214,7 @@ it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () =>
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3281,7 +3281,7 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3355,7 +3355,7 @@ it("should handle bitbucket git dependencies", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -3392,7 +3392,7 @@ it("should handle bitbucket git dependencies", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", dep],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -3434,7 +3434,7 @@ it("should handle gitlab git dependencies", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -3471,7 +3471,7 @@ it("should handle gitlab git dependencies", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", dep],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -3511,7 +3511,7 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3579,7 +3579,7 @@ it("should handle GitHub URL in dependencies (https://github.com/user/repo.git)"
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3632,7 +3632,7 @@ it("should handle GitHub URL in dependencies (git://github.com/user/repo.git#com
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3700,7 +3700,7 @@ it("should handle GitHub URL in dependencies (git+https://github.com/user/repo.g
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3753,7 +3753,7 @@ it("should handle GitHub tarball URL in dependencies (https://github.com/user/re
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3810,7 +3810,7 @@ it("should handle GitHub tarball URL in dependencies (https://github.com/user/re
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env: {
@@ -3875,7 +3875,7 @@ it("should treat non-GitHub http(s) URLs as tarballs (https://some.url/path?stuf
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3933,7 +3933,7 @@ cache = false
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -3991,7 +3991,7 @@ cache = false
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4093,7 +4093,7 @@ it("should consider peerDependencies during hoisting", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4193,7 +4193,7 @@ it("should install peerDependencies when needed", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4258,7 +4258,7 @@ it("should not regard peerDependencies declarations as duplicates", async () => 
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4291,7 +4291,7 @@ it("should report error on invalid format for package.json", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4317,7 +4317,7 @@ it("should report error on invalid format for dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4343,7 +4343,7 @@ it("should report error on invalid format for optionalDependencies", async () =>
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4371,7 +4371,7 @@ it("should report error on invalid format for workspaces", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4413,7 +4413,7 @@ it("should report error on duplicated workspace packages", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4448,7 +4448,7 @@ it("should handle Git URL in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4510,7 +4510,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4570,7 +4570,7 @@ it("should handle Git URL with committish in dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4632,7 +4632,7 @@ it("should fail on invalid Git URL", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4670,7 +4670,7 @@ it("should fail on Git URL with invalid committish", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4711,7 +4711,7 @@ it("should de-duplicate committish in Git URLs", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4809,7 +4809,7 @@ cache = false
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4867,7 +4867,7 @@ cache = false
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -4942,7 +4942,7 @@ cache = false
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5016,7 +5016,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5070,7 +5070,7 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5116,7 +5116,7 @@ it("should handle tarball URL", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5165,7 +5165,7 @@ it("should handle tarball path", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5213,7 +5213,7 @@ it("should handle tarball URL with aliasing", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5262,7 +5262,7 @@ it("should handle tarball path with aliasing", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5320,7 +5320,7 @@ it("should de-duplicate dependencies alongside tarball URL", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5404,7 +5404,7 @@ it("should handle tarball URL with existing lockfile", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5466,7 +5466,7 @@ it("should handle tarball URL with existing lockfile", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5549,7 +5549,7 @@ it("should handle tarball path with existing lockfile", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5610,7 +5610,7 @@ it("should handle tarball path with existing lockfile", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5688,7 +5688,7 @@ it("should handle devDependencies from folder", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5744,7 +5744,7 @@ it("should deduplicate devDependencies from folder", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5798,7 +5798,7 @@ it("should install dependencies in root package of workspace", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: join(package_dir, "moo"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5851,7 +5851,7 @@ it("should install dependencies in root package of workspace (*)", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: join(package_dir, "moo"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5903,7 +5903,7 @@ it("should ignore invalid workspaces from parent directory", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: join(package_dir, "moo"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -5960,7 +5960,7 @@ it("should handle --cwd", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install", "--cwd", "moo"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6005,7 +6005,7 @@ it("should handle --frozen-lockfile", async () => {
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "install", "--frozen-lockfile"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6033,7 +6033,7 @@ frozenLockfile = true
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6070,7 +6070,7 @@ cache = false
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6212,7 +6212,7 @@ cache = false
   } = spawn({
     cmd: [bunExe(), "install", "--production"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6270,7 +6270,7 @@ it("should handle trustedDependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6325,7 +6325,7 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6356,7 +6356,7 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6400,7 +6400,7 @@ it("should handle `workspaces:bar` and `workspace:*` gracefully", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6444,7 +6444,7 @@ it("should handle `workspaces:*` and `workspace:bar` gracefully", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6488,7 +6488,7 @@ it("should handle `workspaces:bar` and `workspace:bar` gracefully", async () => 
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6543,7 +6543,7 @@ it("should handle installing packages from inside a workspace with `*`", async (
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: join(package_dir, "packages", "yolo"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6574,7 +6574,7 @@ it("should handle installing packages from inside a workspace with `*`", async (
   } = spawn({
     cmd: [bunExe(), "install", "bar"],
     cwd: join(package_dir, "packages", "yolo"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6626,7 +6626,7 @@ it("should handle installing packages from inside a workspace without prefix", a
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: join(package_dir, "packages", "p1"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6654,7 +6654,7 @@ it("should handle installing packages from inside a workspace without prefix", a
   } = spawn({
     cmd: [bunExe(), "install", "bar"],
     cwd: join(package_dir, "packages", "p1"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -6799,7 +6799,7 @@ it("should handle installing packages inside workspaces with difference versions
     } = spawn({
       cmd: [bunExe(), "install"],
       cwd: join(package_dir, "packages", "package2"),
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -6831,7 +6831,7 @@ it("should handle installing packages inside workspaces with difference versions
     } = spawn({
       cmd: [bunExe(), "install", "bar"],
       cwd: join(package_dir, "packages", "package2"),
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -6857,7 +6857,7 @@ it("should handle installing packages inside workspaces with difference versions
     } = spawn({
       cmd: [bunExe(), "install"],
       cwd: join(package_dir, "packages", "package3"),
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -6887,7 +6887,7 @@ it("should handle installing packages inside workspaces with difference versions
     } = spawn({
       cmd: [bunExe(), "install", "bar"],
       cwd: join(package_dir, "packages", "package3"),
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -6912,7 +6912,7 @@ it("should handle installing packages inside workspaces with difference versions
     } = spawn({
       cmd: [bunExe(), "install"],
       cwd: join(package_dir, "packages", "package4"),
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -6942,7 +6942,7 @@ it("should handle installing packages inside workspaces with difference versions
     } = spawn({
       cmd: [bunExe(), "install", "bar"],
       cwd: join(package_dir, "packages", "package4"),
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -6967,7 +6967,7 @@ it("should handle installing packages inside workspaces with difference versions
     } = spawn({
       cmd: [bunExe(), "install"],
       cwd: join(package_dir, "packages", "package5"),
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -6997,7 +6997,7 @@ it("should handle installing packages inside workspaces with difference versions
     } = spawn({
       cmd: [bunExe(), "install", "bar"],
       cwd: join(package_dir, "packages", "package5"),
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -7023,7 +7023,7 @@ it("should handle installing packages inside workspaces with difference versions
     } = spawn({
       cmd: [bunExe(), "install"],
       cwd: join(package_dir),
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -7053,7 +7053,7 @@ it("should handle installing packages inside workspaces with difference versions
     } = spawn({
       cmd: [bunExe(), "install", "bar"],
       cwd: join(package_dir),
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -7096,7 +7096,7 @@ it("should override npm dependency by matching workspace", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -7143,7 +7143,7 @@ it("should not override npm dependency by workspace with mismatched version", as
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -7187,7 +7187,7 @@ it("should override @scoped npm dependency by matching workspace", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -7237,7 +7237,7 @@ it("should override aliased npm dependency by matching workspace", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -7292,7 +7292,7 @@ it("should override child npm dependency by matching workspace", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -7350,7 +7350,7 @@ it("should not override child npm dependency by workspace with mismatched versio
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -7414,7 +7414,7 @@ it("should override @scoped child npm dependency by matching workspace", async (
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -7477,7 +7477,7 @@ it("should override aliased child npm dependency by matching workspace", async (
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -7542,7 +7542,7 @@ it("should handle `workspace:` with semver range", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -7599,7 +7599,7 @@ it("should handle `workspace:` with alias & @scope", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -7673,7 +7673,7 @@ it("should handle `workspace:*` on both root & child", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -7711,7 +7711,7 @@ it("should handle `workspace:*` on both root & child", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -7758,7 +7758,7 @@ it("should install peer dependencies from root package", async () => {
     cmd: [bunExe(), "install"],
     cwd: package_dir,
     env,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
   });
@@ -7799,7 +7799,7 @@ it("should install correct version of peer dependency from root package", async 
     cmd: [bunExe(), "install"],
     cwd: package_dir,
     env,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
   });
@@ -7871,7 +7871,7 @@ describe("Registry URLs", () => {
         const { stdout, stderr, exited } = spawn({
           cmd: [bunExe(), "install"],
           cwd: package_dir,
-          stdout: null,
+          stdout: "pipe",
           stdin: "pipe",
           stderr: "pipe",
           env,
@@ -7914,7 +7914,7 @@ describe("Registry URLs", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -7955,7 +7955,7 @@ describe("Registry URLs", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,

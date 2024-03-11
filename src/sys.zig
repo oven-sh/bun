@@ -64,6 +64,7 @@ else
 
 pub const Tag = enum(u8) {
     TODO,
+
     dup,
     access,
     chmod,
@@ -116,7 +117,7 @@ pub const Tag = enum(u8) {
     truncate,
     realpath,
     futime,
-    listen,
+    pidfd_open,
 
     kevent,
     kqueue,
@@ -130,10 +131,17 @@ pub const Tag = enum(u8) {
     readv,
     preadv,
     ioctl_ficlone,
+    accept,
+    bind2,
+    connect2,
+    listen,
+    pipe,
+    try_write,
 
     uv_spawn,
     uv_pipe,
-    pipe,
+
+    // Below this line are Windows API calls only.
 
     WriteFile,
     NtQueryDirectoryFile,
@@ -156,7 +164,7 @@ pub const Error = struct {
     const retry_errno = if (Environment.isLinux)
         @as(Int, @intCast(@intFromEnum(E.AGAIN)))
     else if (Environment.isMac)
-        @as(Int, @intCast(@intFromEnum(E.WOULDBLOCK)))
+        @as(Int, @intCast(@intFromEnum(E.AGAIN)))
     else
         @as(Int, @intCast(@intFromEnum(E.INTR)));
 
@@ -207,7 +215,7 @@ pub const Error = struct {
 
     pub const retry = Error{
         .errno = retry_errno,
-        .syscall = .retry,
+        .syscall = .read,
     };
 
     pub inline fn withFd(this: Error, fd: anytype) Error {
@@ -235,6 +243,30 @@ pub const Error = struct {
             .fd => |fd| this.withFd(fd),
             .path => |path| this.withPath(path.slice()),
         };
+    }
+
+    pub fn name(this: *const Error) []const u8 {
+        if (comptime Environment.isWindows) {
+            const system_errno = brk: {
+                // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
+                @setRuntimeSafety(false);
+                if (this.from_libuv) {
+                    break :brk @as(C.SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(this.errno))));
+                }
+
+                break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
+            };
+            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+                return errname;
+            }
+        } else if (this.errno > 0 and this.errno < C.SystemErrno.max) {
+            const system_errno = @as(C.SystemErrno, @enumFromInt(this.errno));
+            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+                return errname;
+            }
+        }
+
+        return "UNKNOWN";
     }
 
     pub fn toSystemError(this: Error) SystemError {
@@ -952,7 +984,7 @@ pub fn openatA(dirfd: bun.FileDescriptor, file_path: []const u8, flags: bun.Mode
 
     const pathZ = std.os.toPosixPath(file_path) catch return Maybe(bun.FileDescriptor){
         .err = .{
-            .errno = @intFromEnum(bun.C.E.NOMEM),
+            .errno = @intFromEnum(bun.C.E.NAMETOOLONG),
             .syscall = .open,
         },
     };
@@ -1005,11 +1037,20 @@ pub const max_count = switch (builtin.os.tag) {
 
 pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     const adjusted_len = @min(max_count, bytes.len);
+    var debug_timer = bun.Output.DebugTimer.start();
+
+    defer {
+        if (comptime Environment.isDebug) {
+            if (debug_timer.timer.read() > std.time.ns_per_ms) {
+                bun.Output.debugWarn("write({}, {d}) blocked for {}", .{ fd, bytes.len, debug_timer });
+            }
+        }
+    }
 
     return switch (Environment.os) {
         .mac => {
             const rc = system.@"write$NOCANCEL"(fd.cast(), bytes.ptr, adjusted_len);
-            log("write({}, {d}) = {d}", .{ fd, adjusted_len, rc });
+            log("write({}, {d}) = {d} ({})", .{ fd, adjusted_len, rc, debug_timer });
 
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                 return err;
@@ -1020,7 +1061,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
         .linux => {
             while (true) {
                 const rc = sys.write(fd.cast(), bytes.ptr, adjusted_len);
-                log("write({}, {d}) = {d}", .{ fd, adjusted_len, rc });
+                log("write({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
 
                 if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                     if (err.getErrno() == .INTR) continue;
@@ -1041,8 +1082,8 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                 &bytes_written,
                 null,
             );
-            log("WriteFile({}, {d}) = {d} (written: {d})", .{ fd, adjusted_len, rc, bytes_written });
             if (rc == 0) {
+                log("WriteFile({}, {d}) = {s}", .{ fd, adjusted_len, @tagName(bun.windows.getLastErrno()) });
                 return .{
                     .err = Syscall.Error{
                         .errno = @intFromEnum(bun.windows.getLastErrno()),
@@ -1051,6 +1092,9 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                     },
                 };
             }
+
+            log("WriteFile({}, {d}) = {d}", .{ fd, adjusted_len, bytes_written });
+
             return Maybe(usize){ .result = bytes_written };
         },
         else => @compileError("Not implemented yet"),
@@ -1307,13 +1351,43 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
                 return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
             }
         },
-        .windows => sys_uv.read(fd, buf),
+        .windows => if (bun.FDImpl.decode(fd).kind == .uv)
+            sys_uv.read(fd, buf)
+        else {
+            var amount_read: u32 = 0;
+            const rc = kernel32.ReadFile(fd.cast(), buf.ptr, @as(u32, @intCast(adjusted_len)), &amount_read, null);
+            if (rc == windows.FALSE) {
+                const ret = .{
+                    .err = Syscall.Error{
+                        .errno = @intFromEnum(bun.windows.getLastErrno()),
+                        .syscall = .read,
+                        .fd = fd,
+                    },
+                };
+
+                if (comptime Environment.isDebug) {
+                    log("ReadFile({}, {d}) = {s} ({})", .{ fd, adjusted_len, ret.err.name(), debug_timer });
+                }
+
+                return ret;
+            }
+            log("ReadFile({}, {d}) = {d} ({})", .{ fd, adjusted_len, amount_read, debug_timer });
+
+            return Maybe(usize){ .result = amount_read };
+        },
         else => @compileError("read is not implemented on this platform"),
     };
 }
 
+const socket_flags_nonblock = bun.C.MSG_DONTWAIT | bun.C.MSG_NOSIGNAL;
+
+pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
+    return recv(fd, buf, socket_flags_nonblock);
+}
+
 pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
     const adjusted_len = @min(buf.len, max_count);
+    const debug_timer = bun.Output.DebugTimer.start();
     if (comptime Environment.allow_assert) {
         if (adjusted_len == 0) {
             bun.Output.debugWarn("recv() called with 0 length buffer", .{});
@@ -1322,43 +1396,57 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
 
     if (comptime Environment.isMac) {
         const rc = system.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
-        log("recv({}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
 
         if (Maybe(usize).errnoSys(rc, .recv)) |err| {
+            log("recv({}, {d}) = {s} {}", .{ fd, adjusted_len, err.err.name(), debug_timer });
             return err;
         }
+
+        log("recv({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
 
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = linux.recvfrom(fd.cast(), buf.ptr, adjusted_len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
-            log("recv({}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
+            const rc = linux.recvfrom(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
 
             if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
+                log("recv({}, {d}) = {s} {}", .{ fd, adjusted_len, err.err.name(), debug_timer });
                 return err;
             }
+            log("recv({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
 }
 
+pub fn sendNonBlock(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
+    return send(fd, buf, socket_flags_nonblock);
+}
+
 pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = system.@"sendto$NOCANCEL"(fd, buf.ptr, buf.len, flag, null, 0);
+        const rc = system.@"sendto$NOCANCEL"(fd.cast(), buf.ptr, buf.len, flag, null, 0);
+
         if (Maybe(usize).errnoSys(rc, .send)) |err| {
+            syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
             return err;
         }
+
+        syslog("send({}, {d}) = {d}", .{ fd, buf.len, rc });
+
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = linux.sendto(fd, buf.ptr, buf.len, flag | os.SOCK.CLOEXEC | os.MSG.NOSIGNAL, null, 0);
+            const rc = linux.sendto(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
             if (Maybe(usize).errnoSys(rc, .send)) |err| {
                 if (err.getErrno() == .INTR) continue;
+                syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
                 return err;
             }
 
+            syslog("send({}, {d}) = {d}", .{ fd, buf.len, rc });
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
@@ -1503,10 +1591,20 @@ pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: u
 
 pub fn unlink(from: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(sys.unlink(from), .unlink)) |err| {
-            if (err.getErrno() == .INTR) continue;
-            return err;
+        if (bun.Environment.isWindows) {
+            if (sys.unlink(from) != 0) {
+                const last_error = kernel32.GetLastError();
+                const errno = Syscall.getErrno(@as(u16, @intFromEnum(last_error)));
+                if (errno == .INTR) continue;
+                return .{ .err = Syscall.Error.fromCode(errno, .unlink) };
+            }
+        } else {
+            if (Maybe(void).errnoSys(sys.unlink(from), .unlink)) |err| {
+                if (err.getErrno() == .INTR) continue;
+                return err;
+            }
         }
+        log("unlink({s}) = 0", .{from});
         return Maybe(void).success;
     }
 }
@@ -1582,9 +1680,8 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
         },
         .linux => {
             // TODO: alpine linux may not have /proc/self
-            var procfs_buf: ["/proc/self/fd/-2147483648".len:0]u8 = undefined;
-            const proc_path = std.fmt.bufPrintZ(procfs_buf[0..], "/proc/self/fd/{d}\x00", .{fd.cast()}) catch unreachable;
-
+            var procfs_buf: ["/proc/self/fd/-2147483648".len + 1:0]u8 = undefined;
+            const proc_path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{fd.cast()}) catch unreachable;
             return switch (readlink(proc_path, out_buffer)) {
                 .err => |err| return .{ .err = err },
                 .result => |len| return .{ .result = out_buffer[0..len] },
@@ -1919,10 +2016,11 @@ pub fn pipe() Maybe([2]bun.FileDescriptor) {
     )) |err| {
         return err;
     }
+    log("pipe() = [{d}, {d}]", .{ fds[0], fds[1] });
     return .{ .result = .{ bun.toFD(fds[0]), bun.toFD(fds[1]) } };
 }
 
-pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
+pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         var target: windows.HANDLE = undefined;
         const process = kernel32.GetCurrentProcess();
@@ -1935,6 +2033,7 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
             w.TRUE,
             w.DUPLICATE_SAME_ACCESS,
         );
+        log("dup({d}) = {d}", .{ fd.cast(), out });
         if (out == 0) {
             if (Maybe(bun.FileDescriptor).errnoSysFd(0, .dup, fd)) |err| {
                 return err;
@@ -1943,9 +2042,23 @@ pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
         return Maybe(bun.FileDescriptor){ .result = bun.toFD(target) };
     }
 
-    const out = std.c.dup(fd.cast());
-    log("dup({}) = {d}", .{ fd, out });
-    return Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd) orelse Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
+    const ArgType = if (comptime Environment.isLinux) usize else c_int;
+    const out = system.fcntl(fd.cast(), @as(i32, bun.C.F.DUPFD_CLOEXEC), @as(ArgType, 0));
+    log("dup({d}) = {d}", .{ fd.cast(), out });
+    if (Maybe(bun.FileDescriptor).errnoSysFd(out, .dup, fd)) |err| {
+        return err;
+    }
+
+    if (flags != 0) {
+        const fd_flags: ArgType = @intCast(system.fcntl(@intCast(out), @as(i32, std.os.F.GETFD), @as(ArgType, 0)));
+        _ = system.fcntl(@intCast(out), @as(i32, std.os.F.SETFD), @as(ArgType, @intCast(fd_flags | @as(ArgType, @intCast(flags)))));
+    }
+
+    return Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
+}
+
+pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
+    return dupWithFlags(fd, 0);
 }
 
 pub fn linkat(dir_fd: bun.FileDescriptor, basename: []const u8, dest_dir_fd: bun.FileDescriptor, dest_name: []const u8) Maybe(void) {
@@ -1992,3 +2105,213 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
         name,
     ) orelse Maybe(void).success;
 }
+
+/// On Linux, this `preadv2(2)` to attempt to read a blocking file descriptor without blocking.
+///
+/// On other platforms, this is just a wrapper around `read(2)`.
+pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
+    if (Environment.isLinux) {
+        while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
+            const iovec = [1]std.os.iovec{.{
+                .iov_base = buf.ptr,
+                .iov_len = buf.len,
+            }};
+            var debug_timer = bun.Output.DebugTimer.start();
+
+            // Note that there is a bug on Linux Kernel 5
+            const rc = C.sys_preadv2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NOWAIT);
+
+            if (comptime Environment.isDebug) {
+                log("preadv2({}, {d}) = {d} ({})", .{ fd, buf.len, rc, debug_timer });
+
+                if (debug_timer.timer.read() > std.time.ns_per_ms) {
+                    bun.Output.debugWarn("preadv2({}, {d}) blocked for {}", .{ fd, buf.len, debug_timer });
+                }
+            }
+
+            if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
+                switch (err.getErrno()) {
+                    .OPNOTSUPP, .NOSYS => {
+                        bun.C.linux.RWFFlagSupport.disable();
+                        switch (bun.isReadable(fd)) {
+                            .hup, .ready => return read(fd, buf),
+                            else => return .{ .err = Error.retry },
+                        }
+                    },
+                    .INTR => continue,
+                    else => return err,
+                }
+            }
+
+            return .{ .result = @as(usize, @intCast(rc)) };
+        }
+    }
+
+    return read(fd, buf);
+}
+
+/// On Linux, this `pwritev(2)` to attempt to read a blocking file descriptor without blocking.
+///
+/// On other platforms, this is just a wrapper around `read(2)`.
+pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
+    if (Environment.isLinux) {
+        while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
+            const iovec = [1]std.os.iovec_const{.{
+                .iov_base = buf.ptr,
+                .iov_len = buf.len,
+            }};
+
+            var debug_timer = bun.Output.DebugTimer.start();
+
+            const rc = C.sys_pwritev2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NOWAIT);
+
+            if (comptime Environment.isDebug) {
+                log("pwritev2({}, {d}) = {d} ({})", .{ fd, buf.len, rc, debug_timer });
+
+                if (debug_timer.timer.read() > std.time.ns_per_ms) {
+                    bun.Output.debugWarn("pwritev2({}, {d}) blocked for {}", .{ fd, buf.len, debug_timer });
+                }
+            }
+
+            if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
+                switch (err.getErrno()) {
+                    .OPNOTSUPP, .NOSYS => {
+                        bun.C.linux.RWFFlagSupport.disable();
+                        switch (bun.isWritable(fd)) {
+                            .hup, .ready => return write(fd, buf),
+                            else => return .{ .err = Error.retry },
+                        }
+                    },
+                    .INTR => continue,
+                    else => return err,
+                }
+            }
+
+            return .{ .result = @as(usize, @intCast(rc)) };
+        }
+    }
+
+    return write(fd, buf);
+}
+
+pub fn isPollable(mode: mode_t) bool {
+    return os.S.ISFIFO(mode) or os.S.ISSOCK(mode);
+}
+
+const This = @This();
+
+pub const File = struct {
+    // "handle" matches std.fs.File
+    handle: bun.FileDescriptor,
+
+    pub fn from(other: anytype) File {
+        const T = @TypeOf(other);
+
+        if (T == File) {
+            return other;
+        }
+
+        if (T == std.os.fd_t) {
+            return File{ .handle = bun.toFD(other) };
+        }
+
+        if (T == bun.FileDescriptor) {
+            return File{ .handle = other };
+        }
+
+        if (T == std.fs.File) {
+            return File{ .handle = bun.toFD(other.handle) };
+        }
+
+        if (T == std.fs.Dir) {
+            return File{ .handle = bun.toFD(other.handle) };
+        }
+
+        if (comptime Environment.isWindows) {
+            if (T == bun.windows.HANDLE) {
+                return File{ .handle = bun.toFD(other) };
+            }
+        }
+
+        if (comptime Environment.isLinux) {
+            if (T == u64) {
+                return File{ .handle = bun.toFD(other) };
+            }
+        }
+
+        @compileError("Unsupported type " ++ bun.meta.typeName(T));
+    }
+
+    pub fn write(self: File, buf: []const u8) Maybe(usize) {
+        return This.write(self.handle, buf);
+    }
+
+    pub fn read(self: File, buf: []u8) Maybe(usize) {
+        return This.read(self.handle, buf);
+    }
+
+    pub fn writeAll(self: File, buf: []const u8) Maybe(void) {
+        var remain = buf;
+        while (remain.len > 0) {
+            const rc = This.write(self.handle, remain);
+            switch (rc) {
+                .err => |err| return .{ .err = err },
+                .result => |amt| {
+                    if (amt == 0) {
+                        return .{ .result = {} };
+                    }
+                    remain = remain[amt..];
+                },
+            }
+        }
+
+        return .{ .result = {} };
+    }
+
+    pub const ReadError = anyerror;
+
+    fn stdIoRead(this: File, buf: []u8) ReadError!usize {
+        return try this.read(buf).unwrap();
+    }
+
+    pub const Reader = std.io.Reader(File, anyerror, stdIoRead);
+
+    pub fn reader(self: File) Reader {
+        return Reader{ .context = self };
+    }
+
+    pub const WriteError = anyerror;
+    fn stdIoWrite(this: File, bytes: []const u8) WriteError!usize {
+        try this.writeAll(bytes).unwrap();
+
+        return bytes.len;
+    }
+
+    fn stdIoWriteQuietDebug(this: File, bytes: []const u8) WriteError!usize {
+        bun.Output.disableScopedDebugWriter();
+        defer bun.Output.enableScopedDebugWriter();
+        try this.writeAll(bytes).unwrap();
+
+        return bytes.len;
+    }
+
+    pub const Writer = std.io.Writer(File, anyerror, stdIoWrite);
+    pub const QuietWriter = if (Environment.isDebug) std.io.Writer(File, anyerror, stdIoWriteQuietDebug) else Writer;
+
+    pub fn writer(self: File) Writer {
+        return Writer{ .context = self };
+    }
+
+    pub fn quietWriter(self: File) QuietWriter {
+        return QuietWriter{ .context = self };
+    }
+
+    pub fn isTty(self: File) bool {
+        return std.os.isatty(self.handle.cast());
+    }
+
+    pub fn close(self: File) void {
+        // TODO: probably return the error? we have a lot of code paths which do not so we are keeping for now
+        _ = This.close(self.handle);
+    }
+};

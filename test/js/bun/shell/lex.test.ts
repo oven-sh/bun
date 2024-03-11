@@ -1,5 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
-
 import { $ } from "bun";
 import { TestBuilder, redirect } from "./util";
 

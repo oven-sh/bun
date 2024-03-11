@@ -4554,24 +4554,24 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
     return result;
 }
 
-extern "C" void Bun__VM__setEntryPointResult(void*, EncodedJSValue);
+extern "C" void Bun__VM__setEvalResultIfEntryPoint(void*, EncodedJSValue, EncodedJSValue);
 
 JSC::JSValue GlobalObject::moduleLoaderEvaluateForEval(JSGlobalObject* globalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, JSValue scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
-    s_globalObjectMethodTable.moduleLoaderEvaluate = &moduleLoaderEvaluate;
-
     if (UNLIKELY(scriptFetcher && scriptFetcher.isObject())) {
-        Bun__VM__setEntryPointResult(jsCast<Zig::GlobalObject*>(globalObject)->bunVM(), JSValue::encode(scriptFetcher));
+        Bun__VM__setEvalResultIfEntryPoint(jsCast<Zig::GlobalObject*>(globalObject)->bunVM(), JSValue::encode(key), JSValue::encode(scriptFetcher));
         return scriptFetcher;
     }
 
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue,
         scriptFetcher, sentValue, resumeMode);
 
-    Bun__VM__setEntryPointResult(jsCast<Zig::GlobalObject*>(globalObject)->bunVM(), JSValue::encode(result));
+    // need to check each module evaluated to cover cases like these (23 should be the result):
+    // `import "./foo"; 23; import "./bar"`
+    Bun__VM__setEvalResultIfEntryPoint(jsCast<Zig::GlobalObject*>(globalObject)->bunVM(), JSValue::encode(key), JSValue::encode(result));
 
     return result;
 }

@@ -895,13 +895,33 @@ pub const VirtualMachine = struct {
         return .running;
     }
 
-    pub fn setEntryPointResult(this: *VirtualMachine, value: JSValue) callconv(.C) void {
-        this.entry_point_result.set(this.global, value);
+    pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) callconv(.C) bool {
+        if (this.module_loader.eval_source) |eval_source| {
+            var specifier_str = specifier.toBunString(this.global);
+            defer specifier_str.deref();
+            return specifier_str.eqlUTF8(eval_source.path.text);
+        }
+
+        return false;
+    }
+
+    pub fn setEvalResultIfEntryPoint(this: *VirtualMachine, specifier: JSValue, result: JSValue) callconv(.C) void {
+        if (!this.entry_point_result.has() and this.specifierIsEvalEntryPoint(specifier)) {
+            this.entry_point_result.set(this.global, result);
+        }
+    }
+
+    pub fn setEntryPointEvalResult(this: *VirtualMachine, value: JSValue) callconv(.C) void {
+        if (!this.entry_point_result.has()) {
+            this.entry_point_result.set(this.global, value);
+        }
     }
 
     comptime {
         @export(scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
-        @export(setEntryPointResult, .{ .name = "Bun__VM__setEntryPointResult" });
+        @export(setEvalResultIfEntryPoint, .{ .name = "Bun__VM__setEvalResultIfEntryPoint" });
+        @export(setEntryPointEvalResult, .{ .name = "Bun__VM__setEntryPointEvalResult" });
+        @export(specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     }
 
     pub fn onExit(this: *VirtualMachine) void {

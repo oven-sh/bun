@@ -4514,7 +4514,6 @@ const LinkerContext = struct {
                         stmt.loc,
                     ),
                     expr,
-                    this.allocator,
                 );
                 try this.graph.generateSymbolImportAndUse(source_index, 0, module_ref, 1, Index.init(source_index));
             },
@@ -7522,7 +7521,6 @@ const LinkerContext = struct {
                                     },
                                     Logger.Loc.Empty,
                                 ),
-                                temp_allocator,
                             ),
                         ) catch unreachable;
                     },
@@ -8726,7 +8724,6 @@ const LinkerContext = struct {
                                                 value = value.joinWithComma(
                                                     binding.assign(
                                                         other,
-                                                        temp_allocator,
                                                     ),
                                                     temp_allocator,
                                                 );

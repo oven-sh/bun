@@ -5483,7 +5483,7 @@ var nativeReadableStreamPrototypes = {
   5: undefined,
 };
 
-function getNativeReadableStreamPrototype(Readable) {
+function getNativeReadableStreamPrototype(nativeType, Readable) {
   return (nativeReadableStreamPrototypes[nativeType] ??= createNativeStreamReadable(Readable));
 }
 

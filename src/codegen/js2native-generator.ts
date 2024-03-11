@@ -79,7 +79,7 @@ export function registerNativeCall(
     return existing.id;
   }
 
-  const id = -nativeCalls.length - 1;
+  const id = nativeCalls.length;
   nativeCalls.push({
     id,
     type: create_fn_len != null ? "cpp" : call_type,

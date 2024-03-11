@@ -175,8 +175,7 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         argv ? reinterpret_cast<StringImpl*>(argv->data()) : nullptr,
         argv ? static_cast<uint32_t>(argv->size()) : 0,
         execArgv ? reinterpret_cast<StringImpl*>(execArgv->data()) : nullptr,
-        execArgv ? static_cast<uint32_t>(execArgv->size()) : 0
-    );
+        execArgv ? static_cast<uint32_t>(execArgv->size()) : 0);
 
     if (!impl) {
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
@@ -460,7 +459,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 {
-    VM&vm = globalObject->vm();
+    VM& vm = globalObject->vm();
 
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue workerData = jsUndefined();
@@ -481,9 +480,11 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     }
 
     JSArray* array = constructEmptyArray(globalObject, nullptr, 3);
-    array->push(globalObject, workerData);
-    array->push(globalObject, threadId);
-    array->push(globalObject, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
+
+    array->putByIndexInline(globalObject, (unsigned)0, workerData, false);
+    array->putByIndexInline(globalObject, (unsigned)1, threadId, false);
+    array->putByIndexInline(globalObject, (unsigned)2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic), false);
+
     return array;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync } from "fs";
+import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
@@ -44,6 +44,47 @@ for (const flag of ["-e", "--print"]) {
     });
   });
 }
+
+describe("--print for cjs/esm", () => {
+  test("eval result between esm imports", async () => {
+    let cwd = mkdtempSync(join(tmpdir(), "bun-run-eval-test-"));
+    writeFileSync(join(cwd, "foo.js"), "'foo'");
+    writeFileSync(join(cwd, "bar.js"), "'bar'");
+    let { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--print", 'import "./foo.js"; 123; import "./bar.js"'],
+      cwd: cwd,
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toEqual("123\n");
+    expect(exitCode).toBe(0);
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  test("forced cjs", async () => {
+    let { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--print", "module.exports; 123"],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toEqual("123\n");
+    expect(exitCode).toBe(0);
+  });
+  test("module, exports, require, __filename, __dirname", async () => {
+    let { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "--print",
+        `
+        console.log(typeof module, typeof exports, typeof require, typeof __filename, typeof __dirname); 123
+      `,
+      ],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toEqual("object object function string string\n123\n");
+    expect(exitCode).toBe(0);
+  });
+});
 
 function group(run: (code: string) => ReturnType<typeof Bun.spawnSync>) {
   test("it works", async () => {

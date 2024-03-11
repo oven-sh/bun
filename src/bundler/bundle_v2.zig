@@ -460,13 +460,12 @@ pub const BundleV2 = struct {
         return visitor.reachable.toOwnedSlice();
     }
 
-    fn isDone(ptr: *anyopaque) bool {
-        var this = bun.cast(*const BundleV2, ptr);
+    fn isDone(this: *BundleV2) bool {
         return @atomicLoad(usize, &this.graph.parse_pending, .Monotonic) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .Monotonic) == 0;
     }
 
     pub fn waitForParse(this: *BundleV2) void {
-        this.loop().tick(this, isDone);
+        this.loop().tick(this, &isDone);
 
         debug("Parsed {d} files, producing {d} ASTs", .{ this.graph.input_files.len, this.graph.ast.len });
     }
@@ -1550,7 +1549,7 @@ pub const BundleV2 = struct {
     pub fn generateInNewThreadWrap(instance: *BundleThread) void {
         Output.Source.configureNamedThread("Bundler");
 
-        instance.waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("Failed to create waker");
+        instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
 
         var has_bundled = false;
         while (true) {

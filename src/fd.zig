@@ -10,7 +10,7 @@ const libuv = bun.windows.libuv;
 
 const allow_assert = env.allow_assert;
 
-const log = bun.Output.scoped(.fs, false);
+const log = bun.sys.syslog;
 fn handleToNumber(handle: FDImpl.System) FDImpl.SystemAsInt {
     if (env.os == .windows) {
         // intCast fails if 'fd > 2^62'
@@ -34,13 +34,15 @@ fn numberToHandle(handle: FDImpl.SystemAsInt) FDImpl.System {
 
 pub fn uv_get_osfhandle(in: c_int) libuv.uv_os_fd_t {
     const out = libuv.uv_get_osfhandle(in);
-    log("uv_get_osfhandle({d}) = {d}", .{ in, @intFromPtr(out) });
+    // TODO: this is causing a dead lock because is also used on fd format
+    // log("uv_get_osfhandle({d}) = {d}", .{ in, @intFromPtr(out) });
     return out;
 }
 
 pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
     const out = libuv.uv_open_osfhandle(in);
-    log("uv_open_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
+    // TODO: this is causing a dead lock because is also used on fd format
+    // log("uv_open_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
     return out;
 }
 
@@ -217,7 +219,7 @@ pub const FDImpl = packed struct {
 
         // Format the file descriptor for logging BEFORE closing it.
         // Otherwise the file descriptor is always invalid after closing it.
-        var buf: [1050]u8 = undefined;
+        var buf: if (env.isDebug) [1050]u8 else void = undefined;
         const this_fmt = if (env.isDebug) std.fmt.bufPrint(&buf, "{}", .{this}) catch unreachable;
 
         const result: ?bun.sys.Error = switch (env.os) {
@@ -307,6 +309,11 @@ pub const FDImpl = packed struct {
     }
 
     pub fn format(this: FDImpl, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (!this.isValid()) {
+            try writer.writeAll("[invalid_fd]");
+            return;
+        }
+
         if (fmt.len != 0) {
             // The reason for this error is because formatting FD as an integer on windows is
             // ambiguous and almost certainly a mistake. You probably meant to format fd.cast().
@@ -321,10 +328,6 @@ pub const FDImpl = packed struct {
             @compileError("invalid format string for FDImpl.format. must be empty like '{}'");
         }
 
-        if (!this.isValid()) {
-            try writer.writeAll("[invalid_fd]");
-            return;
-        }
         switch (env.os) {
             else => {
                 const fd = this.system();
@@ -351,7 +354,7 @@ pub const FDImpl = packed struct {
                                 return try writer.print("{d}[cwd handle]", .{this.value.as_system});
                             } else print_with_path: {
                                 var fd_path: bun.WPathBuffer = undefined;
-                                const path = std.os.windows.GetFinalPathNameByHandle(handle, .{ .volume_name = .Dos }, &fd_path) catch break :print_with_path;
+                                const path = std.os.windows.GetFinalPathNameByHandle(handle, .{ .volume_name = .Nt }, &fd_path) catch break :print_with_path;
                                 return try writer.print("{d}[{}]", .{
                                     this.value.as_system,
                                     bun.fmt.utf16(path),

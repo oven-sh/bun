@@ -64,7 +64,7 @@ test("basic 1", async () => {
   var { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -93,7 +93,7 @@ test("basic 1", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -129,7 +129,7 @@ test("dependency from root satisfies range from dependency", async () => {
   var { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -160,7 +160,7 @@ test("dependency from root satisfies range from dependency", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -197,7 +197,7 @@ test("peerDependency in child npm dependency should not maintain old version whe
   var { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -238,7 +238,7 @@ test("peerDependency in child npm dependency should not maintain old version whe
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -277,7 +277,7 @@ test("package added after install", async () => {
   var { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -319,7 +319,7 @@ test("package added after install", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -355,7 +355,7 @@ test("package added after install", async () => {
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -462,7 +462,7 @@ test("it should re-symlink binaries that become invalid when updating package ve
   var { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -502,7 +502,7 @@ test("it should re-symlink binaries that become invalid when updating package ve
   ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: packageDir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1759,7 +1759,7 @@ for (const forceWaiterThread of [false, true]) {
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -1808,7 +1808,7 @@ for (const forceWaiterThread of [false, true]) {
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -1862,7 +1862,7 @@ for (const forceWaiterThread of [false, true]) {
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -1950,7 +1950,7 @@ for (const forceWaiterThread of [false, true]) {
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2020,7 +2020,7 @@ for (const forceWaiterThread of [false, true]) {
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2052,7 +2052,7 @@ for (const forceWaiterThread of [false, true]) {
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2101,7 +2101,7 @@ for (const forceWaiterThread of [false, true]) {
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2143,7 +2143,7 @@ for (const forceWaiterThread of [false, true]) {
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2169,7 +2169,7 @@ for (const forceWaiterThread of [false, true]) {
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2201,7 +2201,7 @@ for (const forceWaiterThread of [false, true]) {
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2225,7 +2225,7 @@ for (const forceWaiterThread of [false, true]) {
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2260,7 +2260,7 @@ for (const forceWaiterThread of [false, true]) {
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2295,7 +2295,7 @@ for (const forceWaiterThread of [false, true]) {
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2320,7 +2320,7 @@ for (const forceWaiterThread of [false, true]) {
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2375,7 +2375,7 @@ for (const forceWaiterThread of [false, true]) {
       const { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2787,7 +2787,7 @@ for (const forceWaiterThread of [false, true]) {
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env: testEnv,
@@ -2971,7 +2971,7 @@ for (const forceWaiterThread of [false, true]) {
       const { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env,
@@ -3955,7 +3955,7 @@ describe("semver", () => {
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: null,
+        stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
         env,
@@ -3993,7 +3993,7 @@ describe("semver", () => {
     var { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -4121,7 +4121,7 @@ for (let i = 0; i < prereleaseTests.length; i++) {
         const { stdout, stderr, exited } = spawn({
           cmd: [bunExe(), "install"],
           cwd: packageDir,
-          stdout: null,
+          stdout: "pipe",
           stdin: "pipe",
           stderr: "pipe",
           env,
@@ -4263,7 +4263,7 @@ for (let i = 0; i < prereleaseFailTests.length; i++) {
         const { stdout, stderr, exited } = spawn({
           cmd: [bunExe(), "install"],
           cwd: packageDir,
-          stdout: null,
+          stdout: "pipe",
           stdin: "pipe",
           stderr: "pipe",
           env,
@@ -4298,7 +4298,7 @@ describe("yarn tests", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -4389,7 +4389,7 @@ describe("yarn tests", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -4442,7 +4442,7 @@ describe("yarn tests", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -4510,7 +4510,7 @@ describe("yarn tests", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -4590,7 +4590,7 @@ describe("yarn tests", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -4725,7 +4725,7 @@ describe("yarn tests", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -4771,7 +4771,7 @@ describe("yarn tests", () => {
     var { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -4803,7 +4803,7 @@ describe("yarn tests", () => {
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test.js"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -4855,7 +4855,7 @@ describe("yarn tests", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -4896,7 +4896,7 @@ describe("yarn tests", () => {
     var { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -4974,7 +4974,7 @@ describe("yarn tests", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--dev"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5037,7 +5037,7 @@ describe("yarn tests", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5090,7 +5090,7 @@ describe("yarn tests", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--dev"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5131,7 +5131,7 @@ describe("yarn tests", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--dev"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5172,7 +5172,7 @@ describe("yarn tests", () => {
     var { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5248,7 +5248,7 @@ describe("yarn tests", () => {
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test.js"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5277,7 +5277,7 @@ describe("yarn tests", () => {
     var { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5309,7 +5309,7 @@ describe("yarn tests", () => {
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test.js"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5338,7 +5338,7 @@ describe("yarn tests", () => {
     var { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5371,7 +5371,7 @@ describe("yarn tests", () => {
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test.js"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5401,7 +5401,7 @@ describe("yarn tests", () => {
     var { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5428,7 +5428,7 @@ describe("yarn tests", () => {
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test.js"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5458,7 +5458,7 @@ describe("yarn tests", () => {
     var { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--dev"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -5484,7 +5484,7 @@ describe("yarn tests", () => {
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--dev"],
       cwd: packageDir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,

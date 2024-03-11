@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { file, readableStreamToArrayBuffer, readableStreamToArray, readableStreamToText, ArrayBufferSink } from "bun";
 import { expect, it, beforeEach, afterEach, describe, test } from "bun:test";
 import { mkfifo } from "mkfifo";
@@ -437,7 +436,7 @@ it.skipIf(isWindows)("Bun.file() read text from pipe", async () => {
   const proc = Bun.spawn({
     cmd: ["bash", join(import.meta.dir + "/", "bun-streams-test-fifo.sh"), "/tmp/fifo"],
     stderr: "inherit",
-    stdout: null,
+    stdout: "pipe",
     stdin: null,
     env: {
       FIFO_TEST: large,

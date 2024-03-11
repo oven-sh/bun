@@ -1883,52 +1883,6 @@ pub const CacheLevel = struct {
     use_etag: bool,
     use_last_modified: bool,
 };
-const Waker = if (Environment.isPosix) bun.Async.Waker else *bun.uws.UVLoop;
-
-const Waiter = struct {
-    onWait: *const fn (this: *anyopaque) anyerror!usize,
-    onWake: *const fn (this: *anyopaque) void,
-    ctx: *anyopaque,
-
-    pub fn init(
-        ctx: anytype,
-        comptime onWait: *const fn (this: @TypeOf(ctx)) anyerror!usize,
-        comptime onWake: *const fn (this: @TypeOf(ctx)) void,
-    ) Waiter {
-        return Waiter{
-            .ctx = @ptrCast(ctx),
-            .onWait = @alignCast(@ptrCast(@as(*const anyopaque, @ptrCast(onWait)))),
-            .onWake = @alignCast(@ptrCast(@as(*const anyopaque, @ptrCast(onWake)))),
-        };
-    }
-
-    pub fn wait(this: *Waiter) !usize {
-        return this.onWait(this.ctx);
-    }
-
-    pub fn wake(this: *Waiter) void {
-        this.onWake(this.ctx);
-    }
-
-    pub fn fromUWSLoop(loop: *uws.Loop) Waiter {
-        const Handlers = struct {
-            fn onWait(uws_loop: *uws.Loop) !usize {
-                uws_loop.run();
-                return 0;
-            }
-
-            fn onWake(uws_loop: *uws.Loop) void {
-                uws_loop.wakeup();
-            }
-        };
-
-        return Waiter.init(
-            loop,
-            Handlers.onWait,
-            Handlers.onWake,
-        );
-    }
-};
 
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:
@@ -2015,13 +1969,10 @@ pub const PackageManager = struct {
 
     peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
 
-    /// Do not use directly outside of wait or wake
-    uws_event_loop: *uws.Loop,
-
-    file_poll_store: bun.Async.FilePoll.Store,
-
     // name hash from alias package name -> aliased package dependency version info
     known_npm_aliases: NpmAliasMap = .{},
+
+    event_loop: JSC.AnyEventLoop,
 
     // During `installPackages` we learn exactly what dependencies from --trust
     // actually have scripts to run, and we add them to this list
@@ -2098,7 +2049,7 @@ pub const PackageManager = struct {
     };
 
     pub fn hasEnoughTimePassedBetweenWaitingMessages() bool {
-        const iter = instance.uws_event_loop.iterationNumber();
+        const iter = instance.event_loop.loop().iterationNumber();
         if (TimePasser.last_time < iter) {
             TimePasser.last_time = iter;
             return true;
@@ -2152,7 +2103,7 @@ pub const PackageManager = struct {
                 var bun_path: string = "";
                 RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
                 try this.env.map.put("PATH", PATH.items);
-                _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, RunCommand.bun_node_dir) catch bun.outOfMemory());
+                _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, bun_path) catch bun.outOfMemory());
             }
         }
 
@@ -2210,22 +2161,20 @@ pub const PackageManager = struct {
         }
 
         _ = this.wait_count.fetchAdd(1, .Monotonic);
-        this.uws_event_loop.wakeup();
+        this.event_loop.wakeup();
+    }
+
+    fn hasNoMorePendingLifecycleScripts(this: *PackageManager) bool {
+        return this.pending_lifecycle_script_tasks.load(.Monotonic) == 0;
     }
 
     pub fn tickLifecycleScripts(this: *PackageManager) void {
-        if (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-            this.uws_event_loop.tickWithoutIdle();
-        }
+        this.event_loop.tickOnce(this);
     }
 
     pub fn sleep(this: *PackageManager) void {
-        if (this.wait_count.swap(0, .Monotonic) > 0) {
-            this.tickLifecycleScripts();
-            return;
-        }
         Output.flush();
-        this.uws_event_loop.tick();
+        this.event_loop.tick(this, hasNoMorePendingLifecycleScripts);
     }
 
     const DependencyToEnqueue = union(enum) {
@@ -2603,10 +2552,9 @@ pub const PackageManager = struct {
     }
 
     pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
-        if (comptime Environment.isWindows) {
-            @panic("TODO: command prompt version of temp node-gyp script");
+        if (Environment.isWindows) {
+            Output.debug("TODO: VERIFY ensureTempNodeGypScript WORKS!!", .{});
         }
-
         if (this.node_gyp_tempdir_name.len > 0) return;
 
         const tempdir = this.getTemporaryDirectory();
@@ -2627,13 +2575,25 @@ pub const PackageManager = struct {
         };
         defer node_gyp_tempdir.close();
 
-        var node_gyp_file = node_gyp_tempdir.createFile("node-gyp", .{ .mode = 0o777 }) catch |err| {
+        const file_name = switch (Environment.os) {
+            else => "node-gyp",
+            .windows => "node-gyp.cmd",
+        };
+        const mode = switch (Environment.os) {
+            else => 0o755,
+            .windows => 0, // windows does not have an executable bit
+        };
+
+        var node_gyp_file = node_gyp_tempdir.createFile(file_name, .{ .mode = mode }) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
             Global.crash();
         };
         defer node_gyp_file.close();
 
-        var bytes: string = "#!/usr/bin/env node\nrequire(\"child_process\").spawnSync(\"bun\",[\"x\",\"node-gyp\",...process.argv.slice(2)],{stdio:\"inherit\"})";
+        var bytes: string = switch (Environment.os) {
+            else => "#!/usr/bin/env node\nrequire(\"child_process\").spawnSync(\"bun\",[\"x\",\"node-gyp\",...process.argv.slice(2)],{stdio:\"inherit\"})",
+            .windows => "@node -e \"require('child_process').spawnSync('bun',['x','node-gyp',...process.argv.slice(2)],{stdio:'inherit'})\"",
+        };
         var index: usize = 0;
         while (index < bytes.len) {
             switch (bun.sys.write(bun.toFD(node_gyp_file.handle), bytes[index..])) {
@@ -2641,7 +2601,7 @@ pub const PackageManager = struct {
                     index += written;
                 },
                 .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to node-gyp file", .{@tagName(err.getErrno())});
+                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@tagName(err.getErrno())});
                     Global.crash();
                 },
             }
@@ -6680,7 +6640,7 @@ pub const PackageManager = struct {
         }
 
         if (env.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
-            JSC.Subprocess.WaiterThread.setShouldUseWaiterThread();
+            bun.spawn.WaiterThread.setShouldUseWaiterThread();
         }
 
         if (PackageManager.verbose_install) {
@@ -6721,11 +6681,12 @@ pub const PackageManager = struct {
             .root_package_json_file = package_json_file,
             .workspaces = workspaces,
             // .progress
-            .uws_event_loop = uws.Loop.get(),
-            .file_poll_store = bun.Async.FilePoll.Store.init(ctx.allocator),
+            .event_loop = .{
+                .mini = JSC.MiniEventLoop.init(bun.default_allocator),
+            },
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
-
+        JSC.MiniEventLoop.global = &manager.event_loop.mini;
         if (!manager.options.enable.cache) {
             manager.options.enable.manifest_cache = false;
             manager.options.enable.manifest_cache_control = false;
@@ -6811,8 +6772,9 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = undefined,
-            .uws_event_loop = uws.Loop.get(),
-            .file_poll_store = bun.Async.FilePoll.Store.init(allocator),
+            .event_loop = .{
+                .js = JSC.VirtualMachine.get().eventLoop(),
+            },
             .workspaces = std.StringArrayHashMap(Semver.Version).init(allocator),
         };
         manager.lockfile = try allocator.create(Lockfile);
@@ -8200,9 +8162,6 @@ pub const PackageManager = struct {
         /// Increments the number of installed packages for a tree id and runs available scripts
         /// if the tree is finished.
         pub fn incrementTreeInstallCount(this: *PackageInstaller, tree_id: Lockfile.Tree.Id, comptime log_level: Options.LogLevel) void {
-            if (comptime Environment.isWindows) {
-                return bun.todo(@src(), {});
-            }
             if (comptime Environment.allow_assert) {
                 std.debug.assert(tree_id != Lockfile.Tree.invalid_id);
             }
@@ -8229,9 +8188,6 @@ pub const PackageManager = struct {
         }
 
         pub fn runAvailableScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
-            if (comptime Environment.isWindows) {
-                return bun.todo(@src(), {});
-            }
             var i: usize = this.pending_lifecycle_scripts.items.len;
             while (i > 0) {
                 i -= 1;
@@ -8268,9 +8224,6 @@ pub const PackageManager = struct {
         }
 
         pub fn completeRemainingScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
-            if (comptime Environment.isWindows) {
-                return bun.todo(@src(), {});
-            }
             for (this.pending_lifecycle_scripts.items) |entry| {
                 const package_name = entry.list.package_name;
                 while (LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
@@ -9369,10 +9322,7 @@ pub const PackageManager = struct {
                     if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
                 }
 
-                if (this.pending_tasks > 0)
-                    this.sleep()
-                else
-                    this.tickLifecycleScripts();
+                this.sleep();
             } else {
                 this.tickLifecycleScripts();
             }
@@ -10132,9 +10082,6 @@ pub const PackageManager = struct {
         list: Lockfile.Package.Scripts.List,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
-        if (comptime Environment.isWindows) {
-            return bun.todo(@src(), {});
-        }
         var any_scripts = false;
         for (list.items) |maybe_item| {
             if (maybe_item != null) {

@@ -1,10 +1,7 @@
-// @known-failing-on-windows: 1 failing
+import { spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunExe, bunEnv } from "../../harness.js";
-import { mkdirSync, rmSync, writeFileSync, readFileSync, mkdtempSync } from "fs";
-import { tmpdir } from "os";
-import { dirname, join } from "path";
-import { sleep, spawn, spawnSync, which } from "bun";
+import { join } from "path";
+import { bunEnv, bunExe } from "../../harness.js";
 
 // https://github.com/oven-sh/bun/issues/2499
 it("onAborted() and onWritable are not called after receiving an empty response body due to a promise rejection", async testDone => {

@@ -4132,7 +4132,16 @@ declare module "bun" {
       /**
        * If true, the subprocess will have a hidden window.
        */
-      // windowsHide?: boolean;
+      windowsHide?: boolean;
+
+      /**
+       * Path to the executable to run in the subprocess. This defaults to `cmds[0]`.
+       *
+       * One use-case for this is for applications which wrap other applications or to simulate a symlink.
+       *
+       * @default cmds[0]
+       */
+      argv0?: string;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =
@@ -4316,7 +4325,7 @@ declare module "bun" {
      * Kill the process
      * @param exitCode The exitCode to send to the process
      */
-    kill(exitCode?: number): void;
+    kill(exitCode?: number | NodeJS.Signals): void;
 
     /**
      * This method will tell Bun to wait for this process to exit after you already
@@ -4376,6 +4385,8 @@ declare module "bun" {
      * Get the resource usage information of the process (max RSS, CPU time, etc)
      */
     resourceUsage: ResourceUsage;
+
+    signalCode?: string;
   }
 
   /**
@@ -4471,6 +4482,8 @@ declare module "bun" {
        * ```
        */
       cmd: string[];
+
+      onExit: never;
     },
   ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
 

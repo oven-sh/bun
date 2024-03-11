@@ -170,23 +170,6 @@ for (const { body, fn } of bodyTypes) {
       describe("ReadableStream", () => {
         const streams = [
           {
-            label: "empty stream",
-            stream: () => new ReadableStream(),
-            content: "",
-            skip: true, // hangs
-          },
-          {
-            label: "custom stream",
-            stream: () =>
-              new ReadableStream({
-                start(controller) {
-                  controller.enqueue("hello\n");
-                },
-              }),
-            content: "hello\n",
-            skip: true, // hangs
-          },
-          {
             label: "direct stream",
             stream: () =>
               new ReadableStream({

@@ -1,14 +1,19 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
-#include "helpers.h"
 #include "simdutf.h"
 #include "JSDOMURL.h"
 #include "DOMURL.h"
 #include "ZigGlobalObject.h"
 #include "IDLTypes.h"
-#include "JSDOMWrapperCache.h"
 
+#include <wtf/Seconds.h>
+#include <wtf/text/ExternalStringImpl.h>
+#include <JavaScriptCore/JSONObject.h>
+#include <wtf/text/AtomString.h>
+#include <wtf/text/WTFString.h>
+
+#include "JSDOMWrapperCache.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -21,12 +26,7 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
 
-#include <wtf/Seconds.h>
-#include <wtf/text/ExternalStringImpl.h>
 #include "GCDefferalContext.h"
-#include <JavaScriptCore/JSONObject.h>
-#include <wtf/text/AtomString.h>
-#include <wtf/text/WTFString.h>
 
 extern "C" void mi_free(void* ptr);
 

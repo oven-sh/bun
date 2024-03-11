@@ -262,9 +262,6 @@ jobs:
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         # if: ${{github.event.inputs.use_bun == 'false'}}
         run: |
-          ulimit -c unlimited
-          ulimit -c
-
           node packages/bun-internal-test/src/runner.node.mjs || true
       # - uses: actions/upload-artifact@v4
       #   if: steps.test.outputs.failing_tests != ''

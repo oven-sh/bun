@@ -55,17 +55,13 @@ pub const Cli = struct {
         var panicker = MainPanicHandler.init(log);
         MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
-            switch (err) {
-                else => {
-                    if (Output.enable_ansi_colors_stderr) {
-                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                    } else {
-                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                    }
+            log.printForLogLevel(Output.errorWriter()) catch {};
 
-                    Reporter.globalError(err, @errorReturnTrace());
-                },
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
             }
+
+            Reporter.globalError(err, null);
         };
     }
 
@@ -198,9 +194,10 @@ pub const Arguments = struct {
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     } ++ if (Environment.isWindows) [_]ParamType{
-        // clap.parseParam("--native-shell                    Use cmd.exe to interpret package.json scripts") catch unreachable,
-        clap.parseParam("--no-native-shell                    Use Bun shell (TODO: flip this switch)") catch unreachable,
-    } else .{};
+        clap.parseParam("--system-shell                    Use cmd.exe to interpret package.json scripts") catch unreachable,
+    } else .{
+        clap.parseParam("--bun-shell                       Use Bun Shell to interpret package.json scripts") catch unreachable,
+    };
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const bunx_commands = [_]ParamType{
@@ -850,10 +847,10 @@ pub const Arguments = struct {
             ctx.debug.output_file = output_file.?;
 
         if (cmd == .RunCommand) {
-            ctx.debug.use_native_shell = if (Environment.isWindows)
-                !args.flag("--no-native-shell")
+            ctx.debug.use_system_shell = if (Environment.isWindows)
+                args.flag("--system-shell")
             else
-                true;
+                !args.flag("--bun-shell");
         }
 
         return opts;
@@ -979,7 +976,7 @@ pub const HelpCommand = struct {
             .explicit => {
                 Output.pretty(
                     "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
-                        Global.package_json_version_with_sha ++
+                        Global.package_json_version_with_revision ++
                         ")<r>\n\n" ++
                         cli_helptext_fmt,
                     args,
@@ -1053,7 +1050,7 @@ pub const Command = struct {
         run_in_bun: bool = false,
         loaded_bunfig: bool = false,
         /// Disables using bun.shell.Interpreter for `bun run`, instead spawning cmd.exe
-        use_native_shell: bool = false,
+        use_system_shell: bool = false,
 
         // technical debt
         macros: MacroOptions = MacroOptions.unspecified,
@@ -1550,33 +1547,32 @@ pub const Command = struct {
                     return;
                 }
 
-                // iterate over args
-                // if --help, print help and exit
-                const print_help = brk: {
-                    for (bun.argv()) |arg| {
-                        if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
-                            break :brk true;
-                        }
-                    }
-                    break :brk false;
-                };
-
                 var template_name_start: usize = 0;
                 var positionals: [2]string = .{ "", "" };
-
                 var positional_i: usize = 0;
 
+                var dash_dash_bun = false;
+                var print_help = false;
                 if (args.len > 2) {
-                    const remainder = args[2..];
+                    const remainder = args[1..];
                     var remainder_i: usize = 0;
                     while (remainder_i < remainder.len and positional_i < positionals.len) : (remainder_i += 1) {
-                        const slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n;");
-                        if (slice.len > 0 and !strings.hasPrefixComptime(slice, "--")) {
-                            if (positional_i == 0) {
-                                template_name_start = remainder_i + 2;
+                        const slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n");
+                        if (slice.len > 0) {
+                            if (!strings.hasPrefixComptime(slice, "--")) {
+                                if (positional_i == 1) {
+                                    template_name_start = remainder_i + 2;
+                                }
+                                positionals[positional_i] = slice;
+                                positional_i += 1;
                             }
-                            positionals[positional_i] = slice;
-                            positional_i += 1;
+                            if (slice[0] == '-') {
+                                if (strings.eqlComptime(slice, "--bun")) {
+                                    dash_dash_bun = true;
+                                } else if (strings.eqlComptime(slice, "--help") or strings.eqlComptime(slice, "-h")) {
+                                    print_help = true;
+                                }
+                            }
                         }
                     }
                 }
@@ -1585,14 +1581,14 @@ pub const Command = struct {
                     // "bun create --"
                     // "bun create -abc --"
                     positional_i == 0 or
-                    positionals[0].len == 0)
+                    positionals[1].len == 0)
                 {
                     Command.Tag.printHelp(.CreateCommand, true);
                     Global.exit(0);
                     return;
                 }
 
-                const template_name = positionals[0];
+                const template_name = positionals[1];
 
                 // if template_name is "react"
                 // print message telling user to use "bun create vite" instead
@@ -1638,10 +1634,13 @@ pub const Command = struct {
                     example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {
-                    const bunx_args = try allocator.alloc([:0]const u8, 1 + args.len - template_name_start);
+                    const bunx_args = try allocator.alloc([:0]const u8, 2 + args.len - template_name_start + @intFromBool(dash_dash_bun));
                     bunx_args[0] = "bunx";
-                    bunx_args[1] = try BunxCommand.addCreatePrefix(allocator, template_name);
-                    for (bunx_args[2..], args[template_name_start + 1 ..]) |*dest, src| {
+                    if (dash_dash_bun) {
+                        bunx_args[1] = "--bun";
+                    }
+                    bunx_args[1 + @as(usize, @intFromBool(dash_dash_bun))] = try BunxCommand.addCreatePrefix(allocator, template_name);
+                    for (bunx_args[2 + @as(usize, @intFromBool(dash_dash_bun)) ..], args[template_name_start..]) |*dest, src| {
                         dest.* = src;
                     }
 
@@ -1740,7 +1739,7 @@ pub const Command = struct {
                     }
 
                     if (extension.len > 0) {
-                        if (strings.endsWithComptime(ctx.args.entry_points[0], ".bun.sh")) {
+                        if (strings.endsWithComptime(ctx.args.entry_points[0], ".sh")) {
                             break :brk options.Loader.bunsh;
                         }
 

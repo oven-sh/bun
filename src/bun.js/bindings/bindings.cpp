@@ -4740,6 +4740,9 @@ enum class BuiltinNamesMap : uint8_t {
     toString,
     redirect,
     inspectCustom,
+    highWaterMark,
+    path,
+    stream,
     asyncIterator,
 };
 
@@ -4778,8 +4781,21 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     case BuiltinNamesMap::inspectCustom: {
         return Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
     }
+    case BuiltinNamesMap::highWaterMark: {
+        return clientData->builtinNames().highWaterMarkPublicName();
+    }
+    case BuiltinNamesMap::path: {
+        return clientData->builtinNames().pathPublicName();
+    }
+    case BuiltinNamesMap::stream: {
+        return clientData->builtinNames().streamPublicName();
+    }
     case BuiltinNamesMap::asyncIterator: {
         return vm.propertyNames->asyncIteratorSymbol;
+    }
+    default: {
+        ASSERT_NOT_REACHED();
+        return Identifier();
     }
     }
 }
@@ -5178,12 +5194,33 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     JSC::VM& vm = globalObject->vm();
-    globalObject->queueMicrotask(
-        JSValue(globalObject->performMicrotaskFunction()),
-        JSC::JSValue::decode(JSValue1),
+    JSValue microtaskArgs[] = {
+        JSValue::decode(JSValue1),
         globalObject->m_asyncContextData.get()->getInternalField(0),
-        JSC::JSValue::decode(JSValue3),
-        JSC::JSValue::decode(JSValue4));
+        JSValue::decode(JSValue3),
+        JSValue::decode(JSValue4)
+    };
+
+    ASSERT(microtaskArgs[0].isCallable());
+
+    if (microtaskArgs[1].isEmpty()) {
+        microtaskArgs[1] = jsUndefined();
+    }
+
+    if (microtaskArgs[2].isEmpty()) {
+        microtaskArgs[2] = jsUndefined();
+    }
+
+    if (microtaskArgs[3].isEmpty()) {
+        microtaskArgs[3] = jsUndefined();
+    }
+
+    globalObject->queueMicrotask(
+        globalObject->performMicrotaskFunction(),
+        WTFMove(microtaskArgs[0]),
+        WTFMove(microtaskArgs[1]),
+        WTFMove(microtaskArgs[2]),
+        WTFMove(microtaskArgs[3]));
 }
 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC__JSGlobalObject* globalObject)

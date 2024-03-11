@@ -58,7 +58,7 @@ it("should update to latest version of dependency", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -102,7 +102,7 @@ it("should update to latest version of dependency", async () => {
   } = spawn({
     cmd: [bunExe(), "update", "baz"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -171,7 +171,7 @@ it("should update to latest versions of dependencies", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -223,7 +223,7 @@ it("should update to latest versions of dependencies", async () => {
   } = spawn({
     cmd: [bunExe(), "update"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -289,7 +289,7 @@ it("lockfile should not be modified when there are no version changes, issue#588
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -312,7 +312,7 @@ it("lockfile should not be modified when there are no version changes, issue#588
     const { exited } = spawn({
       cmd: [bunExe(), "update"],
       cwd: package_dir, // package.json is not changed
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,

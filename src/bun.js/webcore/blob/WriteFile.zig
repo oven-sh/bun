@@ -483,7 +483,7 @@ pub const WriteFileWindows = struct {
             return;
         }
 
-        this.fd = @intCast(rc.value);
+        this.fd = @intCast(rc.int());
 
         // the loop must be copied
         this.doWriteLoop(this.loop());
@@ -535,14 +535,15 @@ pub const WriteFileWindows = struct {
             return;
         }
 
-        this.total_written += @intCast(rc.value);
+        this.total_written += @intCast(rc.int());
         this.doWriteLoop(this.loop());
     }
 
     pub fn onFinish(container: *WriteFileWindows) void {
         container.loop().unrefConcurrently();
         var event_loop = container.event_loop;
-        defer event_loop.drainMicrotasks();
+        event_loop.enter();
+        defer event_loop.exit();
 
         // We don't need to enqueue task since this is already in a task.
         container.runFromJSThread();

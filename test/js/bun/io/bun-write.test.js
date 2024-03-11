@@ -1,5 +1,5 @@
 import fs, { mkdirSync } from "fs";
-import { it, expect, describe } from "bun:test";
+import { it, expect, describe, test } from "bun:test";
 import path, { join } from "path";
 import { gcTick, withoutAggressiveGC, bunExe, bunEnv, isWindows } from "harness";
 import { tmpdir } from "os";
@@ -478,4 +478,21 @@ describe("ENOENT", () => {
       );
     });
   });
+});
+
+test("timed output should work", async () => {
+  const producer_file = path.join(import.meta.dir, "timed-stderr-output.js");
+
+  const producer = Bun.spawn([bunExe(), "run", producer_file], {
+    stderr: "pipe",
+    stdout: "inherit",
+    stdin: "inherit",
+  });
+
+  let text = "";
+  for await (const chunk of producer.stderr) {
+    text += [...chunk].map(x => String.fromCharCode(x)).join("");
+    await Bun.sleep(1000);
+  }
+  expect(text).toBe("0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n");
 });

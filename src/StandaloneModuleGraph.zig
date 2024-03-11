@@ -570,7 +570,8 @@ pub const StandaloneModuleGraph = struct {
     }
 
     pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {
-        const self_exe = bun.toLibUVOwnedFD(openSelf() catch return null);
+        // Do not invoke libuv here.
+        const self_exe = openSelf() catch return null;
         defer _ = Syscall.close(self_exe);
 
         var trailer_bytes: [4096]u8 = undefined;

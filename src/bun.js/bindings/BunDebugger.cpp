@@ -1,5 +1,7 @@
 #include "root.h"
 
+#include "ZigGlobalObject.h"
+
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>

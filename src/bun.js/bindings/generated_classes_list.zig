@@ -65,4 +65,7 @@ pub const Classes = struct {
     pub const Crypto = JSC.WebCore.Crypto;
     pub const FFI = JSC.FFI;
     pub const H2FrameParser = JSC.API.H2FrameParser;
+    pub const FileInternalReadableStreamSource = JSC.WebCore.FileReader.Source;
+    pub const BlobInternalReadableStreamSource = JSC.WebCore.ByteBlobLoader.Source;
+    pub const BytesInternalReadableStreamSource = JSC.WebCore.ByteStream.Source;
 };

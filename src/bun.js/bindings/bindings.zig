@@ -1610,6 +1610,25 @@ pub const SystemError = extern struct {
     pub const name = "SystemError";
     pub const namespace = "";
 
+    pub fn getErrno(this: *const SystemError) bun.C.E {
+        // The inverse in bun.sys.Error.toSystemError()
+        return @enumFromInt(this.errno * -1);
+    }
+
+    pub fn deref(this: *const SystemError) void {
+        this.path.deref();
+        this.code.deref();
+        this.message.deref();
+        this.syscall.deref();
+    }
+
+    pub fn ref(this: *SystemError) void {
+        this.path.ref();
+        this.code.ref();
+        this.message.ref();
+        this.syscall.ref();
+    }
+
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer {
             this.path.deref();
@@ -2878,7 +2897,7 @@ pub const JSGlobalObject = extern struct {
     pub fn queueMicrotask(
         this: *JSGlobalObject,
         function: JSValue,
-        args: []JSC.JSValue,
+        args: []const JSC.JSValue,
     ) void {
         this.queueMicrotaskJob(
             function,
@@ -3747,6 +3766,18 @@ pub const JSValue = enum(JSValueReprInt) {
             return FetchHeaders.cast(value);
         }
 
+        if (comptime ZigType == JSC.WebCore.Body.Value) {
+            if (value.as(JSC.WebCore.Request)) |req| {
+                return req.getBodyValue();
+            }
+
+            if (value.as(JSC.WebCore.Response)) |res| {
+                return res.getBodyValue();
+            }
+
+            return null;
+        }
+
         if (comptime @hasDecl(ZigType, "fromJS") and @TypeOf(ZigType.fromJS) == fn (JSC.JSValue) ?*ZigType) {
             if (comptime ZigType == JSC.WebCore.Blob) {
                 if (ZigType.fromJS(value)) |blob| {
@@ -3905,7 +3936,7 @@ pub const JSValue = enum(JSValueReprInt) {
             .quote_strings = true,
         };
 
-        JSC.ConsoleObject.format(
+        JSC.ConsoleObject.format2(
             .Debug,
             globalObject,
             @as([*]const JSValue, @ptrCast(&this)),
@@ -4539,7 +4570,14 @@ pub const JSValue = enum(JSValueReprInt) {
         toString,
         redirect,
         inspectCustom,
+        highWaterMark,
+        path,
+        stream,
         asyncIterator,
+
+        pub fn has(property: []const u8) bool {
+            return bun.ComptimeEnumMap(BuiltinName).has(property);
+        }
     };
 
     // intended to be more lightweight than ZigString
@@ -4610,6 +4648,12 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
+        if (comptime bun.Environment.isDebug) {
+            if (BuiltinName.has(property)) {
+                Output.debugWarn("get(\"{s}\") called. Please use fastGet(.{s}) instead!", .{ property, property });
+            }
+        }
+
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @as(u32, @intCast(property.len)));
         return if (@intFromEnum(value) != 0) value else return null;
     }
@@ -4635,6 +4679,19 @@ pub const JSValue = enum(JSValueReprInt) {
         std.debug.assert(this.isCell());
         const function = this.fastGet(global, BuiltinName.toString) orelse return false;
         return function.isCell() and function.isCallable(global.vm());
+    }
+
+    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
+        if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
+            if (fastGet(this, global, @field(BuiltinName, property))) |prop| {
+                if (prop.isEmptyOrUndefinedOrNull()) return null;
+                return prop;
+            }
+
+            return null;
+        }
+
+        return getTruthy(this, global, property);
     }
 
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
@@ -4694,6 +4751,15 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn getOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !?Enum {
+        if (comptime BuiltinName.has(property_name)) {
+            if (fastGet(this, globalThis, @field(BuiltinName, property_name))) |prop| {
+                if (prop.isEmptyOrUndefinedOrNull())
+                    return null;
+                return try toEnum(prop, globalThis, property_name, Enum);
+            }
+            return null;
+        }
+
         if (get(this, globalThis, property_name)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull())
                 return null;
@@ -4746,7 +4812,12 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) !?T {
-        if (getTruthy(this, globalThis, property_name)) |prop| {
+        const prop = (if (comptime BuiltinName.has(property_name))
+            fastGet(this, globalThis, @field(BuiltinName, property_name))
+        else
+            get(this, globalThis, property_name)) orelse return null;
+
+        if (!prop.isEmptyOrUndefinedOrNull()) {
             switch (comptime T) {
                 bool => {
                     if (prop.isBoolean()) {

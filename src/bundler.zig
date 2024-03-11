@@ -1028,7 +1028,7 @@ pub const Bundler = struct {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
             .css => {
-                var file: std.fs.File = undefined;
+                var file: bun.sys.File = undefined;
 
                 if (Outstream == std.fs.Dir) {
                     const output_dir = outstream;
@@ -1036,9 +1036,9 @@ pub const Bundler = struct {
                     if (std.fs.path.dirname(file_path.pretty)) |dirname| {
                         try output_dir.makePath(dirname);
                     }
-                    file = try output_dir.createFile(file_path.pretty, .{});
+                    file = bun.sys.File.from(try output_dir.createFile(file_path.pretty, .{}));
                 } else {
-                    file = outstream;
+                    file = bun.sys.File.from(outstream);
                 }
 
                 const CSSBuildContext = struct {
@@ -1046,7 +1046,7 @@ pub const Bundler = struct {
                 };
                 const build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
 
-                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, std.fs.File.Writer));
+                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8192, bun.sys.File.Writer));
                 const CSSWriter = Css.NewWriter(
                     BufferedWriter.Writer,
                     @TypeOf(&bundler.linker),
@@ -1844,7 +1844,7 @@ pub const Bundler = struct {
         const did_start = false;
 
         if (bundler.options.output_dir_handle == null) {
-            const outstream = std.io.getStdOut();
+            const outstream = bun.sys.File.from(std.io.getStdOut());
 
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {

@@ -104,8 +104,8 @@ pub const Waker = struct {
         *anyopaque,
     ) bool;
 
-    pub fn init(allocator: std.mem.Allocator) !Waker {
-        return initWithFileDescriptor(allocator, try std.os.kqueue());
+    pub fn init() !Waker {
+        return initWithFileDescriptor(bun.default_allocator, try std.os.kqueue());
     }
 
     pub fn initWithFileDescriptor(allocator: std.mem.Allocator, kq: i32) !Waker {

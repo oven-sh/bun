@@ -54,10 +54,7 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
 describe("fd leak", () => {
   function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 500) {
     test(`fdleak_${name}`, async () => {
-      for (let i = 0; i < 5; i++) {
-        await builder().quiet().run();
-      }
-
+      Bun.gc(true);
       const baseline = openSync(devNull, "r");
       closeSync(baseline);
 

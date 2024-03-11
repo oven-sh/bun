@@ -51,7 +51,7 @@ it("should list top-level dependency", async () => {
     await spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -63,7 +63,7 @@ it("should list top-level dependency", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -107,7 +107,7 @@ it("should list all dependencies", async () => {
     await spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -119,7 +119,7 @@ it("should list all dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls", "--all"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -164,7 +164,7 @@ it("should list top-level aliased dependency", async () => {
     await spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -176,7 +176,7 @@ it("should list top-level aliased dependency", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -220,7 +220,7 @@ it("should list aliased dependencies", async () => {
     await spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
@@ -232,7 +232,7 @@ it("should list aliased dependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls", "--all"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -278,7 +278,7 @@ it("should remove all cache", async () => {
     await spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env: {

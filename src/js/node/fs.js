@@ -596,12 +596,11 @@ ReadStream = (function (InternalReadStream) {
       // Get the stream controller
       // We need the pointer to the underlying stream controller for the NativeReadable
       var stream = fileRef.stream();
-      var native = $direct(stream);
-      if (!native) {
+      var ptr = stream.$bunNativePtr;
+      if (!ptr) {
         $debug("no native readable stream");
         throw new Error("no native readable stream");
       }
-      var { stream: ptr } = native;
 
       super(ptr, {
         ...options,

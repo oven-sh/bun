@@ -11,6 +11,7 @@
     "p-queue": "^8.0.1"
   },
   "devDependencies": {
+    "@types/p-queue": "^3.2.1",
     "bun-types": "canary",
     "prettier": "^2.8.2"
   },

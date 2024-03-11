@@ -45,6 +45,10 @@ pub const Loader = struct {
     did_load_process: bool = false,
     reject_unauthorized: ?bool = null,
 
+    pub fn iterator(this: *const Loader) Map.HashTable.Iterator {
+        return this.map.iterator();
+    }
+
     pub fn has(this: *const Loader, input: []const u8) bool {
         const value = this.get(input) orelse return false;
         if (value.len == 0) return false;
@@ -1152,12 +1156,12 @@ pub const Map = struct {
         return result[0..].ptr;
     }
 
-    pub inline fn init(allocator: std.mem.Allocator) Map {
-        return Map{ .map = HashTable.init(allocator) };
+    pub fn iterator(this: *const Map) HashTable.Iterator {
+        return this.map.iterator();
     }
 
-    pub inline fn iterator(this: *Map) HashTable.Iterator {
-        return this.map.iterator();
+    pub inline fn init(allocator: std.mem.Allocator) Map {
+        return Map{ .map = HashTable.init(allocator) };
     }
 
     pub inline fn put(this: *Map, key: string, value: string) !void {

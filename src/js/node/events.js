@@ -397,6 +397,9 @@ function on(emitter, event, options = {}) {
     emitter.on(evName, () => {
       emitter.removeListener(event, eventHandler);
       emitter.removeListener("error", errorHandler);
+      while (!unconsumedPromises.isEmpty()) {
+        unconsumedPromises.shift().resolve();
+      }
       done = true;
     });
   }

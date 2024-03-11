@@ -25,14 +25,22 @@ pub const subproc = @import("./subproc.zig");
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
 pub const Interpreter = eval.Interpreter;
-pub const InterpreterMini = eval.InterpreterMini;
 pub const Subprocess = subproc.ShellSubprocess;
-pub const SubprocessMini = subproc.ShellSubprocessMini;
+// pub const IOWriter = interpret.IOWriter;
+// pub const SubprocessMini = subproc.ShellSubprocessMini;
 
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
-pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue.";
+pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue!";
+
+/// Using these instead of `bun.STD{IN,OUT,ERR}_FD` to makesure we use uv fd
+pub const STDIN_FD: bun.FileDescriptor = if (bun.Environment.isWindows) bun.FDImpl.fromUV(0).encode() else bun.STDIN_FD;
+pub const STDOUT_FD: bun.FileDescriptor = if (bun.Environment.isWindows) bun.FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+pub const STDERR_FD: bun.FileDescriptor = if (bun.Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+
+pub const POSIX_DEV_NULL: [:0]const u8 = "/dev/null";
+pub const WINDOWS_DEV_NULL: [:0]const u8 = "NUL";
 
 /// The strings in this type are allocated with event loop ctx allocator
 pub const ShellErr = union(enum) {
@@ -41,9 +49,13 @@ pub const ShellErr = union(enum) {
     invalid_arguments: struct { val: []const u8 = "" },
     todo: []const u8,
 
-    pub fn newSys(e: Syscall.Error) @This() {
+    pub fn newSys(e: anytype) @This() {
         return .{
-            .sys = e.toSystemError(),
+            .sys = switch (@TypeOf(e)) {
+                Syscall.Error => e.toSystemError(),
+                JSC.SystemError => e,
+                else => @compileError("Invalid `e`: " ++ @typeName(e)),
+            },
         };
     }
 
@@ -68,8 +80,9 @@ pub const ShellErr = union(enum) {
         }
     }
 
-    pub fn throwJS(this: @This(), globalThis: *JSC.JSGlobalObject) void {
-        switch (this) {
+    pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) void {
+        defer this.deinit(bun.default_allocator);
+        switch (this.*) {
             .sys => {
                 const err = this.sys.toErrorInstance(globalThis);
                 globalThis.throwValue(err);
@@ -78,7 +91,7 @@ pub const ShellErr = union(enum) {
                 var str = JSC.ZigString.init(this.custom);
                 str.markUTF8();
                 const err_value = str.toErrorInstance(globalThis);
-                globalThis.vm().throwError(globalThis, err_value);
+                globalThis.throwValue(err_value);
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
             .invalid_arguments => {
@@ -91,6 +104,7 @@ pub const ShellErr = union(enum) {
     }
 
     pub fn throwMini(this: @This()) void {
+        defer this.deinit(bun.default_allocator);
         switch (this) {
             .sys => {
                 const err = this.sys;

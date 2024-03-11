@@ -7,7 +7,7 @@ if (TARGET === "STDIN") {
   if (MODE === "READABLE") {
     process.stdin.on("readable", () => {
       let chunk;
-      while ((chunk = process.stdin.read()) !== null) {
+      while ((chunk = process.stdin.read()) != null) {
         data += chunk;
       }
     });
@@ -17,8 +17,7 @@ if (TARGET === "STDIN") {
     });
   }
   process.stdin.on("end", () => {
-    process.stdout.write("data: ");
-    process.stdout.write(data);
+    process.stdout.write(Buffer.concat([Buffer.from("data: "), Buffer.from(data)]));
   });
 } else if (TARGET === "STDOUT") {
   process.stdout.write("stdout_test");

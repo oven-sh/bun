@@ -54,7 +54,7 @@ it("should remove existing package", async () => {
   const { exited: exited1 } = spawn({
     cmd: [bunExe(), "add", `file:${pkg1_path}`.replace(/\\/g, "\\\\")],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -63,7 +63,7 @@ it("should remove existing package", async () => {
   const { exited: exited2 } = spawn({
     cmd: [bunExe(), "add", `file:${pkg2_path}`.replace(/\\/g, "\\\\")],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -91,7 +91,7 @@ it("should remove existing package", async () => {
   } = spawn({
     cmd: [bunExe(), "remove", "pkg1"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -132,7 +132,7 @@ it("should remove existing package", async () => {
   } = spawn({
     cmd: [bunExe(), "remove", "pkg2"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -181,7 +181,7 @@ it("should not reject missing package", async () => {
   const { exited: addExited } = spawn({
     cmd: [bunExe(), "add", `file:${pkg_path}`.replace(/\\/g, "\\\\")],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -191,7 +191,7 @@ it("should not reject missing package", async () => {
   const { exited: rmExited } = spawn({
     cmd: [bunExe(), "remove", "pkg2"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -211,7 +211,7 @@ it("should not affect if package is not installed", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "remove", "pkg"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -248,7 +248,7 @@ it("should retain a new line in the end of package.json", async () => {
   const { exited: addExited } = spawn({
     cmd: [bunExe(), "add", `file:${pkg_path}`.replace(/\\/g, "\\\\")],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -261,7 +261,7 @@ it("should retain a new line in the end of package.json", async () => {
   const { exited } = spawn({
     cmd: [bunExe(), "remove", "pkg"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -294,7 +294,7 @@ it("should remove peerDependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "remove", "bar"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,

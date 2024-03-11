@@ -364,6 +364,10 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
     return o;
   };
 
+  (internalEnv as any).toJSON = () => {
+    return { ...internalEnv };
+  };
+
   return new Proxy(internalEnv, {
     get(_, p) {
       return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;

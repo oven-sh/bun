@@ -1,4 +1,4 @@
-import { dns } from "bun";
+import { SystemError, dns } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 import { isIP, isIPv4, isIPv6 } from "node:net";
@@ -7,7 +7,7 @@ const backends = ["system", "libc", "c-ares"];
 const validHostnames = ["localhost", "example.com"];
 const invalidHostnames = ["adsfa.asdfasdf.asdf.com"]; // known invalid
 const malformedHostnames = ["", " ", ".", " .", "localhost:80", "this is not a hostname"];
-
+const isWindows = process.platform === "win32";
 describe("dns", () => {
   describe.each(backends)("lookup() [backend: %s]", backend => {
     describe.each(validHostnames)("%s", hostname => {
@@ -45,6 +45,23 @@ describe("dns", () => {
           address: isIP,
         },
       ])("%j", async ({ options, address: expectedAddress, family: expectedFamily }) => {
+        // this behavior matchs nodejs
+        const expect_to_fail =
+          isWindows &&
+          backend !== "c-ares" &&
+          (options.family === "IPv6" || options.family === 6) &&
+          hostname !== "localhost";
+        if (expect_to_fail) {
+          try {
+            // @ts-expect-error
+            await dns.lookup(hostname, options);
+            expect.unreachable();
+          } catch (err: unknown) {
+            expect(err).toBeDefined();
+            expect((err as SystemError).code).toBe("DNS_ENOTFOUND");
+          }
+          return;
+        }
         // @ts-expect-error
         const result = await dns.lookup(hostname, options);
         expect(result).toBeArray();

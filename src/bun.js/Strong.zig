@@ -63,7 +63,7 @@ pub const Strong = struct {
         return .{ .globalThis = globalThis };
     }
 
-    pub fn get(this: *Strong) ?JSC.JSValue {
+    pub fn get(this: *const Strong) ?JSC.JSValue {
         var ref = this.ref orelse return null;
         const result = ref.get();
         if (result == .zero) {

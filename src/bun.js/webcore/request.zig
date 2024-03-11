@@ -180,7 +180,7 @@ pub const Request = struct {
                     try Blob.writeFormatForSize(size, writer, enable_ansi_colors);
                 }
             } else if (this.body.value == .Locked) {
-                if (this.body.value.Locked.readable) |stream| {
+                if (this.body.value.Locked.readable.get()) |stream| {
                     try writer.writeAll("\n");
                     try formatter.writeIndent(Writer, writer);
                     formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);

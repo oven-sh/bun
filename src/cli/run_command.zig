@@ -273,7 +273,7 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         silent: bool,
-        use_native_shell: bool,
+        use_system_shell: bool,
     ) !bool {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
@@ -306,7 +306,7 @@ pub const RunCommand = struct {
             combined_script = combined_script_buf;
         }
 
-        if (Environment.isWindows and !use_native_shell) {
+        if (!use_system_shell) {
             if (!silent) {
                 if (Environment.isDebug) {
                     Output.prettyError("[bun shell] ", .{});
@@ -316,7 +316,7 @@ pub const RunCommand = struct {
             }
 
             const mini = bun.JSC.MiniEventLoop.initGlobal(env);
-            bun.shell.InterpreterMini.initAndRunFromSource(mini, name, combined_script) catch |err| {
+            bun.shell.Interpreter.initAndRunFromSource(mini, name, combined_script) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
@@ -431,9 +431,11 @@ pub const RunCommand = struct {
         if (Environment.isWindows and bun.strings.hasSuffixComptime(executable, ".exe")) {
             std.debug.assert(std.fs.path.isAbsolute(executable));
 
-            // Using @constCast is safe because we know that `direct_launch_buffer` is the data destination
+            // Using @constCast is safe because we know that
+            // `direct_launch_buffer` is the data destination that assumption is
+            // backed by the immediate assertion.
             var wpath = @constCast(bun.strings.toNTPath(&BunXFastPath.direct_launch_buffer, executable));
-            std.debug.assert(bun.isSliceInBuffer(u16, wpath, &BunXFastPath.direct_launch_buffer));
+            std.debug.assert(bun.isSliceInBufferT(u16, wpath, &BunXFastPath.direct_launch_buffer));
 
             std.debug.assert(wpath.len > bun.windows.nt_object_prefix.len + ".exe".len);
             wpath.len += ".bunx".len - ".exe".len;
@@ -1372,7 +1374,7 @@ pub const RunCommand = struct {
                             this_bundler.env,
                             &.{},
                             ctx.debug.silent,
-                            ctx.debug.use_native_shell,
+                            ctx.debug.use_system_shell,
                         )) {
                             return false;
                         }
@@ -1386,7 +1388,7 @@ pub const RunCommand = struct {
                         this_bundler.env,
                         passthrough,
                         ctx.debug.silent,
-                        ctx.debug.use_native_shell,
+                        ctx.debug.use_system_shell,
                     )) return false;
 
                     temp_script_buffer[0.."post".len].* = "post".*;
@@ -1400,7 +1402,7 @@ pub const RunCommand = struct {
                             this_bundler.env,
                             &.{},
                             ctx.debug.silent,
-                            ctx.debug.use_native_shell,
+                            ctx.debug.use_system_shell,
                         )) {
                             return false;
                         }
@@ -1581,7 +1583,7 @@ pub const BunXFastPath = struct {
 
     /// If this returns, it implies the fast path cannot be taken
     fn tryLaunch(ctx: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
-        std.debug.assert(bun.isSliceInBuffer(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
+        std.debug.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 
         debug("Attempting to find and load bunx file: '{}'", .{bun.fmt.utf16(path_to_use)});

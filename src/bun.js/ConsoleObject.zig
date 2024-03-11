@@ -35,6 +35,8 @@ writer: BufferedWriter,
 
 counts: Counter = .{},
 
+pub fn format(_: @This(), comptime _: []const u8, _: anytype, _: anytype) !void {}
+
 pub fn init(error_writer: Output.WriterType, writer: Output.WriterType) ConsoleObject {
     return ConsoleObject{
         .error_writer = BufferedWriter{ .unbuffered_writer = error_writer },
@@ -195,7 +197,7 @@ pub fn messageWithTypeAndLevel(
     }
 
     if (print_length > 0)
-        format(
+        format2(
             level,
             global,
             vals,
@@ -619,11 +621,13 @@ const TablePrinter = struct {
 
 pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject) void {
     var holder = ZigException.Holder.init();
-
+    var vm = VirtualMachine.get();
+    defer holder.deinit(vm);
     const exception = holder.zigException();
+
     var err = ZigString.init("trace output").toErrorInstance(global);
     err.toZigException(global, exception);
-    VirtualMachine.get().remapZigException(exception, err, null);
+    vm.remapZigException(exception, err, null, &holder.need_to_clear_parser_arena_on_deinit);
 
     if (Output.enable_ansi_colors_stderr)
         VirtualMachine.printStackTrace(
@@ -650,7 +654,7 @@ pub const FormatOptions = struct {
     max_depth: u16 = 2,
 };
 
-pub fn format(
+pub fn format2(
     level: MessageLevel,
     global: *JSGlobalObject,
     vals: [*]const JSValue,
@@ -680,7 +684,10 @@ pub fn format(
         const tag = ConsoleObject.Formatter.Tag.get(vals[0], global);
 
         var unbuffered_writer = if (comptime Writer != RawWriter)
-            writer.context.unbuffered_writer.context.writer()
+            if (@hasDecl(@TypeOf(writer.context.unbuffered_writer.context), "quietWriter"))
+                writer.context.unbuffered_writer.context.quietWriter()
+            else
+                writer.context.unbuffered_writer.context.writer()
         else
             writer;
 
@@ -2461,7 +2468,7 @@ pub const Formatter = struct {
                                 comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                 .{},
                             );
-                            const data = value.get(this.globalThis, "data").?;
+                            const data = value.fastGet(this.globalThis, .data).?;
                             const tag = Tag.getAdvanced(data, this.globalThis, .{ .hide_global = true });
                             if (tag.cell.isStringLike()) {
                                 this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);

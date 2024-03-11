@@ -1,5 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
-
 import { $ } from "bun";
 import { test, expect } from "bun:test";
 import { tempDirWithFiles } from "harness";

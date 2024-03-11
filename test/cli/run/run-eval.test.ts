@@ -88,7 +88,6 @@ describe("bun run - < file-path.js", () => {
         });
       }
 
-      console.log(result);
       if (!result.success) {
         queueMicrotask(() => {
           throw new Error("bun run - < file-path.js failed");

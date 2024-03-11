@@ -3124,9 +3124,14 @@ pub const FileSink = struct {
 
     pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
         _ = wait; // autofix
-        if (this.done or this.pending.state == .pending) {
+        if (this.pending.state == .pending) {
+            return .{ .result = this.pending.future.promise.promise.asValue(globalThis) };
+        }
+
+        if (this.done) {
             return .{ .result = JSC.JSValue.jsUndefined() };
         }
+
         const rc = this.writer.flush();
         switch (rc) {
             .done => |written| {

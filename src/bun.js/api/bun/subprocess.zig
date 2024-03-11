@@ -1591,7 +1591,9 @@ pub const Subprocess = struct {
 
             {
                 var cmds_array = cmd_value.arrayIterator(globalThis);
-                argv = @TypeOf(argv).initCapacity(allocator, cmds_array.len) catch {
+                // + 1 for argv0
+                // + 1 for null terminator
+                argv = @TypeOf(argv).initCapacity(allocator, cmds_array.len + 2) catch {
                     globalThis.throwOutOfMemory();
                     return .zero;
                 };
@@ -1711,7 +1713,10 @@ pub const Subprocess = struct {
                         .include_value = true,
                     }).init(globalThis, object.asObjectRef());
                     defer object_iter.deinit();
-                    env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
+                    env_array.ensureTotalCapacityPrecise(allocator, object_iter.len +
+                        // +1 incase there's IPC
+                        // +1 for null terminator
+                        2) catch {
                         globalThis.throwOutOfMemory();
                         return .zero;
                     };
@@ -1839,7 +1844,7 @@ pub const Subprocess = struct {
             }
         }
 
-        var windows_ipc_env_buf: if (Environment.isWindows) ["BUN_INTERNAL_IPC_FD=\\\\.\\pipe\\BUN_IPC_00000000-0000-0000-0000-000000000000".len]u8 else void = undefined;
+        var windows_ipc_env_buf: if (Environment.isWindows) ["BUN_INTERNAL_IPC_FD=\\\\.\\pipe\\BUN_IPC_00000000-0000-0000-0000-000000000000".len * 2]u8 else void = undefined;
         if (ipc_mode != .none) {
             if (comptime is_sync) {
                 globalThis.throwInvalidArguments("IPC is not supported in Bun.spawnSync", .{});

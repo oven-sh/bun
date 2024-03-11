@@ -2,7 +2,7 @@ const JSC = @import("root").bun.JSC;
 const bun = @import("root").bun;
 const string = bun.string;
 const std = @import("std");
-
+const Output = bun.Output;
 fn _getSystem() type {
     // this is a workaround for a Zig stage1 bug
     // the "usingnamespace" is evaluating in dead branches
@@ -111,10 +111,7 @@ pub const BunSpawn = struct {
         }
 
         pub fn inherit(self: *Actions, fd: bun.FileDescriptor) !void {
-            _ = self;
-            _ = fd;
-
-            @panic("not implemented");
+            try self.dup2(fd, fd);
         }
 
         pub fn chdir(self: *Actions, path: []const u8) !void {
@@ -316,12 +313,14 @@ pub const PosixSpawn = struct {
 
         extern fn posix_spawn_bun(
             pid: *c_int,
+            path: [*:0]const u8,
             request: *const BunSpawnRequest,
             argv: [*:null]?[*:0]const u8,
             envp: [*:null]?[*:0]const u8,
         ) isize;
 
         pub fn spawn(
+            path: [*:0]const u8,
             req_: BunSpawnRequest,
             argv: [*:null]?[*:0]const u8,
             envp: [*:null]?[*:0]const u8,
@@ -329,7 +328,7 @@ pub const PosixSpawn = struct {
             var req = req_;
             var pid: c_int = 0;
 
-            const rc = posix_spawn_bun(&pid, &req, argv, envp);
+            const rc = posix_spawn_bun(&pid, path, &req, argv, envp);
             if (comptime bun.Environment.allow_assert)
                 bun.sys.syslog("posix_spawn_bun({s}) = {d} ({d})", .{
                     bun.span(argv[0] orelse ""),
@@ -360,6 +359,7 @@ pub const PosixSpawn = struct {
     ) Maybe(pid_t) {
         if (comptime Environment.isLinux) {
             return BunSpawnRequest.spawn(
+                path,
                 .{
                     .actions = if (actions) |act| .{
                         .ptr = act.actions.items.ptr,
@@ -412,8 +412,8 @@ pub const PosixSpawn = struct {
     /// See also `std.os.waitpid` for an alternative if your child process was spawned via `fork` and
     /// `execve` method.
     pub fn waitpid(pid: pid_t, flags: u32) Maybe(WaitPidResult) {
-        const Status = c_int;
-        var status: Status = 0;
+        const PidStatus = c_int;
+        var status: PidStatus = 0;
         while (true) {
             const rc = system.waitpid(pid, &status, @as(c_int, @intCast(flags)));
             switch (errno(rc)) {
@@ -432,8 +432,8 @@ pub const PosixSpawn = struct {
 
     /// Same as waitpid, but also returns resource usage information.
     pub fn wait4(pid: pid_t, flags: u32, usage: ?*std.os.rusage) Maybe(WaitPidResult) {
-        const Status = c_int;
-        var status: Status = 0;
+        const PidStatus = c_int;
+        var status: PidStatus = 0;
         while (true) {
             const rc = system.wait4(pid, &status, @as(c_int, @intCast(flags)), usage);
             switch (errno(rc)) {
@@ -449,4 +449,7 @@ pub const PosixSpawn = struct {
             }
         }
     }
+
+    pub usingnamespace @import("./process.zig");
+    pub usingnamespace @import("./spawn/stdio.zig");
 };

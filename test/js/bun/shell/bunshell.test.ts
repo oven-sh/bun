@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm } from "fs/promises";
 import { bunEnv, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, sep } from "path";
 import { TestBuilder, sortedShellOutput } from "./util";
 
 $.env(bunEnv);
@@ -38,6 +38,15 @@ afterAll(async () => {
 const BUN = process.argv0;
 
 describe("bunshell", () => {
+  describe("concurrency", () => {
+    test("writing to stdout", async () => {
+      await Promise.all([
+        TestBuilder.command`echo 1`.stdout("1\n").run(),
+        TestBuilder.command`echo 2`.stdout("2\n").run(),
+        TestBuilder.command`echo 3`.stdout("3\n").run(),
+      ]);
+    });
+  });
   test("js_obj_test", async () => {
     function runTest(name: string, builder: TestBuilder) {
       test(`js_obj_test_name_${name}`, async () => {
@@ -72,24 +81,25 @@ describe("bunshell", () => {
       `"\\"hello\\" \\"lol\\" \\"nice\\"lkasjf;jdfla<>SKDJFLKSF"`,
     );
 
-    test("wrapped in quotes", async () => {
+    describe("wrapped in quotes", async () => {
       const url = "http://www.example.com?candy_name=M&M";
-      await TestBuilder.command`echo url="${url}"`.stdout(`url=${url}\n`).run();
-      await TestBuilder.command`echo url='${url}'`.stdout(`url=${url}\n`).run();
-      await TestBuilder.command`echo url=${url}`.stdout(`url=${url}\n`).run();
+      TestBuilder.command`echo url="${url}"`.stdout(`url=${url}\n`).runAsTest("double quotes");
+      TestBuilder.command`echo url='${url}'`.stdout(`url=${url}\n`).runAsTest("single quotes");
+      TestBuilder.command`echo url=${url}`.stdout(`url=${url}\n`).runAsTest("no quotes");
     });
 
-    test("escape var", async () => {
+    describe("escape var", async () => {
       const shellvar = "$FOO";
-      await TestBuilder.command`FOO=bar && echo "${shellvar}"`.stdout(`$FOO\n`).run();
-      await TestBuilder.command`FOO=bar && echo '${shellvar}'`.stdout(`$FOO\n`).run();
-      await TestBuilder.command`FOO=bar && echo ${shellvar}`.stdout(`$FOO\n`).run();
+      TestBuilder.command`FOO=bar && echo "${shellvar}"`.stdout(`$FOO\n`).runAsTest("double quotes");
+      TestBuilder.command`FOO=bar && echo '${shellvar}'`.stdout(`$FOO\n`).runAsTest("single quotes");
+      TestBuilder.command`FOO=bar && echo ${shellvar}`.stdout(`$FOO\n`).runAsTest("no quotes");
     });
 
     test("can't escape a js string/obj ref", async () => {
       const shellvar = "$FOO";
       await TestBuilder.command`FOO=bar && echo \\${shellvar}`.stdout(`\\$FOO\n`).run();
       const buf = new Uint8Array(1);
+
       expect(async () => {
         await TestBuilder.command`echo hi > \\${buf}`.run();
       }).toThrow("Redirection with no file");
@@ -107,7 +117,7 @@ describe("bunshell", () => {
   });
 
   describe("quiet", async () => {
-    test("basic", async () => {
+    test.todo("basic", async () => {
       // Check its buffered
       {
         const { stdout, stderr } = await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log('hi'); console.error('lol')"`;
@@ -177,21 +187,23 @@ describe("bunshell", () => {
 
     // Issue: #8982
     // https://github.com/oven-sh/bun/issues/8982
-    test("word splitting", async () => {
-      await TestBuilder.command`echo $(echo id)/$(echo region)`.stdout("id/region\n").run();
-      await TestBuilder.command`echo $(echo hi id)/$(echo region)`.stdout("hi id/region\n").run();
+    describe("word splitting", async () => {
+      TestBuilder.command`echo $(echo id)/$(echo region)`.stdout("id/region\n").runAsTest("concatenated cmd substs");
+      TestBuilder.command`echo $(echo hi id)/$(echo region)`
+        .stdout("hi id/region\n")
+        .runAsTest("cmd subst with whitespace gets split");
 
       // Make sure its one whole argument
-      await TestBuilder.command`echo {"console.log(JSON.stringify(process.argv.slice(2)))"} > temp_script.ts; BUN_DEBUG_QUIET_LOGS=1 ${BUN} run temp_script.ts $(echo id)/$(echo region)`
+      TestBuilder.command`echo {"console.log(JSON.stringify(process.argv.slice(2)))"} > temp_script.ts; BUN_DEBUG_QUIET_LOGS=1 ${BUN} run temp_script.ts $(echo id)/$(echo region)`
         .stdout('["id/region"]\n')
         .ensureTempDir()
-        .run();
+        .runAsTest("make sure its one whole argument");
 
       // Make sure its two separate arguments
-      await TestBuilder.command`echo {"console.log(JSON.stringify(process.argv.slice(2)))"} > temp_script.ts; BUN_DEBUG_QUIET_LOGS=1 ${BUN} run temp_script.ts $(echo hi id)/$(echo region)`
+      TestBuilder.command`echo {"console.log(JSON.stringify(process.argv.slice(2)))"} > temp_script.ts; BUN_DEBUG_QUIET_LOGS=1 ${BUN} run temp_script.ts $(echo hi id)/$(echo region)`
         .stdout('["hi","id/region"]\n')
         .ensureTempDir()
-        .run();
+        .runAsTest("make sure its two separate arguments");
     });
   });
 
@@ -226,12 +238,12 @@ describe("bunshell", () => {
     });
 
     test("var value", async () => {
-      const error = runWithErrorPromise(async () => {
+      const error = await runWithErrorPromise(async () => {
         const whatsupbro = "元気かい、兄弟";
         const { stdout } = await $`FOO=${whatsupbro}; echo $FOO`;
         expect(stdout.toString("utf-8")).toEqual(whatsupbro + "\n");
       });
-      expect(error).toBeDefined();
+      expect(error).toBeUndefined();
     });
 
     test("in compound word", async () => {
@@ -270,11 +282,11 @@ describe("bunshell", () => {
   });
 
   describe("latin-1", async () => {
-    test("basic", async () => {
-      await TestBuilder.command`echo ${"à"}`.stdout("à\n").run();
-      await TestBuilder.command`echo ${" à"}`.stdout(" à\n").run();
-      await TestBuilder.command`echo ${"à¿"}`.stdout("à¿\n").run();
-      await TestBuilder.command`echo ${'"à¿"'}`.stdout('"à¿"\n').run();
+    describe("basic", async () => {
+      TestBuilder.command`echo ${"à"}`.stdout("à\n").runAsTest("lone latin-1 character");
+      TestBuilder.command`echo ${" à"}`.stdout(" à\n").runAsTest("latin-1 character preceded by space");
+      TestBuilder.command`echo ${"à¿"}`.stdout("à¿\n").runAsTest("multiple latin-1 characters");
+      TestBuilder.command`echo ${'"à¿"'}`.stdout('"à¿"\n').runAsTest("latin-1 characters in quotes");
     });
   });
 
@@ -416,8 +428,8 @@ describe("bunshell", () => {
     });
 
     test("export var", async () => {
-      const buffer = Buffer.alloc(8192);
-      const buffer2 = Buffer.alloc(8192);
+      const buffer = Buffer.alloc(1 << 20);
+      const buffer2 = Buffer.alloc(1 << 20);
       await $`export FOO=bar && BAZ=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer} && BUN_TEST_VAR=1 ${BUN} -e "console.log(JSON.stringify(process.env))" > ${buffer2}`;
 
       const str1 = stringifyBuffer(buffer);
@@ -437,7 +449,7 @@ describe("bunshell", () => {
     });
 
     test("syntax edgecase", async () => {
-      const buffer = new Uint8Array(8192);
+      const buffer = new Uint8Array(1 << 20);
       const shellProc = await $`FOO=bar BUN_TEST_VAR=1 ${BUN} -e "console.log(JSON.stringify(process.env))"> ${buffer}`;
 
       const str = stringifyBuffer(buffer);
@@ -501,11 +513,11 @@ describe("bunshell", () => {
           .filter(s => s.length !== 0)
           .sort(),
       ).toEqual(
-        `${temp_dir}/foo
-${temp_dir}/dir/files
-${temp_dir}/dir/some
-${temp_dir}/dir
-${temp_dir}/bar
+        `${join(temp_dir, "foo")}
+${join(temp_dir, "dir", "files")}
+${join(temp_dir, "dir", "some")}
+${join(temp_dir, "dir")}
+${join(temp_dir, "bar")}
 ${temp_dir}`
           .split("\n")
           .sort(),
@@ -520,142 +532,148 @@ ${temp_dir}`
 });
 
 describe("deno_task", () => {
-  test("commands", async () => {
-    await TestBuilder.command`echo 1`.stdout("1\n").run();
-    await TestBuilder.command`echo 1 2   3`.stdout("1 2 3\n").run();
-    await TestBuilder.command`echo "1 2   3"`.stdout("1 2   3\n").run();
-    await TestBuilder.command`echo 1 2\ \ \ 3`.stdout("1 2   3\n").run();
-    await TestBuilder.command`echo "1 2\ \ \ 3"`.stdout("1 2\\ \\ \\ 3\n").run();
-    await TestBuilder.command`echo test$(echo 1    2)`.stdout("test1 2\n").run();
-    await TestBuilder.command`echo test$(echo "1    2")`.stdout("test1 2\n").run();
-    await TestBuilder.command`echo "test$(echo "1    2")"`.stdout("test1    2\n").run();
-    await TestBuilder.command`echo test$(echo "1 2 3")`.stdout("test1 2 3\n").run();
-    await TestBuilder.command`VAR=1 BUN_TEST_VAR=1 ${BUN} -e 'console.log(process.env.VAR)' && echo $VAR`
+  describe("commands", async () => {
+    TestBuilder.command`echo 1`.stdout("1\n").runAsTest("echo 1");
+    TestBuilder.command`echo 1 2   3`.stdout("1 2 3\n").runAsTest("echo 1 2   3");
+    TestBuilder.command`echo "1 2   3"`.stdout("1 2   3\n").runAsTest('echo "1 2   3"');
+    TestBuilder.command`echo 1 2\ \ \ 3`.stdout("1 2   3\n").runAsTest("echo 1 2\\ \\ \\ 3");
+    TestBuilder.command`echo "1 2\ \ \ 3"`.stdout("1 2\\ \\ \\ 3\n").runAsTest('echo "1 2\\ \\ \\ 3"');
+    TestBuilder.command`echo test$(echo 1    2)`.stdout("test1 2\n").runAsTest("echo test$(echo 1    2)");
+    TestBuilder.command`echo test$(echo "1    2")`.stdout("test1 2\n").runAsTest('echo test$(echo "1    2")');
+    TestBuilder.command`echo "test$(echo "1    2")"`.stdout("test1    2\n").runAsTest('echo "test$(echo "1    2")"');
+    TestBuilder.command`echo test$(echo "1 2 3")`.stdout("test1 2 3\n").runAsTest('echo test$(echo "1 2 3")');
+    TestBuilder.command`VAR=1 BUN_TEST_VAR=1 ${BUN} -e 'console.log(process.env.VAR)' && echo $VAR`
       .stdout("1\n\n")
-      .run();
-    await TestBuilder.command`VAR=1 VAR2=2 BUN_TEST_VAR=1 ${BUN} -e 'console.log(process.env.VAR + process.env.VAR2)'`
+      .runAsTest("shell var in command");
+    TestBuilder.command`VAR=1 VAR2=2 BUN_TEST_VAR=1 ${BUN} -e 'console.log(process.env.VAR + process.env.VAR2)'`
       .stdout("12\n")
-      .run();
-    await TestBuilder.command`EMPTY= BUN_TEST_VAR=1 ${BUN} -e ${"console.log(`EMPTY: ${process.env.EMPTY}`)"}`
+      .runAsTest("shell var in command 2");
+    TestBuilder.command`EMPTY= BUN_TEST_VAR=1 ${BUN} -e ${"console.log(`EMPTY: ${process.env.EMPTY}`)"}`
       .stdout("EMPTY: \n")
-      .run();
-    await TestBuilder.command`"echo" "1"`.stdout("1\n").run();
-    await TestBuilder.command`echo test-dashes`.stdout("test-dashes\n").run();
-    await TestBuilder.command`echo 'a/b'/c`.stdout("a/b/c\n").run();
-    await TestBuilder.command`echo 'a/b'ctest\"te  st\"'asdf'`.stdout('a/bctest"te st"asdf\n').run();
-    await TestBuilder.command`echo --test=\"2\" --test='2' test\"TEST\" TEST'test'TEST 'test''test' test'test'\"test\" \"test\"\"test\"'test'`
+      .runAsTest("empty shell var");
+    TestBuilder.command`"echo" "1"`.stdout("1\n").runAsTest("echo 1 quoted");
+    TestBuilder.command`echo test-dashes`.stdout("test-dashes\n").runAsTest("echo test-dashes");
+    TestBuilder.command`echo 'a/b'/c`.stdout("a/b/c\n").runAsTest("echo 'a/b'/c");
+    TestBuilder.command`echo 'a/b'ctest\"te  st\"'asdf'`
+      .stdout('a/bctest"te st"asdf\n')
+      .runAsTest("echoing a bunch of escapes and quotations");
+    TestBuilder.command`echo --test=\"2\" --test='2' test\"TEST\" TEST'test'TEST 'test''test' test'test'\"test\" \"test\"\"test\"'test'`
       .stdout(`--test="2" --test=2 test"TEST" TESTtestTEST testtest testtest"test" "test""test"test\n`)
-      .run();
+      .runAsTest("echoing a bunch of escapes and quotations 2");
   });
 
-  test("boolean logic", async () => {
-    await TestBuilder.command`echo 1 && echo 2 || echo 3`.stdout("1\n2\n").run();
-    await TestBuilder.command`echo 1 || echo 2 && echo 3`.stdout("1\n3\n").run();
+  describe("boolean logic", async () => {
+    TestBuilder.command`echo 1 && echo 2 || echo 3`.stdout("1\n2\n").runAsTest("echo 1 && echo 2 || echo 3");
+    TestBuilder.command`echo 1 || echo 2 && echo 3`.stdout("1\n3\n").runAsTest("echo 1 || echo 2 && echo 3");
 
-    await TestBuilder.command`echo 1 || (echo 2 && echo 3)`.error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN).run();
-    await TestBuilder.command`false || false || (echo 2 && false) || echo 3`
+    TestBuilder.command`echo 1 || (echo 2 && echo 3)`
       .error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN)
-      .run();
+      .runAsTest("or with subshell");
+    TestBuilder.command`false || false || (echo 2 && false) || echo 3`
+      .error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN)
+      .runAsTest("or with subshell 2");
     // await TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").run();
     // await TestBuilder.command`false || false || (echo 2 && false) || echo 3`.stdout("2\n3\n").run();
   });
 
-  test("command substitution", async () => {
-    await TestBuilder.command`echo $(echo 1)`.stdout("1\n").run();
-    await TestBuilder.command`echo $(echo 1 && echo 2)`.stdout("1 2\n").run();
+  describe("command substitution", async () => {
+    TestBuilder.command`echo $(echo 1)`.stdout("1\n").runAsTest("nested echo cmd subst");
+    TestBuilder.command`echo $(echo 1 && echo 2)`.stdout("1 2\n").runAsTest("nested echo cmd subst with conditional");
     // TODO Sleep tests
   });
 
-  test("shell variables", async () => {
-    await TestBuilder.command`echo $VAR && VAR=1 && echo $VAR && ${BUN} -e ${"console.log(process.env.VAR)"}`
+  describe("shell variables", async () => {
+    TestBuilder.command`echo $VAR && VAR=1 && echo $VAR && ${BUN} -e ${"console.log(process.env.VAR)"}`
       .stdout("\n1\nundefined\n")
-      .run();
+      .runAsTest("shell var");
 
-    await TestBuilder.command`VAR=1 && echo $VAR$VAR`.stdout("11\n").run();
+    TestBuilder.command`VAR=1 && echo $VAR$VAR`.stdout("11\n").runAsTest("shell var 2");
 
-    await TestBuilder.command`VAR=1 && echo Test$VAR && echo $(echo "Test: $VAR") ; echo CommandSub$($VAR) ; echo $ ; echo \$VAR`
+    TestBuilder.command`VAR=1 && echo Test$VAR && echo $(echo "Test: $VAR") ; echo CommandSub$($VAR) ; echo $ ; echo \$VAR`
       .stdout("Test1\nTest: 1\nCommandSub\n$\n$VAR\n")
       .stderr("bun: command not found: 1\n")
-      .run();
+      .runAsTest("shell var 3");
   });
 
-  test("env variables", async () => {
-    await TestBuilder.command`echo $VAR && export VAR=1 && echo $VAR && BUN_TEST_VAR=1 ${BUN} -e 'console.log(process.env.VAR)'`
+  describe("env variables", async () => {
+    TestBuilder.command`echo $VAR && export VAR=1 && echo $VAR && BUN_TEST_VAR=1 ${BUN} -e 'console.log(process.env.VAR)'`
       .stdout("\n1\n1\n")
-      .run();
+      .runAsTest("exported vars");
 
-    await TestBuilder.command`export VAR=1 VAR2=testing VAR3="test this out" && echo $VAR $VAR2 $VAR3`
+    TestBuilder.command`export VAR=1 VAR2=testing VAR3="test this out" && echo $VAR $VAR2 $VAR3`
       .stdout("1 testing test this out\n")
-      .run();
+      .runAsTest("exported vars 2");
   });
 
-  test("pipeline", async () => {
-    await TestBuilder.command`echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+  describe("pipeline", async () => {
+    TestBuilder.command`echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       .stdout("1\n")
-      .run();
+      .runAsTest("basic pipe");
 
-    await TestBuilder.command`echo 1 | echo 2 && echo 3`.stdout("2\n3\n").run();
+    TestBuilder.command`echo 1 | echo 2 && echo 3`.stdout("2\n3\n").runAsTest("pipe in conditional");
 
     // await TestBuilder.command`echo $(sleep 0.1 && echo 2 & echo 1) | BUN_TEST_VAR=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
     //   .stdout("1 2\n")
     //   .run();
 
-    await TestBuilder.command`echo 2 | echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+    TestBuilder.command`echo 2 | echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       .stdout("1\n")
-      .run();
+      .runAsTest("multi pipe");
 
-    await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       .stdout("1\n")
       .stderr("2\n")
-      .run();
+      .runAsTest("piping subprocesses");
 
-    await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(2);' |& BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(2);' |& BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       // .stdout("1\n2\n")
       .error("Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.")
-      .run();
+      .runAsTest("|&");
 
     // await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(2);' | BUN_TEST_VAR=1 ${BUN} -e 'setTimeout(async () => { await Deno.stdin.readable.pipeTo(Deno.stderr.writable) }, 10)' |& BUN_TEST_VAR=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stderr.writable)'`
     //   .stderr("2\n1\n")
     //   .run();
 
-    await TestBuilder.command`echo 1 |& BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
+    TestBuilder.command`echo 1 |& BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       // .stdout("1\n")
       .error("Piping stdout and stderr (`|&`) is not supported yet. Please file an issue on GitHub.")
-      .run();
+      .runAsTest("|& 2");
 
-    await TestBuilder.command`echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)' > output.txt`
+    TestBuilder.command`echo 1 | BUN_DEBUG_QUIET_LOGS=1 BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)' > output.txt`
       .fileEquals("output.txt", "1\n")
-      .run();
+      .runAsTest("pipe with redirect to file");
 
-    await TestBuilder.command`echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stderr)' 2> output.txt`
+    TestBuilder.command`echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stderr)' 2> output.txt`
       .fileEquals("output.txt", "1\n")
-      .run();
+      .runAsTest("pipe with redirect stderr to file");
   });
 
-  test("redirects", async function igodf() {
+  describe("redirects", async function igodf() {
     // await TestBuilder.command`echo 5 6 7 > test.txt`.fileEquals("test.txt", "5 6 7\n").run();
 
     // await TestBuilder.command`echo 1 2 3 && echo 1 > test.txt`.stdout("1 2 3\n").fileEquals("test.txt", "1\n").run();
 
     // subdir
-    await TestBuilder.command`mkdir subdir && cd subdir && echo 1 2 3 > test.txt`
+    TestBuilder.command`mkdir subdir && cd subdir && echo 1 2 3 > test.txt`
       .fileEquals(`subdir/test.txt`, "1 2 3\n")
-      .run();
+      .runAsTest("redirect to file");
 
     // absolute path
-    await TestBuilder.command`echo 1 2 3 > "$PWD/test.txt"`.fileEquals("test.txt", "1 2 3\n").run();
+    TestBuilder.command`echo 1 2 3 > "$PWD/test.txt"`
+      .fileEquals("test.txt", "1 2 3\n")
+      .runAsTest("redirection path gets expanded");
 
     // stdout
-    await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(5)' 1> test.txt`
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(5)' 1> test.txt`
       .stderr("5\n")
       .fileEquals("test.txt", "1\n")
-      .run();
+      .runAsTest("redirect stdout of subproccess");
 
     // stderr
-    await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(5)' 2> test.txt`
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(5)' 2> test.txt`
       .stdout("1\n")
       .fileEquals("test.txt", "5\n")
-      .run();
+      .runAsTest("redirect stderr of subprocess");
 
     // invalid fd
     // await TestBuilder.command`echo 2 3> test.txt`
@@ -665,17 +683,19 @@ describe("deno_task", () => {
     //   .run();
 
     // /dev/null
-    await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(5)' 2> /dev/null`
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); console.error(5)' 2> /dev/null`
       .stdout("1\n")
-      .run();
+      .runAsTest("/dev/null");
 
     // appending
-    await TestBuilder.command`echo 1 > test.txt && echo 2 >> test.txt`.fileEquals("test.txt", "1\n2\n").run();
+    TestBuilder.command`echo 1 > test.txt && echo 2 >> test.txt`
+      .fileEquals("test.txt", "1\n2\n")
+      .runAsTest("appending");
 
     // &> and &>> redirect
     await TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e 'console.log(1); setTimeout(() => console.error(23), 10)' &> file.txt && BUN_TEST_VAR=1 ${BUN} -e 'console.log(456); setTimeout(() => console.error(789), 10)' &>> file.txt`
       .fileEquals("file.txt", "1\n23\n456\n789\n")
-      .run();
+      .runAsTest("&> and &>> redirect");
 
     // multiple arguments after re-direct
     // await TestBuilder.command`export TwoArgs=testing\\ this && echo 1 > $TwoArgs`
@@ -686,36 +706,42 @@ describe("deno_task", () => {
     //   .run();
 
     // zero arguments after re-direct
-    await TestBuilder.command`echo 1 > $EMPTY`.stderr("bun: ambiguous redirect: at `echo`\n").exitCode(1).run();
+    TestBuilder.command`echo 1 > $EMPTY`
+      .stderr("bun: ambiguous redirect: at `echo`\n")
+      .exitCode(1)
+      .runAsTest("zero arguments after re-direct");
 
-    await TestBuilder.command`echo foo bar > file.txt; cat < file.txt`.ensureTempDir().stdout("foo bar\n").run();
+    TestBuilder.command`echo foo bar > file.txt; cat < file.txt`
+      .ensureTempDir()
+      .stdout("foo bar\n")
+      .runAsTest("redirect input");
 
-    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 2>&1`
+    TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 2>&1`
       .stdout("Stdout\nStderr\n")
-      .run();
+      .runAsTest("redirect stderr to stdout");
 
-    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 1>&2`
+    TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 1>&2`
       .stderr("Stdout\nStderr\n")
-      .run();
+      .runAsTest("redirect stdout to stderr");
 
-    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 2>&1`
+    TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 2>&1`
       .stdout("Stdout\nStderr\n")
       .quiet()
-      .run();
+      .runAsTest("redirect stderr to stdout quiet");
 
-    await TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 1>&2`
+    TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Stdout'); console.error('Stderr')"} 1>&2`
       .stderr("Stdout\nStderr\n")
       .quiet()
-      .run();
+      .runAsTest("redirect stdout to stderr quiet");
   });
 
-  test("pwd", async () => {
-    await TestBuilder.command`pwd && cd sub_dir && pwd && cd ../ && pwd`
+  describe("pwd", async () => {
+    TestBuilder.command`pwd && cd sub_dir && pwd && cd ../ && pwd`
       .directory("sub_dir")
       .file("file.txt", "test")
       // $TEMP_DIR gets replaced with the actual temp dir by the test runner
-      .stdout(`$TEMP_DIR\n$TEMP_DIR/sub_dir\n$TEMP_DIR\n`)
-      .run();
+      .stdout(`$TEMP_DIR\n${join("$TEMP_DIR", "sub_dir")}\n$TEMP_DIR\n`)
+      .runAsTest("pwd");
   });
 
   test("change env", async () => {

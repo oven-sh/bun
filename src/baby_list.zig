@@ -65,6 +65,16 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
+        pub fn clearRetainingCapacity(this: *@This()) void {
+            var list_ = this.listManaged(bun.default_allocator);
+            list_.clearRetainingCapacity();
+        }
+
+        pub fn replaceRange(this: *@This(), start: usize, len_: usize, new_items: []const Type) !void {
+            var list_ = this.listManaged(bun.default_allocator);
+            try list_.replaceRange(start, len_, new_items);
+        }
+
         pub fn appendAssumeCapacity(this: *@This(), value: Type) void {
             this.ptr[this.len] = value;
             this.len += 1;
@@ -140,6 +150,12 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
+        pub fn allocatedSlice(this: *const ListType) []u8 {
+            if (this.cap == 0) return &.{};
+
+            return this.ptr[0..this.cap];
+        }
+
         pub fn update(this: *ListType, list_: anytype) void {
             this.* = .{
                 .ptr = list_.items.ptr,
@@ -208,6 +224,12 @@ pub fn BabyList(comptime Type: type) type {
             var list_ = this.list();
             try list_.append(allocator, value);
             this.update(list_);
+        }
+
+        pub fn appendFmt(this: *@This(), allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !void {
+            var list__ = this.listManaged(allocator);
+            const writer = list__.writer();
+            try writer.print(fmt, args);
         }
 
         pub fn append(this: *@This(), allocator: std.mem.Allocator, value: []const Type) !void {

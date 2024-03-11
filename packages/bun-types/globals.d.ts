@@ -1758,21 +1758,10 @@ declare global {
      * ```
      */
     readonly env: NodeJS.ProcessEnv;
-    /**
-     * Resolve a module ID the same as if you imported it
-     *
-     * On failure, throws a `ResolveMessage`
-     */
-    resolve(moduleId: string): Promise<string>;
-    /**
-     * Resolve a `moduleId` as though it were imported from `parent`
-     *
-     * On failure, throws a `ResolveMessage`
-     */
-    // tslint:disable-next-line:unified-signatures
-    resolve(moduleId: string, parent: string): Promise<string>;
 
     /**
+      * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead
+     *
      * Resolve a module ID the same as if you imported it
      *
      * The `parent` argument is optional, and defaults to the current module's path.

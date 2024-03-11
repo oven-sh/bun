@@ -51,7 +51,7 @@ it("#imports with wildcard", async () => {
   expect(run("#foo/extensionless/wildcard")).toBe(wildcard);
 });
 
-it("import.meta.resolve", async () => {
+it("import.meta.resolveSync", async () => {
   expect(import.meta.resolveSync("./resolve-test.js")).toBe(import.meta.path);
 
   expect(import.meta.resolveSync("./resolve-test.js", import.meta.path)).toBe(import.meta.path);

@@ -1,3 +1,4 @@
+import { SpawnOptions, Subprocess, SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
 import { bunEnv, bunExe } from "harness";
@@ -6,8 +7,7 @@ import { join, sep } from "path";
 
 describe("bun -e", () => {
   test("it works", async () => {
-    let { stdout } = Bun.spawnSync({
-      cmd: [bunExe(), "-e", 'console.log("hello world")'],
+    const { stdout } = Bun.spawnSync([bunExe(), "-e", 'console.log("hello world")'], {
       env: bunEnv,
     });
     expect(stdout.toString("utf8")).toEqual("hello world\n");
@@ -15,14 +15,16 @@ describe("bun -e", () => {
 
   test("import, tsx, require in esm, import.meta", async () => {
     const ref = await import("react");
-    let { stdout } = Bun.spawnSync({
-      cmd: [
+    const { stdout } = Bun.spawnSync(
+      [
         bunExe(),
         "-e",
         'import {version} from "react"; console.log(JSON.stringify({version,file:import.meta.path,require:require("react").version})); console.log(<hello>world</hello>);',
       ],
-      env: bunEnv,
-    });
+      {
+        env: bunEnv,
+      },
+    );
     const json = {
       version: ref.version,
       file: join(process.cwd(), "[eval]"),
@@ -32,8 +34,7 @@ describe("bun -e", () => {
   });
 
   test("error has source map info 1", async () => {
-    let { stdout, stderr } = Bun.spawnSync({
-      cmd: [bunExe(), "-e", '(throw new Error("hi" as 2))'],
+    let { stderr } = Bun.spawnSync([bunExe(), "-e", '(throw new Error("hi" as 2))'], {
       env: bunEnv,
     });
     expect(stderr.toString("utf8")).toInclude('"hi" as 2');
@@ -41,7 +42,7 @@ describe("bun -e", () => {
   });
 });
 
-function group(run: (code: string) => ReturnType<typeof Bun.spawnSync>) {
+function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
   test("it works", async () => {
     const { stdout } = run('console.log("hello world")');
     expect(stdout.toString("utf8")).toEqual("hello world\n");
@@ -74,12 +75,20 @@ describe("bun run - < file-path.js", () => {
     const file = join(tmpdir(), "bun-run-eval-test.js");
     require("fs").writeFileSync(file, code);
     try {
-      const result = Bun.spawnSync({
-        cmd: ["bash", "-c", `${bunExe()} run - < ${file}`],
-        env: bunEnv,
-        stderr: "inherit",
-      });
+      let result;
+      if (process.platform === "win32") {
+        result = Bun.spawnSync(["powershell", "-c", `Get-Content ${file} | ${bunExe()} run -`], {
+          env: bunEnv,
+          stderr: "inherit",
+        });
+      } else {
+        result = Bun.spawnSync(["bash", "-c", `${bunExe()} run - < ${file}`], {
+          env: bunEnv,
+          stderr: "inherit",
+        });
+      }
 
+      console.log(result);
       if (!result.success) {
         queueMicrotask(() => {
           throw new Error("bun run - < file-path.js failed");
@@ -99,10 +108,10 @@ describe("bun run - < file-path.js", () => {
 
 describe("echo | bun run -", () => {
   function run(code: string) {
-    const result = Bun.spawnSync({
-      cmd: [bunExe(), "run", "-"],
+    const result = Bun.spawnSync([bunExe(), "run", "-"], {
       env: bunEnv,
       stdin: Buffer.from(code),
+      stderr: "inherit",
     });
     if (!result.success) {
       queueMicrotask(() => {

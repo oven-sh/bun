@@ -2642,11 +2642,6 @@ pub const JSGlobalObject = extern struct {
         return @enumFromInt(@as(JSValue.Type, @bitCast(@intFromPtr(globalThis))));
     }
 
-    extern fn JSGlobalObject__setupModuleLoaderEvaluateForEval(*JSGlobalObject) void;
-    pub fn setupModuleLoaderEvaluateForEval(this: *JSGlobalObject) void {
-        JSGlobalObject__setupModuleLoaderEvaluateForEval(this);
-    }
-
     pub fn throwInvalidArguments(
         this: *JSGlobalObject,
         comptime fmt: string,

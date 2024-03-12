@@ -69,7 +69,7 @@ class GlobalObject : public JSC::JSGlobalObject {
 
 public:
     static const JSC::ClassInfo s_info;
-    static JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
+    static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -169,8 +169,6 @@ public:
     static JSC::JSInternalPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSModuleRecord*, JSC::JSValue);
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
-    static JSC::JSValue moduleLoaderEvaluateForEval(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
-    void setupModuleLoaderEvaluateForEval();
 
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
@@ -447,6 +445,9 @@ public:
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
 
+    bool evalMode() const { return m_evalMode; }
+    void setEvalMode(bool evalMode) { m_evalMode = evalMode; }
+
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
 private:
@@ -464,6 +465,7 @@ private:
     Ref<WebCore::DOMWrapperWorld> m_world;
     Bun::CommonStrings m_commonStrings;
     RefPtr<WebCore::Performance> m_performance { nullptr };
+    bool m_evalMode;
 
     // JSC's hashtable code-generator tries to access these properties, so we make them public.
     // However, we'd like it better if they could be protected.

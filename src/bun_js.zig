@@ -167,6 +167,7 @@ pub const Run = struct {
                     .args = ctx.args,
                     .store_fd = ctx.debug.hot_reload != .none,
                     .smol = ctx.runtime_options.smol,
+                    .eval = ctx.runtime_options.eval.eval_and_print,
                     .debugger = ctx.runtime_options.debugger,
                 },
             ),
@@ -189,7 +190,7 @@ pub const Run = struct {
 
             if (ctx.runtime_options.eval.eval_and_print) {
                 b.options.dead_code_elimination = false;
-                vm.global.setupModuleLoaderEvaluateForEval();
+                // vm.global.setupModuleLoaderEvaluateForEval();
             }
         }
 
@@ -393,9 +394,8 @@ pub const Run = struct {
         vm.onExit();
 
         if (this.ctx.runtime_options.eval.eval_and_print) {
-            if (vm.entry_point_result.trySwap()) |result| {
-                result.print(vm.global, .Log, .Log);
-            }
+            const result = vm.entry_point_result.trySwap() orelse .undefined;
+            result.print(vm.global, .Log, .Log);
         }
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();

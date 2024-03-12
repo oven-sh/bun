@@ -1253,6 +1253,7 @@ pub const VirtualMachine = struct {
             vm.console,
             -1,
             false,
+            false,
             null,
         );
         vm.regular_event_loop.global = vm.global;
@@ -1278,6 +1279,10 @@ pub const VirtualMachine = struct {
         env_loader: ?*DotEnv.Loader = null,
         store_fd: bool = false,
         smol: bool = false,
+
+        // --print needs the result from evaluating the main module
+        eval: bool = false,
+
         graph: ?*bun.StandaloneModuleGraph = null,
         debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
     };
@@ -1363,6 +1368,7 @@ pub const VirtualMachine = struct {
             vm.console,
             -1,
             opts.smol,
+            opts.eval,
             null,
         );
         vm.regular_event_loop.global = vm.global;
@@ -1510,6 +1516,7 @@ pub const VirtualMachine = struct {
             vm.console,
             @as(i32, @intCast(worker.execution_context_id)),
             worker.mini,
+            opts.eval,
             worker.cpp_worker,
         );
         vm.regular_event_loop.global = vm.global;

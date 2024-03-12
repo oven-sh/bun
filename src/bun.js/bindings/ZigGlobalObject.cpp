@@ -742,7 +742,7 @@ static void resetOnEachMicrotaskTick(JSC::VM& vm, Zig::GlobalObject* globalObjec
     }
 }
 
-extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, void* worker_ptr)
+extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
 
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
@@ -786,6 +786,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 JSC::jsNull()));
     }
 
+    globalObject->setEvalMode(evalMode);
     globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
     globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT); // Node.js defaults to 10
@@ -977,7 +978,7 @@ JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGloba
     }
 }
 
-JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
+const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &supportsRichSourceInfo,
     &shouldInterruptScript,
     &javaScriptRuntimeFlags,
@@ -4478,46 +4479,32 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     return Zig::ImportMetaObject::create(globalObject, keyString);
 }
 
-JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
-    JSModuleLoader* moduleLoader, JSValue key,
-    JSValue moduleRecordValue, JSValue scriptFetcher,
-    JSValue sentValue, JSValue resumeMode)
-{
-    if (UNLIKELY(scriptFetcher && scriptFetcher.isObject())) {
-        return scriptFetcher;
-    }
-
-    JSC::JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue,
-        scriptFetcher, sentValue, resumeMode);
-
-    return result;
-}
-
 extern "C" void Bun__VM__setEvalResultIfEntryPoint(void*, EncodedJSValue, EncodedJSValue);
 
-JSC::JSValue GlobalObject::moduleLoaderEvaluateForEval(JSGlobalObject* globalObject,
+JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, JSValue scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
     if (UNLIKELY(scriptFetcher && scriptFetcher.isObject())) {
-        Bun__VM__setEvalResultIfEntryPoint(jsCast<Zig::GlobalObject*>(globalObject)->bunVM(), JSValue::encode(key), JSValue::encode(scriptFetcher));
+        if (globalObject->evalMode()) {
+            Bun__VM__setEvalResultIfEntryPoint(globalObject->bunVM(), JSValue::encode(key), JSValue::encode(scriptFetcher));
+        }
         return scriptFetcher;
     }
 
-    JSC::JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue,
+    JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         scriptFetcher, sentValue, resumeMode);
 
-    // need to check each module evaluated to cover cases like these (23 should be the result):
-    // `import "./foo"; 23; import "./bar"`
-    Bun__VM__setEvalResultIfEntryPoint(jsCast<Zig::GlobalObject*>(globalObject)->bunVM(), JSValue::encode(key), JSValue::encode(result));
+    if (globalObject->evalMode()) {
+        // need to check each module evaluated to cover cases like these (23 should be the result):
+        // `import "./foo"; 23; import "./bar"`
+        Bun__VM__setEvalResultIfEntryPoint(globalObject->bunVM(), JSValue::encode(key), JSValue::encode(result));
+    }
 
     return result;
-}
-
-void GlobalObject::setupModuleLoaderEvaluateForEval()
-{
-    s_globalObjectMethodTable.moduleLoaderEvaluate = &moduleLoaderEvaluateForEval;
 }
 
 GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))

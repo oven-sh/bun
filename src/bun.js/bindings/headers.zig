@@ -358,7 +358,7 @@ pub extern fn Reader__f64__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JS
 pub extern fn Reader__i64__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Reader__u64__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Reader__intptr__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) void;
-pub extern fn Zig__GlobalObject__create(arg0: ?*anyopaque, arg1: i32, arg2: bool, arg3: ?*anyopaque) *bindings.JSGlobalObject;
+pub extern fn Zig__GlobalObject__create(arg0: ?*anyopaque, arg1: i32, arg2: bool, arg3: bool, arg4: ?*anyopaque) *bindings.JSGlobalObject;
 pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: *bindings.JSGlobalObject) ?*anyopaque;
 pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque) bool;
 pub extern fn Bun__Path__create(arg0: *bindings.JSGlobalObject, arg1: bool) JSC__JSValue;

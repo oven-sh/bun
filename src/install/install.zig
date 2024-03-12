@@ -8666,7 +8666,8 @@ pub const PackageManager = struct {
                             const count = this.getInstalledPackageScriptsCount(alias, package_id, resolution.tag, log_level);
                             if (count > 0) {
                                 if (comptime log_level.isVerbose()) {
-                                    Output.prettyError("Blocked scripts for: {s}@{}\n", .{
+                                    Output.prettyError("Blocked {d} scripts for: {s}@{}\n", .{
+                                        count,
                                         alias,
                                         resolution.fmt(this.lockfile.buffers.string_bytes.items),
                                     });

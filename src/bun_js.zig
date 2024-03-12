@@ -190,7 +190,6 @@ pub const Run = struct {
 
             if (ctx.runtime_options.eval.eval_and_print) {
                 b.options.dead_code_elimination = false;
-                // vm.global.setupModuleLoaderEvaluateForEval();
             }
         }
 

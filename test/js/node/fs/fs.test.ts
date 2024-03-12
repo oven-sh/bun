@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, expect, it } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
@@ -61,13 +60,15 @@ function mkdirForce(path: string) {
 }
 
 it("fdatasyncSync", () => {
-  const fd = openSync(import.meta.path, "w", 0o664);
+  const temp = tmpdir();
+  const fd = openSync(join(temp, "test.blob"), "w", 0o664);
   fdatasyncSync(fd);
   closeSync(fd);
 });
 
 it("fdatasync", done => {
-  const fd = openSync(import.meta.path, "w", 0o664);
+  const temp = tmpdir();
+  const fd = openSync(join(temp, "test.blob"), "w", 0o664);
   fdatasync(fd, function () {
     done(...arguments);
     closeSync(fd);
@@ -94,7 +95,7 @@ it("writeFileSync in append should not truncate the file", () => {
   expect(readFileSync(path, "utf8")).toBe(str);
 });
 
-it.skipIf(isWindows)("await readdir #3931", async () => {
+it("await readdir #3931", async () => {
   const { exitCode } = spawnSync({
     cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
     env: bunEnv,
@@ -960,8 +961,6 @@ describe("writeSync", () => {
 
   it("works with a position set to 0", () => {
     const fd = openSync(import.meta.dir + "/writeFileSync.txt", "w+");
-    const four = new Uint8Array(4);
-
     {
       const count = writeSync(fd, new TextEncoder().encode("File"), 0, 4, 0);
       expect(count).toBe(4);
@@ -970,7 +969,6 @@ describe("writeSync", () => {
   });
   it("works without position set", () => {
     const fd = openSync(import.meta.dir + "/writeFileSync.txt", "w+");
-    const four = new Uint8Array(4);
     {
       const count = writeSync(fd, new TextEncoder().encode("File"));
       expect(count).toBe(4);
@@ -1627,7 +1625,7 @@ describe("createReadStream", () => {
   });
 });
 
-describe.skipIf(isWindows)("fs.WriteStream", () => {
+describe("fs.WriteStream", () => {
   it("should be exported", () => {
     expect(fs.WriteStream).toBeDefined();
   });
@@ -1722,7 +1720,7 @@ describe.skipIf(isWindows)("fs.WriteStream", () => {
   });
 });
 
-describe.skipIf(isWindows)("fs.ReadStream", () => {
+describe("fs.ReadStream", () => {
   it("should be exported", () => {
     expect(fs.ReadStream).toBeDefined();
   });
@@ -1835,7 +1833,7 @@ describe.skipIf(isWindows)("fs.ReadStream", () => {
   });
 });
 
-describe.skipIf(isWindows)("createWriteStream", () => {
+describe("createWriteStream", () => {
   it("simple write stream finishes", async () => {
     const path = `${tmpdir()}/fs.test.js/${Date.now()}.createWriteStream.txt`;
     const stream = createWriteStream(path);
@@ -2364,6 +2362,7 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 
+  // TODO: make this work on Windows
   it.skipIf(isWindows)("works after 2038", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");
@@ -2742,9 +2741,15 @@ it("test syscall errno, issue#4198", () => {
 });
 
 it.if(isWindows)("writing to windows hidden file is possible", () => {
-  Bun.spawnSync(["cmd", "/C", "touch file.txt && attrib +h file.txt"], { stdio: ["ignore", "ignore", "ignore"] });
-  writeFileSync("file.txt", "Hello World");
-  const content = readFileSync("file.txt", "utf8");
+  const temp = tmpdir();
+  writeFileSync(join(temp, "file.txt"), "FAIL");
+  const status = Bun.spawnSync(["cmd", "/C", "attrib +h file.txt"], {
+    stdio: ["ignore", "ignore", "ignore"],
+    cwd: temp,
+  });
+  expect(status.exitCode).toBe(0);
+  writeFileSync(join(temp, "file.txt"), "Hello World");
+  const content = readFileSync(join(temp, "file.txt"), "utf8");
   expect(content).toBe("Hello World");
 });
 

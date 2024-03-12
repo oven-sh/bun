@@ -3779,7 +3779,7 @@ pub const NodeFS = struct {
             .path => |path_| {
                 const path = path_.sliceZ(&this.sync_error_buf);
 
-                const fd = switch (Syscall.open(path, @intFromEnum(FileSystemFlags.a), 0o000666)) {
+                const fd = switch (bun.sys.open(path, @intFromEnum(FileSystemFlags.a), 0o666)) {
                     .result => |result| result,
                     .err => |err| return .{ .err = err },
                 };
@@ -4518,7 +4518,7 @@ pub const NodeFS = struct {
         else
             args.path.sliceZ(&this.sync_error_buf);
 
-        return switch (Syscall.open(path, @intFromEnum(args.flags), args.mode)) {
+        return switch (bun.sys.open(path, @intFromEnum(args.flags), args.mode)) {
             .err => |err| .{
                 .err = err.withPath(args.path.slice()),
             },
@@ -5156,7 +5156,7 @@ pub const NodeFS = struct {
                     }
                 }
 
-                break :brk switch (Syscall.open(
+                break :brk switch (bun.sys.open(
                     path,
                     os.O.RDONLY | os.O.NOCTTY,
                     0,
@@ -5533,7 +5533,7 @@ pub const NodeFS = struct {
         else
             std.os.O.RDONLY;
 
-        const fd = switch (Syscall.open(path, flags, 0)) {
+        const fd = switch (bun.sys.open(path, flags, 0)) {
             .err => |err| return .{ .err = err.withPath(path) },
             .result => |fd_| fd_,
         };
@@ -5783,7 +5783,7 @@ pub const NodeFS = struct {
 
     fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, flags: i32, comptime _: Flavor) Maybe(Return.Truncate) {
         if (comptime Environment.isWindows) {
-            const file = Syscall.open(
+            const file = bun.sys.open(
                 path.sliceZ(&this.sync_error_buf),
                 os.O.WRONLY | flags,
                 0o644,

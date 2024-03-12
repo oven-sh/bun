@@ -771,6 +771,8 @@ pub fn openFileAtWindowsNtPath(
     };
     var io: windows.IO_STATUS_BLOCK = undefined;
 
+    var attributes: w.DWORD = w.FILE_ATTRIBUTE_NORMAL;
+
     while (true) {
         const rc = windows.ntdll.NtCreateFile(
             &result,
@@ -778,7 +780,7 @@ pub fn openFileAtWindowsNtPath(
             &attr,
             &io,
             null,
-            w.FILE_ATTRIBUTE_NORMAL,
+            attributes,
             w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE,
             disposition,
             options,
@@ -800,6 +802,25 @@ pub fn openFileAtWindowsNtPath(
             } else {
                 log("NtCreateFile({}, {}) = {s} (file) = {d}", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             }
+        }
+
+        if (rc == .ACCESS_DENIED and
+            attributes == w.FILE_ATTRIBUTE_NORMAL and
+            (access_mask & (w.GENERIC_READ | w.GENERIC_WRITE)) == w.GENERIC_WRITE)
+        {
+            // > If CREATE_ALWAYS and FILE_ATTRIBUTE_NORMAL are specified,
+            // > CreateFile fails and sets the last error to ERROR_ACCESS_DENIED
+            // > if the file exists and has the FILE_ATTRIBUTE_HIDDEN or
+            // > FILE_ATTRIBUTE_SYSTEM attribute. To avoid the error, specify the
+            // > same attributes as the existing file.
+            //
+            // The above also applies to NtCreateFile. In order to make this work,
+            // we retry but only in the case that the file was opened for writing.
+            //
+            // See https://github.com/oven-sh/bun/issues/6820
+            //     https://github.com/libuv/libuv/pull/3380
+            attributes = w.FILE_ATTRIBUTE_HIDDEN;
+            continue;
         }
 
         switch (windows.Win32Error.fromNTStatus(rc)) {
@@ -1003,9 +1024,6 @@ pub fn openA(file_path: []const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.F
 }
 
 pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
-    if (comptime Environment.isWindows) {
-        return sys_uv.open(file_path, flags, perm);
-    }
     // this is what open() does anyway.
     return openat(bun.toFD((std.fs.cwd().fd)), file_path, flags, perm);
 }

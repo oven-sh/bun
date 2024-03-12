@@ -143,8 +143,7 @@ pub const UntrustedCommand = struct {
         Output.pretty(
             \\Found <b>0<r> untrusted dependencies with scripts.
             \\
-            \\This means all packages with scripts are in "trustedDependencies" or non of your
-            \\dependencies have scripts.
+            \\This means all packages with scripts are in "trustedDependencies" or non of your dependencies have scripts.
             \\
             \\For more information, visit <magenta>https://bun.sh/docs/install/lifecycle#trusteddependencies<r>
             \\
@@ -382,6 +381,8 @@ pub const TrustCommand = struct {
         var total_packages_with_scripts: usize = 0;
         var total_skipped_packages: usize = 0;
 
+        Output.print("\n", .{});
+
         depth = scripts_at_depth.count();
         while (depth > 0) {
             depth -= 1;
@@ -425,6 +426,10 @@ pub const TrustCommand = struct {
         std.os.ftruncate(pm.root_package_json_file.handle, new_package_json_contents.len) catch {};
         pm.root_package_json_file.close();
 
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(total_scripts_ran > 0);
+        }
+
         Output.pretty(" <green>{d}<r> script{s} ran across {d} package{s} ", .{
             total_scripts_ran,
             if (total_scripts_ran > 1) "s" else "",
@@ -433,11 +438,14 @@ pub const TrustCommand = struct {
         });
 
         Output.printStartEndStdout(start_time, std.time.nanoTimestamp());
-        Output.print("\n\n", .{});
+        Output.print("\n", .{});
 
-        Output.prettyln(" <yellow>{d}<r> package{s} with blocked scripts", .{
-            total_skipped_packages,
-            if (total_skipped_packages > 1) "s" else "",
-        });
+        if (total_skipped_packages > 0) {
+            Output.print("\n", .{});
+            Output.prettyln(" <yellow>{d}<r> package{s} with blocked scripts", .{
+                total_skipped_packages,
+                if (total_skipped_packages > 1) "s" else "",
+            });
+        }
     }
 };

@@ -143,7 +143,7 @@ pub const UntrustedCommand = struct {
         Output.pretty(
             \\Found <b>0<r> untrusted dependencies with scripts.
             \\
-            \\This means all packages with scripts are in "trustedDependencies" or non of your dependencies have scripts.
+            \\This means all packages with scripts are in "trustedDependencies" or none of your dependencies have scripts.
             \\
             \\For more information, visit <magenta>https://bun.sh/docs/install/lifecycle#trusteddependencies<r>
             \\

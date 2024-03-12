@@ -581,11 +581,6 @@ public:
         : GlobalObject(vm, structure, &s_globalObjectMethodTable)
     {
     }
-
-    EvalGlobalObject(JSC::VM& vm, JSC::Structure* structure, uint32_t contextId)
-        : GlobalObject(vm, structure, contextId, &s_globalObjectMethodTable)
-    {
-    }
 };
 
 } // namespace Zig

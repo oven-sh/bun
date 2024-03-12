@@ -20,7 +20,9 @@ const Path = @import("../resolver/resolve_path.zig");
 const String = @import("../install/semver.zig").String;
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const DepIdSet = std.ArrayHashMapUnmanaged(DependencyID, void, ArrayIdentityContext, false);
-const TrustedCommand = @import("./pm_trusted_command.zig").TrustedCommand;
+const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
+const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
+const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const Environment = bun.Environment;
 
 const ByName = struct {
@@ -95,20 +97,20 @@ pub const PackageManagerCommand = struct {
         Output.prettyln(
             \\<b><blue>bun pm<r>: Package manager utilities
             \\
-            \\  bun pm <b>bin<r>            print the path to bin folder
-            \\  <d>└<r>  <cyan>-g<r> bin             print the <b>global<r> path to bin folder
-            \\  bun pm <b>ls<r>             list the dependency tree according to the current lockfile
-            \\  <d>└<r>  <cyan>--all<r>              list the entire dependency tree according to the current lockfile
-            \\  bun pm <b>hash<r>           generate & print the hash of the current lockfile
-            \\  bun pm <b>hash-string<r>    print the string used to hash the lockfile
-            \\  bun pm <b>hash-print<r>     print the hash stored in the current lockfile
-            \\  bun pm <b>cache<r>          print the path to the cache folder
-            \\  bun pm <b>cache rm<r>       clear the cache
-            \\  bun pm <b>migrate<r>        migrate another package manager's lockfile without installing anything
-            \\  bun pm <b>trust(ed)<r>      print current trusted and untrusted dependencies with scripts
-            \\  <d>├<r>  \<packages, ...\>    trust dependencies and run scripts
-            \\  <d>├<r>  <cyan>--all<r>              trust all untrusted dependencies and run their scripts 
-            \\  <d>└<r>  <cyan>--default<r>          print the list of default trusted dependencies
+            \\  bun pm <b>bin<r>                print the path to bin folder
+            \\  <d>└<r>  <cyan>-g<r>                     print the <b>global<r> path to bin folder
+            \\  bun pm <b>ls<r>                 list the dependency tree according to the current lockfile
+            \\  <d>└<r>  <cyan>--all<r>                  list the entire dependency tree according to the current lockfile
+            \\  bun pm <b>hash<r>               generate & print the hash of the current lockfile
+            \\  bun pm <b>hash-string<r>        print the string used to hash the lockfile
+            \\  bun pm <b>hash-print<r>         print the hash stored in the current lockfile
+            \\  bun pm <b>cache<r>              print the path to the cache folder
+            \\  bun pm <b>cache rm<r>           clear the cache
+            \\  bun pm <b>migrate<r>            migrate another package manager's lockfile without installing anything
+            \\  bun pm <b>untrusted<r>          print current untrusted dependencies with scripts
+            \\  bun pm <b>trust<r> <d>names ...<r>    run scripts for untrusted dependencies and add to `trustedDependencies`
+            \\  <d>└<r>  <cyan>--all<r>                  trust all untrusted dependencies
+            \\  bun pm <b>default-trusted<r>    print the default trusted dependencies list
             \\
             \\Learn more about these at <magenta>https://bun.sh/docs/cli/pm<r>
             \\
@@ -248,8 +250,14 @@ pub const PackageManagerCommand = struct {
 
             Output.writer().writeAll(outpath) catch {};
             Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "trusted") or (strings.eqlComptime(subcommand, "trust"))) {
-            try TrustedCommand.exec(ctx, pm, args);
+        } else if (strings.eqlComptime(subcommand, "default-trusted")) {
+            try DefaultTrustedCommand.exec();
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "untrusted")) {
+            try UntrustedCommand.exec(ctx, pm, args);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "trust")) {
+            try TrustCommand.exec(ctx, pm, args);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "ls")) {
             const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");

@@ -2384,6 +2384,40 @@ pub const Package = extern struct {
             cwd: string,
             package_name: string,
 
+            pub fn printScripts(
+                this: Package.Scripts.List,
+                resolution: *const Resolution,
+                resolution_buf: []const u8,
+                comptime format_type: enum { completed, info, untrusted },
+            ) void {
+                if (std.mem.indexOf(u8, this.cwd, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str)) |i| {
+                    Output.pretty("<d>.{s}{s} @{}<r>\n", .{
+                        std.fs.path.sep_str,
+                        strings.withoutTrailingSlash(this.cwd[i + 1 ..]),
+                        resolution.fmt(resolution_buf),
+                    });
+                } else {
+                    Output.pretty("<d>{s} @{}<r>\n", .{
+                        strings.withoutTrailingSlash(this.cwd),
+                        resolution.fmt(resolution_buf),
+                    });
+                }
+
+                const fmt = switch (comptime format_type) {
+                    .completed => " <green>✓<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
+                    .untrusted => " <yellow>»<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
+                    .info => " [{s}]<d>:<r> <cyan>{s}<r>\n",
+                };
+                for (this.items, 0..) |maybe_script, script_index| {
+                    if (maybe_script) |script| {
+                        Output.pretty(fmt, .{
+                            Lockfile.Scripts.names[script_index],
+                            script.script,
+                        });
+                    }
+                }
+            }
+
             pub fn first(this: Package.Scripts.List) Lockfile.Scripts.Entry {
                 if (comptime Environment.allow_assert) {
                     std.debug.assert(this.items[this.first_index] != null);

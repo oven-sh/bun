@@ -10173,9 +10173,9 @@ pub const PackageManager = struct {
         }
 
         if (packages_count > 0) {
-            Output.prettyln("\n\n<d> Blocked scripts from {d} package{s}. Run `bun pm trusted` for details.<r>\n", .{
-                packages_count,
-                if (packages_count > 1) "s" else "",
+            Output.prettyln("\n\n<d> Blocked {d} postinstall{s}. Run `bun pm untrusted` for details.<r>\n", .{
+                scripts_count,
+                if (scripts_count > 1) "s" else "",
             });
         } else {
             Output.pretty("<r>\n", .{});

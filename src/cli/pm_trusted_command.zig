@@ -179,8 +179,6 @@ pub const TrustCommand = struct {
         Output.prettyError("<r><b>bun pm trust <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
         Output.flush();
 
-        const start_time = std.time.nanoTimestamp();
-
         if (args.len == 2) errorExpectedArgs();
 
         const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
@@ -206,9 +204,8 @@ pub const TrustCommand = struct {
         var untrusted_dep_ids: DepIdSet = .{};
         defer untrusted_dep_ids.deinit(ctx.allocator);
 
-        for (pm.lockfile.buffers.dependencies.items, 0..) |dep, i| {
+        for (pm.lockfile.buffers.dependencies.items, pm.lockfile.buffers.resolutions.items, 0..) |dep, package_id, i| {
             const dep_id: u32 = @intCast(i);
-            const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
             if (package_id == Install.invalid_package_id) continue;
 
             const alias = dep.name.slice(buf);
@@ -279,7 +276,6 @@ pub const TrustCommand = struct {
 
                             for (packages_to_trust.items) |package_name_from_cli| {
                                 if (strings.eqlLong(package_name_from_cli, alias, true) and !pm.lockfile.hasTrustedDependency(alias)) {
-                                    try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
                                     break :brk false;
                                 }
                             }
@@ -437,7 +433,7 @@ pub const TrustCommand = struct {
             if (total_packages_with_scripts > 1) "s" else "",
         });
 
-        Output.printStartEndStdout(start_time, std.time.nanoTimestamp());
+        Output.printStartEndStdout(bun.start_time, std.time.nanoTimestamp());
         Output.print("\n", .{});
 
         if (total_skipped_packages > 0) {

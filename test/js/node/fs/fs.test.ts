@@ -2159,7 +2159,7 @@ describe("fs/promises", () => {
   });
 });
 
-it("stat on a large file", () => {
+it("fstat on a large file", () => {
   var dest: string = "",
     fd;
   try {
@@ -2171,13 +2171,13 @@ it("stat on a large file", () => {
     while (offset < 5 * 1024 * 1024 * 1024) {
       offset += writeSync(fd, bigBuffer, 0, bigBuffer.length, offset);
     }
-
+    fdatasyncSync(fd);
     expect(fstatSync(fd).size).toEqual(offset);
   } finally {
     if (fd) closeSync(fd);
     unlinkSync(dest);
   }
-});
+}, 20_000);
 
 it("fs.constants", () => {
   if (isWindows) {

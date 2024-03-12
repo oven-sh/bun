@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
-import { join, sep } from "path";
+import { join, sep, posix } from "path";
 
 for (const flag of ["-e", "--print"]) {
   describe(`bun ${flag}`, () => {
@@ -116,11 +116,12 @@ function group(run: (code: string) => ReturnType<typeof Bun.spawnSync>) {
 
 describe("bun run - < file-path.js", () => {
   function run(code: string) {
-    const file = join(tmpdir(), "bun-run-eval-test.js");
+    // bash only supports / as path separator
+    const file = join(tmpdir(), "bun-run-eval-test.js").replaceAll("\\", "/");
     require("fs").writeFileSync(file, code);
     try {
       const result = Bun.spawnSync({
-        cmd: ["bash", "-c", `${bunExe()} run - < ${file}`],
+        cmd: ["bash", "-c", `${bunExe().replaceAll("\\", "/")} run - < ${file}`],
         env: bunEnv,
         stderr: "inherit",
       });

@@ -1052,7 +1052,7 @@ pub const PipeReader = struct {
             this.written += amount;
             // TODO: @zackradisic is this right?
             if (status == .end_of_file) return;
-            if (this.written >= this.parent().buffered_output.slice().len) {
+            if (this.written >= this.parent().buffered_output.slice().len and !(this.parent().state == .pending)) {
                 this.writer.end();
             }
         }
@@ -1146,6 +1146,14 @@ pub const PipeReader = struct {
 
     pub const toJS = toReadableStream;
 
+    // pub fn handleErrorFromCapturedWriter(this: *PipeReader, err: bun.sys.Error) void {
+    //     if (comptime bun.Environment.isPosix) {
+    //         this.
+    //     } else {
+
+    //     }
+    // }
+
     pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
         var this: *PipeReader = @ptrCast(@alignCast(ptr));
         this.buffered_output.append(chunk);
@@ -1155,50 +1163,38 @@ pub const PipeReader = struct {
         if (!this.captured_writer.dead) {
             // FIXME: Can't use bun.STDOUT_FD and bun.STDERR_FD here because we could have multiple writers to it and break kqueue/epoll
             const writer_fd: bun.FileDescriptor = if (this.out_type == .stdout) bun.shell.STDOUT_FD else bun.shell.STDERR_FD;
+            // const writer_fd: bun.FileDescriptor = bun.sys.dup(if (this.out_type == .stdout) bun.shell.STDOUT_FD else bun.shell.STDERR_FD).assert();
+            // const writer_fd: bun.FileDescriptor = bun.sys.dup(if (this.out_type == .stdout) bun.shell.STDOUT_FD else bun.shell.STDERR_FD).assert();
 
             if (comptime Environment.isWindows) {
                 if (this.captured_writer.writer.source == null) {
                     if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
-                        _ = e; // autofix
+                        const writer = std.io.getStdErr().writer();
+                        e.format("Yoops 420", .{}, writer) catch @panic("oops");
                         Output.panic("TODO SHELL SUBPROC onReadChunk error", .{});
                     }
                 }
 
                 this.captured_writer.writer.outgoing.write(chunk) catch bun.outOfMemory();
             } else if (this.captured_writer.writer.getPoll() == null) {
-                if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
-                    _ = e; // autofix
+                if (this.captured_writer.writer.start(writer_fd, false).asErr()) |e| {
+                    const writer = std.io.getStdErr().writer();
+                    const syserr: JSC.SystemError = e.toSystemError();
+                    writer.print("onReadChunk captured writer posix error: fd={} err=[code={d}, message={}, syscall={}] ", .{ writer_fd, syserr.code, syserr.message, syserr.syscall }) catch @panic("DAMN");
                     Output.panic("TODO SHELL SUBPROC onReadChunk error", .{});
                 }
+                // this.captured_writer.writer.handle = .{
+                //     .poll = this.captured_writer.writer.createPoll(writer_fd),
+                // };
             }
-
-            // if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
-            //     const writer = std.io.getStdOut().writer();
-            //     e.format("Yoops ", .{}, writer) catch @panic("oops");
-            //     @panic("TODO SHELL SUBPROC onReadChunk error");
-            // }
-
-            // if (comptime Environment.isWindows) {
-            //     if (this.captured_writer.writer.source == null) {
-            //         if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
-            //             const writer = std.io.getStdOut().writer();
-            //             e.format("Yoops ", .{}, writer) catch @panic("oops");
-            //             @panic("TODO SHELL SUBPROC onReadChunk error");
-            //         }
-            //     }
-            // } else {
-            //     if (this.captured_writer.writer.getPoll() == null) {
-            //         this.captured_writer.writer.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), writer_fd, .{}, @TypeOf(this.captured_writer.writer), &this.captured_writer.writer) };
-            //     }
-            // }
 
             log("CapturedWriter(0x{x}, {s}) write", .{ @intFromPtr(&this.captured_writer), @tagName(this.out_type) });
             if (bun.Environment.isWindows) {
                 _ = this.captured_writer.writer.flush();
             } else switch (this.captured_writer.writer.write(chunk)) {
                 .err => |e| {
-                    const writer = std.io.getStdOut().writer();
-                    e.format("Yoops ", .{}, writer) catch @panic("oops");
+                    const writer = std.io.getStdErr().writer();
+                    e.format("Yoops doopsy", .{}, writer) catch @panic("oops");
                     @panic("TODO SHELL SUBPROC onReadChunk error");
                 },
                 else => |result| {
@@ -1212,8 +1208,8 @@ pub const PipeReader = struct {
         if (should_continue) {
             if (bun.Environment.isPosix) this.reader.registerPoll() else switch (this.reader.startWithCurrentPipe()) {
                 .err => |e| {
-                    const writer = std.io.getStdOut().writer();
-                    e.format("Yoops ", .{}, writer) catch @panic("oops");
+                    const writer = std.io.getStdErr().writer();
+                    e.format("Yoopsy ", .{}, writer) catch @panic("oops");
                     @panic("TODO SHELL SUBPROC onReadChunk error");
                 },
                 else => {},

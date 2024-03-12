@@ -8767,7 +8767,7 @@ pub const Interpreter = struct {
                         this.reader.registerPoll()
                     else switch (this.reader.startWithCurrentPipe()) {
                         .err => |e| {
-                            const writer = std.io.getStdOut().writer();
+                            const writer = std.io.getStdErr().writer();
                             e.format("Yoops ", .{}, writer) catch @panic("oops");
                             @panic("TODO SHELL SUBPROC onReadChunk error");
                         },

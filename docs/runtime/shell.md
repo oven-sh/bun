@@ -400,25 +400,26 @@ await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`
 // => baz
 ```
 
-## .bun.sh file loader
+## .sh file loader
 
-For simple shell scripts, instead of `sh`, you can use Bun Shell to run shell scripts.
+For simple shell scripts, instead of `/bin/sh`, you can use Bun Shell to run shell scripts.
 
-To do that, run any file with bun that ends with `.bun.sh`:
+To do so, just run the script with `bun` on a file with the `.sh` extension.
 
-```sh
-$ echo "echo Hello World!" > script.bun.sh
-$ bun ./script.bun.sh
-> Hello World!
+```sh#script.sh
+echo "Hello World! pwd=$(pwd)"
 ```
 
-On Windows, Bun Shell is used automatically to run `.sh` files when using Bun:
-
 ```sh
-$ echo "echo Hello World!" > script.sh
-# On windows, .bun.sh is not needed, just .sh
 $ bun ./script.sh
-> Hello World!
+Hello World! pwd=/home/demo
+```
+
+Scripts with Bun Shell are cross platform, which means they work on Windows:
+
+```
+PS C:\Users\Demo> bun .\script.sh
+Hello World! pwd=C:\Users\Demo
 ```
 
 ## Credits

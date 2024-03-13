@@ -5758,7 +5758,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         }
                     },
                     .unix => |unix| {
-                        switch (bun.C.getErrno(-1)) {
+                        switch (bun.sys.getErrno(@as(i32, -1))) {
                             .SUCCESS => {
                                 error_instance = (JSC.SystemError{
                                     .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {}", .{bun.fmt.QuotedFormatter{ .text = unix }}) catch "Failed to start server"),

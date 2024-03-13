@@ -77,11 +77,7 @@ pub const LifecycleScriptSubprocess = struct {
             return;
 
         const process = this.process orelse return;
-        this.process = null;
-        const status = process.status;
-        process.detach();
-        process.deref();
-        this.handleExit(status);
+        this.handleExit(process.status);
     }
 
     // This is only used on the main thread.
@@ -328,13 +324,20 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     pub fn resetPolls(this: *LifecycleScriptSubprocess) void {
-        std.debug.assert(this.remaining_fds == 0);
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(this.remaining_fds == 0);
+        }
 
         if (this.process) |process| {
             this.process = null;
             process.close();
             process.deref();
         }
+
+        this.stdout.deinit();
+        this.stderr.deinit();
+        this.stdout = OutputReader.init(@This());
+        this.stderr = OutputReader.init(@This());
     }
 
     pub fn deinit(this: *LifecycleScriptSubprocess) void {

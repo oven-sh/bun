@@ -767,7 +767,7 @@ pub fn cleanWithLogger(
     // }
 
     var new: *Lockfile = try old.allocator.create(Lockfile);
-    try new.initEmpty(
+    new.initEmpty(
         old.allocator,
     );
     try new.string_pool.ensureTotalCapacity(old.string_pool.capacity());
@@ -1722,7 +1722,7 @@ inline fn strWithType(this: *const Lockfile, comptime Type: type, slicable: Type
     return slicable.slice(this.buffers.string_bytes.items);
 }
 
-pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
+pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
     this.* = .{
         .format = Lockfile.FormatVersion.current,
         .packages = .{},
@@ -2384,6 +2384,40 @@ pub const Package = extern struct {
             cwd: string,
             package_name: string,
 
+            pub fn printScripts(
+                this: Package.Scripts.List,
+                resolution: *const Resolution,
+                resolution_buf: []const u8,
+                comptime format_type: enum { completed, info, untrusted },
+            ) void {
+                if (std.mem.indexOf(u8, this.cwd, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str)) |i| {
+                    Output.pretty("<d>.{s}{s} @{}<r>\n", .{
+                        std.fs.path.sep_str,
+                        strings.withoutTrailingSlash(this.cwd[i + 1 ..]),
+                        resolution.fmt(resolution_buf),
+                    });
+                } else {
+                    Output.pretty("<d>{s} @{}<r>\n", .{
+                        strings.withoutTrailingSlash(this.cwd),
+                        resolution.fmt(resolution_buf),
+                    });
+                }
+
+                const fmt = switch (comptime format_type) {
+                    .completed => " <green>✓<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
+                    .untrusted => " <yellow>»<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
+                    .info => " [{s}]<d>:<r> <cyan>{s}<r>\n",
+                };
+                for (this.items, 0..) |maybe_script, script_index| {
+                    if (maybe_script) |script| {
+                        Output.pretty(fmt, .{
+                            Lockfile.Scripts.names[script_index],
+                            script.script,
+                        });
+                    }
+                }
+            }
+
             pub fn first(this: Package.Scripts.List) Lockfile.Scripts.Entry {
                 if (comptime Environment.allow_assert) {
                     std.debug.assert(this.items[this.first_index] != null);
@@ -2592,7 +2626,7 @@ pub const Package = extern struct {
             folder_name: string,
             resolution: *const Resolution,
         ) !?Package.Scripts.List {
-            var path_buf_to_use: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
+            var path_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
             if (this.hasAny()) {
                 const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name) and
                     this.install.isEmpty() and
@@ -2609,7 +2643,7 @@ pub const Package = extern struct {
 
                 const cwd = Path.joinAbsStringBufZTrailingSlash(
                     abs_node_modules_path,
-                    &path_buf_to_use,
+                    &path_buf,
                     &[_]string{folder_name},
                     .auto,
                 );
@@ -2623,37 +2657,33 @@ pub const Package = extern struct {
                     add_node_gyp_rebuild_script,
                 );
             } else if (!this.filled) {
+                const abs_folder_path = Path.joinAbsStringBufZTrailingSlash(
+                    abs_node_modules_path,
+                    &path_buf,
+                    &[_]string{folder_name},
+                    .auto,
+                );
                 return this.createFromPackageJSON(
                     log,
                     lockfile,
                     node_modules,
-                    abs_node_modules_path,
+                    abs_folder_path,
                     folder_name,
-                    resolution,
+                    resolution.tag,
                 );
             }
 
             return null;
         }
 
-        pub fn createFromPackageJSON(
+        pub fn fillFromPackageJSON(
             this: *Package.Scripts,
+            allocator: std.mem.Allocator,
+            string_builder: *Lockfile.StringBuilder,
             log: *logger.Log,
-            lockfile: *Lockfile,
             node_modules: std.fs.Dir,
-            node_modules_path: string,
             folder_name: string,
-            resolution: *const Resolution,
-        ) !?Package.Scripts.List {
-            var path_buf: bun.PathBuffer = undefined;
-
-            const cwd = Path.joinAbsStringBufZTrailingSlash(
-                node_modules_path,
-                &path_buf,
-                &[_]string{folder_name},
-                .auto,
-            );
-
+        ) !void {
             const json = brk: {
                 const json_src = brk2: {
                     const json_path = bun.path.joinZ([_]string{ folder_name, "package.json" }, .auto);
@@ -2666,8 +2696,8 @@ pub const Package = extern struct {
                     const json_file = json_file_fd.asFile();
                     defer json_file.close();
                     const json_stat_size = try json_file.getEndPos();
-                    const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
-                    errdefer lockfile.allocator.free(json_buf);
+                    const json_buf = try allocator.alloc(u8, json_stat_size + 64);
+                    errdefer allocator.free(json_buf);
                     const json_len = try json_file.preadAll(json_buf, 0);
                     break :brk2 logger.Source.initPathString(json_path, json_buf[0..json_len]);
                 };
@@ -2676,22 +2706,34 @@ pub const Package = extern struct {
                 break :brk try json_parser.ParseJSONUTF8(
                     &json_src,
                     log,
-                    lockfile.allocator,
+                    allocator,
                 );
             };
 
+            Lockfile.Package.Scripts.parseCount(allocator, string_builder, json);
+            try string_builder.allocate();
+            this.parseAlloc(allocator, string_builder, json);
+            this.filled = true;
+        }
+
+        pub fn createFromPackageJSON(
+            this: *Package.Scripts,
+            log: *logger.Log,
+            lockfile: *Lockfile,
+            node_modules: std.fs.Dir,
+            abs_folder_path: string,
+            folder_name: string,
+            resolution_tag: Resolution.Tag,
+        ) !?Package.Scripts.List {
             var tmp: Lockfile = undefined;
-            try tmp.initEmpty(lockfile.allocator);
+            tmp.initEmpty(lockfile.allocator);
             defer tmp.deinit();
             var builder = tmp.stringBuilder();
-            Lockfile.Package.Scripts.parseCount(lockfile.allocator, &builder, json);
-            try builder.allocate();
-            this.parseAlloc(lockfile.allocator, &builder, json);
-            this.filled = true;
+            try this.fillFromPackageJSON(lockfile.allocator, &builder, log, node_modules, folder_name);
 
             const add_node_gyp_rebuild_script = if (this.install.isEmpty() and this.preinstall.isEmpty()) brk: {
                 const binding_dot_gyp_path = Path.joinAbsStringZ(
-                    cwd,
+                    abs_folder_path,
                     &[_]string{"binding.gyp"},
                     .auto,
                 );
@@ -2702,9 +2744,9 @@ pub const Package = extern struct {
             return this.createList(
                 lockfile,
                 tmp.buffers.string_bytes.items,
-                cwd,
+                abs_folder_path,
                 folder_name,
-                resolution.tag,
+                resolution_tag,
                 add_node_gyp_rebuild_script,
             );
         }

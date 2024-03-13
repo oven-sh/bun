@@ -341,10 +341,14 @@ pub const Bin = extern struct {
                             target_path_trim = target_path_trim[3..];
                         }
                         setPermissions(node_modules.fd, target_path_trim);
-                        this.err = err;
+                        return;
                     }
+
+                    this.err = err;
+                    return;
                 };
                 setPermissions(node_modules.fd, dest_path);
+                return;
             } else {
                 const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
 

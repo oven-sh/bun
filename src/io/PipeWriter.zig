@@ -653,7 +653,7 @@ pub fn PosixStreamingWriter(
 
         pub fn deinit(this: *PosixWriter) void {
             this.buffer.clearAndFree();
-            this.close();
+            this.closeWithoutReporting();
         }
 
         pub fn hasRef(this: *PosixWriter) bool {

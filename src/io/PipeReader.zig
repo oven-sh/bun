@@ -790,7 +790,7 @@ const PosixBufferedReader = struct {
 
     pub fn deinit(this: *PosixBufferedReader) void {
         this.buffer().clearAndFree();
-        this.closeHandle();
+        this.closeWithoutReporting();
     }
 
     pub fn onError(this: *PosixBufferedReader, err: bun.sys.Error) void {

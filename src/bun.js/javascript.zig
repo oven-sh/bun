@@ -914,7 +914,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn setEvalResultIfEntryPoint(this: *VirtualMachine, specifier: JSValue, result: JSValue) callconv(.C) void {
-        if (!this.entry_point_result.has() and this.specifierIsEvalEntryPoint(specifier)) {
+        if (this.specifierIsEvalEntryPoint(specifier)) {
             this.entry_point_result.set(this.global, result);
         }
     }

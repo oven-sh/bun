@@ -548,7 +548,7 @@ ReadStream = (function (InternalReadStream) {
         start = defaultReadStreamOptions.start,
         end = defaultReadStreamOptions.end,
         autoDestroy = defaultReadStreamOptions.autoClose,
-        fs = defaultReadStreamOptions.fs,
+        fs: overridden_fs = defaultReadStreamOptions.fs,
         highWaterMark = defaultReadStreamOptions.highWaterMark,
         fd = defaultReadStreamOptions.fd,
       } = options;
@@ -588,7 +588,7 @@ ReadStream = (function (InternalReadStream) {
       // If fd not open for this file, open it
       if (tempThis.fd === undefined) {
         // NOTE: this fs is local to constructor, from options
-        tempThis.fd = fs.openSync(pathOrFd, flags, mode);
+        tempThis.fd = overridden_fs.openSync(pathOrFd, flags, mode);
       }
       // Get FileRef from fd
       var fileRef = Bun.file(tempThis.fd);
@@ -598,8 +598,7 @@ ReadStream = (function (InternalReadStream) {
       var stream = fileRef.stream();
       var ptr = stream.$bunNativePtr;
       if (!ptr) {
-        $debug("no native readable stream");
-        throw new Error("no native readable stream");
+        throw new Error("Failed to get internal stream controller. This is a bug in Bun");
       }
 
       super(ptr, {
@@ -639,6 +638,9 @@ ReadStream = (function (InternalReadStream) {
       if (start !== undefined) {
         this.pos = start;
       }
+
+      $assert(overridden_fs);
+      this.#fs = overridden_fs;
     }
     #fileRef;
     #fs;
@@ -677,6 +679,7 @@ ReadStream = (function (InternalReadStream) {
         if (!fd) {
           cb(err);
         } else {
+          $assert(this.#fs);
           this.#fs.close(fd, er => {
             cb(er || err);
           });
@@ -742,7 +745,7 @@ ReadStream = (function (InternalReadStream) {
     #internalRead(n) {
       // pos is the current position in the file
       // by default, if a start value is provided, pos starts at this.start
-      var { pos, end, bytesRead, fd, encoding } = this;
+      var { pos, end, bytesRead, fd } = this;
 
       n =
         pos !== undefined // if there is a pos, then we are reading from that specific position in the file

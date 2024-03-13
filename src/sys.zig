@@ -2056,12 +2056,13 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
             w.TRUE,
             w.DUPLICATE_SAME_ACCESS,
         );
-        log("dup({d}) = {d}", .{ fd.cast(), out });
         if (out == 0) {
             if (Maybe(bun.FileDescriptor).errnoSysFd(0, .dup, fd)) |err| {
+                log("dup({}) = {}", .{ fd, err });
                 return err;
             }
         }
+        log("dup({}) = {}", .{ fd, bun.toFD(target) });
         return Maybe(bun.FileDescriptor){ .result = bun.toFD(target) };
     }
 
@@ -2338,3 +2339,29 @@ pub const File = struct {
         _ = This.close(self.handle);
     }
 };
+
+pub inline fn toLibUVOwnedFD(
+    maybe_windows_fd: bun.FileDescriptor,
+    comptime syscall: Syscall.Tag,
+    comptime error_case: enum { close_on_fail, leak_fd_on_fail },
+) Maybe(bun.FileDescriptor) {
+    if (!Environment.isWindows) {
+        return .{ .result = maybe_windows_fd };
+    }
+
+    return .{
+        .result = bun.toLibUVOwnedFD(maybe_windows_fd) catch |err| switch (err) {
+            error.SystemFdQuotaExceeded => {
+                if (error_case == .close_on_fail) {
+                    _ = close(maybe_windows_fd);
+                }
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(bun.C.E.MFILE),
+                        .syscall = syscall,
+                    },
+                };
+            },
+        },
+    };
+}

@@ -219,11 +219,11 @@ function Install-Bun {
 
   $env:IS_BUN_AUTO_UPDATE = "1"
   $null = "$(& "${BunBin}\bun.exe" completions)"
-  # if ($LASTEXITCODE -ne 0) {
-  #   Write-Output "Install Failed - could not finalize installation"
-  #   Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
-  #   exit 1
-  # }
+  if ($LASTEXITCODE -ne 0) {
+    Write-Output "Install Failed - could not finalize installation"
+    Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
+    exit 1
+  }
   $env:IS_BUN_AUTO_UPDATE = $null
 
   $DisplayVersion = if ($BunRevision -like "*-canary.*") {

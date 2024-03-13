@@ -632,7 +632,10 @@ pub const Archive = struct {
                                     }).handle;
                                 }
                             };
-                            const file_handle = bun.toLibUVOwnedFD(file_handle_native);
+                            const file_handle = brk: {
+                                errdefer _ = bun.sys.close(file_handle_native);
+                                break :brk try bun.toLibUVOwnedFD(file_handle_native);
+                            };
 
                             defer if (comptime close_handles) {
                                 // On windows, AV hangs these closes really badly.

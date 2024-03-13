@@ -3414,6 +3414,7 @@ var require_readable = __commonJS({
 });
 
 // node_modules/readable-stream/lib/internal/streams/writable.js
+var errorOrDestroy;
 var require_writable = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/writable.js"(exports, module) {
     "use strict";
@@ -3444,7 +3445,7 @@ var require_writable = __commonJS({
       ERR_STREAM_WRITE_AFTER_END,
       ERR_UNKNOWN_ENCODING,
     } = require_errors().codes;
-    var { errorOrDestroy } = destroyImpl;
+    ({ errorOrDestroy } = destroyImpl);
 
     function Writable(options = {}) {
       const isDuplex = this instanceof require_duplex();

@@ -3680,6 +3680,36 @@ for (const forceWaiterThread of [false, true]) {
         expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
       });
     });
+    test("node -p should work in postinstall scripts", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            postinstall: 'node -p \'require("fs").writeFileSync("postinstall.txt", "postinstall")\'',
+          },
+        }),
+      );
+
+      const originalPath = env.PATH;
+      env.PATH = "";
+
+      let { exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      env.PATH = originalPath;
+
+      expect(await exited).toBe(0);
+
+      expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
+    });
   });
 }
 

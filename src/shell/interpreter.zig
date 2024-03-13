@@ -7810,13 +7810,14 @@ pub const Interpreter = struct {
             }
 
             pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) void {
+                log("Rm(0x{x}).onIOWriterChunk()", .{@intFromPtr(this)});
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
                         (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_count.load(.SeqCst) > 0));
                 }
 
                 if (this.state == .exec and this.state.exec.state == .waiting) {
-                    log("[rm] output done={d} output count={d}", .{ this.state.exec.getOutputCount(.output_done), this.state.exec.getOutputCount(.output_count) });
+                    log("Rm(0x{x}) output done={d} output count={d}", .{ @intFromPtr(this), this.state.exec.getOutputCount(.output_done), this.state.exec.getOutputCount(.output_count) });
                     this.state.exec.incrementOutputCount(.output_done);
                     if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
                         const code: ExitCode = if (this.state.exec.err != null) 1 else 0;
@@ -7946,6 +7947,7 @@ pub const Interpreter = struct {
                             if (!this.bltn.stderr.needsIO()) {
                                 _ = this.bltn.writeNoIO(.stderr, error_string);
                             } else {
+                                log("Rm(0x{x}) task=0x{x} ERROR={s}", .{ @intFromPtr(this), @intFromPtr(task), error_string });
                                 exec.incrementOutputCount(.output_count);
                                 this.bltn.stderr.enqueue(this, error_string);
                                 return;
@@ -7955,7 +7957,7 @@ pub const Interpreter = struct {
                     },
                 };
 
-                log("ShellRmTask(0x{x}, task.)", .{task.root_path});
+                log("ShellRmTask(0x{x}, task={s})", .{ @intFromPtr(task), task.root_path });
                 // Wait until all tasks done and all output is written
                 if (tasks_done >= this.state.exec.total_tasks and
                     exec.getOutputCount(.output_done) >= exec.getOutputCount(.output_count))
@@ -8034,6 +8036,7 @@ pub const Interpreter = struct {
                     is_absolute: bool = false,
                     subtask_count: std.atomic.Value(usize),
                     need_to_wait: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+                    deleting_after_waiting_for_children: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
                     kind_hint: EntryKindHint,
                     task: JSC.WorkPoolTask = .{ .callback = runFromThreadPool },
                     deleted_entries: std.ArrayList(u8),
@@ -8042,6 +8045,7 @@ pub const Interpreter = struct {
                     const EntryKindHint = enum { idk, dir, file };
 
                     pub fn takeDeletedEntries(this: *DirTask) std.ArrayList(u8) {
+                        print("DirTask(0x{x} path={s}) takeDeletedEntries", .{ @intFromPtr(this), this.path });
                         const ret = this.deleted_entries;
                         this.deleted_entries = std.ArrayList(u8).init(ret.allocator);
                         return ret;
@@ -8062,7 +8066,11 @@ pub const Interpreter = struct {
                     }
 
                     fn runFromThreadPoolImpl(this: *DirTask) void {
-                        defer this.postRun();
+                        defer {
+                            if (!this.deleting_after_waiting_for_children.load(.SeqCst)) {
+                                this.postRun();
+                            }
+                        }
 
                         // Root, get cwd path on windows
                         if (bun.Environment.isWindows) {
@@ -8116,6 +8124,7 @@ pub const Interpreter = struct {
                     }
 
                     pub fn postRun(this: *DirTask) void {
+                        print("DirTask(0x{x}, path={s}) postRun", .{ @intFromPtr(this), this.path });
                         // // This is true if the directory has subdirectories
                         // // that need to be deleted
                         if (this.need_to_wait.load(.SeqCst)) return;
@@ -8149,6 +8158,9 @@ pub const Interpreter = struct {
                     }
 
                     pub fn deleteAfterWaitingForChildren(this: *DirTask) void {
+                        print("DirTask(0x{x}, path={s}) deleteAfterWaitingForChildren", .{ @intFromPtr(this), this.path });
+                        // `runFromMainThreadImpl` has a `defer this.postRun()` so need to set this to true to skip that
+                        this.deleting_after_waiting_for_children.store(true, .SeqCst);
                         this.need_to_wait.store(false, .SeqCst);
                         var do_post_run = true;
                         defer {
@@ -8178,6 +8190,7 @@ pub const Interpreter = struct {
                     }
 
                     pub fn queueForWrite(this: *DirTask) void {
+                        log("DirTask(0x{x}, path={s}) queueForWrite to_write={d}", .{ @intFromPtr(this), this.path, this.deleted_entries.items.len });
                         if (this.deleted_entries.items.len == 0) return;
                         if (this.task_manager.event_loop == .js) {
                             this.task_manager.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
@@ -8276,6 +8289,7 @@ pub const Interpreter = struct {
                     print("deleted: {s}", .{path[0..path.len]});
                     if (!this.opts.verbose) return Maybe(void).success;
                     if (dir_task.deleted_entries.items.len == 0) {
+                        print("DirTask(0x{x}, {s}) Incrementing output count (deleted={s})", .{ @intFromPtr(dir_task), dir_task.path, path });
                         _ = this.rm.state.exec.incrementOutputCount(.output_count);
                     }
                     dir_task.deleted_entries.appendSlice(path[0..path.len]) catch bun.outOfMemory();
@@ -9158,7 +9172,7 @@ pub const Interpreter = struct {
 
         pub fn onWrite(this: *This, amount: usize, status: bun.io.WriteStatus) void {
             this.setWriting(false);
-            print("IOWriter(0x{x}, fd={}) write({d}, {})", .{ @intFromPtr(this), this.fd, amount, status });
+            print("IOWriter(0x{x}, fd={}) onWrite({d}, {})", .{ @intFromPtr(this), this.fd, amount, status });
             if (this.__idx >= this.writers.len()) return;
             const child = this.writers.get(this.__idx);
             if (child.isDead()) {

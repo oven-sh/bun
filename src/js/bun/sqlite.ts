@@ -187,10 +187,10 @@ class Database {
     if (typeof options === "object" && options) {
       flags = 0;
 
-      if(typeof options.fileMustExist === "boolean") {
-          options.create = !options.fileMustExist;
+      if (typeof options.fileMustExist === "boolean") {
+        options.create = !options.fileMustExist;
       }
-      
+
       if (options.readonly) {
         flags = constants.SQLITE_OPEN_READONLY;
       }

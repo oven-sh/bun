@@ -8008,6 +8008,20 @@ pub const Interpreter = struct {
                 task: JSC.WorkPoolTask = .{
                     .callback = workPoolCallback,
                 },
+                join_style: JoinStyle,
+
+                const JoinStyle = union(enum) {
+                    posix,
+                    windows,
+
+                    pub fn fromPath(p: bun.PathString) JoinStyle {
+                        const backslash = std.mem.indexOfScalar(u8, p.slice(), '\\') orelse std.math.maxInt(usize);
+                        const forwardslash = std.mem.indexOfScalar(u8, p.slice(), '/') orelse std.math.maxInt(usize);
+                        if (forwardslash <= backslash)
+                            return .posix;
+                        return .windows;
+                    }
+                };
 
                 const CwdPath = if (bun.Environment.isWindows) [:0]const u8 else u0;
 
@@ -8203,6 +8217,7 @@ pub const Interpreter = struct {
                         .concurrent_task = JSC.EventLoopTask.fromEventLoop(rm.bltn.eventLoop()),
                         .error_signal = error_signal,
                         .root_is_absolute = is_absolute,
+                        .join_style = JoinStyle.fromPath(root_path),
                     };
                     return task;
                 }
@@ -8277,9 +8292,14 @@ pub const Interpreter = struct {
                     }
                 }
 
-                pub fn bufJoin(buf: *[bun.MAX_PATH_BYTES]u8, parts: []const []const u8, syscall_tag: Syscall.Tag) Maybe([:0]u8) {
-                    var fixed_buf_allocator = std.heap.FixedBufferAllocator.init(buf[0..]);
-                    return .{ .result = std.fs.path.joinZ(fixed_buf_allocator.allocator(), parts) catch return Maybe([:0]u8).initErr(Syscall.Error.fromCode(bun.C.E.NAMETOOLONG, syscall_tag)) };
+                pub fn bufJoin(this: *ShellRmTask, buf: *[bun.MAX_PATH_BYTES]u8, parts: []const []const u8, syscall_tag: Syscall.Tag) Maybe([:0]const u8) {
+                    _ = syscall_tag; // autofix
+
+                    // var fixed_buf_allocator = std.heap.FixedBufferAllocator.init(buf[0..]);
+                    if (this.join_style == .posix) {
+                        return .{ .result = ResolvePath.joinZBuf(buf, parts, .posix) };
+                        // return .{ .result = std.fs.path.joinZ(fixed_buf_allocator.allocator(), parts) catch return Maybe([:0]u8).initErr(Syscall.Error.fromCode(bun.C.E.NAMETOOLONG, syscall_tag)) };
+                    } else return .{ .result = ResolvePath.joinZBuf(buf, parts, .windows) };
                 }
 
                 pub fn removeEntry(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool) Maybe(void) {
@@ -8390,7 +8410,7 @@ pub const Interpreter = struct {
                             },
                             else => {
                                 const name = current.name.sliceAssumeZ();
-                                const file_path = switch (ShellRmTask.bufJoin(
+                                const file_path = switch (this.bufJoin(
                                     buf,
                                     &[_][]const u8{
                                         path[0..path.len],

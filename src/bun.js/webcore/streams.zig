@@ -3490,7 +3490,6 @@ pub const FileReader = struct {
                         },
                         .result => |opened| {
                             std.debug.assert(opened.fd.isValid());
-                            std.debug.assert(bun.uvfdcast(opened.fd) >= 0);
                             this.fd = opened.fd;
                             pollable = opened.pollable;
                             file_type = opened.file_type;
@@ -3509,7 +3508,6 @@ pub const FileReader = struct {
             }
         }
         std.debug.assert(this.fd.isValid());
-        std.debug.assert(bun.uvfdcast(this.fd) >= 0);
 
         this.event_loop = JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop());
 

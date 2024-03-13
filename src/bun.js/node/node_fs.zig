@@ -3779,7 +3779,7 @@ pub const NodeFS = struct {
             .path => |path_| {
                 const path = path_.sliceZ(&this.sync_error_buf);
 
-                const fd = switch (bun.sys.open(path, @intFromEnum(FileSystemFlags.a), 0o666)) {
+                const fd = switch (Syscall.open(path, @intFromEnum(FileSystemFlags.a), 0o666)) {
                     .result => |result| result,
                     .err => |err| return .{ .err = err },
                 };
@@ -4518,7 +4518,7 @@ pub const NodeFS = struct {
         else
             args.path.sliceZ(&this.sync_error_buf);
 
-        return switch (bun.sys.open(path, @intFromEnum(args.flags), args.mode)) {
+        return switch (Syscall.open(path, @intFromEnum(args.flags), args.mode)) {
             .err => |err| .{
                 .err = err.withPath(args.path.slice()),
             },

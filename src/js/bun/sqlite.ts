@@ -187,10 +187,8 @@ class Database {
     if (typeof options === "object" && options) {
       flags = 0;
 
-      if(!options.fileMustExist) {
-        options.create = true;
-      } else {
-        options.create = false;
+      if(typeof options.fileMustExist === "boolean") {
+          options.create = !options.fileMustExist;
       }
       
       if (options.readonly) {

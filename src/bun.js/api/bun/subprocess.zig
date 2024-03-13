@@ -1093,12 +1093,14 @@ pub const Subprocess = struct {
                 }
             }
 
+            // we check if ref_count is already zero because we might reach this function
+            // through the deinit function passed to bun.NewRefCounted(..., deinitFn).
             switch (this.*) {
                 .buffer => {
-                    this.buffer.deref();
+                    if (this.buffer.ref_count > 0) this.buffer.deref();
                 },
                 .pipe => {
-                    this.pipe.deref();
+                    if (this.pipe.ref_count > 0) this.pipe.deref();
                 },
                 else => {},
             }

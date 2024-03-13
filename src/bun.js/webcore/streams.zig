@@ -3505,7 +3505,6 @@ pub const FileReader = struct {
         {
             const reader_fd = this.reader.getFd();
             if (reader_fd != bun.invalid_fd and this.fd == bun.invalid_fd) {
-                std.debug.assert(bun.uvfdcast(this.fd) >= 0);
                 this.fd = reader_fd;
             }
         }

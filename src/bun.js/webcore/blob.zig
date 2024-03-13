@@ -2298,7 +2298,13 @@ pub const Blob = struct {
                         open_source_flags,
                         0,
                     )) {
-                        .result => |result| bun.toLibUVOwnedFD(result),
+                        .result => |result| switch (bun.sys.toLibUVOwnedFD(result, .open, .close_on_fail)) {
+                            .result => |result_fd| result_fd,
+                            .err => |errno| {
+                                this.system_error = errno.toSystemError();
+                                return bun.errnoToZigErr(errno.errno);
+                            },
+                        },
                         .err => |errno| {
                             this.system_error = errno.toSystemError();
                             return bun.errnoToZigErr(errno.errno);
@@ -2314,7 +2320,13 @@ pub const Blob = struct {
                             open_destination_flags,
                             JSC.Node.default_permission,
                         )) {
-                            .result => |result| bun.toLibUVOwnedFD(result),
+                            .result => |result| switch (bun.sys.toLibUVOwnedFD(result, .open, .close_on_fail)) {
+                                .result => |result_fd| result_fd,
+                                .err => |errno| {
+                                    this.system_error = errno.toSystemError();
+                                    return bun.errnoToZigErr(errno.errno);
+                                },
+                            },
                             .err => |errno| {
                                 switch (mkdirIfNotExists(this, errno, dest, dest)) {
                                     .@"continue" => continue,

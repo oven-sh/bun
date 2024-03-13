@@ -85,7 +85,7 @@ pub fn messageWithTypeAndLevel(
     //message_level: u32,
     level: MessageLevel,
     global: *JSGlobalObject,
-    vals: [*]JSValue,
+    vals: [*]const JSValue,
     len: usize,
 ) callconv(.C) void {
     if (comptime is_bindgen) {

@@ -174,6 +174,7 @@ pub const Arguments = struct {
         clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
         clap.parseParam("-i                                Auto-install dependencies during execution. Equivalent to --install=fallback.") catch unreachable,
         clap.parseParam("-e, --eval <STR>                  Evaluate argument as a script") catch unreachable,
+        clap.parseParam("--print <STR>                     Evaluate argument as a script and print the result") catch unreachable,
         clap.parseParam("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk") catch unreachable,
         clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
         clap.parseParam("-p, --port <STR>                  Set the default port for Bun.serve") catch unreachable,
@@ -537,7 +538,13 @@ pub const Arguments = struct {
             }
 
             if (args.option("--port")) |port_str| {
-                opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
+                if (comptime cmd == .RunAsNodeCommand) {
+                    // TODO: prevent `node --port <script>` from working
+                    ctx.runtime_options.eval.script = port_str;
+                    ctx.runtime_options.eval.eval_and_print = true;
+                } else {
+                    opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
+                }
             }
 
             ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))
@@ -573,7 +580,12 @@ pub const Arguments = struct {
                 ctx.preloads = preloads;
             }
 
-            ctx.runtime_options.eval_script = args.option("--eval") orelse "";
+            if (args.option("--print")) |script| {
+                ctx.runtime_options.eval.script = script;
+                ctx.runtime_options.eval.eval_and_print = true;
+            } else if (args.option("--eval")) |script| {
+                ctx.runtime_options.eval.script = script;
+            }
             ctx.runtime_options.if_present = args.flag("--if-present");
             ctx.runtime_options.smol = args.flag("--smol");
             if (args.option("--inspect")) |inspect_flag| {
@@ -1093,7 +1105,10 @@ pub const Command = struct {
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,
-        eval_script: []const u8 = "",
+        eval: struct {
+            script: []const u8 = "",
+            eval_and_print: bool = false,
+        } = .{},
     };
 
     pub const Context = struct {
@@ -1689,7 +1704,7 @@ pub const Command = struct {
                     }
                 };
 
-                if (ctx.runtime_options.eval_script.len > 0) {
+                if (ctx.runtime_options.eval.script.len > 0) {
                     const trigger = bun.pathLiteral("/[eval]");
                     var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
                     const cwd = try std.os.getcwd(&entry_point_buf);

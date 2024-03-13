@@ -45,9 +45,10 @@ pub const ZigGlobalObject = extern struct {
         console: *anyopaque,
         context_id: i32,
         mini_mode: bool,
+        eval_mode: bool,
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
-        const global = shim.cppFn("create", .{ console, context_id, mini_mode, worker_ptr });
+        const global = shim.cppFn("create", .{ console, context_id, mini_mode, eval_mode, worker_ptr });
         Backtrace.reloadHandlers() catch unreachable;
         return global;
     }

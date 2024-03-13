@@ -167,6 +167,7 @@ pub const Run = struct {
                     .args = ctx.args,
                     .store_fd = ctx.debug.hot_reload != .none,
                     .smol = ctx.runtime_options.smol,
+                    .eval = ctx.runtime_options.eval.eval_and_print,
                     .debugger = ctx.runtime_options.debugger,
                 },
             ),
@@ -182,12 +183,14 @@ pub const Run = struct {
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
 
-        if (ctx.runtime_options.eval_script.len > 0) {
-            vm.module_loader.eval_script = ptr: {
-                const v = try bun.default_allocator.create(logger.Source);
-                v.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval_script);
-                break :ptr v;
-            };
+        if (ctx.runtime_options.eval.script.len > 0) {
+            const script_source = try bun.default_allocator.create(logger.Source);
+            script_source.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval.script);
+            vm.module_loader.eval_source = script_source;
+
+            if (ctx.runtime_options.eval.eval_and_print) {
+                b.options.dead_code_elimination = false;
+            }
         }
 
         b.options.install = ctx.install;
@@ -266,7 +269,7 @@ pub const Run = struct {
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
-        if (this.ctx.runtime_options.eval_script.len > 0) {
+        if (this.ctx.runtime_options.eval.script.len > 0) {
             Bun__ExposeNodeModuleGlobals(vm.global);
         }
 
@@ -388,6 +391,11 @@ pub const Run = struct {
         const exit_code = this.vm.exit_handler.exit_code;
 
         vm.onExit();
+
+        if (this.ctx.runtime_options.eval.eval_and_print) {
+            const result = vm.entry_point_result.trySwap() orelse .undefined;
+            result.print(vm.global, .Log, .Log);
+        }
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
         Global.exit(exit_code);

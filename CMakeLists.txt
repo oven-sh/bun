@@ -5,6 +5,37 @@ cmake_policy(SET CMP0067 NEW)
 set(Bun_VERSION "1.0.30")
 set(WEBKIT_TAG 089023cc9078b3aa173869fd6685f3e7bed2a994)
 
+if(APPLE AND DEFINED ENV{CI})
+    if(ARCH STREQUAL "x86_64")
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
+    else()
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
+    endif()
+endif()
+
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    execute_process(COMMAND xcrun --show-sdk-path OUTPUT_VARIABLE SDKROOT)
+    string(STRIP ${SDKROOT} SDKROOT)
+    message(STATUS "Using SDKROOT: ${SDKROOT}")
+    SET(CMAKE_OSX_SYSROOT ${SDKROOT})
+
+    execute_process(COMMAND xcrun --show-sdk-version OUTPUT_VARIABLE MACOSX_DEPLOYMENT_TARGET)
+    string(STRIP ${MACOSX_DEPLOYMENT_TARGET} MACOSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET ${MACOSX_DEPLOYMENT_TARGET})
+
+    # Check if current version of macOS is less than the deployment target and if so, raise an error
+    execute_process(COMMAND sw_vers -productVersion OUTPUT_VARIABLE MACOS_VERSION)
+    string(STRIP ${MACOS_VERSION} MACOS_VERSION)
+
+    if(MACOS_VERSION VERSION_LESS ${MACOSX_DEPLOYMENT_TARGET})
+        message(FATAL_ERROR "\nThe current version of macOS (${MACOS_VERSION}) is less than the deployment target (${MACOSX_DEPLOYMENT_TARGET}).\nThis makes icucore fail to run at start.\nTo fix this, please either:\n- Upgrade to the latest version of macOS\n- Use `xcode-select` to switch to an SDK version <= ${MACOS_VERSION}")
+    endif()
+endif()
+
+if(APPLE)
+    message(STATUS "Building for macOS v${CMAKE_OSX_DEPLOYMENT_TARGET}")
+endif()
+
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
 
@@ -1050,16 +1081,6 @@ else()
 endif()
 
 if(APPLE)
-    # this is gated to avoid the following warning when developing on modern versions of macOS.
-    # ld: warning: object file (/opt/homebrew/opt/icu4c/lib/libicudata.a[2](icudt73l_dat.o)) was built for newer 'macOS' version (14.0) than being linked (11.0)
-    if(DEFINED ENV{CI})
-    if(ARCH STREQUAL "x86_64")
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
-    else()
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
-    endif()
-    endif()
-
     target_link_options(${bun} PUBLIC "-dead_strip")
     target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
     target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")

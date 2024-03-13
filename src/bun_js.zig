@@ -394,7 +394,7 @@ pub const Run = struct {
 
         if (this.ctx.runtime_options.eval.eval_and_print) {
             const to_print = brk: {
-                const result = vm.entry_point_result.trySwap() orelse .undefined;
+                const result = vm.entry_point_result.value.trySwap() orelse .undefined;
                 if (result.asAnyPromise()) |promise| {
                     if (promise.status(vm.jsc) != .Pending) {
                         break :brk promise.result(vm.jsc);

@@ -3507,7 +3507,6 @@ pub const FileReader = struct {
                 this.fd = reader_fd;
             }
         }
-        std.debug.assert(this.fd.isValid());
 
         this.event_loop = JSC.EventLoopHandle.init(this.parent().globalThis.bunVM().eventLoop());
 

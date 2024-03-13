@@ -576,7 +576,10 @@ pub const VirtualMachine = struct {
     rare_data: ?*JSC.RareData = null,
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,
-    entry_point_result: JSC.Strong = .{},
+    entry_point_result: struct {
+        value: JSC.Strong = .{},
+        cjs_set_value: bool = false,
+    } = .{},
 
     auto_install_dependencies: bool = false,
 
@@ -913,22 +916,24 @@ pub const VirtualMachine = struct {
         return false;
     }
 
-    pub fn setEvalResultIfEntryPoint(this: *VirtualMachine, specifier: JSValue, result: JSValue) callconv(.C) void {
-        if (this.specifierIsEvalEntryPoint(specifier)) {
-            this.entry_point_result.set(this.global, result);
+    pub fn setEntryPointEvalResultESM(this: *VirtualMachine, result: JSValue) callconv(.C) void {
+        // allow esm evaluate to set value multiple times
+        if (!this.entry_point_result.cjs_set_value) {
+            this.entry_point_result.value.set(this.global, result);
         }
     }
 
-    pub fn setEntryPointEvalResult(this: *VirtualMachine, value: JSValue) callconv(.C) void {
-        if (!this.entry_point_result.has()) {
-            this.entry_point_result.set(this.global, value);
+    pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callconv(.C) void {
+        if (!this.entry_point_result.value.has()) {
+            this.entry_point_result.value.set(this.global, value);
+            this.entry_point_result.cjs_set_value = true;
         }
     }
 
     comptime {
         @export(scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
-        @export(setEvalResultIfEntryPoint, .{ .name = "Bun__VM__setEvalResultIfEntryPoint" });
-        @export(setEntryPointEvalResult, .{ .name = "Bun__VM__setEntryPointEvalResult" });
+        @export(setEntryPointEvalResultESM, .{ .name = "Bun__VM__setEntryPointEvalResultESM" });
+        @export(setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
         @export(specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     }
 

@@ -393,8 +393,17 @@ pub const Run = struct {
         vm.onExit();
 
         if (this.ctx.runtime_options.eval.eval_and_print) {
-            const result = vm.entry_point_result.trySwap() orelse .undefined;
-            result.print(vm.global, .Log, .Log);
+            const to_print = brk: {
+                const result = vm.entry_point_result.trySwap() orelse .undefined;
+                if (result.asAnyPromise()) |promise| {
+                    if (promise.status(vm.jsc) != .Pending) {
+                        break :brk promise.result(vm.jsc);
+                    }
+                }
+
+                break :brk result;
+            };
+            to_print.print(vm.global, .Log, .Log);
         }
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();

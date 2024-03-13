@@ -786,7 +786,7 @@ describe("deno_task", () => {
       await $\`somecommandthatdoesnotexist\`
     }
 
-    someFunction()
+    await someFunction()
     `;
 
     const [_, lineNr] = code

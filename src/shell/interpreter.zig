@@ -329,20 +329,23 @@ pub const IO = struct {
             }
         }
 
-        fn to_subproc_stdio(this: OutKind) bun.shell.subproc.Stdio {
+        fn to_subproc_stdio(this: OutKind, shellio: *?*shell.IOWriter) bun.shell.subproc.Stdio {
             return switch (this) {
-                .fd => |val| if (val.captured) |cap| .{ .capture = .{ .buf = cap, .fd = val.writer.fd } } else .{ .fd = val.writer.fd },
+                .fd => |val| brk: {
+                    shellio.* = val.writer.refSelf();
+                    break :brk if (val.captured) |cap| .{ .capture = .{ .buf = cap, .fd = val.writer.fd } } else .{ .fd = val.writer.fd };
+                },
                 .pipe => .pipe,
                 .ignore => .ignore,
             };
         }
     };
 
-    fn to_subproc_stdio(this: IO, stdio: *[3]bun.shell.subproc.Stdio) void {
+    fn to_subproc_stdio(this: IO, stdio: *[3]bun.shell.subproc.Stdio, shellio: *shell.subproc.ShellIO) void {
         // stdio[stdin_no] = this.stdin.to_subproc_stdio();
         this.stdin.to_subproc_stdio(&stdio[0]);
-        stdio[stdout_no] = this.stdout.to_subproc_stdio();
-        stdio[stderr_no] = this.stderr.to_subproc_stdio();
+        stdio[stdout_no] = this.stdout.to_subproc_stdio(&shellio.stdout);
+        stdio[stderr_no] = this.stderr.to_subproc_stdio(&shellio.stderr);
     }
 };
 
@@ -1098,8 +1101,16 @@ pub const Interpreter = struct {
         };
 
         const stdin_reader = IOReader.init(stdin_fd, event_loop);
-        const stdout_writer = IOWriter.init(stdout_fd, event_loop);
-        const stderr_writer = IOWriter.init(stderr_fd, event_loop);
+        const stdout_writer = IOWriter.init(
+            stdout_fd,
+            .{
+                .pollable = isPollable(stdout_fd, event_loop.stdout().data.file.mode),
+            },
+            event_loop,
+        );
+        const stderr_writer = IOWriter.init(stderr_fd, .{
+            .pollable = isPollable(stderr_fd, event_loop.stderr().data.file.mode),
+        }, event_loop);
 
         interpreter.* = .{
             .event_loop = event_loop,
@@ -1247,7 +1258,7 @@ pub const Interpreter = struct {
         interp.done = &is_done.done;
         try interp.run();
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
-        interp.deinit();
+        interp.deinitEverything();
     }
 
     pub fn run(this: *ThisInterpreter) !void {
@@ -1295,10 +1306,11 @@ pub const Interpreter = struct {
         log("finish", .{});
         defer decrPendingActivityFlag(&this.has_pending_activity);
         if (this.event_loop == .js) {
+            defer this.deinitAfterJSRun();
             // defer this.deinit();
             // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
             // this.buffered_stdout.
-            this.reject.deinit();
+            // this.reject.deinit();
             _ = this.resolve.call(&.{JSValue.jsNumberFromU16(exit_code)});
         } else {
             this.done.?.* = true;
@@ -1317,7 +1329,22 @@ pub const Interpreter = struct {
         }
     }
 
-    fn deinit(this: *ThisInterpreter) void {
+    fn deinitAfterJSRun(this: *ThisInterpreter) void {
+        log("deinit interpreter", .{});
+        for (this.jsobjs) |jsobj| {
+            jsobj.unprotect();
+        }
+        this.root_io.deref();
+        this.root_shell.deinitImpl(false, false);
+    }
+
+    fn deinitFromFinalizer(this: *ThisInterpreter) void {
+        this.resolve.deinit();
+        this.reject.deinit();
+        this.allocator.destroy(this);
+    }
+
+    fn deinitEverything(this: *ThisInterpreter) void {
         log("deinit interpreter", .{});
         for (this.jsobjs) |jsobj| {
             jsobj.unprotect();
@@ -1463,7 +1490,8 @@ pub const Interpreter = struct {
         this: *ThisInterpreter,
     ) callconv(.C) void {
         log("Interpreter finalize", .{});
-        this.deinit();
+        this.deinitFromFinalizer();
+        // this.deinit(true);
     }
 
     pub fn hasPendingActivity(this: *ThisInterpreter) callconv(.C) bool {
@@ -2962,7 +2990,7 @@ pub const Interpreter = struct {
             }
         }
 
-        pub fn onIOWriterChunk(this: *Pipeline, err: ?JSC.SystemError) void {
+        pub fn onIOWriterChunk(this: *Pipeline, _: usize, err: ?JSC.SystemError) void {
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.state == .waiting_write_err);
             }
@@ -3044,10 +3072,27 @@ pub const Interpreter = struct {
                     pipe[0] = bun.FDImpl.fromUV(fds[0]).encode();
                     pipe[1] = bun.FDImpl.fromUV(fds[1]).encode();
                 } else {
-                    pipe.* = switch (Syscall.pipe()) {
-                        .err => |e| return .{ .err = e },
-                        .result => |p| p,
+                    const fds: [2]bun.FileDescriptor = brk: {
+                        var fds_: [2]std.c.fd_t = undefined;
+                        const rc = std.c.socketpair(std.os.AF.UNIX, std.os.SOCK.STREAM, 0, &fds_);
+                        if (rc != 0) {
+                            return bun.sys.Maybe(void).errno(bun.sys.getErrno(rc), .socketpair);
+                        }
+
+                        var before = std.c.fcntl(fds_[0], std.os.F.GETFL);
+
+                        const result = std.c.fcntl(fds_[0], std.os.F.SETFL, before | bun.C.O_CLOEXEC);
+                        if (result == -1) @panic("WTF");
+
+                        if (comptime bun.Environment.isMac) {
+                            // SO_NOSIGPIPE
+                            before = 1;
+                            _ = std.c.setsockopt(fds_[0], std.os.SOL.SOCKET, std.os.SO.NOSIGPIPE, &before, @sizeOf(c_int));
+                        }
+
+                        break :brk .{ bun.toFD(fds_[0]), bun.toFD(fds_[1]) };
                     };
+                    pipe.* = fds;
                 }
                 set_count.* += 1;
             }
@@ -3057,7 +3102,10 @@ pub const Interpreter = struct {
         fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO, evtloop: JSC.EventLoopHandle) IO.OutKind {
             // Last command in the pipeline should write to stdout
             if (proc_idx == cmd_count - 1) return io.stdout.ref();
-            return .{ .fd = .{ .writer = IOWriter.init(pipes[proc_idx][1], evtloop) } };
+            return .{ .fd = .{ .writer = IOWriter.init(pipes[proc_idx][1], .{
+                .pollable = true,
+                .is_socket = bun.Environment.isPosix,
+            }, evtloop) } };
         }
 
         fn readPipe(pipes: []Pipe, proc_idx: usize, io: *IO, evtloop: JSC.EventLoopHandle) IO.InKind {
@@ -3390,7 +3438,7 @@ pub const Interpreter = struct {
             return this.next();
         }
 
-        pub fn onIOWriterChunk(this: *Cmd, e: ?JSC.SystemError) void {
+        pub fn onIOWriterChunk(this: *Cmd, _: usize, e: ?JSC.SystemError) void {
             if (e) |err| {
                 this.base.throw(&bun.shell.ShellErr.newSys(err));
                 return;
@@ -3540,7 +3588,9 @@ pub const Interpreter = struct {
                 spawn_args.fillEnv(&env_iter, false);
             }
 
-            this.io.to_subproc_stdio(&spawn_args.stdio);
+            var shellio: shell.subproc.ShellIO = .{};
+            defer shellio.deref();
+            this.io.to_subproc_stdio(&spawn_args.stdio, &shellio);
 
             if (this.node.redirect_file) |redirect| {
                 const in_cmd_subst = false;
@@ -3652,7 +3702,7 @@ pub const Interpreter = struct {
                 .child = undefined,
                 .buffered_closed = buffered_closed,
             } };
-            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), spawn_args, &this.exec.subproc.child)) {
+            const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child)) {
                 .result => this.exec.subproc.child,
                 .err => |*e| {
                     this.base.throw(e);
@@ -4244,7 +4294,9 @@ pub const Interpreter = struct {
                         const path = cmd.redirection_file.items[0..cmd.redirection_file.items.len -| 1 :0];
                         log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
                         const perm = 0o666;
-                        const flags = node.redirect.toFlags();
+                        const is_nonblocking = node.redirect.stdout or node.redirect.stderr;
+                        var flags = node.redirect.toFlags();
+                        if (is_nonblocking) flags |= std.os.O.NONBLOCK;
                         const redirfd = switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
                             .err => |e| {
                                 cmd.writeFailingError("bun: {s}: {s}", .{ e.toSystemError().message, path });
@@ -4259,11 +4311,11 @@ pub const Interpreter = struct {
                         }
                         if (node.redirect.stdout) {
                             cmd.exec.bltn.stdout.deref();
-                            cmd.exec.bltn.stdout = .{ .fd = .{ .writer = IOWriter.init(redirfd, cmd.base.eventLoop()) } };
+                            cmd.exec.bltn.stdout = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = true, .nonblocking = is_nonblocking }, cmd.base.eventLoop()) } };
                         }
                         if (node.redirect.stderr) {
                             cmd.exec.bltn.stderr.deref();
-                            cmd.exec.bltn.stderr = .{ .fd = .{ .writer = IOWriter.init(redirfd, cmd.base.eventLoop()) } };
+                            cmd.exec.bltn.stderr = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = true, .nonblocking = is_nonblocking }, cmd.base.eventLoop()) } };
                         }
                     },
                     .jsbuf => |val| {
@@ -4675,7 +4727,7 @@ pub const Interpreter = struct {
                 }
             }
 
-            pub fn onIOWriterChunk(this: *Cat, err: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?JSC.SystemError) void {
                 print("onIOWriterChunk(0x{x}, {s}, had_err={any})", .{ @intFromPtr(this), @tagName(this.state), err != null });
                 // Writing to stdout errored, cancel everything and write error
                 if (err) |e| {
@@ -4965,7 +5017,7 @@ pub const Interpreter = struct {
                 }
             }
 
-            pub fn onIOWriterChunk(this: *Touch, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Touch, _: usize, e: ?JSC.SystemError) void {
                 if (this.state == .waiting_write_err) {
                     // if (e) |err| return this.bltn.done(1);
                     return this.bltn.done(1);
@@ -5282,7 +5334,7 @@ pub const Interpreter = struct {
                 done,
             } = .idle,
 
-            pub fn onIOWriterChunk(this: *Mkdir, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Mkdir, _: usize, e: ?JSC.SystemError) void {
                 if (e) |err| err.deref();
 
                 switch (this.state) {
@@ -5657,7 +5709,7 @@ pub const Interpreter = struct {
                 return Maybe(void).success;
             }
 
-            pub fn onIOWriterChunk(this: *Export, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Export, _: usize, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.printing);
                 }
@@ -5783,7 +5835,7 @@ pub const Interpreter = struct {
                 return Maybe(void).success;
             }
 
-            pub fn onIOWriterChunk(this: *Echo, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Echo, _: usize, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.state == .waiting);
                 }
@@ -5918,7 +5970,7 @@ pub const Interpreter = struct {
                 this.next();
             }
 
-            pub fn onIOWriterChunk(this: *Which, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Which, _: usize, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.state == .one_arg or
                         (this.state == .multi_args and this.state.multi_args.state == .waiting_write));
@@ -6034,7 +6086,7 @@ pub const Interpreter = struct {
                 }
             }
 
-            pub fn onIOWriterChunk(this: *Cd, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Cd, _: usize, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.state == .waiting_write_stderr);
                 }
@@ -6116,7 +6168,7 @@ pub const Interpreter = struct {
                 }
             }
 
-            pub fn onIOWriterChunk(this: *Pwd, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Pwd, _: usize, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert(this.state == .waiting_io);
                 }
@@ -6242,7 +6294,7 @@ pub const Interpreter = struct {
                 _ = this; // autofix
             }
 
-            pub fn onIOWriterChunk(this: *Ls, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Ls, _: usize, e: ?JSC.SystemError) void {
                 if (e) |err| err.deref();
                 if (this.state == .waiting_write_err) {
                     // if (e) |err| return this.bltn.done(1);
@@ -7273,7 +7325,7 @@ pub const Interpreter = struct {
                 return Maybe(void).success;
             }
 
-            pub fn onIOWriterChunk(this: *Mv, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Mv, _: usize, e: ?JSC.SystemError) void {
                 defer if (e) |err| err.deref();
                 switch (this.state) {
                     .waiting_write_err => {
@@ -7754,7 +7806,7 @@ pub const Interpreter = struct {
                 return Maybe(void).success;
             }
 
-            pub fn onIOWriterChunk(this: *Rm, e: ?JSC.SystemError) void {
+            pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?JSC.SystemError) void {
                 if (comptime bun.Environment.allow_assert) {
                     std.debug.assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
                         (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_count.load(.SeqCst) > 0));
@@ -8651,6 +8703,13 @@ pub const Interpreter = struct {
         pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOReaderRefCount";
         pub usingnamespace bun.NewRefCounted(@This(), IOReader.asyncDeinit);
 
+        const InitFlags = packed struct(u8) {
+            pollable: bool = false,
+            nonblocking: bool = false,
+            socket: bool = false,
+            __unused: u5 = 0,
+        };
+
         pub fn refSelf(this: *IOReader) *IOReader {
             this.ref();
             return this;
@@ -8682,6 +8741,8 @@ pub const Interpreter = struct {
                 this.reader.source = .{ .file = bun.io.Source.openFile(fd) };
             }
             this.reader.setParent(this);
+
+            // this.flags = flags;
 
             return this;
         }
@@ -8908,6 +8969,8 @@ pub const Interpreter = struct {
         concurrent_task: JSC.EventLoopTask,
         is_writing: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
         async_deinit: AsyncDeinitWriter = .{},
+        started: bool = false,
+        flags: InitFlags = .{},
 
         pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOWriterRefCount";
 
@@ -8923,7 +8986,7 @@ pub const Interpreter = struct {
 
         pub const auto_poll = false;
 
-        usingnamespace bun.NewRefCounted(@This(), asyncDeinit);
+        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit);
         const This = @This();
         pub const WriterImpl = bun.io.BufferedWriter(
             This,
@@ -8943,7 +9006,15 @@ pub const Interpreter = struct {
             return this;
         }
 
-        pub fn init(fd: bun.FileDescriptor, evtloop: JSC.EventLoopHandle) *This {
+        pub const InitFlags = packed struct(u8) {
+            pollable: bool = false,
+            nonblocking: bool = false,
+            is_socket: bool = false,
+            __unused: u5 = 0,
+        };
+
+        // pub fn init(fd: bun.FileDescriptor, evtloop: JSC.EventLoopHandle) *This {
+        pub fn init(fd: bun.FileDescriptor, flags: InitFlags, evtloop: JSC.EventLoopHandle) *This {
             const this = IOWriter.new(.{
                 .fd = fd,
                 .evtloop = evtloop,
@@ -8951,19 +9022,30 @@ pub const Interpreter = struct {
             });
 
             this.writer.parent = this;
-            if (comptime bun.Environment.isPosix) {
-                this.writer.handle = .{
-                    .poll = this.writer.createPoll(fd),
-                };
-            } else {
-                this.writer.source = .{
-                    .file = bun.io.Source.openFile(fd),
-                };
-            }
+            this.flags = flags;
 
-            print("IOWriter(0x{x}, fd={}) init noice", .{ @intFromPtr(this), fd });
+            print("IOWriter(0x{x}, fd={}) init flags={any}", .{ @intFromPtr(this), fd, flags });
 
             return this;
+        }
+
+        fn __start(this: *This) void {
+            if (this.writer.start(this.fd, this.flags.pollable).asErr()) |e| {
+                const writer = std.io.getStdErr().writer();
+                e.format("Yoops ", .{}, writer) catch @panic("oops");
+                @panic("TODO SHELL handle IOWriter.init err");
+            }
+            if (comptime bun.Environment.isPosix) {
+                if (this.flags.nonblocking) {
+                    this.writer.getPoll().?.flags.insert(.nonblocking);
+                }
+
+                if (this.flags.is_socket) {
+                    this.writer.getPoll().?.flags.insert(.socket);
+                } else if (this.flags.pollable) {
+                    this.writer.getPoll().?.flags.insert(.fifo);
+                }
+            }
         }
 
         pub fn eventLoop(this: *This) JSC.EventLoopHandle {
@@ -8972,6 +9054,11 @@ pub const Interpreter = struct {
 
         /// Idempotent write call
         pub fn write(this: *This) void {
+            if (!this.started) {
+                this.__start();
+                this.started = true;
+                if (this.writer.handle == .fd) {} else return;
+            }
             if (bun.Environment.isWindows) {
                 log("IOWriter(0x{x}, fd={}) write() is_writing={any}", .{ @intFromPtr(this), this.fd, this.is_writing });
                 if (this.is_writing) return;
@@ -8983,12 +9070,11 @@ pub const Interpreter = struct {
                 return;
             }
 
-            if (bun.Environment.allow_assert) {
-                if (this.writer.handle != .poll) @panic("Should be poll.");
-            }
-            if (!this.writer.handle.poll.isRegistered()) {
-                this.writer.write();
-            }
+            if (this.writer.handle == .poll) {
+                if (!this.writer.handle.poll.isWatching()) {
+                    this.writer.write();
+                }
+            } else this.writer.write();
         }
 
         /// Cancel the chunks enqueued by the given writer by
@@ -9037,7 +9123,7 @@ pub const Interpreter = struct {
             for (slice[this.__idx..]) |*w| {
                 if (w.isDead()) {
                     this.__idx += 1;
-                    this.total_bytes_written = w.len - w.written;
+                    this.total_bytes_written += w.len - w.written;
                     continue;
                 }
                 return;
@@ -9080,7 +9166,12 @@ pub const Interpreter = struct {
                 if (comptime bun.Environment.isWindows) {
                     this.setWriting(true);
                     this.writer.write();
-                } else this.writer.registerPoll();
+                } else {
+                    if (this.writer.handle == .poll)
+                        this.writer.registerPoll()
+                    else
+                        this.writer.write();
+                }
             }
         }
 
@@ -9107,28 +9198,32 @@ pub const Interpreter = struct {
                     continue :writer_loop;
                 }
 
-                w.ptr.onWriteChunk(this.err);
+                w.ptr.onWriteChunk(0, this.err);
                 seen.append(@intFromPtr(ptr)) catch bun.outOfMemory();
             }
         }
 
         pub fn getBuffer(this: *This) []const u8 {
             const writer = brk: {
+                if (this.__idx >= this.writers.len()) return "";
                 const writer = this.writers.get(this.__idx);
                 if (!writer.isDead()) break :brk writer;
                 this.skipDead();
-                if (this.__idx >= this.writers.len()) return "";
-                break :brk this.writers.get(this.__idx);
+                break :brk writer;
             };
-            return this.buf.items[this.total_bytes_written .. this.total_bytes_written + writer.len];
+            const remaining = writer.len - writer.written;
+            return this.buf.items[this.total_bytes_written .. this.total_bytes_written + remaining];
         }
 
         pub fn bump(this: *This, current_writer: *Writer) void {
             log("IOWriter(0x{x}) bump(0x{x} {s})", .{ @intFromPtr(this), @intFromPtr(current_writer), @tagName(current_writer.ptr.ptr.tag()) });
             const is_dead = current_writer.isDead();
+            const written = current_writer.written;
             const child_ptr = current_writer.ptr;
 
-            defer if (!is_dead) child_ptr.onWriteChunk(null);
+            defer {
+                if (!is_dead) child_ptr.onWriteChunk(written, null);
+            }
 
             if (is_dead) {
                 this.skipDead();
@@ -9147,12 +9242,16 @@ pub const Interpreter = struct {
 
             if (this.total_bytes_written >= SHRINK_THRESHOLD) {
                 log("IOWriter(0x{x}) exceeded shrink threshold: truncating", .{@intFromPtr(this)});
-                const replace_range_len = this.buf.items.len - this.total_bytes_written;
-                if (replace_range_len == 0) {
+                const remaining_len = this.total_bytes_written - SHRINK_THRESHOLD;
+                if (remaining_len == 0) {
                     this.buf.clearRetainingCapacity();
+                    this.total_bytes_written = 0;
                 } else {
-                    this.buf.replaceRange(bun.default_allocator, 0, replace_range_len, this.buf.items[this.total_bytes_written..replace_range_len]) catch bun.outOfMemory();
-                    this.buf.items.len = replace_range_len;
+                    const slice = this.buf.items[SHRINK_THRESHOLD..this.total_bytes_written];
+                    // [0..S..T];
+                    std.mem.copyForwards(u8, this.buf.items[0..remaining_len], slice);
+                    this.buf.items.len = remaining_len;
+                    this.total_bytes_written = remaining_len;
                 }
                 this.writers.truncate(this.__idx);
                 this.__idx = 0;
@@ -9163,7 +9262,7 @@ pub const Interpreter = struct {
             const childptr = if (@TypeOf(ptr) == ChildPtr) ptr else ChildPtr.init(ptr);
             if (buf.len == 0) {
                 log("IOWriter(0x{x}) enqueue EMPTY", .{@intFromPtr(this)});
-                childptr.onWriteChunk(null);
+                childptr.onWriteChunk(0, null);
                 return;
             }
             const writer: Writer = .{
@@ -9221,6 +9320,7 @@ pub const Interpreter = struct {
             if (bun.Environment.allow_assert) std.debug.assert(this.ref_count == 0);
             this.buf.deinit(bun.default_allocator);
             if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
+            this.writer.disableKeepingProcessAlive(this.evtloop);
             this.destroy();
         }
 
@@ -9523,6 +9623,7 @@ pub const IOWriterChildPtr = struct {
         Interpreter.Builtin.Touch,
         Interpreter.Builtin.Touch.ShellTouchOutputTask,
         Interpreter.Builtin.Cat,
+        shell.subproc.PipeReader.CapturedWriter,
     });
 
     pub fn init(p: anytype) IOWriterChildPtr {
@@ -9533,8 +9634,8 @@ pub const IOWriterChildPtr = struct {
     }
 
     /// Called when the IOWriter writes a complete chunk of data the child enqueued
-    pub fn onWriteChunk(this: IOWriterChildPtr, err: ?JSC.SystemError) void {
-        return this.ptr.call("onIOWriterChunk", .{err}, void);
+    pub fn onWriteChunk(this: IOWriterChildPtr, amount: usize, err: ?JSC.SystemError) void {
+        return this.ptr.call("onIOWriterChunk", .{ amount, err }, void);
     }
 };
 
@@ -9778,7 +9879,7 @@ pub fn OutputTask(
             }
         }
 
-        pub fn onIOWriterChunk(this: *@This(), err: ?JSC.SystemError) void {
+        pub fn onIOWriterChunk(this: *@This(), _: usize, err: ?JSC.SystemError) void {
             if (err) |e| {
                 e.deref();
             }
@@ -10045,4 +10146,9 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             }
         }
     };
+}
+
+pub fn isPollable(fd: bun.FileDescriptor, mode: os.mode_t) bool {
+    if (bun.Environment.isWindows) return false;
+    return os.S.ISFIFO(mode) or os.S.ISSOCK(mode) or os.isatty(fd.int()) or os.S.ISREG(mode);
 }

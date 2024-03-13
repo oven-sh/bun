@@ -4600,7 +4600,6 @@ pub const Interpreter = struct {
                 idle,
                 exec_stdin: struct {
                     in_done: bool = false,
-                    out_done: bool = false,
                     chunks_queued: usize = 0,
                     chunks_done: usize = 0,
                     errno: ExitCode = 0,
@@ -4729,12 +4728,16 @@ pub const Interpreter = struct {
 
             pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?JSC.SystemError) void {
                 print("onIOWriterChunk(0x{x}, {s}, had_err={any})", .{ @intFromPtr(this), @tagName(this.state), err != null });
+                const errno: ExitCode = if (err) |e| brk: {
+                    defer e.deref();
+                    break :brk @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
+                } else 0;
                 // Writing to stdout errored, cancel everything and write error
                 if (err) |e| {
                     defer e.deref();
                     switch (this.state) {
                         .exec_stdin => {
-                            this.state.exec_stdin.out_done = true;
+                            this.state.exec_stdin.errno = errno;
                             // Cancel reader if needed
                             if (!this.state.exec_stdin.in_done) {
                                 if (this.bltn.stdin.needsIO()) {
@@ -4761,7 +4764,7 @@ pub const Interpreter = struct {
                 switch (this.state) {
                     .exec_stdin => {
                         this.state.exec_stdin.chunks_done += 1;
-                        if (this.state.exec_stdin.in_done and this.state.exec_stdin.chunks_done >= this.state.exec_stdin.chunks_queued) {
+                        if (this.state.exec_stdin.in_done and (this.state.exec_stdin.chunks_done >= this.state.exec_stdin.chunks_queued)) {
                             this.bltn.done(0);
                             return;
                         }
@@ -4769,7 +4772,10 @@ pub const Interpreter = struct {
                     },
                     .exec_filepath_args => {
                         this.state.exec_filepath_args.chunks_done += 1;
-                        if (this.state.exec_filepath_args.in_done) {
+                        if (this.state.exec_filepath_args.chunks_done >= this.state.exec_filepath_args.chunks_queued) {
+                            this.state.exec_filepath_args.out_done = true;
+                        }
+                        if (this.state.exec_filepath_args.in_done and this.state.exec_filepath_args.out_done) {
                             this.next();
                             return;
                         }
@@ -4785,9 +4791,6 @@ pub const Interpreter = struct {
                 print("onIOReaderChunk(0x{x}, {s}, chunk_len={d})", .{ @intFromPtr(this), @tagName(this.state), chunk.len });
                 switch (this.state) {
                     .exec_stdin => {
-                        // out_done should only be done if reader is done (impossible since we just read a chunk)
-                        // or it errored (also impossible since that removes us from the reader)
-                        std.debug.assert(!this.state.exec_stdin.out_done);
                         if (this.bltn.stdout.needsIO()) {
                             this.state.exec_stdin.chunks_queued += 1;
                             this.bltn.stdout.enqueue(this, chunk);
@@ -4820,14 +4823,14 @@ pub const Interpreter = struct {
                         this.state.exec_stdin.errno = errno;
                         this.state.exec_stdin.in_done = true;
                         if (errno != 0) {
-                            if (this.state.exec_stdin.out_done or !this.bltn.stdout.needsIO()) {
+                            if ((this.state.exec_stdin.chunks_done >= this.state.exec_stdin.chunks_queued) or !this.bltn.stdout.needsIO()) {
                                 this.bltn.done(errno);
                                 return;
                             }
                             this.bltn.stdout.fd.writer.cancelChunks(this);
                             return;
                         }
-                        if (this.state.exec_stdin.out_done or !this.bltn.stdout.needsIO()) {
+                        if ((this.state.exec_stdin.chunks_done >= this.state.exec_stdin.chunks_queued) or !this.bltn.stdout.needsIO()) {
                             this.bltn.done(0);
                         }
                     },
@@ -9057,7 +9060,9 @@ pub const Interpreter = struct {
             if (!this.started) {
                 this.__start();
                 this.started = true;
-                if (this.writer.handle == .fd) {} else return;
+                if (comptime bun.Environment.isPosix) {
+                    if (this.writer.handle == .fd) {} else return;
+                } else return;
             }
             if (bun.Environment.isWindows) {
                 log("IOWriter(0x{x}, fd={}) write() is_writing={any}", .{ @intFromPtr(this), this.fd, this.is_writing });
@@ -10148,7 +10153,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
     };
 }
 
-pub fn isPollable(fd: bun.FileDescriptor, mode: os.mode_t) bool {
+pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
     if (bun.Environment.isWindows) return false;
     return os.S.ISFIFO(mode) or os.S.ISSOCK(mode) or os.isatty(fd.int()) or os.S.ISREG(mode);
 }

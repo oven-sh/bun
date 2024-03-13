@@ -1439,7 +1439,7 @@ pub const RunCommand = struct {
             errdefer list.deinit();
 
             std.io.getStdIn().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
-            ctx.runtime_options.eval_script = list.items;
+            ctx.runtime_options.eval.script = list.items;
 
             const trigger = bun.pathLiteral("/[stdin]");
             var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
@@ -1530,7 +1530,7 @@ pub const RunCommand = struct {
     pub fn execAsIfNode(ctx: Command.Context) !void {
         std.debug.assert(CLI.pretend_to_be_node);
 
-        if (ctx.runtime_options.eval_script.len > 0) {
+        if (ctx.runtime_options.eval.script.len > 0) {
             const trigger = bun.pathLiteral("/[eval]");
             var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
             const cwd = try std.os.getcwd(&entry_point_buf);

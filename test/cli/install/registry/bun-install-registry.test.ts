@@ -410,7 +410,7 @@ test("it should correctly link binaries after deleting node_modules", async () =
     "",
     expect.stringContaining("3 packages installed"),
     "",
-    " Skipped ~1 script. Run `bun pm trusted` for details.",
+    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -438,7 +438,7 @@ test("it should correctly link binaries after deleting node_modules", async () =
     "",
     expect.stringContaining("3 packages installed"),
     "",
-    " Skipped ~1 script. Run `bun pm trusted` for details.",
+    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -581,7 +581,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     "",
     expect.stringContaining("19 packages installed"),
     "",
-    " Skipped ~1 script. Run `bun pm trusted` for details.",
+    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -620,7 +620,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     "",
     expect.stringContaining("19 packages installed"),
     "",
-    " Skipped ~1 script. Run `bun pm trusted` for details.",
+    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -1648,7 +1648,7 @@ test("missing package on reinstall, some with binaries", async () => {
     "",
     expect.stringContaining("19 packages installed"),
     "",
-    " Skipped ~1 script. Run `bun pm trusted` for details.",
+    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -2071,7 +2071,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         expect.stringContaining("1 package installed"),
         "",
-        " Skipped ~1 script. Run `bun pm trusted` for details.",
+        " Blocked 3 postinstalls. Run `bun pm untrusted` for details.",
         "",
       ]);
 
@@ -2533,7 +2533,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         expect.stringContaining("2 packages installed"),
         "",
-        " Skipped ~1 script. Run `bun pm trusted` for details.",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -2722,7 +2722,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         expect.stringContaining("1 package installed"),
         "",
-        " Skipped ~1 script. Run `bun pm trusted` for details.",
+        " Blocked 6 postinstalls. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -2888,7 +2888,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         expect.stringContaining("3 packages installed"),
         "",
-        " Skipped ~1 script. Run `bun pm trusted` for details.",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -3723,7 +3723,7 @@ describe("pm trust", async () => {
     );
 
     let { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "pm", "trusted", "--default"],
+      cmd: [bunExe(), "pm", "default-trusted"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
@@ -3749,7 +3749,7 @@ describe("pm trust", async () => {
       );
 
       let { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "pm", "trusted", "--all"],
+        cmd: [bunExe(), "pm", "trust", "--all"],
         cwd: packageDir,
         stdout: "pipe",
         stderr: "pipe",
@@ -3792,7 +3792,7 @@ describe("pm trust", async () => {
         "",
         expect.stringContaining("2 packages installed"),
         "",
-        " Skipped ~1 script. Run `bun pm trusted` for details.",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -3808,10 +3808,12 @@ describe("pm trust", async () => {
       }));
 
       err = await Bun.readableStreamToText(stderr);
-      expect(err).toBeEmpty();
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
 
       out = await Bun.readableStreamToText(stdout);
-      expect(err).toBeEmpty();
+      expect(out).toContain("1 script ran across 1 package");
       expect(await exited).toBe(0);
 
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();

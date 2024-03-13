@@ -4508,8 +4508,6 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     return Zig::ImportMetaObject::create(globalObject, keyString);
 }
 
-extern "C" void Bun__VM__setEvalResultIfEntryPoint(void*, EncodedJSValue, EncodedJSValue);
-
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, JSValue scriptFetcher,
@@ -4527,6 +4525,9 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     return result;
 }
 
+extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
+extern "C" void Bun__VM__setEntryPointEvalResultESM(void*, EncodedJSValue);
+
 JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, JSValue scriptFetcher,
@@ -4535,16 +4536,18 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     if (UNLIKELY(scriptFetcher && scriptFetcher.isObject())) {
-        Bun__VM__setEvalResultIfEntryPoint(globalObject->bunVM(), JSValue::encode(key), JSValue::encode(scriptFetcher));
+        if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
+            Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(scriptFetcher));
+        }
         return scriptFetcher;
     }
 
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         scriptFetcher, sentValue, resumeMode);
 
-    // need to check each module evaluated to cover cases like these (23 should be the result):
-    // `import "./foo"; 23; import "./bar"`
-    Bun__VM__setEvalResultIfEntryPoint(globalObject->bunVM(), JSValue::encode(key), JSValue::encode(result));
+    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
+        Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(result));
+    }
 
     return result;
 }

@@ -93,7 +93,7 @@ static bool canPerformFastEnumeration(Structure* s)
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
-extern "C" void Bun__VM__setEntryPointEvalResult(void*, EncodedJSValue);
+extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename, WTF::NakedPtr<Exception>& exception)
 {
@@ -139,7 +139,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
             return false;
         }
 
-        Bun__VM__setEntryPointEvalResult(globalObject->bunVM(), JSValue::encode(result));
+        Bun__VM__setEntryPointEvalResultCJS(globalObject->bunVM(), JSValue::encode(result));
 
         moduleObject->sourceCode.clear();
 

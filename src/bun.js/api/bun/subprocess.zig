@@ -1839,7 +1839,7 @@ pub const Subprocess = struct {
             }
         }
 
-        var windows_ipc_env_buf: if (Environment.isWindows) ["BUN_INTERNAL_IPC_FD=\\\\.\\pipe\\BUN_IPC_00000000-0000-0000-0000-000000000000".len]u8 else void = undefined;
+        var windows_ipc_env_buf: if (Environment.isWindows) ["BUN_INTERNAL_IPC_FD=\\\\.\\pipe\\BUN_IPC_00000000-0000-0000-0000-000000000000_".len]u8 else void = undefined;
         if (ipc_mode != .none) {
             if (comptime is_sync) {
                 globalThis.throwInvalidArguments("IPC is not supported in Bun.spawnSync", .{});

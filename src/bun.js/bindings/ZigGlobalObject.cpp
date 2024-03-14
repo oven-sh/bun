@@ -66,7 +66,6 @@
 #include "wtf/URLParser.h"
 #include "wtf/text/ExternalStringImpl.h"
 #include "wtf/text/StringCommon.h"
-#include "wtf/text/StringConcatenate.h"
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"

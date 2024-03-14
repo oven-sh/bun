@@ -22,6 +22,8 @@ if (process.platform === "linux") {
     await proc.exited;
 
     const resourceUsage = proc.resourceUsage();
+    
+    // Assert we didn't use 100% of CPU time
     expect(resourceUsage?.cpuTime.total).toBeLessThan(750_000n);
   });
 }

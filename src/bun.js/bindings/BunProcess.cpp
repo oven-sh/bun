@@ -1648,10 +1648,13 @@ static JSValue constructProcessHrtimeObject(VM& vm, JSObject* processObject)
     return hrtime;
 }
 
+extern "C" void Bun__ForceFileSinkToBeSynchronousOnWindows(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int fd)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject *globalThis = jsCast<Zig::GlobalObject*>(globalObject);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -1673,7 +1676,19 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
         return {};
     }
 
-    return result;
+    ASSERT_WITH_MESSAGE(JSC::isJSArray(result), "Expected an array from getStdioWriteStream");
+    JSC::JSObject *resultObject = JSC::jsCast<JSC::JSObject*>(result);
+
+#if OS(WINDOWS)
+    // Node.js docs - https://nodejs.org/api/process.html#a-note-on-process-io
+    // Files: synchronous on Windows and POSIX
+    // TTYs (Terminals): asynchronous on Windows, synchronous on POSIX
+    // Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
+    // Synchronous writes avoid problems such as output written with console.log() or console.error() being unexpectedly interleaved, or not written at all if process.exit() is called before an asynchronous write completes. See process.exit() for more information.
+    Bun__ForceFileSinkToBeSynchronousOnWindows(globalThis, JSValue::encode(resultObject->getDirectIndex(1)));
+#endif
+
+    return resultObject->getDirectIndex(globalObject, 0);
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)

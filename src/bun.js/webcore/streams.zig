@@ -2880,6 +2880,7 @@ pub const FileSink = struct {
     // we should not duplicate these fields...
     pollable: bool = false,
     nonblocking: bool = false,
+    force_sync_on_windows: bool = false,
     is_socket: bool = false,
     fd: bun.FileDescriptor = bun.invalid_fd,
     has_js_called_unref: bool = false,
@@ -2890,6 +2891,11 @@ pub const FileSink = struct {
 
     pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
     pub const Poll = IOWriter;
+
+    export fn Bun__ForceFileSinkToBeSynchronousOnWindows(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) {
+        var this: *FileSink = @ptrCast(JSSink.fromJS(globalObject, jsvalue) orelse return);
+        this.force_sync_on_windows = true;
+    }
 
     pub fn onAttachedProcessExit(this: *FileSink) void {
         log("onAttachedProcessExit()", .{});
@@ -3029,7 +3035,7 @@ pub const FileSink = struct {
         // TODO: this should be concurrent.
         const fd = switch (switch (options.input_path) {
             .path => |path| bun.sys.openA(path.slice(), options.flags(), options.mode),
-            .fd => |fd_| bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none) std.os.O.NONBLOCK else 0),
+            .fd => |fd_| bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none and !this.force_sync_on_windows) std.os.O.NONBLOCK else 0),
         }) {
             .err => |err| return .{ .err = err },
             .result => |fd| fd,
@@ -3052,13 +3058,16 @@ pub const FileSink = struct {
                 },
             }
         } else if (comptime Environment.isWindows) {
-            this.pollable = (bun.windows.GetFileType(fd.cast()) & bun.windows.FILE_TYPE_PIPE) != 0;
+            this.pollable = (bun.windows.GetFileType(fd.cast()) & bun.windows.FILE_TYPE_PIPE) != 0 and !this.force_sync_on_windows;
             this.fd = fd;
         } else {
             @compileError("TODO: implement for this platform");
         }
 
-        switch (this.writer.start(
+        const startFn = if (Environment.isWindows and this.force_sync_on_windows) IOWriter.startSync else IOWriter.start;
+
+        switch (startFn(
+            &this.writer,
             fd,
             this.pollable,
         )) {

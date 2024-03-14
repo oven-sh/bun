@@ -781,7 +781,7 @@ fn BaseWindowsPipeWriter(
             this.is_done = true;
             if (this.source) |source| {
                 switch (source) {
-                    .file => |file| {
+                    .sync_file, .file => |file| {
                         file.fs.deinit();
                         file.fs.data = file;
                         _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, @ptrCast(&onFileClose));
@@ -826,6 +826,20 @@ fn BaseWindowsPipeWriter(
         pub fn startWithPipe(this: *WindowsPipeWriter, pipe: *uv.Pipe) bun.JSC.Maybe(void) {
             std.debug.assert(this.source == null);
             this.source = .{ .pipe = pipe };
+            this.setParent(this.parent);
+            return this.startWithCurrentPipe();
+        }
+
+        pub fn startSync(this: *WindowsPipeWriter, fd: bun.FileDescriptor) bun.JSC.Maybe(void) {
+            std.debug.assert(this.source == null);
+            const source = Source{
+                .sync_file = switch (Source.openFile(fd)) {
+                    .result => |source| source,
+                    .err => |err| return .{ .err = err },
+                },
+            };
+            source.setData(this);
+            this.source = source;
             this.setParent(this.parent);
             return this.startWithCurrentPipe();
         }
@@ -931,6 +945,15 @@ pub fn WindowsBufferedWriter(
 
             const pipe = this.source orelse return;
             switch (pipe) {
+                .sync_file => |file| {
+                    this.pending_payload_size = buffer.len;
+                    file.fs.deinit();
+                    file.fs.setData(this);
+                    this.write_buffer = uv.uv_buf_t.init(buffer);
+
+                    const write_result = uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, null);
+                    onWriteComplete(this, write_result);
+                },
                 .file => |file| {
                     this.pending_payload_size = buffer.len;
                     file.fs.deinit();
@@ -1185,6 +1208,14 @@ pub fn WindowsStreamingWriter(
             this.current_payload = this.outgoing;
             this.outgoing = temp;
             switch (pipe) {
+                .sync_file => |file| {
+                    file.fs.deinit();
+                    file.fs.setData(this);
+                    this.write_buffer = uv.uv_buf_t.init(bytes);
+
+                    const write_result = uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, null);
+                    onWriteComplete(this, write_result);
+                },
                 .file => |file| {
                     file.fs.deinit();
                     file.fs.setData(this);

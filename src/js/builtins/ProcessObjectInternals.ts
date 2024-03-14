@@ -241,7 +241,7 @@ export function getStdinStream(fd) {
     }
   });
 
-  return stream;
+  return [stream, stream.$bunNativePtr];
 }
 
 export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksFn, reportUncaughtExceptionFn) {

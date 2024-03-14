@@ -44,8 +44,8 @@ public:
     /// Fixing this means adjusting a lot of how the module resolver works to operate and handle URL
     /// escaping, see https://github.com/oven-sh/bun/issues/8640 for more details.
     ///
-    /// The above rules get a best estimate bandage to solve the problem stated in:
-    /// <TODO: Open PR as there is no issue>
+    /// The above rules get a best estimate bandage to solve the problems
+    /// stated in https://github.com/oven-sh/bun/pull/9399
     static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier);
 
     static ImportMetaObject* createRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);

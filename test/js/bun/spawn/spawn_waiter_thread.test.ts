@@ -12,11 +12,13 @@ async function run(withWaiterThread: boolean) {
         : { WITHOUT_WAITER_THREAD: "1" }),
     },
     stderr: "inherit",
+    stdout: "inherit",
+    stdin: "ignore",
     cmd: [bunExe(), join(__dirname, "spawn_waiter_thread-fixture.js")],
   });
 
   setTimeout(() => {
-    proc.kill();
+    proc.kill(process.platform !== "win32" ? "SIGKILL" : undefined);
   }, 1000).unref();
 
   await proc.exited;

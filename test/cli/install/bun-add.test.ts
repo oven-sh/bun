@@ -70,6 +70,7 @@ it("should add existing package", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("bun add");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
@@ -161,6 +162,7 @@ it.each(["file://", "file:/", "file:"])("should accept file protocol with prefix
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -326,6 +328,7 @@ it("should add dependency with capital letters", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -381,6 +384,7 @@ it("should add exact version with --exact", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -437,6 +441,7 @@ it("should add exact version with install.exact", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -554,6 +559,7 @@ it("should add dependency with specified semver", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -615,6 +621,7 @@ it("should add dependency (GitHub)", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -702,6 +709,7 @@ it("should add dependency alongside workspaces", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -776,6 +784,7 @@ it("should add aliased dependency (npm)", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -837,6 +846,7 @@ it("should add aliased dependency (GitHub)", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -1300,6 +1310,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -1360,6 +1371,7 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -1668,6 +1680,7 @@ it("should add dependencies to workspaces directly", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -1731,6 +1744,7 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("bun add");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
@@ -1768,6 +1782,7 @@ it("should add dependency alongside peerDependencies", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();

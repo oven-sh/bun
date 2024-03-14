@@ -1643,6 +1643,7 @@ it("should handle ^0.0.2 in dependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -1710,6 +1711,7 @@ it("should handle matching workspaces from dependencies", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -1744,6 +1746,7 @@ it("should edit package json correctly with git dependencies", async () => {
   var err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(await exited).toBe(0);
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
     name: "foo",
@@ -1764,6 +1767,7 @@ it("should edit package json correctly with git dependencies", async () => {
   err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(await exited).toBe(0);
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
     name: "foo",
@@ -1784,6 +1788,7 @@ it("should edit package json correctly with git dependencies", async () => {
   err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(await exited).toBe(0);
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
     name: "foo",
@@ -1804,6 +1809,7 @@ it("should edit package json correctly with git dependencies", async () => {
   err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(await exited).toBe(0);
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
     name: "foo",
@@ -1840,6 +1846,7 @@ it("should handle ^0.0.2-rc in dependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -1885,6 +1892,7 @@ it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -1930,6 +1938,7 @@ it("should choose the right version with prereleases", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -1975,6 +1984,7 @@ it("should handle ^0.0.2rc1 in dependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -2020,6 +2030,7 @@ it("should handle ^0.0.2_pre3 in dependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -2065,6 +2076,7 @@ it("should handle ^0.0.2b_4+cafe_b0ba in dependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -2110,6 +2122,7 @@ it("should handle caret range in dependencies when the registry has prereleased 
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -6278,6 +6291,7 @@ it("should handle trustedDependencies", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();

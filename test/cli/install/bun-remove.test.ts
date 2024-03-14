@@ -302,6 +302,7 @@ it("should remove peerDependencies", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([" done", ""]);

@@ -14,25 +14,25 @@ var testCounter: number = 0;
 var port: number = 4873;
 var packageDir: string;
 
-// beforeAll(async () => {
-//   verdaccioServer = fork(
-//     await import.meta.resolve("verdaccio/bin/verdaccio"),
-//     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
-//     { silent: true, execPath: "bun" },
-//   );
+beforeAll(async () => {
+  verdaccioServer = fork(
+    await import.meta.resolve("verdaccio/bin/verdaccio"),
+    ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
+    { silent: true, execPath: "bun" },
+  );
 
-//   await new Promise<void>(done => {
-//     verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
-//       if (msg.verdaccio_started) {
-//         done();
-//       }
-//     });
-//   });
-// });
+  await new Promise<void>(done => {
+    verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
+      if (msg.verdaccio_started) {
+        done();
+      }
+    });
+  });
+});
 
-// afterAll(() => {
-//   verdaccioServer.kill();
-// });
+afterAll(() => {
+  verdaccioServer.kill();
+});
 
 beforeEach(async () => {
   packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-registry-" + testCounter++ + "-"));
@@ -1224,51 +1224,50 @@ describe("hoisting", async () => {
 });
 
 describe("workspaces", async () => {
-  // test("it should detect duplicate workspace dependencies", async () => {
-  //   await writeFile(
-  //     join(packageDir, "package.json"),
-  //     JSON.stringify({
-  //       name: "foo",
-  //       workspaces: ["packages/*"],
-  //     }),
-  //   );
+  test("it should detect duplicate workspace dependencies", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+    );
 
-  //   await mkdir(join(packageDir, "packages", "pkg1"), { recursive: true });
-  //   await writeFile(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify({ name: "pkg1" }));
-  //   await mkdir(join(packageDir, "packages", "pkg2"), { recursive: true });
-  //   await writeFile(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify({ name: "pkg1" }));
+    await mkdir(join(packageDir, "packages", "pkg1"), { recursive: true });
+    await writeFile(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify({ name: "pkg1" }));
+    await mkdir(join(packageDir, "packages", "pkg2"), { recursive: true });
+    await writeFile(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify({ name: "pkg1" }));
 
-  //   var { stderr, exited } = spawn({
-  //     cmd: [bunExe(), "install"],
-  //     cwd: packageDir,
-  //     stdout: "pipe",
-  //     stdin: "pipe",
-  //     stderr: "pipe",
-  //     env,
-  //   });
+    var { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
 
-  //   var err = await new Response(stderr).text();
-  //   expect(err).toContain('Workspace name "pkg1" already exists');
-  //   expect(await exited).toBe(1);
+    var err = await new Response(stderr).text();
+    expect(err).toContain('Workspace name "pkg1" already exists');
+    expect(await exited).toBe(1);
 
-  //   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  //   await rm(join(packageDir, "bun.lockb"), { force: true });
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"), { force: true });
 
-  //   ({ stderr, exited } = spawn({
-  //     cmd: [bunExe(), "install"],
-  //     cwd: join(packageDir, "packages", "pkg1"),
-  //     stdout: "pipe",
-  //     stdin: "pipe",
-  //     stderr: "pipe",
-  //     env,
-  //   }));
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(packageDir, "packages", "pkg1"),
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
 
-  //   err = await new Response(stderr).text();
-  //   expect(err).toContain('Workspace name "pkg1" already exists');
-  //   expect(await exited).toBe(1);
-  // });
+    err = await new Response(stderr).text();
+    expect(err).toContain('Workspace name "pkg1" already exists');
+    expect(await exited).toBe(1);
+  });
   const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0", "*"];
-  // const versions = ["workspace:1.0.0"];
 
   for (const rootVersion of versions) {
     for (const packageVersion of versions) {
@@ -1400,133 +1399,133 @@ describe("workspaces", async () => {
       });
     }
   }
-  // for (const version of versions) {
-  //   test(`it should allow listing workspace as dependency of the root package version ${version}`, async () => {
-  //     await writeFile(
-  //       join(packageDir, "package.json"),
-  //       JSON.stringify({
-  //         name: "foo",
-  //         workspaces: ["packages/*"],
-  //         dependencies: {
-  //           "workspace-1": version,
-  //         },
-  //       }),
-  //     );
+  for (const version of versions) {
+    test(`it should allow listing workspace as dependency of the root package version ${version}`, async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "workspace-1": version,
+          },
+        }),
+      );
 
-  //     await mkdir(join(packageDir, "packages", "workspace-1"), { recursive: true });
-  //     await writeFile(
-  //       join(packageDir, "packages", "workspace-1", "package.json"),
-  //       JSON.stringify({
-  //         name: "workspace-1",
-  //         version: "1.0.0",
-  //       }),
-  //     );
-  //     // install first from the root, the the workspace package
-  //     var { stdout, stderr, exited } = spawn({
-  //       cmd: [bunExe(), "install"],
-  //       cwd: packageDir,
-  //       stdout: "pipe",
-  //       stdin: "pipe",
-  //       stderr: "pipe",
-  //       env,
-  //     });
+      await mkdir(join(packageDir, "packages", "workspace-1"), { recursive: true });
+      await writeFile(
+        join(packageDir, "packages", "workspace-1", "package.json"),
+        JSON.stringify({
+          name: "workspace-1",
+          version: "1.0.0",
+        }),
+      );
+      // install first from the root, the the workspace package
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
 
-  //     var err = await new Response(stderr).text();
-  //     var out = await new Response(stdout).text();
-  //     expect(err).toContain("Saved lockfile");
-  //     expect(err).not.toContain("already exists");
-  //     expect(err).not.toContain("not found");
-  //     expect(err).not.toContain("Duplicate dependency");
-  //     expect(err).not.toContain('workspace dependency "workspace-1" not found');
-  //     expect(err).not.toContain("error:");
-  //     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-  //       "",
-  //       ` + workspace-1@workspace:packages${sep}workspace-1`,
-  //       "",
-  //       " 1 package installed",
-  //     ]);
-  //     expect(await exited).toBe(0);
+      var err = await new Response(stderr).text();
+      var out = await new Response(stdout).text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("already exists");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("Duplicate dependency");
+      expect(err).not.toContain('workspace dependency "workspace-1" not found');
+      expect(err).not.toContain("error:");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
+        ` + workspace-1@workspace:packages${sep}workspace-1`,
+        "",
+        " 1 package installed",
+      ]);
+      expect(await exited).toBe(0);
 
-  //     ({ stdout, stderr, exited } = spawn({
-  //       cmd: [bunExe(), "install"],
-  //       cwd: join(packageDir, "packages", "workspace-1"),
-  //       stdout: "pipe",
-  //       stdin: "pipe",
-  //       stderr: "pipe",
-  //       env,
-  //     }));
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: join(packageDir, "packages", "workspace-1"),
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      }));
 
-  //     err = await new Response(stderr).text();
-  //     out = await new Response(stdout).text();
-  //     expect(err).not.toContain("Saved lockfile");
-  //     expect(err).not.toContain("not found");
-  //     expect(err).not.toContain("already exists");
-  //     expect(err).not.toContain("Duplicate dependency");
-  //     expect(err).not.toContain('workspace dependency "workspace-1" not found');
-  //     expect(err).not.toContain("error:");
-  //     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-  //       "",
-  //       ` + workspace-1@workspace:packages${sep}workspace-1`,
-  //       "",
-  //       " 1 package installed",
-  //     ]);
-  //     expect(await exited).toBe(0);
+      err = await new Response(stderr).text();
+      out = await new Response(stdout).text();
+      expect(err).not.toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("already exists");
+      expect(err).not.toContain("Duplicate dependency");
+      expect(err).not.toContain('workspace dependency "workspace-1" not found');
+      expect(err).not.toContain("error:");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
+        ` + workspace-1@workspace:packages${sep}workspace-1`,
+        "",
+        " 1 package installed",
+      ]);
+      expect(await exited).toBe(0);
 
-  //     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  //     await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
 
-  //     // install from workspace package then from root
-  //     ({ stdout, stderr, exited } = spawn({
-  //       cmd: [bunExe(), "install"],
-  //       cwd: join(packageDir, "packages", "workspace-1"),
-  //       stdout: "pipe",
-  //       stdin: "pipe",
-  //       stderr: "pipe",
-  //       env,
-  //     }));
+      // install from workspace package then from root
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: join(packageDir, "packages", "workspace-1"),
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      }));
 
-  //     err = await new Response(stderr).text();
-  //     out = await new Response(stdout).text();
-  //     expect(err).toContain("Saved lockfile");
-  //     expect(err).not.toContain("already exists");
-  //     expect(err).not.toContain("not found");
-  //     expect(err).not.toContain("Duplicate dependency");
-  //     expect(err).not.toContain('workspace dependency "workspace-1" not found');
-  //     expect(err).not.toContain("error:");
-  //     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-  //       "",
-  //       ` + workspace-1@workspace:packages${sep}workspace-1`,
-  //       "",
-  //       " 1 package installed",
-  //     ]);
-  //     expect(await exited).toBe(0);
+      err = await new Response(stderr).text();
+      out = await new Response(stdout).text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("already exists");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("Duplicate dependency");
+      expect(err).not.toContain('workspace dependency "workspace-1" not found');
+      expect(err).not.toContain("error:");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
+        ` + workspace-1@workspace:packages${sep}workspace-1`,
+        "",
+        " 1 package installed",
+      ]);
+      expect(await exited).toBe(0);
 
-  //     ({ stdout, stderr, exited } = spawn({
-  //       cmd: [bunExe(), "install"],
-  //       cwd: packageDir,
-  //       stdout: "pipe",
-  //       stdin: "pipe",
-  //       stderr: "pipe",
-  //       env,
-  //     }));
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      }));
 
-  //     err = await new Response(stderr).text();
-  //     out = await new Response(stdout).text();
-  //     expect(err).not.toContain("Saved lockfile");
-  //     expect(err).not.toContain("already exists");
-  //     expect(err).not.toContain("not found");
-  //     expect(err).not.toContain("Duplicate dependency");
-  //     expect(err).not.toContain('workspace dependency "workspace-1" not found');
-  //     expect(err).not.toContain("error:");
-  //     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-  //       "",
-  //       ` + workspace-1@workspace:packages${sep}workspace-1`,
-  //       "",
-  //       " 1 package installed",
-  //     ]);
-  //     expect(await exited).toBe(0);
-  //   });
-  // }
+      err = await new Response(stderr).text();
+      out = await new Response(stdout).text();
+      expect(err).not.toContain("Saved lockfile");
+      expect(err).not.toContain("already exists");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("Duplicate dependency");
+      expect(err).not.toContain('workspace dependency "workspace-1" not found');
+      expect(err).not.toContain("error:");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
+        ` + workspace-1@workspace:packages${sep}workspace-1`,
+        "",
+        " 1 package installed",
+      ]);
+      expect(await exited).toBe(0);
+    });
+  }
 });
 
 test("it should re-populate .bin folder if package is reinstalled", async () => {

@@ -3715,7 +3715,7 @@ for (const forceWaiterThread of [false, true]) {
       // when we change bun install to delete dependencies from node_modules
       // for both cases, we need to update this test
       for (const withRm of [true, false]) {
-        test.only(withRm ? "withRm" : "withoutRm", async () => {
+        test(withRm ? "withRm" : "withoutRm", async () => {
           await writeFile(
             join(packageDir, "package.json"),
             JSON.stringify({

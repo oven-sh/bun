@@ -173,12 +173,12 @@ pub const LifecycleScriptSubprocess = struct {
             }
         } else if (comptime Environment.isWindows) {
             if (spawned.stdout == .buffer) {
-                this.stdout.parent = this;
+                this.stdout.setParent(this);
                 this.remaining_fds += 1;
                 try this.stdout.startWithCurrentPipe().unwrap();
             }
             if (spawned.stderr == .buffer) {
-                this.stderr.parent = this;
+                this.stderr.setParent(this);
                 this.remaining_fds += 1;
                 try this.stderr.startWithCurrentPipe().unwrap();
             }

@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, toHaveBins, toBeValidBin, toBeWorkspaceLink, ospath } from "harness";
@@ -77,7 +76,7 @@ it("should add existing package", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` installed foo@${add_path}`,
+    ` installed foo@${add_path.replace(/\\/g, "/")}`,
     "",
     " 1 package installed",
   ]);
@@ -88,7 +87,7 @@ it("should add existing package", async () => {
         name: "bar",
         version: "0.0.2",
         dependencies: {
-          foo: dep.replace(/\\\\/g, "\\"),
+          foo: dep.replace(/\\\\/g, "/"),
         },
       },
       null,
@@ -119,7 +118,7 @@ it("should reject missing package", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("bun add");
   expect(err).toContain("error: MissingPackageJSON");
-  expect(err).toContain(`note: error occured while resolving ${dep}`);
+  expect(err).toContain(`note: error occured while resolving file:${add_path}`);
 
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -153,7 +152,7 @@ it.each(["file://", "file:/", "file:"])("should accept file protocol with prefix
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", dep],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -168,7 +167,7 @@ it.each(["file://", "file:/", "file:"])("should accept file protocol with prefix
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` installed foo@${add_path}`,
+    ` installed foo@${add_path.replace(/\\/g, "/")}`,
     "",
     " 1 package installed",
   ]);
@@ -206,7 +205,7 @@ it.each(["fileblah://", "file:///"])("should reject invalid path without segfaul
   if (protocolPrefix === "file:///") {
     expect(err).toContain("error: MissingPackageJSON");
   } else {
-    expect(err).toContain(`error: unrecognised dependency format: ${dep}`);
+    expect(err).toContain(`error: unrecognised dependency format: ${dep.replace(/\\\\/g, "/")}`);
   }
 
   expect(stdout).toBeDefined();
@@ -715,7 +714,7 @@ it("should add dependency alongside workspaces", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ospath(" + bar@workspace:packages/bar"),
+    " + bar@workspace:packages/bar",
     "",
     " installed baz@0.0.3 with binaries:",
     "  - baz-run",
@@ -1668,7 +1667,7 @@ it("should add dependencies to workspaces directly", async () => {
   );
   await writeFile(join(package_dir, "moo", "bunfig.toml"), await file(join(package_dir, "bunfig.toml")).text());
   const add_path = relative(join(package_dir, "moo"), add_dir);
-  const dep = `file:${add_path}`.replace(/\\/g, "\\\\");
+  const dep = `file:${add_path}`.replace(/\\/g, "/");
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", dep],
     cwd: join(package_dir, "moo"),
@@ -1686,7 +1685,7 @@ it("should add dependencies to workspaces directly", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` installed foo@${relative(package_dir, add_dir)}`,
+    ` installed foo@${relative(package_dir, add_dir).replace(/\\/g, "/")}`,
     "",
     " 1 package installed",
   ]);
@@ -1704,7 +1703,7 @@ it("should add dependencies to workspaces directly", async () => {
     name: "moo",
     version: "0.3.0",
     dependencies: {
-      foo: `file:${add_path}`,
+      foo: `file:${add_path.replace(/\\/g, "/")}`,
     },
   });
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "foo"]);
@@ -1751,7 +1750,7 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` installed foo@${add_path}`,
+    ` installed foo@${add_path.replace(/\\/g, "/")}`,
     "",
     " 1 package installed",
   ]);

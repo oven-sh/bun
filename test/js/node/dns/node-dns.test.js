@@ -231,9 +231,19 @@ test("dns.lookup (localhost)", done => {
   });
 });
 
-test.skipIf(isWindows)("dns.getServers", done => {
+test("dns.getServers", done => {
   function parseResolvConf() {
-    let servers = [];
+    const servers = [];
+    if (isWindows) {
+      const { stdout } = Bun.spawnSync(["ipconfig"], { stdout: "pipe" });
+      for (const line of stdout.toString("utf8").split(os.EOL)) {
+        if (line.indexOf("Default Gateway") !== -1) {
+          servers.push(line.split(":")[1].trim());
+        }
+      }
+      return servers;
+    }
+
     try {
       const content = fs.readFileSync("/etc/resolv.conf", "utf-8");
       const lines = content.split(os.EOL);

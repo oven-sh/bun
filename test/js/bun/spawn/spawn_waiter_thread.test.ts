@@ -24,6 +24,7 @@ async function run(withWaiterThread: boolean) {
   const resourceUsage = proc.resourceUsage();
 
   // Assert we didn't use 100% of CPU time
+  console.log(resourceUsage.cpuTime);
   expect(resourceUsage?.cpuTime.total).toBeLessThan(750_000n);
 }
 

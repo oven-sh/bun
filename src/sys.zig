@@ -1333,7 +1333,7 @@ pub const StatxField = enum(comptime_int) {
     blocks = linux.STATX_BLOCKS,
 };
 // Linux Kernel v4.11
-var supports_statx_on_linux = std.atomic.Atomic(bool).init(true);
+var supports_statx_on_linux = std.atomic.Value(bool).init(true);
 
 pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe(bun.Stat) {
     if (comptime Environment.isWindows) {
@@ -1386,9 +1386,6 @@ pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe
     }
 
     var stat_ = std.mem.zeroes(bun.Stat);
-    if (buf.mask & linux.STATX_TYPE != 0) {
-        stat_.type = buf.type;
-    }
 
     stat_.dev = buf.dev_major | (buf.dev_minor << 8);
     stat_.ino = buf.ino;

@@ -50,7 +50,7 @@ pub const OsIterator = struct {
     const Error = process.ArgIterator.InitError;
 
     arena: @import("root").bun.ArenaAllocator,
-    remain: [][:0]u8,
+    remain: [][:0]const u8,
 
     /// The executable path (this is the first argument passed to the program)
     /// TODO: Is it the right choice for this to be null? Maybe `init` should

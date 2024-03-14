@@ -724,8 +724,7 @@ pub const ReadFileUV = struct {
 
     fn remainingBuffer(this: *const ReadFileUV) []u8 {
         var remaining = this.buffer.unusedCapacitySlice();
-        remaining = remaining[0..@min(remaining.len, this.max_length -| this.read_off)];
-        return remaining;
+        return remaining[0..@min(remaining.len, this.max_length -| this.read_off)];
     }
 
     pub fn queueRead(this: *ReadFileUV) void {

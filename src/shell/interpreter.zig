@@ -6514,7 +6514,6 @@ pub const Interpreter = struct {
                     if (skip) return;
                     this.output.ensureUnusedCapacity(name.len + 1) catch bun.outOfMemory();
                     this.output.appendSlice(name) catch bun.outOfMemory();
-                    // FIXME TODO non ascii/utf-8
                     this.output.append('\n') catch bun.outOfMemory();
                 }
 
@@ -8788,8 +8787,9 @@ pub const Interpreter = struct {
         pub fn start(this: *IOReader) void {
             if (bun.Environment.isPosix) {
                 if (this.reader.handle == .closed or !this.reader.handle.poll.isRegistered()) {
-                    if (this.reader.start(this.fd, true).asErr()) |_| {
-                        @panic("TODO handle error");
+                    if (this.reader.start(this.fd, true).asErr()) |e| {
+                        // @panic("TODO handle error");
+                        this.onReaderError(e);
                     }
                 }
                 return;
@@ -8798,8 +8798,7 @@ pub const Interpreter = struct {
             if (this.is_reading) return;
             this.is_reading = true;
             if (this.reader.startWithCurrentPipe().asErr()) |e| {
-                _ = e;
-                @panic("TODO handle error");
+                this.onReaderError(e);
             }
         }
 
@@ -8865,9 +8864,8 @@ pub const Interpreter = struct {
                         this.reader.registerPoll()
                     else switch (this.reader.startWithCurrentPipe()) {
                         .err => |e| {
-                            const writer = std.io.getStdErr().writer();
-                            e.format("Yoops ", .{}, writer) catch @panic("oops");
-                            @panic("TODO SHELL SUBPROC onReadChunk error");
+                            this.onReaderError(e);
+                            return false;
                         },
                         else => {},
                     }
@@ -9066,11 +9064,27 @@ pub const Interpreter = struct {
             return this;
         }
 
-        fn __start(this: *This) void {
-            if (this.writer.start(this.fd, this.flags.pollable).asErr()) |e| {
-                const writer = std.io.getStdErr().writer();
-                e.format("Yoops ", .{}, writer) catch @panic("oops");
-                @panic("TODO SHELL handle IOWriter.init err");
+        pub fn __start(this: *This) Maybe(void) {
+            if (this.writer.start(this.fd, this.flags.pollable).asErr()) |e_| {
+                const e: bun.sys.Error = e_;
+                if (bun.Environment.isPosix) {
+                    // We get this if we pass in a file descriptor that is not
+                    // pollable, for example a special character device like
+                    // /dev/null. If so, restart with polling disabled.
+                    //
+                    // It's also possible on Linux for EINVAL to be returned
+                    // when registering multiple writable/readable polls for the
+                    // same file descriptor. The shell code here makes sure to
+                    // _not_ run into that case, but it is possible.
+                    if (e.getErrno() == .INVAL) {
+                        this.flags.pollable = false;
+                        this.flags.nonblocking = false;
+                        this.flags.is_socket = false;
+                        this.writer.handle = .{ .closed = {} };
+                        return __start(this);
+                    }
+                }
+                return .{ .err = e };
             }
             if (comptime bun.Environment.isPosix) {
                 if (this.flags.nonblocking) {
@@ -9083,6 +9097,8 @@ pub const Interpreter = struct {
                     this.writer.getPoll().?.flags.insert(.fifo);
                 }
             }
+
+            return Maybe(void).success;
         }
 
         pub fn eventLoop(this: *This) JSC.EventLoopHandle {
@@ -9092,7 +9108,10 @@ pub const Interpreter = struct {
         /// Idempotent write call
         pub fn write(this: *This) void {
             if (!this.started) {
-                this.__start();
+                if (this.__start().asErr()) |e| {
+                    this.onError(e);
+                    return;
+                }
                 this.started = true;
                 if (comptime bun.Environment.isPosix) {
                     if (this.writer.handle == .fd) {} else return;
@@ -9103,8 +9122,7 @@ pub const Interpreter = struct {
                 if (this.is_writing) return;
                 this.is_writing = true;
                 if (this.writer.startWithCurrentPipe().asErr()) |e| {
-                    _ = e;
-                    @panic("TODO handle error");
+                    return .{ .err = e };
                 }
                 return;
             }

@@ -7,6 +7,25 @@ import * as util from "node:util";
 
 const isWindows = process.platform === "win32";
 
+const DEFAULT_RETRY_COUNT = 3;
+function retryOnTimeout(fn, hostname, max_retries, callback) {
+  let retries = max_retries;
+
+  function test() {
+    fn(hostname, (err, results) => {
+      if (err?.code === "DNS_ETIMEOUT") {
+        if (retries === 0) {
+          return callback(err);
+        }
+        retries--;
+        return test();
+      }
+      callback(err, results);
+    });
+  }
+  test();
+}
+
 // TODO:
 test("it exists", () => {
   expect(dns).toBeDefined();
@@ -60,7 +79,7 @@ test("it exists", () => {
 
 // //TODO: use a bun.sh SRV for testing
 test("dns.resolveSrv (_test._tcp.test.socketify.dev)", done => {
-  dns.resolveSrv("_test._tcp.test.socketify.dev", (err, results) => {
+  retryOnTimeout(dns.resolveSrv, "_test._tcp.test.socketify.dev", DEFAULT_RETRY_COUNT, (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0].name).toBe("_dc-srv.130c90ab9de1._test._tcp.test.socketify.dev");
@@ -72,7 +91,7 @@ test("dns.resolveSrv (_test._tcp.test.socketify.dev)", done => {
 });
 
 test("dns.resolveSrv (_test._tcp.invalid.localhost)", done => {
-  dns.resolveSrv("_test._tcp.invalid.localhost", (err, results) => {
+  retryOnTimeout(dns.resolveSrv, "_test._tcp.invalid.localhost", DEFAULT_RETRY_COUNT, (err, results) => {
     expect(err).toBeTruthy();
     expect(results).toBeUndefined(true);
     done();
@@ -80,7 +99,7 @@ test("dns.resolveSrv (_test._tcp.invalid.localhost)", done => {
 });
 
 test("dns.resolveTxt (txt.socketify.dev)", done => {
-  dns.resolveTxt("txt.socketify.dev", (err, results) => {
+  retryOnTimeout(dns.resolveTxt, "txt.socketify.dev", DEFAULT_RETRY_COUNT, (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0][0]).toBe("bun_test;test");
@@ -89,7 +108,7 @@ test("dns.resolveTxt (txt.socketify.dev)", done => {
 });
 
 test("dns.resolveSoa (bun.sh)", done => {
-  dns.resolveSoa("bun.sh", (err, result) => {
+  retryOnTimeout(dns.resolveSoa, "bun.sh", DEFAULT_RETRY_COUNT, (err, result) => {
     expect(err).toBeNull();
     expect(typeof result.serial).toBe("number");
     expect(result.refresh).toBe(10000);
@@ -106,7 +125,7 @@ test("dns.resolveSoa (bun.sh)", done => {
 });
 
 test("dns.resolveSoa (empty string)", done => {
-  dns.resolveSoa("", (err, result) => {
+  retryOnTimeout(dns.resolveSoa, "", DEFAULT_RETRY_COUNT, (err, result) => {
     expect(err).toBeNull();
     // one of root server
     expect(result).not.toBeUndefined();
@@ -115,7 +134,7 @@ test("dns.resolveSoa (empty string)", done => {
 });
 
 test("dns.resolveNaptr (naptr.socketify.dev)", done => {
-  dns.resolveNaptr("naptr.socketify.dev", (err, results) => {
+  retryOnTimeout(dns.resolveNaptr, "naptr.socketify.dev", DEFAULT_RETRY_COUNT, (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0].flags).toBe("S");
@@ -129,7 +148,7 @@ test("dns.resolveNaptr (naptr.socketify.dev)", done => {
 });
 
 test("dns.resolveCaa (caa.socketify.dev)", done => {
-  dns.resolveCaa("caa.socketify.dev", (err, results) => {
+  retryOnTimeout(dns.resolveCaa, "caa.socketify.dev", DEFAULT_RETRY_COUNT, (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0].critical).toBe(0);
@@ -139,7 +158,7 @@ test("dns.resolveCaa (caa.socketify.dev)", done => {
 });
 
 test("dns.resolveMx (bun.sh)", done => {
-  dns.resolveMx("bun.sh", (err, results) => {
+  retryOnTimeout(dns.resolveMx, "bun.sh", DEFAULT_RETRY_COUNT, (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     const priority = results[0].priority;
@@ -150,7 +169,7 @@ test("dns.resolveMx (bun.sh)", done => {
 });
 
 test("dns.resolveNs (bun.sh) ", done => {
-  dns.resolveNs("bun.sh", (err, results) => {
+  retryOnTimeout(dns.resolveNs, "bun.sh", DEFAULT_RETRY_COUNT, (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0].includes(".ns.cloudflare.com")).toBe(true);
@@ -159,8 +178,9 @@ test("dns.resolveNs (bun.sh) ", done => {
 });
 
 test("dns.resolveNs (empty string) ", done => {
-  dns.resolveNs("", (err, results) => {
+  retryOnTimeout(dns.resolveNs, "", DEFAULT_RETRY_COUNT, (err, results) => {
     expect(err).toBeNull();
+
     expect(results instanceof Array).toBe(true);
     // root servers
     expect(results.sort()).toStrictEqual(
@@ -185,7 +205,7 @@ test("dns.resolveNs (empty string) ", done => {
 });
 
 test("dns.resolvePtr (ptr.socketify.dev)", done => {
-  dns.resolvePtr("ptr.socketify.dev", (err, results) => {
+  retryOnTimeout(dns.resolvePtr, "ptr.socketify.dev", DEFAULT_RETRY_COUNT, (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0]).toBe("bun.sh");
@@ -194,7 +214,7 @@ test("dns.resolvePtr (ptr.socketify.dev)", done => {
 });
 
 test("dns.resolveCname (cname.socketify.dev)", done => {
-  dns.resolveCname("cname.socketify.dev", (err, results) => {
+  retryOnTimeout(dns.resolveCname, "cname.socketify.dev", DEFAULT_RETRY_COUNT, (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0]).toBe("bun.sh");

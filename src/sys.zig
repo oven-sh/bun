@@ -1332,6 +1332,9 @@ pub const StatxField = enum(comptime_int) {
     size = linux.STATX_SIZE,
     blocks = linux.STATX_BLOCKS,
 };
+// Linux Kernel v4.11
+var supports_statx_on_linux: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true);
+
 pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe(bun.Stat) {
     if (comptime Environment.isWindows) {
         if (comptime fields.len == 1 and fields[0] == .size) {
@@ -1356,6 +1359,10 @@ pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe
         return fstat(fd);
     }
 
+    if (!supports_statx_on_linux.load(.Monotonic)) {
+        return fstat(fd);
+    }
+
     var buf: std.os.linux.Statx = comptime std.mem.zeroes(linux.Statx);
 
     const mask: u32 = comptime brk: {
@@ -1371,6 +1378,10 @@ pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe
     const rc = linux.statx(@intCast(fd.cast()), "", linux.AT.EMPTY_PATH | 0, mask, &buf);
 
     if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| {
+        if (err.getErrno() == .NOSYS) {
+            supports_statx_on_linux.store(false, .Monotonic);
+            return fstat(fd);
+        }
         return .{ .err = err.err };
     }
 

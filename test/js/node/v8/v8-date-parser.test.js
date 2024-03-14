@@ -20,7 +20,19 @@
 // ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 const todoOnWindows = process.platform === "win32" ? test.todo : test;
+
+if (typeof Bun !== "undefined") {
+  const aggressiveGC = Bun.unsafe.gcAggressionLevel();
+  beforeAll(() => {
+    Bun.unsafe.gcAggressionLevel(0);
+  });
+
+  afterAll(() => {
+    Bun.unsafe.gcAggressionLevel(aggressiveGC);
+  });
+}
 
 describe("v8 date parser", () => {
   // https://github.com/v8/v8/blob/c45b7804109ece574f71fd45417b4ad498a99e6f/test/webkit/date-parse-comments-test.js#L27

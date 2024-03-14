@@ -410,7 +410,7 @@ test("it should correctly link binaries after deleting node_modules", async () =
     "",
     expect.stringContaining("3 packages installed"),
     "",
-    " Skipped ~1 script. Run `bun pm trusted` for details.",
+    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -438,7 +438,7 @@ test("it should correctly link binaries after deleting node_modules", async () =
     "",
     expect.stringContaining("3 packages installed"),
     "",
-    " Skipped ~1 script. Run `bun pm trusted` for details.",
+    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -581,7 +581,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     "",
     expect.stringContaining("19 packages installed"),
     "",
-    " Skipped ~1 script. Run `bun pm trusted` for details.",
+    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -620,7 +620,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     "",
     expect.stringContaining("19 packages installed"),
     "",
-    " Skipped ~1 script. Run `bun pm trusted` for details.",
+    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -1648,7 +1648,7 @@ test("missing package on reinstall, some with binaries", async () => {
     "",
     expect.stringContaining("19 packages installed"),
     "",
-    " Skipped ~1 script. Run `bun pm trusted` for details.",
+    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -2071,7 +2071,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         expect.stringContaining("1 package installed"),
         "",
-        " Skipped ~1 script. Run `bun pm trusted` for details.",
+        " Blocked 3 postinstalls. Run `bun pm untrusted` for details.",
         "",
       ]);
 
@@ -2533,7 +2533,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         expect.stringContaining("2 packages installed"),
         "",
-        " Skipped ~1 script. Run `bun pm trusted` for details.",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -2722,7 +2722,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         expect.stringContaining("1 package installed"),
         "",
-        " Skipped ~1 script. Run `bun pm trusted` for details.",
+        " Blocked 6 postinstalls. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -2888,7 +2888,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         expect.stringContaining("3 packages installed"),
         "",
-        " Skipped ~1 script. Run `bun pm trusted` for details.",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -3680,6 +3680,213 @@ for (const forceWaiterThread of [false, true]) {
         expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
       });
     });
+    test("node -p should work in postinstall scripts", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            postinstall: 'node -p \'require("fs").writeFileSync("postinstall.txt", "postinstall")\'',
+          },
+        }),
+      );
+
+      const originalPath = env.PATH;
+      env.PATH = "";
+
+      let { exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      env.PATH = originalPath;
+
+      expect(await exited).toBe(0);
+
+      expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
+    });
+
+    describe("add trusted, delete, then add again", async () => {
+      // when we change bun install to delete dependencies from node_modules
+      // for both cases, we need to update this test
+      for (const withRm of [true, false]) {
+        test(withRm ? "withRm" : "withoutRm", async () => {
+          await writeFile(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              dependencies: {
+                "no-deps": "1.0.0",
+                "uses-what-bin": "1.0.0",
+              },
+            }),
+          );
+
+          let { stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            env,
+          });
+
+          let err = await Bun.readableStreamToText(stderr);
+          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("not found");
+          expect(err).not.toContain("error:");
+          expect(err).not.toContain("warn:");
+          let out = await Bun.readableStreamToText(stdout);
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+            "",
+            " + no-deps@1.0.0",
+            " + uses-what-bin@1.0.0",
+            "",
+            expect.stringContaining("3 packages installed"),
+            "",
+            " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+            "",
+          ]);
+          expect(await exited).toBe(0);
+          expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
+
+          ({ stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "pm", "trust", "uses-what-bin"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            env,
+          }));
+
+          err = await Bun.readableStreamToText(stderr);
+          expect(err).not.toContain("error:");
+          expect(err).not.toContain("warn:");
+          out = await Bun.readableStreamToText(stdout);
+          expect(out).toContain("1 script ran across 1 package");
+          expect(await exited).toBe(0);
+
+          expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+            name: "foo",
+            dependencies: {
+              "no-deps": "1.0.0",
+              "uses-what-bin": "1.0.0",
+            },
+            trustedDependencies: ["uses-what-bin"],
+          });
+
+          // now remove and install again
+          if (withRm) {
+            ({ stdout, stderr, exited } = spawn({
+              cmd: [bunExe(), "rm", "uses-what-bin"],
+              cwd: packageDir,
+              stdout: "pipe",
+              stderr: "pipe",
+              env,
+            }));
+
+            err = await Bun.readableStreamToText(stderr);
+            expect(err).toContain("Saved lockfile");
+            expect(err).not.toContain("not found");
+            expect(err).not.toContain("error:");
+            expect(err).not.toContain("warn:");
+            out = await Bun.readableStreamToText(stdout);
+            expect(out).toContain("1 package removed");
+            expect(out).toContain("uses-what-bin");
+            expect(await exited).toBe(0);
+          }
+          await writeFile(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              dependencies: {
+                "no-deps": "1.0.0",
+              },
+            }),
+          );
+
+          ({ stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            env,
+          }));
+
+          err = await Bun.readableStreamToText(stderr);
+          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("not found");
+          expect(err).not.toContain("error:");
+          expect(err).not.toContain("warn:");
+          out = await Bun.readableStreamToText(stdout);
+          let expected = withRm
+            ? ["", "Checked 1 install across 2 packages (no changes)"]
+            : ["", expect.stringContaining("1 package removed")];
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(expected);
+          expect(await exited).toBe(0);
+          expect(await exists(join(packageDir, "node_modules", "uses-what-bin"))).toBe(!withRm);
+
+          // add again, bun pm untrusted should report it as untrusted
+
+          await writeFile(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              dependencies: {
+                "no-deps": "1.0.0",
+                "uses-what-bin": "1.0.0",
+              },
+            }),
+          );
+
+          ({ stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "i"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            env,
+          }));
+
+          err = await Bun.readableStreamToText(stderr);
+          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("not found");
+          expect(err).not.toContain("error:");
+          expect(err).not.toContain("warn:");
+          out = await Bun.readableStreamToText(stdout);
+          expected = withRm
+            ? [
+                "",
+                " + uses-what-bin@1.0.0",
+                "",
+                expect.stringContaining("1 package installed"),
+                "",
+                " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+                "",
+              ]
+            : ["", expect.stringContaining("Checked 3 installs across 4 packages (no changes)")];
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(expected);
+
+          ({ stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "pm", "untrusted"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stderr: "pipe",
+            env,
+          }));
+
+          err = await Bun.readableStreamToText(stderr);
+          expect(err).not.toContain("error:");
+          expect(err).not.toContain("warn:");
+          out = await Bun.readableStreamToText(stdout);
+          expect(out).toContain("./node_modules/uses-what-bin @1.0.0");
+          expect(await exited).toBe(0);
+        });
+      }
+    });
   });
 }
 
@@ -3693,7 +3900,7 @@ describe("pm trust", async () => {
     );
 
     let { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "pm", "trusted", "--default"],
+      cmd: [bunExe(), "pm", "default-trusted"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
@@ -3719,7 +3926,7 @@ describe("pm trust", async () => {
       );
 
       let { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "pm", "trusted", "--all"],
+        cmd: [bunExe(), "pm", "trust", "--all"],
         cwd: packageDir,
         stdout: "pipe",
         stderr: "pipe",
@@ -3762,7 +3969,7 @@ describe("pm trust", async () => {
         "",
         expect.stringContaining("2 packages installed"),
         "",
-        " Skipped ~1 script. Run `bun pm trusted` for details.",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -3778,10 +3985,12 @@ describe("pm trust", async () => {
       }));
 
       err = await Bun.readableStreamToText(stderr);
-      expect(err).toBeEmpty();
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
 
       out = await Bun.readableStreamToText(stdout);
-      expect(err).toBeEmpty();
+      expect(out).toContain("1 script ran across 1 package");
       expect(await exited).toBe(0);
 
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();

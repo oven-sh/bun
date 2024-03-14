@@ -170,10 +170,6 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     }
 
     JSValue mode = callFrame->argument(1);
-    if (!mode.isNumber()) {
-        throwTypeError(globalObject, scope, "mode must be a number"_s);
-        return JSValue::encode(jsUndefined());
-    }
 
     auto fdToUse = static_cast<int32_t>(fd.asNumber());
 
@@ -183,7 +179,10 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
         memset(ttyHandle, 0, sizeof(uv_tty_t));
         uv_tty_init(static_cast<Zig::GlobalObject*>(globalObject)->uvLoop(), ttyHandle, fdToUse, 0);
     }
-    int err = uv_tty_set_mode(ttyHandle, mode.toInt32(globalObject));
+    printf("ttyHandle: %p\n", ttyHandle);
+    printf("fdToUse: %d\n", fdToUse);
+    printf("mode: %d\n", mode.isTrue());
+    int err = uv_tty_set_mode(ttyHandle, mode.isTrue() ? UV_TTY_MODE_RAW : UV_TTY_MODE_NORMAL);
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int err = Bun__ttySetMode(fdToUse, mode.toInt32(globalObject));
@@ -338,7 +337,6 @@ public:
 
 const ClassInfo TTYWrapPrototype::s_info = {
     "LibuvStreamWrap"_s,
-
     &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TTYWrapPrototype)
 };
 

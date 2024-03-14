@@ -3402,20 +3402,21 @@ pub const FileReader = struct {
 
             const fd = if (file.pathlike != .path)
                 // We will always need to close the file descriptor.
-                switch (Syscall.dupWithFlags(file.pathlike.fd, brk: {
-                    if (comptime Environment.isPosix) {
-                        if (bun.FDTag.get(file.pathlike.fd) == .none and !(file.is_atty orelse false)) {
-                            break :brk std.os.O.NONBLOCK;
-                        }
-                    }
+                // switch (Syscall.dupWithFlags(file.pathlike.fd, brk: {
+                //     if (comptime Environment.isPosix) {
+                //         if (bun.FDTag.get(file.pathlike.fd) == .none and !(file.is_atty orelse false)) {
+                //             break :brk std.os.O.NONBLOCK;
+                //         }
+                //     }
 
-                    break :brk 0;
-                })) {
-                    .result => |_fd| if (Environment.isWindows) bun.toLibUVOwnedFD(_fd) else _fd,
-                    .err => |err| {
-                        return .{ .err = err.withFd(file.pathlike.fd) };
-                    },
-                }
+                //     break :brk 0;
+                // })) {
+                //     .result => |_fd| if (Environment.isWindows) bun.toLibUVOwnedFD(_fd) else _fd,
+                //     .err => |err| {
+                //         return .{ .err = err.withFd(file.pathlike.fd) };
+                //     },
+                // }
+                file.pathlike.fd
             else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
                 .err => |err| {

@@ -25,8 +25,7 @@ Object.defineProperty(ReadStream, "prototype", {
     const Prototype = Object.create(require("node:fs").ReadStream.prototype);
 
     Prototype.setRawMode = function (flag) {
-      const mode = flag ? 1 : 0;
-      const err = ttySetMode(this.fd, mode);
+      const err = ttySetMode(this.fd, !!flag);
       if (err) {
         this.emit("error", new Error("setRawMode failed with errno: " + err));
         return this;

@@ -341,7 +341,7 @@ pub fn WindowsPipeReader(
             const nread_int = nread.int();
             bun.sys.syslog("onStreamRead() = {d}", .{nread_int});
 
-            //NOTE: pipes/tty need to call stopReading on errors (yeah)
+            // NOTE: pipes/tty need to call stopReading on errors (yeah)
             switch (nread_int) {
                 0 => {
                     // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)

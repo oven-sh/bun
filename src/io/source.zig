@@ -12,6 +12,7 @@ pub const Source = union(enum) {
 
     const Pipe = uv.Pipe;
     const Tty = uv.uv_tty_t;
+
     pub const File = struct {
         fs: uv.fs_t,
         iov: uv.uv_buf_t,
@@ -126,7 +127,10 @@ pub const Source = union(enum) {
 
         return switch (tty.init(loop, bun.uvfdcast(fd))) {
             .err => |err| .{ .err = err },
-            .result => .{ .result = tty },
+            .result => brk: {
+                _ = tty.setMode(.raw);
+                break :brk .{ .result = tty };
+            },
         };
     }
 

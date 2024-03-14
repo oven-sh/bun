@@ -7848,18 +7848,18 @@ describe("Registry URLs", () => {
     ["http://[www.example.com]/", true],
     ["c:a", true],
     ["https://registry.npmjs.org/", false],
-    ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm/", false], // https://github.com/oven-sh/bun/issues/3899
-    ["https://artifactory.xxx.yyy/artifactory/api/npm/my-npm", false], // https://github.com/oven-sh/bun/issues/5368
+    ["http://artifactory.xxx.yyy/artifactory/api/npm/my-npm/", false], // https://github.com/oven-sh/bun/issues/3899
+    ["http://artifactory.xxx.yyy/artifactory/api/npm/my-npm", false], // https://github.com/oven-sh/bun/issues/5368
     // ["", true],
     ["https:example.org", false],
     ["https://////example.com///", false],
     ["https://example.com/https:example.org", false],
     ["https://example.com/[]?[]#[]", false],
-    ["https://example/%?%#%", false],
+    ["http://example/%?%#%", false],
     ["c:", true],
     ["c:/", false],
-    ["https://點看", false], // gets converted to punycode
-    ["https://xn--c1yn36f/", false],
+    ["http://點看", false], // gets converted to punycode
+    ["http://xn--c1yn36f/", false],
   ];
 
   for (const entry of registryURLs) {

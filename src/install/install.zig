@@ -8690,7 +8690,7 @@ pub const PackageManager = struct {
                                     Output.prettyError("Blocked {d} scripts for: {s}@{}\n", .{
                                         count,
                                         alias,
-                                        resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                        resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
                                     });
                                 }
 

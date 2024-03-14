@@ -2392,12 +2392,12 @@ pub const Package = extern struct {
                     Output.pretty("<d>.{s}{s} @{}<r>\n", .{
                         std.fs.path.sep_str,
                         strings.withoutTrailingSlash(this.cwd[i + 1 ..]),
-                        resolution.fmt(resolution_buf),
+                        resolution.fmt(resolution_buf, .posix),
                     });
                 } else {
                     Output.pretty("<d>{s} @{}<r>\n", .{
                         strings.withoutTrailingSlash(this.cwd),
-                        resolution.fmt(resolution_buf),
+                        resolution.fmt(resolution_buf, .posix),
                     });
                 }
 

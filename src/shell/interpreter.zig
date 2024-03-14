@@ -3081,7 +3081,7 @@ pub const Interpreter = struct {
 
                         var before = std.c.fcntl(fds_[0], std.os.F.GETFL);
 
-                        const result = std.c.fcntl(fds_[0], std.os.F.SETFL, before | bun.C.O_CLOEXEC);
+                        const result = std.c.fcntl(fds_[0], std.os.F.SETFL, before | os.O.CLOEXEC);
                         if (result == -1) @panic("WTF");
 
                         if (comptime bun.Environment.isMac) {

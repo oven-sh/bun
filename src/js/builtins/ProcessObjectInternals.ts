@@ -29,14 +29,13 @@ export function getStdioWriteStream(fd) {
 
   let stream;
   if (tty.isatty(fd)) {
-    const stream = tty.WriteStream(fd);
+    stream = new tty.WriteStream(fd);
     process.on("SIGWINCH", () => {
       stream._refreshSize();
     });
-
     stream._type = "tty";
   } else {
-    stream = new require("node:fs").WriteStream(fd, { autoClose: false, fd });
+    stream = new (require("node:fs").WriteStream)(fd, { autoClose: false, fd });
     stream._type = "fs";
   }
 

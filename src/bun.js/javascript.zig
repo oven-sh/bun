@@ -385,6 +385,10 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.bundler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
+pub export fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) *uv.Loop {
+    return jsc_vm.uvLoop();
+}
+
 // pub fn getGlobalExitCodeForPipeFailure() u8 {
 //     if (VirtualMachine.is_main_thread_vm) {
 //         return VirtualMachine.get().exit_handler.exit_code;

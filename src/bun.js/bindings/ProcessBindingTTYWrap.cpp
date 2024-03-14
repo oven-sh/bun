@@ -10,7 +10,6 @@
 #include "NodeTTYModule.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/FunctionPrototype.h>
-#include <threads.h>
 
 #ifndef WIN32
 #include <errno.h>
@@ -115,12 +114,15 @@ public:
 
     ~TTYWrapObject()
     {
+#if OS(WINDOWS)
         uv_close(reinterpret_cast<uv_handle_t*>(handle), [](uv_handle_t* handle) -> void {
             delete handle;
         });
+#endif
     }
 
     int fd = -1;
+
 #if OS(WINDOWS)
     uv_tty_t* handle = nullptr;
 #endif
@@ -179,7 +181,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     if (ttyHandle == nullptr) {
         ttyHandle = new uv_tty_t;
         memset(ttyHandle, 0, sizeof(uv_tty_t));
-        uv_tty_init(uv_default_loop(), ttyHandle, fdToUse, 0);
+        uv_tty_init(static_cast<Zig::GlobalObject*>(globalObject)->uvLoop(), ttyHandle, fdToUse, 0);
     }
     int err = uv_tty_set_mode(ttyHandle, mode.toInt32(globalObject));
 #else
@@ -412,7 +414,7 @@ public:
 #if OS(WINDOWS)
         auto* handle = new uv_tty_t;
         memset(handle, 0, sizeof(uv_tty_t));
-        int rc = uv_tty_init(uv_default_loop(), handle, fd, 0);
+        int rc = uv_tty_init(static_cast<Zig::GlobalObject*>(globalObject)->uvLoop(), handle, fd, 0);
         if (rc < 0) {
             delete handle;
             throwTypeError(globalObject, scope, "Failed to initialize TTY handle"_s);

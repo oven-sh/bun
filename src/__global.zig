@@ -99,6 +99,9 @@ pub fn exitWide(code: u32) noreturn {
     runExitCallbacks();
     Output.flush();
     std.mem.doNotOptimizeAway(&Bun__atexit);
+    if (Environment.isWindows) {
+        bun.windows.libuv.uv_library_shutdown();
+    }
     std.c.exit(@bitCast(code));
 }
 

@@ -2892,8 +2892,10 @@ pub const FileSink = struct {
     pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
     pub const Poll = IOWriter;
 
-    export fn Bun__ForceFileSinkToBeSynchronousOnWindows(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) {
-        var this: *FileSink = @ptrCast(JSSink.fromJS(globalObject, jsvalue) orelse return);
+    export fn Bun__ForceFileSinkToBeSynchronousOnWindows(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) void {
+        comptime std.debug.assert(Environment.isWindows);
+
+        var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(globalObject, jsvalue) orelse return));
         this.force_sync_on_windows = true;
     }
 
@@ -3064,10 +3066,25 @@ pub const FileSink = struct {
             @compileError("TODO: implement for this platform");
         }
 
-        const startFn = if (Environment.isWindows and this.force_sync_on_windows) IOWriter.startSync else IOWriter.start;
+        if (comptime Environment.isWindows) {
+            if (this.force_sync_on_windows) {
+                switch (this.writer.startSync(
+                    fd,
+                    this.pollable,
+                )) {
+                    .err => |err| {
+                        _ = bun.sys.close(fd);
+                        return .{ .err = err };
+                    },
+                    .result => {
+                        this.writer.updateRef(this.eventLoop(), false);
+                    },
+                }
+                return .{ .result = {} };
+            }
+        }
 
-        switch (startFn(
-            &this.writer,
+        switch (this.writer.start(
             fd,
             this.pollable,
         )) {
@@ -3200,6 +3217,7 @@ pub const FileSink = struct {
         if (this.done) {
             return .{ .done = {} };
         }
+
         return this.toResult(this.writer.writeLatin1(data.slice()));
     }
     pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {

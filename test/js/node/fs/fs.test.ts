@@ -60,6 +60,11 @@ function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
+it("writing to 1, 2 are possible", () => {
+  expect(fs.writeSync(1, Buffer.from("\nhello-stdout-test\n"))).toBe(19);
+  expect(fs.writeSync(2, Buffer.from("\nhello-stderr-test\n"))).toBe(19);
+});
+
 it("fdatasyncSync", () => {
   const fd = openSync(import.meta.path, "w", 0o664);
   fdatasyncSync(fd);

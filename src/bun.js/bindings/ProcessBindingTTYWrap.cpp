@@ -1,5 +1,6 @@
 #include "root.h"
 
+#include "JavaScriptCore/JSDestructibleObject.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/Identifier.h"
 
@@ -9,6 +10,7 @@
 #include "NodeTTYModule.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <threads.h>
 
 #ifndef WIN32
 #include <errno.h>
@@ -72,14 +74,16 @@ static bool getWindowSize(int fd, size_t* width, size_t* height)
 #endif
 }
 
-class TTYWrapObject final : public JSC::JSNonFinalObject {
+class TTYWrapObject final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
 
     static TTYWrapObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, int fd)
     {
+
         TTYWrapObject* object = new (NotNull, JSC::allocateCell<TTYWrapObject>(vm)) TTYWrapObject(vm, structure, fd);
         object->finishCreation(vm);
+
         return object;
     }
 
@@ -103,7 +107,23 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
+    static void destroy(JSC::JSCell* cell)
+    {
+        TTYWrapObject* ttyWrap = jsCast<TTYWrapObject*>(cell);
+        ttyWrap->TTYWrapObject::~TTYWrapObject();
+    }
+
+    ~TTYWrapObject()
+    {
+        uv_close(reinterpret_cast<uv_handle_t*>(handle), [](uv_handle_t* handle) -> void {
+            delete handle;
+        });
+    }
+
     int fd = -1;
+#if OS(WINDOWS)
+    uv_tty_t* handle = nullptr;
+#endif
 
 private:
     TTYWrapObject(JSC::VM& vm, JSC::Structure* structure, const int fd)
@@ -130,6 +150,7 @@ JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* g
 
 extern "C" int Bun__ttySetMode(int fd, int mode);
 
+static thread_local uv_tty_t* ttyHandle = nullptr;
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -152,8 +173,20 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
         return JSValue::encode(jsUndefined());
     }
 
+    auto fdToUse = static_cast<int32_t>(fd.asNumber());
+
+#if OS(WINDOWS)
+    if (ttyHandle == nullptr) {
+        ttyHandle = new uv_tty_t;
+        memset(ttyHandle, 0, sizeof(uv_tty_t));
+        uv_tty_init(uv_default_loop(), ttyHandle, fdToUse, 0);
+    }
+    int err = uv_tty_set_mode(ttyHandle, mode.toInt32(globalObject));
+#else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
-    int err = Bun__ttySetMode(fd.asNumber(), mode.toInt32(globalObject));
+    int err = Bun__ttySetMode(fdToUse, mode.toInt32(globalObject));
+#endif
+
     return JSValue::encode(jsNumber(err));
 }
 
@@ -181,8 +214,12 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
         return JSValue::encode(jsUndefined());
     }
 
+#if OS(WINDOWS)
+    int err = uv_tty_set_mode(ttyWrap->handle, mode.toInt32(globalObject));
+#else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int err = Bun__ttySetMode(fd, mode.toInt32(globalObject));
+#endif
     return JSValue::encode(jsNumber(err));
 }
 
@@ -372,8 +409,23 @@ public:
             return {};
         }
 
+#if OS(WINDOWS)
+        auto* handle = new uv_tty_t;
+        memset(handle, 0, sizeof(uv_tty_t));
+        int rc = uv_tty_init(uv_default_loop(), handle, fd, 0);
+        if (rc < 0) {
+            delete handle;
+            throwTypeError(globalObject, scope, "Failed to initialize TTY handle"_s);
+        }
+#endif
+
         auto* structure = TTYWrapObject::createStructure(vm, globalObject, prototypeValue.getObject());
         auto* object = TTYWrapObject::create(vm, globalObject, structure, fd);
+
+#if OS(WINDOWS)
+        object->handle = handle;
+#endif
+
         return JSValue::encode(object);
     }
 

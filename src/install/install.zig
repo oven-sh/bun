@@ -7634,7 +7634,15 @@ pub const PackageManager = struct {
             // add
             // remove
             outer: for (positionals) |positional| {
-                var input = std.mem.trim(u8, positional, " \n\r\t");
+                var input: []u8 = @constCast(std.mem.trim(u8, positional, " \n\r\t"));
+                {
+                    var temp: [2048]u8 = undefined;
+                    const len = std.mem.replace(u8, input, "\\\\", "/", &temp);
+                    bun.path.platformToPosixInPlace(u8, &temp);
+                    const input2 = temp[0 .. input.len - len];
+                    @memcpy(input[0..input2.len], input2);
+                    input.len = input2.len;
+                }
                 switch (op) {
                     .link, .unlink => if (!strings.hasPrefixComptime(input, "link:")) {
                         input = std.fmt.allocPrint(allocator, "{0s}@link:{0s}", .{input}) catch unreachable;

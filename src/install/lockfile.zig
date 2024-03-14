@@ -1218,7 +1218,7 @@ pub const Printer = struct {
                             fmt,
                             .{
                                 package_name,
-                                resolved[package_id].fmt(string_buf, .auto),
+                                resolved[package_id].fmt(string_buf, .posix),
                                 later_version_fmt,
                             },
                         );
@@ -1235,7 +1235,7 @@ pub const Printer = struct {
                             fmt,
                             .{
                                 package_name,
-                                resolved[package_id].fmt(string_buf, .auto),
+                                resolved[package_id].fmt(string_buf, .posix),
                             },
                         );
                     }
@@ -1293,7 +1293,7 @@ pub const Printer = struct {
                             fmt,
                             .{
                                 package_name,
-                                resolved[package_id].fmt(string_buf, .auto),
+                                resolved[package_id].fmt(string_buf, .posix),
                             },
                         );
                     },
@@ -1311,7 +1311,7 @@ pub const Printer = struct {
                             fmt,
                             .{
                                 package_name,
-                                resolved[package_id].fmt(string_buf, .auto),
+                                resolved[package_id].fmt(string_buf, .posix),
                             },
                         );
 

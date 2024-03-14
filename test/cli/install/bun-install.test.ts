@@ -6303,7 +6303,7 @@ it("should handle trustedDependencies", async () => {
     "",
     expect.stringContaining(" 2 packages installed"),
     "",
-    " Skipped ~1 script. Run `bun pm trusted` for details.",
+    " Blocked 3 postinstalls. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);

@@ -1177,7 +1177,7 @@ pub const Command = struct {
 
     // std.process.args allocates!
     const ArgsIterator = struct {
-        buf: [][:0]u8 = undefined,
+        buf: [][:0]const u8 = undefined,
         i: u32 = 0,
 
         pub fn next(this: *ArgsIterator) ?[]const u8 {
@@ -1415,7 +1415,7 @@ pub const Command = struct {
                 var ctx = try Command.Context.create(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
                 var args = bun.argv()[0..];
-                args[1] = @constCast("bun-repl");
+                args[1] = "bun-repl";
                 try BunxCommand.exec(ctx, args);
                 return;
             },

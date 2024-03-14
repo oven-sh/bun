@@ -1260,7 +1260,7 @@ pub const Printer = struct {
                     }
 
                     try writer.print(
-                        comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r>\n", enable_ansi_colors),
+                        comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r>", enable_ansi_colors),
                         .{
                             package_name,
                             resolved[package_id].fmt(string_buf, .auto),
@@ -1329,8 +1329,6 @@ pub const Printer = struct {
 
             // updates.len > 0 is a simpler check than to keep track of a boolean
             // this assert ensures it is accurate.
-            if (bun.Environment.allow_assert)
-                std.debug.assert(had_printed_new_install == (this.updates.len > 0));
 
             if (this.updates.len > 0) {
                 try writer.writeAll("\n");

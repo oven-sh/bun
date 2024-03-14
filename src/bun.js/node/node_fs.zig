@@ -5158,7 +5158,7 @@ pub const NodeFS = struct {
 
                 break :brk switch (Syscall.open(
                     path,
-                    os.O.RDONLY | os.O.NOCTTY,
+                    os.O.RDONLY | os.O.NOCTTY | os.O.CLOEXEC,
                     0,
                 )) {
                     .err => |err| return .{
@@ -5175,7 +5175,9 @@ pub const NodeFS = struct {
                 _ = Syscall.close(fd);
         }
 
-        const stat_ = switch (Syscall.fstat(fd)) {
+        const stat_ = switch (Syscall.fstatx(fd, &.{
+            .size,
+        })) {
             .err => |err| return .{
                 .err = err,
             },
@@ -5352,7 +5354,7 @@ pub const NodeFS = struct {
                 const open_result = Syscall.openat(
                     dirfd,
                     path,
-                    @intFromEnum(args.flag) | os.O.NOCTTY,
+                    @intFromEnum(args.flag) | os.O.NOCTTY | os.O.CLOEXEC,
                     args.mode,
                 );
 

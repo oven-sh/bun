@@ -119,7 +119,7 @@ __asm__(".symver pow,pow@GLIBC_2.2.5");
 __asm__(".symver log,log@GLIBC_2.2.5");
 #endif
 
-// ban statx, for now
+// ban libc statx, for now
 extern "C" int __wrap_statx(int fd, const char* path, int flags,
     unsigned int mask, struct statx* buf)
 {

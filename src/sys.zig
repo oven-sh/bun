@@ -1319,6 +1319,82 @@ pub fn pwrite(fd: bun.FileDescriptor, bytes: []const u8, offset: i64) Maybe(usiz
     }
 }
 
+pub const StatxField = enum(comptime_int) {
+    type = linux.STATX_TYPE,
+    mode = linux.STATX_MODE,
+    nlink = linux.STATX_NLINK,
+    uid = linux.STATX_UID,
+    gid = linux.STATX_GID,
+    atime = linux.STATX_ATIME,
+    mtime = linux.STATX_MTIME,
+    ctime = linux.STATX_CTIME,
+    ino = linux.STATX_INO,
+    size = linux.STATX_SIZE,
+    blocks = linux.STATX_BLOCKS,
+};
+pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe(bun.Stat) {
+    if (comptime Environment.isWindows) {
+        if (comptime fields.len == 1 and fields[0] == .size) {
+            // if we only care about file size we can use a faster path
+            const hFile: windows.HANDLE = fd.cast();
+            var fileSize: windows.LARGE_INTEGER = 0;
+            if (bun.windows.GetFileSizeEx(hFile, &fileSize) == 0) {
+                return .{
+                    .err = Syscall.Error{
+                        .errno = @intFromEnum(bun.windows.getLastErrno()),
+                        .syscall = .fstat,
+                        .fd = fd,
+                    },
+                };
+            }
+
+            return .{ .result = bun.Stat{ .size = @intCast(fileSize) } };
+        }
+    }
+
+    if (comptime !Environment.isLinux) {
+        return fstat(fd);
+    }
+
+    var buf: std.os.linux.Statx = comptime std.mem.zeroes(linux.Statx);
+
+    const mask: u32 = comptime brk: {
+        var i: u32 = 0;
+
+        for (fields) |field| {
+            i |= @intFromEnum(field);
+        }
+
+        break :brk i;
+    };
+
+    const rc = linux.statx(@intCast(fd.cast()), "", linux.AT.EMPTY_PATH | 0, mask, &buf);
+
+    if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| {
+        return .{ .err = err.err };
+    }
+
+    var stat_ = std.mem.zeroes(bun.Stat);
+    if (buf.mask & linux.STATX_TYPE != 0) {
+        stat_.type = buf.type;
+    }
+
+    stat_.dev = buf.dev_major | (buf.dev_minor << 8);
+    stat_.ino = buf.ino;
+    stat_.mode = buf.mode;
+    stat_.nlink = buf.nlink;
+    stat_.uid = buf.uid;
+    stat_.gid = buf.gid;
+    stat_.size = @intCast(buf.size);
+    stat_.blksize = buf.blksize;
+    stat_.blocks = @intCast(buf.blocks);
+    stat_.atim = .{ .tv_sec = buf.atime.tv_sec, .tv_nsec = buf.atime.tv_nsec };
+    stat_.mtim = .{ .tv_sec = buf.mtime.tv_sec, .tv_nsec = buf.atime.tv_nsec };
+    stat_.ctim = .{ .tv_sec = buf.ctime.tv_sec, .tv_nsec = buf.atime.tv_nsec };
+
+    return .{ .result = stat_ };
+}
+
 pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     if (comptime Environment.allow_assert) {
         if (buf.len == 0) {

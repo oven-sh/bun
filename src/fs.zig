@@ -1145,10 +1145,10 @@ pub const FileSystem = struct {
             FileSystem.setMaxFd(file.handle);
 
             // Skip the extra file.stat() call when possible
-            var size = _size orelse (file.getEndPos() catch |err| {
+            var size = _size orelse @as(usize, @intCast((bun.sys.fstatx(bun.toFD(file.handle), &.{.size}).unwrap() catch |err| {
                 fs.readFileError(path, err);
                 return err;
-            });
+            }).size));
             debug("stat({d}) = {d}", .{ file.handle, size });
 
             // Skip the pread call for empty files

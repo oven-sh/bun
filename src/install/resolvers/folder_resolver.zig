@@ -140,14 +140,14 @@ pub const FolderResolution = union(Tag) {
                         }
                     }
                 },
-                else => {},
+                .relative => {},
             }
             bun.copy(u8, remain, normalized);
             remain[normalized.len..][0.."/package.json".len].* = (std.fs.path.sep_str ++ "package.json").*;
             remain = remain[normalized.len + "/package.json".len ..];
             abs = joined[0 .. joined.len - remain.len];
             // We store the folder name without package.json
-            rel = abs[0 .. abs.len - "/package.json".len];
+            rel = FileSystem.instance.relative(FileSystem.instance.top_level_dir, abs[0 .. abs.len - "/package.json".len]);
         }
         joined[abs.len] = 0;
 

@@ -1388,17 +1388,21 @@ pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe
     var stat_ = std.mem.zeroes(bun.Stat);
 
     stat_.dev = buf.dev_major | (buf.dev_minor << 8);
-    stat_.ino = buf.ino;
-    stat_.mode = buf.mode;
-    stat_.nlink = buf.nlink;
-    stat_.uid = buf.uid;
-    stat_.gid = buf.gid;
+
+    // These intcasts are to deal with:
+    // - architecture-specific differences
+    // - differences between stat and statx return types
+    stat_.ino = @intCast(buf.ino);
+    stat_.mode = @intCast(buf.mode);
+    stat_.nlink = @intCast(buf.nlink);
+    stat_.uid = @intCast(buf.uid);
+    stat_.gid = @intCast(buf.gid);
     stat_.size = @intCast(buf.size);
-    stat_.blksize = buf.blksize;
+    stat_.blksize = @intCast(buf.blksize);
     stat_.blocks = @intCast(buf.blocks);
-    stat_.atim = .{ .tv_sec = buf.atime.tv_sec, .tv_nsec = buf.atime.tv_nsec };
-    stat_.mtim = .{ .tv_sec = buf.mtime.tv_sec, .tv_nsec = buf.atime.tv_nsec };
-    stat_.ctim = .{ .tv_sec = buf.ctime.tv_sec, .tv_nsec = buf.atime.tv_nsec };
+    stat_.atim = .{ .tv_sec = @intCast(buf.atime.tv_sec), .tv_nsec = @intCast(buf.atime.tv_nsec) };
+    stat_.mtim = .{ .tv_sec = @intCast(buf.mtime.tv_sec), .tv_nsec = @intCast(buf.atime.tv_nsec) };
+    stat_.ctim = .{ .tv_sec = @intCast(buf.ctime.tv_sec), .tv_nsec = @intCast(buf.atime.tv_nsec) };
 
     return .{ .result = stat_ };
 }

@@ -321,9 +321,6 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
 }
 
 export function getMaxFD(): number {
-  if (isWindows) {
-    return 0;
-  }
   const maxFD = openSync("/dev/null", "r");
   closeSync(maxFD);
   return maxFD;

@@ -9122,7 +9122,8 @@ pub const Interpreter = struct {
                 if (this.is_writing) return;
                 this.is_writing = true;
                 if (this.writer.startWithCurrentPipe().asErr()) |e| {
-                    return .{ .err = e };
+                    this.onError(e);
+                    return;
                 }
                 return;
             }

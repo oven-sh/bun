@@ -739,7 +739,7 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     }
 }
 
-extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, void* worker_ptr)
+extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
 
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
@@ -776,6 +776,13 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             }
         }
+    } else if (evalMode) {
+        globalObject = Zig::EvalGlobalObject::create(
+            vm,
+            Zig::EvalGlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())),
+                JSC::jsNull()),
+            &Zig::EvalGlobalObject::s_globalObjectMethodTable);
+
     } else {
         globalObject = Zig::GlobalObject::create(
             vm,
@@ -990,15 +997,38 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &reportUncaughtExceptionAtEventLoop,
     &currentScriptExecutionOwner,
     &scriptExecutionStatus,
+    nullptr, // reportViolationForUnsafeEval
     nullptr, // defaultLanguage
     nullptr, // compileStreaming
     nullptr, // instantiateStreaming
-    nullptr,
     &Zig::deriveShadowRealmGlobalObject
 };
 
-GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
-    : JSC::JSGlobalObject(vm, structure, &s_globalObjectMethodTable)
+const JSC::GlobalObjectMethodTable EvalGlobalObject::s_globalObjectMethodTable = {
+    &supportsRichSourceInfo,
+    &shouldInterruptScript,
+    &javaScriptRuntimeFlags,
+    // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
+    nullptr,
+    nullptr, // &shouldInterruptScriptBeforeTimeout,
+    &moduleLoaderImportModule, // moduleLoaderImportModule
+    &moduleLoaderResolve, // moduleLoaderResolve
+    &moduleLoaderFetch, // moduleLoaderFetch
+    &moduleLoaderCreateImportMetaProperties, // moduleLoaderCreateImportMetaProperties
+    &moduleLoaderEvaluate, // moduleLoaderEvaluate
+    &promiseRejectionTracker, // promiseRejectionTracker
+    &reportUncaughtExceptionAtEventLoop,
+    &currentScriptExecutionOwner,
+    &scriptExecutionStatus,
+    nullptr, // reportViolationForUnsafeEval
+    nullptr, // defaultLanguage
+    nullptr, // compileStreaming
+    nullptr, // instantiateStreaming
+    &Zig::deriveShadowRealmGlobalObject
+};
+
+GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
+    : JSC::JSGlobalObject(vm, structure, methodTable)
     , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(WebCore::DOMWrapperWorld::create(vm, WebCore::DOMWrapperWorld::Type::Normal))
@@ -1014,8 +1044,8 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     globalEventScope.relaxAdoptionRequirement();
 }
 
-GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier contextId)
-    : JSC::JSGlobalObject(vm, structure, &s_globalObjectMethodTable)
+GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier contextId, const JSC::GlobalObjectMethodTable* methodTable)
+    : JSC::JSGlobalObject(vm, structure, methodTable)
     , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(WebCore::DOMWrapperWorld::create(vm, WebCore::DOMWrapperWorld::Type::Normal))
@@ -3974,17 +4004,46 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     return Zig::ImportMetaObject::create(globalObject, keyString);
 }
 
-JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
+JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, JSValue scriptFetcher,
     JSValue sentValue, JSValue resumeMode)
 {
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
     if (UNLIKELY(scriptFetcher && scriptFetcher.isObject())) {
         return scriptFetcher;
     }
 
-    JSC::JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue,
+    JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         scriptFetcher, sentValue, resumeMode);
+
+    return result;
+}
+
+extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
+extern "C" void Bun__VM__setEntryPointEvalResultESM(void*, EncodedJSValue);
+
+JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
+    JSModuleLoader* moduleLoader, JSValue key,
+    JSValue moduleRecordValue, JSValue scriptFetcher,
+    JSValue sentValue, JSValue resumeMode)
+{
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    if (UNLIKELY(scriptFetcher && scriptFetcher.isObject())) {
+        if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
+            Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(scriptFetcher));
+        }
+        return scriptFetcher;
+    }
+
+    JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
+        scriptFetcher, sentValue, resumeMode);
+
+    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
+        Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(result));
+    }
 
     return result;
 }

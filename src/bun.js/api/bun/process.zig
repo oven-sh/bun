@@ -849,9 +849,13 @@ const WaiterThreadPosix = struct {
 
                 _ = std.os.poll(&polls, std.math.maxInt(i32)) catch 0;
 
-                // Make sure we consume any pending signals
+                // Make sure we consume any pending:
+                // - signals
+                // - eventfd
+                // See https://github.com/oven-sh/bun/issues/9404
                 var buf: [1024]u8 = undefined;
-                _ = std.os.read(this.signalfd.cast(), &buf) catch 0;
+                while (bun.sys.read(this.signalfd.cast(), &buf).unwrap() catch 0 > 0) {}
+                while (bun.sys.read(this.eventfd.cast(), &buf).unwrap() catch 0 > 0) {}
             } else {
                 var mask = std.os.empty_sigset;
                 var signal: c_int = std.os.SIG.CHLD;

@@ -3304,7 +3304,12 @@ pub const PackageManager = struct {
 
             .folder => {
                 // relative to cwd
-                const res = FolderResolution.getOrPut(.{ .relative = .folder }, version, this.lockfile.str(&version.value.folder), this);
+                const folder_path = this.lockfile.str(&version.value.folder);
+                const folder_path_abs = if (std.fs.path.isAbsolute(folder_path)) folder_path else blk: {
+                    var buf2: bun.PathBuffer = undefined;
+                    break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{folder_path}, .auto);
+                };
+                const res = FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
 
                 switch (res) {
                     .err => |err| return err,

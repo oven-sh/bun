@@ -1228,7 +1228,11 @@ pub const PipeReader = struct {
         const owned = this.toOwnedSlice();
         this.state = .{ .done = owned };
         if (!this.isDone()) return;
+        // we need to ref because the process might be done and deref inside signalDoneToCmd before we call onCloseIO
+        this.ref();
+        defer this.deref();
         this.signalDoneToCmd();
+
         if (this.process) |process| {
             // this.process = null;
             process.onCloseIO(this.kind(process));

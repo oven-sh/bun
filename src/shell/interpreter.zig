@@ -9108,6 +9108,7 @@ pub const Interpreter = struct {
         /// Idempotent write call
         pub fn write(this: *This) void {
             if (!this.started) {
+                log("IOWriter(0x{x}, fd={}) starting", .{ @intFromPtr(this), this.fd });
                 if (this.__start().asErr()) |e| {
                     this.onError(e);
                     return;
@@ -9130,9 +9131,13 @@ pub const Interpreter = struct {
 
             if (this.writer.handle == .poll) {
                 if (!this.writer.handle.poll.isWatching()) {
+                    log("IOWriter(0x{x}, fd={}) calling this.writer.write()", .{ @intFromPtr(this), this.fd });
                     this.writer.write();
-                }
-            } else this.writer.write();
+                } else log("IOWriter(0x{x}, fd={}) poll already watching", .{ @intFromPtr(this), this.fd });
+            } else {
+                log("IOWriter(0x{x}, fd={}) no poll, calling write", .{ @intFromPtr(this), this.fd });
+                this.writer.write();
+            }
         }
 
         /// Cancel the chunks enqueued by the given writer by
@@ -9206,7 +9211,7 @@ pub const Interpreter = struct {
                 if (status == .end_of_file) {
                     const not_fully_written = !this.isLastIdx(this.__idx) or child.written < child.len;
                     if (bun.Environment.allow_assert and not_fully_written) {
-                        bun.Output.debugWarn("IOWriter(0x{x}) received done without fully writing data, check that onError is thrown", .{@intFromPtr(this)});
+                        bun.Output.debugWarn("IOWriter(0x{x}, fd={}) received done without fully writing data, check that onError is thrown", .{ @intFromPtr(this), this.fd });
                     }
                     return;
                 }
@@ -9262,19 +9267,38 @@ pub const Interpreter = struct {
         }
 
         pub fn getBuffer(this: *This) []const u8 {
+            const result = this.getBufferImpl();
+            log("IOWriter(0x{x}, fd={}) getBuffer = {d} bytes", .{ @intFromPtr(this), this.fd, result.len });
+            return result;
+        }
+
+        fn getBufferImpl(this: *This) []const u8 {
             const writer = brk: {
-                if (this.__idx >= this.writers.len()) return "";
-                const writer = this.writers.get(this.__idx);
+                if (this.__idx >= this.writers.len()) {
+                    log("IOWriter(0x{x}, fd={}) getBufferImpl all writes done", .{ @intFromPtr(this), this.fd });
+                    return "";
+                }
+                var writer = this.writers.get(this.__idx);
                 if (!writer.isDead()) break :brk writer;
+                log("IOWriter(0x{x}, fd={}) skipping dead", .{ @intFromPtr(this), this.fd });
                 this.skipDead();
+                if (this.__idx >= this.writers.len()) {
+                    log("IOWriter(0x{x}, fd={}) getBufferImpl all writes done", .{ @intFromPtr(this), this.fd });
+                    return "";
+                }
+                writer = this.writers.get(this.__idx);
                 break :brk writer;
             };
+            log("IOWriter(0x{x}, fd={}) getBufferImpl writer_len={} writer_written={}", .{ @intFromPtr(this), this.fd, writer.len, writer.written });
             const remaining = writer.len - writer.written;
+            if (bun.Environment.allow_assert) {
+                std.debug.assert(!(writer.len == writer.written));
+            }
             return this.buf.items[this.total_bytes_written .. this.total_bytes_written + remaining];
         }
 
         pub fn bump(this: *This, current_writer: *Writer) void {
-            log("IOWriter(0x{x}) bump(0x{x} {s})", .{ @intFromPtr(this), @intFromPtr(current_writer), @tagName(current_writer.ptr.ptr.tag()) });
+            log("IOWriter(0x{x}, fd={}) bump(0x{x} {s})", .{ @intFromPtr(this), this.fd, @intFromPtr(current_writer), @tagName(current_writer.ptr.ptr.tag()) });
             const is_dead = current_writer.isDead();
             const written = current_writer.written;
             const child_ptr = current_writer.ptr;
@@ -9290,7 +9314,7 @@ pub const Interpreter = struct {
             }
 
             if (this.__idx >= this.writers.len()) {
-                log("IOWriter(0x{x}) all writers complete: truncating", .{@intFromPtr(this)});
+                log("IOWriter(0x{x}, fd={}) all writers complete: truncating", .{ @intFromPtr(this), this.fd });
                 this.buf.clearRetainingCapacity();
                 this.__idx = 0;
                 this.writers.clearRetainingCapacity();
@@ -9299,7 +9323,7 @@ pub const Interpreter = struct {
             }
 
             if (this.total_bytes_written >= SHRINK_THRESHOLD) {
-                log("IOWriter(0x{x}) exceeded shrink threshold: truncating", .{@intFromPtr(this)});
+                log("IOWriter(0x{x}, fd={}) exceeded shrink threshold: truncating", .{ @intFromPtr(this), this.fd });
                 const remaining_len = this.total_bytes_written - SHRINK_THRESHOLD;
                 if (remaining_len == 0) {
                     this.buf.clearRetainingCapacity();
@@ -9319,7 +9343,7 @@ pub const Interpreter = struct {
         pub fn enqueue(this: *This, ptr: anytype, bytelist: ?*bun.ByteList, buf: []const u8) void {
             const childptr = if (@TypeOf(ptr) == ChildPtr) ptr else ChildPtr.init(ptr);
             if (buf.len == 0) {
-                log("IOWriter(0x{x}) enqueue EMPTY", .{@intFromPtr(this)});
+                log("IOWriter(0x{x}, fd={}) enqueue EMPTY", .{ @intFromPtr(this), this.fd });
                 childptr.onWriteChunk(0, null);
                 return;
             }
@@ -9328,7 +9352,7 @@ pub const Interpreter = struct {
                 .len = buf.len,
                 .bytelist = bytelist,
             };
-            log("IOWriter(0x{x}) enqueue(0x{x} {s}, buf={s})", .{ @intFromPtr(this), @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), buf });
+            log("IOWriter(0x{x}, fd={}) enqueue(0x{x} {s}, buf={s}, writer_len={d})", .{ @intFromPtr(this), this.fd, @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), buf, this.writers.len() + 1 });
             this.buf.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
             this.writers.append(writer);
             this.write();
@@ -9389,7 +9413,7 @@ pub const Interpreter = struct {
         /// Only does things on windows
         pub inline fn setWriting(this: *This, writing: bool) void {
             if (bun.Environment.isWindows) {
-                log("IOWriter(0x{x}) setWriting({any})", .{ @intFromPtr(this), writing });
+                log("IOWriter(0x{x}, fd={}) setWriting({any})", .{ @intFromPtr(this), this.fd, writing });
                 this.is_writing = writing;
             }
         }

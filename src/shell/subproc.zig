@@ -1041,7 +1041,7 @@ pub const PipeReader = struct {
         pub fn doWrite(this: *CapturedWriter, chunk: []const u8) void {
             if (this.dead or this.err != null) return;
 
-            log("CapturedWriter(0x{x}, {s}) doWrite len={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), chunk.len });
+            log("CapturedWriter(0x{x}, {s}) doWrite len={d} parent_amount={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), chunk.len, this.parent().buffered_output.len() });
             this.writer.enqueue(this, null, chunk);
         }
 
@@ -1064,7 +1064,7 @@ pub const PipeReader = struct {
         }
 
         pub fn isDone(this: *CapturedWriter, just_written: usize) bool {
-            log("CapturedWriter(0x{x}, {s}) isDone(is_dead={any}, has_err={any}, parent_state={s}, written={d}, parent_amount={d})", .{ @intFromPtr(this), @tagName(this.parent().out_type), this.dead, this.err != null, @tagName(this.parent().state), just_written, this.parent().buffered_output.len() });
+            log("CapturedWriter(0x{x}, {s}) isDone(is_dead={any}, has_err={any}, parent_state={s}, written={d}, parent_amount={d})", .{ @intFromPtr(this), @tagName(this.parent().out_type), this.dead, this.err != null, @tagName(this.parent().state), this.written, this.parent().buffered_output.len() });
             if (this.dead or this.err != null) return true;
             // if (this.writer.) return true;
             const p = this.parent();

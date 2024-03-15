@@ -2025,7 +2025,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn send(this: *@This(), buf: []const u8) bool {
-            // this.unregisterAutoFlusher();
+            this.unregisterAutoFlusher();
             return this.sendWithoutAutoFlusher(buf);
         }
 

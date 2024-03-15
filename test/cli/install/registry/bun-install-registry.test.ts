@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { file, spawn } from "bun";
 import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
 import { join, sep } from "path";
@@ -1818,7 +1817,6 @@ for (const forceWaiterThread of [false, true]) {
         stderr: "pipe",
         env: testEnv,
       });
-      expect(await exited).toBe(0);
       expect(stderr).toBeDefined();
       var err = await new Response(stderr).text();
       expect(stdout).toBeDefined();
@@ -1826,6 +1824,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("panic:");
+      expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "preinstall.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "install.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
@@ -1869,7 +1868,6 @@ for (const forceWaiterThread of [false, true]) {
         env: testEnv,
       }));
 
-      expect(await exited).toBe(0);
       expect(stderr).toBeDefined();
       err = await new Response(stderr).text();
       expect(stdout).toBeDefined();
@@ -1884,6 +1882,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         expect.stringContaining("1 package installed"),
       ]);
+      expect(await exited).toBe(0);
       expect(await file(join(packageDir, "preinstall.txt")).text()).toBe("preinstall exists!");
       expect(await file(join(packageDir, "install.txt")).text()).toBe("install exists!");
       expect(await file(join(packageDir, "postinstall.txt")).text()).toBe("postinstall exists!");
@@ -2226,7 +2225,10 @@ for (const forceWaiterThread of [false, true]) {
       ]);
       expect(await exited).toBe(0);
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", ".cache", "what-bin"]);
-      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(["what-bin"]);
+      const isWindows = process.platform === "win32";
+      const what_bin_bins = !isWindows ? ["what-bin"] : ["what-bin.bunx", "what-bin.exe"];
+      // prettier-ignore
+      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
 
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -2284,7 +2286,7 @@ for (const forceWaiterThread of [false, true]) {
       ]);
       expect(await exited).toBe(0);
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", ".cache", "what-bin"]);
-      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(["what-bin"]);
+      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
 
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -2307,7 +2309,7 @@ for (const forceWaiterThread of [false, true]) {
       ]);
       expect(await exited).toBe(0);
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", ".cache", "what-bin"]);
-      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(["what-bin"]);
+      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
 
       // add it to trusted dependencies
       await writeFile(
@@ -2343,7 +2345,7 @@ for (const forceWaiterThread of [false, true]) {
       ]);
       expect(await exited).toBe(0);
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", ".cache", "what-bin"]);
-      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(["what-bin"]);
+      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(what_bin_bins);
     });
 
     test("lifecycle scripts run if node_modules is deleted", async () => {
@@ -2490,8 +2492,6 @@ for (const forceWaiterThread of [false, true]) {
         env: testEnv,
       });
 
-      expect(await exited).toBe(1);
-
       const err = await new Response(stderr).text();
       expect(err).toContain("hello");
       expect(await exited).toBe(1);
@@ -2593,7 +2593,7 @@ for (const forceWaiterThread of [false, true]) {
         env: testEnv,
       });
 
-      const err = await new Response(stderr).text();
+      let err = await new Response(stderr).text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -2622,6 +2622,13 @@ for (const forceWaiterThread of [false, true]) {
         stderr: "pipe",
         env: testEnv,
       }));
+
+      err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
 
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "node_modules", "binding-gyp-scripts", "build.node"))).toBeTrue();
@@ -2786,7 +2793,7 @@ for (const forceWaiterThread of [false, true]) {
         env: testEnv,
       });
 
-      const err = await new Response(stderr).text();
+      let err = await new Response(stderr).text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
@@ -2829,6 +2836,13 @@ for (const forceWaiterThread of [false, true]) {
         stderr: "pipe",
         env: testEnv,
       }));
+
+      err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
 
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "preprepare.txt"))).toBeTrue();
@@ -2921,7 +2935,7 @@ for (const forceWaiterThread of [false, true]) {
     //   expect(err).toContain("Saved lockfile");
     //   expect(err).not.toContain("not found");
     //   expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
+    //   expect(err).not.toContain("panic:");
 
     //   await rm(join(packageDir, "node_modules", ".cache"), { recursive: true, force: true });
     //   expect((await readdir(join(packageDir, "node_modules"), { recursive: true })).sort()).toMatchSnapshot();
@@ -3003,6 +3017,13 @@ for (const forceWaiterThread of [false, true]) {
         stderr: "pipe",
         env,
       }));
+
+      err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
 
       expect(await exited).toBe(0);
       expect(await file(join(packageDir, "node_modules", ".bin", "what-bin")).text()).toContain("what-bin@1.0.0");
@@ -3793,7 +3814,7 @@ for (const forceWaiterThread of [false, true]) {
       const originalPath = env.PATH;
       env.PATH = "";
 
-      let { exited } = spawn({
+      let { stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
@@ -3804,6 +3825,12 @@ for (const forceWaiterThread of [false, true]) {
 
       env.PATH = originalPath;
 
+      let err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
       expect(await exited).toBe(0);
 
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
@@ -3838,6 +3865,7 @@ for (const forceWaiterThread of [false, true]) {
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
+          expect(err).not.toContain("panic:");
           let out = await Bun.readableStreamToText(stdout);
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             "",
@@ -4088,6 +4116,7 @@ describe("pm trust", async () => {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
 
       out = await Bun.readableStreamToText(stdout);
       expect(out).toContain("1 script ran across 1 package");
@@ -4922,8 +4951,8 @@ describe("yarn tests", () => {
     expect(err).not.toContain("panic:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      ` + a@workspace:packages${sep}a`,
-      ` + b@workspace:packages${sep}b`,
+      ` + a@workspace:packages/a`,
+      ` + b@workspace:packages/b`,
       "",
       " 5 packages installed",
     ]);

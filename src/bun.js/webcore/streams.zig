@@ -2013,18 +2013,19 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return true;
             } else {
                 this.handleFirstWriteIfNecessary();
-                this.has_backpressure = !this.res.write(buf);
+                const success = this.res.write(buf);
+                this.has_backpressure = !success;
                 if (this.has_backpressure) {
                     this.res.onWritable(*@This(), onWritable, this);
                 }
-                return true;
+                return success;
             }
 
             unreachable;
         }
 
         fn send(this: *@This(), buf: []const u8) bool {
-            this.unregisterAutoFlusher();
+            // this.unregisterAutoFlusher();
             return this.sendWithoutAutoFlusher(buf);
         }
 
@@ -2203,6 +2204,12 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
             if (this.done or this.requested_end) {
                 return .{ .owned = 0 };
+            }
+
+            if (this.res.hasResponded()) {
+                this.signal.close(null);
+                this.markDone();
+                return .{ .done = {} };
             }
 
             const bytes = data.slice();

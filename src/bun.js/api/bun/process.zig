@@ -205,7 +205,7 @@ pub const Process = struct {
         } else if (comptime Environment.isWindows) {}
     }
 
-    pub fn onWaitPidFromWaiterThread(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult)) void {
+    pub fn onWaitPidFromWaiterThread(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
         if (comptime Environment.isWindows) {
             @compileError("not implemented on this platform");
         }
@@ -213,7 +213,7 @@ pub const Process = struct {
             this.poller.waiter_thread.unref(this.event_loop);
             this.poller = .{ .detached = {} };
         }
-        this.onWaitPid(waitpid_result, &std.mem.zeroes(Rusage));
+        this.onWaitPid(waitpid_result, rusage);
         this.deref();
     }
 
@@ -649,7 +649,6 @@ pub const WaiterThread = if (Environment.isPosix) WaiterThreadPosix else struct 
 // We use a single thread to call waitpid() in a loop.
 const WaiterThreadPosix = struct {
     started: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-    signalfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
     eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
 
     js_process: ProcessQueue = .{},
@@ -672,6 +671,7 @@ const WaiterThreadPosix = struct {
             pub const ResultTask = struct {
                 result: JSC.Maybe(PosixSpawn.WaitPidResult),
                 subprocess: *T,
+                rusage: Rusage,
 
                 pub usingnamespace bun.New(@This());
 
@@ -680,8 +680,9 @@ const WaiterThreadPosix = struct {
                 pub fn runFromMainThread(self: *@This()) void {
                     const result = self.result;
                     const subprocess = self.subprocess;
+                    const rusage = self.rusage;
                     self.destroy();
-                    subprocess.onWaitPidFromWaiterThread(&result);
+                    subprocess.onWaitPidFromWaiterThread(&result, &rusage);
                 }
 
                 pub fn runFromMainThreadMini(self: *@This(), _: *void) void {
@@ -702,7 +703,7 @@ const WaiterThreadPosix = struct {
                     const result = self.result;
                     const subprocess = self.subprocess;
                     self.destroy();
-                    subprocess.onWaitPidFromWaiterThread(&result);
+                    subprocess.onWaitPidFromWaiterThread(&result, &std.mem.zeroes(Rusage));
                 }
 
                 pub fn runFromMainThreadMini(self: *@This(), _: *void) void {
@@ -741,7 +742,8 @@ const WaiterThreadPosix = struct {
                         continue;
                     }
 
-                    const result = PosixSpawn.wait4(pid, std.os.W.NOHANG, null);
+                    var rusage = std.mem.zeroes(Rusage);
+                    const result = PosixSpawn.wait4(pid, std.os.W.NOHANG, &rusage);
                     if (result == .err or (result == .result and result.result.pid == pid)) {
                         _ = this.active.orderedRemove(i);
                         queue = this.active.items;
@@ -754,6 +756,7 @@ const WaiterThreadPosix = struct {
                                             .{
                                                 .result = result,
                                                 .subprocess = process,
+                                                .rusage = rusage,
                                             },
                                         ),
                                     )),
@@ -813,33 +816,42 @@ const WaiterThreadPosix = struct {
             return;
         }
 
-        var thread = try std.Thread.spawn(.{ .stack_size = stack_size }, loop, .{});
-        thread.detach();
-
         if (comptime Environment.isLinux) {
             const linux = std.os.linux;
-            var mask = std.os.empty_sigset;
-            linux.sigaddset(&mask, std.os.SIG.CHLD);
-            instance.signalfd = bun.toFD(try std.os.signalfd(-1, &mask, linux.SFD.CLOEXEC | linux.SFD.NONBLOCK));
             instance.eventfd = bun.toFD(try std.os.eventfd(0, linux.EFD.NONBLOCK | linux.EFD.CLOEXEC | 0));
         }
+
+        var thread = try std.Thread.spawn(.{ .stack_size = stack_size }, loop, .{});
+        thread.detach();
+    }
+
+    fn wakeup(_: c_int) callconv(.C) void {
+        const one = @as([8]u8, @bitCast(@as(usize, 1)));
+        _ = bun.sys.write(instance.eventfd, &one).unwrap() catch 0;
     }
 
     pub fn loop() void {
         Output.Source.configureNamedThread("Waitpid");
 
+        if (comptime Environment.isLinux) {
+            var current_mask = std.os.empty_sigset;
+            std.os.linux.sigaddset(&current_mask, std.os.SIG.CHLD);
+            const act = std.os.Sigaction{
+                .handler = .{ .handler = &wakeup },
+                .mask = current_mask,
+                .flags = std.os.SA.NOCLDSTOP,
+            };
+            // create a SIGCHLD handler for monitoring child processes
+            std.os.sigaction(std.os.SIG.CHLD, &act, null) catch {};
+        }
+
         var this = &instance;
 
-        while (true) {
+        outer: while (true) {
             this.js_process.loop();
 
             if (comptime Environment.isLinux) {
                 var polls = [_]std.os.pollfd{
-                    .{
-                        .fd = this.signalfd.cast(),
-                        .events = std.os.POLL.IN | std.os.POLL.ERR,
-                        .revents = 0,
-                    },
                     .{
                         .fd = this.eventfd.cast(),
                         .events = std.os.POLL.IN | std.os.POLL.ERR,
@@ -847,11 +859,13 @@ const WaiterThreadPosix = struct {
                     },
                 };
 
-                _ = std.os.poll(&polls, std.math.maxInt(i32)) catch 0;
+                // Consume the pending eventfd
+                var buf: [8]u8 = undefined;
+                if (bun.sys.read(this.eventfd, &buf).unwrap() catch 0 > 0) {
+                    continue :outer;
+                }
 
-                // Make sure we consume any pending signals
-                var buf: [1024]u8 = undefined;
-                _ = std.os.read(this.signalfd.cast(), &buf) catch 0;
+                _ = std.os.poll(&polls, std.math.maxInt(i32)) catch 0;
             } else {
                 var mask = std.os.empty_sigset;
                 var signal: c_int = std.os.SIG.CHLD;

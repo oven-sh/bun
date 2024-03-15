@@ -2013,12 +2013,11 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return true;
             } else {
                 this.handleFirstWriteIfNecessary();
-                const success = this.res.write(buf);
-                this.has_backpressure = !success;
+                this.has_backpressure = !this.res.write(buf);
                 if (this.has_backpressure) {
                     this.res.onWritable(*@This(), onWritable, this);
                 }
-                return success;
+                return true;
             }
 
             unreachable;
@@ -2204,12 +2203,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
             if (this.done or this.requested_end) {
                 return .{ .owned = 0 };
-            }
-
-            if (this.res.hasResponded()) {
-                this.signal.close(null);
-                this.markDone();
-                return .{ .done = {} };
             }
 
             const bytes = data.slice();

@@ -7,11 +7,12 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm } from "fs/promises";
-import { bunEnv, runWithErrorPromise, tempDirWithFiles } from "harness";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
+import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 import { TestBuilder, sortedShellOutput } from "./util";
+import { packageDirGetter } from "./../../../cli/install/dummy.registry";
 
 $.env(bunEnv);
 $.cwd(process.cwd());
@@ -815,3 +816,61 @@ function sentinelByte(buf: Uint8Array): number {
   }
   throw new Error("No sentinel byte");
 }
+
+test("shell as script runner propagates env vars: bun run <foo>", async () => {
+  const package_dir = packageDirGetter();
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ scripts: { prod: `NODE_ENV=production ${bunExe()} index.ts` } }),
+  );
+  await writeFile(
+    join(package_dir, "index.ts"),
+    `console.log(process.env.NODE_ENV); console.log(process.env.AWESOME);`,
+  );
+  await writeFile(join(package_dir, ".env.production"), `AWESOME=production`);
+  await writeFile(join(package_dir, ".env.development"), `AWESOME=development`);
+
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "run", "prod"],
+    cwd: package_dir,
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.trim().split("\n")).toEqual(["production", "production"]);
+  expect(await exited).toBe(0);
+});
+
+test("shell as script runner propagates env vars: bun <foo>", async () => {
+  const package_dir = packageDirGetter();
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ scripts: { prod: `NODE_ENV=production ${bunExe()} index.ts` } }),
+  );
+  await writeFile(
+    join(package_dir, "index.ts"),
+    `console.log(process.env.NODE_ENV); console.log(process.env.AWESOME);`,
+  );
+  await writeFile(join(package_dir, ".env.production"), `AWESOME=production`);
+  await writeFile(join(package_dir, ".env.development"), `AWESOME=development`);
+
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "prod"],
+    cwd: package_dir,
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.trim().split("\n")).toEqual(["production", "production"]);
+  expect(await exited).toBe(0);
+});

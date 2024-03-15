@@ -540,13 +540,7 @@ pub const Bundler = struct {
                     this.options.setProduction(true);
                 }
 
-                if (this.options.isTest() or this.env.isTest()) {
-                    try this.env.load(dir, this.options.env.files, .@"test");
-                } else if (this.options.production) {
-                    try this.env.load(dir, this.options.env.files, .production);
-                } else {
-                    try this.env.load(dir, this.options.env.files, .development);
-                }
+                try this.runEnvLoaderLoad(dir);
             },
             .disable => {
                 this.env.loadProcess();
@@ -571,6 +565,16 @@ pub const Bundler = struct {
         }
 
         Analytics.disabled = Analytics.disabled or this.env.get("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null;
+    }
+
+    pub fn runEnvLoaderLoad(this: *Bundler, dir: *Fs.FileSystem.DirEntry) !void {
+        if (this.options.isTest() or this.env.isTest()) {
+            try this.env.load(dir, this.options.env.files, .@"test");
+        } else if (this.options.production) {
+            try this.env.load(dir, this.options.env.files, .production);
+        } else {
+            try this.env.load(dir, this.options.env.files, .development);
+        }
     }
 
     // This must be run after a framework is configured, if a framework is enabled

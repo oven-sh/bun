@@ -102,7 +102,7 @@ export function dummyAfterAll() {
   server.stop();
 }
 
-let packageDirGetter: () => string = () => {
+export let packageDirGetter: () => string = () => {
   return tmpdirSync("bun-install-test-" + testCounter++ + "--");
 };
 export async function dummyBeforeEach() {

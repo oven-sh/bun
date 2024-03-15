@@ -3848,21 +3848,24 @@ pub const Interpreter = struct {
             this.exec.subproc.buffered_closed.close(this, .stdin);
         }
 
-        pub fn bufferedOutputClose(this: *Cmd, kind: Subprocess.OutKind) void {
+        pub fn bufferedOutputClose(this: *Cmd, kind: Subprocess.OutKind, err: ?JSC.SystemError) void {
             switch (kind) {
-                .stdout => this.bufferedOutputCloseStdout(),
-                .stderr => this.bufferedOutputCloseStderr(),
+                .stdout => this.bufferedOutputCloseStdout(err),
+                .stderr => this.bufferedOutputCloseStderr(err),
             }
             if (this.hasFinished()) {
                 this.parent.childDone(this, this.exit_code orelse 0);
             }
         }
 
-        pub fn bufferedOutputCloseStdout(this: *Cmd) void {
+        pub fn bufferedOutputCloseStdout(this: *Cmd, err: ?JSC.SystemError) void {
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.exec == .subproc);
             }
             log("cmd ({x}) close buffered stdout", .{@intFromPtr(this)});
+            if (err) |e| {
+                this.exit_code = @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
+            }
             if (this.io.stdout == .fd and this.io.stdout.fd.captured != null and !this.node.redirect.redirectsElsewhere(.stdout)) {
                 var buf = this.io.stdout.fd.captured.?;
                 const the_slice = this.exec.subproc.child.stdout.pipe.slice();
@@ -3872,11 +3875,14 @@ pub const Interpreter = struct {
             this.exec.subproc.child.closeIO(.stdout);
         }
 
-        pub fn bufferedOutputCloseStderr(this: *Cmd) void {
+        pub fn bufferedOutputCloseStderr(this: *Cmd, err: ?JSC.SystemError) void {
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.exec == .subproc);
             }
             log("cmd ({x}) close buffered stderr", .{@intFromPtr(this)});
+            if (err) |e| {
+                this.exit_code = @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
+            }
             if (this.io.stderr == .fd and this.io.stderr.fd.captured != null and !this.node.redirect.redirectsElsewhere(.stderr)) {
                 var buf = this.io.stderr.fd.captured.?;
                 buf.append(bun.default_allocator, this.exec.subproc.child.stderr.pipe.slice()) catch bun.outOfMemory();
@@ -9080,6 +9086,7 @@ pub const Interpreter = struct {
                     // same file descriptor. The shell code here makes sure to
                     // _not_ run into that case, but it is possible.
                     if (e.getErrno() == .INVAL) {
+                        print("IOWriter(0x{x}, fd={}) got EINVAL", .{ @intFromPtr(this), this.fd });
                         this.flags.pollable = false;
                         this.flags.nonblocking = false;
                         this.flags.is_socket = false;
@@ -9247,7 +9254,9 @@ pub const Interpreter = struct {
 
         pub fn onError(this: *This, err__: bun.sys.Error) void {
             this.setWriting(false);
-            this.err = err__.toSystemError();
+            const ee = err__.toSystemError();
+            this.err = ee;
+            log("IOWriter(0x{x}, fd={}) onError errno={s} errmsg={} errsyscall={}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
             var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);
             var seen = std.ArrayList(usize).initCapacity(seen_alloc.get(), 64) catch bun.outOfMemory();
             defer seen.deinit();
@@ -9404,6 +9413,11 @@ pub const Interpreter = struct {
             print("IOWriter(0x{x}, fd={}) deinit", .{ @intFromPtr(this), this.fd });
             if (bun.Environment.allow_assert) std.debug.assert(this.ref_count == 0);
             this.buf.deinit(bun.default_allocator);
+            if (comptime bun.Environment.isPosix) {
+                if (this.writer.handle == .poll and this.writer.handle.poll.isRegistered()) {
+                    this.writer.handle.closeImpl(null, {}, false);
+                }
+            }
             if (this.fd != bun.invalid_fd) _ = bun.sys.close(this.fd);
             this.writer.disableKeepingProcessAlive(this.evtloop);
             this.destroy();

@@ -1076,6 +1076,7 @@ pub const PipeReader = struct {
             log("CapturedWriter({x}, {s}) onWrite({d}, has_err={any}) total_written={d} total_to_write={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), amount, err != null, this.written + amount, this.parent().buffered_output.len() });
             this.written += amount;
             if (err) |e| {
+                log("CapturedWriter(0x{x}, {s}) onWrite errno={d} errmsg={} errfd={} syscall={}", .{ @intFromPtr(this), @tagName(this.parent().out_type), e.errno, e.message, e.fd, e.syscall });
                 this.err = e;
                 this.parent().trySignalDoneToCmd();
             } else if (this.written >= this.parent().buffered_output.len() and !(this.parent().state == .pending)) {
@@ -1242,7 +1243,15 @@ pub const PipeReader = struct {
                         this.state = .{ .err = e };
                     }
                 }
-                cmd.bufferedOutputClose(this.out_type);
+                const e: ?JSC.SystemError = brk: {
+                    if (this.state != .err) break :brk null;
+                    if (this.state.err) |*e| {
+                        e.ref();
+                        break :brk e.*;
+                    }
+                    break :brk null;
+                };
+                cmd.bufferedOutputClose(this.out_type, e);
             }
         }
     }

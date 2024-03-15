@@ -18,7 +18,6 @@ if [ -z "$PKG" ]; then
   exit 1
 fi
 
-
 url="https://github.com/oven-sh/WebKit/releases/download/autobuild-$TAG/$PKG.tar.gz"
 
 old_tar_dir="$(dirname "$0")/../.webkit-cache"
@@ -54,4 +53,10 @@ fi
 
 tar -xzf "$tar" -C "$(dirname "$OUTDIR")" || (rm "$tar" && exit 1)
 
-echo "$TAG-$PKG" > "$OUTDIR/.tag"
+# We want to make sure we use the system-version of icucore on macOS
+if [ "$(uname)" == "Darwin" ]; then
+  # delete the unicode folder from include
+  rm -rf "$OUTDIR/include/unicode"
+fi
+
+echo "$TAG-$PKG" >"$OUTDIR/.tag"

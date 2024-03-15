@@ -375,7 +375,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
             );
             Global.exit(1);
         },
-        error.InvalidArgument, error.InstallFailed, error.InvalidPackageJSON => {
+        error.InvalidArgument => {
             Global.exit(1);
         },
         error.SystemFdQuotaExceeded => {

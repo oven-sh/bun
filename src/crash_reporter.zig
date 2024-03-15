@@ -46,7 +46,7 @@ pub fn reloadHandlers() !void {
     };
 
     try setup_sigactions(&act);
-
+    @import("root").bun.spawn.WaiterThread.reloadHandlers();
     bun_ignore_sigpipe();
 }
 const os = std.os;
@@ -59,6 +59,7 @@ pub fn start() !void {
 
     try setup_sigactions(&act);
     bun_ignore_sigpipe();
+    @import("root").bun.spawn.WaiterThread.reloadHandlers();
 }
 
 extern fn bun_ignore_sigpipe() void;

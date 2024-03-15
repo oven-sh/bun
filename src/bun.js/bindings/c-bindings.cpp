@@ -1,5 +1,6 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
+#include <csignal>
 #include <cstdint>
 
 #if !OS(WINDOWS)
@@ -295,7 +296,7 @@ static inline void make_pos_h_l(unsigned long* pos_h, unsigned long* pos_l,
 extern "C" ssize_t sys_preadv2(int fd, const struct iovec* iov, int iovcnt,
     off_t offset, unsigned int flags)
 {
-	return syscall(SYS_preadv2, fd, iov, iovcnt, offset, offset>>32, RWF_NOWAIT);
+    return syscall(SYS_preadv2, fd, iov, iovcnt, offset, offset >> 32, RWF_NOWAIT);
 }
 extern "C" ssize_t sys_pwritev2(int fd, const struct iovec* iov, int iovcnt,
     off_t offset, unsigned int flags)

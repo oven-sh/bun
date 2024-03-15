@@ -159,13 +159,7 @@ pub const BunxCommand = struct {
 
     fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, package_name: []const u8) ![]const u8 {
         var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
-        subpath[0.."node_modules/".len].* = "node_modules/".*;
-        @memcpy(subpath["node_modules/".len..][0..package_name.len], package_name);
-        subpath["node_modules/".len + package_name.len] = std.fs.path.sep;
-        subpath["node_modules/".len + package_name.len + 1 ..][0.."package.json".len].* = "package.json".*;
-        subpath["node_modules/".len + package_name.len + 1 + "package.json".len] = 0;
-
-        const subpath_z: [:0]const u8 = subpath[0 .. "node_modules/".len + package_name.len + 1 + "package.json".len :0];
+        const subpath_z = std.fmt.bufPrintZ(&subpath, "node_modules/{s}/package.json", .{package_name}) catch unreachable;
         return try getBinNameFromSubpath(bundler, dir_fd, subpath_z);
     }
 
@@ -573,8 +567,8 @@ pub const BunxCommand = struct {
         var args = std.BoundedArray([]const u8, 7).fromSlice(&.{
             try std.fs.selfExePathAlloc(ctx.allocator),
             "add",
-            "--no-summary",
             install_param,
+            "--no-summary",
         }) catch
             unreachable; // upper bound is known
 

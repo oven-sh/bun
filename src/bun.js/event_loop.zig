@@ -1887,9 +1887,9 @@ pub const MiniEventLoop = struct {
 
     pub fn stderr(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
         return this.stderr_store orelse brk: {
-            const store = bun.default_allocator.create(JSC.WebCore.Blob.Store) catch unreachable;
+            const store = bun.default_allocator.create(JSC.WebCore.Blob.Store) catch bun.outOfMemory();
             var mode: bun.Mode = 0;
-            const fd = if (Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+            const fd = if (comptime Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
 
             switch (bun.sys.fstat(fd)) {
                 .result => |stat| {
@@ -1919,7 +1919,7 @@ pub const MiniEventLoop = struct {
 
     pub fn stdout(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
         return this.stdout_store orelse brk: {
-            const store = bun.default_allocator.create(JSC.WebCore.Blob.Store) catch unreachable;
+            const store = bun.default_allocator.create(JSC.WebCore.Blob.Store) catch bun.outOfMemory();
             var mode: bun.Mode = 0;
             const fd = if (Environment.isWindows) bun.FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
 

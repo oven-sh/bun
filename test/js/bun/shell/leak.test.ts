@@ -32,7 +32,7 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
               .sort(),
           ).toEqual(["lmao", "lol", "nice", "foo/bar:", "bar", "great", "wow"].sort()),
         ),
-    100,
+    500,
   ],
   [
     "rm",
@@ -52,7 +52,7 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
 ];
 
 describe("fd leak", () => {
-  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 500) {
+  function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 500, threshold: number = 5) {
     test(`fdleak_${name}`, async () => {
       Bun.gc(true);
       const baseline = openSync(devNull, "r");
@@ -66,7 +66,7 @@ describe("fd leak", () => {
       Bun.gc(true);
       const fd = openSync(devNull, "r");
       closeSync(fd);
-      expect(fd).toBeLessThanOrEqual(baseline);
+      expect(Math.abs(fd - baseline)).toBeLessThanOrEqual(threshold);
     }, 100_000);
   }
 

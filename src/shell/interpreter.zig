@@ -1307,10 +1307,6 @@ pub const Interpreter = struct {
         defer decrPendingActivityFlag(&this.has_pending_activity);
         if (this.event_loop == .js) {
             defer this.deinitAfterJSRun();
-            // defer this.deinit();
-            // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
-            // this.buffered_stdout.
-            // this.reject.deinit();
             _ = this.resolve.call(&.{JSValue.jsNumberFromU16(exit_code)});
         } else {
             this.done.?.* = true;
@@ -1491,7 +1487,6 @@ pub const Interpreter = struct {
     ) callconv(.C) void {
         log("Interpreter finalize", .{});
         this.deinitFromFinalizer();
-        // this.deinit(true);
     }
 
     pub fn hasPendingActivity(this: *ThisInterpreter) callconv(.C) bool {
@@ -3082,7 +3077,11 @@ pub const Interpreter = struct {
                         var before = std.c.fcntl(fds_[0], std.os.F.GETFL);
 
                         const result = std.c.fcntl(fds_[0], std.os.F.SETFL, before | os.O.CLOEXEC);
-                        if (result == -1) @panic("WTF");
+                        if (result == -1) {
+                            _ = bun.sys.close(bun.toFD(fds_[0]));
+                            _ = bun.sys.close(bun.toFD(fds_[1]));
+                            return Maybe(void).errno(bun.sys.getErrno(result), .fcntl);
+                        }
 
                         if (comptime bun.Environment.isMac) {
                             // SO_NOSIGPIPE
@@ -8011,11 +8010,18 @@ pub const Interpreter = struct {
                 },
                 join_style: JoinStyle,
 
+                /// On Windows we allow posix path separators
+                /// But this results in weird looking paths if we use our path.join function which uses the platform separator:
+                /// `foo/bar + baz -> foo/bar\baz`
+                ///
+                /// So detect which path separator the user is using and prefer that.
+                /// If both are used, pick the first one.
                 const JoinStyle = union(enum) {
                     posix,
                     windows,
 
                     pub fn fromPath(p: bun.PathString) JoinStyle {
+                        if (comptime bun.Environment.isPosix) return .posix;
                         const backslash = std.mem.indexOfScalar(u8, p.slice(), '\\') orelse std.math.maxInt(usize);
                         const forwardslash = std.mem.indexOfScalar(u8, p.slice(), '/') orelse std.math.maxInt(usize);
                         if (forwardslash <= backslash)
@@ -8778,8 +8784,6 @@ pub const Interpreter = struct {
             }
             this.reader.setParent(this);
 
-            // this.flags = flags;
-
             return this;
         }
 
@@ -8788,7 +8792,6 @@ pub const Interpreter = struct {
             if (bun.Environment.isPosix) {
                 if (this.reader.handle == .closed or !this.reader.handle.poll.isRegistered()) {
                     if (this.reader.start(this.fd, true).asErr()) |e| {
-                        // @panic("TODO handle error");
                         this.onReaderError(e);
                     }
                 }

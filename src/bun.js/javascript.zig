@@ -576,6 +576,11 @@ pub const VirtualMachine = struct {
     rare_data: ?*JSC.RareData = null,
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,
+    entry_point_result: struct {
+        value: JSC.Strong = .{},
+        cjs_set_value: bool = false,
+    } = .{},
+
     auto_install_dependencies: bool = false,
 
     onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
@@ -901,8 +906,35 @@ pub const VirtualMachine = struct {
         return .running;
     }
 
+    pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) callconv(.C) bool {
+        if (this.module_loader.eval_source) |eval_source| {
+            var specifier_str = specifier.toBunString(this.global);
+            defer specifier_str.deref();
+            return specifier_str.eqlUTF8(eval_source.path.text);
+        }
+
+        return false;
+    }
+
+    pub fn setEntryPointEvalResultESM(this: *VirtualMachine, result: JSValue) callconv(.C) void {
+        // allow esm evaluate to set value multiple times
+        if (!this.entry_point_result.cjs_set_value) {
+            this.entry_point_result.value.set(this.global, result);
+        }
+    }
+
+    pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callconv(.C) void {
+        if (!this.entry_point_result.value.has()) {
+            this.entry_point_result.value.set(this.global, value);
+            this.entry_point_result.cjs_set_value = true;
+        }
+    }
+
     comptime {
         @export(scriptExecutionStatus, .{ .name = "Bun__VM__scriptExecutionStatus" });
+        @export(setEntryPointEvalResultESM, .{ .name = "Bun__VM__setEntryPointEvalResultESM" });
+        @export(setEntryPointEvalResultCJS, .{ .name = "Bun__VM__setEntryPointEvalResultCJS" });
+        @export(specifierIsEvalEntryPoint, .{ .name = "Bun__VM__specifierIsEvalEntryPoint" });
     }
 
     pub fn onExit(this: *VirtualMachine) void {
@@ -1226,6 +1258,7 @@ pub const VirtualMachine = struct {
             vm.console,
             -1,
             false,
+            false,
             null,
         );
         vm.regular_event_loop.global = vm.global;
@@ -1251,6 +1284,10 @@ pub const VirtualMachine = struct {
         env_loader: ?*DotEnv.Loader = null,
         store_fd: bool = false,
         smol: bool = false,
+
+        // --print needs the result from evaluating the main module
+        eval: bool = false,
+
         graph: ?*bun.StandaloneModuleGraph = null,
         debugger: bun.CLI.Command.Debugger = .{ .unspecified = {} },
     };
@@ -1336,6 +1373,7 @@ pub const VirtualMachine = struct {
             vm.console,
             -1,
             opts.smol,
+            opts.eval,
             null,
         );
         vm.regular_event_loop.global = vm.global;
@@ -1483,6 +1521,7 @@ pub const VirtualMachine = struct {
             vm.console,
             @as(i32, @intCast(worker.execution_context_id)),
             worker.mini,
+            opts.eval,
             worker.cpp_worker,
         );
         vm.regular_event_loop.global = vm.global;
@@ -1602,13 +1641,13 @@ pub const VirtualMachine = struct {
             break :brk options.Loader.file;
         };
 
-        if (jsc_vm.module_loader.eval_script) |eval_script| {
+        if (jsc_vm.module_loader.eval_source) |eval_source| {
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                virtual_source = eval_script;
+                virtual_source = eval_source;
                 loader = .tsx;
             }
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
-                virtual_source = eval_script;
+                virtual_source = eval_source;
                 loader = .tsx;
             }
         }
@@ -1686,7 +1725,7 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = result.path;
             return;
-        } else if (jsc_vm.module_loader.eval_script != null and
+        } else if (jsc_vm.module_loader.eval_source != null and
             (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]")) or
             strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
         {

@@ -301,7 +301,8 @@ class FileHandle extends EventEmitter {
 
     try {
       this[kRef]();
-      return real_export.read(fd, buffer, offset, length, position);
+      const bytesRead = real_export.read(fd, buffer, offset, length, position);
+      return { bytesRead, buffer };
     } finally {
       this[kUnref]();
     }
@@ -313,7 +314,8 @@ class FileHandle extends EventEmitter {
 
     try {
       this[kRef]();
-      return real_export.readv(fd, buffers, position);
+      const bytesRead = real_export.readv(fd, buffers, position);
+      return { bytesRead, buffers };
     } finally {
       this[kUnref]();
     }

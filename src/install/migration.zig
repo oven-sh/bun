@@ -120,7 +120,7 @@ const dependency_keys = .{
 pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Log, data: string, path: string) !LoadFromDiskResult {
     debug("begin lockfile migration", .{});
 
-    try this.initEmpty(allocator);
+    this.initEmpty(allocator);
     Install.initializeStore();
 
     const json_src = logger.Source.initPathString(path, data);

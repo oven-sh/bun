@@ -167,6 +167,7 @@ pub const Run = struct {
                     .args = ctx.args,
                     .store_fd = ctx.debug.hot_reload != .none,
                     .smol = ctx.runtime_options.smol,
+                    .eval = ctx.runtime_options.eval.eval_and_print,
                     .debugger = ctx.runtime_options.debugger,
                 },
             ),
@@ -182,12 +183,14 @@ pub const Run = struct {
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
 
-        if (ctx.runtime_options.eval_script.len > 0) {
-            vm.module_loader.eval_script = ptr: {
-                const v = try bun.default_allocator.create(logger.Source);
-                v.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval_script);
-                break :ptr v;
-            };
+        if (ctx.runtime_options.eval.script.len > 0) {
+            const script_source = try bun.default_allocator.create(logger.Source);
+            script_source.* = logger.Source.initPathString(entry_path, ctx.runtime_options.eval.script);
+            vm.module_loader.eval_source = script_source;
+
+            if (ctx.runtime_options.eval.eval_and_print) {
+                b.options.dead_code_elimination = false;
+            }
         }
 
         b.options.install = ctx.install;
@@ -266,7 +269,7 @@ pub const Run = struct {
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
-        if (this.ctx.runtime_options.eval_script.len > 0) {
+        if (this.ctx.runtime_options.eval.script.len > 0) {
             Bun__ExposeNodeModuleGlobals(vm.global);
         }
 
@@ -365,10 +368,37 @@ pub const Run = struct {
                     vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
                 }
             } else {
-                //
                 while (vm.isEventLoopAlive()) {
                     vm.tick();
                     vm.eventLoop().autoTickActive();
+                }
+
+                if (this.ctx.runtime_options.eval.eval_and_print) {
+                    const to_print = brk: {
+                        const result = vm.entry_point_result.value.get() orelse .undefined;
+                        if (result.asAnyPromise()) |promise| {
+                            switch (promise.status(vm.jsc)) {
+                                .Pending => {
+                                    result._then(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+
+                                    vm.tick();
+                                    vm.eventLoop().autoTickActive();
+
+                                    while (vm.isEventLoopAlive()) {
+                                        vm.tick();
+                                        vm.eventLoop().autoTickActive();
+                                    }
+
+                                    break :brk result;
+                                },
+                                else => break :brk promise.result(vm.jsc),
+                            }
+                        }
+
+                        break :brk result;
+                    };
+
+                    to_print.print(vm.global, .Log, .Log);
                 }
 
                 vm.onBeforeExit();
@@ -393,6 +423,22 @@ pub const Run = struct {
         Global.exit(exit_code);
     }
 };
+
+pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) noreturn {
+    const arguments = callframe.arguments(1).slice();
+    const result = arguments[0];
+    result.print(global, .Log, .Log);
+    Global.exit(global.bunVM().exit_handler.exit_code);
+    return .undefined;
+}
+
+pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) noreturn {
+    const arguments = callframe.arguments(1).slice();
+    const result = arguments[0];
+    result.print(global, .Log, .Log);
+    Global.exit(global.bunVM().exit_handler.exit_code);
+    return .undefined;
+}
 
 noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
     @setCold(true);

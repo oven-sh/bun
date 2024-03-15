@@ -2159,6 +2159,18 @@ describe("fs/promises", () => {
   it("opendir should have a path property, issue#4995", async () => {
     expect((await fs.promises.opendir(".")).path).toBe(".");
   });
+
+  it("FileHandle#read returns object", async () => {
+    const fd = await fs.promises.open(__filename);
+    const buf = Buffer.alloc(10);
+    expect(await fd.read(buf, 0, 10, 0)).toEqual({ bytesRead: 10, buffer: buf });
+  });
+
+  it("FileHandle#readv returns object", async () => {
+    const fd = await fs.promises.open(__filename);
+    const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
+    expect(await fd.readv(buffers, 0, 20, 0)).toEqual({ bytesRead: 20, buffers });
+  });
 });
 
 it("stat on a large file", () => {

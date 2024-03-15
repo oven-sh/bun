@@ -513,7 +513,7 @@ pub const BunxCommand = struct {
                     null,
                 );
                 // runBinary is noreturn
-                comptime unreachable;
+                @compileError("unreachable");
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -550,7 +550,7 @@ pub const BunxCommand = struct {
                             null,
                         );
                         // runBinary is noreturn
-                        comptime unreachable;
+                        @compileError("unreachable");
                     }
                 }
             } else |err| {
@@ -656,7 +656,7 @@ pub const BunxCommand = struct {
                 null,
             );
             // runBinary is noreturn
-            comptime unreachable;
+            @compileError("unreachable");
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -680,7 +680,7 @@ pub const BunxCommand = struct {
                         null,
                     );
                     // runBinary is noreturn
-                    comptime unreachable;
+                    @compileError("unreachable");
                 }
             }
         } else |_| {}

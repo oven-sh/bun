@@ -926,7 +926,7 @@ pub const Platform = enum {
 
     pub fn getSeparatorFunc(comptime _platform: Platform) IsSeparatorFunc {
         switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
+            .auto => @compileError("unreachable"),
             .loose => {
                 return isSepAny;
             },
@@ -941,7 +941,7 @@ pub const Platform = enum {
 
     pub fn getSeparatorFuncT(comptime _platform: Platform) IsSeparatorFuncT {
         switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
+            .auto => @compileError("unreachable"),
             .loose => {
                 return isSepAnyT;
             },
@@ -956,7 +956,7 @@ pub const Platform = enum {
 
     pub fn getLastSeparatorFunc(comptime _platform: Platform) LastSeparatorFunction {
         switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
+            .auto => @compileError("unreachable"),
             .loose => {
                 return lastIndexOfSeparatorLoose;
             },
@@ -971,7 +971,7 @@ pub const Platform = enum {
 
     pub fn getLastSeparatorFuncT(comptime _platform: Platform) LastSeparatorFunctionT {
         switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
+            .auto => @compileError("unreachable"),
             .loose => {
                 return lastIndexOfSeparatorLooseT;
             },
@@ -990,7 +990,7 @@ pub const Platform = enum {
 
     pub inline fn isSeparatorT(comptime _platform: Platform, comptime T: type, char: T) bool {
         switch (comptime _platform.resolve()) {
-            .auto => comptime unreachable,
+            .auto => @compileError("unreachable"),
             .loose => {
                 return isSepAnyT(T, char);
             },

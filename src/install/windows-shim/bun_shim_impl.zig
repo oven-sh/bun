@@ -519,7 +519,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             ptr -= 1;
             std.debug.assert(@intFromPtr(ptr) >= @intFromPtr(buf1_u16));
         }
-        comptime unreachable;
+        @compileError("unreachable");
     };
     std.debug.assert(read_ptr[0] != '\\');
     std.debug.assert((read_ptr - 1)[0] == '\\');
@@ -854,9 +854,9 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         _ = nt.NtClose(process.hThread);
 
         nt.RtlExitUserProcess(exit_code);
-        comptime unreachable;
+        @compileError("unreachable");
     }
-    comptime unreachable;
+    @compileError("unreachable");
 }
 
 pub const FromBunRunContext = struct {

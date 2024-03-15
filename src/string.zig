@@ -380,7 +380,7 @@ pub const String = extern struct {
         return switch (@TypeOf(os_path)) {
             []const u8 => createUTF8(os_path),
             []const u16 => createUTF16(os_path),
-            else => comptime unreachable,
+            else => @compileError("unreachable"),
         };
     }
 

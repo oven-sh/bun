@@ -11070,7 +11070,7 @@ fn NewParser_(
             const what = switch (kind) {
                 .k_await_using, .k_using => "declaration",
                 .k_const => "constant",
-                else => comptime unreachable,
+                else => @compileError("unreachable"),
             };
 
             for (decls) |decl| {

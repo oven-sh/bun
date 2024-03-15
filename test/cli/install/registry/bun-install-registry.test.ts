@@ -3711,7 +3711,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
     });
 
-    test.only("bun pm trust and untrusted on missing package", async () => {
+    test("bun pm trust and untrusted on missing package", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({

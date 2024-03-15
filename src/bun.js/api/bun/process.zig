@@ -642,6 +642,8 @@ pub const WaiterThread = if (Environment.isPosix) WaiterThreadPosix else struct 
     }
 
     pub fn setShouldUseWaiterThread() void {}
+
+    pub fn reloadHandlers() void {}
 };
 
 // Machines which do not support pidfd_open (GVisor, Linux Kernel < 5.6)
@@ -830,8 +832,10 @@ const WaiterThreadPosix = struct {
         _ = bun.sys.write(instance.eventfd, &one).unwrap() catch 0;
     }
 
-    pub fn loop() void {
-        Output.Source.configureNamedThread("Waitpid");
+    pub fn reloadHandlers() void {
+        if (!should_use_waiter_thread) {
+            return;
+        }
 
         if (comptime Environment.isLinux) {
             var current_mask = std.os.empty_sigset;
@@ -841,10 +845,13 @@ const WaiterThreadPosix = struct {
                 .mask = current_mask,
                 .flags = std.os.SA.NOCLDSTOP,
             };
-            // create a SIGCHLD handler for monitoring child processes
             std.os.sigaction(std.os.SIG.CHLD, &act, null) catch {};
         }
+    }
 
+    pub fn loop() void {
+        Output.Source.configureNamedThread("Waitpid");
+        reloadHandlers();
         var this = &instance;
 
         outer: while (true) {

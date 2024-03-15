@@ -368,10 +368,37 @@ pub const Run = struct {
                     vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
                 }
             } else {
-                //
                 while (vm.isEventLoopAlive()) {
                     vm.tick();
                     vm.eventLoop().autoTickActive();
+                }
+
+                if (this.ctx.runtime_options.eval.eval_and_print) {
+                    const to_print = brk: {
+                        const result = vm.entry_point_result.value.get() orelse .undefined;
+                        if (result.asAnyPromise()) |promise| {
+                            switch (promise.status(vm.jsc)) {
+                                .Pending => {
+                                    result._then(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+
+                                    vm.tick();
+                                    vm.eventLoop().autoTickActive();
+
+                                    while (vm.isEventLoopAlive()) {
+                                        vm.tick();
+                                        vm.eventLoop().autoTickActive();
+                                    }
+
+                                    break :brk result;
+                                },
+                                else => break :brk promise.result(vm.jsc),
+                            }
+                        }
+
+                        break :brk result;
+                    };
+
+                    to_print.print(vm.global, .Log, .Log);
                 }
 
                 vm.onBeforeExit();
@@ -392,24 +419,26 @@ pub const Run = struct {
 
         vm.onExit();
 
-        if (this.ctx.runtime_options.eval.eval_and_print) {
-            const to_print = brk: {
-                const result = vm.entry_point_result.value.trySwap() orelse .undefined;
-                if (result.asAnyPromise()) |promise| {
-                    if (promise.status(vm.jsc) != .Pending) {
-                        break :brk promise.result(vm.jsc);
-                    }
-                }
-
-                break :brk result;
-            };
-            to_print.print(vm.global, .Log, .Log);
-        }
-
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
         Global.exit(exit_code);
     }
 };
+
+pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) noreturn {
+    const arguments = callframe.arguments(1).slice();
+    const result = arguments[0];
+    result.print(global, .Log, .Log);
+    Global.exit(global.bunVM().exit_handler.exit_code);
+    return .undefined;
+}
+
+pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) noreturn {
+    const arguments = callframe.arguments(1).slice();
+    const result = arguments[0];
+    result.print(global, .Log, .Log);
+    Global.exit(global.bunVM().exit_handler.exit_code);
+    return .undefined;
+}
 
 noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
     @setCold(true);

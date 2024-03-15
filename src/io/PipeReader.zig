@@ -1038,6 +1038,7 @@ pub const WindowsBufferedReader = struct {
 
     pub fn startWithCurrentPipe(this: *WindowsOutputReader) bun.JSC.Maybe(void) {
         std.debug.assert(this.source != null);
+        this.source.?.setData(this);
         this.buffer().clearRetainingCapacity();
         this.flags.is_done = false;
         this.unpause();

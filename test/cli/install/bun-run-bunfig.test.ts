@@ -50,12 +50,13 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     });
   });
 
-  describe.each(["bun", "system"])(`run.shell %s`, shell => {
-    test.each(["true", "false"])("run.silent = %s", silentStr => {
+  describe.each(["bun", "system", "default"])(`run.shell = "%s"`, shellStr => {
+    const shell = shellStr === "default" ? (isWindows ? "bun" : "system") : shellStr;
+    test.each(["true", "false"])('run.silent = "%s"', silentStr => {
       const silent = silentStr === "true";
       const bunfig = toTOMLString({
         run: {
-          shell,
+          shell: shellStr === "default" ? undefined : shell,
           silent,
         },
       });

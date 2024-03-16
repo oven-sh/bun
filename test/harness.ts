@@ -533,6 +533,8 @@ function makeFlatPropertyMap(opts: object) {
   const ret: any = {};
   function recurse(obj: object, path = "") {
     for (const [key, value] of Object.entries(obj)) {
+      if (value === undefined) continue;
+
       if (value && typeof value === "object") {
         recurse(value, path ? `${path}.${key}` : key);
       } else {
@@ -550,6 +552,7 @@ export function toTOMLString(opts: object) {
   const props = makeFlatPropertyMap(opts);
   let ret = "";
   for (const [key, value] of Object.entries(props)) {
+    if (value === undefined) continue;
     ret += `${key} = ${JSON.stringify(value)}` + "\n";
   }
   return ret;

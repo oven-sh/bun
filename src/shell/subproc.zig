@@ -993,7 +993,7 @@ pub const PipeReader = struct {
         pub inline fn len(this: *BufferedOutput) usize {
             return switch (this.*) {
                 .bytelist => this.bytelist.len,
-                .array_buffer => this.array_buffer.buf.slice()[0..this.array_buffer.i].len,
+                .array_buffer => this.array_buffer.i,
             };
         }
 
@@ -1033,13 +1033,12 @@ pub const PipeReader = struct {
     pub usingnamespace bun.NewRefCounted(PipeReader, deinit);
 
     pub const CapturedWriter = struct {
-        dead: bool = true,
         writer: *sh.IOWriter = undefined,
         written: usize = 0,
         err: ?JSC.SystemError = null,
 
         pub fn doWrite(this: *CapturedWriter, chunk: []const u8) void {
-            if (this.dead or this.err != null) return;
+            if (this.err != null) return;
 
             log("CapturedWriter(0x{x}, {s}) doWrite len={d} parent_amount={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), chunk.len, this.parent().buffered_output.len() });
             this.writer.enqueue(this, null, chunk);
@@ -1064,9 +1063,8 @@ pub const PipeReader = struct {
         }
 
         pub fn isDone(this: *CapturedWriter, just_written: usize) bool {
-            log("CapturedWriter(0x{x}, {s}) isDone(is_dead={any}, has_err={any}, parent_state={s}, written={d}, parent_amount={d})", .{ @intFromPtr(this), @tagName(this.parent().out_type), this.dead, this.err != null, @tagName(this.parent().state), this.written, this.parent().buffered_output.len() });
-            if (this.dead or this.err != null) return true;
-            // if (this.writer.) return true;
+            log("CapturedWriter(0x{x}, {s}) isDone(has_err={any}, parent_state={s}, written={d}, parent_amount={d})", .{ @intFromPtr(this), @tagName(this.parent().out_type), this.err != null, @tagName(this.parent().state), this.written, this.parent().buffered_output.len() });
+            if (this.err != null) return true;
             const p = this.parent();
             if (p.state == .pending) return false;
             return this.written + just_written >= this.parent().buffered_output.len();
@@ -1094,10 +1092,9 @@ pub const PipeReader = struct {
         }
 
         pub fn deinit(this: *CapturedWriter) void {
-            if (this.dead) return;
             if (this.err) |e| {
-                e.deref();
                 this.err = null;
+                e.deref();
             }
             this.writer.deref();
         }
@@ -1134,7 +1131,6 @@ pub const PipeReader = struct {
 
         if (capture) |cap| {
             this.captured_writer.writer = cap.refSelf();
-            this.captured_writer.dead = false;
         }
 
         if (Environment.isWindows) {
@@ -1377,9 +1373,7 @@ pub const PipeReader = struct {
             bun.default_allocator.free(this.state.done);
         }
 
-        if (!this.captured_writer.dead) {
-            this.captured_writer.deinit();
-        }
+        this.captured_writer.deinit();
 
         if (this.state == .err) {
             if (this.state.err) |e| {

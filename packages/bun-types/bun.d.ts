@@ -4483,7 +4483,7 @@ declare module "bun" {
        */
       cmd: string[];
 
-      onExit: never;
+      onExit?: never;
     },
   ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
 

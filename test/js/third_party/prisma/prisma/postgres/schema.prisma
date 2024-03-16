@@ -4,7 +4,6 @@
 generator client {
   provider = "prisma-client-js"
   output   = "client"
-  %binaryTargets%
 }
 
 datasource db {
@@ -56,4 +55,10 @@ model Post {
   option23 Int?
   option24 Int?
   option25 Int?
+}
+
+// For test/js/third_party/postgres/postgres.test.ts
+model users {
+  id    Int     @id @default(autoincrement())
+  alive Boolean
 }

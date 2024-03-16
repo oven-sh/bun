@@ -73,7 +73,7 @@ pub fn assert(cond: bool, comptime msg: []const u8) void {
     }
 }
 
-const ExitCode = if (bun.Environment.isWindows) u16 else u16;
+pub const ExitCode = u16;
 
 pub const StateKind = enum(u8) {
     script,
@@ -612,6 +612,7 @@ pub const Interpreter = struct {
     started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     done: ?*bool = null,
+    exit_code: ?*ExitCode = null,
 
     const InterpreterChildPtr = StatePtrUnion(.{
         Script,
@@ -1156,7 +1157,7 @@ pub const Interpreter = struct {
         return .{ .result = interpreter };
     }
 
-    pub fn initAndRunFromFile(mini: *JSC.MiniEventLoop, path: []const u8) !void {
+    pub fn initAndRunFromFile(mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         const src = src: {
             var file = try std.fs.cwd().openFile(path, .{});
@@ -1196,10 +1197,12 @@ pub const Interpreter = struct {
         var interp = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
-                return;
+                return 1;
             },
             .result => |i| i,
         };
+        var exit_code: ExitCode = 1;
+
         const IsDone = struct {
             done: bool = false,
 
@@ -1210,11 +1213,13 @@ pub const Interpreter = struct {
         };
         var is_done: IsDone = .{};
         interp.done = &is_done.done;
+        interp.exit_code = &exit_code;
         try interp.run();
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
+        return exit_code;
     }
 
-    pub fn initAndRunFromSource(mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !void {
+    pub fn initAndRunFromSource(mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 
@@ -1242,7 +1247,7 @@ pub const Interpreter = struct {
         var interp = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
-                return;
+                return 1;
             },
             .result => |i| i,
         };
@@ -1255,10 +1260,13 @@ pub const Interpreter = struct {
             }
         };
         var is_done: IsDone = .{};
+        var exit_code: ExitCode = 1;
         interp.done = &is_done.done;
+        interp.exit_code = &exit_code;
         try interp.run();
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         interp.deinitEverything();
+        return exit_code;
     }
 
     pub fn run(this: *ThisInterpreter) !void {
@@ -1305,11 +1313,13 @@ pub const Interpreter = struct {
     fn finish(this: *ThisInterpreter, exit_code: ExitCode) void {
         log("finish", .{});
         defer decrPendingActivityFlag(&this.has_pending_activity);
+
         if (this.event_loop == .js) {
             defer this.deinitAfterJSRun();
             _ = this.resolve.call(&.{JSValue.jsNumberFromU16(exit_code)});
         } else {
             this.done.?.* = true;
+            this.exit_code.?.* = exit_code;
         }
     }
 
@@ -7246,9 +7256,11 @@ pub const Interpreter = struct {
                                 return this.writeFailingError(buf, 1);
                             }
 
+                            const count_per_task = ShellMvBatchedTask.BATCH_SIZE;
+
                             const task_count = brk: {
                                 const sources_len: f64 = @floatFromInt(this.args.sources.len);
-                                const batch_size: f64 = @floatFromInt(ShellMvBatchedTask.BATCH_SIZE);
+                                const batch_size: f64 = @floatFromInt(count_per_task);
                                 const task_count: usize = @intFromFloat(@ceil(sources_len / batch_size));
                                 break :brk task_count;
                             };
@@ -7258,33 +7270,12 @@ pub const Interpreter = struct {
                             const tasks = this.bltn.arena.allocator().alloc(ShellMvBatchedTask, task_count) catch bun.outOfMemory();
                             // Initialize tasks
                             {
-                                var count = task_count;
-                                const count_per_task = this.args.sources.len / ShellMvBatchedTask.BATCH_SIZE;
                                 var i: usize = 0;
-                                var j: usize = 0;
-                                while (i < tasks.len -| 1) : (i += 1) {
-                                    j += count_per_task;
-                                    const sources = this.args.sources[j .. j + count_per_task];
-                                    count -|= count_per_task;
-                                    tasks[i] = ShellMvBatchedTask{
-                                        .mv = this,
-                                        .cwd = cwd_fd,
-                                        .target = this.args.target,
-                                        .target_fd = this.args.target_fd,
-                                        .sources = sources,
-                                        // We set this later
-                                        .error_signal = undefined,
-                                        .task = .{
-                                            .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.bltn.parentCmd().base.eventLoop()),
-                                            .event_loop = this.bltn.parentCmd().base.eventLoop(),
-                                        },
-                                        .event_loop = this.bltn.parentCmd().base.eventLoop(),
-                                    };
-                                }
+                                while (i < tasks.len) : (i += 1) {
+                                    const start_idx = i * count_per_task;
+                                    const end_idx = @min(start_idx + count_per_task, this.args.sources.len);
+                                    const sources = this.args.sources[start_idx..end_idx];
 
-                                // Give remainder to last task
-                                if (count > 0) {
-                                    const sources = this.args.sources[j .. j + count];
                                     tasks[i] = ShellMvBatchedTask{
                                         .mv = this,
                                         .cwd = cwd_fd,

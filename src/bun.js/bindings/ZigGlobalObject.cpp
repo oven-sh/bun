@@ -4500,12 +4500,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     JSValue val)
 {
-    JSC::VM& vm = globalObject->vm();
-    JSC::JSString* keyString = key.toStringOrNull(globalObject);
-    if (UNLIKELY(!keyString))
-        return JSC::constructEmptyObject(globalObject);
-
-    return Zig::ImportMetaObject::create(globalObject, keyString);
+    return Zig::ImportMetaObject::create(globalObject, key);
 }
 
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,

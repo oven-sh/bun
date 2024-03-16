@@ -1,3 +1,4 @@
+#include "JavaScriptCore/JSCJSValue.h"
 #include "root.h"
 #include "headers.h"
 
@@ -46,6 +47,7 @@
 #include "CommonJSModuleRecord.h"
 #include <JavaScriptCore/JSPromise.h>
 #include "PathInlines.h"
+#include "wtf/text/StringView.h"
 
 namespace Zig {
 using namespace JSC;
@@ -125,22 +127,44 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
     }
 }
 
-Zig::ImportMetaObject* Zig::ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JSValue key)
+ImportMetaObject* ImportMetaObject::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url)
 {
-    if (WebCore::DOMURL* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(JSValue::encode(key))) {
-        return create(globalObject, JSC::jsString(globalObject->vm(), domURL->href().fileSystemPath()));
+    ImportMetaObject* ptr = new (NotNull, JSC::allocateCell<ImportMetaObject>(vm)) ImportMetaObject(vm, structure, url);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, const WTF::String& url)
+{
+    VM& vm = globalObject->vm();
+    Zig::GlobalObject* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    auto structure = zigGlobalObject->ImportMetaObjectStructure();
+    return create(vm, globalObject, structure, url);
+}
+
+ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL)
+{
+    if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(JSValue::encode(specifierOrURL))) {
+        return create(globalObject, url->href().string());
     }
 
-    auto* keyString = key.toStringOrNull(globalObject);
-    if (UNLIKELY(!keyString)) {
-        return nullptr;
-    }
+    WTF::String specifier = specifierOrURL.toWTFString(globalObject);
+    ASSERT(specifier);
+    return ImportMetaObject::createFromSpecifier(globalObject, specifier);
+}
 
-    if (keyString->value(globalObject).startsWith("file://"_s)) {
-        return create(globalObject, JSC::jsString(globalObject->vm(), WTF::URL(keyString->value(globalObject)).fileSystemPath()));
+ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
+{
+    auto index = specifier.find('?');
+    URL url;
+    if (index != notFound) {
+        StringView view = specifier;
+        url = URL::fileURLWithFileSystemPath(view.substring(0, index));
+        url.setQuery(view.substring(index + 1));
+    } else {
+        url = URL::fileURLWithFileSystemPath(specifier);
     }
-
-    return create(globalObject, keyString);
+    return create(globalObject, url.string());
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireResolve);
@@ -374,30 +398,6 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     }
 }
 
-enum class ImportMetaPropertyOffset : uint32_t {
-    url,
-    dir,
-    file,
-    path,
-    require,
-};
-static constexpr uint32_t numberOfImportMetaProperties = 5;
-
-Zig::ImportMetaObject* ImportMetaObject::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url)
-{
-    ImportMetaObject* ptr = new (NotNull, JSC::allocateCell<ImportMetaObject>(vm)) ImportMetaObject(vm, structure, url);
-    ptr->finishCreation(vm);
-    return ptr;
-}
-Zig::ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* jslobalObject, JSC::JSString* keyString)
-{
-    auto* globalObject = jsCast<Zig::GlobalObject*>(jslobalObject);
-    auto& vm = globalObject->vm();
-    auto view = keyString->value(globalObject);
-    JSC::Structure* structure = globalObject->ImportMetaObjectStructure();
-    return Zig::ImportMetaObject::create(vm, globalObject, structure, view);
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_url, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     ImportMetaObject* thisObject = jsDynamicCast<ImportMetaObject*>(JSValue::decode(thisValue));
@@ -406,6 +406,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_url, (JSGlobalObject * globalO
 
     return JSValue::encode(thisObject->urlProperty.getInitializedOnMainThread(thisObject));
 }
+
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_dir, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     ImportMetaObject* thisObject = jsDynamicCast<ImportMetaObject*>(JSValue::decode(thisValue));
@@ -414,6 +415,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_dir, (JSGlobalObject * globalO
 
     return JSValue::encode(thisObject->dirProperty.getInitializedOnMainThread(thisObject));
 }
+
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_file, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     ImportMetaObject* thisObject = jsDynamicCast<ImportMetaObject*>(JSValue::decode(thisValue));
@@ -422,6 +424,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_file, (JSGlobalObject * global
 
     return JSValue::encode(thisObject->fileProperty.getInitializedOnMainThread(thisObject));
 }
+
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_path, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     ImportMetaObject* thisObject = jsDynamicCast<ImportMetaObject*>(JSValue::decode(thisValue));
@@ -430,6 +433,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_path, (JSGlobalObject * global
 
     return JSValue::encode(thisObject->pathProperty.getInitializedOnMainThread(thisObject));
 }
+
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_require, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     ImportMetaObject* thisObject = jsDynamicCast<ImportMetaObject*>(JSValue::decode(thisValue));
@@ -438,6 +442,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_require, (JSGlobalObject * glo
 
     return JSValue::encode(thisObject->requireProperty.getInitializedOnMainThread(thisObject));
 }
+
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(jsGlobalObject);
@@ -536,7 +541,6 @@ void ImportMetaObject::finishCreation(VM& vm)
         WTF::String path;
 
         if (url.isValid()) {
-
             if (url.protocolIsFile()) {
                 path = url.fileSystemPath();
             } else {
@@ -551,22 +555,18 @@ void ImportMetaObject::finishCreation(VM& vm)
     });
     this->urlProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
-        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
-
-        init.set(jsString(init.vm, url.string()));
+        init.set(jsString(init.vm, meta->url));
     });
     this->dirProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
 
-        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
+        WTF::URL url(meta->url);
         WTF::String dirname;
 
-        if (url.isValid()) {
-            if (url.protocolIsFile()) {
-                dirname = url.fileSystemPath();
-            } else {
-                dirname = url.path().toString();
-            }
+        if (url.protocolIsFile()) {
+            dirname = url.fileSystemPath();
+        } else {
+            dirname = url.path().toString();
         }
 
         if (dirname.endsWith(PLATFORM_SEP_s)) {
@@ -580,21 +580,16 @@ void ImportMetaObject::finishCreation(VM& vm)
     this->fileProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
 
-        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
+        WTF::URL url(meta->url);
         WTF::String path;
 
-        if (!url.isValid()) {
-            path = meta->url;
+        if (url.protocolIsFile()) {
+            path = url.fileSystemPath();
         } else {
-            if (url.protocolIsFile()) {
-                path = url.fileSystemPath();
-            } else {
-                path = url.path().toString();
-            }
+            path = url.path().toString();
         }
 
         WTF::String filename;
-
         if (path.endsWith(PLATFORM_SEP_s)) {
             filename = path.substring(path.reverseFind(PLATFORM_SEP, path.length() - 2) + 1);
         } else {
@@ -606,11 +601,8 @@ void ImportMetaObject::finishCreation(VM& vm)
     this->pathProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = jsCast<ImportMetaObject*>(init.owner);
 
-        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
-
-        if (!url.isValid()) {
-            init.set(jsString(init.vm, meta->url));
-        } else if (url.protocolIsFile()) {
+        WTF::URL url(meta->url);
+        if (url.protocolIsFile()) {
             init.set(jsString(init.vm, url.fileSystemPath()));
         } else {
             init.set(jsString(init.vm, url.path()));

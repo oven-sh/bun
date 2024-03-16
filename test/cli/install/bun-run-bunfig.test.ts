@@ -41,7 +41,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       const nodeBin = result.stdout.toString().trim();
 
       if (bun) {
-        expect(realpathSync(nodeBin)).toBe(realpathSync(process.argv0));
+        expect(realpathSync(nodeBin)).toBe(realpathSync(process.execPath));
       } else {
         expect(realpathSync(nodeBin)).toBe(realpathSync(node));
       }

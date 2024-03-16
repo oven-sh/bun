@@ -485,3 +485,35 @@ bun run --bun dev
 ```
 
 If set to `false`, this will disable the `node` symlink.
+
+### `run.silent` - suppress reporting the command being run
+
+When `true`, suppresses the output of the command being run by `bun run` or `bun`.
+
+```toml
+[run]
+silent = true
+```
+
+Without this option, the command being run will be printed to the console:
+
+```sh
+$ bun run dev
+> $ echo "Running \"dev\"..."
+Running "dev"...
+```
+
+With this option, the command being run will not be printed to the console:
+
+```sh
+$ bun run dev
+Running "dev"...
+```
+
+This is equivalent to passing `--silent` to all `bun run` commands:
+
+```sh
+bun --silent run dev
+bun --silent dev
+bun run --silent dev
+```

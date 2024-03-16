@@ -9554,14 +9554,9 @@ pub fn MaybeChild(comptime T: type) type {
     };
 }
 
-pub fn closefd(fd: bun.FileDescriptor) void {
+fn closefd(fd: bun.FileDescriptor) void {
     if (Syscall.close2(fd)) |err| {
-        _ = err;
-        log("ERR closefd: {}\n", .{fd});
-        // stderr_mutex.lock();
-        // defer stderr_mutex.unlock();
-        // const stderr = std.io.getStdErr().writer();
-        // err.toSystemError().format("error", .{}, stderr) catch @panic("damn");
+        log("ERR closefd: {}\n", .{err});
     }
 }
 

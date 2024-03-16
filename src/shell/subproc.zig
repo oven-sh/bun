@@ -1178,14 +1178,6 @@ pub const PipeReader = struct {
 
     pub const toJS = toReadableStream;
 
-    // pub fn handleErrorFromCapturedWriter(this: *PipeReader, err: bun.sys.Error) void {
-    //     if (comptime bun.Environment.isPosix) {
-    //         this.
-    //     } else {
-
-    //     }
-    // }
-
     pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
         var this: *PipeReader = @ptrCast(@alignCast(ptr));
         this.buffered_output.append(chunk);
@@ -1198,9 +1190,7 @@ pub const PipeReader = struct {
         if (should_continue) {
             if (bun.Environment.isPosix) this.reader.registerPoll() else switch (this.reader.startWithCurrentPipe()) {
                 .err => |e| {
-                    const writer = std.io.getStdErr().writer();
-                    e.format("Yoopsy ", .{}, writer) catch @panic("oops");
-                    @panic("TODO SHELL SUBPROC onReadChunk error");
+                    Output.panic("TODO: implement error handling in Bun Shell PipeReader.onReadChunk\n{}", .{e});
                 },
                 else => {},
             }

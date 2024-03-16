@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { realpathSync, chmodSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles, toTOMLString } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles, toTOMLString } from "harness";
 import { join } from "path";
 
 describe.each(["bun run", "bun"])(`%s`, cmd => {
@@ -16,13 +16,14 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
           bun,
         },
       });
+      const which = isWindows ? "where" : "which";
 
       const cwd = tempDirWithFiles("run.where.node." + cmd2, {
         "bunfig.toml": bunfig,
         "package.json": JSON.stringify(
           {
             scripts: {
-              "where-node": "which node",
+              "where-node": `${which} node`,
             },
           },
           null,

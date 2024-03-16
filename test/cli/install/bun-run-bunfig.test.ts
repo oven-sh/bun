@@ -4,7 +4,7 @@ import { bunEnv, bunExe, isWindows, tempDirWithFiles, toTOMLString } from "harne
 import { join } from "path";
 
 describe.each(["bun run", "bun"])(`%s`, cmd => {
-  const runCmd = cmd === "bun" ? ["run"] : [];
+  const runCmd = cmd === "bun" ? ["-c=bunfig.toml", "run"] : ["-c=bunfig.toml"];
   const node = Bun.which("node")!;
 
   describe.each(["--bun", "without --bun"])("%s", cmd2 => {
@@ -16,7 +16,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
           bun,
         },
       });
-      const which = isWindows ? "where" : "which";
+      const which = "which";
 
       const cwd = tempDirWithFiles("run.where.node." + cmd2, {
         "bunfig.toml": bunfig,
@@ -50,73 +50,83 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     });
   });
 
-  test("run.shell system", async () => {
-    const bunfig = toTOMLString({
-      run: {
-        shell: "system",
-      },
-    });
-
-    const cwd = tempDirWithFiles("run.shell.system", {
-      "bunfig.toml": bunfig,
-      "package.json": JSON.stringify(
-        {
-          scripts: {
-            start: "this-should-start-with-bun-in-the-error-message",
-          },
+  describe.each(["bun", "system"])(`run.shell %s`, shell => {
+    test.each(["true", "false"])("run.silent = %s", silentStr => {
+      const silent = silentStr === "true";
+      const bunfig = toTOMLString({
+        run: {
+          shell,
+          silent,
         },
-        null,
-        2,
-      ),
-    });
+      });
 
-    const result = Bun.spawnSync({
-      cmd: [bunExe(), "--silent", ...runCmd, "start"],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "inherit",
-      stdin: "ignore",
-      cwd,
-    });
-
-    expect(result.success).toBeFalse();
-    const err = result.stderr.toString().trim();
-    expect(err).not.toStartWith("bun: ");
-    expect(err).toContain("command not found");
-  });
-
-  test("run.shell bun", async () => {
-    const bunfig = toTOMLString({
-      run: {
-        shell: "bun",
-      },
-    });
-
-    const cwd = tempDirWithFiles("run.shell.bun", {
-      "bunfig.toml": bunfig,
-      "package.json": JSON.stringify(
-        {
-          scripts: {
-            start: "this-should-start-with-bun-in-the-error-message",
+      const cwd = tempDirWithFiles(Bun.hash(bunfig).toString(36), {
+        "bunfig.toml": bunfig,
+        "package.json": JSON.stringify(
+          {
+            scripts: {
+              startScript: "echo 1",
+            },
           },
+          null,
+          2,
+        ),
+      });
+
+      const result = Bun.spawnSync({
+        cmd: [bunExe(), ...runCmd, "startScript"],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "ignore",
+        stdin: "ignore",
+        cwd,
+      });
+
+      if (silent) {
+        expect(result.stderr.toString().trim()).toBe("");
+      } else {
+        expect(result.stderr.toString().trim()).toContain("$ echo 1");
+      }
+      expect(result.success).toBeTrue();
+    });
+    test("command not found", async () => {
+      const bunfig = toTOMLString({
+        run: {
+          shell,
         },
-        null,
-        2,
-      ),
-    });
+      });
 
-    const result = Bun.spawnSync({
-      cmd: [bunExe(), "--silent", ...runCmd, "start"],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "inherit",
-      stdin: "ignore",
-      cwd,
-    });
+      const cwd = tempDirWithFiles("run.shell.system-" + Bun.hash(bunfig).toString(32), {
+        "bunfig.toml": bunfig,
+        "package.json": JSON.stringify(
+          {
+            scripts: {
+              start: "this-should-start-with-bun-in-the-error-message",
+            },
+          },
+          null,
+          2,
+        ),
+      });
 
-    const err = result.stderr.toString().trim();
-    expect(err).not.toStartWith("bun: ");
-    expect(err).toContain("command not found");
-    expect(result.success).toBeFalse();
+      const result = Bun.spawnSync({
+        cmd: [bunExe(), "--silent", ...runCmd, "start"],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "inherit",
+        stdin: "ignore",
+        cwd,
+      });
+
+      const err = result.stderr.toString().trim();
+      if (shell === "bun") {
+        expect(err).toStartWith("bun: ");
+      } else {
+        expect(err).not.toStartWith("bun: ");
+      }
+      expect(err).toContain("command not found");
+      expect(err).toContain("this-should-start-with-bun-in-the-error-message");
+      expect(result.success).toBeFalse();
+    });
   });
 });

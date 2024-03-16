@@ -3190,3 +3190,4 @@ pub fn needsEscapeUtf8AsciiLatin1Slow(str: []const u8) bool {
     }
     return false;
 }
+pub const ExitCode = eval.ExitCode;

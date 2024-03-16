@@ -73,7 +73,7 @@ pub fn assert(cond: bool, comptime msg: []const u8) void {
     }
 }
 
-const ExitCode = if (bun.Environment.isWindows) u16 else u16;
+pub const ExitCode = u16;
 
 pub const StateKind = enum(u8) {
     script,
@@ -609,6 +609,7 @@ pub const Interpreter = struct {
     started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     done: ?*bool = null,
+    exit_code: ?*ExitCode = null,
 
     const InterpreterChildPtr = StatePtrUnion(.{
         Script,
@@ -1145,7 +1146,7 @@ pub const Interpreter = struct {
         return .{ .result = interpreter };
     }
 
-    pub fn initAndRunFromFile(mini: *JSC.MiniEventLoop, path: []const u8) !void {
+    pub fn initAndRunFromFile(mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         const src = src: {
             var file = try std.fs.cwd().openFile(path, .{});
@@ -1185,10 +1186,12 @@ pub const Interpreter = struct {
         var interp = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
-                return;
+                return 1;
             },
             .result => |i| i,
         };
+        var exit_code: ExitCode = 1;
+
         const IsDone = struct {
             done: bool = false,
 
@@ -1199,11 +1202,13 @@ pub const Interpreter = struct {
         };
         var is_done: IsDone = .{};
         interp.done = &is_done.done;
+        interp.exit_code = &exit_code;
         try interp.run();
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
+        return exit_code;
     }
 
-    pub fn initAndRunFromSource(mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !void {
+    pub fn initAndRunFromSource(mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 
@@ -1231,7 +1236,7 @@ pub const Interpreter = struct {
         var interp = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
-                return;
+                return 1;
             },
             .result => |i| i,
         };
@@ -1244,10 +1249,13 @@ pub const Interpreter = struct {
             }
         };
         var is_done: IsDone = .{};
+        var exit_code: ExitCode = 1;
         interp.done = &is_done.done;
+        interp.exit_code = &exit_code;
         try interp.run();
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         interp.deinit();
+        return exit_code;
     }
 
     pub fn run(this: *ThisInterpreter) !void {
@@ -1294,6 +1302,7 @@ pub const Interpreter = struct {
     fn finish(this: *ThisInterpreter, exit_code: ExitCode) void {
         log("finish", .{});
         defer decrPendingActivityFlag(&this.has_pending_activity);
+
         if (this.event_loop == .js) {
             // defer this.deinit();
             // this.promise.resolve(this.global, JSValue.jsNumberFromInt32(@intCast(exit_code)));
@@ -1302,6 +1311,7 @@ pub const Interpreter = struct {
             _ = this.resolve.call(&.{JSValue.jsNumberFromU16(exit_code)});
         } else {
             this.done.?.* = true;
+            this.exit_code.?.* = exit_code;
         }
     }
 

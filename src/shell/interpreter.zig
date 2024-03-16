@@ -2820,6 +2820,7 @@ pub const Interpreter = struct {
             if (this.currently_executing) |child| {
                 child.deinit();
             }
+            this.io.deinit();
             this.base.interpreter.allocator.destroy(this);
         }
     };

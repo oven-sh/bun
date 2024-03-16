@@ -1696,6 +1696,8 @@ pub const MiniEventLoop = struct {
     after_event_loop_callback_ctx: ?*anyopaque = null,
     after_event_loop_callback: ?JSC.OpaqueCallback = null,
     pipe_read_buffer: ?*PipeReadBuffer = null,
+    stdout_store: ?*JSC.WebCore.Blob.Store = null,
+    stderr_store: ?*JSC.WebCore.Blob.Store = null,
     const PipeReadBuffer = [256 * 1024]u8;
 
     pub threadlocal var globalInitialized: bool = false;
@@ -1882,6 +1884,70 @@ pub const MiniEventLoop = struct {
 
         this.loop.wakeup();
     }
+
+    pub fn stderr(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
+        return this.stderr_store orelse brk: {
+            const store = bun.default_allocator.create(JSC.WebCore.Blob.Store) catch bun.outOfMemory();
+            var mode: bun.Mode = 0;
+            const fd = if (comptime Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+
+            switch (bun.sys.fstat(fd)) {
+                .result => |stat| {
+                    mode = @intCast(stat.mode);
+                },
+                .err => {},
+            }
+
+            store.* = JSC.WebCore.Blob.Store{
+                .ref_count = 2,
+                .allocator = bun.default_allocator,
+                .data = .{
+                    .file = JSC.WebCore.Blob.FileStore{
+                        .pathlike = .{
+                            .fd = fd,
+                        },
+                        .is_atty = bun.Output.stderr_descriptor_type == .terminal,
+                        .mode = mode,
+                    },
+                },
+            };
+
+            this.stderr_store = store;
+            break :brk store;
+        };
+    }
+
+    pub fn stdout(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
+        return this.stdout_store orelse brk: {
+            const store = bun.default_allocator.create(JSC.WebCore.Blob.Store) catch bun.outOfMemory();
+            var mode: bun.Mode = 0;
+            const fd = if (Environment.isWindows) bun.FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+
+            switch (bun.sys.fstat(fd)) {
+                .result => |stat| {
+                    mode = @intCast(stat.mode);
+                },
+                .err => {},
+            }
+
+            store.* = JSC.WebCore.Blob.Store{
+                .ref_count = 2,
+                .allocator = bun.default_allocator,
+                .data = .{
+                    .file = JSC.WebCore.Blob.FileStore{
+                        .pathlike = .{
+                            .fd = fd,
+                        },
+                        .is_atty = bun.Output.stdout_descriptor_type == .terminal,
+                        .mode = mode,
+                    },
+                },
+            };
+
+            this.stdout_store = store;
+            break :brk store;
+        };
+    }
 };
 
 pub const AnyEventLoop = union(enum) {
@@ -1996,6 +2062,20 @@ pub const AnyEventLoop = union(enum) {
 pub const EventLoopHandle = union(enum) {
     js: *JSC.EventLoop,
     mini: *MiniEventLoop,
+
+    pub fn stdout(this: EventLoopHandle) *JSC.WebCore.Blob.Store {
+        return switch (this) {
+            .js => this.js.virtual_machine.rareData().stdout(),
+            .mini => this.mini.stdout(),
+        };
+    }
+
+    pub fn stderr(this: EventLoopHandle) *JSC.WebCore.Blob.Store {
+        return switch (this) {
+            .js => this.js.virtual_machine.rareData().stderr(),
+            .mini => this.mini.stderr(),
+        };
+    }
 
     pub fn cast(this: EventLoopHandle, comptime as: @Type(.EnumLiteral)) if (as == .js) *JSC.EventLoop else *MiniEventLoop {
         if (as == .js) {

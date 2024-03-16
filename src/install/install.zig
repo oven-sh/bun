@@ -9682,6 +9682,11 @@ pub const PackageManager = struct {
 
                         manager.lockfile.overrides = try lockfile.overrides.clone(&lockfile, manager.lockfile, builder);
 
+                        manager.lockfile.trusted_dependencies = if (lockfile.trusted_dependencies) |trusted_dependencies|
+                            try trusted_dependencies.clone(manager.lockfile.allocator)
+                        else
+                            null;
+
                         try manager.lockfile.buffers.dependencies.ensureUnusedCapacity(manager.lockfile.allocator, len);
                         try manager.lockfile.buffers.resolutions.ensureUnusedCapacity(manager.lockfile.allocator, len);
 

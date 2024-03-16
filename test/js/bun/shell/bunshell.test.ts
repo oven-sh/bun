@@ -733,6 +733,22 @@ describe("deno_task", () => {
       .stderr("Stdout\nStderr\n")
       .quiet()
       .runAsTest("redirect stdout to stderr quiet");
+
+    TestBuilder.command`echo hi > /dev/null`.quiet().runAsTest("redirect /dev/null");
+
+    TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log('Hello friends')"} > /dev/null`
+      .quiet()
+      .runAsTest("subproc redirect /dev/null");
+
+    const code = /* ts */ `
+      import { $ } from 'bun'
+
+      await $\`echo Bunception!\`
+      `;
+
+    TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code} > /dev/null`
+      .quiet()
+      .runAsTest("bunception redirect /dev/null");
   });
 
   describe("pwd", async () => {
@@ -786,7 +802,7 @@ describe("deno_task", () => {
       await $\`somecommandthatdoesnotexist\`
     }
 
-    someFunction()
+    await someFunction()
     `;
 
     const [_, lineNr] = code

@@ -18,6 +18,9 @@ namespace Zig {
 
 #include "headers-handwritten.h"
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
+
 template<class CppType, typename ZigType> class Wrap {
 public:
     Wrap() {};
@@ -350,8 +353,6 @@ static const WTF::String toStringStatic(ZigString str)
 
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
 {
-    JSC::VM& vm = globalObject->vm();
-
     WTF::String message = toStringCopy(*str);
     if (UNLIKELY(message.isNull() && str->len > 0)) {
         // pending exception while creating an error.
@@ -366,8 +367,6 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC__JSGlobalObject* 
 
 static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
 {
-    JSC::VM& vm = globalObject->vm();
-
     JSC::JSObject* result = JSC::createTypeError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
@@ -376,8 +375,6 @@ static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC__JSGlobalObje
 
 static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
 {
-    JSC::VM& vm = globalObject->vm();
-
     JSC::JSObject* result = JSC::createSyntaxError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
@@ -386,8 +383,6 @@ static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC__JSGlobalOb
 
 static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
 {
-    JSC::VM& vm = globalObject->vm();
-
     JSC::JSObject* result = JSC::createRangeError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
@@ -420,3 +415,5 @@ OutType* WebCoreCast(JSC__JSValue JSValue0)
 
     return reinterpret_cast<OutType*>(&jsdomURL->wrapped());
 }
+
+#pragma clang diagnostic pop

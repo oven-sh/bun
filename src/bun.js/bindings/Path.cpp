@@ -191,8 +191,6 @@ static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
 
 extern JSC__JSValue Bun__Path__create(JSC::JSGlobalObject* globalObject, bool isWindows)
 {
-    JSC::VM& vm = globalObject->vm();
-
     return JSC::JSValue::encode(JSC::JSValue(Zig::createPath(
         globalObject, isWindows)));
 }

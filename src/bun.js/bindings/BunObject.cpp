@@ -54,7 +54,6 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
 {
     auto& vm = lexicalGlobalObject->vm();
 
-    auto clientData = WebCore::clientData(vm);
     if (arrayValue.isUndefinedOrNull() || !arrayValue) {
         return JSC::JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1)));
     }
@@ -333,7 +332,6 @@ static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionBunEscapeHTMLWitho
 JSC_DEFINE_HOST_FUNCTION(functionBunSleepThenCallback,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
 
     JSPromise* promise = jsDynamicCast<JSC::JSPromise*>(callFrame->argument(0));
     RELEASE_ASSERT(promise);

@@ -702,8 +702,6 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
     if (UNLIKELY(signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()))
         return;
 
-    SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
-
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
     if (UNLIKELY(!context))
         return;
@@ -839,7 +837,6 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #else
             if (signalNumber != SIGKILL) { // windows has no SIGSTOP
 #endif
-                uint32_t contextId = eventEmitter.scriptExecutionContext()->identifier();
 
                 if (isAdded) {
                     if (!signalToContextIdsMap->contains(signalNumber)) {
@@ -875,10 +872,11 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     }
                 } else {
                     if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end()) {
-                        SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
+
 #if !OS(WINDOWS)
                         signal(signalNumber, SIG_DFL);
 #else
+                        SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                         Bun__UVSignalHandle__close(signal_handle.handle);
 #endif
                         signalToContextIdsMap->remove(signalNumber);
@@ -1256,8 +1254,6 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
     // }
     auto constructUserLimits = [&]() -> JSValue {
         JSC::JSObject* userLimits = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 11);
-
-        rusage usage;
 
         static constexpr int resourceLimits[] = {
             RLIMIT_CORE,
@@ -1657,7 +1653,6 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsNumber(fd));
 
-    auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;
@@ -1696,12 +1691,10 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = Bun__getDefaultGlobal();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsNumber(STDIN_FILENO));
 
-    auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
 
     NakedPtr<JSC::Exception> returnedException = nullptr;

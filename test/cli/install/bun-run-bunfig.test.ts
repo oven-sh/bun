@@ -57,6 +57,8 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
 
   describe.each(["bun", "system", "default"])(`run.shell = "%s"`, shellStr => {
     const shell = shellStr === "default" ? (isWindows ? "bun" : "system") : shellStr;
+    const command_not_found =
+      isWindows && shell === "system" ? "is not recognized as an internal or external command" : "command not found";
     test.each(["true", "false"])('run.silent = "%s"', silentStr => {
       const silent = silentStr === "true";
       const bunfig = toTOMLString({
@@ -130,7 +132,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       } else {
         expect(err).not.toStartWith("bun: ");
       }
-      expect(err).toContain("command not found");
+      expect(err).toContain(command_not_found);
       expect(err).toContain("this-should-start-with-bun-in-the-error-message");
       expect(result.success).toBeFalse();
     });

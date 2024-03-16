@@ -3609,24 +3609,23 @@ pub const Interpreter = struct {
                             } };
 
                             setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
-                        } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob| {
+                        } else if (this.base.interpreter.jsobjs[val.idx].as(JSC.WebCore.Blob)) |blob__| {
+                            const blob = blob__.dupe();
                             if (this.node.redirect.stdin) {
                                 if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
-                                    .Blob = blob.*,
+                                    .Blob = blob,
                                 }, stdin_no)) {
                                     return;
                                 }
-                            }
-                            if (this.node.redirect.stdout) {
+                            } else if (this.node.redirect.stdout) {
                                 if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
-                                    .Blob = blob.*,
+                                    .Blob = blob,
                                 }, stdout_no)) {
                                     return;
                                 }
-                            }
-                            if (this.node.redirect.stderr) {
+                            } else if (this.node.redirect.stderr) {
                                 if (!spawn_args.stdio[stdin_no].extractBlob(global, .{
-                                    .Blob = blob.*,
+                                    .Blob = blob,
                                 }, stderr_no)) {
                                     return;
                                 }

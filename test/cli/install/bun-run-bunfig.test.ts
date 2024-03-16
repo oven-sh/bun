@@ -6,6 +6,7 @@ import { join } from "path";
 describe.each(["bun run", "bun"])(`%s`, cmd => {
   const runCmd = cmd === "bun" ? ["-c=bunfig.toml", "run"] : ["-c=bunfig.toml"];
   const node = Bun.which("node")!;
+  const execPath = process.execPath;
 
   describe.each(["--bun", "without --bun"])("%s", cmd2 => {
     test("which node", async () => {
@@ -42,7 +43,11 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       const nodeBin = result.stdout.toString().trim();
 
       if (bun) {
-        expect(realpathSync(nodeBin)).toBe(realpathSync(process.execPath));
+        if (isWindows) {
+          expect(realpathSync(nodeBin)).toContain("\\bun-node-");
+        } else {
+          expect(realpathSync(nodeBin)).toBe(realpathSync(execPath));
+        }
       } else {
         expect(realpathSync(nodeBin)).toBe(realpathSync(node));
       }

@@ -1335,6 +1335,12 @@ pub const Interpreter = struct {
     }
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
+        if (this.root_shell._buffered_stderr == .owned) {
+            this.root_shell._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+        }
+        if (this.root_shell._buffered_stdout == .owned) {
+            this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+        }
         this.resolve.deinit();
         this.reject.deinit();
         this.allocator.destroy(this);
@@ -5863,7 +5869,7 @@ pub const Interpreter = struct {
 
             pub fn deinit(this: *Echo) void {
                 log("({s}) deinit", .{@tagName(.echo)});
-                _ = this;
+                this.output.deinit();
             }
         };
 

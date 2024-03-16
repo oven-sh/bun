@@ -4308,9 +4308,8 @@ pub const Interpreter = struct {
                         const path = cmd.redirection_file.items[0..cmd.redirection_file.items.len -| 1 :0];
                         log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
                         const perm = 0o666;
-                        const is_nonblocking = (node.redirect.stdout or node.redirect.stderr) and is_pollable;
-                        var flags = node.redirect.toFlags();
-                        if (is_nonblocking) flags |= std.os.O.NONBLOCK;
+                        const is_nonblocking = false;
+                        const flags = node.redirect.toFlags();
                         const redirfd = switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
                             .err => |e| {
                                 cmd.writeFailingError("bun: {s}: {s}", .{ e.toSystemError().message, path });

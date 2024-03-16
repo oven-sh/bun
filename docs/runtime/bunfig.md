@@ -433,33 +433,39 @@ editor = "code"
 
 The `bun run` command can be configured under the `[run]` section. These apply to the `bun run` command and the `bun` command when running a file or executable or script.
 
-### `run.shell`: `"system" | "bun"`
+Currently, `bunfig.toml` isn't always automatically loaded for `bun run` in a local project (it does check for a global `bunfig.toml`), so you might still need to pass `-c` or `-c=bunfig.toml` to use these settings.
+
+### `run.shell` - use the system shell or Bun's shell
 
 The shell to use when running package.json scripts via `bun run` or `bun`. On Windows, this defaults to `"bun"` and on other platforms it defaults to `"system"`.
 
-Always use the system shell instead of Bun's shell (default behavior unless Windows):
+To always use the system shell instead of Bun's shell (default behavior unless Windows):
 
 ```toml
-
 [run]
+# default outside of Windows
 shell = "system"
 ```
 
-Always use Bun's shell instead of the system shell:
+To always use Bun's shell instead of the system shell:
 
 ```toml
 [run]
+# default on Windows
 shell = "bun"
 ```
 
-### `run.bun`: `boolean`
+### `run.bun` - auto alias `node` to `bun`
 
-When `true`, this adds a `node` symlink to `$PATH` which points to the `bun` binary for all scripts or executables invoked by `bun run` or `bun`.
+When `true`, this prepends `$PATH` with a `node` symlink that points to the `bun` binary for all scripts or executables invoked by `bun run` or `bun`.
+
+This means that if you have a script that runs `node`, it will actually run `bun` instead, without needing to change your script. This works recursively, so if your script runs another script that runs `node`, it will also run `bun` instead. This applies to shebangs as well, so if you have a script with a shebang that points to `node`, it will actually run `bun` instead.
 
 By default, this is enabled if `node` is not already in your `$PATH`.
 
 ```toml
 [run]
+# equivalent to `bun --bun` for all `bun run` commands
 bun = true
 ```
 

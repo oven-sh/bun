@@ -123,7 +123,7 @@ pub const Run = struct {
         vm.global.vm().holdAPILock(&run, callback);
     }
 
-    fn bootBunShell(ctx: *const Command.Context, entry_path: []const u8) !void {
+    fn bootBunShell(ctx: *const Command.Context, entry_path: []const u8) !bun.shell.ExitCode {
         @setCold(true);
 
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
@@ -136,8 +136,7 @@ pub const Run = struct {
         try bundle.runEnvLoader();
         const mini = JSC.MiniEventLoop.initGlobal(bundle.env);
         mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
-        try bun.shell.Interpreter.initAndRunFromFile(mini, entry_path);
-        return;
+        return try bun.shell.Interpreter.initAndRunFromFile(mini, entry_path);
     }
 
     pub fn boot(ctx_: Command.Context, entry_path: string) !void {
@@ -146,8 +145,8 @@ pub const Run = struct {
         bun.JSC.initialize();
 
         if (strings.endsWithComptime(entry_path, ".bun.sh")) {
-            try bootBunShell(&ctx, entry_path);
-            Global.exit(0);
+            const exit_code = try bootBunShell(&ctx, entry_path);
+            Global.exitWide(exit_code);
             return;
         }
 

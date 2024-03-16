@@ -26,6 +26,8 @@ pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
 pub const Interpreter = eval.Interpreter;
 pub const Subprocess = subproc.ShellSubprocess;
+pub const IOWriter = Interpreter.IOWriter;
+pub const IOReader = Interpreter.IOReader;
 // pub const IOWriter = interpret.IOWriter;
 // pub const SubprocessMini = subproc.ShellSubprocessMini;
 

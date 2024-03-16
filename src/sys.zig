@@ -137,6 +137,7 @@ pub const Tag = enum(u8) {
     listen,
     pipe,
     try_write,
+    socketpair,
 
     uv_spawn,
     uv_pipe,

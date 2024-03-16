@@ -527,9 +527,11 @@ pub const Arguments = struct {
 
             if (args.flag("--hot")) {
                 ctx.debug.hot_reload = .hot;
+                Bun__watchMode = .hot;
             } else if (args.flag("--watch")) {
                 ctx.debug.hot_reload = .watch;
                 bun.auto_reload_on_crash = true;
+                Bun__watchMode = .watch;
             }
 
             if (args.option("--origin")) |origin| {
@@ -1087,7 +1089,7 @@ pub const Command = struct {
 
     pub const MacroOptions = union(enum) { unspecified: void, disable: void, map: MacroMap };
 
-    pub const HotReload = enum {
+    pub const HotReload = enum(u8) {
         none,
         hot,
         watch,
@@ -2217,3 +2219,5 @@ pub const Command = struct {
         });
     };
 };
+
+pub export var Bun__watchMode: bun.CLI.Command.HotReload = .none;

@@ -623,7 +623,6 @@ DEFINE_VISIT_CHILDREN(ImportMetaObject);
 
 void ImportMetaObject::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<ImportMetaObject*>(cell);
     // if (void* wrapped = thisObject->wrapped()) {
     // if (thisObject->scriptExecutionContext())
     //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());

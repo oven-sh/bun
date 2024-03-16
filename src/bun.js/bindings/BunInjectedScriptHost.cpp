@@ -111,34 +111,6 @@ static JSValue constructDataProperties(VM& vm, JSGlobalObject* exec, JSArray* ar
     RELEASE_AND_RETURN(scope, array);
 }
 
-static JSValue constructDataPropertiesSlow(VM& vm, JSGlobalObject* exec, JSArray* array, JSValue value)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (!value.isObject())
-        return value;
-
-    auto* object = asObject(value);
-    PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    object->getPropertyNames(exec, propertyNames, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, {});
-    unsigned i = 0;
-    auto catcher = DECLARE_CATCH_SCOPE(vm);
-
-    for (auto& propertyName : propertyNames) {
-        auto propertyValue = object->get(exec, propertyName);
-        if (catcher.exception()) {
-            catcher.clearException();
-            propertyValue = jsUndefined();
-        }
-
-        array->putDirectIndex(exec, i++, constructInternalProperty(vm, exec, propertyName, propertyValue));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    RELEASE_AND_RETURN(scope, array);
-}
-
 JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exec, JSC::JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -167,8 +139,6 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
         if (type == JSDOMWrapperType) {
             if (auto* headers = jsDynamicCast<JSFetchHeaders*>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
-                unsigned index = 0;
-                // array->putDirectIndex(exec, index++, constructInternalProperty(vm, exec, "#inspect"_s, WebCore::getInternalProperties(vm, exec, headers)));
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, headers));
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
@@ -176,17 +146,13 @@ JSValue BunInjectedScriptHost::getInternalProperties(VM& vm, JSGlobalObject* exe
 
             if (auto* params = jsDynamicCast<JSURLSearchParams*>(value)) {
                 auto* array = constructEmptyArray(exec, nullptr);
-                unsigned index = 0;
-                // array->putDirectIndex(exec, index++, constructInternalProperty(vm, exec, "#inspect"_s, WebCore::getInternalProperties(vm, exec, params)));
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, params));
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;
             }
 
             if (auto* formData = jsDynamicCast<JSDOMFormData*>(value)) {
-                unsigned index = 0;
                 auto* array = constructEmptyArray(exec, nullptr);
-                // array->putDirectIndex(exec, index++, constructInternalProperty(vm, exec, "#inspect"_s, WebCore::getInternalProperties(vm, exec, formData)));
                 constructDataProperties(vm, exec, array, WebCore::getInternalProperties(vm, exec, formData));
                 RETURN_IF_EXCEPTION(scope, {});
                 return array;

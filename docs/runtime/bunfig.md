@@ -426,4 +426,56 @@ editor = "code"
 # - "nvim", "neovim"
 # - "vim","vi"
 # - "emacs"
-``` -->
+```
+-->
+
+## `bun run`
+
+The `bun run` command can be configured under the `[run]` section. These apply to the `bun run` command and the `bun` command when running a file or executable or script.
+
+### `run.shell`: `"system" | "bun"`
+
+The shell to use when running package.json scripts via `bun run` or `bun`. On Windows, this defaults to `"bun"` and on other platforms it defaults to `"system"`.
+
+Always use the system shell instead of Bun's shell (default behavior unless Windows):
+
+```toml
+
+[run]
+shell = "system"
+```
+
+Always use Bun's shell instead of the system shell:
+
+```toml
+[run]
+shell = "bun"
+```
+
+### `run.bun`: `boolean`
+
+When `true`, this adds a `node` symlink to `$PATH` which points to the `bun` binary for all scripts or executables invoked by `bun run` or `bun`.
+
+By default, this is enabled if `node` is not already in your `$PATH`.
+
+```toml
+[run]
+bun = true
+```
+
+You can test this by running:
+
+```sh
+$ bun --bun which node # /path/to/bun
+$ bun which node # /path/to/node
+```
+
+This option is equivalent to prefixing all `bun run` commands with `--bun`:
+
+```sh
+bun --bun run dev
+bun --bun dev
+bun run --bun dev
+```
+
+If set to `false`, this will disable the `node` symlink.

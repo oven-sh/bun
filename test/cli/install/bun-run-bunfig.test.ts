@@ -1,14 +1,16 @@
-import { test, expect, describe } from "bun:test";
-import { tmpdir } from "os";
-import { join } from "path";
-import { mkdirSync } from "fs";
+import { describe, expect, test } from "bun:test";
+import { realpathSync, chmodSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles, toTOMLString } from "harness";
+import { join } from "path";
 
 describe.each(["bun run", "bun"])(`%s`, cmd => {
   const runCmd = cmd === "bun" ? ["run"] : [];
+  const node = Bun.which("node")!;
+
   describe.each(["--bun", "without --bun"])("%s", cmd2 => {
     test("which node", async () => {
       const bun = cmd2 === "--bun";
+      const bunFlag = bun ? ["--bun"] : [];
       const bunfig = toTOMLString({
         run: {
           bun,
@@ -29,16 +31,21 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       });
 
       const result = Bun.spawnSync({
-        cmd: [bunExe(), "--silent", ...runCmd, "where-node"],
+        cmd: [bunExe(), "--silent", ...bunFlag, ...runCmd, "where-node"],
         env: bunEnv,
         stderr: "inherit",
         stdout: "pipe",
         stdin: "ignore",
         cwd,
       });
-      console.log(Bun.which("node"));
+      const nodeBin = result.stdout.toString().trim();
+
+      if (bun) {
+        expect(realpathSync(nodeBin)).toBe(realpathSync(process.argv0));
+      } else {
+        expect(realpathSync(nodeBin)).toBe(realpathSync(node));
+      }
       expect(result.success).toBeTrue();
-      console.log("node:", result.stdout.toString());
     });
   });
 
@@ -73,7 +80,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
 
     expect(result.success).toBeFalse();
     const err = result.stderr.toString().trim();
-    expect(err).toStartWith("bun: ");
+    expect(err).not.toStartWith("bun: ");
     expect(err).toContain("command not found");
   });
 

@@ -1155,12 +1155,11 @@ pub const RunCommand = struct {
         ;
 
         Output.pretty(intro_text ++ "\n\n", .{});
-        Output.flush();
+
         Output.pretty("<b>Flags:<r>", .{});
-        Output.flush();
+
         clap.simpleHelp(&Arguments.run_params);
         Output.pretty("\n\n" ++ examples_text, .{});
-        Output.flush();
 
         if (package_json) |pkg| {
             if (pkg.scripts) |scripts| {
@@ -1184,16 +1183,15 @@ pub const RunCommand = struct {
                     // Output.prettyln("\n<d>{d} scripts<r>", .{scripts.count()});
 
                     Output.prettyln("\n", .{});
-                    Output.flush();
                 } else {
                     Output.prettyln("\n<r><yellow>No \"scripts\" found in package.json.<r>\n", .{});
-                    Output.flush();
                 }
             } else {
                 Output.prettyln("\n<r><yellow>No \"scripts\" found in package.json.<r>\n", .{});
-                Output.flush();
             }
         }
+
+        Output.flush();
     }
 
     pub fn exec(

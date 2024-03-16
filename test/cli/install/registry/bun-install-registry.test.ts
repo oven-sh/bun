@@ -3711,6 +3711,77 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
     });
 
+    test("bun pm trust and untrusted on missing package", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "uses-what-bin": "1.5.0",
+          },
+        }),
+      );
+
+      let { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "i"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      let err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      let out = await Bun.readableStreamToText(stdout);
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
+        " + uses-what-bin@1.5.0",
+        "",
+        expect.stringContaining("2 packages installed"),
+        "",
+        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "",
+      ]);
+      expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
+      expect(await exited).toBe(0);
+
+      // remove uses-what-bin from node_modules, bun pm trust and untrusted should handle missing package
+      await rm(join(packageDir, "node_modules", "uses-what-bin"), { recursive: true, force: true });
+
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "pm", "untrusted"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      }));
+
+      err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("bun pm untrusted");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      out = await Bun.readableStreamToText(stdout);
+      expect(out).toContain("Found 0 untrusted dependencies with scripts");
+      expect(await exited).toBe(0);
+
+      ({ stderr, exited } = spawn({
+        cmd: [bunExe(), "pm", "trust", "uses-what-bin"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      }));
+
+      expect(await exited).toBe(1);
+
+      err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("bun pm trust");
+      expect(err).toContain("0 scripts ran");
+      expect(err).toContain("uses-what-bin");
+    });
+
     describe("add trusted, delete, then add again", async () => {
       // when we change bun install to delete dependencies from node_modules
       // for both cases, we need to update this test

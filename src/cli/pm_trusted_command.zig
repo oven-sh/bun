@@ -100,14 +100,19 @@ pub const UntrustedCommand = struct {
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
 
-                    if (try package_scripts.getList(
+                    const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
                         node_modules_dir,
                         abs_node_modules_path.items,
                         alias,
                         resolution,
-                    )) |scripts_list| {
+                    ) catch |err| {
+                        if (err == error.ENOENT) continue;
+                        return err;
+                    };
+
+                    if (maybe_scripts_list) |scripts_list| {
                         if (scripts_list.total == 0 or scripts_list.items.len == 0) continue;
                         try untrusted_deps.put(ctx.allocator, dep_id, scripts_list);
                     }
@@ -263,14 +268,19 @@ pub const TrustCommand = struct {
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
 
-                    if (try package_scripts.getList(
+                    const maybe_scripts_list = package_scripts.getList(
                         pm.log,
                         pm.lockfile,
                         node_modules_dir,
                         abs_node_modules_path.items,
                         alias,
                         resolution,
-                    )) |scripts_list| {
+                    ) catch |err| {
+                        if (err == error.ENOENT) continue;
+                        return err;
+                    };
+
+                    if (maybe_scripts_list) |scripts_list| {
                         const skip = brk: {
                             if (trust_all) break :brk false;
 

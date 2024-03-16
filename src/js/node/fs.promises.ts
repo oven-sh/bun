@@ -320,7 +320,7 @@ export default real_export;
 
       try {
         this[kRef]();
-        return await read(fd, buffer, offset, length, position);
+        return { buffer, bytesRead: await read(fd, buffer, offset, length, position) };
       } finally {
         this[kUnref]();
       }
@@ -332,7 +332,7 @@ export default real_export;
 
       try {
         this[kRef]();
-        return await readv(fd, buffers, position);
+        return { buffers, bytesRead: await readv(fd, buffers, position) };
       } finally {
         this[kUnref]();
       }
@@ -396,7 +396,7 @@ export default real_export;
 
       try {
         this[kRef]();
-        return await write(fd, buffer, offset, length, position);
+        return { buffer, bytesWritten: await write(fd, buffer, offset, length, position) };
       } finally {
         this[kUnref]();
       }
@@ -408,7 +408,7 @@ export default real_export;
 
       try {
         this[kRef]();
-        return await writev(fd, buffers, position);
+        return { buffers, bytesWritten: await writev(fd, buffers, position) };
       } finally {
         this[kUnref]();
       }
@@ -463,15 +463,22 @@ export default real_export;
     }
 
     readableWebStream(options = kEmptyObject) {
-      throw new Error("BUN TODO FileHandle.readableWebStream");
+      const fd = this[kFd];
+      throwEBADFIfNecessary(fs.createReadStream, fd);
+
+      return Bun.file(fd).stream();
     }
 
-    createReadStream(options = undefined) {
-      throw new Error("BUN TODO FileHandle.createReadStream");
+    createReadStream(options) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(fs.createReadStream, fd);
+      return fs.createReadStream("", { fd, highWaterMark: 64 * 1024, ...(options || {}) });
     }
 
-    createWriteStream(options = undefined) {
-      throw new Error("BUN TODO FileHandle.createWriteStream");
+    createWriteStream(options) {
+      const fd = this[kFd];
+      throwEBADFIfNecessary(fs.createWriteStream, fd);
+      return fs.createWriteStream("", { fd, ...(options || {}) });
     }
 
     [kTransfer]() {

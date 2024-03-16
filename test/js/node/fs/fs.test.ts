@@ -2161,15 +2161,88 @@ describe("fs/promises", () => {
   });
 
   it("FileHandle#read returns object", async () => {
-    const fd = await fs.promises.open(__filename);
+    await using fd = await fs.promises.open(__filename);
     const buf = Buffer.alloc(10);
     expect(await fd.read(buf, 0, 10, 0)).toEqual({ bytesRead: 10, buffer: buf });
   });
 
   it("FileHandle#readv returns object", async () => {
-    const fd = await fs.promises.open(__filename);
+    await using fd = await fs.promises.open(__filename);
     const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
     expect(await fd.readv(buffers, 0, 20, 0)).toEqual({ bytesRead: 20, buffers });
+  });
+
+  it("FileHandle#write returns object", async () => {
+    await using fd = await fs.promises.open(`${tmpdir()}/${Date.now()}.writeFile.txt`, "w");
+    const buf = Buffer.from("test");
+    expect(await fd.write(buf, 0, 4, 0)).toEqual({ bytesWritten: 4, buffer: buf });
+  });
+
+  it("FileHandle#writev returns object", async () => {
+    await using fd = await fs.promises.open(`${tmpdir()}/${Date.now()}.writeFile.txt`, "w");
+    const buffers = [Buffer.from("test"), Buffer.from("test")];
+    expect(await fd.writev(buffers, 0, 8, 0)).toEqual({ bytesWritten: 8, buffers });
+  });
+
+  it("FileHandle#readFile returns buffer", async () => {
+    await using fd = await fs.promises.open(__filename);
+    const buf = await fd.readFile();
+    expect(buf instanceof Buffer).toBe(true);
+  });
+
+  it("FileHandle#readableWebStream", async () => {
+    await using fd = await fs.promises.open(__filename);
+    const stream = fd.readableWebStream();
+    const reader = stream.getReader();
+    const chunk = await reader.read();
+    expect(chunk.value instanceof Uint8Array).toBe(true);
+    await stream.cancel();
+  });
+
+  it("FileHandle#createReadStream", async () => {
+    await using fd = await fs.promises.open(__filename);
+    const readable = fd.createReadStream();
+    const data = await new Promise(resolve => {
+      let data = "";
+      readable.on("data", chunk => {
+        data += chunk;
+      });
+      readable.on("end", () => {
+        resolve(data);
+      });
+    });
+
+    expect(data).toBe(readFileSync(__filename, "utf8"));
+  });
+
+  it("FileHandle#writeFile", async () => {
+    const path = `${tmpdir()}/${Date.now()}.writeFile.txt`;
+    await using fd = await fs.promises.open(path, "w");
+    await fd.writeFile("File written successfully");
+    expect(readFileSync(path, "utf8")).toBe("File written successfully");
+  });
+
+  it("FileHandle#createWriteStream", async () => {
+    const path = `${tmpdir()}/${Date.now()}.createWriteStream.txt`;
+    {
+      await using fd = await fs.promises.open(path, "w");
+      const stream = fd.createWriteStream();
+      stream.write("Test file written successfully");
+      stream.end();
+
+      await new Promise((resolve, reject) => {
+        stream.on("error", e => {
+          reject(e);
+        });
+
+        stream.on("finish", () => {
+          expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+          resolve(true);
+        });
+      });
+    }
+
+    expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
   });
 });
 

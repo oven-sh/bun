@@ -265,7 +265,7 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
-    pub fn runPackageScriptForeground(
+    fn runPackageScriptForeground(
         allocator: std.mem.Allocator,
         original_script: string,
         name: string,
@@ -316,14 +316,22 @@ pub const RunCommand = struct {
             }
 
             const mini = bun.JSC.MiniEventLoop.initGlobal(env);
-            bun.shell.Interpreter.initAndRunFromSource(mini, name, combined_script) catch |err| {
+            const code = bun.shell.Interpreter.initAndRunFromSource(mini, name, combined_script) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
 
-                Output.flush();
                 Global.exit(1);
             };
+
+            if (code > 0) {
+                if (code != 2 and !silent) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
+                    Output.flush();
+                }
+
+                Global.exitWide(code);
+            }
 
             return true;
         }
@@ -1155,12 +1163,11 @@ pub const RunCommand = struct {
         ;
 
         Output.pretty(intro_text ++ "\n\n", .{});
-        Output.flush();
+
         Output.pretty("<b>Flags:<r>", .{});
-        Output.flush();
+
         clap.simpleHelp(&Arguments.run_params);
         Output.pretty("\n\n" ++ examples_text, .{});
-        Output.flush();
 
         if (package_json) |pkg| {
             if (pkg.scripts) |scripts| {
@@ -1184,16 +1191,15 @@ pub const RunCommand = struct {
                     // Output.prettyln("\n<d>{d} scripts<r>", .{scripts.count()});
 
                     Output.prettyln("\n", .{});
-                    Output.flush();
                 } else {
                     Output.prettyln("\n<r><yellow>No \"scripts\" found in package.json.<r>\n", .{});
-                    Output.flush();
                 }
             } else {
                 Output.prettyln("\n<r><yellow>No \"scripts\" found in package.json.<r>\n", .{});
-                Output.flush();
             }
         }
+
+        Output.flush();
     }
 
     pub fn exec(

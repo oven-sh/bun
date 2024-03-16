@@ -97,6 +97,10 @@ pub fn PosixPipeWriter(
             const buffer = getBuffer(parent);
             log("onPoll({})", .{buffer.len});
             if (buffer.len == 0 and !received_hup) {
+                log("PosixPipeWriter(0x{x}) handle={s}", .{ @intFromPtr(parent), @tagName(parent.handle) });
+                if (parent.handle == .poll) {
+                    log("PosixPipeWriter(0x{x}) got 0, registered state = {any}", .{ @intFromPtr(parent), parent.handle.poll.isRegistered() });
+                }
                 return;
             }
 

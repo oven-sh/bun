@@ -236,6 +236,8 @@ export default real_export;
     close,
   } = real_export;
   // Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
+  // These functions await the result so that errors propagate correctly with
+  // async stack traces and so that the ref counting is correct.
   var FileHandle = class FileHandle extends EventEmitter {
     constructor(fd) {
       super();
@@ -252,8 +254,6 @@ export default real_export;
       return this[kFd];
     }
 
-    // These functions await the result so that errors propagate correctly with
-    // async stack traces
     async appendFile(data, options) {
       const fd = this[kFd];
       throwEBADFIfNecessary(writeFile, fd);

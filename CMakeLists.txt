@@ -1001,6 +1001,8 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
+            -Werror=uninitialized
+            -Werror
         )
     else()
         target_compile_options(${bun} PUBLIC /Od /Z7)
@@ -1019,6 +1021,8 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
+            -Werror=uninitialized
+            -Werror
         )
     else()
         set(LTO_LINK_FLAG "")

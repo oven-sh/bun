@@ -4296,10 +4296,14 @@ pub const Interpreter = struct {
                             cmd.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{@tagName(kind)});
                             return .yield;
                         }
+
+                        // Regular files are not pollable on linux
+                        const is_pollable: bool = if (bun.Environment.isLinux) false else true;
+
                         const path = cmd.redirection_file.items[0..cmd.redirection_file.items.len -| 1 :0];
                         log("EXPANDED REDIRECT: {s}\n", .{cmd.redirection_file.items[0..]});
                         const perm = 0o666;
-                        const is_nonblocking = node.redirect.stdout or node.redirect.stderr;
+                        const is_nonblocking = (node.redirect.stdout or node.redirect.stderr) and is_pollable;
                         var flags = node.redirect.toFlags();
                         if (is_nonblocking) flags |= std.os.O.NONBLOCK;
                         const redirfd = switch (ShellSyscall.openat(cmd.base.shell.cwd_fd, path, flags, perm)) {
@@ -4316,11 +4320,11 @@ pub const Interpreter = struct {
                         }
                         if (node.redirect.stdout) {
                             cmd.exec.bltn.stdout.deref();
-                            cmd.exec.bltn.stdout = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = true, .nonblocking = is_nonblocking }, cmd.base.eventLoop()) } };
+                            cmd.exec.bltn.stdout = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking }, cmd.base.eventLoop()) } };
                         }
                         if (node.redirect.stderr) {
                             cmd.exec.bltn.stderr.deref();
-                            cmd.exec.bltn.stderr = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = true, .nonblocking = is_nonblocking }, cmd.base.eventLoop()) } };
+                            cmd.exec.bltn.stderr = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking }, cmd.base.eventLoop()) } };
                         }
                     },
                     .jsbuf => |val| {
@@ -9074,6 +9078,7 @@ pub const Interpreter = struct {
         }
 
         pub fn __start(this: *This) Maybe(void) {
+            print("IOWriter(0x{x}, fd={}) __start()", .{ @intFromPtr(this), this.fd });
             if (this.writer.start(this.fd, this.flags.pollable).asErr()) |e_| {
                 const e: bun.sys.Error = e_;
                 if (bun.Environment.isPosix) {
@@ -9092,6 +9097,18 @@ pub const Interpreter = struct {
                         this.flags.is_socket = false;
                         this.writer.handle = .{ .closed = {} };
                         return __start(this);
+                    }
+
+                    if (bun.Environment.isLinux) {
+                        // On linux regular files are not pollable and return EPERM,
+                        // so restart if that's the case with polling disabled.
+                        if (e.getErrno() == .PERM) {
+                            this.flags.pollable = false;
+                            this.flags.nonblocking = false;
+                            this.flags.is_socket = false;
+                            this.writer.handle = .{ .closed = {} };
+                            return __start(this);
+                        }
                     }
                 }
                 return .{ .err = e };
@@ -10249,5 +10266,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
 
 pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
     if (bun.Environment.isWindows) return false;
+    if (bun.Environment.isLinux) return os.S.ISFIFO(mode) or os.S.ISSOCK(mode) or os.isatty(fd.int());
+    // macos allows regular files to be pollable: ISREG(mode) == true
     return os.S.ISFIFO(mode) or os.S.ISSOCK(mode) or os.isatty(fd.int()) or os.S.ISREG(mode);
 }

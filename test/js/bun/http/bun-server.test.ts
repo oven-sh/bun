@@ -465,7 +465,7 @@ test("Bun does not crash when given invalid config", async () => {
     {
       fetch() {},
       port: server1.port,
-      get ssl() {
+      get tls() {
         throw new Error();
       },
     },

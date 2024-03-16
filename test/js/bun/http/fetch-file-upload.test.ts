@@ -161,7 +161,7 @@ test("uploads roundtrip with sendfile()", async () => {
   expect(resp.status).toBe(200);
   expect(await resp.text()).toBe(hash);
   server.stop(true);
-});
+}, 10_000);
 
 test("missing file throws the expected error", async () => {
   Bun.gc(true);

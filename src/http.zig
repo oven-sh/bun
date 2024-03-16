@@ -122,7 +122,10 @@ pub const Sendfile = struct {
     content_size: usize = 0,
 
     pub fn isEligible(url: bun.URL) bool {
-        return url.isHTTP() and url.href.len > 0 and FeatureFlags.streaming_file_uploads_for_http_client;
+        if (comptime Environment.isWindows or !FeatureFlags.streaming_file_uploads_for_http_client) {
+            return false;
+        }
+        return url.isHTTP() and url.href.len > 0;
     }
 
     pub fn write(

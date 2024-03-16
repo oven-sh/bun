@@ -555,7 +555,7 @@ class BunWebSocketMocked extends EventEmitter {
     };
   }
 
-  #ping(ws, data, isBinary) {
+  #ping(ws, data) {
     this.#ws = ws;
     this.emit("ping", data);
   }

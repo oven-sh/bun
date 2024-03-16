@@ -1,4 +1,3 @@
-#include "JavaScriptCore/JSCJSValue.h"
 #include "root.h"
 #include "headers.h"
 
@@ -66,7 +65,6 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
         return JSC::JSValue::encode(JSC::JSValue {});
     }
     default: {
-        JSValue thisValue = callFrame->thisValue();
         JSC::JSValue moduleName = callFrame->argument(0);
 
         auto doIt = [&](const WTF::String& fromStr) -> JSC::EncodedJSValue {
@@ -522,9 +520,6 @@ JSC::Structure* ImportMetaObject::createStructure(JSC::VM& vm, JSC::JSGlobalObje
     ImportMetaObjectPrototype* prototype = ImportMetaObjectPrototype::create(vm,
         globalObject,
         ImportMetaObjectPrototype::createStructure(vm, globalObject));
-
-    auto clientData = WebCore::clientData(vm);
-    auto& builtinNames = clientData->builtinNames();
 
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), ImportMetaObject::info());
 }

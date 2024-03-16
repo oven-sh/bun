@@ -332,7 +332,7 @@ export default real_export;
 
       try {
         this[kRef]();
-        return { buffers, bytesRead: await readv(fd, buffers, position) };
+        return await readv(fd, buffers, position);
       } finally {
         this[kUnref]();
       }
@@ -408,7 +408,7 @@ export default real_export;
 
       try {
         this[kRef]();
-        return { buffers, bytesWritten: await writev(fd, buffers, position) };
+        return await writev(fd, buffers, position);
       } finally {
         this[kUnref]();
       }
@@ -472,13 +472,13 @@ export default real_export;
     createReadStream(options) {
       const fd = this[kFd];
       throwEBADFIfNecessary(fs.createReadStream, fd);
-      return fs.createReadStream("", { fd, highWaterMark: 64 * 1024, ...(options || {}) });
+      return require("node:fs").createReadStream("", { fd, highWaterMark: 64 * 1024, ...(options || {}) });
     }
 
     createWriteStream(options) {
       const fd = this[kFd];
       throwEBADFIfNecessary(fs.createWriteStream, fd);
-      return fs.createWriteStream("", { fd, ...(options || {}) });
+      return require("node:fs").createWriteStream("", { fd, ...(options || {}) });
     }
 
     [kTransfer]() {
@@ -498,9 +498,9 @@ export default real_export;
     }
 
     [kUnref]() {
-      this[kRefs]--;
-      if (this[kRefs] === 0) {
-        PromisePrototypeThen(this.close(), this[kCloseResolve], this[kCloseReject]);
+      const refCount = this[kRefs]--;
+      if (refCount === 1) {
+        PromisePrototypeThen.$call(this.close(), this[kCloseResolve], this[kCloseReject]);
       }
     }
   };

@@ -50,6 +50,18 @@ it("Database.open", () => {
     });
     db.close();
   }
+  // create: false works
+  {
+    var db = Database.open(":memory:", {
+      create: false,
+    });
+    db.close();
+  }
+  // empty options works
+  {
+    var db = Database.open(`:memory:`, {});
+    db.close();
+  }
 
   // this should not throw
   // it creates an in-memory db

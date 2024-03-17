@@ -729,43 +729,6 @@ pub fn cleanWithLogger(
         try old.preprocessUpdateRequests(updates, exact_versions);
     }
 
-    // Deduplication works like this
-    // Go through *already* resolved package versions
-    // Ask, do any of those versions happen to match a lower version?
-    // If yes, choose that version instead.
-    // Why lower?
-    //
-    // Normally, the problem looks like this:
-    //   Package A: "react@^17"
-    //   Package B: "react@17.0.1
-    //
-    // Now you have two copies of React.
-    // When you really only wanted one.
-    // Since _typically_ the issue is that Semver ranges with "^" or "~" say "choose latest", we end up with latest
-    // if (options.enable.deduplicate_packages) {
-    //     var resolutions: []PackageID = old.buffers.resolutions.items;
-    //     const dependencies: []const Dependency = old.buffers.dependencies.items;
-    //     const package_resolutions: []const Resolution = old.packages.items(.resolution);
-    //     const string_buf = old.buffers.string_bytes.items;
-
-    //     const root_resolution = @as(usize, old.packages.items(.resolutions)[0].len);
-
-    //     const DedupeMap = std.ArrayHashMap(PackageNameHash, std.ArrayListUnmanaged([2]PackageID), ArrayIdentityContext(PackageNameHash), false);
-    //     var dedupe_map = DedupeMap.initContext(allocator, .{});
-    //     try dedupe_map.ensureTotalCapacity(old.unique_packages.count());
-
-    //     for (resolutions) |resolved_package_id, dep_i| {
-    //         if (resolved_package_id < max_package_id and !old.unique_packages.isSet(resolved_package_id)) {
-    //             const dependency = dependencies[dep_i];
-    //             if (dependency.version.tag == .npm) {
-    //                 var dedupe_entry = try dedupe_map.getOrPut(dependency.name_hash);
-    //                 if (!dedupe_entry.found_existing) dedupe_entry.value_ptr.* = .{};
-    //                 try dedupe_entry.value_ptr.append(allocator, [2]PackageID{ dep_i, resolved_package_id });
-    //             }
-    //         }
-    //     }
-    // }
-
     var new: *Lockfile = try old.allocator.create(Lockfile);
     new.initEmpty(
         old.allocator,
@@ -3458,7 +3421,10 @@ pub const Package = extern struct {
                 summary.update += 1;
             }
 
-            summary.add = @truncate((to_deps.len + skipped_workspaces) - (from_deps.len - summary.remove));
+            // Use saturating arithmetic here because a migrated
+            // package-lock.json could be out of sync with the package.json, so the
+            // number of from_deps could be greater than to_deps.
+            summary.add = @truncate((to_deps.len + skipped_workspaces) -| (from_deps.len -| summary.remove));
 
             inline for (Lockfile.Scripts.names) |hook| {
                 if (!@field(to.scripts, hook).eql(

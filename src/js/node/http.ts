@@ -533,6 +533,12 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
         drain(ws) {
           ws.data.drain(ws);
         },
+        ping(ws, data) {
+          ws.data.ping(ws, data);
+        },
+        pong(ws, data) {
+          ws.data.pong(ws, data);
+        },
       },
       // Be very careful not to access (web) Request object
       // properties:

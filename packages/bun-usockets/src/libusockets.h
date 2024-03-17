@@ -16,6 +16,10 @@
  */
 // clang-format off
 
+#ifndef us_calloc
+#define us_calloc calloc
+#endif
+
 #ifndef us_malloc
 #define us_malloc malloc
 #endif
@@ -249,7 +253,7 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     const char *host, int port, int options, int socket_ext_size);
 
 struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_socket_context_t *context,
-    const char *path, int options, int socket_ext_size);
+    const char *path, size_t pathlen, int options, int socket_ext_size);
 
 /* listen_socket.c/.h */
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls);
@@ -259,7 +263,7 @@ struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_
     const char *host, int port, const char *source_host, int options, int socket_ext_size);
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context,
-    const char *server_path, int options, int socket_ext_size);
+    const char *server_path, size_t pathlen, int options, int socket_ext_size);
 
 /* Is this socket established? Can be used to check if a connecting socket has fired the on_open event yet.
  * Can also be used to determine if a socket is a listen_socket or not, but you probably know that already. */

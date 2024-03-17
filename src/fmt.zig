@@ -185,6 +185,7 @@ pub const URLFormatter = struct {
         http,
         https,
         unix,
+        abstract,
     };
 
     pub fn format(this: URLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -192,6 +193,7 @@ pub const URLFormatter = struct {
             .http => "http",
             .https => "https",
             .unix => "unix",
+            .abstract => "abstract",
         }});
 
         if (this.hostname) |hostname| {
@@ -1176,3 +1178,25 @@ pub fn fmtDurationOneDecimal(ns: u64) std.fmt.Formatter(formatDurationOneDecimal
     return .{ .data = FormatDurationData{ .ns = ns } };
 }
 // };
+
+pub fn fmtSlice(data: anytype, comptime delim: []const u8) FormatSlice(@TypeOf(data), delim) {
+    return .{ .slice = data };
+}
+
+fn FormatSlice(comptime T: type, comptime delim: []const u8) type {
+    std.debug.assert(@typeInfo(T).Pointer.size == .Slice);
+
+    return struct {
+        slice: T,
+
+        pub fn format(self: @This(), comptime format_str: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+            if (self.slice.len == 0) return;
+            const f = "{" ++ format_str ++ "}";
+            try writer.print(f, .{self.slice[0]});
+            for (self.slice[1..]) |item| {
+                if (delim.len > 0) try writer.writeAll(delim);
+                try writer.print(f, .{item});
+            }
+        }
+    };
+}

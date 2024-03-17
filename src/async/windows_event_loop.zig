@@ -51,11 +51,15 @@ pub const KeepAlive = struct {
 
     /// Prevent a poll from keeping the process alive.
     pub fn unref(this: *KeepAlive, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
         if (this.status != .active)
             return;
         this.status = .inactive;
-        event_loop_ctx.platformEventLoop().dec();
+        if (comptime @TypeOf(event_loop_ctx_) == JSC.EventLoopHandle) {
+            event_loop_ctx_.loop().subActive(1);
+            return;
+        }
+        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        event_loop_ctx.platformEventLoop().subActive(1);
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -88,11 +92,16 @@ pub const KeepAlive = struct {
 
     /// Allow a poll to keep the process alive.
     pub fn ref(this: *KeepAlive, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
         if (this.status != .inactive)
             return;
         this.status = .active;
-        event_loop_ctx.platformEventLoop().inc();
+        const EventLoopContext = @TypeOf(event_loop_ctx_);
+        if (comptime EventLoopContext == JSC.EventLoopHandle) {
+            event_loop_ctx_.ref();
+            return;
+        }
+        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+        event_loop_ctx.platformEventLoop().ref();
     }
 
     /// Allow a poll to keep the process alive.
@@ -168,20 +177,6 @@ pub const FilePoll = struct {
         return poll;
     }
 
-    pub fn initWithPackageManager(m: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: anytype) *FilePoll {
-        return initWithPackageManagerWithOwner(m, fd, flags, Owner.init(owner));
-    }
-
-    pub fn initWithPackageManagerWithOwner(manager: *bun.PackageManager, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
-        var poll = manager.file_poll_store.get();
-        poll.fd = fd;
-        poll.flags = Flags.Set.init(flags);
-        poll.owner = owner;
-        poll.next_to_free = null;
-
-        return poll;
-    }
-
     pub fn deinit(this: *FilePoll) void {
         const vm = JSC.VirtualMachine.get();
         this.deinitWithVM(vm);
@@ -195,7 +190,10 @@ pub const FilePoll = struct {
 
     pub fn unregister(this: *FilePoll, loop: *Loop) bool {
         _ = loop;
-        uv.uv_unref(@ptrFromInt(this.fd.int()));
+        // TODO(@paperdave): This cast is extremely suspicious. At best, `fd` is
+        // the wrong type (it should be a uv handle), at worst this code is a
+        // crash due to invalid memory access.
+        uv.uv_unref(@ptrFromInt(@intFromEnum(this.fd)));
         return true;
     }
 
@@ -369,19 +367,17 @@ pub const FilePoll = struct {
 };
 
 pub const Waker = struct {
-    loop: *bun.uws.UVLoop,
+    loop: *bun.uws.WindowsLoop,
 
-    pub fn init(_: std.mem.Allocator) !Waker {
-        return .{ .loop = bun.uws.UVLoop.init() };
+    pub fn init() !Waker {
+        return .{ .loop = bun.uws.WindowsLoop.get() };
     }
 
-    pub fn getFd(this: *const Waker) bun.FileDescriptor {
-        _ = this;
-
+    pub fn getFd(_: *const Waker) bun.FileDescriptor {
         @compileError("Waker.getFd is unsupported on Windows");
     }
 
-    pub fn initWithFileDescriptor(_: std.mem.Allocator, _: bun.FileDescriptor) Waker {
+    pub fn initWithFileDescriptor(_: bun.FileDescriptor) Waker {
         @compileError("Waker.initWithFileDescriptor is unsupported on Windows");
     }
 

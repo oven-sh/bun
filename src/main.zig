@@ -39,11 +39,16 @@ pub fn main() void {
     if (Environment.isWindows) {
         environ = @ptrCast(std.os.environ.ptr);
         _environ = @ptrCast(std.os.environ.ptr);
-        bun.win32.STDOUT_FD = bun.toFD(std.io.getStdOut().handle);
-        bun.win32.STDERR_FD = bun.toFD(std.io.getStdErr().handle);
-        bun.win32.STDIN_FD = bun.toFD(std.io.getStdIn().handle);
+        const peb = std.os.windows.peb();
+        const stdout = peb.ProcessParameters.hStdOutput;
+        const stderr = peb.ProcessParameters.hStdError;
+        const stdin = peb.ProcessParameters.hStdInput;
 
-        bun.buffered_stdin.unbuffered_reader.context.handle = std.io.getStdIn().handle;
+        bun.win32.STDERR_FD = if (stderr != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stderr) else bun.invalid_fd;
+        bun.win32.STDOUT_FD = if (stdout != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdout) else bun.invalid_fd;
+        bun.win32.STDIN_FD = if (stdin != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdin) else bun.invalid_fd;
+
+        bun.Output.buffered_stdin.unbuffered_reader.context.handle = bun.win32.STDIN_FD;
 
         const w = std.os.windows;
 
@@ -52,21 +57,25 @@ pub fn main() void {
         _ = w.kernel32.SetConsoleOutputCP(CP_UTF8);
 
         var mode: w.DWORD = undefined;
-        const stdoutHandle = w.peb().ProcessParameters.hStdOutput;
-        if (w.kernel32.GetConsoleMode(stdoutHandle, &mode) != 0) {
-            _ = SetConsoleMode(stdoutHandle, mode | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {
+            _ = SetConsoleMode(stdout, mode | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING);
         }
     }
 
     bun.start_time = std.time.nanoTimestamp();
 
-    const stdout = std.io.getStdOut();
-    const stderr = std.io.getStdErr();
+    const stdout = bun.sys.File.from(std.io.getStdOut());
+    const stderr = bun.sys.File.from(std.io.getStdErr());
     var output_source = Output.Source.init(stdout, stderr);
 
     Output.Source.set(&output_source);
+
+    if (comptime Environment.isDebug) {
+        bun.Output.initScopedDebugWriterAtStartup();
+    }
+
     defer Output.flush();
-    if (Environment.isX64 and Environment.enableSIMD) {
+    if (Environment.isX64 and Environment.enableSIMD and Environment.isPosix) {
         bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
     }
 
@@ -79,5 +88,5 @@ pub fn main() void {
         );
     }
 
-    bun.CLI.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
+    bun.CLI.Cli.start(bun.default_allocator, MainPanicHandler);
 }

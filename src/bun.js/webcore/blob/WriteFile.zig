@@ -398,20 +398,18 @@ pub const WriteFileWindows = struct {
             },
             .fd => {
                 write_file.fd = brk: {
-                    const rare = event_loop.virtual_machine.rareData();
-
-                    if (file_blob.store == rare.stdout_store) {
-                        break :brk 1;
-                    } else if (file_blob.store == rare.stderr_store) {
-                        break :brk 2;
-                    } else if (file_blob.store == rare.stdin_store) {
-                        break :brk 0;
+                    if (event_loop.virtual_machine.rare_data) |rare| {
+                        if (file_blob.store == rare.stdout_store) {
+                            break :brk 1;
+                        } else if (file_blob.store == rare.stderr_store) {
+                            break :brk 2;
+                        } else if (file_blob.store == rare.stdin_store) {
+                            break :brk 0;
+                        }
                     }
 
-                    // The file stored descriptor is not 0, 1, or 2.
-                    const fd_ = file_blob.store.?.data.file.pathlike.fd;
-
-                    break :brk @intCast(fd_.int());
+                    // The file stored descriptor is not stdin, stdout, or stderr.
+                    break :brk bun.uvfdcast(file_blob.store.?.data.file.pathlike.fd);
                 };
 
                 write_file.doWriteLoop(write_file.loop());
@@ -485,7 +483,7 @@ pub const WriteFileWindows = struct {
             return;
         }
 
-        this.fd = @intCast(rc.value);
+        this.fd = @intCast(rc.int());
 
         // the loop must be copied
         this.doWriteLoop(this.loop());
@@ -537,14 +535,15 @@ pub const WriteFileWindows = struct {
             return;
         }
 
-        this.total_written += @intCast(rc.value);
+        this.total_written += @intCast(rc.int());
         this.doWriteLoop(this.loop());
     }
 
     pub fn onFinish(container: *WriteFileWindows) void {
         container.loop().unrefConcurrently();
         var event_loop = container.event_loop;
-        defer event_loop.drainMicrotasks();
+        event_loop.enter();
+        defer event_loop.exit();
 
         // We don't need to enqueue task since this is already in a task.
         container.runFromJSThread();

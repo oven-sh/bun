@@ -319,7 +319,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
                 out.tcp.?.timeout(120);
                 return out;
-            } else {
+            } else |_| {
+                // TODO: handle error better than just returning null
                 client.clearData();
                 client.destroy();
             }

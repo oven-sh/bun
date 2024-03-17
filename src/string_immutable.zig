@@ -742,6 +742,20 @@ pub fn withoutTrailingSlashWindowsPath(this: string) []const u8 {
     return href;
 }
 
+/// This will remove ONE trailing slash at the end of a string,
+/// but on Windows it will not remove the \ in "C:\"
+pub fn pathWithoutTrailingSlashOne(str: []const u8) []const u8 {
+    return if (str.len > 0 and charIsAnySlash(str[str.len - 1]))
+        if (Environment.isWindows and str.len == 3 and str[1] == ':')
+            // Preserve "C:\"
+            str
+        else
+            // Remove one slash
+            str[0 .. str.len - 1]
+    else
+        str;
+}
+
 pub fn withoutLeadingSlash(this: string) []const u8 {
     return std.mem.trimLeft(u8, this, "/");
 }
@@ -5374,7 +5388,7 @@ pub fn convertUTF8toUTF16InBuffer(
     //
     // the reason i didn't implement the fallback is purely because our
     // code in this file is too chaotic. it is left as a TODO
-    if (input.len == 0) return &[_]u16{};
+    if (input.len == 0) return buf[0..0];
     const result = bun.simdutf.convert.utf8.to.utf16.le(input, buf);
     return buf[0..result];
 }

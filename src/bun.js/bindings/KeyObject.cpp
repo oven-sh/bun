@@ -95,20 +95,21 @@ static bool KeyObject__IsASN1Sequence(const unsigned char* data, size_t size,
 
     return true;
 }
-static bool KeyObject__IsRSAPrivateKey(const unsigned char* data, size_t size)
-{
-    // Both RSAPrivateKey and RSAPublicKey structures start with a SEQUENCE.
-    size_t offset, len;
-    if (!KeyObject__IsASN1Sequence(data, size, &offset, &len))
-        return false;
+// TODO: @cirospaciari - is this supposed to be unused?
+// static bool KeyObject__IsRSAPrivateKey(const unsigned char* data, size_t size)
+// {
+//     // Both RSAPrivateKey and RSAPublicKey structures start with a SEQUENCE.
+//     size_t offset, len;
+//     if (!KeyObject__IsASN1Sequence(data, size, &offset, &len))
+//         return false;
 
-    // An RSAPrivateKey sequence always starts with a single-byte integer whose
-    // value is either 0 or 1, whereas an RSAPublicKey starts with the modulus
-    // (which is the product of two primes and therefore at least 4), so we can
-    // decide the type of the structure based on the first three bytes of the
-    // sequence.
-    return len >= 3 && data[offset] == 2 && data[offset + 1] == 1 && !(data[offset + 2] & 0xfe);
-}
+//     // An RSAPrivateKey sequence always starts with a single-byte integer whose
+//     // value is either 0 or 1, whereas an RSAPublicKey starts with the modulus
+//     // (which is the product of two primes and therefore at least 4), so we can
+//     // decide the type of the structure based on the first three bytes of the
+//     // sequence.
+//     return len >= 3 && data[offset] == 2 && data[offset + 1] == 1 && !(data[offset + 2] & 0xfe);
+// }
 
 static bool KeyObject__IsEncryptedPrivateKeyInfo(const unsigned char* data, size_t size)
 {
@@ -239,7 +240,7 @@ int PasswordCallback(char* buf, int size, int rwflag, void* u)
             size_t len = result->length();
             if (buflen < len)
                 return -1;
-            memcpy(buf, result->data(), buflen);
+            memcpy(buf, result->data(), len);
             return len;
         }
     }
@@ -470,6 +471,7 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     if (format == "pem"_s) {
+        ASSERT(data);
         auto bio = BIOPtr(BIO_new_mem_buf(const_cast<char*>((char*)data), byteLength));
         auto pkey = EvpPKeyPtr(PEM_read_bio_PrivateKey(bio.get(), nullptr, PasswordCallback, &passphrase));
 
@@ -823,7 +825,6 @@ static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObjec
         return KeyObject__createECFromPrivate(globalObject, pkey, curve, CryptoAlgorithmIdentifier::ECDSA);
     } else if (pKeyID == EVP_PKEY_ED25519 || pKeyID == EVP_PKEY_X25519) {
         size_t out_len = 0;
-        auto& vm = globalObject->vm();
         if (!EVP_PKEY_get_raw_private_key(pkey, nullptr, &out_len)) {
             throwException(globalObject, scope, createTypeError(globalObject, "Invalid private key"_s));
             return JSValue::encode(JSC::jsUndefined());
@@ -1374,7 +1375,6 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
     }
     auto vectorData = buffer.releaseReturnValue();
     auto& wrapped = key->wrapped();
-    auto key_type = wrapped.type();
     auto id = wrapped.keyClass();
 
     auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
@@ -1592,7 +1592,6 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
     auto signatureData = signatureBuffer.releaseReturnValue();
 
     auto& wrapped = key->wrapped();
-    auto key_type = wrapped.type();
     auto id = wrapped.keyClass();
 
     auto hash = WebCore::CryptoAlgorithmIdentifier::SHA_256;
@@ -2621,7 +2620,8 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
             }
         }
 
-        auto saltLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
+        // TODO: @cirospaciari is saltLength supposed to be used here?
+        // auto saltLengthJS = options->getIfPropertyExists(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "hashAlgorithm"_s)));
 
         auto failureCallback = [&]() {
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Failed to generate key pair"_s));
@@ -2849,7 +2849,6 @@ JSC::EncodedJSValue KeyObject__Equals(JSC::JSGlobalObject* lexicalGlobalObject, 
             auto& wrapped = key->wrapped();
             auto& wrapped2 = key2->wrapped();
             auto key_type = wrapped.type();
-            auto key_class = wrapped.keyClass();
             if (key_type != wrapped2.type()) {
                 return JSC::JSValue::encode(jsBoolean(false));
             }

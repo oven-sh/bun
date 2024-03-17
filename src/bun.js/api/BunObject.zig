@@ -854,7 +854,7 @@ pub fn inspect(
     const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
-    ConsoleObject.format(
+    ConsoleObject.format2(
         .Debug,
         globalThis,
         @as([*]const JSValue, @ptrCast(&value)),
@@ -991,12 +991,13 @@ pub fn getMain(
             if (strings.hasSuffixComptime(vm.main, "[eval]")) {
                 break :use_resolved_path;
             }
+            if (strings.hasSuffixComptime(vm.main, "[stdin]")) {
+                break :use_resolved_path;
+            }
 
-            const fd = bun.sys.openat(
-                // avoid going thorugh libuv for this one.
-                bun.toFD(std.fs.cwd().fd),
-
-                &(std.os.toPosixPath(vm.main) catch break :use_resolved_path),
+            const fd = bun.sys.openatA(
+                if (comptime Environment.isWindows) bun.invalid_fd else bun.toFD(std.fs.cwd().fd),
+                vm.main,
 
                 // Open with the minimum permissions necessary for resolving the file path.
                 if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY,
@@ -3022,6 +3023,10 @@ pub fn serve(
         if (exception[0] != null) {
             globalObject.throwValue(exception_[0].?.value());
             return .undefined;
+        }
+
+        if (globalObject.hasException()) {
+            return .zero;
         }
 
         break :brk config_;

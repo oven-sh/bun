@@ -50,6 +50,198 @@ afterEach(async () => {
   await rm(packageDir, { force: true, recursive: true });
 });
 
+describe.each(["--production", "without --production"])("%s", flag => {
+  const prod = flag === "--production";
+  const order = ["devDependencies", "dependencies"];
+  // const stdio = process.versions.bun.includes("debug") ? "inherit" : "ignore";
+  const stdio = "ignore";
+
+  if (prod) {
+    test("modifying package.json with --production should not save lockfile", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "bin-change-dir": "1.0.0",
+          },
+          devDependencies: {
+            "bin-change-dir": "1.0.1",
+            "basic-1": "1.0.0",
+          },
+        }),
+      );
+
+      var { exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: stdio,
+        stdin: stdio,
+        stderr: stdio,
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      const initialHash = Bun.hash(await file(join(packageDir, "bun.lockb")).arrayBuffer());
+
+      expect(await file(join(packageDir, "node_modules", "bin-change-dir", "package.json")).json()).toMatchObject({
+        name: "bin-change-dir",
+        version: "1.0.1",
+      });
+
+      var { exited } = spawn({
+        cmd: [bunExe(), "install", "--production"],
+        cwd: packageDir,
+        stdout: stdio,
+        stdin: stdio,
+        stderr: stdio,
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      expect(await file(join(packageDir, "node_modules", "bin-change-dir", "package.json")).json()).toMatchObject({
+        name: "bin-change-dir",
+        version: "1.0.0",
+      });
+
+      var { exited } = spawn({
+        cmd: [bunExe(), "install", "--production", "bin-change-dir@1.0.1"],
+        cwd: packageDir,
+        stdout: stdio,
+        stdin: stdio,
+        stderr: stdio,
+        env,
+      });
+
+      expect(await exited).toBe(1);
+
+      // We should not have saved bun.lockb
+      expect(Bun.hash(await file(join(packageDir, "bun.lockb")).arrayBuffer())).toBe(initialHash);
+
+      // We should not have installed bin-change-dir@1.0.1
+      expect(await file(join(packageDir, "node_modules", "bin-change-dir", "package.json")).json()).toMatchObject({
+        name: "bin-change-dir",
+        version: "1.0.0",
+      });
+
+      // This is a no-op. It should work.
+      var { exited } = spawn({
+        cmd: [bunExe(), "install", "--production", "bin-change-dir@1.0.0"],
+        cwd: packageDir,
+        stdout: stdio,
+        stdin: stdio,
+        stderr: stdio,
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      // We should not have saved bun.lockb
+      expect(Bun.hash(await file(join(packageDir, "bun.lockb")).arrayBuffer())).toBe(initialHash);
+
+      // We should have installed bin-change-dir@1.0.0
+      expect(await file(join(packageDir, "node_modules", "bin-change-dir", "package.json")).json()).toMatchObject({
+        name: "bin-change-dir",
+        version: "1.0.0",
+      });
+    });
+  }
+
+  test(`should prefer ${order[+prod % 2]} over ${order[1 - (+prod % 2)]}`, async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "bin-change-dir": "1.0.0",
+        },
+        devDependencies: {
+          "bin-change-dir": "1.0.1",
+          "basic-1": "1.0.0",
+        },
+      }),
+    );
+
+    let initialLockfileHash;
+    async function saveWithoutProd() {
+      var hash;
+      // First install without --production
+      // so that the lockfile is up to date
+      var { exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: stdio,
+        stdin: stdio,
+        stderr: stdio,
+        env,
+      });
+      expect(await exited).toBe(0);
+
+      await Promise.all([
+        (async () =>
+          expect(await file(join(packageDir, "node_modules", "bin-change-dir", "package.json")).json()).toMatchObject({
+            name: "bin-change-dir",
+            version: "1.0.1",
+          }))(),
+        (async () =>
+          expect(await file(join(packageDir, "node_modules", "basic-1", "package.json")).json()).toMatchObject({
+            name: "basic-1",
+            version: "1.0.0",
+          }))().then(
+          async () => await rm(join(packageDir, "node_modules", "basic-1"), { recursive: true, force: true }),
+        ),
+
+        (async () => (hash = Bun.hash(await file(join(packageDir, "bun.lockb")).arrayBuffer())))(),
+      ]);
+
+      return hash;
+    }
+    if (prod) {
+      initialLockfileHash = await saveWithoutProd();
+    }
+
+    var { exited } = spawn({
+      cmd: [bunExe(), "install", prod ? "--production" : ""].filter(Boolean),
+      cwd: packageDir,
+      stdout: stdio,
+      stdin: stdio,
+      stderr: stdio,
+      env,
+    });
+
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "bin-change-dir", "package.json")).json()).toMatchObject({
+      name: "bin-change-dir",
+      version: prod ? "1.0.0" : "1.0.1",
+    });
+
+    if (!prod) {
+      expect(await file(join(packageDir, "node_modules", "basic-1", "package.json")).json()).toMatchObject({
+        name: "basic-1",
+        version: "1.0.0",
+      });
+    } else {
+      // it should not install devDependencies
+      expect(await exists(join(packageDir, "node_modules", "basic-1"))).toBeFalse();
+
+      // it should not mutate the lockfile when there were no changes to begin with.
+      const newHash = Bun.hash(await file(join(packageDir, "bun.lockb")).arrayBuffer());
+
+      expect(newHash).toBe(initialLockfileHash!);
+    }
+
+    if (prod) {
+      // lets now try to install again without --production
+      const newHash = await saveWithoutProd();
+      expect(newHash).toBe(initialLockfileHash);
+    }
+  });
+});
+
 test("basic 1", async () => {
   await writeFile(
     join(packageDir, "package.json"),

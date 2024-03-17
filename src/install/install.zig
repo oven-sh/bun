@@ -5796,9 +5796,15 @@ pub const PackageManager = struct {
                 this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
                 PackageManager.verbose_install = false;
             }
+
+            // If the lockfile is frozen, don't save it to disk.
+            if (this.enable.frozen_lockfile) {
+                this.do.save_lockfile = false;
+                this.enable.force_save_lockfile = false;
+            }
         }
 
-        pub const Do = struct {
+        pub const Do = packed struct {
             save_lockfile: bool = true,
             load_lockfile: bool = true,
             install_packages: bool = true,
@@ -5812,7 +5818,7 @@ pub const PackageManager = struct {
             trust_dependencies_from_args: bool = false,
         };
 
-        pub const Enable = struct {
+        pub const Enable = packed struct {
             manifest_cache: bool = true,
             manifest_cache_control: bool = true,
             cache: bool = true,
@@ -7571,6 +7577,16 @@ pub const PackageManager = struct {
             }
 
             cli.positionals = args.positionals();
+
+            if (cli.production and cli.trusted) {
+                Output.errGeneric("The '--production' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", .{});
+                Global.crash();
+            }
+
+            if (cli.frozen_lockfile and cli.trusted) {
+                Output.errGeneric("The '--frozen-lockfile' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", .{});
+                Global.crash();
+            }
 
             return cli;
         }
@@ -9958,6 +9974,16 @@ pub const PackageManager = struct {
 
         const packages_len_before_install = manager.lockfile.packages.len;
 
+        if (manager.options.enable.frozen_lockfile) {
+            if (manager.lockfile.hasMetaHashChanged(PackageManager.verbose_install or manager.options.do.print_meta_hash_string, packages_len_before_install) catch false) {
+                if (comptime log_level != .silent) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});
+                    Output.note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile", .{});
+                }
+                Global.crash();
+            }
+        }
+
         var install_summary = PackageInstall.Summary{};
         if (manager.options.do.install_packages) {
             install_summary = try manager.installPackages(
@@ -9966,7 +9992,10 @@ pub const PackageManager = struct {
             );
         }
 
-        const did_meta_hash_change = try manager.lockfile.hasMetaHashChanged(
+        const did_meta_hash_change =
+            // If the lockfile was frozen, we already checked it
+            !manager.options.enable.frozen_lockfile and
+            try manager.lockfile.hasMetaHashChanged(
             PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
             @min(packages_len_before_install, manager.lockfile.packages.len),
         );
@@ -9978,14 +10007,6 @@ pub const PackageManager = struct {
             // this will handle new trusted dependencies added through --trust
             manager.package_json_updates.len > 0 or
             (load_lockfile_result == .ok and load_lockfile_result.ok.serializer_result.packages_need_update);
-
-        if (did_meta_hash_change and manager.options.enable.frozen_lockfile) {
-            if (comptime log_level != .silent) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});
-                Output.note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile", .{});
-            }
-            Global.crash();
-        }
 
         // It's unnecessary work to re-save the lockfile if there are no changes
         if (manager.options.do.save_lockfile and

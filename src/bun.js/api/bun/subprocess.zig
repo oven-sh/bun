@@ -555,22 +555,45 @@ pub const Subprocess = struct {
         var arguments = callframe.arguments(1);
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
-        var sig: i32 = SignalCode.default;
+        const sig: i32 = brk: {
+            if (arguments.ptr[0].getNumber()) |sig64| {
+                // Node does this:
+                if (std.math.isNan(sig64)) {
+                    break :brk SignalCode.default;
+                }
 
-        if (arguments.len > 0) {
-            if (arguments.ptr[0].isString()) {
+                // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
+                if (std.math.isInf(sig64) or @trunc(sig64) != sig64) {
+                    globalThis.throwInvalidArguments("Unknown signal", .{});
+                    return .zero;
+                }
+
+                if (sig64 < 0) {
+                    globalThis.throwInvalidArguments("Invalid signal: must be >= 0", .{});
+                    return .zero;
+                }
+
+                if (sig64 > 31) {
+                    globalThis.throwInvalidArguments("Invalid signal: must be < 32", .{});
+                    return .zero;
+                }
+
+                break :brk @intFromFloat(sig64);
+            } else if (arguments.ptr[0].isString()) {
+                if (arguments.ptr[0].asString().length() == 0) {
+                    break :brk SignalCode.default;
+                }
                 const signal_code = arguments.ptr[0].toEnum(globalThis, "signal", SignalCode) catch return .zero;
-                sig = @intFromEnum(signal_code);
-            } else {
-                sig = arguments.ptr[0].coerce(i32, globalThis);
+                break :brk @intFromEnum(signal_code);
+            } else if (!arguments.ptr[0].isEmptyOrUndefinedOrNull()) {
+                globalThis.throwInvalidArguments("Invalid signal: must be a string or an integer", .{});
+                return .zero;
             }
-            if (globalThis.hasException()) return .zero;
-        }
 
-        if (!(sig >= 0 and sig <= std.math.maxInt(u8))) {
-            globalThis.throwInvalidArguments("Invalid signal: must be >= 0 and <= 255", .{});
-            return .zero;
-        }
+            break :brk SignalCode.default;
+        };
+
+        if (globalThis.hasException()) return .zero;
 
         switch (this.tryKill(sig)) {
             .result => {},

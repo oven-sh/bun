@@ -3240,7 +3240,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 var prev = body.value.Locked.readable;
                                 body.value.Locked.readable = .{};
                                 readable.value.ensureStillAlive();
-                                prev.deinit();
+                                defer prev.deinit();
                                 readable.value.ensureStillAlive();
                                 readable.ptr.Bytes.onData(
                                     .{
@@ -5899,10 +5899,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             req.setYield(false);
-            var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
+            var ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
             ctx.create(this, req, resp);
             this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));
-            var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
+            var request_object = this.allocator.create(JSC.WebCore.Request) catch bun.outOfMemory();
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;

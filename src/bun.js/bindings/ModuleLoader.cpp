@@ -814,17 +814,12 @@ extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobal
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     JSC::VM& vm = globalObject->vm();
-    ErrorableResolvedSource res = {};
     JSC::JSValue reason = callFrame->argument(0);
     PendingVirtualModuleResult* pendingModule = JSC::jsCast<PendingVirtualModuleResult*>(callFrame->argument(1));
-    JSC::JSValue specifierString = pendingModule->internalField(0).get();
-    JSC::JSValue referrerString = pendingModule->internalField(1).get();
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     JSC::JSInternalPromise* promise = pendingModule->internalPromise();
 
-    ZigString specifier = Zig::toZigString(specifierString, globalObject);
-    ZigString referrer = Zig::toZigString(referrerString, globalObject);
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
     promise->reject(globalObject, reason);
 

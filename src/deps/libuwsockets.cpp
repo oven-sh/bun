@@ -365,26 +365,26 @@ extern "C"
   }
 
   /* callback, path to unix domain socket */
-  void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, uws_listen_domain_handler handler, void *user_data)
+  void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, size_t pathlen, uws_listen_domain_handler handler, void *user_data)
   {
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen([handler, domain, user_data](struct us_listen_socket_t *listen_socket)
+      uwsApp->listen(0,[handler, domain, user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, domain, 0, user_data); },
-                     domain);
+                     {domain, pathlen});
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->listen([handler, domain, user_data](struct us_listen_socket_t *listen_socket)
+      uwsApp->listen(0, [handler, domain, user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, domain, 0, user_data); },
-                     domain);
+                     {domain, pathlen});
     }
   }
 
   /* callback, path to unix domain socket */
-  void uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain, int options, uws_listen_domain_handler handler, void *user_data)
+  void uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain, size_t pathlen, int options, uws_listen_domain_handler handler, void *user_data)
   {
     if (ssl)
     {
@@ -392,7 +392,7 @@ extern "C"
       uwsApp->listen(
           options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket)
           { handler((struct us_listen_socket_t *)listen_socket, domain, options, user_data); },
-          domain);
+          {domain, pathlen});
     }
     else
     {
@@ -400,7 +400,7 @@ extern "C"
       uwsApp->listen(
           options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket)
           { handler((struct us_listen_socket_t *)listen_socket, domain, options, user_data); },
-          domain);
+          {domain, pathlen});
     }
   }
 

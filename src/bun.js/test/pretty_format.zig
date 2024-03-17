@@ -1418,7 +1418,7 @@ pub const JestPrettyFormat = struct {
                                     comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                     .{},
                                 );
-                                const data = value.get(this.globalThis, "data").?;
+                                const data = value.fastGet(this.globalThis, .data).?;
                                 const tag = Tag.get(data, this.globalThis);
                                 if (tag.cell.isStringLike()) {
                                     this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);

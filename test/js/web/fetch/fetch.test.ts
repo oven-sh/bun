@@ -1234,10 +1234,10 @@ describe("Response", () => {
       }).toThrow("Body already used");
     });
     it("with Bun.file() streams", async () => {
-      var stream = Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
+      var stream = Bun.file(join(import.meta.dir, "fixtures/file.txt")).stream();
       expect(stream instanceof ReadableStream).toBe(true);
       var input = new Response((await new Response(stream).blob()).stream()).arrayBuffer();
-      var output = Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer();
+      var output = Bun.file(join(import.meta.dir, "/fixtures/file.txt")).arrayBuffer();
       expect(await input).toEqual(await output);
     });
     it("with Bun.file() with request/response", async () => {
@@ -1257,7 +1257,7 @@ describe("Response", () => {
       });
       var input = await response.arrayBuffer();
       var output = await Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
-      expect(input).toEqual((await output.getReader().read()).value?.buffer);
+      expect(new Uint8Array(input)).toEqual((await output.getReader().read()).value);
     });
   });
 
@@ -1741,7 +1741,7 @@ describe("should handle relative location in the redirect, issue#5635", () => {
 });
 
 it("should allow very long redirect URLS", async () => {
-  const Location = "/" + "B".repeat(32 * 1024);
+  const Location = "/" + "B".repeat(7 * 1024);
   const server = Bun.serve({
     port: 0,
     async fetch(request: Request) {

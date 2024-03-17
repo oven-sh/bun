@@ -39,7 +39,7 @@ pub const InitCommand = struct {
 
         Output.flush();
 
-        var input = try bun.buffered_stdin.reader().readUntilDelimiterAlloc(alloc, '\n', 1024);
+        var input = try bun.Output.buffered_stdin.reader().readUntilDelimiterAlloc(alloc, '\n', 1024);
         if (strings.endsWithChar(input, '\r')) {
             input = input[0 .. input.len - 1];
         }
@@ -89,7 +89,7 @@ pub const InitCommand = struct {
         entry_point: string = "",
     };
 
-    pub fn exec(alloc: std.mem.Allocator, argv: [][:0]u8) !void {
+    pub fn exec(alloc: std.mem.Allocator, argv: [][:0]const u8) !void {
         const print_help = brk: {
             for (argv) |arg| {
                 if (strings.eqlComptime(arg, "--help")) {

@@ -156,7 +156,7 @@ it("Bun.sleep works with a Date object", async () => {
   var ten_ms = new Date();
   ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
   await Bun.sleep(ten_ms);
-  expect(performance.now() - now).toBeGreaterThan(offset);
+  expect(Math.ceil(performance.now() - now)).toBeGreaterThan(offset);
 });
 
 it("Bun.sleep(Date) fulfills after Date", async () => {
@@ -314,5 +314,5 @@ it("setTimeout CPU usage #7790", async () => {
   const code = await process.exited;
   expect(code).toBe(0);
   const stats = process.resourceUsage();
-  expect(stats.cpuTime.user / BigInt(1e6)).toBeLessThan(1);
+  expect(stats.cpuTime.total / BigInt(1e6)).toBeLessThan(1);
 });

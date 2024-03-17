@@ -83,7 +83,7 @@ describe("util.promisify", () => {
       assert.strictEqual(promisify(promisify(fn)), promisifedFn);
     });
 
-    it.skip("should register shared promisify symbol", () => {
+    it("should register shared promisify symbol", () => {
       function fn() {}
 
       function promisifiedFn() {}

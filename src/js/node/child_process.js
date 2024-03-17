@@ -501,10 +501,9 @@ const customPromiseExecFunction = orig => {
   };
 };
 
-var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
-ObjectDefineProperty(exec, kCustomPromisifiedSymbol, {
+Object.defineProperty(exec, Symbol.for("nodejs.util.promisify.custom"), {
   __proto__: null,
-  enumerable: false,
+  configurable: true,
   value: customPromiseExecFunction(exec),
 });
 

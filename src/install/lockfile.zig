@@ -415,6 +415,7 @@ pub const Tree = struct {
         queue: Lockfile.TreeFiller,
         log: *logger.Log,
         old_lockfile: *Lockfile,
+        prefer_dev_dependencies: bool = false,
 
         pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -559,7 +560,17 @@ pub const Tree = struct {
         for (this_dependencies) |dep_id| {
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
-            if (builder.resolutions[dep_id] != package_id and !dependency.behavior.isPeer()) {
+            const mismatch = builder.resolutions[dep_id] != package_id;
+
+            if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
+                if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
+                    return hoisted; // 2
+                }
+
+                return dependency_loop; // 3
+            }
+
+            if (mismatch and !dependency.behavior.isPeer()) {
                 if (as_defined and !dep.behavior.isPeer()) {
                     builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
                         builder.packageName(package_id),
@@ -949,6 +960,7 @@ const Cloner = struct {
             .dependencies = this.lockfile.buffers.dependencies.items,
             .log = this.log,
             .old_lockfile = this.old,
+            .prefer_dev_dependencies = PackageManager.instance.options.local_package_features.dev_dependencies,
         };
 
         try (Tree{}).processSubtree(Tree.root_dep_id, &builder);

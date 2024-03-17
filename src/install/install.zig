@@ -857,8 +857,10 @@ pub const PackageInstall = struct {
         skipped: u32 = 0,
         successfully_installed: ?Bitset = null,
 
-        // deduplicated
-        packages_with_skipped_scripts_set: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void) = .{},
+        /// Package name hash -> number of scripts skipped.
+        /// Multiple versions of the same package might add to the count, and each version
+        /// might have a different number of scripts
+        packages_with_blocked_scripts: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, usize) = .{},
     };
 
     pub const Method = enum {
@@ -1883,52 +1885,6 @@ pub const CacheLevel = struct {
     use_etag: bool,
     use_last_modified: bool,
 };
-const Waker = if (Environment.isPosix) bun.Async.Waker else *bun.uws.UVLoop;
-
-const Waiter = struct {
-    onWait: *const fn (this: *anyopaque) anyerror!usize,
-    onWake: *const fn (this: *anyopaque) void,
-    ctx: *anyopaque,
-
-    pub fn init(
-        ctx: anytype,
-        comptime onWait: *const fn (this: @TypeOf(ctx)) anyerror!usize,
-        comptime onWake: *const fn (this: @TypeOf(ctx)) void,
-    ) Waiter {
-        return Waiter{
-            .ctx = @ptrCast(ctx),
-            .onWait = @alignCast(@ptrCast(@as(*const anyopaque, @ptrCast(onWait)))),
-            .onWake = @alignCast(@ptrCast(@as(*const anyopaque, @ptrCast(onWake)))),
-        };
-    }
-
-    pub fn wait(this: *Waiter) !usize {
-        return this.onWait(this.ctx);
-    }
-
-    pub fn wake(this: *Waiter) void {
-        this.onWake(this.ctx);
-    }
-
-    pub fn fromUWSLoop(loop: *uws.Loop) Waiter {
-        const Handlers = struct {
-            fn onWait(uws_loop: *uws.Loop) !usize {
-                uws_loop.run();
-                return 0;
-            }
-
-            fn onWake(uws_loop: *uws.Loop) void {
-                uws_loop.wakeup();
-            }
-        };
-
-        return Waiter.init(
-            loop,
-            Handlers.onWait,
-            Handlers.onWake,
-        );
-    }
-};
 
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:
@@ -2015,13 +1971,10 @@ pub const PackageManager = struct {
 
     peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
 
-    /// Do not use directly outside of wait or wake
-    uws_event_loop: *uws.Loop,
-
-    file_poll_store: bun.Async.FilePoll.Store,
-
     // name hash from alias package name -> aliased package dependency version info
     known_npm_aliases: NpmAliasMap = .{},
+
+    event_loop: JSC.AnyEventLoop,
 
     // During `installPackages` we learn exactly what dependencies from --trust
     // actually have scripts to run, and we add them to this list
@@ -2098,7 +2051,7 @@ pub const PackageManager = struct {
     };
 
     pub fn hasEnoughTimePassedBetweenWaitingMessages() bool {
-        const iter = instance.uws_event_loop.iterationNumber();
+        const iter = instance.event_loop.loop().iterationNumber();
         if (TimePasser.last_time < iter) {
             TimePasser.last_time = iter;
             return true;
@@ -2152,7 +2105,7 @@ pub const PackageManager = struct {
                 var bun_path: string = "";
                 RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
                 try this.env.map.put("PATH", PATH.items);
-                _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, RunCommand.bun_node_dir) catch bun.outOfMemory());
+                _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, bun_path) catch bun.outOfMemory());
             }
         }
 
@@ -2210,22 +2163,20 @@ pub const PackageManager = struct {
         }
 
         _ = this.wait_count.fetchAdd(1, .Monotonic);
-        this.uws_event_loop.wakeup();
+        this.event_loop.wakeup();
+    }
+
+    fn hasNoMorePendingLifecycleScripts(this: *PackageManager) bool {
+        return this.pending_lifecycle_script_tasks.load(.Monotonic) == 0;
     }
 
     pub fn tickLifecycleScripts(this: *PackageManager) void {
-        if (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-            this.uws_event_loop.tickWithoutIdle();
-        }
+        this.event_loop.tickOnce(this);
     }
 
     pub fn sleep(this: *PackageManager) void {
-        if (this.wait_count.swap(0, .Monotonic) > 0) {
-            this.tickLifecycleScripts();
-            return;
-        }
         Output.flush();
-        this.uws_event_loop.tick();
+        this.event_loop.tick(this, hasNoMorePendingLifecycleScripts);
     }
 
     const DependencyToEnqueue = union(enum) {
@@ -2603,10 +2554,9 @@ pub const PackageManager = struct {
     }
 
     pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
-        if (comptime Environment.isWindows) {
-            @panic("TODO: command prompt version of temp node-gyp script");
+        if (Environment.isWindows) {
+            Output.debug("TODO: VERIFY ensureTempNodeGypScript WORKS!!", .{});
         }
-
         if (this.node_gyp_tempdir_name.len > 0) return;
 
         const tempdir = this.getTemporaryDirectory();
@@ -2627,13 +2577,25 @@ pub const PackageManager = struct {
         };
         defer node_gyp_tempdir.close();
 
-        var node_gyp_file = node_gyp_tempdir.createFile("node-gyp", .{ .mode = 0o777 }) catch |err| {
+        const file_name = switch (Environment.os) {
+            else => "node-gyp",
+            .windows => "node-gyp.cmd",
+        };
+        const mode = switch (Environment.os) {
+            else => 0o755,
+            .windows => 0, // windows does not have an executable bit
+        };
+
+        var node_gyp_file = node_gyp_tempdir.createFile(file_name, .{ .mode = mode }) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
             Global.crash();
         };
         defer node_gyp_file.close();
 
-        var bytes: string = "#!/usr/bin/env node\nrequire(\"child_process\").spawnSync(\"bun\",[\"x\",\"node-gyp\",...process.argv.slice(2)],{stdio:\"inherit\"})";
+        var bytes: string = switch (Environment.os) {
+            else => "#!/usr/bin/env node\nrequire(\"child_process\").spawnSync(\"bun\",[\"x\",\"node-gyp\",...process.argv.slice(2)],{stdio:\"inherit\"})",
+            .windows => "@node -e \"require('child_process').spawnSync('bun',['x','node-gyp',...process.argv.slice(2)],{stdio:'inherit'})\"",
+        };
         var index: usize = 0;
         while (index < bytes.len) {
             switch (bun.sys.write(bun.toFD(node_gyp_file.handle), bytes[index..])) {
@@ -2641,7 +2603,7 @@ pub const PackageManager = struct {
                     index += written;
                 },
                 .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to node-gyp file", .{@tagName(err.getErrno())});
+                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@tagName(err.getErrno())});
                     Global.crash();
                 },
             }
@@ -5834,9 +5796,15 @@ pub const PackageManager = struct {
                 this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
                 PackageManager.verbose_install = false;
             }
+
+            // If the lockfile is frozen, don't save it to disk.
+            if (this.enable.frozen_lockfile) {
+                this.do.save_lockfile = false;
+                this.enable.force_save_lockfile = false;
+            }
         }
 
-        pub const Do = struct {
+        pub const Do = packed struct {
             save_lockfile: bool = true,
             load_lockfile: bool = true,
             install_packages: bool = true,
@@ -5850,7 +5818,7 @@ pub const PackageManager = struct {
             trust_dependencies_from_args: bool = false,
         };
 
-        pub const Enable = struct {
+        pub const Enable = packed struct {
             manifest_cache: bool = true,
             manifest_cache_control: bool = true,
             cache: bool = true,
@@ -6680,7 +6648,7 @@ pub const PackageManager = struct {
         }
 
         if (env.get("BUN_FEATURE_FLAG_FORCE_WAITER_THREAD") != null) {
-            JSC.Subprocess.WaiterThread.setShouldUseWaiterThread();
+            bun.spawn.WaiterThread.setShouldUseWaiterThread();
         }
 
         if (PackageManager.verbose_install) {
@@ -6721,11 +6689,12 @@ pub const PackageManager = struct {
             .root_package_json_file = package_json_file,
             .workspaces = workspaces,
             // .progress
-            .uws_event_loop = uws.Loop.get(),
-            .file_poll_store = bun.Async.FilePoll.Store.init(ctx.allocator),
+            .event_loop = .{
+                .mini = JSC.MiniEventLoop.init(bun.default_allocator),
+            },
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
-
+        JSC.MiniEventLoop.global = &manager.event_loop.mini;
         if (!manager.options.enable.cache) {
             manager.options.enable.manifest_cache = false;
             manager.options.enable.manifest_cache_control = false;
@@ -6811,8 +6780,9 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = undefined,
-            .uws_event_loop = uws.Loop.get(),
-            .file_poll_store = bun.Async.FilePoll.Store.init(allocator),
+            .event_loop = .{
+                .js = JSC.VirtualMachine.get().eventLoop(),
+            },
             .workspaces = std.StringArrayHashMap(Semver.Version).init(allocator),
         };
         manager.lockfile = try allocator.create(Lockfile);
@@ -6885,10 +6855,10 @@ pub const PackageManager = struct {
                 lockfile_path_z,
             )) {
                 .ok => |load| manager.lockfile = load.lockfile,
-                else => try manager.lockfile.initEmpty(allocator),
+                else => manager.lockfile.initEmpty(allocator),
             }
         } else {
-            try manager.lockfile.initEmpty(allocator);
+            manager.lockfile.initEmpty(allocator);
         }
 
         return manager;
@@ -6958,7 +6928,7 @@ pub const PackageManager = struct {
                     package_json_cwd,
                     current_package_json_buf[0..current_package_json_contents_len],
                 );
-                try lockfile.initEmpty(ctx.allocator);
+                lockfile.initEmpty(ctx.allocator);
 
                 try package.parseMain(&lockfile, ctx.allocator, manager.log, package_json_source, Features.folder);
                 name = lockfile.str(&package.name);
@@ -7134,7 +7104,7 @@ pub const PackageManager = struct {
                     package_json_cwd,
                     current_package_json_buf[0..current_package_json_contents_len],
                 );
-                try lockfile.initEmpty(ctx.allocator);
+                lockfile.initEmpty(ctx.allocator);
 
                 try package.parseMain(&lockfile, ctx.allocator, manager.log, package_json_source, Features.folder);
                 name = lockfile.str(&package.name);
@@ -7607,6 +7577,16 @@ pub const PackageManager = struct {
             }
 
             cli.positionals = args.positionals();
+
+            if (cli.production and cli.trusted) {
+                Output.errGeneric("The '--production' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", .{});
+                Global.crash();
+            }
+
+            if (cli.frozen_lockfile and cli.trusted) {
+                Output.errGeneric("The '--frozen-lockfile' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", .{});
+                Global.crash();
+            }
 
             return cli;
         }
@@ -8200,9 +8180,6 @@ pub const PackageManager = struct {
         /// Increments the number of installed packages for a tree id and runs available scripts
         /// if the tree is finished.
         pub fn incrementTreeInstallCount(this: *PackageInstaller, tree_id: Lockfile.Tree.Id, comptime log_level: Options.LogLevel) void {
-            if (comptime Environment.isWindows) {
-                return bun.todo(@src(), {});
-            }
             if (comptime Environment.allow_assert) {
                 std.debug.assert(tree_id != Lockfile.Tree.invalid_id);
             }
@@ -8229,9 +8206,6 @@ pub const PackageManager = struct {
         }
 
         pub fn runAvailableScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
-            if (comptime Environment.isWindows) {
-                return bun.todo(@src(), {});
-            }
             var i: usize = this.pending_lifecycle_scripts.items.len;
             while (i > 0) {
                 i -= 1;
@@ -8268,9 +8242,6 @@ pub const PackageManager = struct {
         }
 
         pub fn completeRemainingScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
-            if (comptime Environment.isWindows) {
-                return bun.todo(@src(), {});
-            }
             for (this.pending_lifecycle_scripts.items) |entry| {
                 const package_name = entry.list.package_name;
                 while (LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
@@ -8398,9 +8369,90 @@ pub const PackageManager = struct {
             }
         }
 
+        fn getInstalledPackageScriptsCount(
+            this: *PackageInstaller,
+            alias: string,
+            package_id: PackageID,
+            resolution_tag: Resolution.Tag,
+            comptime log_level: Options.LogLevel,
+        ) usize {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(resolution_tag != .root);
+                std.debug.assert(package_id != 0);
+            }
+            var count: usize = 0;
+            const scripts = brk: {
+                const scripts = this.lockfile.packages.items(.scripts)[package_id];
+                if (scripts.filled) break :brk scripts;
+
+                var temp: Package.Scripts = .{};
+                var temp_lockfile: Lockfile = undefined;
+                temp_lockfile.initEmpty(this.lockfile.allocator);
+                defer temp_lockfile.deinit();
+                var string_builder = temp_lockfile.stringBuilder();
+                temp.fillFromPackageJSON(
+                    this.lockfile.allocator,
+                    &string_builder,
+                    this.manager.log,
+                    this.node_modules_folder,
+                    alias,
+                ) catch |err| {
+                    if (comptime log_level != .silent) {
+                        Output.errGeneric("failed to fill lifecycle scripts for <b>{s}<r>: {s}", .{
+                            alias,
+                            @errorName(err),
+                        });
+                    }
+
+                    if (this.manager.options.enable.fail_early) {
+                        Global.crash();
+                    }
+
+                    return 0;
+                };
+                break :brk temp;
+            };
+
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(scripts.filled);
+            }
+
+            switch (resolution_tag) {
+                .git, .github, .gitlab, .root => {
+                    inline for (Lockfile.Scripts.names) |script_name| {
+                        count += @intFromBool(!@field(scripts, script_name).isEmpty());
+                    }
+                },
+                else => {
+                    const install_script_names = .{
+                        "preinstall",
+                        "install",
+                        "postinstall",
+                    };
+                    inline for (install_script_names) |script_name| {
+                        count += @intFromBool(!@field(scripts, script_name).isEmpty());
+                    }
+                },
+            }
+
+            if (scripts.preinstall.isEmpty() and scripts.install.isEmpty()) {
+                const binding_dot_gyp_path = Path.joinAbsStringZ(
+                    this.node_modules_folder_path.items,
+                    &[_]string{
+                        alias,
+                        "binding.gyp",
+                    },
+                    .auto,
+                );
+                count += @intFromBool(Syscall.exists(binding_dot_gyp_path));
+            }
+
+            return count;
+        }
+
         fn installPackageWithNameAndResolution(
             this: *PackageInstaller,
-            dependency_id: PackageID,
+            dependency_id: DependencyID,
             package_id: PackageID,
             comptime log_level: Options.LogLevel,
             name: string,
@@ -8430,6 +8482,7 @@ pub const PackageManager = struct {
                 .package_version = resolution_label,
                 // .install_order = this.tree_iterator.order,
             };
+            debug("Installing {s}@{s}", .{ name, resolution_label });
 
             switch (resolution.tag) {
                 .npm => {
@@ -8624,11 +8677,23 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (resolution.tag != .workspace and !is_trusted and this.lockfile.packages.get(package_id).meta.hasInstallScript()) {
-                            if (comptime log_level.isVerbose()) {
-                                Output.prettyError("Blocked scripts for: {s}@{}\n", .{ alias, resolution.fmt(this.lockfile.buffers.string_bytes.items) });
+                        if (resolution.tag != .workspace and !is_trusted and this.lockfile.packages.items(.meta)[package_id].hasInstallScript()) {
+                            // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
+                            // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
+                            const count = this.getInstalledPackageScriptsCount(alias, package_id, resolution.tag, log_level);
+                            if (count > 0) {
+                                if (comptime log_level.isVerbose()) {
+                                    Output.prettyError("Blocked {d} scripts for: {s}@{}\n", .{
+                                        count,
+                                        alias,
+                                        resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                    });
+                                }
+
+                                const entry = this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, name_hash) catch bun.outOfMemory();
+                                if (!entry.found_existing) entry.value_ptr.* = 0;
+                                entry.value_ptr.* += count;
                             }
-                            this.summary.packages_with_skipped_scripts_set.put(this.manager.allocator, name_hash, {}) catch bun.outOfMemory();
                         }
 
                         this.incrementTreeInstallCount(this.current_tree_id, log_level);
@@ -8678,7 +8743,14 @@ pub const PackageManager = struct {
                                     );
                                 },
                                 .npm => {
-                                    if (comptime Environment.allow_assert) std.debug.assert(!resolution.value.npm.url.isEmpty());
+                                    if (comptime Environment.isDebug) {
+                                        // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
+                                        // This caused bugs. We can't assert on it because they could come from old lockfiles
+                                        if (resolution.value.npm.url.isEmpty()) {
+                                            Output.debugWarn("package {s}@{} missing tarball_url", .{ name, resolution.fmt(buf) });
+                                        }
+                                    }
+
                                     this.manager.enqueuePackageForDownload(
                                         name,
                                         dependency_id,
@@ -8997,25 +9069,24 @@ pub const PackageManager = struct {
         }
     }
 
-    fn addDependencyAndDependenciesToSet(
-        name_hash_set: *std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
+    fn addDependenciesToSet(
+        names: *std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
         lockfile: *Lockfile,
-        dep_name_hash: PackageNameHash,
         dependencies_slice: Lockfile.DependencySlice,
     ) void {
-        name_hash_set.put(lockfile.allocator, @truncate(dep_name_hash), {}) catch bun.outOfMemory();
-
         const begin = dependencies_slice.off;
         const end = begin +| dependencies_slice.len;
         var dep_id = begin;
         while (dep_id < end) : (dep_id += 1) {
-            const dep = lockfile.buffers.dependencies.items[dep_id];
-
             const package_id = lockfile.buffers.resolutions.items[dep_id];
             if (package_id == invalid_package_id) continue;
 
-            const dependency_slice = lockfile.packages.items(.dependencies)[package_id];
-            addDependencyAndDependenciesToSet(name_hash_set, lockfile, dep.name_hash, dependency_slice);
+            const dep = lockfile.buffers.dependencies.items[dep_id];
+            const entry = names.getOrPut(lockfile.allocator, @truncate(dep.name_hash)) catch bun.outOfMemory();
+            if (!entry.found_existing) {
+                const dependency_slice = lockfile.packages.items(.dependencies)[package_id];
+                addDependenciesToSet(names, lockfile, dependency_slice);
+            }
         }
     }
 
@@ -9219,8 +9290,11 @@ pub const PackageManager = struct {
                                     const package_id = this.lockfile.buffers.resolutions.items[dep_id];
                                     if (package_id == invalid_package_id) continue;
 
-                                    const dependency_slice = this.lockfile.packages.items(.dependencies)[package_id];
-                                    addDependencyAndDependenciesToSet(&set, this.lockfile, root_dep.name_hash, dependency_slice);
+                                    const entry = set.getOrPut(this.lockfile.allocator, @truncate(root_dep.name_hash)) catch bun.outOfMemory();
+                                    if (!entry.found_existing) {
+                                        const dependency_slice = this.lockfile.packages.items(.dependencies)[package_id];
+                                        addDependenciesToSet(&set, this.lockfile, dependency_slice);
+                                    }
                                     break;
                                 }
                             }
@@ -9369,10 +9443,7 @@ pub const PackageManager = struct {
                     if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} tasks\n", .{PackageManager.instance.pending_tasks});
                 }
 
-                if (this.pending_tasks > 0)
-                    this.sleep()
-                else
-                    this.tickLifecycleScripts();
+                this.sleep();
             } else {
                 this.tickLifecycleScripts();
             }
@@ -9450,9 +9521,9 @@ pub const PackageManager = struct {
             &[_]string{"binding.gyp"},
             .auto,
         );
-        if (comptime Environment.allow_assert) {
-            std.debug.assert(root_package.scripts.filled);
-        }
+
+        // might need to read scripts from disk if we are migrating from package-lock.json
+
         if (root_package.scripts.hasAny()) {
             const add_node_gyp_rebuild_script = root_package.scripts.install.isEmpty() and root_package.scripts.preinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
 
@@ -9562,7 +9633,7 @@ pub const PackageManager = struct {
                     if (needs_new_lockfile) break :differ;
 
                     var lockfile: Lockfile = undefined;
-                    try lockfile.initEmpty(ctx.allocator);
+                    lockfile.initEmpty(ctx.allocator);
                     var maybe_root = Lockfile.Package{};
 
                     try maybe_root.parseMain(
@@ -9634,6 +9705,11 @@ pub const PackageManager = struct {
                         };
 
                         manager.lockfile.overrides = try lockfile.overrides.clone(&lockfile, manager.lockfile, builder);
+
+                        manager.lockfile.trusted_dependencies = if (lockfile.trusted_dependencies) |trusted_dependencies|
+                            try trusted_dependencies.clone(manager.lockfile.allocator)
+                        else
+                            null;
 
                         try manager.lockfile.buffers.dependencies.ensureUnusedCapacity(manager.lockfile.allocator, len);
                         try manager.lockfile.buffers.resolutions.ensureUnusedCapacity(manager.lockfile.allocator, len);
@@ -9710,7 +9786,7 @@ pub const PackageManager = struct {
 
         if (needs_new_lockfile) {
             root = .{};
-            try manager.lockfile.initEmpty(ctx.allocator);
+            manager.lockfile.initEmpty(ctx.allocator);
 
             if (manager.options.enable.frozen_lockfile) {
                 if (comptime log_level != .silent) {
@@ -9906,6 +9982,16 @@ pub const PackageManager = struct {
 
         const packages_len_before_install = manager.lockfile.packages.len;
 
+        if (manager.options.enable.frozen_lockfile) {
+            if (manager.lockfile.hasMetaHashChanged(PackageManager.verbose_install or manager.options.do.print_meta_hash_string, packages_len_before_install) catch false) {
+                if (comptime log_level != .silent) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});
+                    Output.note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile", .{});
+                }
+                Global.crash();
+            }
+        }
+
         var install_summary = PackageInstall.Summary{};
         if (manager.options.do.install_packages) {
             install_summary = try manager.installPackages(
@@ -9914,7 +10000,10 @@ pub const PackageManager = struct {
             );
         }
 
-        const did_meta_hash_change = try manager.lockfile.hasMetaHashChanged(
+        const did_meta_hash_change =
+            // If the lockfile was frozen, we already checked it
+            !manager.options.enable.frozen_lockfile and
+            try manager.lockfile.hasMetaHashChanged(
             PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
             @min(packages_len_before_install, manager.lockfile.packages.len),
         );
@@ -9926,14 +10015,6 @@ pub const PackageManager = struct {
             // this will handle new trusted dependencies added through --trust
             manager.package_json_updates.len > 0 or
             (load_lockfile_result == .ok and load_lockfile_result.ok.serializer_result.packages_need_update);
-
-        if (did_meta_hash_change and manager.options.enable.frozen_lockfile) {
-            if (comptime log_level != .silent) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});
-                Output.note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile", .{});
-            }
-            Global.crash();
-        }
 
         // It's unnecessary work to re-save the lockfile if there are no changes
         if (manager.options.do.save_lockfile and
@@ -10055,7 +10136,7 @@ pub const PackageManager = struct {
                     Output.pretty(" <green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
-                    printSkippedScripts(install_summary);
+                    printBlockedPackagesInfo(install_summary);
 
                     if (manager.summary.remove > 0) {
                         Output.pretty("  Removed: <cyan>{d}<r>\n", .{manager.summary.remove});
@@ -10070,7 +10151,7 @@ pub const PackageManager = struct {
                     Output.pretty(" <r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
-                    printSkippedScripts(install_summary);
+                    printBlockedPackagesInfo(install_summary);
                 } else if (install_summary.skipped > 0 and install_summary.fail == 0 and manager.package_json_updates.len == 0) {
                     const count = @as(PackageID, @truncate(manager.lockfile.packages.len));
                     if (count != install_summary.skipped) {
@@ -10082,7 +10163,7 @@ pub const PackageManager = struct {
                         });
                         Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                         printed_timestamp = true;
-                        printSkippedScripts(install_summary);
+                        printBlockedPackagesInfo(install_summary);
                     } else {
                         Output.pretty("<r> <green>Done<r>! Checked {d} package{s}<r> <d>(no changes)<r> ", .{
                             install_summary.skipped,
@@ -10090,7 +10171,7 @@ pub const PackageManager = struct {
                         });
                         Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                         printed_timestamp = true;
-                        printSkippedScripts(install_summary);
+                        printBlockedPackagesInfo(install_summary);
                     }
                 }
 
@@ -10114,12 +10195,22 @@ pub const PackageManager = struct {
         Output.flush();
     }
 
-    fn printSkippedScripts(summary: PackageInstall.Summary) void {
-        const count = summary.packages_with_skipped_scripts_set.count();
-        if (count > 0) {
-            Output.prettyln("\n\n<d> Skipped ~{d} script{s}. Run `bun pm trusted` for details.<r>\n", .{
-                count,
-                if (count > 1) "s" else "",
+    fn printBlockedPackagesInfo(summary: PackageInstall.Summary) void {
+        const packages_count = summary.packages_with_blocked_scripts.count();
+        var scripts_count: usize = 0;
+        for (summary.packages_with_blocked_scripts.values()) |count| scripts_count += count;
+
+        if (comptime Environment.allow_assert) {
+            // if packages_count is greater than 0, scripts_count must also be greater than 0.
+            std.debug.assert(packages_count == 0 or scripts_count > 0);
+            // if scripts_count is 1, it's only possible for packages_count to be 1.
+            std.debug.assert(scripts_count != 1 or packages_count == 1);
+        }
+
+        if (packages_count > 0) {
+            Output.prettyln("\n\n<d> Blocked {d} postinstall{s}. Run `bun pm untrusted` for details.<r>\n", .{
+                scripts_count,
+                if (scripts_count > 1) "s" else "",
             });
         } else {
             Output.pretty("<r>\n", .{});
@@ -10132,9 +10223,6 @@ pub const PackageManager = struct {
         list: Lockfile.Package.Scripts.List,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
-        if (comptime Environment.isWindows) {
-            return bun.todo(@src(), {});
-        }
         var any_scripts = false;
         for (list.items) |maybe_item| {
             if (maybe_item != null) {

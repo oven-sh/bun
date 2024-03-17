@@ -566,13 +566,24 @@ pub extern fn vmsplice(fd: c_int, iovec: [*]const std.os.iovec, iovec_count: usi
 const net_c = @cImport({
     @cInclude("ifaddrs.h"); // getifaddrs, freeifaddrs
     @cInclude("net/if.h"); // IFF_RUNNING, IFF_UP
+    @cInclude("fcntl.h"); // F_DUPFD_CLOEXEC
+    @cInclude("sys/socket.h");
 });
-pub const ifaddrs = net_c.ifaddrs;
-pub const getifaddrs = net_c.getifaddrs;
+
+pub const FD_CLOEXEC = net_c.FD_CLOEXEC;
 pub const freeifaddrs = net_c.freeifaddrs;
+pub const getifaddrs = net_c.getifaddrs;
+pub const ifaddrs = net_c.ifaddrs;
+pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
 pub const IFF_RUNNING = net_c.IFF_RUNNING;
 pub const IFF_UP = net_c.IFF_UP;
-pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;
+pub const MSG_DONTWAIT = net_c.MSG_DONTWAIT;
+pub const MSG_NOSIGNAL = net_c.MSG_NOSIGNAL;
+
+pub const F = struct {
+    pub const DUPFD_CLOEXEC = net_c.F_DUPFD_CLOEXEC;
+    pub const DUPFD = net_c.F_DUPFD;
+};
 
 pub const Mode = u32;
 pub const E = std.os.E;
@@ -596,3 +607,62 @@ pub const linux_fs = if (bun.Environment.isLinux) @cImport({
 pub fn ioctl_ficlone(dest_fd: bun.FileDescriptor, srcfd: bun.FileDescriptor) usize {
     return std.os.linux.ioctl(dest_fd.cast(), linux_fs.FICLONE, @intCast(srcfd.int()));
 }
+
+pub const RWFFlagSupport = enum(u8) {
+    unknown = 0,
+    unsupported = 2,
+    supported = 1,
+
+    var rwf_bool = std.atomic.Value(RWFFlagSupport).init(RWFFlagSupport.unknown);
+
+    pub fn isLinuxKernelVersionWithBuggyRWF_NONBLOCK() bool {
+        return bun.linuxKernelVersion().major == 5 and switch (bun.linuxKernelVersion().minor) {
+            9, 10 => true,
+            else => false,
+        };
+    }
+
+    pub fn disable() void {
+        rwf_bool.store(.unsupported, .Monotonic);
+    }
+
+    /// Workaround for https://github.com/google/gvisor/issues/2601
+    pub fn isMaybeSupported() bool {
+        if (comptime !bun.Environment.isLinux) return false;
+        switch (rwf_bool.load(.Monotonic)) {
+            .unknown => {
+                if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK()) {
+                    rwf_bool.store(.unsupported, .Monotonic);
+                    return false;
+                }
+
+                rwf_bool.store(.supported, .Monotonic);
+                return true;
+            },
+            .supported => {
+                return true;
+            },
+            else => {
+                return false;
+            },
+        }
+
+        unreachable;
+    }
+};
+
+pub extern "C" fn sys_preadv2(
+    fd: c_int,
+    iov: [*]const std.os.iovec,
+    iovcnt: c_int,
+    offset: std.os.off_t,
+    flags: c_uint,
+) isize;
+
+pub extern "C" fn sys_pwritev2(
+    fd: c_int,
+    iov: [*]const std.os.iovec_const,
+    iovcnt: c_int,
+    offset: std.os.off_t,
+    flags: c_uint,
+) isize;

@@ -266,7 +266,7 @@ const Handlers = struct {
             .{ "onHandshake", "handshake" },
         };
         inline for (pairs) |pair| {
-            if (opts.getTruthy(globalObject, pair.@"1")) |callback_value| {
+            if (opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
                 if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
                     exception.* = JSC.toInvalidArguments(comptime std.fmt.comptimePrint("Expected \"{s}\" callback to be a function", .{pair.@"1"}), .{}, globalObject).asObjectRef();
                     return null;
@@ -450,7 +450,7 @@ pub const SocketConfig = struct {
             return null;
         };
 
-        if (opts.getTruthy(globalObject, "data")) |default_data_value| {
+        if (opts.fastGet(globalObject, .data)) |default_data_value| {
             default_data = default_data_value;
         }
 
@@ -703,7 +703,7 @@ pub const Listener = struct {
                 .unix => |u| {
                     const host = bun.default_allocator.dupeZ(u8, u) catch unreachable;
                     defer bun.default_allocator.free(host);
-                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, socket_flags, 8);
+                    break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8);
                 },
                 .fd => {
                     // don't call listen() on an fd
@@ -2812,7 +2812,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var default_data = JSValue.zero;
-            if (opts.getTruthy(globalObject, "data")) |default_data_value| {
+            if (opts.fastGet(globalObject, .data)) |default_data_value| {
                 default_data = default_data_value;
                 default_data.ensureStillAlive();
             }

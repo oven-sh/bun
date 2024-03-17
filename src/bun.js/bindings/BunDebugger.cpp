@@ -1,5 +1,7 @@
 #include "root.h"
 
+#include "ZigGlobalObject.h"
+
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
@@ -540,7 +542,6 @@ enum class AsyncCallTypeUint8 : uint8_t {
 
 static Inspector::InspectorDebuggerAgent::AsyncCallType getCallType(AsyncCallTypeUint8 callType)
 {
-    Inspector::InspectorDebuggerAgent::AsyncCallType type;
     switch (callType) {
     case AsyncCallTypeUint8::DOMTimer:
         return Inspector::InspectorDebuggerAgent::AsyncCallType::DOMTimer;

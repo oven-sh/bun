@@ -495,7 +495,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const path_ = allocator.dupeZ(u8, path) catch bun.outOfMemory();
             defer allocator.free(path_);
 
-            const socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, 0, 8) orelse
+            const socket = us_socket_context_connect_unix(comptime ssl_int, socket_ctx, path_, path_.len, 0, 8) orelse
                 return error.FailedToOpenSocket;
 
             const socket_ = ThisSocket{ .socket = socket };
@@ -1179,9 +1179,9 @@ extern fn us_socket_context_on_end(ssl: i32, context: ?*SocketContext, on_end: *
 extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 
 pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
-pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, options: i32, socket_ext_size: i32) ?*ListenSocket;
+pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*ListenSocket;
 pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, source_host: [*c]const u8, options: i32, socket_ext_size: i32) ?*Socket;
-pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, options: i32, socket_ext_size: i32) ?*Socket;
+pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_is_established(ssl: i32, s: ?*Socket) i32;
 pub extern fn us_socket_close_connecting(ssl: i32, s: ?*Socket) ?*Socket;
 pub extern fn us_socket_context_loop(ssl: i32, context: ?*SocketContext) ?*Loop;
@@ -1858,7 +1858,7 @@ pub fn NewApp(comptime ssl: bool) type {
             comptime UserData: type,
             user_data: UserData,
             comptime handler: fn (UserData, ?*ThisApp.ListenSocket) void,
-            domain: [*:0]const u8,
+            domain: [:0]const u8,
             flags: i32,
         ) void {
             const Wrapper = struct {
@@ -1876,7 +1876,8 @@ pub fn NewApp(comptime ssl: bool) type {
             return uws_app_listen_domain_with_options(
                 ssl_flag,
                 @as(*uws_app_t, @ptrCast(app)),
-                domain,
+                domain.ptr,
+                domain.len,
                 flags,
                 Wrapper.handle,
                 user_data,
@@ -2496,12 +2497,14 @@ extern fn uws_app_listen_domain_with_options(
     ssl_flag: c_int,
     app: *uws_app_t,
     domain: [*:0]const u8,
+    pathlen: usize,
     i32,
     *const (fn (*ListenSocket, domain: [*:0]const u8, i32, *anyopaque) callconv(.C) void),
     ?*anyopaque,
 ) void;
 
-pub const UVLoop = extern struct {
+/// This extends off of uws::Loop on Windows
+pub const WindowsLoop = extern struct {
     const uv = bun.windows.libuv;
 
     internal_loop_data: InternalLoopData align(16),
@@ -2511,46 +2514,43 @@ pub const UVLoop = extern struct {
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
 
-    pub fn init() *UVLoop {
+    pub fn get() *WindowsLoop {
         return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
     }
 
-    extern fn uws_get_loop_with_native(*anyopaque) *UVLoop;
+    extern fn uws_get_loop_with_native(*anyopaque) *WindowsLoop;
 
-    pub fn iterationNumber(this: *const UVLoop) c_longlong {
+    pub fn iterationNumber(this: *const WindowsLoop) c_longlong {
         return this.internal_loop_data.iteration_nr;
     }
 
-    pub fn addActive(this: *const UVLoop, val: u32) void {
+    pub fn addActive(this: *const WindowsLoop, val: u32) void {
         this.uv_loop.addActive(val);
     }
 
-    pub fn subActive(this: *const UVLoop, val: u32) void {
+    pub fn subActive(this: *const WindowsLoop, val: u32) void {
         this.uv_loop.subActive(val);
     }
 
-    pub fn isActive(this: *const UVLoop) bool {
+    pub fn isActive(this: *const WindowsLoop) bool {
         return this.uv_loop.isActive();
     }
-    pub fn get() *UVLoop {
-        return @ptrCast(uws_get_loop());
-    }
 
-    pub fn wakeup(this: *UVLoop) void {
+    pub fn wakeup(this: *WindowsLoop) void {
         us_wakeup_loop(this);
     }
 
     pub const wake = wakeup;
 
-    pub fn tickWithTimeout(this: *UVLoop, _: i64) void {
+    pub fn tickWithTimeout(this: *WindowsLoop, _: i64) void {
         us_loop_run(this);
     }
 
-    pub fn tickWithoutIdle(this: *UVLoop) void {
+    pub fn tickWithoutIdle(this: *WindowsLoop) void {
         us_loop_pump(this);
     }
 
-    pub fn create(comptime Handler: anytype) *UVLoop {
+    pub fn create(comptime Handler: anytype) *WindowsLoop {
         return us_create_loop(
             null,
             Handler.wakeup,
@@ -2560,7 +2560,7 @@ pub const UVLoop = extern struct {
         ).?;
     }
 
-    pub fn run(this: *UVLoop) void {
+    pub fn run(this: *WindowsLoop) void {
         us_loop_run(this);
     }
 
@@ -2568,13 +2568,16 @@ pub const UVLoop = extern struct {
     pub const tick = run;
     pub const wait = run;
 
-    pub fn inc(this: *UVLoop) void {
+    pub fn inc(this: *WindowsLoop) void {
         this.uv_loop.inc();
     }
 
-    pub fn dec(this: *UVLoop) void {
+    pub fn dec(this: *WindowsLoop) void {
         this.uv_loop.dec();
     }
+
+    pub const ref = inc;
+    pub const unref = dec;
 
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
@@ -2601,7 +2604,7 @@ pub const UVLoop = extern struct {
     }
 };
 
-pub const Loop = if (bun.Environment.isWindows) UVLoop else PosixLoop;
+pub const Loop = if (bun.Environment.isWindows) WindowsLoop else PosixLoop;
 
 extern fn uws_get_loop() *Loop;
 extern fn us_create_loop(
@@ -2628,7 +2631,7 @@ extern fn us_socket_pair(
     fds: *[2]LIBUS_SOCKET_DESCRIPTOR,
 ) ?*Socket;
 
-extern fn us_socket_from_fd(
+pub extern fn us_socket_from_fd(
     ctx: *SocketContext,
     ext_size: c_int,
     fd: LIBUS_SOCKET_DESCRIPTOR,

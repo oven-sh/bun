@@ -265,7 +265,7 @@ pub const RunCommand = struct {
 
     const log = Output.scoped(.RUN, false);
 
-    pub fn runPackageScriptForeground(
+    fn runPackageScriptForeground(
         allocator: std.mem.Allocator,
         original_script: string,
         name: string,
@@ -273,7 +273,7 @@ pub const RunCommand = struct {
         env: *DotEnv.Loader,
         passthrough: []const string,
         silent: bool,
-        use_native_shell: bool,
+        use_system_shell: bool,
     ) !bool {
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
@@ -306,7 +306,7 @@ pub const RunCommand = struct {
             combined_script = combined_script_buf;
         }
 
-        if (Environment.isWindows and !use_native_shell) {
+        if (!use_system_shell) {
             if (!silent) {
                 if (Environment.isDebug) {
                     Output.prettyError("[bun shell] ", .{});
@@ -316,14 +316,22 @@ pub const RunCommand = struct {
             }
 
             const mini = bun.JSC.MiniEventLoop.initGlobal(env);
-            bun.shell.InterpreterMini.initAndRunFromSource(mini, name, combined_script) catch |err| {
+            const code = bun.shell.Interpreter.initAndRunFromSource(mini, name, combined_script) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
                 }
 
-                Output.flush();
                 Global.exit(1);
             };
+
+            if (code > 0) {
+                if (code != 2 and !silent) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
+                    Output.flush();
+                }
+
+                Global.exitWide(code);
+            }
 
             return true;
         }
@@ -431,9 +439,11 @@ pub const RunCommand = struct {
         if (Environment.isWindows and bun.strings.hasSuffixComptime(executable, ".exe")) {
             std.debug.assert(std.fs.path.isAbsolute(executable));
 
-            // Using @constCast is safe because we know that `direct_launch_buffer` is the data destination
+            // Using @constCast is safe because we know that
+            // `direct_launch_buffer` is the data destination that assumption is
+            // backed by the immediate assertion.
             var wpath = @constCast(bun.strings.toNTPath(&BunXFastPath.direct_launch_buffer, executable));
-            std.debug.assert(bun.isSliceInBuffer(u16, wpath, &BunXFastPath.direct_launch_buffer));
+            std.debug.assert(bun.isSliceInBufferT(u16, wpath, &BunXFastPath.direct_launch_buffer));
 
             std.debug.assert(wpath.len > bun.windows.nt_object_prefix.len + ".exe".len);
             wpath.len += ".bunx".len - ".exe".len;
@@ -1153,12 +1163,11 @@ pub const RunCommand = struct {
         ;
 
         Output.pretty(intro_text ++ "\n\n", .{});
-        Output.flush();
+
         Output.pretty("<b>Flags:<r>", .{});
-        Output.flush();
+
         clap.simpleHelp(&Arguments.run_params);
         Output.pretty("\n\n" ++ examples_text, .{});
-        Output.flush();
 
         if (package_json) |pkg| {
             if (pkg.scripts) |scripts| {
@@ -1182,16 +1191,15 @@ pub const RunCommand = struct {
                     // Output.prettyln("\n<d>{d} scripts<r>", .{scripts.count()});
 
                     Output.prettyln("\n", .{});
-                    Output.flush();
                 } else {
                     Output.prettyln("\n<r><yellow>No \"scripts\" found in package.json.<r>\n", .{});
-                    Output.flush();
                 }
             } else {
                 Output.prettyln("\n<r><yellow>No \"scripts\" found in package.json.<r>\n", .{});
-                Output.flush();
             }
         }
+
+        Output.flush();
     }
 
     pub fn exec(
@@ -1372,7 +1380,7 @@ pub const RunCommand = struct {
                             this_bundler.env,
                             &.{},
                             ctx.debug.silent,
-                            ctx.debug.use_native_shell,
+                            ctx.debug.use_system_shell,
                         )) {
                             return false;
                         }
@@ -1386,7 +1394,7 @@ pub const RunCommand = struct {
                         this_bundler.env,
                         passthrough,
                         ctx.debug.silent,
-                        ctx.debug.use_native_shell,
+                        ctx.debug.use_system_shell,
                     )) return false;
 
                     temp_script_buffer[0.."post".len].* = "post".*;
@@ -1400,7 +1408,7 @@ pub const RunCommand = struct {
                             this_bundler.env,
                             &.{},
                             ctx.debug.silent,
-                            ctx.debug.use_native_shell,
+                            ctx.debug.use_system_shell,
                         )) {
                             return false;
                         }
@@ -1437,7 +1445,7 @@ pub const RunCommand = struct {
             errdefer list.deinit();
 
             std.io.getStdIn().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
-            ctx.runtime_options.eval_script = list.items;
+            ctx.runtime_options.eval.script = list.items;
 
             const trigger = bun.pathLiteral("/[stdin]");
             var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
@@ -1528,7 +1536,7 @@ pub const RunCommand = struct {
     pub fn execAsIfNode(ctx: Command.Context) !void {
         std.debug.assert(CLI.pretend_to_be_node);
 
-        if (ctx.runtime_options.eval_script.len > 0) {
+        if (ctx.runtime_options.eval.script.len > 0) {
             const trigger = bun.pathLiteral("/[eval]");
             var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
             const cwd = try std.os.getcwd(&entry_point_buf);
@@ -1581,7 +1589,7 @@ pub const BunXFastPath = struct {
 
     /// If this returns, it implies the fast path cannot be taken
     fn tryLaunch(ctx: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
-        std.debug.assert(bun.isSliceInBuffer(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
+        std.debug.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 
         debug("Attempting to find and load bunx file: '{}'", .{bun.fmt.utf16(path_to_use)});

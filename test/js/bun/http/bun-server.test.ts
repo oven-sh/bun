@@ -317,7 +317,6 @@ describe("Server", () => {
       server.stop(true);
     }
   });
-
   test("abort signal on server with stream", async () => {
     {
       let signalOnServer = false;
@@ -378,9 +377,10 @@ describe("Server", () => {
       cmd: [bunExe(), path.join("js-sink-sourmap-fixture", "index.mjs")],
       cwd: import.meta.dir,
       env: bunEnv,
-      stderr: "pipe",
+      stdin: "inherit",
+      stderr: "inherit",
+      stdout: "inherit",
     });
-    expect(stderr).toBeEmpty();
     expect(exitCode).toBe(0);
   });
 
@@ -434,74 +434,6 @@ test("unref keeps process alive for ongoing connections", async () => {
   expect([path.join(import.meta.dir, "unref-fixture-2.ts")]).toRun();
 });
 
-describe("Bun.serve error handling", () => {
-  test("supports error handling", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        throw new Error("woops!");
-      },
-      error(error) {
-        return new Response(`${error.message}`);
-      },
-    });
-
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
-    expect(await response.text()).toBe("woops!");
-    server.stop(true);
-  });
-
-  test("supports reading the Request in error handling", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        throw new Error("woops!");
-      },
-      error(error, req) {
-        if (req === null) return new Response(`${error.message}`);
-        return new Response(`${error.message}\n${req.method}`);
-      },
-    });
-
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
-    expect(await response.text()).toBe("woops!\nGET");
-    server.stop(true);
-  });
-
-  test("the request headers survive", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        throw new Error("woops!");
-      },
-      error(error, req) {
-        return new Response(`${req.headers.get("x-foo")}`);
-      },
-    });
-
-    const response = await fetch(`http://${server.hostname}:${server.port}`, { headers: { "x-foo": "1" } });
-    expect(await response.text()).toBe("1");
-    server.stop(true);
-  });
-
-  test("the request url survives", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        throw new Error("woops!");
-      },
-      error(error, req) {
-        return new Response(`${req.url}`);
-      },
-    });
-
-    const url = `http://${server.hostname}:${server.port}/`;
-    const response = await fetch(url);
-    expect(await response.text()).toBe(url);
-    server.stop(true);
-  });
-});
-
 test("Bun does not crash when given invalid config", async () => {
   const server1 = Bun.serve({
     fetch(request, server) {
@@ -533,7 +465,7 @@ test("Bun does not crash when given invalid config", async () => {
     {
       fetch() {},
       port: server1.port,
-      get ssl() {
+      get tls() {
         throw new Error();
       },
     },

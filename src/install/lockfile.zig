@@ -415,6 +415,7 @@ pub const Tree = struct {
         queue: Lockfile.TreeFiller,
         log: *logger.Log,
         old_lockfile: *Lockfile,
+        prefer_dev_dependencies: bool = false,
 
         pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -559,7 +560,17 @@ pub const Tree = struct {
         for (this_dependencies) |dep_id| {
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
-            if (builder.resolutions[dep_id] != package_id and !dependency.behavior.isPeer()) {
+            const mismatch = builder.resolutions[dep_id] != package_id;
+
+            if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
+                if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
+                    return hoisted; // 2
+                }
+
+                return dependency_loop; // 3
+            }
+
+            if (mismatch and !dependency.behavior.isPeer()) {
                 if (as_defined and !dep.behavior.isPeer()) {
                     builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
                         builder.packageName(package_id),
@@ -729,45 +740,8 @@ pub fn cleanWithLogger(
         try old.preprocessUpdateRequests(updates, exact_versions);
     }
 
-    // Deduplication works like this
-    // Go through *already* resolved package versions
-    // Ask, do any of those versions happen to match a lower version?
-    // If yes, choose that version instead.
-    // Why lower?
-    //
-    // Normally, the problem looks like this:
-    //   Package A: "react@^17"
-    //   Package B: "react@17.0.1
-    //
-    // Now you have two copies of React.
-    // When you really only wanted one.
-    // Since _typically_ the issue is that Semver ranges with "^" or "~" say "choose latest", we end up with latest
-    // if (options.enable.deduplicate_packages) {
-    //     var resolutions: []PackageID = old.buffers.resolutions.items;
-    //     const dependencies: []const Dependency = old.buffers.dependencies.items;
-    //     const package_resolutions: []const Resolution = old.packages.items(.resolution);
-    //     const string_buf = old.buffers.string_bytes.items;
-
-    //     const root_resolution = @as(usize, old.packages.items(.resolutions)[0].len);
-
-    //     const DedupeMap = std.ArrayHashMap(PackageNameHash, std.ArrayListUnmanaged([2]PackageID), ArrayIdentityContext(PackageNameHash), false);
-    //     var dedupe_map = DedupeMap.initContext(allocator, .{});
-    //     try dedupe_map.ensureTotalCapacity(old.unique_packages.count());
-
-    //     for (resolutions) |resolved_package_id, dep_i| {
-    //         if (resolved_package_id < max_package_id and !old.unique_packages.isSet(resolved_package_id)) {
-    //             const dependency = dependencies[dep_i];
-    //             if (dependency.version.tag == .npm) {
-    //                 var dedupe_entry = try dedupe_map.getOrPut(dependency.name_hash);
-    //                 if (!dedupe_entry.found_existing) dedupe_entry.value_ptr.* = .{};
-    //                 try dedupe_entry.value_ptr.append(allocator, [2]PackageID{ dep_i, resolved_package_id });
-    //             }
-    //         }
-    //     }
-    // }
-
     var new: *Lockfile = try old.allocator.create(Lockfile);
-    try new.initEmpty(
+    new.initEmpty(
         old.allocator,
     );
     try new.string_pool.ensureTotalCapacity(old.string_pool.capacity());
@@ -986,6 +960,7 @@ const Cloner = struct {
             .dependencies = this.lockfile.buffers.dependencies.items,
             .log = this.log,
             .old_lockfile = this.old,
+            .prefer_dev_dependencies = PackageManager.instance.options.local_package_features.dev_dependencies,
         };
 
         try (Tree{}).processSubtree(Tree.root_dep_id, &builder);
@@ -1722,7 +1697,7 @@ inline fn strWithType(this: *const Lockfile, comptime Type: type, slicable: Type
     return slicable.slice(this.buffers.string_bytes.items);
 }
 
-pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
+pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
     this.* = .{
         .format = Lockfile.FormatVersion.current,
         .packages = .{},
@@ -2384,6 +2359,40 @@ pub const Package = extern struct {
             cwd: string,
             package_name: string,
 
+            pub fn printScripts(
+                this: Package.Scripts.List,
+                resolution: *const Resolution,
+                resolution_buf: []const u8,
+                comptime format_type: enum { completed, info, untrusted },
+            ) void {
+                if (std.mem.indexOf(u8, this.cwd, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str)) |i| {
+                    Output.pretty("<d>.{s}{s} @{}<r>\n", .{
+                        std.fs.path.sep_str,
+                        strings.withoutTrailingSlash(this.cwd[i + 1 ..]),
+                        resolution.fmt(resolution_buf),
+                    });
+                } else {
+                    Output.pretty("<d>{s} @{}<r>\n", .{
+                        strings.withoutTrailingSlash(this.cwd),
+                        resolution.fmt(resolution_buf),
+                    });
+                }
+
+                const fmt = switch (comptime format_type) {
+                    .completed => " <green>✓<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
+                    .untrusted => " <yellow>»<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
+                    .info => " [{s}]<d>:<r> <cyan>{s}<r>\n",
+                };
+                for (this.items, 0..) |maybe_script, script_index| {
+                    if (maybe_script) |script| {
+                        Output.pretty(fmt, .{
+                            Lockfile.Scripts.names[script_index],
+                            script.script,
+                        });
+                    }
+                }
+            }
+
             pub fn first(this: Package.Scripts.List) Lockfile.Scripts.Entry {
                 if (comptime Environment.allow_assert) {
                     std.debug.assert(this.items[this.first_index] != null);
@@ -2592,7 +2601,7 @@ pub const Package = extern struct {
             folder_name: string,
             resolution: *const Resolution,
         ) !?Package.Scripts.List {
-            var path_buf_to_use: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
+            var path_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
             if (this.hasAny()) {
                 const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name) and
                     this.install.isEmpty() and
@@ -2609,7 +2618,7 @@ pub const Package = extern struct {
 
                 const cwd = Path.joinAbsStringBufZTrailingSlash(
                     abs_node_modules_path,
-                    &path_buf_to_use,
+                    &path_buf,
                     &[_]string{folder_name},
                     .auto,
                 );
@@ -2623,37 +2632,33 @@ pub const Package = extern struct {
                     add_node_gyp_rebuild_script,
                 );
             } else if (!this.filled) {
+                const abs_folder_path = Path.joinAbsStringBufZTrailingSlash(
+                    abs_node_modules_path,
+                    &path_buf,
+                    &[_]string{folder_name},
+                    .auto,
+                );
                 return this.createFromPackageJSON(
                     log,
                     lockfile,
                     node_modules,
-                    abs_node_modules_path,
+                    abs_folder_path,
                     folder_name,
-                    resolution,
+                    resolution.tag,
                 );
             }
 
             return null;
         }
 
-        pub fn createFromPackageJSON(
+        pub fn fillFromPackageJSON(
             this: *Package.Scripts,
+            allocator: std.mem.Allocator,
+            string_builder: *Lockfile.StringBuilder,
             log: *logger.Log,
-            lockfile: *Lockfile,
             node_modules: std.fs.Dir,
-            node_modules_path: string,
             folder_name: string,
-            resolution: *const Resolution,
-        ) !?Package.Scripts.List {
-            var path_buf: bun.PathBuffer = undefined;
-
-            const cwd = Path.joinAbsStringBufZTrailingSlash(
-                node_modules_path,
-                &path_buf,
-                &[_]string{folder_name},
-                .auto,
-            );
-
+        ) !void {
             const json = brk: {
                 const json_src = brk2: {
                     const json_path = bun.path.joinZ([_]string{ folder_name, "package.json" }, .auto);
@@ -2666,8 +2671,8 @@ pub const Package = extern struct {
                     const json_file = json_file_fd.asFile();
                     defer json_file.close();
                     const json_stat_size = try json_file.getEndPos();
-                    const json_buf = try lockfile.allocator.alloc(u8, json_stat_size + 64);
-                    errdefer lockfile.allocator.free(json_buf);
+                    const json_buf = try allocator.alloc(u8, json_stat_size + 64);
+                    errdefer allocator.free(json_buf);
                     const json_len = try json_file.preadAll(json_buf, 0);
                     break :brk2 logger.Source.initPathString(json_path, json_buf[0..json_len]);
                 };
@@ -2676,22 +2681,34 @@ pub const Package = extern struct {
                 break :brk try json_parser.ParseJSONUTF8(
                     &json_src,
                     log,
-                    lockfile.allocator,
+                    allocator,
                 );
             };
 
+            Lockfile.Package.Scripts.parseCount(allocator, string_builder, json);
+            try string_builder.allocate();
+            this.parseAlloc(allocator, string_builder, json);
+            this.filled = true;
+        }
+
+        pub fn createFromPackageJSON(
+            this: *Package.Scripts,
+            log: *logger.Log,
+            lockfile: *Lockfile,
+            node_modules: std.fs.Dir,
+            abs_folder_path: string,
+            folder_name: string,
+            resolution_tag: Resolution.Tag,
+        ) !?Package.Scripts.List {
             var tmp: Lockfile = undefined;
-            try tmp.initEmpty(lockfile.allocator);
+            tmp.initEmpty(lockfile.allocator);
             defer tmp.deinit();
             var builder = tmp.stringBuilder();
-            Lockfile.Package.Scripts.parseCount(lockfile.allocator, &builder, json);
-            try builder.allocate();
-            this.parseAlloc(lockfile.allocator, &builder, json);
-            this.filled = true;
+            try this.fillFromPackageJSON(lockfile.allocator, &builder, log, node_modules, folder_name);
 
             const add_node_gyp_rebuild_script = if (this.install.isEmpty() and this.preinstall.isEmpty()) brk: {
                 const binding_dot_gyp_path = Path.joinAbsStringZ(
-                    cwd,
+                    abs_folder_path,
                     &[_]string{"binding.gyp"},
                     .auto,
                 );
@@ -2702,9 +2719,9 @@ pub const Package = extern struct {
             return this.createList(
                 lockfile,
                 tmp.buffers.string_bytes.items,
-                cwd,
+                abs_folder_path,
                 folder_name,
-                resolution.tag,
+                resolution_tag,
                 add_node_gyp_rebuild_script,
             );
         }
@@ -3136,6 +3153,12 @@ pub const Package = extern struct {
             dependencies_list.items = dependencies_list.items.ptr[0..new_length];
             resolutions_list.items = resolutions_list.items.ptr[0..new_length];
 
+            if (comptime Environment.isDebug) {
+                if (package.resolution.value.npm.url.isEmpty()) {
+                    Output.panic("tarball_url is empty for package {s}@{}", .{ manifest.name(), version });
+                }
+            }
+
             return package;
         }
     }
@@ -3416,7 +3439,10 @@ pub const Package = extern struct {
                 summary.update += 1;
             }
 
-            summary.add = @truncate((to_deps.len + skipped_workspaces) - (from_deps.len - summary.remove));
+            // Use saturating arithmetic here because a migrated
+            // package-lock.json could be out of sync with the package.json, so the
+            // number of from_deps could be greater than to_deps.
+            summary.add = @truncate((to_deps.len + skipped_workspaces) -| (from_deps.len -| summary.remove));
 
             inline for (Lockfile.Scripts.names) |hook| {
                 if (!@field(to.scripts, hook).eql(
@@ -4704,21 +4730,21 @@ pub const Package = extern struct {
 
     pub const Meta = extern struct {
         // TODO: when we bump the lockfile version, we should reorder this to:
-        // id(32), arch(16), os(16), id(8), man_dir(8), __has_install_script(8), integrity(72 align 8)
+        // id(32), arch(16), os(16), id(8), man_dir(8), has_install_script(8), integrity(72 align 8)
         // should allow us to remove padding bytes
 
         // TODO: remove origin. it doesnt do anything and can be inferred from the resolution
         origin: Origin = Origin.npm,
         _padding_origin: u8 = 0,
 
-        arch: Npm.Architecture = Npm.Architecture.all,
-        os: Npm.OperatingSystem = Npm.OperatingSystem.all,
+        arch: Npm.Architecture = .all,
+        os: Npm.OperatingSystem = .all,
         _padding_os: u16 = 0,
 
         id: PackageID = invalid_package_id,
 
-        man_dir: String = String{},
-        integrity: Integrity = Integrity{},
+        man_dir: String = .{},
+        integrity: Integrity = .{},
 
         /// Shouldn't be used directly. Use `Meta.hasInstallScript()` and
         /// `Meta.setHasInstallScript()` instead.
@@ -4726,11 +4752,11 @@ pub const Package = extern struct {
         /// `.old` represents the value of this field before it was used
         /// in the lockfile and should never be saved to a new lockfile.
         /// There is a debug assert for this in `Lockfile.Package.Serializer.save()`.
-        __has_install_script: enum(u8) {
-            old,
+        has_install_script: enum(u8) {
+            old = 0,
             false,
             true,
-        },
+        } = .false,
 
         _padding_integrity: [2]u8 = .{0} ** 2,
 
@@ -4741,15 +4767,15 @@ pub const Package = extern struct {
         }
 
         pub fn hasInstallScript(this: *const Meta) bool {
-            return this.__has_install_script == .true;
+            return this.has_install_script == .true;
         }
 
         pub fn setHasInstallScript(this: *Meta, has_script: bool) void {
-            this.__has_install_script = if (has_script) .true else .false;
+            this.has_install_script = if (has_script) .true else .false;
         }
 
         pub fn needsUpdate(this: *const Meta) bool {
-            return this.__has_install_script == .old;
+            return this.has_install_script == .old;
         }
 
         pub fn count(this: *const Meta, buf: []const u8, comptime StringBuilderType: type, builder: StringBuilderType) void {
@@ -4757,9 +4783,7 @@ pub const Package = extern struct {
         }
 
         pub fn init() Meta {
-            return .{
-                .__has_install_script = .false,
-            };
+            return .{};
         }
 
         pub fn clone(this: *const Meta, id: PackageID, buf: []const u8, comptime StringBuilderType: type, builder: StringBuilderType) Meta {
@@ -4770,7 +4794,7 @@ pub const Package = extern struct {
                 .arch = this.arch,
                 .os = this.os,
                 .origin = this.origin,
-                .__has_install_script = this.__has_install_script,
+                .has_install_script = this.has_install_script,
             };
         }
     };
@@ -4852,7 +4876,7 @@ pub const Package = extern struct {
                     debug("save(\"{s}\") = {d} bytes", .{ field.name, std.mem.sliceAsBytes(value).len });
                     if (comptime strings.eqlComptime(field.name, "meta")) {
                         for (value) |meta| {
-                            std.debug.assert(meta.__has_install_script != .old);
+                            std.debug.assert(meta.has_install_script != .old);
                         }
                     }
                 }

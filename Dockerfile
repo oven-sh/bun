@@ -16,7 +16,7 @@ ARG BUILD_MACHINE_ARCH=x86_64
 ARG BUILDARCH=amd64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG GIT_SHA=""
-ARG BUN_VERSION="bun-v1.0.7"
+ARG BUN_VERSION="bun-v1.0.30"
 ARG BUN_DOWNLOAD_URL_BASE="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${BUN_VERSION}"
 ARG CANARY=0
 ARG ASSERTIONS=OFF
@@ -372,7 +372,7 @@ ENV CCACHE_DIR=/ccache
 RUN --mount=type=cache,target=/ccache  mkdir ${BUN_DIR}/build \
   && cd ${BUN_DIR}/build \
   && mkdir -p tmp_modules tmp_functions js codegen \
-  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_DEBUG_JSC=${ASSERTIONS} -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit -DCANARY=${CANARY} -DZIG_COMPILER=system \
+  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_LTO=ON -DUSE_DEBUG_JSC=${ASSERTIONS} -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit -DCANARY=${CANARY} -DZIG_COMPILER=system \
   && bash compile-cpp-only.sh -v
 
 FROM bun-base-with-zig as bun-codegen-for-zig
@@ -419,6 +419,7 @@ RUN mkdir -p build \
   && cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
+  -DUSE_LTO=ON \
   -DZIG_OPTIMIZE="${ZIG_OPTIMIZE}" \
   -DCPU_TARGET="${CPU_TARGET}" \
   -DZIG_TARGET="${TRIPLET}" \
@@ -476,6 +477,7 @@ RUN cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUN_LINK_ONLY=1 \
   -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
+  -DUSE_LTO=ON \
   -DUSE_DEBUG_JSC=${ASSERTIONS} \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
   -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \
@@ -540,6 +542,7 @@ RUN cmake .. \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DCANARY="${CANARY}" \
   -DZIG_COMPILER=system \
+  -DUSE_LTO=ON \
   && ninja -v \
   && ./bun --revision \
   && mkdir -p /build/out \

@@ -55,17 +55,13 @@ pub const Cli = struct {
         var panicker = MainPanicHandler.init(log);
         MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
-            switch (err) {
-                else => {
-                    if (Output.enable_ansi_colors_stderr) {
-                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                    } else {
-                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                    }
+            log.printForLogLevel(Output.errorWriter()) catch {};
 
-                    Reporter.globalError(err, @errorReturnTrace());
-                },
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
             }
+
+            Reporter.globalError(err, null);
         };
     }
 
@@ -178,6 +174,7 @@ pub const Arguments = struct {
         clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
         clap.parseParam("-i                                Auto-install dependencies during execution. Equivalent to --install=fallback.") catch unreachable,
         clap.parseParam("-e, --eval <STR>                  Evaluate argument as a script") catch unreachable,
+        clap.parseParam("--print <STR>                     Evaluate argument as a script and print the result") catch unreachable,
         clap.parseParam("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk") catch unreachable,
         clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
         clap.parseParam("-p, --port <STR>                  Set the default port for Bun.serve") catch unreachable,
@@ -185,22 +182,22 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
     };
 
+    const auto_or_run_params = [_]ParamType{
+        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+        clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
+    };
+
     const auto_only_params = [_]ParamType{
         // clap.parseParam("--all") catch unreachable,
-        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
-    };
+    } ++ auto_or_run_params;
     const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
-        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
-    } ++ if (Environment.isWindows) [_]ParamType{
-        // clap.parseParam("--native-shell                    Use cmd.exe to interpret package.json scripts") catch unreachable,
-        clap.parseParam("--no-native-shell                    Use Bun shell (TODO: flip this switch)") catch unreachable,
-    } else .{};
+    } ++ auto_or_run_params;
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const bunx_commands = [_]ParamType{
@@ -541,7 +538,13 @@ pub const Arguments = struct {
             }
 
             if (args.option("--port")) |port_str| {
-                opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
+                if (comptime cmd == .RunAsNodeCommand) {
+                    // TODO: prevent `node --port <script>` from working
+                    ctx.runtime_options.eval.script = port_str;
+                    ctx.runtime_options.eval.eval_and_print = true;
+                } else {
+                    opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
+                }
             }
 
             ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))
@@ -577,7 +580,12 @@ pub const Arguments = struct {
                 ctx.preloads = preloads;
             }
 
-            ctx.runtime_options.eval_script = args.option("--eval") orelse "";
+            if (args.option("--print")) |script| {
+                ctx.runtime_options.eval.script = script;
+                ctx.runtime_options.eval.eval_and_print = true;
+            } else if (args.option("--eval")) |script| {
+                ctx.runtime_options.eval.script = script;
+            }
             ctx.runtime_options.if_present = args.flag("--if-present");
             ctx.runtime_options.smol = args.flag("--smol");
             if (args.option("--inspect")) |inspect_flag| {
@@ -655,7 +663,8 @@ pub const Arguments = struct {
                     else => invalidTarget(&diag, _target),
                 };
 
-                ctx.debug.run_in_bun = opts.target.? == .bun;
+                if (opts.target.? == .bun)
+                    ctx.debug.run_in_bun = opts.target.? == .bun;
             }
 
             if (args.flag("--watch")) {
@@ -776,7 +785,10 @@ pub const Arguments = struct {
         const react_fast_refresh = true;
 
         if (cmd == .AutoCommand or cmd == .RunCommand) {
-            ctx.debug.silent = args.flag("--silent");
+            // "run.silent" in bunfig.toml
+            if (args.flag("--silent")) {
+                ctx.debug.silent = true;
+            }
 
             if (opts.define) |define| {
                 if (define.keys.len > 0)
@@ -785,7 +797,10 @@ pub const Arguments = struct {
         }
 
         if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .BunxCommand) {
-            ctx.debug.run_in_bun = args.flag("--bun") or ctx.debug.run_in_bun;
+            // "run.bun" in bunfig.toml
+            if (args.flag("--bun")) {
+                ctx.debug.run_in_bun = true;
+            }
         }
 
         opts.resolve = Api.ResolveMode.lazy;
@@ -850,11 +865,17 @@ pub const Arguments = struct {
         if (output_file != null)
             ctx.debug.output_file = output_file.?;
 
-        if (cmd == .RunCommand) {
-            ctx.debug.use_native_shell = if (Environment.isWindows)
-                !args.flag("--no-native-shell")
-            else
-                true;
+        if (cmd == .RunCommand or cmd == .AutoCommand) {
+            if (args.option("--shell")) |shell| {
+                if (strings.eqlComptime(shell, "bun")) {
+                    ctx.debug.use_system_shell = false;
+                } else if (strings.eqlComptime(shell, "system")) {
+                    ctx.debug.use_system_shell = true;
+                } else {
+                    Output.errGeneric("Expected --shell to be one of 'bun' or 'system'. Received: \"{s}\"", .{shell});
+                    Global.exit(1);
+                }
+            }
         }
 
         return opts;
@@ -980,7 +1001,7 @@ pub const HelpCommand = struct {
             .explicit => {
                 Output.pretty(
                     "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
-                        Global.package_json_version_with_sha ++
+                        Global.package_json_version_with_revision ++
                         ")<r>\n\n" ++
                         cli_helptext_fmt,
                     args,
@@ -1054,7 +1075,7 @@ pub const Command = struct {
         run_in_bun: bool = false,
         loaded_bunfig: bool = false,
         /// Disables using bun.shell.Interpreter for `bun run`, instead spawning cmd.exe
-        use_native_shell: bool = false,
+        use_system_shell: bool = !bun.Environment.isWindows,
 
         // technical debt
         macros: MacroOptions = MacroOptions.unspecified,
@@ -1097,7 +1118,10 @@ pub const Command = struct {
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
         if_present: bool = false,
-        eval_script: []const u8 = "",
+        eval: struct {
+            script: []const u8 = "",
+            eval_and_print: bool = false,
+        } = .{},
     };
 
     pub const Context = struct {
@@ -1166,7 +1190,7 @@ pub const Command = struct {
 
     // std.process.args allocates!
     const ArgsIterator = struct {
-        buf: [][:0]u8 = undefined,
+        buf: [][:0]const u8 = undefined,
         i: u32 = 0,
 
         pub fn next(this: *ArgsIterator) ?[]const u8 {
@@ -1404,7 +1428,7 @@ pub const Command = struct {
                 var ctx = try Command.Context.create(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
                 var args = bun.argv()[0..];
-                args[1] = @constCast("bun-repl");
+                args[1] = "bun-repl";
                 try BunxCommand.exec(ctx, args);
                 return;
             },
@@ -1551,33 +1575,32 @@ pub const Command = struct {
                     return;
                 }
 
-                // iterate over args
-                // if --help, print help and exit
-                const print_help = brk: {
-                    for (bun.argv()) |arg| {
-                        if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
-                            break :brk true;
-                        }
-                    }
-                    break :brk false;
-                };
-
                 var template_name_start: usize = 0;
                 var positionals: [2]string = .{ "", "" };
-
                 var positional_i: usize = 0;
 
+                var dash_dash_bun = false;
+                var print_help = false;
                 if (args.len > 2) {
-                    const remainder = args[2..];
+                    const remainder = args[1..];
                     var remainder_i: usize = 0;
                     while (remainder_i < remainder.len and positional_i < positionals.len) : (remainder_i += 1) {
-                        const slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n;");
-                        if (slice.len > 0 and !strings.hasPrefixComptime(slice, "--")) {
-                            if (positional_i == 0) {
-                                template_name_start = remainder_i + 2;
+                        const slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n");
+                        if (slice.len > 0) {
+                            if (!strings.hasPrefixComptime(slice, "--")) {
+                                if (positional_i == 1) {
+                                    template_name_start = remainder_i + 2;
+                                }
+                                positionals[positional_i] = slice;
+                                positional_i += 1;
                             }
-                            positionals[positional_i] = slice;
-                            positional_i += 1;
+                            if (slice[0] == '-') {
+                                if (strings.eqlComptime(slice, "--bun")) {
+                                    dash_dash_bun = true;
+                                } else if (strings.eqlComptime(slice, "--help") or strings.eqlComptime(slice, "-h")) {
+                                    print_help = true;
+                                }
+                            }
                         }
                     }
                 }
@@ -1586,14 +1609,14 @@ pub const Command = struct {
                     // "bun create --"
                     // "bun create -abc --"
                     positional_i == 0 or
-                    positionals[0].len == 0)
+                    positionals[1].len == 0)
                 {
                     Command.Tag.printHelp(.CreateCommand, true);
                     Global.exit(0);
                     return;
                 }
 
-                const template_name = positionals[0];
+                const template_name = positionals[1];
 
                 // if template_name is "react"
                 // print message telling user to use "bun create vite" instead
@@ -1639,10 +1662,13 @@ pub const Command = struct {
                     example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {
-                    const bunx_args = try allocator.alloc([:0]const u8, 1 + args.len - template_name_start);
+                    const bunx_args = try allocator.alloc([:0]const u8, 2 + args.len - template_name_start + @intFromBool(dash_dash_bun));
                     bunx_args[0] = "bunx";
-                    bunx_args[1] = try BunxCommand.addCreatePrefix(allocator, template_name);
-                    for (bunx_args[2..], args[template_name_start + 1 ..]) |*dest, src| {
+                    if (dash_dash_bun) {
+                        bunx_args[1] = "--bun";
+                    }
+                    bunx_args[1 + @as(usize, @intFromBool(dash_dash_bun))] = try BunxCommand.addCreatePrefix(allocator, template_name);
+                    for (bunx_args[2 + @as(usize, @intFromBool(dash_dash_bun)) ..], args[template_name_start..]) |*dest, src| {
                         dest.* = src;
                     }
 
@@ -1691,7 +1717,7 @@ pub const Command = struct {
                     }
                 };
 
-                if (ctx.runtime_options.eval_script.len > 0) {
+                if (ctx.runtime_options.eval.script.len > 0) {
                     const trigger = bun.pathLiteral("/[eval]");
                     var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
                     const cwd = try std.os.getcwd(&entry_point_buf);
@@ -1741,7 +1767,7 @@ pub const Command = struct {
                     }
 
                     if (extension.len > 0) {
-                        if (strings.endsWithComptime(ctx.args.entry_points[0], ".bun.sh")) {
+                        if (strings.endsWithComptime(ctx.args.entry_points[0], ".sh")) {
                             break :brk options.Loader.bunsh;
                         }
 

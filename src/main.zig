@@ -48,7 +48,7 @@ pub fn main() void {
         bun.win32.STDOUT_FD = if (stdout != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdout) else bun.invalid_fd;
         bun.win32.STDIN_FD = if (stdin != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdin) else bun.invalid_fd;
 
-        bun.buffered_stdin.unbuffered_reader.context.handle = stdin;
+        bun.Output.buffered_stdin.unbuffered_reader.context.handle = bun.win32.STDIN_FD;
 
         const w = std.os.windows;
 
@@ -64,11 +64,16 @@ pub fn main() void {
 
     bun.start_time = std.time.nanoTimestamp();
 
-    const stdout = std.io.getStdOut();
-    const stderr = std.io.getStdErr();
+    const stdout = bun.sys.File.from(std.io.getStdOut());
+    const stderr = bun.sys.File.from(std.io.getStdErr());
     var output_source = Output.Source.init(stdout, stderr);
 
     Output.Source.set(&output_source);
+
+    if (comptime Environment.isDebug) {
+        bun.Output.initScopedDebugWriterAtStartup();
+    }
+
     defer Output.flush();
     if (Environment.isX64 and Environment.enableSIMD and Environment.isPosix) {
         bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);

@@ -4981,6 +4981,22 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    /// Check if the JSValue is either a signed 32-bit integer or a double and
+    /// return the value as a f64
+    ///
+    /// This does not call `valueOf` on the JSValue
+    pub fn getNumber(this: JSValue) ?f64 {
+        if (this.isInt32()) {
+            return @as(f64, @floatFromInt(this.asInt32()));
+        }
+
+        if (isNumber(this)) {
+            return asDouble(this);
+        }
+
+        return null;
+    }
+
     pub fn asNumber(this: JSValue) f64 {
         if (this.isInt32()) {
             return @as(f64, @floatFromInt(this.asInt32()));

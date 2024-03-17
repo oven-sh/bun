@@ -8482,6 +8482,7 @@ pub const PackageManager = struct {
                 .package_version = resolution_label,
                 // .install_order = this.tree_iterator.order,
             };
+            debug("Installing {s}@{s}", .{ name, resolution_label });
 
             switch (resolution.tag) {
                 .npm => {
@@ -8742,7 +8743,14 @@ pub const PackageManager = struct {
                                     );
                                 },
                                 .npm => {
-                                    if (comptime Environment.allow_assert) std.debug.assert(!resolution.value.npm.url.isEmpty());
+                                    if (comptime Environment.isDebug) {
+                                        // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
+                                        // This caused bugs. We can't assert on it because they could come from old lockfiles
+                                        if (resolution.value.npm.url.isEmpty()) {
+                                            Output.debugWarn("package {s}@{} missing tarball_url", .{ name, resolution.fmt(buf) });
+                                        }
+                                    }
+
                                     this.manager.enqueuePackageForDownload(
                                         name,
                                         dependency_id,

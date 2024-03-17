@@ -3153,6 +3153,12 @@ pub const Package = extern struct {
             dependencies_list.items = dependencies_list.items.ptr[0..new_length];
             resolutions_list.items = resolutions_list.items.ptr[0..new_length];
 
+            if (comptime Environment.isDebug) {
+                if (package.resolution.value.npm.url.isEmpty()) {
+                    Output.panic("tarball_url is empty for package {s}@{}", .{ manifest.name(), version });
+                }
+            }
+
             return package;
         }
     }

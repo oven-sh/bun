@@ -195,8 +195,10 @@ var promisify = function promisify(original) {
     if (typeof custom !== "function") {
       throw new TypeError('The "util.promisify.custom" argument must be of type Function');
     }
-    return defineCustomPromisify(original, custom);
+    // ensure that we don't create another promisified function wrapper
+    return defineCustomPromisify(custom, custom);
   }
+
   function fn(...originalArgs) {
     const { promise, resolve, reject } = Promise.withResolvers();
     try {

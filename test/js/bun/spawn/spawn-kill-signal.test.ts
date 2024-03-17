@@ -1,4 +1,5 @@
 import { test, expect, describe } from "bun:test";
+import { isWindows } from "harness";
 import { constants } from "os";
 
 const inputs = {
@@ -21,7 +22,7 @@ describe("subprocess.kill", () => {
           proc.kill(...input);
 
           await promise;
-          expect(proc.exitCode).toBeNull();
+          expect(proc.exitCode).toBe(isWindows ? 1 : null);
           expect(proc.signalCode).toBe(key as any);
         });
       }
@@ -44,7 +45,7 @@ describe("subprocess.kill", () => {
 
         await promise;
 
-        expect(proc.exitCode).toBeNull();
+        expect(proc.exitCode).toBe(isWindows ? 1 : null);
         expect(proc.signalCode).toBe("SIGTERM");
       });
     }

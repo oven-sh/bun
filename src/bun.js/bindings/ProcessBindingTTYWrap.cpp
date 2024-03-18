@@ -171,8 +171,11 @@ private:
     TTYWrapObject(JSC::VM& vm, JSC::Structure* structure, const int fd)
         : Base(vm, structure)
         , fd(fd)
-        , handle(nullptr)
+
     {
+#if OS(WINDOWS)
+        handle(nullptr)
+#endif
     }
 
     void finishCreation(JSC::VM& vm)

@@ -3069,47 +3069,36 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    // test("stress test", async () => {
-    //   // 1000 versions of the same package, and 1000 different packages each depending on one
-    //   // of the versions. This creates a node_modules folder for 999 of the package
-    //   // versions (minus 1 because one is hoisted) with none depending on another. This allows
-    //   // lifecycle scripts for each package to run in parallel if --lifecycle-script-jobs is set
-    //   // high enough.
-    //   const totalPackageVersions = 1000;
-    //   const maxJobs = 400;
-    //   var dependencies: any = {};
-    //   for (var i = 0; i < totalPackageVersions; i++) {
-    //     dependencies[`uses-postinstall-stress-test-1-0-${i}`] = `1.0.${i}`;
-    //   }
+    test("stress test", async () => {
+      const dependenciesList = await createPackagesWithScripts(500, {
+        "postinstall": `${bunExe()} --version`,
+      });
 
-    //   await writeFile(
-    //     join(packageDir, "package.json"),
-    //     JSON.stringify({
-    //       name: "foo",
-    //       version: "1.0.0",
-    //       dependencies,
-    //       trustedDependencies: ["postinstall-stress-test"],
-    //     }),
-    //   );
+      // the script is quick, default number for max concurrent scripts
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
 
-    //   var { stdout, stderr, exited } = spawn({
-    //     cmd: [bunExe(), "install", `--lifecycle-script-jobs=${maxJobs}`],
-    //     cwd: packageDir,
-    //     stdout: "pipe",
-    //     stdin: "pipe",
-    //     stderr: "pipe",
-    //     env: testEnv,
-    //   });
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      const out = await Bun.readableStreamToText(stdout);
+      expect(out).not.toContain("Blocked");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
+        ...dependenciesList.map(dep => ` + ${dep}@${dep}`).sort((a, b) => a.localeCompare(b)),
+        "",
+        " 500 packages installed",
+      ]);
 
-    //   const err = await new Response(stderr).text();
-    //   expect(await exited).toBe(0);
-    //   expect(err).toContain("Saved lockfile");
-    //   expect(err).not.toContain("not found");
-    //   expect(err).not.toContain("error:");
-
-    //   await rm(join(packageDir, "node_modules", ".cache"), { recursive: true, force: true });
-    //   expect((await readdir(join(packageDir, "node_modules"), { recursive: true })).sort()).toMatchSnapshot();
-    // }, 10_000);
+      expect(await exited).toBe(0);
+    });
 
     test("it should install and use correct binary version", async () => {
       // this should install `what-bin` in two places:
@@ -3135,7 +3124,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       });
 
       var err = await new Response(stderr).text();
@@ -3184,7 +3173,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       }));
 
       expect(await exited).toBe(0);
@@ -3201,7 +3190,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       }));
 
       out = await new Response(stdout).text();
@@ -3236,7 +3225,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       });
 
       const err = await new Response(stderr).text();
@@ -3266,7 +3255,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       });
 
       expect(await exited).toBe(0);
@@ -3297,7 +3286,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       });
 
       // electron lifecycle scripts should run, uses-what-bin scripts should not run
@@ -3341,7 +3330,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       }));
 
       err = await Bun.readableStreamToText(stderr);
@@ -3382,7 +3371,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       });
 
       const err = await Bun.readableStreamToText(stderr);
@@ -3423,7 +3412,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       });
 
       var err = await Bun.readableStreamToText(stderr);
@@ -3459,7 +3448,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       }));
 
       err = await Bun.readableStreamToText(stderr);
@@ -3549,7 +3538,7 @@ for (const forceWaiterThread of [false, true]) {
             stdout: "pipe",
             stderr: "pipe",
             stdin: "pipe",
-            env,
+            env: testEnv,
           });
 
           let err = await Bun.readableStreamToText(stderr);
@@ -3581,7 +3570,7 @@ for (const forceWaiterThread of [false, true]) {
             stdout: "pipe",
             stderr: "pipe",
             stdin: "pipe",
-            env,
+            env: testEnv,
           }));
 
           err = await Bun.readableStreamToText(stderr);
@@ -3612,7 +3601,7 @@ for (const forceWaiterThread of [false, true]) {
             stdout: "pipe",
             stderr: "pipe",
             stdin: "pipe",
-            env,
+            env: testEnv,
           });
 
           const err = await Bun.readableStreamToText(stderr);
@@ -3649,7 +3638,7 @@ for (const forceWaiterThread of [false, true]) {
             stdout: "pipe",
             stderr: "pipe",
             stdin: "pipe",
-            env,
+            env: testEnv,
           });
 
           let err = await Bun.readableStreamToText(stderr);
@@ -3682,7 +3671,7 @@ for (const forceWaiterThread of [false, true]) {
             stdout: "pipe",
             stderr: "pipe",
             stdin: "pipe",
-            env,
+            env: testEnv,
           }));
 
           // oh, I didn't realize no-deps doesn't have
@@ -3731,7 +3720,7 @@ for (const forceWaiterThread of [false, true]) {
           stdout: "pipe",
           stderr: "pipe",
           stdin: "pipe",
-          env,
+          env: testEnv,
         });
 
         let err = await Bun.readableStreamToText(stderr);
@@ -3763,7 +3752,7 @@ for (const forceWaiterThread of [false, true]) {
           stdout: "pipe",
           stderr: "pipe",
           stdin: "pipe",
-          env,
+          env: testEnv,
         }));
 
         err = await Bun.readableStreamToText(stderr);
@@ -3796,7 +3785,7 @@ for (const forceWaiterThread of [false, true]) {
           stdout: "pipe",
           stderr: "pipe",
           stdin: "pipe",
-          env,
+          env: testEnv,
         });
 
         let err = await Bun.readableStreamToText(stderr);
@@ -3840,7 +3829,7 @@ for (const forceWaiterThread of [false, true]) {
           stdout: "pipe",
           stderr: "pipe",
           stdin: "pipe",
-          env,
+          env: testEnv,
         }));
 
         err = await Bun.readableStreamToText(stderr);
@@ -3879,7 +3868,7 @@ for (const forceWaiterThread of [false, true]) {
           stdout: "pipe",
           stderr: "pipe",
           stdin: "pipe",
-          env,
+          env: testEnv,
         });
 
         let err = await Bun.readableStreamToText(stderr);
@@ -3925,7 +3914,7 @@ for (const forceWaiterThread of [false, true]) {
           stdout: "pipe",
           stderr: "pipe",
           stdin: "pipe",
-          env,
+          env: testEnv,
         }));
 
         err = await Bun.readableStreamToText(stderr);
@@ -3963,7 +3952,7 @@ for (const forceWaiterThread of [false, true]) {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       });
 
       env.PATH = originalPath;
@@ -3989,7 +3978,7 @@ for (const forceWaiterThread of [false, true]) {
         cwd: packageDir,
         stdout: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       });
 
       let err = await Bun.readableStreamToText(stderr);
@@ -4017,7 +4006,7 @@ for (const forceWaiterThread of [false, true]) {
         cwd: packageDir,
         stdout: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       }));
 
       err = await Bun.readableStreamToText(stderr);
@@ -4033,7 +4022,7 @@ for (const forceWaiterThread of [false, true]) {
         cwd: packageDir,
         stdout: "pipe",
         stderr: "pipe",
-        env,
+        env: testEnv,
       }));
 
       expect(await exited).toBe(1);
@@ -4065,7 +4054,7 @@ for (const forceWaiterThread of [false, true]) {
             cwd: packageDir,
             stdout: "pipe",
             stderr: "pipe",
-            env,
+            env: testEnv,
           });
 
           let err = await Bun.readableStreamToText(stderr);
@@ -4092,7 +4081,7 @@ for (const forceWaiterThread of [false, true]) {
             cwd: packageDir,
             stdout: "pipe",
             stderr: "pipe",
-            env,
+            env: testEnv,
           }));
 
           err = await Bun.readableStreamToText(stderr);
@@ -4119,7 +4108,7 @@ for (const forceWaiterThread of [false, true]) {
               cwd: packageDir,
               stdout: "pipe",
               stderr: "pipe",
-              env,
+              env: testEnv,
             }));
 
             err = await Bun.readableStreamToText(stderr);
@@ -4147,7 +4136,7 @@ for (const forceWaiterThread of [false, true]) {
             cwd: packageDir,
             stdout: "pipe",
             stderr: "pipe",
-            env,
+            env: testEnv,
           }));
 
           err = await Bun.readableStreamToText(stderr);
@@ -4181,7 +4170,7 @@ for (const forceWaiterThread of [false, true]) {
             cwd: packageDir,
             stdout: "pipe",
             stderr: "pipe",
-            env,
+            env: testEnv,
           }));
 
           err = await Bun.readableStreamToText(stderr);
@@ -4208,7 +4197,7 @@ for (const forceWaiterThread of [false, true]) {
             cwd: packageDir,
             stdout: "pipe",
             stderr: "pipe",
-            env,
+            env: testEnv,
           }));
 
           err = await Bun.readableStreamToText(stderr);

@@ -387,7 +387,7 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
 
 const WindowsOnly = struct {
     pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.C) *bun.windows.libuv.Loop {
-        return jsc_vm.uvLoop().uv_loop;
+        return jsc_vm.uvLoop();
     }
 };
 

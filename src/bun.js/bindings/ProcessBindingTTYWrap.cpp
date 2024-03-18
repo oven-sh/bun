@@ -174,7 +174,7 @@ private:
 
     {
 #if OS(WINDOWS)
-        handle(nullptr)
+        handle = nullptr;
 #endif
     }
 

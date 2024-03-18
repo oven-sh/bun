@@ -7,7 +7,7 @@ const strings = bun.strings;
 const JSC = @import("root").bun.JSC;
 const Environment = bun.Environment;
 const Global = bun.Global;
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen: bool = false;
 const heap_allocator = bun.default_allocator;
 
 const libuv = bun.windows.libuv;
@@ -80,6 +80,7 @@ pub const Os = struct {
             .linux => cpusImplLinux(globalThis),
             .mac => cpusImplDarwin(globalThis),
             .windows => cpusImplWindows(globalThis),
+            .openbsd => cpusImplOpenBSD(globalThis),
             else => @compileError("unsupported OS"),
         } catch {
             const err = JSC.SystemError{
@@ -198,6 +199,51 @@ pub const Os = struct {
             }
         }
 
+        return values;
+    }
+
+    fn cpusImplOpenBSD(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
+        // Fetch the CPU info structure
+        const c = std.c;
+
+        const HW_NCPUS: [2]c_int = [_]c_int{ c.CTL.HW, c.HW.NCPU };
+        var num_cpus: u32 = 0;
+        var len: usize = @sizeOf(@TypeOf(num_cpus));
+
+        if (!(c.sysctl(&HW_NCPUS, 2, &num_cpus, &len, null, 0) == 0)) {
+            return error.no_processor_info;
+        }
+
+        // Get CPU model name
+        const HW_MODELS: [2]c_int = [_]c_int{ c.CTL.HW, c.HW.MODEL };
+        var model_name_buf: [512]u8 = undefined;
+        len = model_name_buf.len;
+
+        if (!(c.sysctl(&HW_MODELS, 2, &model_name_buf, &len, null, 0) == 0)) {
+            return error.no_processor_info;
+        }
+
+        const model_name = JSC.ZigString.init(std.mem.sliceTo(&model_name_buf, 0)).withEncoding().toValueGC(globalThis);
+
+        // Get CPU speed
+        const HW_SPEED: [2]c_int = [_]c_int{ c.CTL.HW, c.HW.CPUSPEED };
+        var speed: u64 = 0;
+        len = @sizeOf(@TypeOf(speed));
+
+        if (!(c.sysctl(&HW_SPEED, 2, &speed, &len, null, 0) == 0)) {
+            return error.no_processor_info;
+        }
+
+        // Set up each CPU value in the return
+        const values = JSC.JSValue.createEmptyArray(globalThis, @as(u32, @intCast(num_cpus)));
+
+        for (0..num_cpus) |cpu_index| {
+            const cpu = JSC.JSValue.createEmptyObject(globalThis, 3);
+            cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed / 1_000_000));
+            cpu.put(globalThis, JSC.ZigString.static("model"), model_name);
+            //cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
+            values.putIndex(globalThis, @as(u32, @intCast(cpu_index)), cpu);
+        }
         return values;
     }
 
@@ -550,7 +596,7 @@ pub const Os = struct {
                     //  cast to a link-layer socket address
                     if (comptime Environment.isLinux) {
                         break @as(?*std.os.sockaddr.ll, @ptrCast(@alignCast(ll_iface.ifa_addr)));
-                    } else if (comptime Environment.isMac) {
+                    } else if (comptime (Environment.isMac or Environment.isOpenBSD)) {
                         break @as(?*C.sockaddr_dl, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                     } else {
                         comptime unreachable;
@@ -561,7 +607,7 @@ pub const Os = struct {
                     // Encode its link-layer address.  We need 2*6 bytes for the
                     //  hex characters and 5 for the colon separators
                     var mac_buf: [17]u8 = undefined;
-                    const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime Environment.isMac) ll_addr.sdl_data[ll_addr.sdl_nlen..] else comptime unreachable;
+                    const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime (Environment.isMac or Environment.isOpenBSD)) ll_addr.sdl_data[ll_addr.sdl_nlen..] else comptime unreachable;
                     const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
                         addr_data[0], addr_data[1], addr_data[2],
                         addr_data[3], addr_data[4], addr_data[5],
@@ -846,9 +892,16 @@ pub const Os = struct {
             if (comptime Environment.isLinux) {
                 result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(std.os.linux.getuid()));
                 result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(std.os.linux.getgid()));
+            } else if (comptime Environment.isOpenBSD) {
+                const openbsd = @import("../../openbsd_c.zig");
+
+                result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(openbsd.getuid()));
+                result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(openbsd.getgid()));
             } else {
-                result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(C.darwin.getuid()));
-                result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(C.darwin.getgid()));
+                const darwin = @import("../../darwin_c.zig");
+
+                result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(darwin.getuid()));
+                result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(darwin.getgid()));
             }
         }
 

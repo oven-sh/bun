@@ -111,6 +111,8 @@ pub const FolderResolution = union(Tag) {
         // We consider it valid if there is a package.json in the folder
         const normalized = if (non_normalized_path.len == 1 and non_normalized_path[0] == '.')
             non_normalized_path
+        else if (std.fs.path.isAbsolute(non_normalized_path))
+            std.mem.trimRight(u8, non_normalized_path, std.fs.path.sep_str)
         else
             std.mem.trimRight(u8, normalize(non_normalized_path), std.fs.path.sep_str);
 

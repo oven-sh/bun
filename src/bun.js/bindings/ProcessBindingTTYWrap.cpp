@@ -152,7 +152,10 @@ JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* g
 
 extern "C" int Bun__ttySetMode(int fd, int mode);
 
+#if OS(WINDOWS)
 static thread_local uv_tty_t* ttyHandle = nullptr;
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -179,9 +182,6 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
         memset(ttyHandle, 0, sizeof(uv_tty_t));
         uv_tty_init(static_cast<Zig::GlobalObject*>(globalObject)->uvLoop(), ttyHandle, fdToUse, 0);
     }
-    printf("ttyHandle: %p\n", ttyHandle);
-    printf("fdToUse: %d\n", fdToUse);
-    printf("mode: %d\n", mode.isTrue());
     int err = uv_tty_set_mode(ttyHandle, mode.isTrue() ? UV_TTY_MODE_RAW : UV_TTY_MODE_NORMAL);
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.

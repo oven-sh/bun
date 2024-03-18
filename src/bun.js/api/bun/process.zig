@@ -543,6 +543,28 @@ pub const Status = union(enum) {
             else => null,
         };
     }
+
+    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+        if (self.signalCode()) |signal_code| {
+            if (signal_code.toExitCode()) |code| {
+                try writer.print("code: {d}", .{code});
+                return;
+            }
+        }
+
+        switch (self) {
+            .exited => |exit| {
+                try writer.print("code: {d}", .{exit.code});
+            },
+            .signaled => |signal| {
+                try writer.print("signal: {d}", .{@intFromEnum(signal)});
+            },
+            .err => |err| {
+                try writer.print("{}", .{err});
+            },
+            else => {},
+        }
+    }
 };
 
 pub const PollerPosix = union(enum) {

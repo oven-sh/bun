@@ -415,6 +415,7 @@ pub const Tree = struct {
         queue: Lockfile.TreeFiller,
         log: *logger.Log,
         old_lockfile: *Lockfile,
+        prefer_dev_dependencies: bool = false,
 
         pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -559,7 +560,17 @@ pub const Tree = struct {
         for (this_dependencies) |dep_id| {
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
-            if (builder.resolutions[dep_id] != package_id and !dependency.behavior.isPeer()) {
+            const mismatch = builder.resolutions[dep_id] != package_id;
+
+            if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
+                if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
+                    return hoisted; // 2
+                }
+
+                return dependency_loop; // 3
+            }
+
+            if (mismatch and !dependency.behavior.isPeer()) {
                 if (as_defined and !dep.behavior.isPeer()) {
                     builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
                         builder.packageName(package_id),
@@ -728,43 +739,6 @@ pub fn cleanWithLogger(
     if (updates.len > 0) {
         try old.preprocessUpdateRequests(updates, exact_versions);
     }
-
-    // Deduplication works like this
-    // Go through *already* resolved package versions
-    // Ask, do any of those versions happen to match a lower version?
-    // If yes, choose that version instead.
-    // Why lower?
-    //
-    // Normally, the problem looks like this:
-    //   Package A: "react@^17"
-    //   Package B: "react@17.0.1
-    //
-    // Now you have two copies of React.
-    // When you really only wanted one.
-    // Since _typically_ the issue is that Semver ranges with "^" or "~" say "choose latest", we end up with latest
-    // if (options.enable.deduplicate_packages) {
-    //     var resolutions: []PackageID = old.buffers.resolutions.items;
-    //     const dependencies: []const Dependency = old.buffers.dependencies.items;
-    //     const package_resolutions: []const Resolution = old.packages.items(.resolution);
-    //     const string_buf = old.buffers.string_bytes.items;
-
-    //     const root_resolution = @as(usize, old.packages.items(.resolutions)[0].len);
-
-    //     const DedupeMap = std.ArrayHashMap(PackageNameHash, std.ArrayListUnmanaged([2]PackageID), ArrayIdentityContext(PackageNameHash), false);
-    //     var dedupe_map = DedupeMap.initContext(allocator, .{});
-    //     try dedupe_map.ensureTotalCapacity(old.unique_packages.count());
-
-    //     for (resolutions) |resolved_package_id, dep_i| {
-    //         if (resolved_package_id < max_package_id and !old.unique_packages.isSet(resolved_package_id)) {
-    //             const dependency = dependencies[dep_i];
-    //             if (dependency.version.tag == .npm) {
-    //                 var dedupe_entry = try dedupe_map.getOrPut(dependency.name_hash);
-    //                 if (!dedupe_entry.found_existing) dedupe_entry.value_ptr.* = .{};
-    //                 try dedupe_entry.value_ptr.append(allocator, [2]PackageID{ dep_i, resolved_package_id });
-    //             }
-    //         }
-    //     }
-    // }
 
     var new: *Lockfile = try old.allocator.create(Lockfile);
     new.initEmpty(
@@ -986,6 +960,7 @@ const Cloner = struct {
             .dependencies = this.lockfile.buffers.dependencies.items,
             .log = this.log,
             .old_lockfile = this.old,
+            .prefer_dev_dependencies = PackageManager.instance.options.local_package_features.dev_dependencies,
         };
 
         try (Tree{}).processSubtree(Tree.root_dep_id, &builder);
@@ -3178,6 +3153,12 @@ pub const Package = extern struct {
             dependencies_list.items = dependencies_list.items.ptr[0..new_length];
             resolutions_list.items = resolutions_list.items.ptr[0..new_length];
 
+            if (comptime Environment.isDebug) {
+                if (package.resolution.value.npm.url.isEmpty()) {
+                    Output.panic("tarball_url is empty for package {s}@{}", .{ manifest.name(), version });
+                }
+            }
+
             return package;
         }
     }
@@ -3458,7 +3439,10 @@ pub const Package = extern struct {
                 summary.update += 1;
             }
 
-            summary.add = @truncate((to_deps.len + skipped_workspaces) - (from_deps.len - summary.remove));
+            // Use saturating arithmetic here because a migrated
+            // package-lock.json could be out of sync with the package.json, so the
+            // number of from_deps could be greater than to_deps.
+            summary.add = @truncate((to_deps.len + skipped_workspaces) -| (from_deps.len -| summary.remove));
 
             inline for (Lockfile.Scripts.names) |hook| {
                 if (!@field(to.scripts, hook).eql(

@@ -6929,15 +6929,13 @@ pub const Interpreter = struct {
                 }
 
                 pub fn moveInDir(this: *@This(), src: [:0]const u8, buf: *[bun.MAX_PATH_BYTES]u8) bool {
-                    var fixed_alloc = std.heap.FixedBufferAllocator.init(buf[0..bun.MAX_PATH_BYTES]);
-
-                    const path_in_dir = std.fs.path.joinZ(fixed_alloc.allocator(), &[_][]const u8{
-                        "./",
-                        ResolvePath.basename(src),
-                    }) catch {
+                    const path_in_dir_ = bun.path.normalizeBuf(ResolvePath.basename(src), buf, .auto);
+                    if (path_in_dir_.len + 1 >= buf.len) {
                         this.err = Syscall.Error.fromCode(bun.C.E.NAMETOOLONG, .rename);
                         return false;
-                    };
+                    }
+                    buf[path_in_dir_.len] = 0;
+                    const path_in_dir = buf[0..path_in_dir_.len :0];
 
                     switch (Syscall.renameat(this.cwd, src, this.target_fd.?, path_in_dir)) {
                         .err => |e| {

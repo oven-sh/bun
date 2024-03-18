@@ -524,3 +524,36 @@ export function fillRepeating(dstBuffer: NodeJS.TypedArray, start: number, end: 
     sLen <<= 1; // double length for next segment
   }
 }
+
+function makeFlatPropertyMap(opts: object) {
+  // return all properties of opts as paths for nested objects with dot notation
+  // like { a: { b: 1 } } => { "a.b": 1 }
+  // combining names of nested objects with dot notation
+  // infinitely deep
+  const ret: any = {};
+  function recurse(obj: object, path = "") {
+    for (const [key, value] of Object.entries(obj)) {
+      if (value === undefined) continue;
+
+      if (value && typeof value === "object") {
+        recurse(value, path ? `${path}.${key}` : key);
+      } else {
+        ret[path ? `${path}.${key}` : key] = value;
+      }
+    }
+  }
+
+  recurse(opts);
+  return ret;
+}
+
+export function toTOMLString(opts: object) {
+  // return a TOML string of the given options
+  const props = makeFlatPropertyMap(opts);
+  let ret = "";
+  for (const [key, value] of Object.entries(props)) {
+    if (value === undefined) continue;
+    ret += `${key} = ${JSON.stringify(value)}` + "\n";
+  }
+  return ret;
+}

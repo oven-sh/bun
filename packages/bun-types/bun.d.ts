@@ -4195,19 +4195,19 @@ declare module "bun" {
     };
 
     /**
-     * The amount of CPU time used by the process, in nanoseconds.
+     * The amount of CPU time used by the process, in microseconds.
      */
     cpuTime: {
       /**
-       * User CPU time used by the process, in nanoseconds.
+       * User CPU time used by the process, in microseconds.
        */
       user: number;
       /**
-       * System CPU time used by the process, in nanoseconds.
+       * System CPU time used by the process, in microseconds.
        */
       system: number;
       /**
-       * Total CPU time used by the process, in nanoseconds.
+       * Total CPU time used by the process, in microseconds.
        */
       total: number;
     };
@@ -4483,7 +4483,7 @@ declare module "bun" {
        */
       cmd: string[];
 
-      onExit: never;
+      onExit?: never;
     },
   ): SpawnOptions.OptionsToSyncSubprocess<Opts>;
 

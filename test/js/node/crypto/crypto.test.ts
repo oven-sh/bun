@@ -1,6 +1,7 @@
 import { sha, MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc, CryptoHasher } from "bun";
 import { it, expect, describe } from "bun:test";
 import crypto from "crypto";
+import { hashesFixture } from "./fixtures/sign.fixture.ts";
 const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
 
 describe("CryptoHasher", () => {
@@ -171,4 +172,22 @@ describe("crypto", () => {
       });
     }
   }
+});
+
+describe("crypto.createSign()/.verifySign()", () => {
+  it.each(hashesFixture)(
+    "should create and verify digital signature for %s",
+    async (alg, privKey, pubKey, expectedSign) => {
+      const p = await Bun.file(`${__dirname}/${privKey}`).text();
+      const sign = crypto.createSign(alg).update("text").sign(p, "base64");
+
+      expect(sign).toEqual(expectedSign);
+
+      const verify = crypto
+        .createVerify(alg)
+        .update("text")
+        .verify(await Bun.file(`${__dirname}/${pubKey}`).text(), sign, "base64");
+      expect(verify).toBeTrue();
+    },
+  );
 });

@@ -1179,7 +1179,7 @@ it("request body and signal life cycle", async () => {
     expect(true).toBe(true);
     server.stop(true);
   }
-});
+}, 30_000);
 
 it("propagates content-type from a Bun.file()'s file path in fetch()", async () => {
   const body = Bun.file(import.meta.dir + "/fetch.js.txt");

@@ -413,7 +413,7 @@ pub const Arguments = struct {
                 // On POSIX, we don't actually call chdir() on the path
                 //
                 // On Windows, we do change the current directory.
-                // Not all system calls  on Windows support passing a dirfd (and libuv entirely doesn't)
+                // Not all system calls on Windows support passing a dirfd (and libuv entirely doesn't)
                 // So we have to do it the real way
                 if (comptime Environment.isWindows) {
                     var wbuf: bun.WPathBuffer = undefined;

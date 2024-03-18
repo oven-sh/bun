@@ -29,6 +29,16 @@ pub fn main() void {
     const bun = @import("root").bun;
     const Output = bun.Output;
     const Environment = bun.Environment;
+    // This should appear before we make any calls at all to libuv.
+    // So it's safest to put it very early in the main function.
+    if (Environment.isWindows) {
+        _ = bun.windows.libuv.uv_replace_allocator(
+            @ptrCast(&bun.Mimalloc.mi_malloc),
+            @ptrCast(&bun.Mimalloc.mi_realloc),
+            @ptrCast(&bun.Mimalloc.mi_calloc),
+            @ptrCast(&bun.Mimalloc.mi_free),
+        );
+    }
 
     bun.initArgv(bun.default_allocator) catch |err| {
         Output.panic("Failed to initialize argv: {s}\n", .{@errorName(err)});
@@ -106,15 +116,6 @@ pub fn main() void {
     defer Output.flush();
     if (Environment.isX64 and Environment.enableSIMD and Environment.isPosix) {
         bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
-    }
-
-    if (Environment.isWindows) {
-        _ = bun.windows.libuv.uv_replace_allocator(
-            @ptrCast(&bun.Mimalloc.mi_malloc),
-            @ptrCast(&bun.Mimalloc.mi_realloc),
-            @ptrCast(&bun.Mimalloc.mi_calloc),
-            @ptrCast(&bun.Mimalloc.mi_free),
-        );
     }
 
     bun.CLI.Cli.start(bun.default_allocator, MainPanicHandler);

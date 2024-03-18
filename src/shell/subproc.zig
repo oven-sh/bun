@@ -16,6 +16,7 @@ const Which = @import("../which.zig");
 const Async = bun.Async;
 // const IPC = @import("../bun.js/ipc.zig");
 const uws = bun.uws;
+const sh = bun.shell;
 
 const PosixSpawn = bun.spawn;
 
@@ -27,6 +28,22 @@ const FileSink = JSC.WebCore.FileSink;
 // pub const ShellSubprocessMini = NewShellSubprocess(.mini);
 
 const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
+
+/// Used for captured writer
+pub const ShellIO = struct {
+    stdout: ?*sh.IOWriter = null,
+    stderr: ?*sh.IOWriter = null,
+
+    pub fn ref(this: *@This()) void {
+        if (this.stdout) |io| io.ref();
+        if (this.stderr) |io| io.ref();
+    }
+
+    pub fn deref(this: *@This()) void {
+        if (this.stdout) |io| io.deref();
+        if (this.stderr) |io| io.deref();
+    }
+};
 
 const BufferedInput = struct {};
 
@@ -346,7 +363,7 @@ pub const ShellSubprocess = struct {
             }
         }
 
-        pub fn init(out_type: bun.shell.Subprocess.OutKind, stdio: Stdio, event_loop: JSC.EventLoopHandle, process: *ShellSubprocess, result: StdioResult, allocator: std.mem.Allocator, max_size: u32, is_sync: bool) Readable {
+        pub fn init(out_type: bun.shell.Subprocess.OutKind, stdio: Stdio, shellio: ?*sh.IOWriter, event_loop: JSC.EventLoopHandle, process: *ShellSubprocess, result: StdioResult, allocator: std.mem.Allocator, max_size: u32, is_sync: bool) Readable {
             _ = allocator; // autofix
             _ = max_size; // autofix
             _ = is_sync; // autofix
@@ -363,15 +380,15 @@ pub const ShellSubprocess = struct {
                     // where the user passed in a Blob with an fd
                     .blob => Readable{ .ignore = {} },
                     .memfd => Readable{ .ignore = {} },
-                    .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, false, out_type) },
+                    .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, null, out_type) },
                     .array_buffer => {
-                        const readable = Readable{ .pipe = PipeReader.create(event_loop, process, result, false, out_type) };
+                        const readable = Readable{ .pipe = PipeReader.create(event_loop, process, result, null, out_type) };
                         readable.pipe.buffered_output = .{
                             .array_buffer = .{ .buf = stdio.array_buffer, .i = 0 },
                         };
                         return readable;
                     },
-                    .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, true, out_type) },
+                    .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, shellio, out_type) },
                 };
             }
 
@@ -384,15 +401,15 @@ pub const ShellSubprocess = struct {
                 // where the user passed in a Blob with an fd
                 .blob => Readable{ .ignore = {} },
                 .memfd => Readable{ .memfd = stdio.memfd },
-                .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, false, out_type) },
+                .pipe => Readable{ .pipe = PipeReader.create(event_loop, process, result, null, out_type) },
                 .array_buffer => {
-                    const readable = Readable{ .pipe = PipeReader.create(event_loop, process, result, false, out_type) };
+                    const readable = Readable{ .pipe = PipeReader.create(event_loop, process, result, null, out_type) };
                     readable.pipe.buffered_output = .{
                         .array_buffer = .{ .buf = stdio.array_buffer, .i = 0 },
                     };
                     return readable;
                 },
-                .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, true, out_type) },
+                .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, shellio, out_type) },
             };
         }
 
@@ -734,6 +751,7 @@ pub const ShellSubprocess = struct {
 
     pub fn spawnAsync(
         event_loop: JSC.EventLoopHandle,
+        shellio: *ShellIO,
         spawn_args_: SpawnArgs,
         out: **@This(),
     ) bun.shell.Result(void) {
@@ -749,6 +767,7 @@ pub const ShellSubprocess = struct {
             event_loop,
             arena.allocator(),
             &spawn_args,
+            shellio,
             out,
         )) {
             .result => |subproc| subproc,
@@ -765,6 +784,7 @@ pub const ShellSubprocess = struct {
         event_loop: JSC.EventLoopHandle,
         allocator: Allocator,
         spawn_args: *SpawnArgs,
+        shellio: *ShellIO,
         out_subproc: **@This(),
     ) bun.shell.Result(*@This()) {
         const is_sync = config.is_sync;
@@ -850,8 +870,8 @@ pub const ShellSubprocess = struct {
             ),
             .stdin = Subprocess.Writable.init(spawn_args.stdio[0], event_loop, subprocess, spawn_result.stdin) catch bun.outOfMemory(),
 
-            .stdout = Subprocess.Readable.init(.stdout, spawn_args.stdio[1], event_loop, subprocess, spawn_result.stdout, event_loop.allocator(), ShellSubprocess.default_max_buffer_size, true),
-            .stderr = Subprocess.Readable.init(.stderr, spawn_args.stdio[2], event_loop, subprocess, spawn_result.stderr, event_loop.allocator(), ShellSubprocess.default_max_buffer_size, true),
+            .stdout = Subprocess.Readable.init(.stdout, spawn_args.stdio[1], shellio.stdout, event_loop, subprocess, spawn_result.stdout, event_loop.allocator(), ShellSubprocess.default_max_buffer_size, true),
+            .stderr = Subprocess.Readable.init(.stderr, spawn_args.stdio[2], shellio.stderr, event_loop, subprocess, spawn_result.stderr, event_loop.allocator(), ShellSubprocess.default_max_buffer_size, true),
 
             .flags = .{
                 .is_sync = is_sync,
@@ -955,7 +975,7 @@ pub const PipeReader = struct {
     state: union(enum) {
         pending: void,
         done: []u8,
-        err: bun.sys.Error,
+        err: ?JSC.SystemError,
     } = .{ .pending = {} },
     stdio_result: StdioResult,
     out_type: bun.shell.subproc.ShellSubprocess.OutKind,
@@ -969,6 +989,13 @@ pub const PipeReader = struct {
             buf: JSC.ArrayBuffer.Strong,
             i: u32 = 0,
         },
+
+        pub inline fn len(this: *BufferedOutput) usize {
+            return switch (this.*) {
+                .bytelist => this.bytelist.len,
+                .array_buffer => this.array_buffer.i,
+            };
+        }
 
         pub fn slice(this: *BufferedOutput) []const u8 {
             return switch (this.*) {
@@ -986,9 +1013,9 @@ pub const PipeReader = struct {
                     const array_buf_slice = this.array_buffer.buf.slice();
                     // TODO: We should probably throw error here?
                     if (this.array_buffer.i >= array_buf_slice.len) return;
-                    const len = @min(array_buf_slice.len - this.array_buffer.i, bytes.len);
-                    @memcpy(array_buf_slice[this.array_buffer.i .. this.array_buffer.i + len], bytes[0..len]);
-                    this.array_buffer.i += @intCast(len);
+                    const length = @min(array_buf_slice.len - this.array_buffer.i, bytes.len);
+                    @memcpy(array_buf_slice[this.array_buffer.i .. this.array_buffer.i + length], bytes[0..length]);
+                    this.array_buffer.i += @intCast(length);
                 },
             }
         }
@@ -1007,19 +1034,16 @@ pub const PipeReader = struct {
 
     pub const CapturedWriter = struct {
         dead: bool = true,
-        writer: IOWriter = .{},
+        writer: *sh.IOWriter = undefined,
         written: usize = 0,
-        err: ?bun.sys.Error = null,
+        err: ?JSC.SystemError = null,
 
-        pub const IOWriter = bun.io.StreamingWriter(
-            CapturedWriter,
-            onWrite,
-            onError,
-            null,
-            onClose,
-        );
+        pub fn doWrite(this: *CapturedWriter, chunk: []const u8) void {
+            if (this.dead or this.err != null) return;
 
-        pub const Poll = IOWriter;
+            log("CapturedWriter(0x{x}, {s}) doWrite len={d} parent_amount={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), chunk.len, this.parent().buffered_output.len() });
+            this.writer.enqueue(this, null, chunk);
+        }
 
         pub fn getBuffer(this: *CapturedWriter) []const u8 {
             const p = this.parent();
@@ -1040,20 +1064,22 @@ pub const PipeReader = struct {
         }
 
         pub fn isDone(this: *CapturedWriter, just_written: usize) bool {
-            if (this.dead) return true;
-            if (this.writer.is_done) return true;
+            log("CapturedWriter(0x{x}, {s}) isDone(has_err={any}, parent_state={s}, written={d}, parent_amount={d})", .{ @intFromPtr(this), @tagName(this.parent().out_type), this.err != null, @tagName(this.parent().state), this.written, this.parent().buffered_output.len() });
+            if (this.dead or this.err != null) return true;
             const p = this.parent();
             if (p.state == .pending) return false;
-            return this.written + just_written >= p.buffered_output.slice().len;
+            return this.written + just_written >= this.parent().buffered_output.len();
         }
 
-        pub fn onWrite(this: *CapturedWriter, amount: usize, status: bun.io.WriteStatus) void {
-            log("CapturedWriter({x}, {s}) onWrite({d}, {any}) total_written={d} total_to_write={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), amount, status, this.written + amount, this.parent().buffered_output.slice().len });
+        pub fn onIOWriterChunk(this: *CapturedWriter, amount: usize, err: ?JSC.SystemError) void {
+            log("CapturedWriter({x}, {s}) onWrite({d}, has_err={any}) total_written={d} total_to_write={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), amount, err != null, this.written + amount, this.parent().buffered_output.len() });
             this.written += amount;
-            // TODO: @zackradisic is this right?
-            if (status == .end_of_file) return;
-            if (this.written >= this.parent().buffered_output.slice().len) {
-                this.writer.end();
+            if (err) |e| {
+                log("CapturedWriter(0x{x}, {s}) onWrite errno={d} errmsg={} errfd={} syscall={}", .{ @intFromPtr(this), @tagName(this.parent().out_type), e.errno, e.message, e.fd, e.syscall });
+                this.err = e;
+                this.parent().trySignalDoneToCmd();
+            } else if (this.written >= this.parent().buffered_output.len() and !(this.parent().state == .pending)) {
+                this.parent().trySignalDoneToCmd();
             }
         }
 
@@ -1064,6 +1090,14 @@ pub const PipeReader = struct {
         pub fn onClose(this: *CapturedWriter) void {
             log("CapturedWriter({x}, {s}) onClose()", .{ @intFromPtr(this), @tagName(this.parent().out_type) });
             this.parent().onCapturedWriterDone();
+        }
+
+        pub fn deinit(this: *CapturedWriter) void {
+            if (this.err) |e| {
+                this.err = null;
+                e.deref();
+            }
+            this.writer.deref();
         }
     };
 
@@ -1083,10 +1117,10 @@ pub const PipeReader = struct {
     }
 
     pub fn onCapturedWriterDone(this: *PipeReader) void {
-        this.signalDoneToCmd();
+        this.trySignalDoneToCmd();
     }
 
-    pub fn create(event_loop: JSC.EventLoopHandle, process: *ShellSubprocess, result: StdioResult, comptime capture: bool, out_type: bun.shell.Subprocess.OutKind) *PipeReader {
+    pub fn create(event_loop: JSC.EventLoopHandle, process: *ShellSubprocess, result: StdioResult, capture: ?*sh.IOWriter, out_type: bun.shell.Subprocess.OutKind) *PipeReader {
         var this: *PipeReader = PipeReader.new(.{
             .process = process,
             .reader = IOReader.init(@This()),
@@ -1096,9 +1130,9 @@ pub const PipeReader = struct {
         });
         log("PipeReader(0x{x}, {s}) create()", .{ @intFromPtr(this), @tagName(this.out_type) });
 
-        if (capture) {
+        if (capture) |cap| {
+            this.captured_writer.writer = cap.refSelf();
             this.captured_writer.dead = false;
-            this.captured_writer.writer.setParent(&this.captured_writer);
         }
 
         if (Environment.isWindows) {
@@ -1135,8 +1169,8 @@ pub const PipeReader = struct {
                 if (comptime Environment.isPosix) {
                     // TODO: are these flags correct
                     const poll = this.reader.handle.poll;
-                    poll.flags.insert(.nonblocking);
                     poll.flags.insert(.socket);
+                    this.reader.flags.socket = true;
                 }
 
                 return .{ .result = {} };
@@ -1151,70 +1185,14 @@ pub const PipeReader = struct {
         this.buffered_output.append(chunk);
         log("PipeReader(0x{x}, {s}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), @tagName(this.out_type), chunk.len, @tagName(has_more) });
 
-        // Setup the writer
-        if (!this.captured_writer.dead) {
-            // FIXME: Can't use bun.STDOUT_FD and bun.STDERR_FD here because we could have multiple writers to it and break kqueue/epoll
-            const writer_fd: bun.FileDescriptor = if (this.out_type == .stdout) bun.shell.STDOUT_FD else bun.shell.STDERR_FD;
-
-            if (comptime Environment.isWindows) {
-                if (this.captured_writer.writer.source == null) {
-                    if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
-                        _ = e; // autofix
-                        Output.panic("TODO SHELL SUBPROC onReadChunk error", .{});
-                    }
-                }
-
-                this.captured_writer.writer.outgoing.write(chunk) catch bun.outOfMemory();
-            } else if (this.captured_writer.writer.getPoll() == null) {
-                if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
-                    _ = e; // autofix
-                    Output.panic("TODO SHELL SUBPROC onReadChunk error", .{});
-                }
-            }
-
-            // if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
-            //     const writer = std.io.getStdOut().writer();
-            //     e.format("Yoops ", .{}, writer) catch @panic("oops");
-            //     @panic("TODO SHELL SUBPROC onReadChunk error");
-            // }
-
-            // if (comptime Environment.isWindows) {
-            //     if (this.captured_writer.writer.source == null) {
-            //         if (this.captured_writer.writer.start(writer_fd, true).asErr()) |e| {
-            //             const writer = std.io.getStdOut().writer();
-            //             e.format("Yoops ", .{}, writer) catch @panic("oops");
-            //             @panic("TODO SHELL SUBPROC onReadChunk error");
-            //         }
-            //     }
-            // } else {
-            //     if (this.captured_writer.writer.getPoll() == null) {
-            //         this.captured_writer.writer.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), writer_fd, .{}, @TypeOf(this.captured_writer.writer), &this.captured_writer.writer) };
-            //     }
-            // }
-
-            log("CapturedWriter(0x{x}, {s}) write", .{ @intFromPtr(&this.captured_writer), @tagName(this.out_type) });
-            if (bun.Environment.isWindows) {
-                _ = this.captured_writer.writer.flush();
-            } else switch (this.captured_writer.writer.write(chunk)) {
-                .err => |e| {
-                    const writer = std.io.getStdOut().writer();
-                    e.format("Yoops ", .{}, writer) catch @panic("oops");
-                    @panic("TODO SHELL SUBPROC onReadChunk error");
-                },
-                else => |result| {
-                    log("CapturedWriter(0x{x}, {s}) write result={any}", .{ @intFromPtr(&this.captured_writer), @tagName(this.out_type), result });
-                },
-            }
-        }
+        this.captured_writer.doWrite(chunk);
 
         const should_continue = has_more != .eof;
 
         if (should_continue) {
             if (bun.Environment.isPosix) this.reader.registerPoll() else switch (this.reader.startWithCurrentPipe()) {
                 .err => |e| {
-                    const writer = std.io.getStdOut().writer();
-                    e.format("Yoops ", .{}, writer) catch @panic("oops");
-                    @panic("TODO SHELL SUBPROC onReadChunk error");
+                    Output.panic("TODO: implement error handling in Bun Shell PipeReader.onReadChunk\n{}", .{e});
                 },
                 else => {},
             }
@@ -1228,7 +1206,11 @@ pub const PipeReader = struct {
         const owned = this.toOwnedSlice();
         this.state = .{ .done = owned };
         if (!this.isDone()) return;
-        this.signalDoneToCmd();
+        // we need to ref because the process might be done and deref inside signalDoneToCmd before we call onCloseIO
+        this.ref();
+        defer this.deref();
+        this.trySignalDoneToCmd();
+
         if (this.process) |process| {
             // this.process = null;
             process.onCloseIO(this.kind(process));
@@ -1236,7 +1218,7 @@ pub const PipeReader = struct {
         }
     }
 
-    pub fn signalDoneToCmd(
+    pub fn trySignalDoneToCmd(
         this: *PipeReader,
     ) void {
         if (!this.isDone()) return;
@@ -1249,7 +1231,15 @@ pub const PipeReader = struct {
                         this.state = .{ .err = e };
                     }
                 }
-                cmd.bufferedOutputClose(this.out_type);
+                const e: ?JSC.SystemError = brk: {
+                    if (this.state != .err) break :brk null;
+                    if (this.state.err) |*e| {
+                        e.ref();
+                        break :brk e.*;
+                    }
+                    break :brk null;
+                };
+                cmd.bufferedOutputClose(this.out_type, e);
             }
         }
     }
@@ -1334,8 +1324,8 @@ pub const PipeReader = struct {
         if (this.state == .done) {
             bun.default_allocator.free(this.state.done);
         }
-        this.state = .{ .err = err };
-        this.signalDoneToCmd();
+        this.state = .{ .err = err.toSystemError() };
+        this.trySignalDoneToCmd();
         if (this.process) |process| {
             // this.process = null;
             process.onCloseIO(this.kind(process));
@@ -1373,6 +1363,17 @@ pub const PipeReader = struct {
 
         if (this.state == .done) {
             bun.default_allocator.free(this.state.done);
+        }
+
+        if (!this.captured_writer.dead) {
+            this.captured_writer.deinit();
+        }
+
+        if (this.state == .err) {
+            if (this.state.err) |e| {
+                e.deref();
+                this.state.err = null;
+            }
         }
 
         this.buffered_output.deinit();

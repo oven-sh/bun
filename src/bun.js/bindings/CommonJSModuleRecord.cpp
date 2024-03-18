@@ -631,7 +631,6 @@ JSCommonJSModule* JSCommonJSModule::create(
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
-    auto& vm = globalObject->vm();
     RELEASE_ASSERT(callframe->argumentCount() == 4);
 
     auto id = callframe->uncheckedArgument(0).toWTFString(globalObject);
@@ -873,7 +872,6 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
 {
     auto result = this->exportsObject();
 
-    auto& vm = globalObject->vm();
     populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation);
 }
 

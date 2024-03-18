@@ -26,6 +26,8 @@ pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
 pub const Interpreter = eval.Interpreter;
 pub const Subprocess = subproc.ShellSubprocess;
+pub const IOWriter = Interpreter.IOWriter;
+pub const IOReader = Interpreter.IOReader;
 // pub const IOWriter = interpret.IOWriter;
 // pub const SubprocessMini = subproc.ShellSubprocessMini;
 
@@ -2586,16 +2588,6 @@ fn isValidVarNameSlowAscii(var_name: []const u8) bool {
 }
 
 var stderr_mutex = std.Thread.Mutex{};
-pub fn closefd(fd: bun.FileDescriptor) void {
-    if (Syscall.close2(fd)) |err| {
-        _ = err;
-        log("ERR closefd: {d}\n", .{fd});
-        // stderr_mutex.lock();
-        // defer stderr_mutex.unlock();
-        // const stderr = std.io.getStdErr().writer();
-        // err.toSystemError().format("error", .{}, stderr) catch @panic("damn");
-    }
-}
 
 pub fn hasEqSign(str: []const u8) ?u32 {
     if (isAllAscii(str)) {
@@ -3190,3 +3182,4 @@ pub fn needsEscapeUtf8AsciiLatin1Slow(str: []const u8) bool {
     }
     return false;
 }
+pub const ExitCode = eval.ExitCode;

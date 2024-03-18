@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.0.31")
+set(Bun_VERSION "1.0.33")
 set(WEBKIT_TAG 089023cc9078b3aa173869fd6685f3e7bed2a994)
 
 if(APPLE AND DEFINED ENV{CI})
@@ -19,7 +19,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     message(STATUS "Using SDKROOT: ${SDKROOT}")
     SET(CMAKE_OSX_SYSROOT ${SDKROOT})
 
-    execute_process(COMMAND xcrun --show-sdk-version OUTPUT_VARIABLE MACOSX_DEPLOYMENT_TARGET)
+    execute_process(COMMAND xcrun --sdk macosx --show-sdk-version OUTPUT_VARIABLE MACOSX_DEPLOYMENT_TARGET)
     string(STRIP ${MACOSX_DEPLOYMENT_TARGET} MACOSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET ${MACOSX_DEPLOYMENT_TARGET})
 
@@ -278,7 +278,7 @@ endif()
 if(UNIX AND NOT APPLE)
     execute_process(COMMAND grep -w "NAME" /etc/os-release OUTPUT_VARIABLE LINUX_DISTRO)
 
-    if(${LINUX_DISTRO} MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux\"\n")
+    if(${LINUX_DISTRO} MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux\"|NAME=\"openSUSE Tumbleweed\"\n")
         set(DEFAULT_USE_STATIC_LIBATOMIC OFF)
     endif()
 endif()
@@ -517,7 +517,7 @@ if(NOT WEBKIT_DIR)
     set(WEBKIT_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include")
 
     if(APPLE)
-        set(ICU_INCLUDE_DIR "${HOMEBREW_PREFIX}/opt/icu4c/include")
+        set(ICU_INCLUDE_DIR "")
     else()
         set(ICU_INCLUDE_DIR "${BUN_WORKDIR}/bun-webkit/include/wtf/unicode")
     endif()
@@ -1001,6 +1001,8 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
+            -Werror=uninitialized
+            -Werror
         )
     else()
         target_compile_options(${bun} PUBLIC /Od /Z7)
@@ -1019,6 +1021,8 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
+            -Werror=uninitialized
+            -Werror
         )
     else()
         set(LTO_LINK_FLAG "")
@@ -1146,21 +1150,7 @@ endif()
 
 # --- ICU ---
 if(APPLE)
-    # TODO: a much better check can be done to find this path
-    find_path(
-        ICU4C_DIR NAMES lib/libicudata.a
-        PATHS ENV PATH /usr/local/opt/icu4c /opt/homebrew/opt/icu4c
-    )
-    find_path(
-        ICONV_DIR NAMES lib/libiconv.a
-        PATHS ENV PATH /usr/local/opt/libiconv /opt/homebrew/opt/libiconv
-    )
-
     target_link_libraries(${bun} PRIVATE "icucore")
-    target_link_libraries(${bun} PRIVATE "${ICONV_DIR}/lib/libiconv.a")
-    target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicudata.a")
-    target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicui18n.a")
-    target_link_libraries(${bun} PRIVATE "${ICU4C_DIR}/lib/libicuuc.a")
 endif()
 
 # --- Stripped Binary "bun"

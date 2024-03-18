@@ -12,6 +12,7 @@ const WaiterThread = bun.spawn.WaiterThread;
 const Timer = std.time.Timer;
 
 const Process = bun.spawn.Process;
+const log = Output.scoped(.Script, false);
 pub const LifecycleScriptSubprocess = struct {
     package_name: []const u8,
 
@@ -27,6 +28,8 @@ pub const LifecycleScriptSubprocess = struct {
     envp: [:null]?[*:0]u8,
 
     timer: ?Timer = null,
+
+    has_incremented_alive_count: bool = false,
 
     pub usingnamespace bun.New(@This());
 
@@ -84,8 +87,17 @@ pub const LifecycleScriptSubprocess = struct {
     var cwd_z_buf: bun.PathBuffer = undefined;
 
     pub fn spawnNextScript(this: *LifecycleScriptSubprocess, next_script_index: u8) !void {
-        _ = alive_count.fetchAdd(1, .Monotonic);
-        errdefer _ = alive_count.fetchSub(1, .Monotonic);
+        if (!this.has_incremented_alive_count) {
+            this.has_incremented_alive_count = true;
+            _ = alive_count.fetchAdd(1, .Monotonic);
+        }
+
+        errdefer {
+            if (this.has_incremented_alive_count) {
+                this.has_incremented_alive_count = false;
+                _ = alive_count.fetchSub(1, .Monotonic);
+            }
+        }
 
         const manager = this.manager;
         const original_script = this.scripts.items[next_script_index].?;
@@ -118,6 +130,8 @@ pub const LifecycleScriptSubprocess = struct {
         try copy_script.append(0);
 
         const combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
+
+        log("{s} - {s} $ {s}", .{ this.package_name, this.scriptName(), combined_script });
 
         var argv = [_]?[*:0]const u8{
             shell_bin,
@@ -225,6 +239,13 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     fn handleExit(this: *LifecycleScriptSubprocess, status: bun.spawn.Status) void {
+        log("{s} - {s} finished {}", .{ this.package_name, this.scriptName(), status });
+
+        if (this.has_incremented_alive_count) {
+            this.has_incremented_alive_count = false;
+            _ = alive_count.fetchSub(1, .Monotonic);
+        }
+
         switch (status) {
             .exited => |exit| {
                 const maybe_duration = if (this.timer) |*t| t.read() else null;

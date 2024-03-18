@@ -806,17 +806,13 @@ int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
                              X509_STORE *store) {
 
   X509 *x = NULL;
-  BIO *in;
-
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
-
-  in = BIO_new_mem_buf(content, strlen(content));
+  int count = 0;
+  BIO *in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
     goto end;
   }
-
-  int count = 0;
 
   while ((x = PEM_read_bio_X509(in, NULL, SSL_CTX_get_default_passwd_cb(ctx),
                                 SSL_CTX_get_default_passwd_cb_userdata(ctx)))) {

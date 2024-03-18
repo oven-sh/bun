@@ -182,23 +182,22 @@ pub const Arguments = struct {
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
     };
 
+    const auto_or_run_params = [_]ParamType{
+        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+        clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
+    };
+
     const auto_only_params = [_]ParamType{
         // clap.parseParam("--all") catch unreachable,
-        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
-    };
+    } ++ auto_or_run_params;
     const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
-        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
-    } ++ if (Environment.isWindows) [_]ParamType{
-        clap.parseParam("--system-shell                    Use cmd.exe to interpret package.json scripts") catch unreachable,
-    } else .{
-        clap.parseParam("--bun-shell                       Use Bun Shell to interpret package.json scripts") catch unreachable,
-    };
+    } ++ auto_or_run_params;
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const bunx_commands = [_]ParamType{
@@ -663,7 +662,8 @@ pub const Arguments = struct {
                     else => invalidTarget(&diag, _target),
                 };
 
-                ctx.debug.run_in_bun = opts.target.? == .bun;
+                if (opts.target.? == .bun)
+                    ctx.debug.run_in_bun = opts.target.? == .bun;
             }
 
             if (args.flag("--watch")) {
@@ -784,7 +784,10 @@ pub const Arguments = struct {
         const react_fast_refresh = true;
 
         if (cmd == .AutoCommand or cmd == .RunCommand) {
-            ctx.debug.silent = args.flag("--silent");
+            // "run.silent" in bunfig.toml
+            if (args.flag("--silent")) {
+                ctx.debug.silent = true;
+            }
 
             if (opts.define) |define| {
                 if (define.keys.len > 0)
@@ -793,7 +796,10 @@ pub const Arguments = struct {
         }
 
         if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .BunxCommand) {
-            ctx.debug.run_in_bun = args.flag("--bun") or ctx.debug.run_in_bun;
+            // "run.bun" in bunfig.toml
+            if (args.flag("--bun")) {
+                ctx.debug.run_in_bun = true;
+            }
         }
 
         opts.resolve = Api.ResolveMode.lazy;
@@ -858,11 +864,17 @@ pub const Arguments = struct {
         if (output_file != null)
             ctx.debug.output_file = output_file.?;
 
-        if (cmd == .RunCommand) {
-            ctx.debug.use_system_shell = if (Environment.isWindows)
-                args.flag("--system-shell")
-            else
-                !args.flag("--bun-shell");
+        if (cmd == .RunCommand or cmd == .AutoCommand) {
+            if (args.option("--shell")) |shell| {
+                if (strings.eqlComptime(shell, "bun")) {
+                    ctx.debug.use_system_shell = false;
+                } else if (strings.eqlComptime(shell, "system")) {
+                    ctx.debug.use_system_shell = true;
+                } else {
+                    Output.errGeneric("Expected --shell to be one of 'bun' or 'system'. Received: \"{s}\"", .{shell});
+                    Global.exit(1);
+                }
+            }
         }
 
         return opts;
@@ -1062,7 +1074,7 @@ pub const Command = struct {
         run_in_bun: bool = false,
         loaded_bunfig: bool = false,
         /// Disables using bun.shell.Interpreter for `bun run`, instead spawning cmd.exe
-        use_system_shell: bool = false,
+        use_system_shell: bool = !bun.Environment.isWindows,
 
         // technical debt
         macros: MacroOptions = MacroOptions.unspecified,
@@ -1177,7 +1189,7 @@ pub const Command = struct {
 
     // std.process.args allocates!
     const ArgsIterator = struct {
-        buf: [][:0]u8 = undefined,
+        buf: [][:0]const u8 = undefined,
         i: u32 = 0,
 
         pub fn next(this: *ArgsIterator) ?[]const u8 {
@@ -1415,7 +1427,7 @@ pub const Command = struct {
                 var ctx = try Command.Context.create(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
                 var args = bun.argv()[0..];
-                args[1] = @constCast("bun-repl");
+                args[1] = "bun-repl";
                 try BunxCommand.exec(ctx, args);
                 return;
             },

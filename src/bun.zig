@@ -1979,9 +1979,9 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
 
-var _argv: [][:0]u8 = &[_][:0]u8{};
+var _argv: [][:0]const u8 = &[_][:0]const u8{};
 
-pub inline fn argv() [][:0]u8 {
+pub inline fn argv() [][:0]const u8 {
     return _argv;
 }
 
@@ -2577,12 +2577,12 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
 
         pub fn ref(self: *T) void {
-            log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
+            if (comptime Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
             self.ref_count += 1;
         }
 
         pub fn deref(self: *T) void {
-            log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+            if (comptime Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
             self.ref_count -= 1;
 
             if (self.ref_count == 0) {

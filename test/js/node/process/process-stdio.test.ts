@@ -48,10 +48,7 @@ test("process.stdin - resume", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: null,
-    env: {
-      ...process.env,
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env: bunEnv,
   });
   expect(stdin).toBeDefined();
   expect(stdout).toBeDefined();
@@ -102,12 +99,14 @@ test("process.stdin - close(#6713)", async () => {
 
 test("process.stdout", () => {
   expect(process.stdout).toBeDefined();
-  expect(process.stdout.isTTY).toBe(isatty(1));
+  // isTTY returns true or undefined in Node.js
+  expect(process.stdout.isTTY).toBe((isatty(1) || undefined) as any);
 });
 
 test("process.stderr", () => {
   expect(process.stderr).toBeDefined();
-  expect(process.stderr.isTTY).toBe(isatty(2));
+  // isTTY returns true or undefined in Node.js
+  expect(process.stderr.isTTY).toBe((isatty(2) || undefined) as any);
 });
 
 test("process.stdout - write", () => {

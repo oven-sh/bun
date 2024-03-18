@@ -1,3 +1,4 @@
+#include "mimalloc.h"
 #include "root.h"
 
 #include "JavaScriptCore/JSDestructibleObject.h"
@@ -23,6 +24,45 @@
 #include <uv.h>
 #include <io.h>
 #include <fcntl.h>
+
+#endif
+
+#if OS(WINDOWS)
+
+namespace UV {
+
+class TTY {
+public:
+    uv_tty_t handle {};
+
+    uv_tty_t* tty() { return &handle; }
+
+    void close()
+    {
+        uv_close((uv_handle_t*)(tty()), [](uv_handle_t* handle) -> void {
+            uv_tty_t* ttyHandle = (uv_tty_t*)handle;
+            ptrdiff_t offset = offsetof(UV::TTY, handle);
+
+            UV::TTY* tty = (UV::TTY*)((char*)ttyHandle - offset);
+            delete tty;
+        });
+    }
+};
+
+}
+
+static uv_tty_t* getSharedHandle(int fd, uv_loop_t* loop)
+{
+    static thread_local uv_tty_t* sharedHandle = nullptr;
+
+    if (!sharedHandle) {
+        sharedHandle = new uv_tty_t;
+        memset(sharedHandle, 0, sizeof(uv_tty_t));
+        uv_tty_init(loop, sharedHandle, fd, 0);
+    }
+    return sharedHandle;
+}
+
 #endif
 
 namespace Bun {
@@ -76,6 +116,7 @@ static bool getWindowSize(int fd, size_t* width, size_t* height)
 class TTYWrapObject final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static TTYWrapObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, int fd)
     {
@@ -108,29 +149,29 @@ public:
 
     static void destroy(JSC::JSCell* cell)
     {
-        TTYWrapObject* ttyWrap = jsCast<TTYWrapObject*>(cell);
-        ttyWrap->TTYWrapObject::~TTYWrapObject();
+        static_cast<TTYWrapObject*>(cell)->TTYWrapObject::~TTYWrapObject();
     }
 
     ~TTYWrapObject()
     {
 #if OS(WINDOWS)
-        uv_close(reinterpret_cast<uv_handle_t*>(handle), [](uv_handle_t* handle) -> void {
-            delete handle;
-        });
+        if (handle) {
+            handle->close();
+        }
 #endif
     }
 
     int fd = -1;
 
 #if OS(WINDOWS)
-    uv_tty_t* handle = nullptr;
+    UV::TTY* handle;
 #endif
 
 private:
     TTYWrapObject(JSC::VM& vm, JSC::Structure* structure, const int fd)
         : Base(vm, structure)
         , fd(fd)
+        , handle(nullptr)
     {
     }
 
@@ -152,10 +193,6 @@ JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* g
 
 extern "C" int Bun__ttySetMode(int fd, int mode);
 
-#if OS(WINDOWS)
-static thread_local uv_tty_t* ttyHandle = nullptr;
-#endif
-
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -174,21 +211,22 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
 
     JSValue mode = callFrame->argument(1);
 
-    auto fdToUse = static_cast<int32_t>(fd.asNumber());
+    auto fdToUse = fd.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
 #if OS(WINDOWS)
-    if (ttyHandle == nullptr) {
-        ttyHandle = new uv_tty_t;
-        memset(ttyHandle, 0, sizeof(uv_tty_t));
-        uv_tty_init(static_cast<Zig::GlobalObject*>(globalObject)->uvLoop(), ttyHandle, fdToUse, 0);
+    if (fdToUse > -1 && fdToUse < 3) {
+        int err = uv_tty_set_mode(getSharedHandle(fdToUse, static_cast<Zig::GlobalObject*>(globalObject)->uvLoop()), mode.isTrue() ? UV_TTY_MODE_RAW : UV_TTY_MODE_NORMAL);
+        return JSValue::encode(jsNumber(err));
+    } else {
+        // TODO:
+        return JSValue::encode(jsNumber(0));
     }
-    int err = uv_tty_set_mode(ttyHandle, mode.isTrue() ? UV_TTY_MODE_RAW : UV_TTY_MODE_NORMAL);
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int err = Bun__ttySetMode(fdToUse, mode.toInt32(globalObject));
-#endif
-
     return JSValue::encode(jsNumber(err));
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
@@ -216,7 +254,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     }
 
 #if OS(WINDOWS)
-    int err = uv_tty_set_mode(ttyWrap->handle, mode.toInt32(globalObject));
+    int err = uv_tty_set_mode(ttyWrap->handle->tty(), mode.toInt32(globalObject));
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int err = Bun__ttySetMode(fd, mode.toInt32(globalObject));
@@ -410,13 +448,15 @@ public:
         }
 
 #if OS(WINDOWS)
-        auto* handle = new uv_tty_t;
-        memset(handle, 0, sizeof(uv_tty_t));
-        int rc = uv_tty_init(static_cast<Zig::GlobalObject*>(globalObject)->uvLoop(), handle, fd, 0);
+        auto* handle = new UV::TTY();
+        memset(handle, 0, sizeof(UV::TTY));
+        int rc = uv_tty_init(jsCast<Zig::GlobalObject*>(globalObject)->uvLoop(), handle->tty(), fd, 0);
         if (rc < 0) {
             delete handle;
             throwTypeError(globalObject, scope, "Failed to initialize TTY handle"_s);
+            return {};
         }
+        ASSERT(handle->tty()->loop);
 #endif
 
         auto* structure = TTYWrapObject::createStructure(vm, globalObject, prototypeValue.getObject());
@@ -474,5 +514,4 @@ JSValue createNodeTTYWrapObject(JSC::JSGlobalObject* globalObject)
 
     return obj;
 }
-
 }

@@ -33,8 +33,5 @@ export const redirect = (opts?: Partial<typeof defaultRedirect>): typeof default
         ...opts,
       };
 
-export const sortedShellOutput = (output: string): string[] =>
-  output
-    .split("\n")
-    .filter(s => s.length > 0)
-    .sort();
+export const sortedShellOutput = (output: string | string[]): string[] =>
+  (Array.isArray(output) ? output : output.split("\n").filter(s => s.length > 0)).sort();

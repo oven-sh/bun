@@ -667,30 +667,43 @@ pub const StreamResult = union(Tag) {
         into_array_and_done: Blob.SizeType,
 
         pub const Pending = struct {
-            future: Future = undefined,
+            future: Future = .{ .none = {} },
             result: Writable,
             consumed: Blob.SizeType = 0,
             state: StreamResult.Pending.State = .none,
 
-            pub fn deinit(_: *@This()) void {
-                // TODO:
+            pub fn deinit(this: *@This()) void {
+                this.future.deinit();
             }
 
             pub const Future = union(enum) {
-                promise: struct {
-                    promise: *JSPromise,
-                    globalThis: *JSC.JSGlobalObject,
-                },
+                none: void,
+                promise: JSC.JSPromise.Strong,
                 handler: Handler,
+
+                pub fn deinit(this: *@This()) void {
+                    if (this.* == .promise) {
+                        this.promise.strong.deinit();
+                        this.* = .{ .none = {} };
+                    }
+                }
             };
 
             pub fn promise(this: *Writable.Pending, globalThis: *JSC.JSGlobalObject) *JSPromise {
-                const prom = JSPromise.create(globalThis);
-                this.future = .{
-                    .promise = .{ .promise = prom, .globalThis = globalThis },
-                };
                 this.state = .pending;
-                return prom;
+
+                switch (this.future) {
+                    .promise => |p| {
+                        return p.get();
+                    },
+                    else => {
+                        this.future = .{
+                            .promise = JSC.JSPromise.Strong.init(globalThis),
+                        };
+
+                        return this.future.promise.get();
+                    },
+                }
             }
 
             pub const Handler = struct {
@@ -714,12 +727,15 @@ pub const StreamResult = union(Tag) {
                 if (this.state != .pending) return;
                 this.state = .used;
                 switch (this.future) {
-                    .promise => |p| {
-                        Writable.fulfillPromise(this.result, p.promise, p.globalThis);
+                    .promise => {
+                        var p = this.future.promise;
+                        this.future = .none;
+                        Writable.fulfillPromise(this.result, p.swap(), p.strong.globalThis.?);
                     },
                     .handler => |h| {
                         h.handler(h.ctx, this.result);
                     },
+                    .none => {},
                 }
             }
         };
@@ -765,11 +781,7 @@ pub const StreamResult = union(Tag) {
                 // undefined == noop, but we probably won't send it
                 .done => JSC.JSValue.jsBoolean(true),
 
-                .pending => |pending| brk: {
-                    const promise_value = pending.promise(globalThis).asValue(globalThis);
-                    promise_value.protect();
-                    break :brk promise_value;
-                },
+                .pending => |pending| pending.promise(globalThis).asValue(globalThis),
             };
         }
     };
@@ -3157,7 +3169,7 @@ pub const FileSink = struct {
     pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
         _ = wait; // autofix
         if (this.pending.state == .pending) {
-            return .{ .result = this.pending.future.promise.promise.asValue(globalThis) };
+            return .{ .result = this.pending.future.promise.value() };
         }
 
         if (this.done) {
@@ -3268,6 +3280,7 @@ pub const FileSink = struct {
         }
     }
     pub fn deinit(this: *FileSink) void {
+        this.pending.deinit();
         this.writer.deinit();
     }
 
@@ -3282,7 +3295,7 @@ pub const FileSink = struct {
     pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) JSC.Maybe(JSValue) {
         if (this.done) {
             if (this.pending.state == .pending) {
-                return .{ .result = this.pending.future.promise.promise.asValue(globalThis) };
+                return .{ .result = this.pending.future.promise.value() };
             }
 
             return .{ .result = JSValue.jsNumber(this.written) };

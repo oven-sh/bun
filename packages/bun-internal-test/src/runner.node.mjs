@@ -12,6 +12,7 @@ import PQueue from "p-queue";
 const run_start = new Date();
 const TIMEOUT_DURATION = 1000 * 60 * 5;
 const SHORT_TIMEOUT_DURATION = Math.ceil(TIMEOUT_DURATION / 5);
+
 function defaultConcurrency() {
   // This causes instability due to the number of open file descriptors / sockets in some tests
   // Windows has higher limits
@@ -30,6 +31,20 @@ let force_ram_size = Number(BigInt(nativeMemory) >> BigInt(2)) + "";
 if (!(Number.isSafeInteger(force_ram_size_input) && force_ram_size_input > 0)) {
   force_ram_size = force_ram_size_input + "";
 }
+function uncygwinTempDir() {
+  if (process.platform === "win32" && process.env.TMPDIR?.startsWith?.("/")) {
+    let TMPDIR = process.env.TMPDIR;
+    if (!/^\/[a-zA-Z]\//.test(TMPDIR)) {
+      return;
+    }
+
+    const driveLetter = TMPDIR[1];
+    TMPDIR = path.win32.normalize(`${driveLetter.toUpperCase()}:` + TMPDIR.substring(2));
+    process.env.TMPDIR = TMPDIR;
+  }
+}
+
+uncygwinTempDir();
 
 const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);

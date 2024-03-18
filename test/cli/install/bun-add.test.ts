@@ -62,7 +62,7 @@ it("should add existing package", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", dep],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -109,7 +109,7 @@ it("should reject missing package", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", dep],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -152,7 +152,7 @@ it("should reject invalid path without segfault", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", dep],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -197,7 +197,7 @@ it("should handle semver-like names", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "1.2.3"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -240,7 +240,7 @@ it("should handle @scoped names", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "@bar/baz"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -274,7 +274,7 @@ it("should add dependency with capital letters", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "BaR"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -329,7 +329,7 @@ it("should add exact version with --exact", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "--exact", "BaR"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -385,7 +385,7 @@ it("should add exact version with install.exact", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "BaR"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -440,7 +440,7 @@ it("should add exact version with -E", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "-E", "BaR"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -502,7 +502,7 @@ it("should add dependency with specified semver", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "baz@~0.0.2"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -563,7 +563,7 @@ it("should add dependency (GitHub)", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "mishoo/UglifyJS#v3.14.1"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -650,7 +650,7 @@ it("should add dependency alongside workspaces", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "baz"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -724,7 +724,7 @@ it("should add aliased dependency (npm)", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "bar@npm:baz@~0.0.2"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -785,7 +785,7 @@ it("should add aliased dependency (GitHub)", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "uglify@mishoo/UglifyJS#v3.14.1"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -870,7 +870,7 @@ it("should let you add the same package twice", async () => {
   } = spawn({
     cmd: [bunExe(), "add", "baz@0.0.3"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -922,7 +922,7 @@ it("should let you add the same package twice", async () => {
   } = spawn({
     cmd: [bunExe(), "add", "baz", "-d"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -986,7 +986,7 @@ it("should install version tagged with `latest` by default", async () => {
   } = spawn({
     cmd: [bunExe(), "add", "baz"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1039,7 +1039,7 @@ it("should install version tagged with `latest` by default", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1100,7 +1100,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   } = spawn({
     cmd: [bunExe(), "add", "bun@github.com:mishoo/UglifyJS.git"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1166,7 +1166,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1199,7 +1199,7 @@ it("should not save git urls twice", async () => {
   const { exited: exited1 } = spawn({
     cmd: [bunExe(), "add", "https://github.com/liz3/empty-bun-repo"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1215,7 +1215,7 @@ it("should not save git urls twice", async () => {
   const { exited: exited2 } = spawn({
     cmd: [bunExe(), "add", "https://github.com/liz3/empty-bun-repo"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1248,7 +1248,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "bar@0.0.2"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1308,7 +1308,7 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "bar@0.0.2"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1366,7 +1366,7 @@ it("should add dependency without duplication", async () => {
   } = spawn({
     cmd: [bunExe(), "add", "bar"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1415,7 +1415,7 @@ it("should add dependency without duplication", async () => {
   } = spawn({
     cmd: [bunExe(), "add", "bar"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1472,7 +1472,7 @@ it("should add dependency without duplication (GitHub)", async () => {
   } = spawn({
     cmd: [bunExe(), "add", "mishoo/UglifyJS#v3.14.1"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1533,7 +1533,7 @@ it("should add dependency without duplication (GitHub)", async () => {
   } = spawn({
     cmd: [bunExe(), "add", "mishoo/UglifyJS#v3.14.1"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1616,7 +1616,7 @@ it("should add dependencies to workspaces directly", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", dep],
     cwd: join(package_dir, "moo"),
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1679,7 +1679,7 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install", ...args],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1716,7 +1716,7 @@ it("should add dependency alongside peerDependencies", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "bar"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -1770,7 +1770,7 @@ it("should add local tarball dependency", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", tarball],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,

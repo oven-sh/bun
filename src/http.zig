@@ -122,7 +122,10 @@ pub const Sendfile = struct {
     content_size: usize = 0,
 
     pub fn isEligible(url: bun.URL) bool {
-        return url.isHTTP() and url.href.len > 0 and FeatureFlags.streaming_file_uploads_for_http_client;
+        if (comptime Environment.isWindows or !FeatureFlags.streaming_file_uploads_for_http_client) {
+            return false;
+        }
+        return url.isHTTP() and url.href.len > 0;
     }
 
     pub fn write(
@@ -634,18 +637,13 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn connectSocket(this: *@This(), client: *HTTPClient, socket_path: []const u8) !HTTPSocket {
             client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
-
-            if (HTTPSocket.connectUnixAnon(
+            const socket = try HTTPSocket.connectUnixAnon(
                 socket_path,
                 this.us_socket_context,
-                undefined,
-            )) |socket| {
-                client.allow_retry = false;
-                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
-                return socket;
-            }
-
-            return error.FailedToOpenSocket;
+                ActiveSocket.init(client).ptr(),
+            );
+            client.allow_retry = false;
+            return socket;
         }
 
         pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !HTTPSocket {
@@ -669,18 +667,14 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
             }
 
-            if (HTTPSocket.connectAnon(
+            const socket = try HTTPSocket.connectAnon(
                 hostname,
                 port,
                 this.us_socket_context,
-                undefined,
-            )) |socket| {
-                client.allow_retry = false;
-                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
-                return socket;
-            }
-
-            return error.FailedToOpenSocket;
+                ActiveSocket.init(client).ptr(),
+            );
+            client.allow_retry = false;
+            return socket;
         }
     };
 }
@@ -711,10 +705,6 @@ pub const HTTPThread = struct {
 
     const threadlog = Output.scoped(.HTTPThread, true);
 
-    const FakeStruct = struct {
-        trash: i64 = 0,
-    };
-
     pub fn init() !void {
         if (http_thread_loaded.swap(true, .SeqCst)) {
             return;
@@ -735,18 +725,17 @@ pub const HTTPThread = struct {
             .{
                 .stack_size = bun.default_thread_stack_size,
             },
-            comptime onStart,
-            .{
-                FakeStruct{},
-            },
+            onStart,
+            .{},
         );
         thread.detach();
     }
 
-    pub fn onStart(_: FakeStruct) void {
+    pub fn onStart() void {
         Output.Source.configureNamedThread("HTTP Client");
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
+
         const loop = bun.uws.Loop.create(struct {
             pub fn wakeup(_: *uws.Loop) callconv(.C) void {
                 http_thread.drainEvents();
@@ -754,6 +743,12 @@ pub const HTTPThread = struct {
             pub fn pre(_: *uws.Loop) callconv(.C) void {}
             pub fn post(_: *uws.Loop) callconv(.C) void {}
         });
+
+        if (Environment.isWindows) {
+            _ = std.os.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
+                std.debug.panic("The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.", .{});
+            };
+        }
 
         http_thread.loop = loop;
         http_thread.http_context.init() catch @panic("Failed to init http context");
@@ -1367,7 +1362,7 @@ pub const InternalState = struct {
     request_body: []const u8 = "",
     original_request_body: HTTPRequestBody = .{ .bytes = "" },
     request_sent_len: usize = 0,
-    fail: anyerror = error.NoError,
+    fail: ?anyerror = null,
     request_stage: HTTPStage = .pending,
     response_stage: HTTPStage = .pending,
     certificate_info: ?CertificateInfo = null,
@@ -1995,13 +1990,9 @@ pub const AsyncHTTP = struct {
         http_thread.schedule(batch);
         while (true) {
             const result: HTTPClientResult = ctx.channel.readItem() catch unreachable;
-            if (!result.isSuccess()) {
-                return result.fail;
-            }
+            if (result.fail) |e| return e;
             std.debug.assert(result.metadata != null);
-            if (result.metadata) |metadata| {
-                return metadata.response;
-            }
+            return result.metadata.?.response;
         }
 
         unreachable;
@@ -2263,13 +2254,18 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     }
 
     var socket = http_thread.connect(this, is_ssl) catch |err| {
+        if (Environment.isDebug) {
+            if (@errorReturnTrace()) |trace| {
+                std.debug.dumpStackTrace(trace.*);
+            }
+        }
         this.fail(err);
         return;
     };
 
     if (socket.isClosed() and (this.state.response_stage != .done and this.state.response_stage != .fail)) {
         this.fail(error.ConnectionClosed);
-        std.debug.assert(this.state.fail != error.NoError);
+        std.debug.assert(this.state.fail != null);
         return;
     }
 }
@@ -2989,7 +2985,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         const body = out_str.*;
         const result = this.toResult();
         const is_done = !result.has_more;
-        if (this.state.is_redirect_pending and this.state.fail == error.NoError) {
+        if (this.state.is_redirect_pending and this.state.fail == null) {
             if (this.state.isDone()) {
                 this.doRedirect(is_ssl, ctx, socket);
             }
@@ -3041,7 +3037,8 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
 pub const HTTPClientResult = struct {
     body: ?*MutableString = null,
     has_more: bool = false,
-    fail: anyerror = error.NoError,
+    fail: ?anyerror = null,
+
     /// Owns the response metadata aka headers, url and status code
     metadata: ?HTTPResponseMetadata = null,
 
@@ -3060,15 +3057,15 @@ pub const HTTPClientResult = struct {
     };
 
     pub fn isSuccess(this: *const HTTPClientResult) bool {
-        return this.fail == error.NoError;
+        return this.fail == null;
     }
 
     pub fn isTimeout(this: *const HTTPClientResult) bool {
-        return this.fail == error.Timeout;
+        return if (this.fail) |e| e == error.Timeout else false;
     }
 
     pub fn isAbort(this: *const HTTPClientResult) bool {
-        return this.fail == error.Aborted;
+        return if (this.fail) |e| e == error.Aborted else false;
     }
 
     pub const Callback = struct {
@@ -3121,7 +3118,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .redirected = this.remaining_redirect_count != default_redirect_count,
             .fail = this.state.fail,
             // check if we are reporting cert errors, do not have a fail state and we are not done
-            .has_more = this.state.fail == error.NoError and !this.state.isDone(),
+            .has_more = this.state.fail == null and !this.state.isDone(),
             .body_size = body_size,
             .certificate_info = null,
         };
@@ -3131,7 +3128,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
         .metadata = null,
         .fail = this.state.fail,
         // check if we are reporting cert errors, do not have a fail state and we are not done
-        .has_more = certificate_info != null or (this.state.fail == error.NoError and !this.state.isDone()),
+        .has_more = certificate_info != null or (this.state.fail == null and !this.state.isDone()),
         .body_size = body_size,
         .certificate_info = certificate_info,
     };
@@ -3574,6 +3571,10 @@ pub fn handleResponseMetadata(
 
                             const normalized_url = JSC.URL.hrefFromString(bun.String.fromBytes(string_builder.allocatedSlice()));
                             defer normalized_url.deref();
+                            if (normalized_url.tag == .Dead) {
+                                // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
+                                return error.RedirectURLInvalid;
+                            }
                             const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
 
                             const new_url = URL.parse(normalized_url_str);

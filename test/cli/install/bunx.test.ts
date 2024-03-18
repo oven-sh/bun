@@ -40,7 +40,7 @@ it("should install and run default (latest) version", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x", "uglify-js", "--compress"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: new TextEncoder().encode("console.log(6 * 7);"),
     stderr: "pipe",
     env,
@@ -58,7 +58,7 @@ it("should install and run specified version", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x", "uglify-js@3.14.1", "-v"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -76,7 +76,7 @@ it("should output usage if no arguments are passed", async () => {
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -97,7 +97,7 @@ it("should work for @scoped packages", async () => {
   const withoutCache = spawn({
     cmd: [bunExe(), "x", "@withfig/autocomplete-tools", "--help"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -115,7 +115,7 @@ it("should work for @scoped packages", async () => {
   const cached = spawn({
     cmd: [bunExe(), "x", "@withfig/autocomplete-tools", "--help"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -143,7 +143,7 @@ console.log(
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "--bun", "x", "uglify-js", "test.js", "--compress"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -164,7 +164,7 @@ it("should work for github repository", async () => {
   const withoutCache = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -182,7 +182,7 @@ it("should work for github repository", async () => {
   const cached = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -202,7 +202,7 @@ it("should work for github repository with committish", async () => {
   const withoutCache = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -220,7 +220,7 @@ it("should work for github repository with committish", async () => {
   const cached = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
     cwd: x_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,

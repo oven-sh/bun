@@ -25,6 +25,21 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "bun test [file] --only",
+      "program": "${workspaceFolder}/build/bun-debug",
+      "args": ["test", "--only", "${file}"],
+      "cwd": "${workspaceFolder}/test",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
+        "BUN_DEBUG_FileReader": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "bun test [file] (fast)",
       "program": "${workspaceFolder}/build/bun-debug",
       "args": ["test", "${file}"],
@@ -416,8 +431,13 @@
           "value": "1"
         },
         {
+          "name": "BUN_DEBUG_jest",
+          "value": "1"
+        },
+
+        {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
-          "value": "2"
+          "value": "1"
         }
       ]
     },
@@ -435,6 +455,22 @@
         },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
+          "value": "1"
+        },
+        {
+          "name": "BUN_DEBUG_EventLoop",
+          "value": "1"
+        },
+        {
+          "name": "BUN_DEBUG_uv",
+          "value": "1"
+        },
+        {
+          "name": "BUN_DEBUG_SYS",
+          "value": "1"
+        },
+        {
+          "name": "BUN_DEBUG_PipeWriter",
           "value": "1"
         },
         {

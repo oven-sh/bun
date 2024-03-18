@@ -24,6 +24,10 @@ $ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-
 $ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
+```bash#openSUSE Tumbleweed
+$ sudo zypper install go cmake ninja automake git rustup && rustup toolchain install stable
+```
+
 {% /codetabs %}
 
 Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
@@ -77,6 +81,10 @@ $ sudo pacman -S llvm clang lld
 $ sudo dnf install 'dnf-command(copr)'
 $ sudo dnf copr enable -y @fedora-llvm-team/llvm-snapshots
 $ sudo dnf install llvm clang lld
+```
+
+```bash#openSUSE Tumbleweed
+$ sudo zypper install clang16 lld16 llvm16
 ```
 
 {% /codetabs %}

@@ -511,7 +511,7 @@ describe("websocket in subprocess", () => {
     if (isWindows) {
       expect(await subprocess.exited).toBe(1);
     } else {
-      expect(await subprocess.exited).toBe(129);
+      expect(await subprocess.exited).toBe(143);
     }
   });
 

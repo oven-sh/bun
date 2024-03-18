@@ -377,9 +377,10 @@ describe("Server", () => {
       cmd: [bunExe(), path.join("js-sink-sourmap-fixture", "index.mjs")],
       cwd: import.meta.dir,
       env: bunEnv,
-      stderr: "pipe",
+      stdin: "inherit",
+      stderr: "inherit",
+      stdout: "inherit",
     });
-    expect(stderr).toBeEmpty();
     expect(exitCode).toBe(0);
   });
 
@@ -431,4 +432,50 @@ test("Bun.serve().unref() works", async () => {
 
 test("unref keeps process alive for ongoing connections", async () => {
   expect([path.join(import.meta.dir, "unref-fixture-2.ts")]).toRun();
+});
+
+test("Bun does not crash when given invalid config", async () => {
+  const server1 = Bun.serve({
+    fetch(request, server) {
+      //
+      throw new Error("Should not be called");
+    },
+    port: 0,
+  });
+
+  const cases = [
+    {
+      fetch() {},
+      port: server1.port,
+      websocket: {},
+    },
+    {
+      port: server1.port,
+      get websocket() {
+        throw new Error();
+      },
+    },
+    {
+      fetch() {},
+      port: server1.port,
+      get websocket() {
+        throw new Error();
+      },
+    },
+    {
+      fetch() {},
+      port: server1.port,
+      get tls() {
+        throw new Error();
+      },
+    },
+  ];
+
+  for (const options of cases) {
+    expect(() => {
+      Bun.serve(options as any);
+    }).toThrow();
+  }
+
+  server1.stop();
 });

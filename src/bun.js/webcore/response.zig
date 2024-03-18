@@ -901,6 +901,9 @@ pub const Fetch = struct {
                         // clean for reuse later
                         this.scheduled_response_buffer.reset();
                     } else {
+                        var prev = this.readable_stream_ref;
+                        this.readable_stream_ref = .{};
+                        defer prev.deinit();
                         readable.ptr.Bytes.onData(
                             .{
                                 .temporary_and_done = bun.ByteList.initConst(chunk),
@@ -914,9 +917,9 @@ pub const Fetch = struct {
 
             if (this.response.get()) |response_js| {
                 if (response_js.as(Response)) |response| {
-                    const body = response.body;
+                    var body = &response.body;
                     if (body.value == .Locked) {
-                        if (body.value.Locked.readable) |readable| {
+                        if (body.value.Locked.readable.get()) |readable| {
                             if (readable.ptr == .Bytes) {
                                 readable.ptr.Bytes.size_hint = this.getSizeHint();
 
@@ -935,6 +938,11 @@ pub const Fetch = struct {
                                     // clean for reuse later
                                     this.scheduled_response_buffer.reset();
                                 } else {
+                                    var prev = body.value.Locked.readable;
+                                    body.value.Locked.readable = .{};
+                                    readable.value.ensureStillAlive();
+                                    prev.deinit();
+                                    readable.value.ensureStillAlive();
                                     readable.ptr.Bytes.onData(
                                         .{
                                             .temporary_and_done = bun.ByteList.initConst(chunk),
@@ -1194,7 +1202,9 @@ pub const Fetch = struct {
             }
             return null;
         }
+
         pub fn onReject(this: *FetchTasklet) JSValue {
+            std.debug.assert(this.result.fail != null);
             log("onReject", .{});
 
             if (this.getAbortError()) |err| {
@@ -1211,24 +1221,22 @@ pub const Fetch = struct {
                 return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
             }
 
-            var path: bun.String = undefined;
-
             // some times we don't have metadata so we also check http.url
-            if (this.metadata) |metadata| {
-                path = bun.String.createUTF8(metadata.url);
-            } else if (this.http) |http_| {
-                path = bun.String.createUTF8(http_.url.href);
-            } else {
-                path = bun.String.empty;
-            }
+            const path = if (this.metadata) |metadata|
+                bun.String.createUTF8(metadata.url)
+            else if (this.http) |http_|
+                bun.String.createUTF8(http_.url.href)
+            else
+                bun.String.empty;
 
             const fetch_error = JSC.SystemError{
-                .code = bun.String.static(@errorName(this.result.fail)),
-                .message = switch (this.result.fail) {
+                .code = bun.String.static(@errorName(this.result.fail.?)),
+                .message = switch (this.result.fail.?) {
                     error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
                     error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                     error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
                     error.ConnectionRefused => bun.String.static("Unable to connect. Is the computer able to access the url?"),
+                    error.RedirectURLInvalid => bun.String.static("Redirect URL in Location header is invalid."),
 
                     error.UNABLE_TO_GET_ISSUER_CERT => bun.String.static("unable to get issuer certificate"),
                     error.UNABLE_TO_GET_CRL => bun.String.static("unable to get certificate CRL"),
@@ -1306,7 +1314,7 @@ pub const Fetch = struct {
 
         pub fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
             const this = bun.cast(*FetchTasklet, ctx);
-            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, this.global_this) catch .{};
+            this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, this.global_this);
         }
 
         pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
@@ -1944,7 +1952,7 @@ pub const Fetch = struct {
                     method = request.method;
 
                     if (request.body.value == .Locked) {
-                        if (request.body.value.Locked.readable) |stream| {
+                        if (request.body.value.Locked.readable.get()) |stream| {
                             if (stream.isDisturbed(globalThis)) {
                                 globalThis.throw("ReadableStream has already been consumed", .{});
                                 if (hostname) |host| {

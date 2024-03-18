@@ -21,6 +21,20 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
 };
 
+if (isWindows) {
+  bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
+}
+
+for (let key in bunEnv) {
+  if (bunEnv[key] === undefined) {
+    delete bunEnv[key];
+  }
+
+  if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
+    delete bunEnv[key];
+  }
+}
+
 export function bunExe() {
   return process.execPath;
 }
@@ -438,4 +452,108 @@ export async function describeWithContainer(
 
 export function osSlashes(path: string) {
   return isWindows ? path.replace(/\//g, "\\") : path;
+}
+
+import * as child_process from "node:child_process";
+
+class WriteBlockedError extends Error {
+  constructor(time) {
+    super("Write blocked for " + (time | 0) + "ms");
+    this.name = "WriteBlockedError";
+  }
+}
+function failTestsOnBlockingWriteCall() {
+  const prop = Object.getOwnPropertyDescriptor(child_process.ChildProcess.prototype, "stdin");
+  const didAttachSymbol = Symbol("kDidAttach");
+  if (prop) {
+    Object.defineProperty(child_process.ChildProcess.prototype, "stdin", {
+      ...prop,
+      get() {
+        const actual = prop.get.call(this);
+        if (actual?.write && !actual.__proto__[didAttachSymbol]) {
+          actual.__proto__[didAttachSymbol] = true;
+          attachWriteMeasurement(actual);
+        }
+        return actual;
+      },
+    });
+  }
+
+  function attachWriteMeasurement(stream) {
+    const prop = Object.getOwnPropertyDescriptor(stream.__proto__, "write");
+    if (prop) {
+      Object.defineProperty(stream.__proto__, "write", {
+        ...prop,
+        value(chunk, encoding, cb) {
+          const start = performance.now();
+          const rc = prop.value.apply(this, arguments);
+          const end = performance.now();
+          if (end - start > 8) {
+            const err = new WriteBlockedError(end - start);
+            throw err;
+          }
+          return rc;
+        },
+      });
+    }
+  }
+}
+
+failTestsOnBlockingWriteCall();
+
+import { heapStats } from "bun:jsc";
+export function dumpStats() {
+  const stats = heapStats();
+  const { objectTypeCounts, protectedObjectTypeCounts } = stats;
+  console.log({
+    objects: Object.fromEntries(Object.entries(objectTypeCounts).sort()),
+    protected: Object.fromEntries(Object.entries(protectedObjectTypeCounts).sort()),
+  });
+}
+
+export function fillRepeating(dstBuffer: NodeJS.TypedArray, start: number, end: number) {
+  let len = dstBuffer.length, // important: use indices length, not byte-length
+    sLen = end - start,
+    p = sLen; // set initial position = source sequence length
+
+  // step 2: copy existing data doubling segment length per iteration
+  while (p < len) {
+    if (p + sLen > len) sLen = len - p; // if not power of 2, truncate last segment
+    dstBuffer.copyWithin(p, start, sLen); // internal copy
+    p += sLen; // add current length to offset
+    sLen <<= 1; // double length for next segment
+  }
+}
+
+function makeFlatPropertyMap(opts: object) {
+  // return all properties of opts as paths for nested objects with dot notation
+  // like { a: { b: 1 } } => { "a.b": 1 }
+  // combining names of nested objects with dot notation
+  // infinitely deep
+  const ret: any = {};
+  function recurse(obj: object, path = "") {
+    for (const [key, value] of Object.entries(obj)) {
+      if (value === undefined) continue;
+
+      if (value && typeof value === "object") {
+        recurse(value, path ? `${path}.${key}` : key);
+      } else {
+        ret[path ? `${path}.${key}` : key] = value;
+      }
+    }
+  }
+
+  recurse(opts);
+  return ret;
+}
+
+export function toTOMLString(opts: object) {
+  // return a TOML string of the given options
+  const props = makeFlatPropertyMap(opts);
+  let ret = "";
+  for (const [key, value] of Object.entries(props)) {
+    if (value === undefined) continue;
+    ret += `${key} = ${JSON.stringify(value)}` + "\n";
+  }
+  return ret;
 }

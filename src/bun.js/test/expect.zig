@@ -187,11 +187,13 @@ pub const Expect = struct {
                     promise.setHandled(vm);
 
                     const now = std.time.Instant.now() catch unreachable;
-                    const elapsed = if (Jest.runner.?.pending_test) |pending_test| @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms) else 0;
-                    const remaining = @as(u32, @truncate(Jest.runner.?.last_test_timeout_timer_duration -| elapsed));
+                    const remaining = if (Jest.runner) |runner| remaining: {
+                        const elapsed = if (runner.pending_test) |pending_test| @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms) else 0;
+                        break :remaining @as(u32, @truncate(runner.last_test_timeout_timer_duration -| elapsed));
+                    } else std.math.maxInt(u32);
 
                     if (!globalThis.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
-                        if (Jest.runner.?.pending_test) |pending_test|
+                        if (Jest.runner) |runner| if (runner.pending_test) |pending_test|
                             pending_test.timeout();
                         return null;
                     }

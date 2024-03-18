@@ -9,6 +9,18 @@ const Fs = @import("../fs.zig");
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
+pub fn z(input: []const u8, output: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+    if (input.len > bun.MAX_PATH_BYTES) {
+        if (comptime bun.Environment.allow_assert) @panic("path too long");
+        return "";
+    }
+
+    @memcpy(output[0..input.len], input);
+    output[input.len] = 0;
+
+    return output[0..input.len :0];
+}
+
 inline fn nqlAtIndex(comptime string_count: comptime_int, index: usize, input: []const []const u8) bool {
     comptime var string_index = 1;
 
@@ -1182,7 +1194,7 @@ pub fn joinZ(_parts: anytype, comptime _platform: Platform) [:0]const u8 {
 
 pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]const u8 {
     const joined = joinStringBuf(buf[0 .. buf.len - 1], _parts, _platform);
-    std.debug.assert(bun.isSliceInBuffer(u8, joined, buf));
+    std.debug.assert(bun.isSliceInBuffer(joined, buf));
     const start_offset = @intFromPtr(joined.ptr) - @intFromPtr(buf.ptr);
     buf[joined.len + start_offset] = 0;
     return buf[start_offset..][0..joined.len :0];

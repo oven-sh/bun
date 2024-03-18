@@ -40,7 +40,7 @@ pub const meta = @import("./meta.zig");
 pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
-pub const resolver = @import("./resolver//resolver.zig");
+pub const resolver = @import("./resolver/resolver.zig");
 pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
@@ -48,9 +48,9 @@ pub const allocators = @import("./allocators.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
+    pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
+    // pub const ShellSubprocessMini = @import("./shell/subproc.zig").ShellSubprocessMini;
 };
-
-pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./__global.zig");
@@ -66,16 +66,29 @@ else
     std.os.fd_t;
 
 pub const FileDescriptor = enum(FileDescriptorInt) {
-    zero,
+    /// Zero is used in old filesystem code to indicate "no file descriptor"
+    /// This is problematic because on POSIX, this is ambiguous with stdin being 0.
+    /// All code that uses this should migrate to invalid_fd to represent invalid states.
+    zero = 0,
+    // Represents an invalid file descriptor. This is used instead of null to
+    // avoid an extra bit.
+    // invalid = @intFromEnum(invalid_fd),
     _,
 
-    pub inline fn int(fd: FileDescriptor) FileDescriptorInt {
-        // TODO(@paperdave): make this a compile error to call on windows. every usage is incorrect.
-        return @intFromEnum(fd);
+    /// Do not use this function in new code.
+    ///
+    /// Interpreting a FD as an integer is almost certainly a mistake.
+    /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
+    ///
+    /// TODO(@paperdave): remove this API.
+    pub inline fn int(self: FileDescriptor) std.os.fd_t {
+        if (Environment.isWindows)
+            @compileError("FileDescriptor.int() is not allowed on Windows.");
+        return @intFromEnum(self);
     }
 
     pub inline fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
-        try writer.writeInt(FileDescriptorInt, fd.int(), endian);
+        try writer.writeInt(FileDescriptorInt, @intFromEnum(fd), endian);
     }
 
     pub inline fn readFrom(reader: anytype, endian: std.builtin.Endian) !FileDescriptor {
@@ -117,6 +130,24 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn assertKind(fd: FileDescriptor, kind: FDImpl.Kind) void {
         std.debug.assert(FDImpl.decode(fd).kind == kind);
+    }
+
+    pub fn isStdio(fd: FileDescriptor) bool {
+        // fd.assertValid();
+        const decoded = FDImpl.decode(fd);
+        return switch (Environment.os) {
+            else => decoded.value.as_system < 3,
+            .windows => switch (decoded.kind) {
+                .system => fd == win32.STDIN_FD or
+                    fd == win32.STDOUT_FD or
+                    fd == win32.STDERR_FD,
+                .uv => decoded.value.as_uv < 3,
+            },
+        };
+    }
+
+    pub fn toJS(value: FileDescriptor, global: *JSC.JSGlobalObject) JSC.JSValue {
+        return FDImpl.decode(value).toJS(global);
     }
 };
 
@@ -451,28 +482,34 @@ pub fn ensureNonBlocking(fd: anytype) void {
     _ = std.os.fcntl(fd, std.os.F.SETFL, current | std.os.O.NONBLOCK) catch 0;
 }
 
-const global_scope_log = Output.scoped(.bun, false);
+const global_scope_log = sys.syslog;
 pub fn isReadable(fd: FileDescriptor) PollFlag {
     if (comptime Environment.isWindows) {
         @panic("TODO on Windows");
     }
-
+    std.debug.assert(fd != invalid_fd);
     var polls = [_]std.os.pollfd{
         .{
             .fd = fd.cast(),
-            .events = std.os.POLL.IN | std.os.POLL.ERR,
+            .events = std.os.POLL.IN | std.os.POLL.ERR | std.os.POLL.HUP,
             .revents = 0,
         },
     };
 
     const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    global_scope_log("poll({}) readable: {any} ({d})", .{ fd, result, polls[0].revents });
-    return if (result and polls[0].revents & std.os.POLL.HUP != 0)
+    const rc = if (result and polls[0].revents & (std.os.POLL.HUP | std.os.POLL.ERR) != 0)
         PollFlag.hup
     else if (result)
         PollFlag.ready
     else
         PollFlag.not_ready;
+    global_scope_log("poll({}, .readable): {any} ({s}{s})", .{
+        fd,
+        result,
+        @tagName(rc),
+        if (polls[0].revents & std.os.POLL.ERR != 0) " ERR " else "",
+    });
+    return rc;
 }
 
 pub const PollFlag = enum { ready, not_ready, hup };
@@ -497,24 +534,30 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         }
         return;
     }
+    std.debug.assert(fd != invalid_fd);
 
     var polls = [_]std.os.pollfd{
         .{
             .fd = fd.cast(),
-            .events = std.os.POLL.OUT,
+            .events = std.os.POLL.OUT | std.os.POLL.ERR | std.os.POLL.HUP,
             .revents = 0,
         },
     };
 
     const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    global_scope_log("poll({}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
-    if (result and polls[0].revents & std.os.POLL.HUP != 0) {
-        return .hup;
-    } else if (result) {
-        return .ready;
-    } else {
-        return .not_ready;
-    }
+    const rc = if (result and polls[0].revents & (std.os.POLL.HUP | std.os.POLL.ERR) != 0)
+        PollFlag.hup
+    else if (result)
+        PollFlag.ready
+    else
+        PollFlag.not_ready;
+    global_scope_log("poll({}, .writable): {any} ({s}{s})", .{
+        fd,
+        result,
+        @tagName(rc),
+        if (polls[0].revents & std.os.POLL.ERR != 0) " ERR " else "",
+    });
+    return rc;
 }
 
 /// Do not use this function, call std.debug.panic directly.
@@ -570,6 +613,7 @@ pub fn isHeapMemory(memory: anytype) bool {
 pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
+pub const isSliceInBufferT = allocators.isSliceInBufferT;
 
 pub inline fn sliceInBuffer(stable: string, value: string) string {
     if (allocators.sliceRange(stable, value)) |_| {
@@ -582,7 +626,7 @@ pub inline fn sliceInBuffer(stable: string, value: string) string {
 }
 
 pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
-    if (!isSliceInBuffer(u8, slice, buffer)) return null;
+    if (!isSliceInBuffer(slice, buffer)) return null;
     const r = [_]u32{
         @as(u32, @truncate(@intFromPtr(slice.ptr) -| @intFromPtr(buffer.ptr))),
         @as(u32, @truncate(slice.len)),
@@ -610,7 +654,6 @@ pub const BoringSSL = @import("./boringssl.zig");
 pub const LOLHTML = @import("./deps/lol-html.zig");
 pub const clap = @import("./deps/zig-clap/clap.zig");
 pub const analytics = @import("./analytics.zig");
-pub const DateTime = @import("./deps/zig-datetime/src/datetime.zig");
 
 pub var start_time: i128 = 0;
 
@@ -686,7 +729,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
             const key = line[0..key_end];
-            if (strings.eqlLong(key, path_, true)) {
+            if (strings.eqlInsensitive(key, path_)) {
                 return line[@min(key_end + 1, line.len)..];
             }
         }
@@ -963,12 +1006,25 @@ pub const SignalCode = enum(u8) {
     SIGSYS = 31,
     _,
 
+    // The `subprocess.kill()` method sends a signal to the child process. If no
+    // argument is given, the process will be sent the 'SIGTERM' signal.
+    pub const default = @intFromEnum(SignalCode.SIGTERM);
+    pub const Map = ComptimeEnumMap(SignalCode);
     pub fn name(value: SignalCode) ?[]const u8 {
         if (@intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS)) {
             return asByteSlice(@tagName(value));
         }
 
         return null;
+    }
+
+    /// Shell scripts use exit codes 128 + signal number
+    /// https://tldp.org/LDP/abs/html/exitcodes.html
+    pub fn toExitCode(value: SignalCode) ?u8 {
+        return switch (@intFromEnum(value)) {
+            1...31 => 128 +% @intFromEnum(value),
+            else => null,
+        };
     }
 
     pub fn description(signal: SignalCode) ?[]const u8 {
@@ -1774,7 +1830,7 @@ pub const WTF = struct {
 
 pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 
-pub const Wyhash = @import("./wyhash.zig").Wyhash;
+pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
 pub inline fn assertComptime() void {
@@ -1923,9 +1979,9 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
 
-var _argv: [][:0]u8 = &[_][:0]u8{};
+var _argv: [][:0]const u8 = &[_][:0]const u8{};
 
-pub inline fn argv() [][:0]u8 {
+pub inline fn argv() [][:0]const u8 {
     return _argv;
 }
 
@@ -1969,6 +2025,8 @@ pub const win32 = struct {
             else => @panic("Invalid stdio fd"),
         };
     }
+
+    pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
 
     pub fn isWatcherChild() bool {
         var buf: [1]u16 = undefined;
@@ -2498,6 +2556,10 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
     }
 
+    const output_name: []const u8 = if (@hasDecl(T, "DEBUG_REFCOUNT_NAME")) T.DEBUG_REFCOUNT_NAME else meta.typeBaseName(@typeName(T));
+
+    const log = Output.scoped(output_name, true);
+
     return struct {
         const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
 
@@ -2515,10 +2577,12 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
 
         pub fn ref(self: *T) void {
+            if (comptime Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
             self.ref_count += 1;
         }
 
         pub fn deref(self: *T) void {
+            if (comptime Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
             self.ref_count -= 1;
 
             if (self.ref_count == 0) {
@@ -2536,7 +2600,9 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
                 ptr.* = t;
 
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(ptr.ref_count == 1);
+                    if (ptr.ref_count != 1) {
+                        std.debug.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
+                    }
                     allocation_logger("new() = {*}", .{ptr});
                 }
 
@@ -2680,10 +2746,35 @@ pub fn getUserName(output_buffer: []u8) ?[]const u8 {
     return output_buffer[0..size];
 }
 
-/// This struct is a workaround a Windows terminal bug.
-/// TODO: when https://github.com/microsoft/terminal/issues/16606 is resolved, revert this commit.
-pub var buffered_stdin = std.io.BufferedReader(4096, std.fs.File.Reader){
-    .unbuffered_reader = std.fs.File.Reader{ .context = .{ .handle = if (Environment.isWindows) undefined else 0 } },
-};
+pub inline fn markWindowsOnly() if (Environment.isWindows) void else noreturn {
+    if (Environment.isWindows) {
+        return;
+    }
+
+    if (@inComptime()) {
+        @compileError("This function is only available on Windows");
+    }
+
+    @panic("Assertion failure: this function should only be accessible on Windows.");
+}
+
+pub inline fn markPosixOnly() if (Environment.isPosix) void else noreturn {
+    if (Environment.isPosix) {
+        return;
+    }
+
+    if (@inComptime()) {
+        @compileError("This function is only available on POSIX");
+    }
+
+    @panic("Assertion failure: this function should only be accessible on POSIX.");
+}
+
+pub fn linuxKernelVersion() Semver.Version {
+    if (comptime !Environment.isLinux) @compileError("linuxKernelVersion() is only available on Linux");
+    return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+}
 
 pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");
+
+pub const exe_suffix = if (Environment.isWindows) ".exe" else "";

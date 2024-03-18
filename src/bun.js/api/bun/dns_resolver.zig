@@ -125,7 +125,7 @@ const LibInfo = struct {
             request.backend.libinfo.file_poll.?.registerWithFd(
                 this.vm.event_loop_handle.?,
                 .machport,
-                true,
+                .one_shot,
                 bun.toFD(@intFromPtr(request.backend.libinfo.machport)),
             ) == .result,
         );

@@ -6,7 +6,8 @@ pub const keep_alive = false;
 pub const print_ast = false;
 pub const disable_printing_null = false;
 
-// This was a ~5% performance improvement
+/// Store and reuse file descriptors during module resolution
+/// This was a ~5% performance improvement
 pub const store_file_descriptors = !env.isBrowser;
 
 pub const css_in_js_import_behavior = CSSInJSImportBehavior.facade;
@@ -162,3 +163,5 @@ pub const concurrent_transpiler = !env.isWindows;
 pub const disable_auto_js_to_ts_in_node_modules = true;
 
 pub const runtime_transpiler_cache = true;
+
+pub const breaking_changes_1_1_0 = false;

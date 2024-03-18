@@ -29,6 +29,7 @@ pub fn NewPanicHandler(comptime panic_func: fn ([]const u8, ?*std.builtin.StackT
             };
         }
         pub inline fn handle_panic(msg: []const u8, error_return_type: ?*std.builtin.StackTrace, addr: ?usize) noreturn {
+
             // This exists to ensure we flush all buffered output before panicking.
             Output.flush();
 

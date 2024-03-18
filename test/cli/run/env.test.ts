@@ -724,3 +724,13 @@ todoOnPosix("setting process.env coerces the value to a string", () => {
   expect(process.env.SET_TO_BUN).toBe("bun!");
   expect(did_call).toBe(1);
 });
+
+test("NODE_ENV=test loads .env.test even when .env.production exists", () => {
+  const dir = tempDirWithFiles("dotenv", {
+    "index.ts": "console.log(process.env.AWESOME);",
+    ".env.production": "AWESOME=production",
+    ".env.test": "AWESOME=test",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`, { NODE_ENV: "test" });
+  expect(stdout).toBe("test");
+});

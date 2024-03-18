@@ -267,6 +267,10 @@ pub const Runtime = struct {
 
         emit_decorator_metadata: bool = false,
 
+        /// If true and if the source is transpiled as cjs, don't wrap the module.
+        /// This is used for `--print` entry points so we can get the result.
+        remove_cjs_module_wrapper: bool = false,
+
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
         // TODO: make this a bitset of all unsupported features

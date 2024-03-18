@@ -197,6 +197,7 @@ void us_loop_free(struct us_loop_t *loop) {
 
 void us_loop_run(struct us_loop_t *loop) {
   us_loop_integrate(loop);
+  uv_update_time(loop->uv_loop);
 
   uv_run(loop->uv_loop, UV_RUN_ONCE);
 }

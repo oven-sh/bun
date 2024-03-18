@@ -2999,6 +2999,76 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
+    async function createPackagesWithScripts(
+      packagesCount: number,
+      scripts: Record<string, string>,
+    ): Promise<string[]> {
+      const dependencies: Record<string, string> = {};
+      const dependenciesList = [];
+
+      for (let i = 0; i < packagesCount; i++) {
+        const packageName: string = "stress-test-package-" + i;
+        const packageVersion = "1.0." + i;
+
+        dependencies[packageName] = "file:./" + packageName;
+        dependenciesList[i] = packageName;
+
+        const packagePath = join(packageDir, packageName);
+        await mkdir(packagePath);
+        await writeFile(
+          join(packagePath, "package.json"),
+          JSON.stringify({
+            name: packageName,
+            version: packageVersion,
+            scripts,
+          }),
+        );
+      }
+
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "stress-test",
+          version: "1.0.0",
+          dependencies,
+          trustedDependencies: dependenciesList,
+        }),
+      );
+
+      return dependenciesList;
+    }
+
+    test("reach max concurrent scripts", async () => {
+      const scripts = {
+        "preinstall": `${bunExe()} -e "Bun.sleepSync(500)"`,
+      };
+
+      const dependenciesList = await createPackagesWithScripts(4, scripts);
+
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--concurrent-scripts=2"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      const out = await Bun.readableStreamToText(stdout);
+      expect(out).not.toContain("Blocked");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
+        ...dependenciesList.map(dep => ` + ${dep}@${dep}`),
+        "",
+        " 4 packages installed",
+      ]);
+      expect(await exited).toBe(0);
+    });
+
     // test("stress test", async () => {
     //   // 1000 versions of the same package, and 1000 different packages each depending on one
     //   // of the versions. This creates a node_modules folder for 999 of the package

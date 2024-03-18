@@ -8773,7 +8773,7 @@ pub const PackageManager = struct {
                                         // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
                                         // This caused bugs. We can't assert on it because they could come from old lockfiles
                                         if (resolution.value.npm.url.isEmpty()) {
-                                            Output.debugWarn("package {s}@{} missing tarball_url", .{ name, resolution.fmt(buf) });
+                                            Output.debugWarn("package {s}@{} missing tarball_url", .{ name, resolution.fmt(buf, .posix) });
                                         }
                                     }
 

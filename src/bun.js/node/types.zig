@@ -22,17 +22,16 @@ const Fs = @import("../../fs.zig");
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const JSC = bun.JSC;
 const Mode = bun.Mode;
-const PathBuffer = bun.PathBuffer;
-const PathString = bun.PathString;
 const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const Syscall = bun.sys;
 const URL = @import("../../url.zig").URL;
 const Value = std.json.Value;
-const WPathBuffer = bun.WPathBuffer;
+
+const PATH_MIN_WIDE = 4096; // 4 KB
 
 const stack_fallback_size_small = switch (Environment.os) {
-    // Up to 4 KB, instead of MAX_PATH_BYTES which is 96kb on Windows, ouch!
-    .windows => 4096,
+    // Up to 4 KB, instead of MAX_PATH_BYTES which is 96 KB on Windows, ouch!
+    .windows => PATH_MIN_WIDE,
     else => bun.MAX_PATH_BYTES,
 };
 
@@ -136,6 +135,15 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         pub const success: @This() = @This(){
             .result = std.mem.zeroes(ReturnType),
         };
+
+        pub fn assert(this: @This()) ReturnType {
+            switch (this) {
+                .err => |err| {
+                    bun.Output.panic("Unexpected error\n{}", .{err});
+                },
+                .result => |result| return result,
+            }
+        }
 
         pub inline fn todo() @This() {
             if (Environment.allow_assert) {
@@ -579,9 +587,9 @@ pub const Encoding = enum(u8) {
     pub fn encodeWithSize(encoding: Encoding, globalObject: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8) JSC.JSValue {
         switch (encoding) {
             .base64 => {
-                var base64: [std.base64.standard.Encoder.calcSize(size)]u8 = undefined;
-                const len = bun.base64.encode(&base64, input);
-                return JSC.ZigString.init(base64[0..len]).toValueGC(globalObject);
+                var buf: [std.base64.standard.Encoder.calcSize(size)]u8 = undefined;
+                const len = bun.base64.encode(&buf, input);
+                return JSC.ZigString.init(buf[0..len]).toValueGC(globalObject);
             },
             .base64url => {
                 var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(size)]u8 = undefined;
@@ -649,7 +657,7 @@ pub const Encoding = enum(u8) {
 };
 
 const PathOrBuffer = union(Tag) {
-    path: PathString,
+    path: bun.PathString,
     buffer: Buffer,
 
     pub const Tag = enum { path, buffer };
@@ -673,7 +681,7 @@ pub fn CallbackTask(comptime Result: type) type {
 }
 
 pub const PathLike = union(enum) {
-    string: PathString,
+    string: bun.PathString,
     buffer: Buffer,
     slice_with_underlying_string: bun.SliceWithUnderlyingString,
     threadsafe_string: bun.SliceWithUnderlyingString,
@@ -730,7 +738,7 @@ pub const PathLike = union(enum) {
         };
     }
 
-    pub fn sliceZWithForceCopy(this: PathLike, buf: *[bun.MAX_PATH_BYTES]u8, comptime force: bool) if (force) [:0]u8 else [:0]const u8 {
+    pub fn sliceZWithForceCopy(this: PathLike, buf: *bun.PathBuffer, comptime force: bool) if (force) [:0]u8 else [:0]const u8 {
         const sliced = this.slice();
 
         if (Environment.isWindows) {
@@ -757,15 +765,15 @@ pub const PathLike = union(enum) {
         return buf[0..sliced.len :0];
     }
 
-    pub inline fn sliceZ(this: PathLike, buf: *PathBuffer) [:0]const u8 {
+    pub inline fn sliceZ(this: PathLike, buf: *bun.PathBuffer) [:0]const u8 {
         return sliceZWithForceCopy(this, buf, false);
     }
 
-    pub inline fn sliceW(this: PathLike, buf: *PathBuffer) [:0]const u16 {
+    pub inline fn sliceW(this: PathLike, buf: *bun.PathBuffer) [:0]const u16 {
         return strings.toWPath(@alignCast(std.mem.bytesAsSlice(u16, buf)), this.slice());
     }
 
-    pub inline fn osPath(this: PathLike, buf: *PathBuffer) bun.OSPathSliceZ {
+    pub inline fn osPath(this: PathLike, buf: *bun.PathBuffer) bun.OSPathSliceZ {
         if (comptime Environment.isWindows) {
             return sliceW(this, buf);
         }
@@ -1229,7 +1237,7 @@ pub const PathOrFileDescriptor = union(Tag) {
         }
         switch (this) {
             .path => |p| try writer.writeAll(p.slice()),
-            .fd => |fd| try writer.print("{d}", .{fd}),
+            .fd => |fd| try writer.print("{}", .{fd}),
         }
     }
 
@@ -1927,14 +1935,10 @@ pub const Path = struct {
 
     const StringBuilder = @import("../../string_builder.zig");
 
-    inline fn getPathBufLenT(comptime T: type) usize {
-        return if (T == u16) PATH_MAX_WIDE else MAX_PATH_BYTES;
-    }
-
     /// Based on Node v21.6.1 path.parse:
     /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L919
     /// The structs returned by parse methods.
-    fn ParsedPath(comptime T: type) type {
+    fn PathParsed(comptime T: type) type {
         return struct {
             root: []const T = "",
             dir: []const T = "",
@@ -1953,8 +1957,14 @@ pub const Path = struct {
         };
     }
 
-    pub const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-    pub const PATH_MAX_WIDE = windows.PATH_MAX_WIDE;
+    pub fn MAX_PATH_SIZE(comptime T: type) usize {
+        return if (T == u16) windows.PATH_MAX_WIDE else bun.MAX_PATH_BYTES;
+    }
+
+    pub fn PATH_SIZE(comptime T: type) usize {
+        return if (T == u16) PATH_MIN_WIDE else bun.MAX_PATH_BYTES;
+    }
+
     pub const shim = Shimmer("Bun", "Path", @This());
     pub const name = "Bun__Path";
     pub const include = "Path.h";
@@ -2021,7 +2031,7 @@ pub const Path = struct {
     }
 
     pub fn getCwdWindowsU8(buf: []u8) MaybeBuf(u8) {
-        const u16Buf: [PATH_MAX_WIDE]u16 = undefined;
+        const u16Buf: bun.WPathBuffer = undefined;
         switch (getCwdWindowsU16(&u16Buf)) {
             .result => |r| {
                 // Handles conversion from UTF-16 to UTF-8 including surrogates ;)
@@ -2062,7 +2072,7 @@ pub const Path = struct {
         if (comptime Environment.isWindows) {
             return getCwdWindowsU16(&buf);
         }
-        const u8Buf: PathBuffer = undefined;
+        const u8Buf: bun.PathBuffer = undefined;
         const result = strings.convertUTF8toUTF16InBuffer(&buf, bun.getcwd(strings.convertUTF16ToUTF8InBuffer(&u8Buf, buf))) catch {
             return MaybeBuf(u16).errnoSys(0, Syscall.Tag.getcwd).?;
         };
@@ -2286,12 +2296,19 @@ pub const Path = struct {
             comptime L(T, "");
     }
 
-    pub inline fn basenamePosix(path: []const u8, suffix: ?[]const u8) []const u8 {
-        return basenamePosixT(u8, path, suffix);
+    pub inline fn basenamePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, suffix: ?[]const T) JSC.JSValue {
+        return toJSString(globalObject, basenamePosixT(T, path, suffix));
     }
 
-    pub inline fn basenameWindows(path: []const u8, suffix: ?[]const u8) []const u8 {
-        return basenameWindowsT(u8, path, suffix);
+    pub inline fn basenameWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, suffix: ?[]const T) JSC.JSValue {
+        return toJSString(globalObject, basenameWindowsT(T, path, suffix));
+    }
+
+    pub inline fn basenameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isWindows: bool, path: []const T, suffix: ?[]const T) JSC.JSValue {
+        return if (isWindows)
+            basenameWindowsJS_T(T, globalObject, path, suffix)
+        else
+            basenamePosixJS_T(T, globalObject, path, suffix);
     }
 
     pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -2301,19 +2318,19 @@ pub const Path = struct {
         if (suffix_ptr) |_suffix_ptr| {
             // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
             validateString(globalObject, _suffix_ptr, "ext", .{}) catch {
-                return JSC.JSValue.jsUndefined();
+                // Returning .zero translates to a nullprt JSC.JSValue.
+                return .zero;
             };
         }
 
         const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         validateString(globalObject, path_ptr, "path", .{}) catch {
-            return JSC.JSValue.jsUndefined();
+            return .zero;
         };
 
         const pathZStr = path_ptr.getZigString(globalObject);
-        const len = pathZStr.len;
-        if (len == 0) return path_ptr;
+        if (pathZStr.len == 0) return path_ptr;
 
         var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
         const allocator = stack_fallback.get();
@@ -2321,23 +2338,15 @@ pub const Path = struct {
         const pathZSlice = pathZStr.toSlice(allocator);
         defer pathZSlice.deinit();
 
+        var suffixZSlice: ?JSC.ZigString.Slice = null;
         if (suffix_ptr) |_suffix_ptr| {
             const suffixZStr = _suffix_ptr.getZigString(globalObject);
-            const suffixLen = suffixZStr.len;
-            if (suffixLen > 0 and suffixLen <= len) {
-                var suffixZSlice = suffixZStr.toSlice(allocator);
-                defer suffixZSlice.deinit();
-                return if (isWindows)
-                    toJSString(globalObject, basenameWindows(pathZSlice.slice(), suffixZSlice.slice()))
-                else
-                    toJSString(globalObject, basenamePosix(pathZSlice.slice(), suffixZSlice.slice()));
+            if (suffixZStr.len > 0 and suffixZStr.len <= pathZStr.len) {
+                suffixZSlice = suffixZStr.toSlice(allocator);
             }
         }
-
-        return if (isWindows)
-            toJSString(globalObject, basenameWindows(pathZSlice.slice(), null))
-        else
-            toJSString(globalObject, basenamePosix(pathZSlice.slice(), null));
+        defer if (suffixZSlice) |_s| _s.deinit();
+        return basenameJS_T(u8, globalObject, isWindows, pathZSlice.slice(), if (suffixZSlice) |_s| _s.slice() else null);
     }
 
     pub fn create(globalObject: *JSC.JSGlobalObject, isWindows: bool) callconv(.C) JSC.JSValue {
@@ -2493,12 +2502,19 @@ pub const Path = struct {
             comptime L(T, CHAR_STR_DOT);
     }
 
-    pub inline fn dirnamePosix(path: []const u8) []const u8 {
-        return dirnamePosixT(u8, path);
+    pub inline fn dirnamePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) JSC.JSValue {
+        return toJSString(globalObject, dirnamePosixT(T, path));
     }
 
-    pub inline fn dirnameWindows(path: []const u8) []const u8 {
-        return dirnameWindowsT(u8, path);
+    pub inline fn dirnameWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) JSC.JSValue {
+        return toJSString(globalObject, dirnameWindowsT(T, path));
+    }
+
+    pub inline fn dirnameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isWindows: bool, path: []const T) JSC.JSValue {
+        return if (isWindows)
+            dirnameWindowsJS_T(T, globalObject, path)
+        else
+            dirnamePosixJS_T(T, globalObject, path);
     }
 
     pub fn dirname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -2506,7 +2522,8 @@ pub const Path = struct {
         const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         validateString(globalObject, path_ptr, "path", .{}) catch {
-            return JSC.JSValue.jsUndefined();
+            // Returning .zero translates to a nullprt JSC.JSValue.
+            return .zero;
         };
 
         const pathZStr = path_ptr.getZigString(globalObject);
@@ -2517,11 +2534,7 @@ pub const Path = struct {
 
         const pathZSlice = pathZStr.toSlice(allocator);
         defer pathZSlice.deinit();
-
-        return if (isWindows)
-            toJSString(globalObject, dirnameWindows(pathZSlice.slice()))
-        else
-            toJSString(globalObject, dirnamePosix(pathZSlice.slice()));
+        return dirnameJS_T(u8, globalObject, isWindows, pathZSlice.slice());
     }
 
     /// Based on Node v21.6.1 path.posix.extname:
@@ -2689,12 +2702,19 @@ pub const Path = struct {
         return path[_startDot.._end];
     }
 
-    pub inline fn extnamePosix(path: []const u8) []const u8 {
-        return extnamePosixT(u8, path);
+    pub inline fn extnamePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) JSC.JSValue {
+        return toJSString(globalObject, extnamePosixT(T, path));
     }
 
-    pub inline fn extnameWindows(path: []const u8) []const u8 {
-        return extnameWindowsT(u8, path);
+    pub inline fn extnameWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) JSC.JSValue {
+        return toJSString(globalObject, extnameWindowsT(T, path));
+    }
+
+    pub inline fn extnameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isWindows: bool, path: []const T) JSC.JSValue {
+        return if (isWindows)
+            extnameWindowsJS_T(T, globalObject, path)
+        else
+            extnamePosixJS_T(T, globalObject, path);
     }
 
     pub fn extname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -2702,7 +2722,8 @@ pub const Path = struct {
         const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         validateString(globalObject, path_ptr, "path", .{}) catch {
-            return JSC.JSValue.jsUndefined();
+            // Returning .zero translates to a nullprt JSC.JSValue.
+            return .zero;
         };
 
         const pathZStr = path_ptr.getZigString(globalObject);
@@ -2713,17 +2734,13 @@ pub const Path = struct {
 
         const pathZSlice = pathZStr.toSlice(allocator);
         defer pathZSlice.deinit();
-
-        return if (isWindows)
-            toJSString(globalObject, extnameWindows(pathZSlice.slice()))
-        else
-            toJSString(globalObject, extnamePosix(pathZSlice.slice()));
+        return extnameJS_T(u8, globalObject, isWindows, pathZSlice.slice());
     }
 
     /// Based on Node v21.6.1 private helper _format:
     /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L145
-    fn _format(comptime T: type, pathObject: ParsedPath(T), sep: T, buf: []T) []const T {
-        comptime validatePathT(T, "_format");
+    fn _formatT(comptime T: type, pathObject: PathParsed(T), sep: T, buf: []T) []const T {
+        comptime validatePathT(T, "_formatT");
 
         // validateObject of `pathObject` is performed in pub fn format.
         const root = pathObject.root;
@@ -2795,12 +2812,24 @@ pub const Path = struct {
         return buf[0..bufSize];
     }
 
-    pub inline fn formatPosix(pathObject: ParsedPath(u8), buf: []u8) []const u8 {
-        return _format(u8, pathObject, CHAR_FORWARD_SLASH, buf);
+    pub inline fn formatPosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, pathObject: PathParsed(T), buf: []T) JSC.JSValue {
+        return toJSString(globalObject, _formatT(T, pathObject, CHAR_FORWARD_SLASH, buf));
     }
 
-    pub inline fn formatWindow(pathObject: ParsedPath(u8), buf: []u8) []const u8 {
-        return _format(u8, pathObject, CHAR_BACKWARD_SLASH, buf);
+    pub inline fn formatWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, pathObject: PathParsed(T), buf: []T) JSC.JSValue {
+        return toJSString(globalObject, _formatT(T, pathObject, CHAR_BACKWARD_SLASH, buf));
+    }
+
+    pub fn formatJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, pathObject: PathParsed(T)) JSC.JSValue {
+        const baseLen = pathObject.base.len;
+        const dirLen = pathObject.dir.len;
+        // Add one for the possible separator.
+        const bufLen: usize = @max(1 +
+            (if (dirLen > 0) dirLen else pathObject.root.len) +
+            (if (baseLen > 0) baseLen else pathObject.name.len + pathObject.ext.len), PATH_SIZE(T));
+        const buf = allocator.alloc(T, bufLen) catch bun.outOfMemory();
+        defer allocator.free(buf);
+        return if (isWindows) formatWindowsJS_T(T, globalObject, pathObject, buf) else formatPosixJS_T(T, globalObject, pathObject, buf);
     }
 
     pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -2808,13 +2837,12 @@ pub const Path = struct {
         const pathObject_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         validateObject(globalObject, pathObject_ptr, "pathObject", .{}, .{}) catch {
-            return JSC.JSValue.jsUndefined();
+            // Returning .zero translates to a nullprt JSC.JSValue.
+            return .zero;
         };
 
         var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
         const allocator = stack_fallback.get();
-
-        var lenSum: usize = 0;
 
         var root: []const u8 = "";
         if (pathObject_ptr.getTruthy(globalObject, "root")) |jsValue| {
@@ -2824,44 +2852,20 @@ pub const Path = struct {
         if (pathObject_ptr.getTruthy(globalObject, "dir")) |jsValue| {
             dir = jsValue.toSlice(globalObject, allocator).slice();
         }
-
-        lenSum += dir.len;
-
         var base: []const u8 = "";
         if (pathObject_ptr.getTruthy(globalObject, "base")) |jsValue| {
             base = jsValue.toSlice(globalObject, allocator).slice();
-            lenSum += base.len;
         }
         // Prefix with _ to avoid shadowing the identifier in the outer scope.
         var _name: []const u8 = "";
         if (pathObject_ptr.getTruthy(globalObject, "name")) |jsValue| {
             _name = jsValue.toSlice(globalObject, allocator).slice();
-            if (base.len == 0) lenSum += _name.len;
         }
         var ext: []const u8 = "";
         if (pathObject_ptr.getTruthy(globalObject, "ext")) |jsValue| {
             ext = jsValue.toSlice(globalObject, allocator).slice();
-            if (base.len == 0) lenSum += ext.len;
         }
-
-        // Add one for the possible separator.
-        lenSum += 1;
-
-        const pathObject = .{ .root = root, .dir = dir, .base = base, .ext = ext, .name = _name };
-        const bufLen = @max(lenSum, MAX_PATH_BYTES);
-        if (bufLen > MAX_PATH_BYTES) {
-            const buf = allocator.alloc(u8, bufLen) catch bun.outOfMemory();
-            defer allocator.free(buf);
-            return if (isWindows)
-                toJSString(globalObject, formatWindow(pathObject, buf))
-            else
-                toJSString(globalObject, formatPosix(pathObject, buf));
-        }
-        var buf: PathBuffer = undefined;
-        return if (isWindows)
-            toJSString(globalObject, formatWindow(pathObject, &buf))
-        else
-            toJSString(globalObject, formatPosix(pathObject, &buf));
+        return formatJS_T(u8, globalObject, allocator, isWindows, .{ .root = root, .dir = dir, .base = base, .ext = ext, .name = _name });
     }
 
     /// Based on Node v21.6.1 path.posix.isAbsolute:
@@ -2908,7 +2912,8 @@ pub const Path = struct {
         const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         validateString(globalObject, path_ptr, "path", .{}) catch {
-            return JSC.JSValue.jsUndefined();
+            // Returning .zero translates to a nullprt JSC.JSValue.
+            return .zero;
         };
 
         const pathZStr = path_ptr.getZigString(globalObject);
@@ -2927,13 +2932,13 @@ pub const Path = struct {
 
     /// Based on Node v21.6.1 private helper isWindowsDeviceRoot:
     /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L60C10-L60C29
-    inline fn isWindowsDeviceRootT(comptime T: type, byte: T) bool {
+    pub inline fn isWindowsDeviceRootT(comptime T: type, byte: T) bool {
         return (byte >= 'A' and byte <= 'Z') or (byte >= 'a' and byte <= 'z');
     }
 
     /// Based on Node v21.6.1 path.posix.join:
     /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1169
-    pub inline fn joinPosixT(comptime T: type, paths: []const []const T, buf: []T, varedLenBuf: []T) []const T {
+    pub inline fn joinPosixT(comptime T: type, paths: []const []const T, buf: []T, buf2: []T) []const T {
         comptime validatePathT(T, "joinPosixT");
 
         if (paths.len == 0) {
@@ -2943,12 +2948,12 @@ pub const Path = struct {
         var bufSize: usize = 0;
         var bufOffset: usize = 0;
 
-        // Back joined by expandable varedLenBuf in case it is long.
+        // Back joined by expandable buf2 in case it is long.
         var joined: []const T = comptime L(T, "");
 
         for (paths) |path| {
             // validateString of `path is performed in pub fn join.
-            // Back our virtual "joined" string by expandable varedLenBuf in
+            // Back our virtual "joined" string by expandable buf2 in
             // case it is long.
             const len = path.len;
             if (len > 0) {
@@ -2960,13 +2965,13 @@ pub const Path = struct {
                 if (bufSize != 0) {
                     bufOffset = bufSize;
                     bufSize += 1;
-                    varedLenBuf[bufOffset] = CHAR_FORWARD_SLASH;
+                    buf2[bufOffset] = CHAR_FORWARD_SLASH;
                 }
                 bufOffset = bufSize;
                 bufSize += len;
-                @memcpy(varedLenBuf[bufOffset..bufSize], path);
+                @memcpy(buf2[bufOffset..bufSize], path);
 
-                joined = varedLenBuf[0..bufSize];
+                joined = buf2[0..bufSize];
             }
         }
         if (bufSize == 0) {
@@ -2977,7 +2982,7 @@ pub const Path = struct {
 
     /// Based on Node v21.6.1 path.win32.join:
     /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L425
-    pub fn joinWindowsT(comptime T: type, paths: []const []const T, buf: []T, varedLenBuf: []T) []const T {
+    pub fn joinWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf2: []T) []const T {
         comptime validatePathT(T, "joinWindowsT");
 
         if (paths.len == 0) {
@@ -2989,7 +2994,7 @@ pub const Path = struct {
         var bufSize: usize = 0;
         var bufOffset: usize = 0;
 
-        // Backed by expandable varedLenBuf in case it is long.
+        // Backed by expandable buf2 in case it is long.
         var joined: []const T = comptime L(T, "");
         var firstPart: []const T = comptime L(T, "");
 
@@ -3005,19 +3010,19 @@ pub const Path = struct {
                 bufOffset = bufSize;
                 if (bufSize == 0) {
                     bufSize = len;
-                    @memcpy(varedLenBuf[0..bufSize], path);
+                    @memcpy(buf2[0..bufSize], path);
 
-                    joined = varedLenBuf[0..bufSize];
+                    joined = buf2[0..bufSize];
                     firstPart = joined;
                 } else {
                     bufOffset = bufSize;
                     bufSize += 1;
-                    varedLenBuf[bufOffset] = CHAR_BACKWARD_SLASH;
+                    buf2[bufOffset] = CHAR_BACKWARD_SLASH;
                     bufOffset = bufSize;
                     bufSize += len;
-                    @memcpy(varedLenBuf[bufOffset..bufSize], path);
+                    @memcpy(buf2[bufOffset..bufSize], path);
 
-                    joined = varedLenBuf[0..bufSize];
+                    joined = buf2[0..bufSize];
                 }
             }
         }
@@ -3071,23 +3076,35 @@ pub const Path = struct {
                 bufOffset = 1;
                 bufSize = bufOffset + (bufSize - slashCount);
                 // Move all bytes to the right by slashCount - 1.
-                // Use bun.copy because joined and varedLenBuf overlap.
-                bun.copy(u8, varedLenBuf[bufOffset..bufSize], joined[slashCount..]);
+                // Use bun.copy because joined and buf2 overlap.
+                bun.copy(u8, buf2[bufOffset..bufSize], joined[slashCount..]);
                 // Prepend the separator.
-                varedLenBuf[0] = CHAR_BACKWARD_SLASH;
+                buf2[0] = CHAR_BACKWARD_SLASH;
 
-                joined = varedLenBuf[0..bufSize];
+                joined = buf2[0..bufSize];
             }
         }
         return normalizeWindowsT(T, joined, buf);
     }
 
-    pub inline fn joinPosix(paths: []const []const u8, buf: []u8, varedLenBuf: []u8) []const u8 {
-        return joinPosixT(u8, paths, buf, varedLenBuf);
+    pub inline fn joinPosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) JSC.JSValue {
+        return toJSString(globalObject, joinPosixT(T, paths, buf, buf2));
     }
 
-    pub inline fn joinWindows(paths: []const []const u8, buf: []u8, varedLenBuf: []u8) []const u8 {
-        return joinWindowsT(u8, paths, buf, varedLenBuf);
+    pub inline fn joinWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) JSC.JSValue {
+        return toJSString(globalObject, joinWindowsT(T, paths, buf, buf2));
+    }
+
+    pub fn joinJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, paths: []const []const T) JSC.JSValue {
+        // Adding 8 bytes when Windows for the possible UNC root.
+        var bufLen: usize = if (isWindows) 8 else 0;
+        for (paths) |path| bufLen += if (bufLen > 0 and path.len > 0) path.len + 1 else path.len;
+        bufLen = @max(bufLen, PATH_SIZE(T));
+        const buf = allocator.alloc(T, bufLen) catch bun.outOfMemory();
+        defer allocator.free(buf);
+        const buf2 = allocator.alloc(T, bufLen) catch bun.outOfMemory();
+        defer allocator.free(buf2);
+        return if (isWindows) joinWindowsJS_T(T, globalObject, paths, buf, buf2) else joinPosixJS_T(T, globalObject, paths, buf, buf2);
     }
 
     pub fn join(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -3103,45 +3120,16 @@ pub const Path = struct {
         var paths = allocator.alloc(string, args_len) catch bun.outOfMemory();
         defer allocator.free(paths);
 
-        // Adding 2 bytes when Windows for the possible UNC root, i.e. "\\\\", addition.
-        var lenSum: usize = if (isWindows) 2 else 0;
-        for (0..args_len) |i| {
-            const path_ptr = args_ptr[i];
+        for (0..args_len, args_ptr) |i, path_ptr| {
             // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
             validateString(globalObject, path_ptr, "paths[{d}]", .{i}) catch {
-                return JSC.JSValue.jsUndefined();
+                // Returning .zero translates to a nullprt JSC.JSValue.
+                return .zero;
             };
-
             const pathZStr = path_ptr.getZigString(globalObject);
-            const len = pathZStr.len;
-            if (len == 0) {
-                // Skip work for empty paths.
-                paths[i] = "";
-            } else {
-                const pathZSlice = pathZStr.toSlice(allocator);
-                paths[i] = pathZSlice.slice();
-                // Add 1 for the separator.
-                lenSum += if (lenSum > 0) len + 1 else len;
-            }
+            paths[i] = if (pathZStr.len > 0) pathZStr.toSlice(allocator).slice() else "";
         }
-
-        const bufLen = @max(lenSum, MAX_PATH_BYTES);
-        if (bufLen > MAX_PATH_BYTES) {
-            const buf = allocator.alloc(u8, bufLen) catch bun.outOfMemory();
-            defer allocator.free(buf);
-            const varedLenBuf = allocator.alloc(u8, bufLen) catch bun.outOfMemory();
-            defer allocator.free(varedLenBuf);
-            return if (isWindows)
-                toJSString(globalObject, joinWindows(paths, buf, varedLenBuf))
-            else
-                toJSString(globalObject, joinPosix(paths, buf, varedLenBuf));
-        }
-        var buf: PathBuffer = undefined;
-        var varedLenBuf: PathBuffer = undefined;
-        return if (isWindows)
-            toJSString(globalObject, joinWindows(paths, &buf, &varedLenBuf))
-        else
-            toJSString(globalObject, joinPosix(paths, &buf, &varedLenBuf));
+        return joinJS_T(u8, globalObject, allocator, isWindows, paths);
     }
 
     /// Based on Node v21.6.1 private helper normalizeString:
@@ -3369,7 +3357,7 @@ pub const Path = struct {
         }
 
         var rootEnd: usize = 0;
-        // Backed by tmpBuf1.
+        // Backed by buf.
         var device: ?[]const T = null;
         // Prefix with _ to avoid shadowing the identifier in the outer scope.
         var _isAbsolute: bool = false;
@@ -3444,21 +3432,20 @@ pub const Path = struct {
                             //   device =
                             //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
                             //   rootEnd = j;
-                            var tmpBuf1: [getPathBufLenT(T)]T = undefined;
                             bufSize = 2;
-                            tmpBuf1[0] = CHAR_BACKWARD_SLASH;
-                            tmpBuf1[1] = CHAR_BACKWARD_SLASH;
+                            buf[0] = CHAR_BACKWARD_SLASH;
+                            buf[1] = CHAR_BACKWARD_SLASH;
                             bufOffset = bufSize;
                             bufSize += firstPart.len;
-                            @memcpy(tmpBuf1[bufOffset..bufSize], firstPart);
+                            @memcpy(buf[bufOffset..bufSize], firstPart);
                             bufOffset = bufSize;
                             bufSize += 1;
-                            tmpBuf1[bufOffset] = CHAR_BACKWARD_SLASH;
+                            buf[bufOffset] = CHAR_BACKWARD_SLASH;
                             bufOffset = bufSize;
                             bufSize += j - last;
-                            @memcpy(tmpBuf1[bufOffset..bufSize], path[last..j]);
+                            @memcpy(buf[bufOffset..bufSize], path[last..j]);
 
-                            device = tmpBuf1[0..bufSize];
+                            device = buf[0..bufSize];
                             rootEnd = j;
                         }
                     }
@@ -3470,7 +3457,9 @@ pub const Path = struct {
             path[1] == CHAR_COLON)
         {
             // Possible device root
-            device = &[2]T{ byte0, CHAR_COLON };
+            buf[0] = byte0;
+            buf[1] = CHAR_COLON;
+            device = buf[0..2];
             rootEnd = 2;
             if (len > 2 and isSepT(T, path[2])) {
                 // Treat separator following drive name as an absolute path
@@ -3480,72 +3469,50 @@ pub const Path = struct {
             }
         }
 
-        // Backed by buf.
-        var tail =
-            if (rootEnd < len)
-            normalizeStringT(T, path[rootEnd..len], !_isAbsolute, CHAR_BACKWARD_SLASH, .windows, buf)
-        else
-            comptime L(T, "");
-        if (tail.len == 0 and !_isAbsolute) {
-            tail = comptime L(T, CHAR_STR_DOT);
-            buf[0] = CHAR_DOT;
+        bufOffset = (if (device) |_d| _d.len else 0) + @intFromBool(_isAbsolute);
+        // Backed by buf at an offset of  device.len + 1 if _isAbsolute is true.
+        var tailLen = if (rootEnd < len) normalizeStringT(T, path[rootEnd..len], !_isAbsolute, CHAR_BACKWARD_SLASH, .windows, buf[bufOffset..]).len else 0;
+        if (tailLen == 0 and !_isAbsolute) {
+            buf[bufOffset] = CHAR_DOT;
+            tailLen = 1;
         }
-
-        var tailLen = tail.len;
-        bufSize = tailLen;
 
         if (tailLen > 0 and
             isSepT(T, path[len - 1]))
         {
             // Translated from the following JS code:
             //   tail += '\\';
-            bufOffset = bufSize;
-            bufSize += 1;
-            buf[bufOffset] = CHAR_BACKWARD_SLASH;
-            tail = buf[0..bufSize];
-            tailLen = bufSize;
+            buf[bufOffset + tailLen] = CHAR_BACKWARD_SLASH;
+            tailLen += 1;
         }
 
+        bufSize = bufOffset + tailLen;
         // Translated from the following JS code:
+        //   if (device === undefined) {
+        //     return isAbsolute ? `\\${tail}` : tail;
+        //   }
         //   return isAbsolute ? `${device}\\${tail}` : `${device}${tail}`;
-        if (device) |_device| {
-            const deviceLen = _device.len;
-            bufOffset = if (_isAbsolute) deviceLen + 1 else deviceLen;
-            bufSize = bufOffset + tailLen;
-            if (tailLen > 0) {
-                // Move all bytes to the right by device.len + (maybe 1 for the separator).
-                // Use bun.copy because tail and buf overlap.
-                bun.copy(T, buf[bufOffset..bufSize], tail);
-            }
-            @memcpy(buf[0..deviceLen], _device);
-            if (_isAbsolute) {
-                buf[deviceLen] = CHAR_BACKWARD_SLASH;
-            }
-        } else {
-            // Translated from the following JS code:
-            //   return isAbsolute ? `\\${tail}` : tail;
-            if (_isAbsolute) {
-                bufOffset = 1;
-                bufSize = bufOffset + tailLen;
-                if (tailLen > 0) {
-                    // Move all bytes to the right by 1 for the separator.
-                    // Use bun.copy because tail and buf overlap.
-                    bun.copy(T, buf[bufOffset..bufSize], tail);
-                }
-                // Prepend the separator.
-                buf[0] = CHAR_BACKWARD_SLASH;
-            }
+        if (_isAbsolute) {
+            bufOffset -= 1;
+            // Prepend the separator.
+            buf[bufOffset] = CHAR_BACKWARD_SLASH;
         }
-
         return buf[0..bufSize];
     }
 
-    pub inline fn normalizePosix(path: []const u8, buf: []u8) []const u8 {
-        return normalizePosixT(u8, path, buf);
+    pub inline fn normalizePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T) JSC.JSValue {
+        return toJSString(globalObject, normalizePosixT(T, path, buf));
     }
 
-    pub inline fn normalizeWindows(path: []const u8, buf: []u8) []const u8 {
-        return normalizeWindowsT(u8, path, buf);
+    pub inline fn normalizeWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T) JSC.JSValue {
+        return toJSString(globalObject, normalizeWindowsT(T, path, buf));
+    }
+
+    pub fn normalizeJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, path: []const T) JSC.JSValue {
+        const bufLen = @max(path.len, PATH_SIZE(T));
+        const buf = allocator.alloc(T, bufLen) catch bun.outOfMemory();
+        defer allocator.free(buf);
+        return if (isWindows) normalizeWindowsJS_T(T, globalObject, path, buf) else normalizePosixJS_T(T, globalObject, path, buf);
     }
 
     pub fn normalize(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -3553,7 +3520,8 @@ pub const Path = struct {
         const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         validateString(globalObject, path_ptr, "path", .{}) catch {
-            return JSC.JSValue.jsUndefined();
+            // Returning .zero translates to a nullprt JSC.JSValue.
+            return .zero;
         };
         const pathZStr = path_ptr.getZigString(globalObject);
         const len = pathZStr.len;
@@ -3564,26 +3532,12 @@ pub const Path = struct {
 
         const pathZSlice = pathZStr.toSlice(allocator);
         defer pathZSlice.deinit();
-
-        const bufLen = @max(len, MAX_PATH_BYTES);
-        if (bufLen > MAX_PATH_BYTES) {
-            const buf = allocator.alloc(u8, bufLen) catch bun.outOfMemory();
-            defer allocator.free(buf);
-            return if (isWindows)
-                toJSString(globalObject, normalizeWindows(pathZSlice.slice(), buf))
-            else
-                toJSString(globalObject, normalizePosix(pathZSlice.slice(), buf));
-        }
-        var buf: PathBuffer = undefined;
-        return if (isWindows)
-            toJSString(globalObject, normalizeWindows(pathZSlice.slice(), &buf))
-        else
-            toJSString(globalObject, normalizePosix(pathZSlice.slice(), &buf));
+        return normalizeJS_T(u8, globalObject, allocator, isWindows, pathZSlice.slice());
     }
 
     // Based on Node v21.6.1 path.posix.parse
     // https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1452
-    pub fn parsePosixT(comptime T: type, path: []const T) ParsedPath(T) {
+    pub fn parsePosixT(comptime T: type, path: []const T) PathParsed(T) {
         comptime validatePathT(T, "parsePosixT");
 
         // validateString of `path` is performed in pub fn parse.
@@ -3687,7 +3641,7 @@ pub const Path = struct {
 
     // Based on Node v21.6.1 path.win32.parse
     // https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L916
-    pub fn parseWindowsT(comptime T: type, path: []const T) ParsedPath(T) {
+    pub fn parseWindowsT(comptime T: type, path: []const T) PathParsed(T) {
         comptime validatePathT(T, "parseWindowsT");
 
         // validateString of `path` is performed in pub fn parse.
@@ -3873,12 +3827,16 @@ pub const Path = struct {
         return .{ .root = root, .dir = dir, .base = base, .ext = ext, .name = _name };
     }
 
-    pub inline fn parsePosix(path: []const u8) ParsedPath(u8) {
-        return parsePosixT(u8, path);
+    pub inline fn parsePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) JSC.JSValue {
+        return parsePosixT(T, path).toJSObject(globalObject);
     }
 
-    pub inline fn parseWindows(path: []const u8) ParsedPath(u8) {
-        return parseWindowsT(u8, path);
+    pub inline fn parseWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T) JSC.JSValue {
+        return parseWindowsT(T, path).toJSObject(globalObject);
+    }
+
+    pub inline fn parseJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isWindows: bool, path: []const T) JSC.JSValue {
+        return if (isWindows) parseWindowsJS_T(T, globalObject, path) else parsePosixJS_T(T, globalObject, path);
     }
 
     pub fn parse(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -3886,27 +3844,24 @@ pub const Path = struct {
         const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         validateString(globalObject, path_ptr, "path", .{}) catch {
-            return JSC.JSValue.jsUndefined();
+            // Returning .zero translates to a nullprt JSC.JSValue.
+            return .zero;
         };
 
         const pathZStr = path_ptr.getZigString(globalObject);
-        if (pathZStr.len == 0) return (ParsedPath(u8){}).toJSObject(globalObject);
+        if (pathZStr.len == 0) return (PathParsed(u8){}).toJSObject(globalObject);
 
         var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
         const allocator = stack_fallback.get();
 
         const pathZSlice = pathZStr.toSlice(allocator);
         defer pathZSlice.deinit();
-
-        return if (isWindows)
-            parseWindows(pathZSlice.slice()).toJSObject(globalObject)
-        else
-            parsePosix(pathZSlice.slice()).toJSObject(globalObject);
+        return parseJS_T(u8, globalObject, isWindows, pathZSlice.slice());
     }
 
     /// Based on Node v21.6.1 path.posix.relative:
     /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1193
-    pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: []T, varedLenBuf: []T, varedLenBuf2: []T) MaybeSlice(T) {
+    pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) MaybeSlice(T) {
         comptime validatePathT(T, "relativePosixT");
 
         // validateString of `from` and `to` are performed in pub fn relative.
@@ -3915,14 +3870,14 @@ pub const Path = struct {
         }
 
         // Trim leading forward slashes.
-        // Backed by expandable varedLenBuf because fromOrig may be long.
-        const fromOrig = switch (resolvePosixT(T, &.{from}, varedLenBuf, varedLenBuf2)) {
+        // Backed by expandable buf2 because fromOrig may be long.
+        const fromOrig = switch (resolvePosixT(T, &.{from}, buf2, buf3)) {
             .result => |r| r,
             .err => |e| return MaybeSlice(T){ .err = e },
         };
         const fromOrigLen = fromOrig.len;
         // Backed by buf.
-        const toOrig = switch (resolvePosixT(T, &.{to}, buf, varedLenBuf2)) {
+        const toOrig = switch (resolvePosixT(T, &.{to}, buf, buf3)) {
             .result => |r| r,
             .err => |e| return MaybeSlice(T){ .err = e },
         };
@@ -3985,7 +3940,7 @@ pub const Path = struct {
         var bufOffset: usize = 0;
         var bufSize: usize = 0;
 
-        // Backed by varedLenBuf2.
+        // Backed by buf3.
         var out: []const T = comptime L(T, "");
         // Add a block to isolate `i`.
         {
@@ -4002,15 +3957,15 @@ pub const Path = struct {
                     if (out.len > 0) {
                         bufOffset = bufSize;
                         bufSize += 3;
-                        varedLenBuf2[bufOffset] = CHAR_FORWARD_SLASH;
-                        varedLenBuf2[bufOffset + 1] = CHAR_DOT;
-                        varedLenBuf2[bufOffset + 2] = CHAR_DOT;
+                        buf3[bufOffset] = CHAR_FORWARD_SLASH;
+                        buf3[bufOffset + 1] = CHAR_DOT;
+                        buf3[bufOffset + 2] = CHAR_DOT;
                     } else {
                         bufSize = 2;
-                        varedLenBuf2[0] = CHAR_DOT;
-                        varedLenBuf2[1] = CHAR_DOT;
+                        buf3[0] = CHAR_DOT;
+                        buf3[1] = CHAR_DOT;
                     }
-                    out = varedLenBuf2[0..bufSize];
+                    out = buf3[0..bufSize];
                 }
             }
         }
@@ -4038,7 +3993,7 @@ pub const Path = struct {
 
     /// Based on Node v21.6.1 path.win32.relative:
     /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L500
-    pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: []T, varedLenBuf: []T, varedLenBuf2: []T) MaybeSlice(T) {
+    pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) MaybeSlice(T) {
         comptime validatePathT(T, "relativeWindowsT");
 
         // validateString of `from` and `to` are performed in pub fn relative.
@@ -4046,14 +4001,14 @@ pub const Path = struct {
             return MaybeSlice(T){ .result = comptime L(T, "") };
         }
 
-        // Backed by expandable varedLenBuf because fromOrig may be long.
-        const fromOrig = switch (resolveWindowsT(T, &.{from}, varedLenBuf, varedLenBuf2)) {
+        // Backed by expandable buf2 because fromOrig may be long.
+        const fromOrig = switch (resolveWindowsT(T, &.{from}, buf2, buf3)) {
             .result => |r| r,
             .err => |e| return MaybeSlice(T){ .err = e },
         };
         const fromOrigLen = fromOrig.len;
         // Backed by buf.
-        const toOrig = switch (resolveWindowsT(T, &.{to}, buf, varedLenBuf2)) {
+        const toOrig = switch (resolveWindowsT(T, &.{to}, buf, buf3)) {
             .result => |r| r,
             .err => |e| return MaybeSlice(T){ .err = e },
         };
@@ -4160,7 +4115,7 @@ pub const Path = struct {
         var bufOffset: usize = 0;
         var bufSize: usize = 0;
 
-        // Backed by varedLenBuf2.
+        // Backed by buf3.
         var out: []const T = comptime L(T, "");
         // Add a block to isolate `i`.
         {
@@ -4174,15 +4129,15 @@ pub const Path = struct {
                     if (out.len > 0) {
                         bufOffset = bufSize;
                         bufSize += 3;
-                        varedLenBuf2[bufOffset] = CHAR_BACKWARD_SLASH;
-                        varedLenBuf2[bufOffset + 1] = CHAR_DOT;
-                        varedLenBuf2[bufOffset + 2] = CHAR_DOT;
+                        buf3[bufOffset] = CHAR_BACKWARD_SLASH;
+                        buf3[bufOffset + 1] = CHAR_DOT;
+                        buf3[bufOffset + 2] = CHAR_DOT;
                     } else {
                         bufSize = 2;
-                        varedLenBuf2[0] = CHAR_DOT;
-                        varedLenBuf2[1] = CHAR_DOT;
+                        buf3[0] = CHAR_DOT;
+                        buf3[1] = CHAR_DOT;
                     }
-                    out = varedLenBuf2[0..bufSize];
+                    out = buf3[0..bufSize];
                 }
             }
         }
@@ -4219,12 +4174,29 @@ pub const Path = struct {
         return MaybeSlice(T){ .result = toOrig[toStart..toEnd] };
     }
 
-    pub inline fn relativePosix(from: []const u8, to: []const u8, buf: []u8, varedLenBuf: []u8, varedLenBuf2: []u8) MaybeSlice(u8) {
-        return relativePosixT(u8, from, to, buf, varedLenBuf, varedLenBuf2);
+    pub inline fn relativePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) JSC.JSValue {
+        return switch (relativePosixT(T, from, to, buf, buf2, buf3)) {
+            .result => |r| toJSString(globalObject, r),
+            .err => |e| e.toJSC(globalObject),
+        };
     }
 
-    pub inline fn relativeWindows(from: []const u8, to: []const u8, buf: []u8, varedLenBuf: []u8, varedLenBuf2: []u8) MaybeSlice(u8) {
-        return relativeWindowsT(u8, from, to, buf, varedLenBuf, varedLenBuf2);
+    pub inline fn relativeWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, from: []const T, to: []const T, buf: []T, buf2: []T, buf3: []T) JSC.JSValue {
+        return switch (relativeWindowsT(T, from, to, buf, buf2, buf3)) {
+            .result => |r| toJSString(globalObject, r),
+            .err => |e| e.toJSC(globalObject),
+        };
+    }
+
+    pub fn relativeJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, from: []const T, to: []const T) JSC.JSValue {
+        const bufLen = @max(from.len + to.len, PATH_SIZE(T));
+        const buf = allocator.alloc(T, bufLen) catch bun.outOfMemory();
+        defer allocator.free(buf);
+        const buf2 = allocator.alloc(T, bufLen) catch bun.outOfMemory();
+        defer allocator.free(buf2);
+        const buf3 = allocator.alloc(T, bufLen) catch bun.outOfMemory();
+        defer allocator.free(buf3);
+        return if (isWindows) relativeWindowsJS_T(T, globalObject, from, to, buf, buf2, buf3) else relativePosixJS_T(T, globalObject, from, to, buf, buf2, buf3);
     }
 
     pub fn relative(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -4232,67 +4204,37 @@ pub const Path = struct {
         const from_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         validateString(globalObject, from_ptr, "from", .{}) catch {
-            return JSC.JSValue.jsUndefined();
+            // Returning .zero translates to a nullprt JSC.JSValue.
+            return .zero;
         };
         const to_ptr = if (args_len > 1) args_ptr[1] else JSC.JSValue.jsUndefined();
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         validateString(globalObject, to_ptr, "to", .{}) catch {
-            return JSC.JSValue.jsUndefined();
+            return .zero;
         };
 
         const fromZigStr = from_ptr.getZigString(globalObject);
         const toZigStr = to_ptr.getZigString(globalObject);
-
-        const lenSum = fromZigStr.len + toZigStr.len;
-        if (lenSum == 0) return JSC.JSValue.jsEmptyString(globalObject);
+        if ((fromZigStr.len + toZigStr.len) == 0) return from_ptr;
 
         var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
         const allocator = stack_fallback.get();
 
         var fromZigSlice = fromZigStr.toSlice(allocator);
         defer fromZigSlice.deinit();
-
         var toZigSlice = toZigStr.toSlice(allocator);
         defer toZigSlice.deinit();
-
-        const bufLen = @max(lenSum, MAX_PATH_BYTES);
-        if (bufLen > MAX_PATH_BYTES) {
-            const buf: []u8 = allocator.alloc(u8, bufLen) catch bun.outOfMemory();
-            defer allocator.free(buf);
-            const varedLenBuf: []u8 = allocator.alloc(u8, bufLen) catch bun.outOfMemory();
-            defer allocator.free(varedLenBuf);
-            const varedLenBuf2: []u8 = allocator.alloc(u8, bufLen) catch bun.outOfMemory();
-            defer allocator.free(varedLenBuf2);
-            const maybe: MaybeSlice(u8) = if (isWindows)
-                relativeWindows(fromZigSlice.slice(), toZigSlice.slice(), buf, varedLenBuf, varedLenBuf2)
-            else
-                relativePosix(fromZigSlice.slice(), toZigSlice.slice(), buf, varedLenBuf, varedLenBuf2);
-            return switch (maybe) {
-                .result => |r| toJSString(globalObject, r),
-                .err => |e| e.toJSC(globalObject),
-            };
-        }
-        var buf: PathBuffer = undefined;
-        var varedLenBuf: PathBuffer = undefined;
-        var varedLenBuf2: PathBuffer = undefined;
-        const maybe = if (isWindows)
-            relativeWindows(fromZigSlice.slice(), toZigSlice.slice(), &buf, &varedLenBuf, &varedLenBuf2)
-        else
-            relativePosix(fromZigSlice.slice(), toZigSlice.slice(), &buf, &varedLenBuf, &varedLenBuf2);
-        return switch (maybe) {
-            .result => |r| toJSString(globalObject, r),
-            .err => |e| e.toJSC(globalObject),
-        };
+        return relativeJS_T(u8, globalObject, allocator, isWindows, fromZigSlice.slice(), toZigSlice.slice());
     }
 
     /// Based on Node v21.6.1 path.posix.resolve:
     /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1095
-    pub fn resolvePosixT(comptime T: type, paths: []const []const T, buf: []T, varedLenBuf: []T) MaybeSlice(T) {
+    pub fn resolvePosixT(comptime T: type, paths: []const []const T, buf: []T, buf2: []T) MaybeSlice(T) {
         comptime validatePathT(T, "resolvePosixT");
 
-        // Backed by expandable varedLenBuf because resolvedPath may be long.
-        // We use varedLenBuf here because resolvePosixT is called by other methods and using
-        // varedLenBuf here avoids stepping on others' toes.
+        // Backed by expandable buf2 because resolvedPath may be long.
+        // We use buf2 here because resolvePosixT is called by other methods and using
+        // buf2 here avoids stepping on others' toes.
         var resolvedPath: []const T = comptime L(T, "");
         var resolvedPathLen: usize = 0;
         var resolvedAbsolute: bool = false;
@@ -4307,8 +4249,8 @@ pub const Path = struct {
                 path = paths[@as(usize, @intCast(i_i64))];
             } else {
                 // cwd is limited to MAX_PATH_BYTES.
-                var tmpBuf1: [getPathBufLenT(T)]T = undefined;
-                path = switch (posixCwdT(T, &tmpBuf1)) {
+                var tmpBuf: [MAX_PATH_SIZE(T)]T = undefined;
+                path = switch (posixCwdT(T, &tmpBuf)) {
                     .result => |r| r,
                     .err => |e| return MaybeSlice(T){ .err = e },
                 };
@@ -4327,16 +4269,16 @@ pub const Path = struct {
                 bufOffset = len + 1;
                 bufSize = bufOffset + resolvedPathLen;
                 // Move all bytes to the right by path.len + 1 for the separator.
-                // Use bun.copy because resolvedPath and varedLenBuf overlap.
-                bun.copy(u8, varedLenBuf[bufOffset..bufSize], resolvedPath);
+                // Use bun.copy because resolvedPath and buf2 overlap.
+                bun.copy(u8, buf2[bufOffset..bufSize], resolvedPath);
             }
             bufSize = len;
-            @memcpy(varedLenBuf[0..bufSize], path);
+            @memcpy(buf2[0..bufSize], path);
             bufSize += 1;
-            varedLenBuf[len] = CHAR_FORWARD_SLASH;
+            buf2[len] = CHAR_FORWARD_SLASH;
             bufSize += resolvedPathLen;
 
-            resolvedPath = varedLenBuf[0..bufSize];
+            resolvedPath = buf2[0..bufSize];
             resolvedPathLen = bufSize;
             resolvedAbsolute = path[0] == CHAR_FORWARD_SLASH;
         }
@@ -4372,18 +4314,18 @@ pub const Path = struct {
 
     /// Based on Node v21.6.1 path.win32.resolve:
     /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L162
-    pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, varedLenBuf: []T) MaybeSlice(T) {
+    pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf2: []T) MaybeSlice(T) {
         comptime validatePathT(T, "resolveWindowsT");
 
         const isSepT = isSepWindowsT;
-        var tmpBuf1: [getPathBufLenT(T)]T = undefined;
+        var tmpBuf: [MAX_PATH_SIZE(T)]T = undefined;
 
-        // Backed by tmpBuf1.
+        // Backed by tmpBuf.
         var resolvedDevice: []const T = comptime L(T, "");
         var resolvedDeviceLen: usize = 0;
-        // Backed by expandable varedLenBuf because resolvedTail may be long.
-        // We use varedLenBuf here because resolvePosixT is called by other methods and using
-        // varedLenBuf here avoids stepping on others' toes.
+        // Backed by expandable buf2 because resolvedTail may be long.
+        // We use buf2 here because resolvePosixT is called by other methods and using
+        // buf2 here avoids stepping on others' toes.
         var resolvedTail: []const T = comptime L(T, "");
         var resolvedTailLen: usize = 0;
         var resolvedAbsolute: bool = false;
@@ -4394,7 +4336,7 @@ pub const Path = struct {
 
         var i_i64: i64 = if (paths.len == 0) -1 else @as(i64, @intCast(paths.len - 1));
         while (i_i64 > -2) : (i_i64 -= 1) {
-            // Backed by expandable varedLenBuf, to not conflict with varedLenBuf backed resolvedTail,
+            // Backed by expandable buf2, to not conflict with buf2 backed resolvedTail,
             // because path may be long.
             var path: []const T = comptime L(T, "");
             if (i_i64 >= 0) {
@@ -4407,7 +4349,7 @@ pub const Path = struct {
                 }
             } else if (resolvedDeviceLen == 0) {
                 // cwd is limited to MAX_PATH_BYTES.
-                path = switch (getCwdT(T, &tmpBuf1)) {
+                path = switch (getCwdT(T, &tmpBuf)) {
                     .result => |r| r,
                     .err => |e| return MaybeSlice(T){ .err = e },
                 };
@@ -4429,16 +4371,16 @@ pub const Path = struct {
                             break :brk &[3:0]u16{ '=', resolvedDevice[0], CHAR_COLON };
                         }
                         bufSize = 1;
-                        // Reuse varedLenBuf for the env key because it's used to get the path.
-                        varedLenBuf[0] = '=';
+                        // Reuse buf2 for the env key because it's used to get the path.
+                        buf2[0] = '=';
                         bufOffset = bufSize;
                         bufSize += resolvedDeviceLen;
-                        @memcpy(varedLenBuf[bufOffset..bufSize], resolvedDevice);
+                        @memcpy(buf2[bufOffset..bufSize], resolvedDevice);
                         if (T == u16) {
-                            break :brk varedLenBuf[0..bufSize];
+                            break :brk buf2[0..bufSize];
                         } else {
-                            var u16Buf: WPathBuffer = undefined;
-                            bufSize = std.unicode.utf8ToUtf16Le(&u16Buf, varedLenBuf[0..bufSize]) catch {
+                            var u16Buf: bun.WPathBuffer = undefined;
+                            bufSize = std.unicode.utf8ToUtf16Le(&u16Buf, buf2[0..bufSize]) catch {
                                 return MaybeSlice(T).errnoSys(0, Syscall.Tag.getenv).?;
                             };
                             break :brk u16Buf[0..bufSize :0];
@@ -4452,21 +4394,21 @@ pub const Path = struct {
                     if (std.os.getenvW(key_w)) |r| {
                         if (T == u16) {
                             bufSize = r.len;
-                            @memcpy(varedLenBuf[0..bufSize], r);
+                            @memcpy(buf2[0..bufSize], r);
                         } else {
-                            // Reuse varedLenBuf because it's used for path.
-                            bufSize = std.unicode.utf16leToUtf8(varedLenBuf, r) catch {
+                            // Reuse buf2 because it's used for path.
+                            bufSize = std.unicode.utf16leToUtf8(buf2, r) catch {
                                 return MaybeSlice(T).errnoSys(0, Syscall.Tag.getcwd).?;
                             };
                         }
-                        envPath = varedLenBuf[0..bufSize];
+                        envPath = buf2[0..bufSize];
                     }
                 }
                 if (envPath) |_envPath| {
                     path = _envPath;
                 } else {
                     // cwd is limited to MAX_PATH_BYTES.
-                    path = switch (getCwdT(T, &tmpBuf1)) {
+                    path = switch (getCwdT(T, &tmpBuf)) {
                         .result => |r| r,
                         .err => |e| return MaybeSlice(T){ .err = e },
                     };
@@ -4489,17 +4431,17 @@ pub const Path = struct {
                     // Translated from the following JS code:
                     //   path = `${resolvedDevice}\\`;
                     bufSize = resolvedDeviceLen;
-                    @memcpy(varedLenBuf[0..bufSize], resolvedDevice);
+                    @memcpy(buf2[0..bufSize], resolvedDevice);
                     bufOffset = bufSize;
                     bufSize += 1;
-                    varedLenBuf[bufOffset] = CHAR_BACKWARD_SLASH;
-                    path = varedLenBuf[0..bufSize];
+                    buf2[bufOffset] = CHAR_BACKWARD_SLASH;
+                    path = buf2[0..bufSize];
                 }
             }
 
             const len = path.len;
             var rootEnd: usize = 0;
-            // Backed by tmpBuf1 or an anonymous buffer.
+            // Backed by tmpBuf or an anonymous buffer.
             var device: []const T = comptime L(T, "");
             // Prefix with _ to avoid shadowing the identifier in the outer scope.
             var _isAbsolute: bool = false;
@@ -4556,20 +4498,20 @@ pub const Path = struct {
                                 //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
                                 //   rootEnd = j;
                                 bufSize = 2;
-                                tmpBuf1[0] = CHAR_BACKWARD_SLASH;
-                                tmpBuf1[1] = CHAR_BACKWARD_SLASH;
+                                tmpBuf[0] = CHAR_BACKWARD_SLASH;
+                                tmpBuf[1] = CHAR_BACKWARD_SLASH;
                                 bufOffset = bufSize;
                                 bufSize += firstPart.len;
-                                @memcpy(tmpBuf1[bufOffset..bufSize], firstPart);
+                                @memcpy(tmpBuf[bufOffset..bufSize], firstPart);
                                 bufOffset = bufSize;
                                 bufSize += 1;
-                                tmpBuf1[bufOffset] = CHAR_BACKWARD_SLASH;
+                                tmpBuf[bufOffset] = CHAR_BACKWARD_SLASH;
                                 const slice = path[last..j];
                                 bufOffset = bufSize;
                                 bufSize += slice.len;
-                                @memcpy(tmpBuf1[bufOffset..bufSize], slice);
+                                @memcpy(tmpBuf[bufOffset..bufSize], slice);
 
-                                device = tmpBuf1[0..bufSize];
+                                device = tmpBuf[0..bufSize];
                                 rootEnd = j;
                             }
                         }
@@ -4606,10 +4548,10 @@ pub const Path = struct {
                     //   resolvedDevice = device;
                     bufSize = device.len;
                     // Copy device over if it's backed by an anonymous buffer.
-                    if (device.ptr != tmpBuf1[0..].ptr) {
-                        @memcpy(tmpBuf1[0..bufSize], device);
+                    if (device.ptr != tmpBuf[0..].ptr) {
+                        @memcpy(tmpBuf[0..bufSize], device);
                     }
-                    resolvedDevice = tmpBuf1[0..bufSize];
+                    resolvedDevice = tmpBuf[0..bufSize];
                     resolvedDeviceLen = bufSize;
                 }
             }
@@ -4626,19 +4568,19 @@ pub const Path = struct {
                     bufOffset = sliceLen + 1;
                     bufSize = bufOffset + resolvedTailLen;
                     // Move all bytes to the right by path slice.len + 1 for the separator
-                    // Use bun.copy because resolvedTail and varedLenBuf overlap.
-                    bun.copy(u8, varedLenBuf[bufOffset..bufSize], resolvedTail);
+                    // Use bun.copy because resolvedTail and buf2 overlap.
+                    bun.copy(u8, buf2[bufOffset..bufSize], resolvedTail);
                 }
                 bufSize = sliceLen;
                 if (sliceLen > 0) {
-                    @memcpy(varedLenBuf[0..bufSize], path[rootEnd..len]);
+                    @memcpy(buf2[0..bufSize], path[rootEnd..len]);
                 }
                 bufOffset = bufSize;
                 bufSize += 1;
-                varedLenBuf[bufOffset] = CHAR_BACKWARD_SLASH;
+                buf2[bufOffset] = CHAR_BACKWARD_SLASH;
                 bufSize += resolvedTailLen;
 
-                resolvedTail = varedLenBuf[0..bufSize];
+                resolvedTail = buf2[0..bufSize];
                 resolvedTailLen = bufSize;
                 resolvedAbsolute = _isAbsolute;
 
@@ -4686,12 +4628,30 @@ pub const Path = struct {
         return MaybeSlice(T){ .result = comptime L(T, CHAR_STR_DOT) };
     }
 
-    pub inline fn resolvePosix(paths: []const []const u8, buf: []u8, varLenBuf1: []u8) MaybeSlice(u8) {
-        return resolvePosixT(u8, paths, buf, varLenBuf1);
+    pub inline fn resolvePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) JSC.JSValue {
+        return switch (resolvePosixT(T, paths, buf, buf2)) {
+            .result => |r| toJSString(globalObject, r),
+            .err => |e| e.toJSC(globalObject),
+        };
     }
 
-    pub inline fn resolveWindows(paths: []const []const u8, buf: []u8, varLenBuf1: []u8) MaybeSlice(u8) {
-        return resolveWindowsT(u8, paths, buf, varLenBuf1);
+    pub inline fn resolveWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, paths: []const []const T, buf: []T, buf2: []T) JSC.JSValue {
+        return switch (resolveWindowsT(T, paths, buf, buf2)) {
+            .result => |r| toJSString(globalObject, r),
+            .err => |e| e.toJSC(globalObject),
+        };
+    }
+
+    pub fn resolveJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, paths: []const []const T) JSC.JSValue {
+        // Adding 8 bytes when Windows for the possible UNC root.
+        var bufLen: usize = if (isWindows) 8 else 0;
+        for (paths) |path| bufLen += if (bufLen > 0 and path.len > 0) path.len + 1 else path.len;
+        bufLen = @max(bufLen, PATH_SIZE(T));
+        const buf = allocator.alloc(T, bufLen) catch bun.outOfMemory();
+        defer allocator.free(buf);
+        const buf2 = allocator.alloc(T, bufLen) catch bun.outOfMemory();
+        defer allocator.free(buf2);
+        return if (isWindows) resolveWindowsJS_T(T, globalObject, paths, buf, buf2) else resolvePosixJS_T(T, globalObject, paths, buf, buf2);
     }
 
     pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -4706,63 +4666,26 @@ pub const Path = struct {
         var paths = allocator.alloc(string, args_len) catch bun.outOfMemory();
         defer allocator.free(paths);
 
-        // Adding 2 bytes when Windows for the possible UNC root, i.e. "\\\\", addition.
-        var lenSum: usize = if (isWindows) 6 else 0;
-        for (0..args_len) |i| {
-            const path_ptr = args_ptr[i];
+        for (0..args_len, args_ptr) |i, path_ptr| {
             // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
             validateString(globalObject, path_ptr, "paths[{d}]", .{i}) catch {
-                return JSC.JSValue.jsUndefined();
+                // Returning .zero translates to a nullprt JSC.JSValue.
+                return .zero;
             };
-
             const pathZStr = path_ptr.getZigString(globalObject);
-            const len = pathZStr.len;
-            if (len == 0) {
-                // Skip work for empty paths.
-                paths[i] = "";
-            } else {
-                const pathZSlice = pathZStr.toSlice(allocator);
-                paths[i] = pathZSlice.slice();
-                // Add 1 for the separator.
-                lenSum += if (lenSum > 0) len + 1 else len;
-            }
+            paths[i] = if (pathZStr.len > 0) pathZStr.toSlice(allocator).slice() else "";
         }
-
-        const bufLen = @max(lenSum, MAX_PATH_BYTES);
-        if (bufLen > MAX_PATH_BYTES) {
-            const buf = allocator.alloc(u8, bufLen) catch bun.outOfMemory();
-            defer allocator.free(buf);
-            const varedLenBuf = allocator.alloc(u8, bufLen) catch bun.outOfMemory();
-            defer allocator.free(varedLenBuf);
-            const maybe = if (isWindows)
-                resolveWindows(paths, buf, varedLenBuf)
-            else
-                resolvePosix(paths, buf, varedLenBuf);
-            return switch (maybe) {
-                .result => |r| toJSString(globalObject, r),
-                .err => |e| e.toJSC(globalObject),
-            };
-        }
-        var buf: PathBuffer = undefined;
-        var varedLenBuf: PathBuffer = undefined;
-        const maybe = if (isWindows)
-            resolveWindows(paths, &buf, &varedLenBuf)
-        else
-            resolvePosix(paths, &buf, &varedLenBuf);
-        return switch (maybe) {
-            .result => |r| toJSString(globalObject, r),
-            .err => |e| e.toJSC(globalObject),
-        };
+        return resolveJS_T(u8, globalObject, allocator, isWindows, paths);
     }
 
     /// Based on Node v21.6.1 path.win32.toNamespacedPath:
     /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L622
-    pub fn toNamespacedPathWindowsT(comptime T: type, path: []const T, buf: []T, varedLenBuf: []T) MaybeSlice(T) {
+    pub fn toNamespacedPathWindowsT(comptime T: type, path: []const T, buf: []T, buf2: []T) MaybeSlice(T) {
         comptime validatePathT(T, "toNamespacedPathWindowsT");
 
         // validateString of `path` is performed in pub fn toNamespacedPath.
         // Backed by buf.
-        const resolvedPath = switch (resolveWindowsT(T, &.{path}, buf, varedLenBuf)) {
+        const resolvedPath = switch (resolveWindowsT(T, &.{path}, buf, buf2)) {
             .result => |r| r,
             .err => |e| return MaybeSlice(T){ .err = e },
         };
@@ -4828,16 +4751,33 @@ pub const Path = struct {
         return MaybeSlice(T){ .result = path };
     }
 
-    pub inline fn toNamespacedPathWindows(path: []const u8, buf: []u8, varedLenBuf: []u8) MaybeSlice(u8) {
-        return toNamespacedPathWindowsT(u8, path, buf, varedLenBuf);
+    pub inline fn toNamespacedPathWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T, buf2: []T) JSC.JSValue {
+        return switch (toNamespacedPathWindowsT(T, path, buf, buf2)) {
+            .result => |r| toJSString(globalObject, r),
+            .err => |e| e.toJSC(globalObject),
+        };
+    }
+
+    pub fn toNamespacedPathJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, path: []const T) JSC.JSValue {
+        if (!isWindows or path.len == 0) return toJSString(globalObject, path);
+        const bufLen = @max(path.len, PATH_SIZE(T));
+        const buf = allocator.alloc(T, bufLen) catch bun.outOfMemory();
+        defer allocator.free(buf);
+        const buf2 = allocator.alloc(T, bufLen) catch bun.outOfMemory();
+        defer allocator.free(buf2);
+        return toNamespacedPathWindowsJS_T(T, globalObject, path, buf, buf2);
     }
 
     pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) return JSC.JSValue.jsUndefined();
         var path_ptr = args_ptr[0];
+
+        // Based on Node v21.6.1 path.win32.toNamespacedPath and path.posix.toNamespacedPath:
+        // https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L624
+        // https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1269
+        //
         // Act as an identity function for non-string values and non-Windows platforms.
-        // Note: this will *probably* throw somewhere.
         if (!isWindows or !path_ptr.isString()) return path_ptr;
         const pathZStr = path_ptr.getZigString(globalObject);
         const len = pathZStr.len;
@@ -4848,24 +4788,7 @@ pub const Path = struct {
 
         const pathZSlice = pathZStr.toSlice(allocator);
         defer pathZSlice.deinit();
-
-        const bufLen = @max(len, MAX_PATH_BYTES);
-        if (bufLen > MAX_PATH_BYTES) {
-            const buf: []u8 = allocator.alloc(u8, bufLen) catch bun.outOfMemory();
-            defer allocator.free(buf);
-            const varedLenBuf: []u8 = allocator.alloc(u8, bufLen) catch bun.outOfMemory();
-            defer allocator.free(varedLenBuf);
-            return switch (toNamespacedPathWindows(pathZSlice.slice(), buf, varedLenBuf)) {
-                .result => |r| toJSString(globalObject, r),
-                .err => |e| e.toJSC(globalObject),
-            };
-        }
-        var buf: PathBuffer = undefined;
-        var varedLenBuf: PathBuffer = undefined;
-        return switch (toNamespacedPathWindows(pathZSlice.slice(), &buf, &varedLenBuf)) {
-            .result => |r| toJSString(globalObject, r),
-            .err => |e| e.toJSC(globalObject),
-        };
+        return toNamespacedPathJS_T(u8, globalObject, allocator, isWindows, pathZSlice.slice());
     }
 
     pub const Export = shim.exportFunctions(.{
@@ -4929,7 +4852,7 @@ pub const Process = struct {
     }
 
     pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        var buf: PathBuffer = undefined;
+        var buf: bun.PathBuffer = undefined;
         const out = std.fs.selfExePath(&buf) catch {
             // if for any reason we are unable to get the executable path, we just return argv[0]
             return getArgv0(globalObject);
@@ -5041,7 +4964,7 @@ pub const Process = struct {
     }
 
     pub fn getCwd(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        var buf: PathBuffer = undefined;
+        var buf: bun.PathBuffer = undefined;
         return switch (Path.getCwd(&buf)) {
             .result => |r| toJSString(globalObject, r),
             .err => |e| e.toJSC(globalObject),
@@ -5053,7 +4976,7 @@ pub const Process = struct {
             return JSC.toInvalidArguments("path is required", .{}, globalObject.ref());
         }
 
-        var buf: PathBuffer = undefined;
+        var buf: bun.PathBuffer = undefined;
         const slice = to.sliceZBuf(&buf) catch {
             return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
         };

@@ -91,7 +91,6 @@ static EncodedJSValue
 constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newTarget = JSValue())
 {
     VM& vm = globalObject->vm();
-    JSValue callee = callFrame->jsCallee();
     ArgList args(callFrame);
     JSValue sourceArg = args.at(0);
     String sourceString = sourceArg.isUndefined() ? emptyString() : sourceArg.toWTFString(globalObject);
@@ -175,7 +174,6 @@ JSC_DEFINE_HOST_FUNCTION(scriptConstructorConstruct, (JSGlobalObject * globalObj
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    auto& vm = globalObject->vm();
     return JSValue::encode(jsBoolean(true)); // TODO
 }
 JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -370,7 +368,8 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     auto& vm = globalObject->vm();
     NodeVMScript* script = jsDynamicCast<NodeVMScript*>(callFrame->thisValue());
     JSValue contextObjectValue = callFrame->argument(0);
-    JSValue optionsObjectValue = callFrame->argument(1);
+    // TODO: options
+    // JSValue optionsObjectValue = callFrame->argument(1);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!script) {
@@ -388,8 +387,8 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     }
 
     // we don't care about options for now
-
-    bool didThrow = false;
+    // TODO: options
+    // bool didThrow = false;
 
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(contextObjectValue);

@@ -146,18 +146,16 @@ const bun = @import("root").bun;
 pub const Waker = struct {
     fd: bun.FileDescriptor,
 
-    pub fn init(allocator: std.mem.Allocator) !Waker {
-        return initWithFileDescriptor(allocator, bun.toFD(try std.os.eventfd(0, 0)));
+    pub fn init() !Waker {
+        return initWithFileDescriptor(bun.toFD(try std.os.eventfd(0, 0)));
     }
 
     pub fn getFd(this: *const Waker) bun.FileDescriptor {
         return this.fd;
     }
 
-    pub fn initWithFileDescriptor(_: std.mem.Allocator, fd: bun.FileDescriptor) Waker {
-        return Waker{
-            .fd = fd,
-        };
+    pub fn initWithFileDescriptor(fd: bun.FileDescriptor) Waker {
+        return Waker{ .fd = fd };
     }
 
     pub fn wait(this: Waker) void {

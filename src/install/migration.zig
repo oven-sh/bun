@@ -120,7 +120,7 @@ const dependency_keys = .{
 pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Log, data: string, path: string) !LoadFromDiskResult {
     debug("begin lockfile migration", .{});
 
-    try this.initEmpty(allocator);
+    this.initEmpty(allocator);
     Install.initializeStore();
 
     const json_src = logger.Source.initPathString(path, data);
@@ -486,6 +486,14 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 } else .all,
 
                 .man_dir = String{},
+
+                .has_install_script = if (pkg.get("hasInstallScript")) |has_install_script_expr| brk: {
+                    if (has_install_script_expr.data != .e_boolean) return error.InvalidNPMLockfile;
+                    break :brk if (has_install_script_expr.data.e_boolean.value)
+                        .true
+                    else
+                        .false;
+                } else .false,
 
                 .integrity = if (pkg.get("integrity")) |integrity|
                     try Integrity.parse(
@@ -1016,9 +1024,15 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         try this.verifyData();
     }
 
-    this.meta_hash = try this.generateMetaHash(false);
+    this.meta_hash = try this.generateMetaHash(false, this.packages.len);
 
-    return LoadFromDiskResult{ .ok = .{ .lockfile = this, .was_migrated = true } };
+    return LoadFromDiskResult{
+        .ok = .{
+            .lockfile = this,
+            .was_migrated = true,
+            .serializer_result = .{},
+        },
+    };
 }
 
 fn packageNameFromPath(pkg_path: []const u8) []const u8 {

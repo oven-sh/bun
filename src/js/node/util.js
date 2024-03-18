@@ -150,53 +150,76 @@ var _extend = function (origin, add) {
   return origin;
 };
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
+function defineCustomPromisify(target, callback) {
+  Object.defineProperty(target, kCustomPromisifiedSymbol, {
+    value: callback,
+    __proto__: null,
+    configurable: true,
+  });
+
+  return callback;
+}
+
+// Lazily load node:timers/promises promisifed functions onto the global timers.
+// This is not a complete solution, as one could load these without loading the "util" module
+// But it is better than nothing.
+{
+  const { setTimeout: timeout, setImmediate: immediate, setInterval: interval } = globalThis;
+
+  if (timeout && $isCallable(timeout)) {
+    defineCustomPromisify(timeout, function setTimeout(arg1) {
+      const fn = defineCustomPromisify(timeout, require("node:timers/promises").setTimeout);
+      return fn.$apply(this, arguments);
+    });
+  }
+
+  if (immediate && $isCallable(immediate)) {
+    defineCustomPromisify(immediate, function setImmediate(arg1) {
+      const fn = defineCustomPromisify(immediate, require("node:timers/promises").setImmediate);
+      return fn.$apply(this, arguments);
+    });
+  }
+
+  if (interval && $isCallable(interval)) {
+    defineCustomPromisify(interval, function setInterval(arg1) {
+      const fn = defineCustomPromisify(interval, require("node:timers/promises").setInterval);
+      return fn.$apply(this, arguments);
+    });
+  }
+}
+
 var promisify = function promisify(original) {
   if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
-  if (kCustomPromisifiedSymbol && original[kCustomPromisifiedSymbol]) {
-    var fn = original[kCustomPromisifiedSymbol];
-    if (typeof fn !== "function") {
+  const custom = original[kCustomPromisifiedSymbol];
+  if (custom) {
+    if (typeof custom !== "function") {
       throw new TypeError('The "util.promisify.custom" argument must be of type Function');
     }
-    Object.defineProperty(fn, kCustomPromisifiedSymbol, {
-      value: fn,
-      enumerable: false,
-      writable: false,
-      configurable: true,
-    });
-    return fn;
+    // ensure that we don't create another promisified function wrapper
+    return defineCustomPromisify(custom, custom);
   }
-  function fn() {
-    var promiseResolve, promiseReject;
-    var promise = new Promise(function (resolve, reject) {
-      promiseResolve = resolve;
-      promiseReject = reject;
-    });
-    var args = [];
-    for (var i = 0; i < arguments.length; i++) {
-      args.push(arguments[i]);
-    }
-    args.push(function (err, value) {
-      if (err) {
-        promiseReject(err);
-      } else {
-        promiseResolve(value);
-      }
-    });
+
+  function fn(...originalArgs) {
+    const { promise, resolve, reject } = Promise.withResolvers();
     try {
-      original.$apply(this, args);
+      original.$apply(this, [
+        ...originalArgs,
+        function (err, ...values) {
+          if (err) {
+            return reject(err);
+          }
+
+          resolve(values[0]);
+        },
+      ]);
     } catch (err) {
-      promiseReject(err);
+      reject(err);
     }
+
     return promise;
   }
   Object.setPrototypeOf(fn, Object.getPrototypeOf(original));
-  if (kCustomPromisifiedSymbol)
-    Object.defineProperty(fn, kCustomPromisifiedSymbol, {
-      value: fn,
-      enumerable: false,
-      writable: false,
-      configurable: true,
-    });
+  defineCustomPromisify(fn, fn);
   return Object.defineProperties(fn, getOwnPropertyDescriptors(original));
 };
 promisify.custom = kCustomPromisifiedSymbol;
@@ -240,6 +263,23 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
+function styleText(format, text) {
+  if (typeof text !== "string") {
+    const e = new Error(`The text argument must be of type string. Received type ${typeof text}`);
+    e.code = "ERR_INVALID_ARG_TYPE";
+    throw e;
+  }
+  const formatCodes = inspect.colors[format];
+  if (formatCodes == null) {
+    const e = new Error(
+      `The value "${typeof format === "symbol" ? format.description : format}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
+    );
+    e.code = "ERR_INVALID_ARG_VALUE";
+    throw e;
+  }
+  return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
+}
+
 export default Object.assign(cjs_exports, {
   format,
   formatWithOptions,
@@ -273,4 +313,5 @@ export default Object.assign(cjs_exports, {
   TextDecoder,
   TextEncoder,
   parseArgs,
+  styleText,
 });

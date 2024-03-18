@@ -92,6 +92,9 @@ static bool canPerformFastEnumeration(Structure* s)
     return true;
 }
 
+extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
+extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
+
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename, WTF::NakedPtr<Exception>& exception)
 {
     JSSourceCode* code = moduleObject->sourceCode.get();
@@ -118,6 +121,30 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
 
     moduleObject->hasEvaluated = true;
+
+    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) {
+
+        // Using same approach as node, `arguments` in the entry point isn't defined
+        // https://github.com/nodejs/node/blob/592c6907bfe1922f36240e9df076be1864c3d1bd/lib/internal/process/execution.js#L92
+        globalObject->putDirect(vm, Identifier::fromLatin1(vm, "exports"_s), moduleObject->exportsObject(), 0);
+        globalObject->putDirect(vm, Identifier::fromLatin1(vm, "require"_s), requireFunction, 0);
+        globalObject->putDirect(vm, Identifier::fromLatin1(vm, "module"_s), moduleObject, 0);
+        globalObject->putDirect(vm, Identifier::fromLatin1(vm, "__filename"_s), filename, 0);
+        globalObject->putDirect(vm, Identifier::fromLatin1(vm, "__dirname"_s), dirname, 0);
+
+        JSValue result = JSC::evaluate(globalObject, code->sourceCode(), jsUndefined(), exception);
+
+        if (UNLIKELY(exception.get() || result.isEmpty())) {
+            moduleObject->sourceCode.clear();
+            return false;
+        }
+
+        Bun__VM__setEntryPointEvalResultCJS(globalObject->bunVM(), JSValue::encode(result));
+
+        moduleObject->sourceCode.clear();
+
+        return true;
+    }
 
     // This will return 0 if there was a syntax error or an allocation failure
     JSValue fnValue = JSC::evaluate(globalObject, code->sourceCode(), jsUndefined(), exception);
@@ -604,7 +631,6 @@ JSCommonJSModule* JSCommonJSModule::create(
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
-    auto& vm = globalObject->vm();
     RELEASE_ASSERT(callframe->argumentCount() == 4);
 
     auto id = callframe->uncheckedArgument(0).toWTFString(globalObject);
@@ -846,7 +872,6 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
 {
     auto result = this->exportsObject();
 
-    auto& vm = globalObject->vm();
     populateESMExports(globalObject, result, exportNames, exportValues, this->ignoreESModuleAnnotation);
 }
 

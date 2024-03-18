@@ -432,6 +432,11 @@ pub const RuntimeTranspilerStore = struct {
             var should_close_input_file_fd = fd == null;
 
             var input_file_fd: StoredFileDescriptorType = .zero;
+
+            const is_main = vm.main.len == path.text.len and
+                vm.main_hash == hash and
+                strings.eqlLong(vm.main, path.text, false);
+
             var parse_options = Bundler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
@@ -446,12 +451,13 @@ pub const RuntimeTranspilerStore = struct {
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
-                .inject_jest_globals = bundler.options.rewrite_jest_for_tests and
-                    vm.main.len == path.text.len and
-                    vm.main_hash == hash and
-                    strings.eqlLong(vm.main, path.text, false),
-                .set_breakpoint_on_first_line = vm.debugger != null and vm.debugger.?.set_breakpoint_on_first_line and strings.eqlLong(vm.main, path.text, true) and setBreakPointOnFirstLine(),
+                .inject_jest_globals = bundler.options.rewrite_jest_for_tests and is_main,
+                .set_breakpoint_on_first_line = vm.debugger != null and
+                    vm.debugger.?.set_breakpoint_on_first_line and
+                    is_main and
+                    setBreakPointOnFirstLine(),
                 .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
+                .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
             };
 
             defer {
@@ -654,7 +660,7 @@ pub const RuntimeTranspilerStore = struct {
 
 pub const ModuleLoader = struct {
     transpile_source_code_arena: ?*bun.ArenaAllocator = null,
-    eval_script: ?*logger.Source = null,
+    eval_source: ?*logger.Source = null,
 
     const debug = Output.scoped(.ModuleLoader, true);
 
@@ -1473,10 +1479,14 @@ pub const ModuleLoader = struct {
                 defer {
                     if (give_back_arena) {
                         if (jsc_vm.module_loader.transpile_source_code_arena == null) {
-                            if (jsc_vm.smol) {
-                                _ = arena_.?.reset(.free_all);
-                            } else {
-                                _ = arena_.?.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                            // when .print_source is used
+                            // caller is responsible for freeing the arena
+                            if (flags != .print_source) {
+                                if (jsc_vm.smol) {
+                                    _ = arena_.?.reset(.free_all);
+                                } else {
+                                    _ = arena_.?.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                                }
                             }
 
                             jsc_vm.module_loader.transpile_source_code_arena = arena_;
@@ -1494,8 +1504,8 @@ pub const ModuleLoader = struct {
                 var package_json: ?*PackageJSON = null;
 
                 if (jsc_vm.bun_watcher.indexOf(hash)) |index| {
-                    const _fd = jsc_vm.bun_watcher.watchlist().items(.fd)[index];
-                    fd = if (_fd.int() > 0) _fd else null;
+                    const maybe_fd = jsc_vm.bun_watcher.watchlist().items(.fd)[index];
+                    fd = if (maybe_fd != .zero) maybe_fd else null;
                     package_json = jsc_vm.bun_watcher.watchlist().items(.package_json)[index];
                 }
 
@@ -1554,9 +1564,12 @@ pub const ModuleLoader = struct {
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
-                    .set_breakpoint_on_first_line = is_main and jsc_vm.debugger != null and jsc_vm.debugger.?.set_breakpoint_on_first_line and setBreakPointOnFirstLine(),
-
+                    .set_breakpoint_on_first_line = is_main and
+                        jsc_vm.debugger != null and
+                        jsc_vm.debugger.?.set_breakpoint_on_first_line and
+                        setBreakPointOnFirstLine(),
                     .runtime_transpiler_cache = if (!disable_transpilying and !JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
+                    .remove_cjs_module_wrapper = is_main and jsc_vm.module_loader.eval_source != null,
                 };
                 defer {
                     if (should_close_input_file_fd and input_file_fd != bun.invalid_fd) {
@@ -2136,9 +2149,13 @@ pub const ModuleLoader = struct {
         // The concurrent one only handles javascript-like loaders right now.
         var loader: ?options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext);
 
-        if (jsc_vm.module_loader.eval_script) |eval_script| {
+        if (jsc_vm.module_loader.eval_source) |eval_source| {
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                virtual_source = eval_script;
+                virtual_source = eval_source;
+                loader = .tsx;
+            }
+            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
+                virtual_source = eval_source;
                 loader = .tsx;
             }
         }

@@ -341,7 +341,7 @@ pub const TrustCommand = struct {
                     if (info.skip) continue;
 
                     while (LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= pm.options.max_concurrent_lifecycle_scripts) {
-                        if (PackageManager.verbose_install) {
+                        if (pm.options.log_level.isVerbose()) {
                             if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.Monotonic)});
                         }
 

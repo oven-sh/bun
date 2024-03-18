@@ -7103,7 +7103,9 @@ pub const Interpreter = struct {
 
                     switch (Syscall.renameat(this.cwd, src, this.cwd, this.target)) {
                         .err => |e| {
-                            this.err = e;
+                            if (e.getErrno() == .NOTDIR) {
+                                this.err = e.withPath(this.target);
+                            } else this.err = e;
                         },
                         else => {},
                     }
@@ -7232,7 +7234,6 @@ pub const Interpreter = struct {
 
                             const maybe_fd: ?bun.FileDescriptor = switch (check_target.task.result.?) {
                                 .err => |e| brk: {
-                                    defer bun.default_allocator.free(e.path);
                                     switch (e.getErrno()) {
                                         bun.C.E.NOENT => {
                                             // Means we are renaming entry, not moving to a directory
@@ -7381,7 +7382,8 @@ pub const Interpreter = struct {
                 exec.tasks_done += 1;
                 if (exec.tasks_done >= exec.task_count) {
                     if (exec.err) |err| {
-                        const buf = this.bltn.fmtErrorArena(.ls, "{s}\n", .{err.toSystemError().message.byteSlice()});
+                        const e = err.toSystemError();
+                        const buf = this.bltn.fmtErrorArena(.mv, "{}: {}\n", .{ e.path, e.message });
                         _ = this.writeFailingError(buf, err.errno);
                         return;
                     }
@@ -7439,7 +7441,7 @@ pub const Interpreter = struct {
                 }
 
                 this.args.sources = filepath_args[0 .. filepath_args.len - 1];
-                this.args.target = filepath_args[filepath_args.len - 1][0..std.mem.len(filepath_args[filepath_args.len - 1]) :0];
+                this.args.target = std.mem.span(filepath_args[filepath_args.len - 1]);
 
                 return .ok;
             }

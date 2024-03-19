@@ -2197,6 +2197,28 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
     return write(fd, buf);
 }
 
+pub fn getFileSize(fd: bun.FileDescriptor) Maybe(usize) {
+    if (Environment.isWindows) {
+        var size: windows.LARGE_INTEGER = undefined;
+        if (windows.GetFileSizeEx(fd.cast(), &size) == windows.FALSE) {
+            const err = Error.fromCode(windows.getLastErrno(), .fstat);
+            log("GetFileSizeEx({}) = {s}", .{ fd, err.name() });
+            return .{ .err = err };
+        }
+        log("GetFileSizeEx({}) = {d}", .{ fd, size });
+        return .{ .result = @intCast(@max(size, 0)) };
+    }
+
+    switch (fstat(fd)) {
+        .result => |*stat_| {
+            return .{ .result = @intCast(@max(stat_.size, 0)) };
+        },
+        .err => |err| {
+            return .{ .err = err };
+        },
+    }
+}
+
 pub fn isPollable(mode: mode_t) bool {
     return os.S.ISFIFO(mode) or os.S.ISSOCK(mode);
 }
@@ -2316,5 +2338,39 @@ pub const File = struct {
     pub fn close(self: File) void {
         // TODO: probably return the error? we have a lot of code paths which do not so we are keeping for now
         _ = This.close(self.handle);
+    }
+
+    pub fn getEndPos(self: File) Maybe(usize) {
+        return getFileSize(self.handle);
+    }
+
+    pub const ReadToEndResult = struct {
+        bytes: std.ArrayList(u8) = undefined,
+        err: ?Error = null,
+    };
+    pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
+        const size = try this.getEndPos();
+        var list = std.ArrayList(u8).initCapacity(allocator, size + 16) catch bun.outOfMemory();
+        while (true) {
+            switch (bun.sys.read(this.handle, list.unusedCapacitySlice())) {
+                .err => |err| {
+                    return .{ .err = err, .bytes = list };
+                },
+                .result => |bytes_read| {
+                    list.items.len += bytes_read;
+
+                    if (list.capacity <= list.items.len + 10) {
+                        list.ensureUnusedCapacity(1024) catch bun.outOfMemory();
+                    }
+
+                    if (bytes_read == 0) {
+                        break;
+                    }
+                    continue;
+                },
+            }
+        }
+
+        return .{ .bytes = list };
     }
 };

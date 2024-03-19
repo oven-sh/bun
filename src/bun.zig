@@ -1022,6 +1022,10 @@ pub const SignalCode = enum(u8) {
         return null;
     }
 
+    pub fn valid(value: SignalCode) bool {
+        return @intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS) and @intFromEnum(value) >= @intFromEnum(SignalCode.SIGHUP);
+    }
+
     /// Shell scripts use exit codes 128 + signal number
     /// https://tldp.org/LDP/abs/html/exitcodes.html
     pub fn toExitCode(value: SignalCode) ?u8 {
@@ -2806,3 +2810,5 @@ pub fn linuxKernelVersion() Semver.Version {
 pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");
 
 pub const exe_suffix = if (Environment.isWindows) ".exe" else "";
+
+pub const spawnSync = @This().spawn.sync.spawn;

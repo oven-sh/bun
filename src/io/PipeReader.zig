@@ -638,6 +638,7 @@ const PosixBufferedReader = struct {
         received_eof: bool = false,
         closed_without_reporting: bool = false,
         close_handle: bool = true,
+        memfd: bool = false,
     };
 
     pub fn init(comptime Type: type) PosixBufferedReader {
@@ -677,6 +678,11 @@ const PosixBufferedReader = struct {
     pub fn setParent(this: *PosixBufferedReader, parent_: *anyopaque) void {
         this.vtable.parent = parent_;
         this.handle.setOwner(this);
+    }
+
+    pub fn startMemfd(this: *PosixBufferedReader, fd: bun.FileDescriptor) void {
+        this.flags.memfd = true;
+        this.handle = .{ .fd = fd };
     }
 
     pub usingnamespace PosixPipeReader(@This(), .{
@@ -745,6 +751,41 @@ const PosixBufferedReader = struct {
 
     pub fn buffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
         return &@as(*PosixBufferedReader, @alignCast(@ptrCast(this)))._buffer;
+    }
+
+    pub fn finalBuffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
+        if (this.flags.memfd and this.handle == .fd) {
+            var buf = this.buffer();
+            defer {
+                this.handle.close(null, {});
+                std.debug.assert(this.handle == .closed);
+            }
+
+            var file = bun.sys.File{
+                .handle = this.handle.fd,
+            };
+            buf.clearRetainingCapacity();
+            const size = (file.getEndPos().unwrap() catch 0);
+
+            if (buf.capacity < size) {
+                buf.ensureTotalCapacityPrecise(size) catch return buf;
+            }
+
+            var remaining = buf.unusedCapacitySlice();
+            var total: usize = 0;
+            while (remaining.len > 0) {
+                const read = file.read(remaining).unwrap() catch 0;
+                total += read;
+                if (read == 0) {
+                    break;
+                }
+                remaining = remaining[read..];
+            }
+
+            buf.items.len = total;
+        }
+
+        return this.buffer();
     }
 
     pub fn disableKeepingProcessAlive(this: *@This(), event_loop_ctx: anytype) void {
@@ -991,6 +1032,8 @@ pub const WindowsBufferedReader = struct {
     pub fn buffer(this: *WindowsOutputReader) *std.ArrayList(u8) {
         return &this._buffer;
     }
+
+    pub const finalBuffer = buffer;
 
     pub fn hasPendingActivity(this: *const WindowsOutputReader) bool {
         const source = this.source orelse return false;

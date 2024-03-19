@@ -460,6 +460,11 @@ public:
             return {};
         }
         ASSERT(handle->tty()->loop);
+#else
+        if (!isatty(fd)) {
+            throwTypeError(globalObject, scope, makeString("fd"_s, fd, " is not a tty"_s));
+            return {};
+        }
 #endif
 
         auto* structure = TTYWrapObject::createStructure(vm, globalObject, prototypeValue.getObject());

@@ -42,9 +42,12 @@ function warnNotImplementedOnce(feature: string, issue?: number) {
   console.warn(new NotImplementedError(feature, issue));
 }
 
+const fileSinkSymbol = Symbol("fileSink");
+
 export default {
   NotImplementedError,
   throwNotImplemented,
   hideFromStack,
   warnNotImplementedOnce,
+  fileSinkSymbol,
 };

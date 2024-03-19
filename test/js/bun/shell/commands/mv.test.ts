@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { describe, test, expect } from "bun:test";
 import { TestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
+import { join } from "path";
 
 describe("mv", async () => {
   TestBuilder.command`echo foo > a; mv a b`.ensureTempDir().fileEquals("b", "foo\n").runAsTest("move file -> file");
@@ -34,7 +35,9 @@ describe("mv", async () => {
   TestBuilder.command`mkdir -p foo; mkdir -p bar; echo hi > foo/inside_foo; echo hi > bar/inside_bar; mv foo bar; ls -R bar`
     .ensureTempDir()
     .stdout(str =>
-      expect(sortedShellOutput(str)).toEqual(sortedShellOutput(["inside_bar", "foo", "bar/foo:", "inside_foo"])),
+      expect(sortedShellOutput(str)).toEqual(
+        sortedShellOutput(["inside_bar", "foo", join("bar", "foo") + ":", "inside_foo"]),
+      ),
     )
     .runAsTest("move dir -> dir");
 

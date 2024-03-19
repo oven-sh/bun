@@ -341,7 +341,7 @@ pub fn WindowsPipeReader(
             const nread_int = nread.int();
             bun.sys.syslog("onStreamRead() = {d}", .{nread_int});
 
-            //NOTE: pipes/tty need to call stopReading on errors (yeah)
+            // NOTE: pipes/tty need to call stopReading on errors (yeah)
             switch (nread_int) {
                 0 => {
                     // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)
@@ -453,7 +453,7 @@ pub fn WindowsPipeReader(
         pub fn closeImpl(this: *This, comptime callDone: bool) void {
             if (this.source) |source| {
                 switch (source) {
-                    .file => |file| {
+                    .sync_file, .file => |file| {
                         file.fs.deinit();
                         file.fs.data = file;
                         _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, @ptrCast(&onFileClose));

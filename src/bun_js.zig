@@ -142,21 +142,23 @@ pub const Run = struct {
     pub fn boot(ctx_: Command.Context, entry_path: string) !void {
         var ctx = ctx_;
         JSC.markBinding(@src());
-        bun.JSC.initialize();
 
-        if (strings.endsWithComptime(entry_path, ".bun.sh")) {
+        if (!ctx.debug.loaded_bunfig) {
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+        }
+
+        if (strings.endsWithComptime(entry_path, comptime if (Environment.isWindows) ".sh" else ".bun.sh")) {
             const exit_code = try bootBunShell(&ctx, entry_path);
             Global.exitWide(exit_code);
             return;
         }
 
+        // The shell does not need to initialize JSC.
+        // JSC initialization costs 1-3ms
+        bun.JSC.initialize();
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
         var arena = try Arena.init();
-
-        if (!ctx.debug.loaded_bunfig) {
-            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
-        }
 
         run = .{
             .vm = try VirtualMachine.init(

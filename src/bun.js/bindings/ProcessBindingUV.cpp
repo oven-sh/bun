@@ -6,7 +6,7 @@
 
 // clang-format off
 
-#define UV_ERRNO_MAP(macro) \
+#define BUN_UV_ERRNO_MAP(macro) \
   macro(E2BIG, -7, "argument list too long") \
   macro(EACCES, -13, "permission denied") \
   macro(EADDRINUSE, -48, "address already in use") \
@@ -111,7 +111,7 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
     case value:                 \
         return JSValue::encode(JSC::jsString(vm, String(#name##_s)));
 
-        UV_ERRNO_MAP(CASE)
+        BUN_UV_ERRNO_MAP(CASE)
 #undef CASE
     }
 
@@ -131,7 +131,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
         map->set(globalObject, JSC::jsNumber(value), arr);                          \
     }
 
-    UV_ERRNO_MAP(PUT_PROPERTY)
+    BUN_UV_ERRNO_MAP(PUT_PROPERTY)
 #undef PUT_PROPERTY
 
     return JSValue::encode(map);
@@ -146,7 +146,7 @@ JSObject* create(VM& vm, JSGlobalObject* globalObject)
 #define PUT_PROPERTY(name, value, desc) \
     bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "UV_" #name##_s), JSC::jsNumber(value));
 
-    UV_ERRNO_MAP(PUT_PROPERTY)
+    BUN_UV_ERRNO_MAP(PUT_PROPERTY)
 #undef PUT_PROPERTY
 
     bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "getErrorMap"_s), JSC::JSFunction::create(vm, globalObject, 0, "getErrorMap"_s, jsGetErrorMap, ImplementationVisibility::Public));

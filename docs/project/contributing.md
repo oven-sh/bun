@@ -30,6 +30,12 @@ $ sudo zypper install go cmake ninja automake git rustup && rustup toolchain ins
 
 {% /codetabs %}
 
+{% callout }
+
+**Note**: The Zig compiler is automatically installed and updated by the build scripts. Manual installation is not required.
+
+{% /callout }
+
 Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
 
 {% codetabs %}
@@ -149,6 +155,8 @@ Advanced uses can pass CMake flags to customize the build.
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
+
+If you use a different editor, make sure that you tell ZLS to use the automatically installed Zig compiler, which is located at `./.cache/zig/zig` (`zig.exe` on Windows).
 
 ## Code generation scripts
 

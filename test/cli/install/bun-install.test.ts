@@ -31,6 +31,15 @@ expect.extend({
       return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join(package_dir, real));
     }
   },
+  toHaveWorkspaceLink2: async function (package_dir: string, [link, realPosix, realWin]: [string, string, string]) {
+    const isWindows = process.platform === "win32";
+    if (!isWindows) {
+      return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join("..", realPosix));
+    } else {
+      // prettier-ignore
+      return expect(await readlink(join(package_dir, "node_modules", link))).toBeWorkspaceLink(join(package_dir, realWin));
+    }
+  },
 });
 
 beforeAll(dummyBeforeAll);
@@ -403,7 +412,8 @@ it("should handle workspaces", async () => {
   expect(package_dir).toHaveWorkspaceLink(["Bar", "bar"]);
   expect(package_dir).toHaveWorkspaceLink(["Asterisk", "packages/asterisk"]);
   expect(package_dir).toHaveWorkspaceLink(["AsteriskTheSecond", "packages/second-asterisk"]);
-  expect(package_dir).toHaveWorkspaceLink(["@org/nominally-scoped", "packages/nominally-scoped"]);
+  // prettier-ignore
+  expect(package_dir).toHaveWorkspaceLink2(["@org/nominally-scoped", "../packages/nominally-scoped", "packages/nominally-scoped"]);
   await access(join(package_dir, "bun.lockb"));
 
   // Perform `bun install` again but with lockfile from before
@@ -445,7 +455,8 @@ it("should handle workspaces", async () => {
   expect(package_dir).toHaveWorkspaceLink(["Bar", "bar"]);
   expect(package_dir).toHaveWorkspaceLink(["Asterisk", "packages/asterisk"]);
   expect(package_dir).toHaveWorkspaceLink(["AsteriskTheSecond", "packages/second-asterisk"]);
-  expect(package_dir).toHaveWorkspaceLink(["@org/nominally-scoped", "packages/nominally-scoped"]);
+  // prettier-ignore
+  expect(package_dir).toHaveWorkspaceLink2(["@org/nominally-scoped", "../packages/nominally-scoped", "packages/nominally-scoped"]);
   await access(join(package_dir, "bun.lockb"));
 });
 

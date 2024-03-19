@@ -9549,16 +9549,19 @@ pub const PackageManager = struct {
             .auto,
         );
 
-        // might need to read scripts from disk if we are migrating from package-lock.json
+        const buf = this.lockfile.buffers.string_bytes.items;
+        // need to clone because this is a copy before Lockfile.cleanWithLogger
+        const name = this.allocator.dupe(u8, root_package.name.slice(buf)) catch bun.outOfMemory();
+        const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
 
         if (root_package.scripts.hasAny()) {
             const add_node_gyp_rebuild_script = root_package.scripts.install.isEmpty() and root_package.scripts.preinstall.isEmpty() and Syscall.exists(binding_dot_gyp_path);
 
             this.root_lifecycle_scripts = root_package.scripts.createList(
                 this.lockfile,
-                this.lockfile.buffers.string_bytes.items,
-                strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
-                root_package.name.slice(this.lockfile.buffers.string_bytes.items),
+                buf,
+                top_level_dir_without_trailing_slash,
+                name,
                 .root,
                 add_node_gyp_rebuild_script,
             );
@@ -9567,9 +9570,9 @@ pub const PackageManager = struct {
                 // no scripts exist but auto node gyp script needs to be added
                 this.root_lifecycle_scripts = root_package.scripts.createList(
                     this.lockfile,
-                    this.lockfile.buffers.string_bytes.items,
-                    strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
-                    root_package.name.slice(this.lockfile.buffers.string_bytes.items),
+                    buf,
+                    top_level_dir_without_trailing_slash,
+                    name,
                     .root,
                     true,
                 );
@@ -9944,14 +9947,18 @@ pub const PackageManager = struct {
             manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
         }
 
-        {
-            // append scripts to lockfile before generating new metahash
-            manager.loadRootLifecycleScripts(root);
-
+        // append scripts to lockfile before generating new metahash
+        manager.loadRootLifecycleScripts(root);
+        defer {
             if (manager.root_lifecycle_scripts) |root_scripts| {
-                root_scripts.appendToLockfile(manager.lockfile);
+                manager.allocator.free(root_scripts.package_name);
             }
+        }
 
+        if (manager.root_lifecycle_scripts) |root_scripts| {
+            root_scripts.appendToLockfile(manager.lockfile);
+        }
+        {
             const packages = manager.lockfile.packages.slice();
             for (packages.items(.resolution), packages.items(.meta), packages.items(.scripts)) |resolution, meta, scripts| {
                 if (resolution.tag == .workspace) {

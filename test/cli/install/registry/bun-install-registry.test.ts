@@ -3040,7 +3040,7 @@ for (const forceWaiterThread of [false, true]) {
 
     test("reach max concurrent scripts", async () => {
       const scripts = {
-        "preinstall": `${bunExe()} -e "Bun.sleepSync(500)"`,
+        "preinstall": `${bunExe().replace(/\\/g, "\\\\")} -e "Bun.sleepSync(500)"`,
       };
 
       const dependenciesList = await createPackagesWithScripts(4, scripts);
@@ -3071,7 +3071,7 @@ for (const forceWaiterThread of [false, true]) {
 
     test("stress test", async () => {
       const dependenciesList = await createPackagesWithScripts(500, {
-        "postinstall": `${bunExe()} --version`,
+        "postinstall": `${bunExe().replace(/\\/g, "\\\\")} --version`,
       });
 
       // the script is quick, default number for max concurrent scripts

@@ -1542,8 +1542,8 @@ describe("workspaces", async () => {
         expect(err).not.toContain("panic:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          ` + pkg1@workspace:packages${sep}pkg1`,
-          ` + pkg2@workspace:packages${sep}pkg2`,
+          ` + pkg1@workspace:packages/pkg1`,
+          ` + pkg2@workspace:packages/pkg2`,
           "",
           " 2 packages installed",
         ]);
@@ -1566,8 +1566,8 @@ describe("workspaces", async () => {
         expect(err).not.toContain("panic:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          ` + pkg1@workspace:packages${sep}pkg1`,
-          ` + pkg2@workspace:packages${sep}pkg2`,
+          ` + pkg1@workspace:packages/pkg1`,
+          ` + pkg2@workspace:packages/pkg2`,
           "",
           " 2 packages installed",
         ]);
@@ -1593,8 +1593,8 @@ describe("workspaces", async () => {
         expect(err).not.toContain("panic:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          ` + pkg1@workspace:packages${sep}pkg1`,
-          ` + pkg2@workspace:packages${sep}pkg2`,
+          ` + pkg1@workspace:packages/pkg1`,
+          ` + pkg2@workspace:packages/pkg2`,
           "",
           " 2 packages installed",
         ]);
@@ -1617,8 +1617,8 @@ describe("workspaces", async () => {
         expect(err).not.toContain("panic:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          ` + pkg1@workspace:packages${sep}pkg1`,
-          ` + pkg2@workspace:packages${sep}pkg2`,
+          ` + pkg1@workspace:packages/pkg1`,
+          ` + pkg2@workspace:packages/pkg2`,
           "",
           " 2 packages installed",
         ]);
@@ -1668,7 +1668,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        ` + workspace-1@workspace:packages${sep}workspace-1`,
+        ` + workspace-1@workspace:packages/workspace-1`,
         "",
         " 1 package installed",
       ]);
@@ -1694,7 +1694,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        ` + workspace-1@workspace:packages${sep}workspace-1`,
+        ` + workspace-1@workspace:packages/workspace-1`,
         "",
         " 1 package installed",
       ]);
@@ -1724,7 +1724,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        ` + workspace-1@workspace:packages${sep}workspace-1`,
+        ` + workspace-1@workspace:packages/workspace-1`,
         "",
         " 1 package installed",
       ]);
@@ -1750,7 +1750,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        ` + workspace-1@workspace:packages${sep}workspace-1`,
+        ` + workspace-1@workspace:packages/workspace-1`,
         "",
         " 1 package installed",
       ]);
@@ -2214,8 +2214,8 @@ for (const forceWaiterThread of [false, true]) {
       var out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        ` + pkg1@workspace:packages${sep}pkg1`,
-        ` + pkg2@workspace:packages${sep}pkg2`,
+        ` + pkg1@workspace:packages/pkg1`,
+        ` + pkg2@workspace:packages/pkg2`,
         "",
         " 2 packages installed",
       ]);
@@ -4018,7 +4018,7 @@ for (const forceWaiterThread of [false, true]) {
       env.PATH = originalPath;
 
       let err = await Bun.readableStreamToText(stderr);
-      expect(err).toContain("Saved lockfile");
+      expect(err).toContain("No packages! Deleted empty lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");

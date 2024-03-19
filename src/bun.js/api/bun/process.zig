@@ -2039,27 +2039,23 @@ pub const sync = struct {
             switch (std.c.getErrno(rc)) {
                 .SUCCESS => {},
                 .AGAIN, .INTR => continue,
-                else => |err| return .{ .err = err },
+                else => |err| return .{ .err = bun.sys.Error.fromCode(err, .poll) },
             }
         }
 
         const status: Status = brk: {
             while (true) {
-                switch (PosixSpawn.wait4(process.pid, 0, null)) {
-                    .err => |err| {
-                        break :brk .{ .err = err };
-                    },
-                    .result => |status| {
-                        break :brk Status.from(process.pid, &status) orelse continue;
-                    },
-                }
+                if (Status.from(process.pid, &PosixSpawn.wait4(process.pid, 0, null))) |stat| break :brk stat;
             }
+
+            unreachable;
         };
 
         if (comptime Environment.isLinux) {
-            for (process.memfds, &out, &out_fds) |memfd, *bytes, *out_fd| {
-                if (memfd)
+            for (process.memfds, &out, out_fds) |memfd, *bytes, out_fd| {
+                if (memfd) {
                     bytes.* = bun.sys.File.from(out_fd).readToEnd(bun.default_allocator).bytes;
+                }
             }
         }
 

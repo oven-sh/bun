@@ -118,6 +118,7 @@ pub const Tag = enum(u8) {
     realpath,
     futime,
     pidfd_open,
+    poll,
 
     kevent,
     kqueue,

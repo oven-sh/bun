@@ -253,14 +253,14 @@ pub const Process = struct {
                 .err => |err_| {
                     if (comptime Environment.isMac) {
                         if (err_.getErrno() == .SRCH) {
-                            break :brk PosixSpawn.wait4(
+                            break :brk Status.from(pid, &PosixSpawn.wait4(
                                 pid,
                                 if (this.sync) 0 else std.os.W.NOHANG,
                                 &rusage_result,
-                            );
+                            ));
                         }
                     }
-                    break :brk .{ .err = err_ };
+                    break :brk Status{ .err = err_ };
                 },
             }
             break :brk null;
@@ -1981,13 +1981,13 @@ pub const sync = struct {
         }
 
         while (out_fds_to_wait_for[0] != bun.invalid_fd or out_fds_to_wait_for[1] != bun.invalid_fd) {
-            for (out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
+            for (&out_fds_to_wait_for, &out, &out_fds) |*fd, *bytes, *out_fd| {
                 if (fd.* == bun.invalid_fd) continue;
                 while (true) {
                     bytes.ensureUnusedCapacity(16384) catch bun.outOfMemory();
                     switch (bun.sys.recvNonBlock(fd.*, bytes.unusedCapacitySlice())) {
                         .err => |err| {
-                            if (err.isRetry() or err == .PIPE) {
+                            if (err.isRetry() or err.getErrno() == .PIPE) {
                                 break;
                             }
                             _ = std.c.kill(process.pid, 1);
@@ -2018,7 +2018,7 @@ pub const sync = struct {
                     .revents = 0,
                 },
             };
-            var poll_fds: []std.c.poll_fd = poll_fds_buf[0..];
+            var poll_fds: []std.c.pollfd = poll_fds_buf[0..];
             poll_fds.len = 0;
 
             if (out_fds_to_wait_for[0] != bun.invalid_fd) {
@@ -2045,7 +2045,7 @@ pub const sync = struct {
 
         const status: Status = brk: {
             while (true) {
-                switch (PosixSpawn.waitpid(process.pid, 0)) {
+                switch (PosixSpawn.wait4(process.pid, 0, null)) {
                     .err => |err| {
                         break :brk .{ .err = err };
                     },

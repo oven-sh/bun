@@ -5772,7 +5772,7 @@ pub const default_trusted_dependencies_list: []string = brk: {
     @setEvalBranchQuota(999999);
     var buf: [max_default_trusted_dependencies]string = undefined;
     var i: usize = 0;
-    var iter = std.mem.tokenizeAny(u8, data, " \n\t");
+    var iter = std.mem.tokenizeAny(u8, data, " \r\n\t");
     while (iter.next()) |dep| {
         buf[i] = dep;
         i += 1;

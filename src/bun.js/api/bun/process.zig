@@ -1240,6 +1240,7 @@ pub fn spawnProcessPosix(
                             0 => "spawn_stdio_stdin",
                             1 => "spawn_stdio_stdout",
                             2 => "spawn_stdio_stderr",
+                            else => "spawn_stdio_generic",
                         };
 
                         // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
@@ -1962,7 +1963,7 @@ pub const sync = struct {
 
             if (comptime Environment.isLinux) {
                 if (process.pidfd) |pidfd| {
-                    _ = bun.sys.close(pidfd);
+                    _ = bun.sys.close(bun.toFD(pidfd));
                 }
             }
         }
@@ -2052,7 +2053,7 @@ pub const sync = struct {
         };
 
         if (comptime Environment.isLinux) {
-            for (process.memfds, &out, out_fds) |memfd, *bytes, out_fd| {
+            for (process.memfds[1..], &out, out_fds) |memfd, *bytes, out_fd| {
                 if (memfd) {
                     bytes.* = bun.sys.File.from(out_fd).readToEnd(bun.default_allocator).bytes;
                 }

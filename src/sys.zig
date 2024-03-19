@@ -2346,11 +2346,17 @@ pub const File = struct {
     }
 
     pub const ReadToEndResult = struct {
-        bytes: std.ArrayList(u8) = undefined,
+        bytes: std.ArrayList(u8) = std.ArrayList(u8).init(default_allocator),
         err: ?Error = null,
     };
     pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
-        const size = try this.getEndPos();
+        const size = switch (this.getEndPos()) {
+            .err => |err| {
+                return .{ .err = err };
+            },
+            .result => |s| s,
+        };
+
         var list = std.ArrayList(u8).initCapacity(allocator, size + 16) catch bun.outOfMemory();
         while (true) {
             switch (bun.sys.read(this.handle, list.unusedCapacitySlice())) {

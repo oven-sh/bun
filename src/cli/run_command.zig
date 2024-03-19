@@ -595,7 +595,7 @@ pub const RunCommand = struct {
                         // A process can be both signaled and exited
                         if (exit_code.signal.valid()) {
                             if (!silent) {
-                                Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to signal <b>{s}<r>", .{
+                                Output.prettyErrorln("<r><red>error<r>: \"<b>{s}<r>\" exited with signal <b>{s}<r>", .{
                                     basenameOrBun(executable),
                                     exit_code.signal.name() orelse "unknown",
                                 });

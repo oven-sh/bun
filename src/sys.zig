@@ -1513,12 +1513,14 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
     if (Environment.isWindows) {
         var w_buf_from: bun.WPathBuffer = undefined;
         var w_buf_to: bun.WPathBuffer = undefined;
+
         return bun.C.renameAtW(
             from_dir,
             bun.strings.toWPath(&w_buf_from, from),
             to_dir,
             bun.strings.toWPath(&w_buf_to, to),
-            false,
+            // @paperdave why waas this set to false?
+            true,
         );
     }
     while (true) {

@@ -290,6 +290,14 @@ pub const FDImpl = packed struct {
     pub fn fromJS(value: JSValue) ?FDImpl {
         if (!value.isInt32()) return null;
         const fd = value.asInt32();
+        if (comptime env.isWindows) {
+            return switch (bun.FDTag.get(fd)) {
+                .stdin => FDImpl.decode(bun.STDIN_FD),
+                .stdout => FDImpl.decode(bun.STDOUT_FD),
+                .stderr => FDImpl.decode(bun.STDERR_FD),
+                else => FDImpl.fromUV(fd),
+            };
+        }
         return FDImpl.fromUV(fd);
     }
 
@@ -301,6 +309,16 @@ pub const FDImpl = packed struct {
         if (!JSC.Node.Valid.fileDescriptor(fd, global, exception_ref)) {
             return error.JSException;
         }
+
+        if (comptime env.isWindows) {
+            return switch (bun.FDTag.get(fd)) {
+                .stdin => FDImpl.decode(bun.STDIN_FD),
+                .stdout => FDImpl.decode(bun.STDOUT_FD),
+                .stderr => FDImpl.decode(bun.STDERR_FD),
+                else => FDImpl.fromUV(fd),
+            };
+        }
+
         return FDImpl.fromUV(fd);
     }
 

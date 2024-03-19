@@ -59,6 +59,11 @@ function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
+it("writing to 1, 2 are possible", () => {
+  expect(fs.writeSync(1, Buffer.from("\nhello-stdout-test\n"))).toBe(19);
+  expect(fs.writeSync(2, Buffer.from("\nhello-stderr-test\n"))).toBe(19);
+});
+
 describe("FileHandle", () => {
   it("FileHandle#read returns object", async () => {
     await using fd = await fs.promises.open(__filename);

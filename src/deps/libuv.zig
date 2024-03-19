@@ -1393,6 +1393,16 @@ pub const struct_uv_tty_s = extern struct {
             .{ .result = {} };
     }
 
+    const Mode = enum(c_uint) {
+        normal = 0,
+        raw = 1,
+        io = 2,
+    };
+
+    pub fn setMode(this: *uv_tty_t, mode: Mode) ReturnCode {
+        return uv_tty_set_mode(this, @intFromEnum(mode));
+    }
+
     pub usingnamespace StreamMixin(@This());
 };
 pub const uv_tty_t = struct_uv_tty_s;
@@ -2118,7 +2128,7 @@ pub const UV_TTY_SUPPORTED: c_int = 0;
 pub const UV_TTY_UNSUPPORTED: c_int = 1;
 pub const uv_tty_vtermstate_t = c_uint;
 pub extern fn uv_tty_init(*uv_loop_t, [*c]uv_tty_t, fd: uv_file, readable: c_int) ReturnCode;
-pub extern fn uv_tty_set_mode([*c]uv_tty_t, mode: uv_tty_mode_t) c_int;
+pub extern fn uv_tty_set_mode(*uv_tty_t, mode: uv_tty_mode_t) ReturnCode;
 pub extern fn uv_tty_reset_mode() c_int;
 pub extern fn uv_tty_get_winsize([*c]uv_tty_t, width: [*c]c_int, height: [*c]c_int) c_int;
 pub extern fn uv_tty_set_vterm_state(state: uv_tty_vtermstate_t) void;

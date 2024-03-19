@@ -5500,7 +5500,7 @@ var Writable = require_writable();
 var Duplex = require_duplex();
 
 const _pathOrFdOrSink = Symbol("pathOrFdOrSink");
-const _fileSink = Symbol("fileSink");
+const { fileSinkSymbol: _fileSink } = require("internal/shared");
 const _native = Symbol("native");
 
 function NativeWritable(pathOrFdOrSink, options = {}) {

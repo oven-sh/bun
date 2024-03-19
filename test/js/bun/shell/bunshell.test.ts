@@ -7,7 +7,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile, readFile } from "fs/promises";
 import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
@@ -837,7 +837,7 @@ test("shell as script runner propagates env vars: bun run <foo>", async () => {
   const package_dir = packageDirGetter();
   await writeFile(
     join(package_dir, "package.json"),
-    JSON.stringify({ scripts: { prod: `NODE_ENV=production ${bunExe()} index.ts` } }),
+    JSON.stringify({ scripts: { prod: `NODE_ENV=production ${$.escape(bunExe())} index.ts` } }),
   );
   await writeFile(
     join(package_dir, "index.ts"),
@@ -866,7 +866,7 @@ test("shell as script runner propagates env vars: bun <foo>", async () => {
   const package_dir = packageDirGetter();
   await writeFile(
     join(package_dir, "package.json"),
-    JSON.stringify({ scripts: { prod: `NODE_ENV=production ${bunExe()} index.ts` } }),
+    JSON.stringify({ scripts: { prod: `NODE_ENV=production ${$.escape(bunExe())} index.ts` } }),
   );
   await writeFile(
     join(package_dir, "index.ts"),

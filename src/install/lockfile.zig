@@ -882,7 +882,7 @@ pub fn cleanWithLogger(
         Output.prettyErrorln("Clean lockfile: {d} packages -> {d} packages in {}\n", .{
             old.packages.len,
             new.packages.len,
-            std.fmt.fmtDuration(timer.read()),
+            bun.fmt.fmtDurationOneDecimal(timer.read()),
         });
     }
 

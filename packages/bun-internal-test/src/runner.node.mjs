@@ -32,15 +32,17 @@ if (!(Number.isSafeInteger(force_ram_size_input) && force_ram_size_input > 0)) {
   force_ram_size = force_ram_size_input + "";
 }
 function uncygwinTempDir() {
-  if (process.platform === "win32" && process.env.TMPDIR?.startsWith?.("/")) {
-    let TMPDIR = process.env.TMPDIR;
-    if (!/^\/[a-zA-Z]\//.test(TMPDIR)) {
-      return;
-    }
+  if (process.platform === "win32") {
+    for (let key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP"]) {
+      let TMPDIR = process.env[key];
+      if (!/^\/[a-zA-Z]\//.test(TMPDIR)) {
+        continue;
+      }
 
-    const driveLetter = TMPDIR[1];
-    TMPDIR = path.win32.normalize(`${driveLetter.toUpperCase()}:` + TMPDIR.substring(2));
-    process.env.TMPDIR = TMPDIR;
+      const driveLetter = TMPDIR[1];
+      TMPDIR = path.win32.normalize(`${driveLetter.toUpperCase()}:` + TMPDIR.substring(2));
+      process.env[key] = TMPDIR;
+    }
   }
 }
 

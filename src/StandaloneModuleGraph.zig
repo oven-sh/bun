@@ -747,7 +747,7 @@ pub const StandaloneModuleGraph = struct {
                 const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);
 
                 return bun.sys.openFileAtWindows(
-                    bun.invalid_fd,
+                    bun.FileDescriptor.cwd(),
                     nt_path,
                     // access_mask
                     w.SYNCHRONIZE | w.GENERIC_READ,

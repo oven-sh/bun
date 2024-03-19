@@ -132,6 +132,10 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
         std.debug.assert(FDImpl.decode(fd).kind == kind);
     }
 
+    pub fn cwd() FileDescriptor {
+        return toFD(std.fs.cwd().fd);
+    }
+
     pub fn isStdio(fd: FileDescriptor) bool {
         // fd.assertValid();
         const decoded = FDImpl.decode(fd);

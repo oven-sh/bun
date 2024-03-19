@@ -1,8 +1,8 @@
 import { file, spawn } from "bun";
 import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
-import { join, sep } from "path";
+import { join } from "path";
 import { mkdtempSync, realpathSync } from "fs";
-import { rm, writeFile, mkdir, exists, cp, readdir } from "fs/promises";
+import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { tmpdir } from "os";
 import { fork, ChildProcess } from "child_process";
@@ -4371,6 +4371,71 @@ for (const forceWaiterThread of [false, true]) {
           expect(await exited).toBe(0);
         });
       }
+    });
+    describe.if(!forceWaiterThread || process.platform === "linux")("does not use 100% cpu", async () => {
+      test("install", async () => {
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            scripts: {
+              preinstall: `${bunExe().replace(/\\/g, "\\\\")} -e "Bun.sleepSync(1000)"`,
+            },
+          }),
+        );
+
+        const proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "ignore",
+          stderr: "ignore",
+          stdin: "ignore",
+          env: testEnv,
+        });
+
+        expect(await proc.exited).toBe(0);
+
+        expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
+      });
+      test("bun pm trust", async () => {
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            dependencies: {
+              "uses-what-bin-slow": "1.0.0",
+            },
+          }),
+        );
+
+        var { exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "ignore",
+          stderr: "ignore",
+          env: testEnv,
+        });
+
+        expect(await exited).toBe(0);
+
+        expect(await exists(join(packageDir, "node_modules", "uses-what-bin-slow", "what-bin.txt"))).toBeFalse();
+
+        const proc = spawn({
+          cmd: [bunExe(), "pm", "trust", "--all"],
+          cwd: packageDir,
+          stdout: "ignore",
+          stderr: "ignore",
+          env: testEnv,
+        });
+
+        expect(await proc.exited).toBe(0);
+
+        expect(await exists(join(packageDir, "node_modules", "uses-what-bin-slow", "what-bin.txt"))).toBeTrue();
+
+        expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
+      });
     });
   });
 }

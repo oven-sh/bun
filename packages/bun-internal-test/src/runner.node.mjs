@@ -34,7 +34,7 @@ if (!(Number.isSafeInteger(force_ram_size_input) && force_ram_size_input > 0)) {
 function uncygwinTempDir() {
   if (process.platform === "win32") {
     for (let key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP"]) {
-      let TMPDIR = process.env[key];
+      let TMPDIR = process.env[key] || "";
       if (!/^\/[a-zA-Z]\//.test(TMPDIR)) {
         continue;
       }

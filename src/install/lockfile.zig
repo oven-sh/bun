@@ -430,7 +430,7 @@ pub const Tree = struct {
         }
 
         pub fn packageVersion(this: *Builder, id: PackageID) Resolution.Formatter {
-            return this.old_lockfile.packages.items(.resolution)[id].fmt(this.old_lockfile.buffers.string_bytes.items);
+            return this.old_lockfile.packages.items(.resolution)[id].fmt(this.old_lockfile.buffers.string_bytes.items, .auto);
         }
 
         pub const Entry = struct {
@@ -1193,7 +1193,7 @@ pub const Printer = struct {
                             fmt,
                             .{
                                 package_name,
-                                resolved[package_id].fmt(string_buf),
+                                resolved[package_id].fmt(string_buf, .posix),
                                 later_version_fmt,
                             },
                         );
@@ -1210,7 +1210,7 @@ pub const Printer = struct {
                             fmt,
                             .{
                                 package_name,
-                                resolved[package_id].fmt(string_buf),
+                                resolved[package_id].fmt(string_buf, .posix),
                             },
                         );
                     }
@@ -1235,10 +1235,10 @@ pub const Printer = struct {
                     }
 
                     try writer.print(
-                        comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r>\n", enable_ansi_colors),
+                        comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r>", enable_ansi_colors),
                         .{
                             package_name,
-                            resolved[package_id].fmt(string_buf),
+                            resolved[package_id].fmt(string_buf, .auto),
                         },
                     );
                 }
@@ -1268,7 +1268,7 @@ pub const Printer = struct {
                             fmt,
                             .{
                                 package_name,
-                                resolved[package_id].fmt(string_buf),
+                                resolved[package_id].fmt(string_buf, .posix),
                             },
                         );
                     },
@@ -1286,7 +1286,7 @@ pub const Printer = struct {
                             fmt,
                             .{
                                 package_name,
-                                resolved[package_id].fmt(string_buf),
+                                resolved[package_id].fmt(string_buf, .posix),
                             },
                         );
 
@@ -1304,8 +1304,6 @@ pub const Printer = struct {
 
             // updates.len > 0 is a simpler check than to keep track of a boolean
             // this assert ensures it is accurate.
-            if (bun.Environment.allow_assert)
-                std.debug.assert(had_printed_new_install == (this.updates.len > 0));
 
             if (this.updates.len > 0) {
                 try writer.writeAll("\n");
@@ -1418,7 +1416,7 @@ pub const Printer = struct {
                 const resolution = resolved[i];
                 const meta = metas[i];
                 const dependencies: []const Dependency = dependency_lists[i].get(dependencies_buffer);
-                const version_formatter = resolution.fmt(string_buf);
+                const version_formatter = resolution.fmt(string_buf, .posix);
 
                 // This prints:
                 // "@babel/core@7.9.0":
@@ -1569,7 +1567,7 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
                     remote_features,
             )) continue;
             if (log_level != .silent) {
-                if (failed_dep.name.isEmpty() or strings.eql(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf))) {
+                if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {
                     Output.prettyErrorln(
                         "<r><red>error<r><d>:<r> <b>{}<r><d> failed to resolve<r>\n",
                         .{
@@ -2369,12 +2367,12 @@ pub const Package = extern struct {
                     Output.pretty("<d>.{s}{s} @{}<r>\n", .{
                         std.fs.path.sep_str,
                         strings.withoutTrailingSlash(this.cwd[i + 1 ..]),
-                        resolution.fmt(resolution_buf),
+                        resolution.fmt(resolution_buf, .posix),
                     });
                 } else {
                     Output.pretty("<d>{s} @{}<r>\n", .{
                         strings.withoutTrailingSlash(this.cwd),
-                        resolution.fmt(resolution_buf),
+                        resolution.fmt(resolution_buf, .posix),
                     });
                 }
 
@@ -2770,7 +2768,12 @@ pub const Package = extern struct {
         const old_extern_string_buf = old.buffers.extern_strings.items;
         var builder_ = new.stringBuilder();
         var builder = &builder_;
-        debug("Clone: {s}@{any} ({s}, {d} dependencies)", .{ this.name.slice(old_string_buf), this.resolution.fmt(old_string_buf), @tagName(this.resolution.tag), this.dependencies.len });
+        debug("Clone: {s}@{any} ({s}, {d} dependencies)", .{
+            this.name.slice(old_string_buf),
+            this.resolution.fmt(old_string_buf, .auto),
+            @tagName(this.resolution.tag),
+            this.dependencies.len,
+        });
 
         builder.count(this.name.slice(old_string_buf));
         this.resolution.count(old_string_buf, *Lockfile.StringBuilder, builder);
@@ -3488,7 +3491,7 @@ pub const Package = extern struct {
         comptime features: Features,
     ) !void {
         initializeStore();
-        const json = json_parser.ParseJSONUTF8(&source, log, allocator) catch |err| {
+        const json = json_parser.ParseJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
             switch (Output.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| {
                     log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
@@ -3528,9 +3531,23 @@ pub const Package = extern struct {
         key_loc: logger.Loc,
         value_loc: logger.Loc,
     ) !?Dependency {
-        const external_version = string_builder.append(String, version);
+        var external_version = string_builder.append(String, version);
         const buf = lockfile.buffers.string_bytes.items;
         const sliced = external_version.sliced(buf);
+
+        if (comptime Environment.isWindows) {
+            switch (Dependency.Version.Tag.infer(sliced.slice)) {
+                .workspace, .folder, .symlink, .tarball => {
+                    if (external_version.isInline()) {
+                        bun.path.pathToPosixInPlace(u8, &external_version.bytes);
+                    } else {
+                        const ptr = external_version.ptr();
+                        bun.path.pathToPosixInPlace(u8, buf[ptr.off..][0..ptr.len]);
+                    }
+                },
+                else => {},
+            }
+        }
 
         var dependency_version = Dependency.parseWithOptionalTag(
             allocator,
@@ -3629,8 +3646,8 @@ pub const Package = extern struct {
             } else {
                 const workspace = dependency_version.value.workspace.slice(buf);
                 const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
-                    var buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    break :brk Path.relative(
+                    var buf2: bun.PathBuffer = undefined;
+                    break :brk Path.relativePlatform(
                         FileSystem.instance.top_level_dir,
                         Path.joinAbsStringBuf(
                             FileSystem.instance.top_level_dir,
@@ -3641,6 +3658,8 @@ pub const Package = extern struct {
                             },
                             .auto,
                         ),
+                        .posix,
+                        false,
                     );
                 });
                 if (comptime Environment.allow_assert) {
@@ -3761,6 +3780,9 @@ pub const Package = extern struct {
         }
 
         pub fn insert(self: *WorkspaceMap, key: string, value: Entry) !void {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(!strings.containsChar(key, std.fs.path.sep_windows));
+            }
             const entry = try self.map.getOrPut(key);
             if (!entry.found_existing) {
                 entry.key_ptr.* = try self.map.allocator.dupe(u8, key);
@@ -3793,7 +3815,6 @@ pub const Package = extern struct {
     };
 
     const WorkspaceEntry = struct {
-        path: []const u8 = "",
         name: []const u8 = "",
         name_loc: logger.Loc = logger.Loc.Empty,
         version: ?[]const u8 = null,
@@ -3810,7 +3831,7 @@ pub const Package = extern struct {
     ) !WorkspaceEntry {
         const path_to_use = if (path.len == 0) "package.json" else brk: {
             const paths = [_]string{ path, "package.json" };
-            break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
+            break :brk bun.path.joinStringBuf(path_buf, &paths, .posix);
         };
 
         // TODO: windows
@@ -3835,7 +3856,6 @@ pub const Package = extern struct {
         var entry = WorkspaceEntry{
             .name = name_to_copy[0..workspace_json.found_name.len],
             .name_loc = workspace_json.name_loc,
-            .path = path_to_use,
         };
         debug("processWorkspaceName({s}) = {s}", .{ path_to_use, entry.name });
         if (workspace_json.has_found_version) {
@@ -3905,6 +3925,9 @@ pub const Package = extern struct {
                 continue;
             } else if (string_builder == null) {
                 input_path = Path.joinAbsStringBuf(source.path.name.dir, filepath_buf, &[_]string{input_path}, .auto);
+                if (comptime Environment.isWindows) {
+                    input_path = Path.normalizeString(input_path, true, .posix);
+                }
             }
 
             const workspace_entry = processWorkspaceName(
@@ -3967,11 +3990,6 @@ pub const Package = extern struct {
         }
 
         if (asterisked_workspace_paths.items.len > 0) {
-            // max path bytes is not enough in real codebases
-            const second_buf = allocator.create([4096]u8) catch unreachable;
-            var second_buf_fixed = std.heap.FixedBufferAllocator.init(second_buf);
-            defer allocator.destroy(second_buf);
-
             for (asterisked_workspace_paths.items) |user_path| {
                 var dir_prefix = if (string_builder) |_|
                     strings.withoutLeadingSlash(user_path)
@@ -4085,17 +4103,23 @@ pub const Package = extern struct {
                     if (workspace_entry.name.len == 0) continue;
 
                     const workspace_path: string = if (string_builder) |builder| brk: {
-                        second_buf_fixed.reset();
-                        const relative = std.fs.path.relative(
-                            second_buf_fixed.allocator(),
+                        builder.count(workspace_entry.name);
+                        const relative = Path.relativePlatform(
                             Fs.FileSystem.instance.top_level_dir,
                             bun.span(entry_path),
-                        ) catch unreachable;
-                        builder.count(workspace_entry.name);
+                            .posix,
+                            true,
+                        );
                         builder.count(relative);
                         builder.cap += bun.MAX_PATH_BYTES;
                         break :brk relative;
-                    } else bun.span(entry_path);
+                    } else brk: {
+                        // entry_path is contained in filepath_buf so it is safe to constCast and
+                        // replace path separators
+                        const entry_slice = bun.span(entry_path);
+                        Path.pathToPosixInPlace(u8, @constCast(entry_slice));
+                        break :brk entry_slice;
+                    };
 
                     try workspace_names.insert(workspace_path, .{
                         .name = workspace_entry.name,
@@ -4546,7 +4570,7 @@ pub const Package = extern struct {
                         const num_notes = count: {
                             var i: usize = 0;
                             for (workspace_names.values()) |value| {
-                                if (strings.eql(value.name, entry.name))
+                                if (strings.eqlLong(value.name, entry.name, true))
                                     i += 1;
                             }
                             break :count i;
@@ -4556,7 +4580,7 @@ pub const Package = extern struct {
                             var i: usize = 0;
                             for (workspace_names.values(), workspace_names.keys()) |value, note_path| {
                                 if (note_path.ptr == path.ptr) continue;
-                                if (strings.eql(value.name, entry.name)) {
+                                if (strings.eqlLong(value.name, entry.name, true)) {
                                     const note_abs_path = allocator.dupeZ(u8, Path.joinAbsStringZ(cwd, &.{ note_path, "package.json" }, .auto)) catch bun.outOfMemory();
 
                                     const note_src = src: {
@@ -5124,16 +5148,58 @@ const Buffers = struct {
         }
     }
 
-    pub fn save(this: Buffers, allocator: Allocator, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
+    pub fn save(
+        lockfile: *Lockfile,
+        allocator: Allocator,
+        comptime StreamType: type,
+        stream: StreamType,
+        comptime Writer: type,
+        writer: Writer,
+    ) !void {
+        const buffers = lockfile.buffers;
         inline for (sizes.names) |name| {
             if (PackageManager.instance.options.log_level.isVerbose()) {
-                Output.prettyErrorln("Saving {d} {s}", .{ @field(this, name).items.len, name });
+                Output.prettyErrorln("Saving {d} {s}", .{ @field(buffers, name).items.len, name });
             }
 
             // Dependencies have to be converted to .toExternal first
             // We store pointers in Version.Value, so we can't just write it directly
             if (comptime strings.eqlComptime(name, "dependencies")) {
-                const remaining = this.dependencies.items;
+                const remaining = buffers.dependencies.items;
+
+                if (comptime Environment.allow_assert) {
+                    for (remaining) |dep| {
+                        switch (dep.version.tag) {
+                            .folder => {
+                                const folder = lockfile.str(&dep.version.value.folder);
+                                if (strings.containsChar(folder, std.fs.path.sep_windows)) {
+                                    std.debug.panic("workspace windows separator: {s}\n", .{folder});
+                                }
+                            },
+                            .tarball => {
+                                if (dep.version.value.tarball.uri == .local) {
+                                    const tarball = lockfile.str(&dep.version.value.tarball.uri.local);
+                                    if (strings.containsChar(tarball, std.fs.path.sep_windows)) {
+                                        std.debug.panic("tarball windows separator: {s}", .{tarball});
+                                    }
+                                }
+                            },
+                            .workspace => {
+                                const workspace = lockfile.str(&dep.version.value.workspace);
+                                if (strings.containsChar(workspace, std.fs.path.sep_windows)) {
+                                    std.debug.panic("workspace windows separator: {s}\n", .{workspace});
+                                }
+                            },
+                            .symlink => {
+                                const symlink = lockfile.str(&dep.version.value.symlink);
+                                if (strings.containsChar(symlink, std.fs.path.sep_windows)) {
+                                    std.debug.panic("symlink windows separator: {s}\n", .{symlink});
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                }
 
                 // It would be faster to buffer these instead of one big allocation
                 var to_clone = try std.ArrayListUnmanaged(Dependency.External).initCapacity(allocator, remaining.len);
@@ -5145,7 +5211,7 @@ const Buffers = struct {
 
                 try writeArray(StreamType, stream, Writer, writer, []Dependency.External, to_clone.items);
             } else {
-                const list = @field(this, name);
+                const list = @field(buffers, name);
                 const items = list.items;
                 const Type = @TypeOf(items);
                 if (comptime Type == Tree) {
@@ -5318,8 +5384,28 @@ pub const Serializer = struct {
         };
         const stream = StreamType{ .bytes = bytes };
 
+        if (comptime Environment.allow_assert) {
+            for (this.packages.items(.resolution)) |res| {
+                switch (res.tag) {
+                    .folder => {
+                        std.debug.assert(!strings.containsChar(this.str(&res.value.folder), std.fs.path.sep_windows));
+                    },
+                    .symlink => {
+                        std.debug.assert(!strings.containsChar(this.str(&res.value.symlink), std.fs.path.sep_windows));
+                    },
+                    .local_tarball => {
+                        std.debug.assert(!strings.containsChar(this.str(&res.value.local_tarball), std.fs.path.sep_windows));
+                    },
+                    .workspace => {
+                        std.debug.assert(!strings.containsChar(this.str(&res.value.workspace), std.fs.path.sep_windows));
+                    },
+                    else => {},
+                }
+            }
+        }
+
         try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(writer), writer);
-        try Lockfile.Buffers.save(this.buffers, z_allocator, StreamType, stream, @TypeOf(writer), writer);
+        try Lockfile.Buffers.save(this, z_allocator, StreamType, stream, @TypeOf(writer), writer);
         try writer.writeInt(u64, 0, .little);
 
         // < Bun v1.0.4 stopped right here when reading the lockfile
@@ -5654,13 +5740,15 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
             comptime var j: usize = 0;
             inline while (j < 16) : (j += 1) {
                 alphabetized_names[(i + j) - 1] = @as(PackageID, @truncate((i + j)));
-                string_builder.fmtCount("{s}@{}\n", .{ names[i + j].slice(bytes), resolutions[i + j].fmt(bytes) });
+                // posix path separators because we only use posix in the lockfile
+                string_builder.fmtCount("{s}@{}\n", .{ names[i + j].slice(bytes), resolutions[i + j].fmt(bytes, .posix) });
             }
         }
 
         while (i < packages_len) : (i += 1) {
             alphabetized_names[i - 1] = @as(PackageID, @truncate(i));
-            string_builder.fmtCount("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes) });
+            // posix path separators because we only use posix in the lockfile
+            string_builder.fmtCount("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .posix) });
         }
     }
 
@@ -5699,7 +5787,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
     string_builder.len += hash_prefix.len;
 
     for (alphabetized_names) |i| {
-        _ = string_builder.fmt("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes) });
+        _ = string_builder.fmt("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .any) });
     }
 
     if (has_scripts) {
@@ -6003,7 +6091,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             if (pkg.resolution.tag == .uninitialized) {
                 try w.write(null);
             } else {
-                const b = try std.fmt.bufPrint(&buf, "{s} {s}", .{ @tagName(pkg.resolution.tag), pkg.resolution.fmt(sb) });
+                const b = try std.fmt.bufPrint(&buf, "{s} {s}", .{ @tagName(pkg.resolution.tag), pkg.resolution.fmt(sb, .auto) });
                 try w.write(b);
             }
 

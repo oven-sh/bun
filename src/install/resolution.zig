@@ -109,8 +109,12 @@ pub const Resolution = extern struct {
         };
     }
 
-    pub fn fmt(this: *const Resolution, string_bytes: []const u8) Formatter {
-        return Formatter{ .resolution = this, .buf = string_bytes };
+    pub fn fmt(this: *const Resolution, string_bytes: []const u8, path_sep: bun.fmt.PathFormatOptions.Sep) Formatter {
+        return Formatter{
+            .resolution = this,
+            .buf = string_bytes,
+            .path_sep = path_sep,
+        };
     }
 
     pub fn fmtURL(this: *const Resolution, options: *const PackageManager.Options, string_bytes: []const u8) URLFormatter {
@@ -188,17 +192,19 @@ pub const Resolution = extern struct {
         buf: []const u8,
 
         pub fn format(formatter: URLFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            const buf = formatter.buf;
+            const value = formatter.resolution.value;
             switch (formatter.resolution.tag) {
-                .npm => try writer.writeAll(formatter.resolution.value.npm.url.slice(formatter.buf)),
-                .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
-                .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
-                .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
-                .git => try formatter.resolution.value.git.formatAs("git+", formatter.buf, layout, opts, writer),
-                .github => try formatter.resolution.value.github.formatAs("github:", formatter.buf, layout, opts, writer),
-                .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab:", formatter.buf, layout, opts, writer),
-                .workspace => try std.fmt.format(writer, "workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
-                .symlink => try std.fmt.format(writer, "link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
-                .single_file_module => try std.fmt.format(writer, "module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
+                .npm => try writer.writeAll(value.npm.url.slice(formatter.buf)),
+                .local_tarball => try bun.fmt.fmtPath(u8, value.local_tarball.slice(buf), .{ .path_sep = .posix }).format("", {}, writer),
+                .folder => try writer.writeAll(value.folder.slice(formatter.buf)),
+                .remote_tarball => try writer.writeAll(value.remote_tarball.slice(formatter.buf)),
+                .git => try value.git.formatAs("git+", formatter.buf, layout, opts, writer),
+                .github => try value.github.formatAs("github:", formatter.buf, layout, opts, writer),
+                .gitlab => try value.gitlab.formatAs("gitlab:", formatter.buf, layout, opts, writer),
+                .workspace => try std.fmt.format(writer, "workspace:{s}", .{value.workspace.slice(formatter.buf)}),
+                .symlink => try std.fmt.format(writer, "link:{s}", .{value.symlink.slice(formatter.buf)}),
+                .single_file_module => try std.fmt.format(writer, "module:{s}", .{value.single_file_module.slice(formatter.buf)}),
                 else => {},
             }
         }
@@ -207,19 +213,26 @@ pub const Resolution = extern struct {
     pub const Formatter = struct {
         resolution: *const Resolution,
         buf: []const u8,
+        path_sep: bun.fmt.PathFormatOptions.Sep,
 
         pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            const buf = formatter.buf;
+            const value = formatter.resolution.value;
             switch (formatter.resolution.tag) {
-                .npm => try formatter.resolution.value.npm.version.fmt(formatter.buf).format(layout, opts, writer),
-                .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
-                .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
-                .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
-                .git => try formatter.resolution.value.git.formatAs("git+", formatter.buf, layout, opts, writer),
-                .github => try formatter.resolution.value.github.formatAs("github:", formatter.buf, layout, opts, writer),
-                .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab:", formatter.buf, layout, opts, writer),
-                .workspace => try std.fmt.format(writer, "workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
-                .symlink => try std.fmt.format(writer, "link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
-                .single_file_module => try std.fmt.format(writer, "module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
+                .npm => try value.npm.version.fmt(buf).format(layout, opts, writer),
+                .local_tarball => try bun.fmt.fmtPath(u8, value.local_tarball.slice(buf), .{ .path_sep = formatter.path_sep }).format("", {}, writer),
+                .folder => try bun.fmt.fmtPath(u8, value.folder.slice(buf), .{ .path_sep = formatter.path_sep }).format("", {}, writer),
+                .remote_tarball => try writer.writeAll(value.remote_tarball.slice(buf)),
+                .git => try value.git.formatAs("git+", buf, layout, opts, writer),
+                .github => try value.github.formatAs("github:", buf, layout, opts, writer),
+                .gitlab => try value.gitlab.formatAs("gitlab:", buf, layout, opts, writer),
+                .workspace => try std.fmt.format(writer, "workspace:{s}", .{bun.fmt.fmtPath(u8, value.workspace.slice(buf), .{
+                    .path_sep = formatter.path_sep,
+                })}),
+                .symlink => try std.fmt.format(writer, "link:{s}", .{bun.fmt.fmtPath(u8, value.symlink.slice(buf), .{
+                    .path_sep = formatter.path_sep,
+                })}),
+                .single_file_module => try std.fmt.format(writer, "module:{s}", .{value.single_file_module.slice(buf)}),
                 else => {},
             }
         }

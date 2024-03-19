@@ -188,7 +188,6 @@ logLevel = "debug"
               cwd: run_dir,
               env: bunEnv,
             });
-            console.log(run_dir);
             if (withLogLevel) {
               expect(stderr.toString().trim()).toContain("ENOENT loading tsconfig.json extends");
             } else {

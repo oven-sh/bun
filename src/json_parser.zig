@@ -114,6 +114,7 @@ fn JSONLikeParser(comptime opts: js_lexer.JSONOptions) type {
         opts.ignore_trailing_escape_sequences,
         opts.json_warn_duplicate_keys,
         opts.was_originally_macro,
+        opts.always_decode_escape_sequences,
     );
 }
 
@@ -125,6 +126,7 @@ fn JSONLikeParser_(
     comptime opts_ignore_trailing_escape_sequences: bool,
     comptime opts_json_warn_duplicate_keys: bool,
     comptime opts_was_originally_macro: bool,
+    comptime opts_always_decode_escape_sequences: bool,
 ) type {
     const opts = js_lexer.JSONOptions{
         .is_json = opts_is_json,
@@ -134,6 +136,7 @@ fn JSONLikeParser_(
         .ignore_trailing_escape_sequences = opts_ignore_trailing_escape_sequences,
         .json_warn_duplicate_keys = opts_json_warn_duplicate_keys,
         .was_originally_macro = opts_was_originally_macro,
+        .always_decode_escape_sequences = opts_always_decode_escape_sequences,
     };
     return struct {
         const Lexer = js_lexer.NewLexer(if (LEXER_DEBUGGER_WORKAROUND) js_lexer.JSONOptions{} else opts);
@@ -763,6 +766,41 @@ pub fn ParseJSONUTF8(
 
     var parser = try JSONParser.init(allocator, source.*, log);
     std.debug.assert(parser.source().contents.len > 0);
+
+    return try parser.parseExpr(false, true);
+}
+
+pub fn ParseJSONUTF8AlwaysDecode(
+    source: *const logger.Source,
+    log: *logger.Log,
+    allocator: std.mem.Allocator,
+) !Expr {
+    const len = source.contents.len;
+    switch (len) {
+        // This is to be consisntent with how disabled JS files are handled
+        0 => {
+            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+        },
+        // This is a fast pass I guess
+        2 => {
+            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
+            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
+                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
+            }
+        },
+        else => {},
+    }
+
+    var parser = try JSONLikeParser(.{
+        .is_json = true,
+        .always_decode_escape_sequences = true,
+    }).init(allocator, source.*, log);
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(parser.source().contents.len > 0);
+    }
 
     return try parser.parseExpr(false, true);
 }

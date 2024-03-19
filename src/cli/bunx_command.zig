@@ -159,13 +159,7 @@ pub const BunxCommand = struct {
 
     fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, package_name: []const u8) ![]const u8 {
         var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
-        subpath[0.."node_modules/".len].* = "node_modules/".*;
-        @memcpy(subpath["node_modules/".len..][0..package_name.len], package_name);
-        subpath["node_modules/".len + package_name.len] = std.fs.path.sep;
-        subpath["node_modules/".len + package_name.len + 1 ..][0.."package.json".len].* = "package.json".*;
-        subpath["node_modules/".len + package_name.len + 1 + "package.json".len] = 0;
-
-        const subpath_z: [:0]const u8 = subpath[0 .. "node_modules/".len + package_name.len + 1 + "package.json".len :0];
+        const subpath_z = std.fmt.bufPrintZ(&subpath, "node_modules/{s}/package.json", .{package_name}) catch unreachable;
         return try getBinNameFromSubpath(bundler, dir_fd, subpath_z);
     }
 
@@ -429,11 +423,18 @@ pub const BunxCommand = struct {
 
         debug("bunx_cache_dir: {s}", .{bunx_cache_dir});
 
+        const bin_extension = switch (Environment.os) {
+            .windows => ".exe",
+            .mac => "",
+            .linux => "",
+            .wasm => "",
+        };
+
         var absolute_in_cache_dir_buf: bun.PathBuffer = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(
             &absolute_in_cache_dir_buf,
-            bun.pathLiteral("{s}/node_modules/.bin/{s}"),
-            .{ bunx_cache_dir, initial_bin_name },
+            bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"),
+            .{ bunx_cache_dir, initial_bin_name, bin_extension },
         ) catch return error.PathTooLong;
 
         const passthrough = passthrough_list.items;
@@ -513,7 +514,7 @@ pub const BunxCommand = struct {
                     null,
                 );
                 // runBinary is noreturn
-                comptime unreachable;
+                @compileError("unreachable");
             }
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -522,7 +523,7 @@ pub const BunxCommand = struct {
             if (getBinName(&this_bundler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
                 // if we check the bin name and its actually the same, we don't need to check $PATH here again
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                    absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
+                    absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}{s}", .{ bunx_cache_dir, package_name_for_bin, bin_extension }) catch unreachable;
 
                     // Only use the system-installed version if there is no version specified
                     if (update_request.version.literal.isEmpty()) {
@@ -550,7 +551,7 @@ pub const BunxCommand = struct {
                             null,
                         );
                         // runBinary is noreturn
-                        comptime unreachable;
+                        @compileError("unreachable");
                     }
                 }
             } else |err| {
@@ -573,8 +574,8 @@ pub const BunxCommand = struct {
         var args = std.BoundedArray([]const u8, 7).fromSlice(&.{
             try std.fs.selfExePathAlloc(ctx.allocator),
             "add",
-            "--no-summary",
             install_param,
+            "--no-summary",
         }) catch
             unreachable; // upper bound is known
 
@@ -634,7 +635,7 @@ pub const BunxCommand = struct {
             },
         }
 
-        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}"), .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, initial_bin_name, bin_extension }) catch unreachable;
 
         // Similar to "npx":
         //
@@ -656,13 +657,13 @@ pub const BunxCommand = struct {
                 null,
             );
             // runBinary is noreturn
-            comptime unreachable;
+            @compileError("unreachable");
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
         if (getBinNameFromTempDirectory(&this_bundler, bunx_cache_dir, result_package_name)) |package_name_for_bin| {
             if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
+                absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}{s}", .{ bunx_cache_dir, package_name_for_bin, bin_extension }) catch unreachable;
 
                 if (bun.which(
                     &path_buf,
@@ -680,7 +681,7 @@ pub const BunxCommand = struct {
                         null,
                     );
                     // runBinary is noreturn
-                    comptime unreachable;
+                    @compileError("unreachable");
                 }
             }
         } else |_| {}

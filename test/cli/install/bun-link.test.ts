@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { spawn, file } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
@@ -73,8 +72,8 @@ it("should link and unlink workspace package", async () => {
   var out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` + boba@workspace:packages${sep}boba`,
-    ` + moo@workspace:packages${sep}moo`,
+    ` + boba@workspace:packages/boba`,
+    ` + moo@workspace:packages/moo`,
     "",
     " 2 packages installed",
   ]);

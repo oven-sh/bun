@@ -3608,8 +3608,8 @@ pub const JSValue = enum(JSValueReprInt) {
                     return this.asInt32();
                 }
 
-                if (this.isNumber()) {
-                    return @as(i32, @truncate(this.coerceDoubleTruncatingIntoInt64()));
+                if (this.getNumber()) |num| {
+                    return coerceJSValueDoubleTruncatingT(i32, num);
                 }
 
                 return this.coerceToInt32(globalThis);
@@ -4184,21 +4184,28 @@ pub const JSValue = enum(JSValueReprInt) {
         return jsNumberFromDouble(@floatFromInt(i));
     }
 
-    pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {
-        const double_value = this.asDouble();
+    fn coerceJSValueDoubleTruncatingT(comptime T: type, num: f64) T {
+        return coerceJSValueDoubleTruncatingTT(T, T, num);
+    }
 
-        if (std.math.isNan(double_value))
-            return std.math.minInt(i64);
-
-        // coerce NaN or Infinity to either -maxInt or maxInt
-        if (std.math.isInf(double_value)) {
-            return if (double_value < 0) @as(i64, std.math.minInt(i64)) else @as(i64, std.math.maxInt(i64));
+    fn coerceJSValueDoubleTruncatingTT(comptime T: type, comptime Out: type, num: f64) Out {
+        if (std.math.isNan(num)) {
+            return 0;
         }
 
-        return @as(
-            i64,
-            @intFromFloat(double_value),
-        );
+        if (num <= std.math.minInt(T) or std.math.isNegativeInf(num)) {
+            return std.math.minInt(T);
+        }
+
+        if (num >= std.math.maxInt(T) or std.math.isPositiveInf(num)) {
+            return std.math.maxInt(T);
+        }
+
+        return @intFromFloat(num);
+    }
+
+    pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {
+        return coerceJSValueDoubleTruncatingT(i64, this.asNumber());
     }
 
     /// Decimal values are truncated without rounding.
@@ -5062,16 +5069,7 @@ pub const JSValue = enum(JSValueReprInt) {
         if (comptime bun.Environment.allow_assert) {
             std.debug.assert(this.isNumber());
         }
-        const double = this.asDouble();
-        if (std.math.isPositiveInf(double)) {
-            return std.math.maxInt(i52);
-        } else if (std.math.isNegativeInf(double)) {
-            return std.math.minInt(i52);
-        } else if (std.math.isNan(double)) {
-            return 0;
-        }
-
-        return @as(i64, @intFromFloat(@max(@min(double, std.math.maxInt(i52)), std.math.minInt(i52))));
+        return coerceJSValueDoubleTruncatingTT(i52, i64, this.asNumber());
     }
 
     pub fn toInt32(this: JSValue) i32 {
@@ -5079,8 +5077,8 @@ pub const JSValue = enum(JSValueReprInt) {
             return asInt32(this);
         }
 
-        if (this.isNumber()) {
-            return @as(i32, @intCast(@min(@max(this.asInt52(), std.math.minInt(i32)), std.math.maxInt(i32))));
+        if (this.getNumber()) |num| {
+            return coerceJSValueDoubleTruncatingT(i32, num);
         }
 
         if (comptime bun.Environment.allow_assert) {

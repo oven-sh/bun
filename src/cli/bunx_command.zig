@@ -620,8 +620,7 @@ pub const BunxCommand = struct {
             Global.exit(1);
         })) {
             .err => |err| {
-                const pathed = err.withPath(argv_to_use[0]);
-                Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error\n{}", .{ install_param, pathed });
+                _ = err; // autofix
                 Global.exit(1);
             },
             .result => |result| result,

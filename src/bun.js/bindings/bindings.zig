@@ -3609,7 +3609,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 }
 
                 if (this.getNumber()) |num| {
-                    return coerceJSValueDoubleTruncatingInto(i32, num);
+                    return coerceJSValueDoubleTruncatingT(i32, num);
                 }
 
                 return this.coerceToInt32(globalThis);
@@ -4184,7 +4184,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return jsNumberFromDouble(@floatFromInt(i));
     }
 
-    fn coerceJSValueDoubleTruncatingInto(comptime T: type, num: f64) T {
+    fn coerceJSValueDoubleTruncatingT(comptime T: type, num: f64) T {
+        return coerceJSValueDoubleTruncatingTT(T, T, num);
+    }
+
+    fn coerceJSValueDoubleTruncatingTT(comptime T: type, comptime Out: type, num: f64) Out {
         if (std.math.isNan(num)) {
             return 0;
         }
@@ -4201,7 +4205,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {
-        return coerceJSValueDoubleTruncatingInto(i64, this.asNumber());
+        return coerceJSValueDoubleTruncatingT(i64, this.asNumber());
     }
 
     /// Decimal values are truncated without rounding.
@@ -5065,16 +5069,7 @@ pub const JSValue = enum(JSValueReprInt) {
         if (comptime bun.Environment.allow_assert) {
             std.debug.assert(this.isNumber());
         }
-        const double = this.asDouble();
-        if (std.math.isPositiveInf(double)) {
-            return std.math.maxInt(i52);
-        } else if (std.math.isNegativeInf(double)) {
-            return std.math.minInt(i52);
-        } else if (std.math.isNan(double)) {
-            return 0;
-        }
-
-        return @as(i64, @intFromFloat(@max(@min(double, std.math.maxInt(i52)), std.math.minInt(i52))));
+        return coerceJSValueDoubleTruncatingTT(i52, i64, this.asNumber());
     }
 
     pub fn toInt32(this: JSValue) i32 {
@@ -5083,7 +5078,7 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         if (this.getNumber()) |num| {
-            return coerceJSValueDoubleTruncatingInto(i32, num);
+            return coerceJSValueDoubleTruncatingT(i32, num);
         }
 
         if (comptime bun.Environment.allow_assert) {

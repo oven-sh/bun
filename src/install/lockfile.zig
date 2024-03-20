@@ -562,12 +562,14 @@ pub const Tree = struct {
             if (dep.name_hash != dependency.name_hash) continue;
             const mismatch = builder.resolutions[dep_id] != package_id;
 
-            if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
-                if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
-                    return hoisted; // 2
-                }
+            if (comptime as_defined) {
+                if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
+                    if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
+                        return hoisted; // 2
+                    }
 
-                return dependency_loop; // 3
+                    return dependency_loop; // 3
+                }
             }
 
             if (mismatch and !dependency.behavior.isPeer()) {

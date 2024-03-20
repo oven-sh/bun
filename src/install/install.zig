@@ -2554,9 +2554,6 @@ pub const PackageManager = struct {
     }
 
     pub fn ensureTempNodeGypScript(this: *PackageManager) !void {
-        if (Environment.isWindows) {
-            Output.debug("TODO: VERIFY ensureTempNodeGypScript WORKS!!", .{});
-        }
         if (this.node_gyp_tempdir_name.len > 0) return;
 
         const tempdir = this.getTemporaryDirectory();
@@ -2619,7 +2616,7 @@ pub const PackageManager = struct {
 
         // Add our node-gyp tempdir to the path
         const existing_path = this.env.get("PATH") orelse "";
-        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + this.node_gyp_tempdir_name.len);
+        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + this.temp_dir_name.len + 1 + this.node_gyp_tempdir_name.len);
         try PATH.appendSlice(existing_path);
         if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
             try PATH.append(std.fs.path.delimiter);
@@ -2628,15 +2625,18 @@ pub const PackageManager = struct {
         try PATH.appendSlice(this.node_gyp_tempdir_name);
         try this.env.map.put("PATH", PATH.items);
 
-        const node_gyp_abs_dir = try bun.fmt.bufPrint(&path_buf, "{s}" ++ .{std.fs.path.sep} ++ "{s}", .{
+        const npm_config_node_gyp = try bun.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}", .{
             strings.withoutTrailingSlash(this.temp_dir_name),
+            std.fs.path.sep_str,
             strings.withoutTrailingSlash(this.node_gyp_tempdir_name),
+            switch (Environment.os) {
+                .windows => ".cmd",
+                else => "",
+            },
         });
-        try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
 
-        path_buf[node_gyp_abs_dir.len] = std.fs.path.sep;
-        @memcpy(path_buf[node_gyp_abs_dir.len + 1 ..][0.."node-gyp".len], "node-gyp");
-        const npm_config_node_gyp = path_buf[0 .. node_gyp_abs_dir.len + 1 + "node-gyp".len];
+        const node_gyp_abs_dir = std.fs.path.dirname(npm_config_node_gyp).?;
+        try this.env.map.putAllocKeyAndValue(this.allocator, "BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir);
         try this.env.map.putAllocKeyAndValue(this.allocator, "npm_config_node_gyp", npm_config_node_gyp);
     }
 

@@ -4065,6 +4065,41 @@ for (const forceWaiterThread of [false, true]) {
 
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
     });
+    test("ensureTempNodeGypScript works", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            preinstall: "node-gyp --version",
+          },
+        }),
+      );
+
+      const originalPath = env.PATH;
+      env.PATH = "";
+
+      let { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env,
+      });
+
+      env.PATH = originalPath;
+
+      let err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("No packages! Deleted empty lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(err).not.toContain("panic:");
+
+      expect(await exited).toBe(0);
+    });
 
     test("bun pm trust and untrusted on missing package", async () => {
       await writeFile(

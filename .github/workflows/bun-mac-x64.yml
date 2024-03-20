@@ -10,7 +10,9 @@ env:
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - ci-*
     paths:
       - ".github/workflows/bun-mac-x64.yml"
       - "src/**/*"
@@ -22,7 +24,9 @@ on:
       - "Makefile"
       - "Dockerfile"
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - ci-*
     paths:
       - ".github/workflows/bun-mac-x64.yml"
       - "src/**/*"

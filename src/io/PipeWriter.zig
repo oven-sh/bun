@@ -842,6 +842,16 @@ fn BaseWindowsPipeWriter(
             const source = Source{
                 .sync_file = Source.openFile(fd),
             };
+
+            source.setData(this);
+            this.source = source;
+            this.setParent(this.parent);
+            return this.startWithCurrentPipe();
+        }
+
+        pub fn startWithFile(this: *WindowsPipeWriter, fd: bun.FileDescriptor) bun.JSC.Maybe(void) {
+            std.debug.assert(this.source == null);
+            const source: bun.io.Source = .{ .file = Source.openFile(fd) };
             source.setData(this);
             this.source = source;
             this.setParent(this.parent);

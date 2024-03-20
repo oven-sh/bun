@@ -8797,6 +8797,7 @@ pub const Interpreter = struct {
         fd: bun.FileDescriptor,
         writers: Writers = .{ .inlined = .{} },
         buf: std.ArrayListUnmanaged(u8) = .{},
+        // winbuf: if (bun.Environment.isWindows) std.ArrayListUnmanaged(u8) else u0 = if (bun.Environment.isWindows) .{} else 0,
         __idx: usize = 0,
         total_bytes_written: usize = 0,
         ref_count: u32 = 1,
@@ -8815,7 +8816,7 @@ pub const Interpreter = struct {
         const ChildPtr = IOWriterChildPtr;
 
         /// ~128kb
-        /// We shrunk the `buf` when we reach the last writer,
+        /// We shrink the `buf` when we reach the last writer,
         /// but if this never happens, we shrink `buf` when it exceeds this threshold
         const SHRINK_THRESHOLD = 1024 * 128;
 
@@ -8895,6 +8896,17 @@ pub const Interpreter = struct {
                             this.writer.handle = .{ .closed = {} };
                             return __start(this);
                         }
+                    }
+                }
+
+                if (bun.Environment.isWindows) {
+                    // This might happen if the file descriptor points to NUL. On Windows GetFileType(NUL) returns FILE_TYPE_CHAR, so `this.writer.start()` will try to open it as a tty with uv_tty_init, but this returns EBADF.
+                    // As a workaround, we'll try opening the file descriptor as a file.
+                    if (e.getErrno() == .BADF) {
+                        this.flags.pollable = false;
+                        this.flags.nonblocking = false;
+                        this.flags.is_socket = false;
+                        return this.writer.startWithFile(this.fd);
                     }
                 }
                 return .{ .err = e };
@@ -9084,6 +9096,11 @@ pub const Interpreter = struct {
         pub fn getBuffer(this: *This) []const u8 {
             const result = this.getBufferImpl();
             log("IOWriter(0x{x}, fd={}) getBuffer = {d} bytes", .{ @intFromPtr(this), this.fd, result.len });
+            // if (comptime bun.Environment.isWindows) {
+            //     this.winbuf.clearRetainingCapacity();
+            //     this.winbuf.appendSlice(bun.default_allocator, result) catch bun.outOfMemory();
+            //     return this.winbuf.items[0..result.len];
+            // }
             return result;
         }
 
@@ -9215,6 +9232,7 @@ pub const Interpreter = struct {
             print("IOWriter(0x{x}, fd={}) deinit", .{ @intFromPtr(this), this.fd });
             if (bun.Environment.allow_assert) std.debug.assert(this.ref_count == 0);
             this.buf.deinit(bun.default_allocator);
+            // if (comptime bun.Environment.isWindows) this.winbuf.deinit(bun.default_allocator);
             if (comptime bun.Environment.isPosix) {
                 if (this.writer.handle == .poll and this.writer.handle.poll.isRegistered()) {
                     this.writer.handle.closeImpl(null, {}, false);

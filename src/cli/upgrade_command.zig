@@ -756,7 +756,7 @@ pub const UpgradeCommand = struct {
                 }
             }
 
-            const destination_executable = std.fs.selfExePath(&current_executable_buf) catch return error.UpgradeFailedMissingExecutable;
+            const destination_executable = bun.selfExePath() catch return error.UpgradeFailedMissingExecutable;
             current_executable_buf[destination_executable.len] = 0;
 
             const target_filename_ = std.fs.path.basename(destination_executable);

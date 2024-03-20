@@ -4852,12 +4852,10 @@ pub const Process = struct {
     }
 
     pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        var buf: bun.PathBuffer = undefined;
-        const out = std.fs.selfExePath(&buf) catch {
+        const out = bun.selfExePath() catch {
             // if for any reason we are unable to get the executable path, we just return argv[0]
             return getArgv0(globalObject);
         };
-
         return JSC.ZigString.fromUTF8(out).toValueGC(globalObject);
     }
 
@@ -4935,7 +4933,7 @@ pub const Process = struct {
                 bun.String.static("bun"),
             );
         } else {
-            const exe_path = std.fs.selfExePathAlloc(allocator) catch null;
+            const exe_path = bun.selfExePath() catch null;
             args_list.appendAssumeCapacity(
                 if (exe_path) |str| bun.String.fromUTF8(str) else bun.String.static("bun"),
             );

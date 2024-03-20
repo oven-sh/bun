@@ -1555,7 +1555,7 @@ pub fn reloadProcess(
     }
 
     // we must clone selfExePath incase the argv[0] was not an absolute path (what appears in the terminal)
-    const exec_path = (allocator.dupeZ(u8, std.fs.selfExePathAlloc(allocator) catch unreachable) catch unreachable).ptr;
+    const exec_path = (allocator.dupeZ(u8, bun.selfExePath() catch unreachable) catch unreachable).ptr;
 
     // we clone argv so that the memory address isn't the same as the libc one
     const newargv = @as([*:null]?[*:0]const u8, @ptrCast(dupe_argv.ptr));
@@ -2801,6 +2801,20 @@ pub inline fn markPosixOnly() if (Environment.isPosix) void else noreturn {
 pub fn linuxKernelVersion() Semver.Version {
     if (comptime !Environment.isLinux) @compileError("linuxKernelVersion() is only available on Linux");
     return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+}
+
+pub fn selfExePath() ![:0]u8 {
+    const memo = struct {
+        var set = false;
+        // this is lame; open issues to fix std soon
+        var value: [4096]u8 = undefined;
+        var len: usize = 0;
+    };
+    if (memo.set) return memo.value[0..memo.len :0];
+    const init = try std.fs.selfExePath(&memo.value);
+    memo.value[init.len] = 0;
+    memo.set = true;
+    return memo.value[0..init.len :0];
 }
 
 pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");

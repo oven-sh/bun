@@ -277,21 +277,18 @@ pub const StandaloneModuleGraph = struct {
         }.toClean;
 
         const cloned_executable_fd: bun.FileDescriptor = brk: {
-            var self_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-            const self_exe = std.fs.selfExePath(&self_buf) catch |err| {
+            const self_exeZ = bun.selfExePath() catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get self executable path: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
-            self_buf[self_exe.len] = 0;
-            const self_exeZ = self_buf[0..self_exe.len :0];
 
             if (comptime Environment.isWindows) {
                 // copy self and then open it for writing
 
                 var in_buf: bun.WPathBuffer = undefined;
                 strings.copyU8IntoU16(&in_buf, self_exeZ);
-                in_buf[self_exe.len] = 0;
-                const in = in_buf[0..self_exe.len :0];
+                in_buf[self_exeZ.len] = 0;
+                const in = in_buf[0..self_exeZ.len :0];
                 var out_buf: bun.WPathBuffer = undefined;
                 strings.copyU8IntoU16(&out_buf, zname);
                 out_buf[zname.len] = 0;
@@ -733,10 +730,8 @@ pub const StandaloneModuleGraph = struct {
             .mac => {
                 // Use of MAX_PATH_BYTES here is valid as the resulting path is immediately
                 // opened with no modification.
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const self_exe_path = try std.fs.selfExePath(&buf);
-                buf[self_exe_path.len] = 0;
-                const file = try std.fs.openFileAbsoluteZ(buf[0..self_exe_path.len :0].ptr, .{});
+                const self_exe_path = try bun.selfExePath();
+                const file = try std.fs.openFileAbsoluteZ(self_exe_path.ptr, .{});
                 return bun.toFD(file.handle);
             },
             .windows => {

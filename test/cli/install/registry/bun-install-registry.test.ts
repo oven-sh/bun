@@ -1445,7 +1445,7 @@ describe("hoisting", async () => {
     expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
   });
 
-  describe.only("devDependencies", () => {
+  describe("devDependencies", () => {
     test("from normal dependency", async () => {
       // Root package should choose no-deps@1.0.1.
       //

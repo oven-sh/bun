@@ -165,7 +165,7 @@ You can also use `bun run -` to redirect files into Bun. For example, to run a `
 ```bash
 $ echo "console.log!('This is TypeScript!' as any)" > secretly-typescript.js
 $ bun run - < secretly-typescript.js
-Hello
+This is TypeScript!
 ```
 
 For convenience, all code is treated as TypeScript with JSX support when using `bun run -`.

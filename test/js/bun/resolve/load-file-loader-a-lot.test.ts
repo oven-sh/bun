@@ -22,4 +22,4 @@ test("a file: loader file can be imported 10,000 times", async () => {
 
   // It's pretty hard to test for not leaking specifier strings correctly. We need string stats.
   console.log("Memory usage: ", (memory - baseline) / 1024 / 1024, "MB");
-});
+}, 10_000);

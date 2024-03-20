@@ -1,6 +1,7 @@
 name: Zig Build
 
 on:
+  push:
   workflow_dispatch:
     inputs:
       os:

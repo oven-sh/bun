@@ -12,6 +12,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".github/workflows/bun-mac-x64.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -23,6 +24,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - ".github/workflows/bun-mac-x64.yml"
       - "src/**/*"
       - "test/**/*"
       - "packages/bun-usockets/src/**/*"
@@ -37,46 +39,12 @@ on:
 jobs:
   macOS-zig:
     name: macOS Zig Object
-    runs-on: namespace-profile-zig-build
-    if: github.repository_owner == 'oven-sh'
-    strategy:
-      matrix:
-        include:
-          # - cpu: nehalem
-          #   arch: x86_64
-          #   tag: bun-obj-darwin-x64-baseline
-          - cpu: haswell
-            arch: x86_64
-            tag: bun-obj-darwin-x64
-    steps:
-      - uses: actions/checkout@v4
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Compile Zig Object
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: false
-          build-args: |
-            BUILDARCH=${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
-            BUILD_MACHINE_ARCH=${{ runner.arch == 'X64' && 'x86_64' || 'aarch64' }}
-            ARCH=${{ matrix.arch }}
-            CPU_TARGET=${{ matrix.cpu }}
-            TRIPLET=${{ matrix.arch }}-macos-none
-            GIT_SHA=${{ github.sha }}
-          platforms: linux/${{ runner.arch == 'X64' && 'amd64' || 'arm64' }}
-          target: build_release_obj
-          outputs: type=local,dest=${{runner.temp}}/release
-      - name: Upload Zig Object
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.tag }}
-          path: ${{runner.temp}}/release/bun-zig.o
-          if-no-files-found: "error"
+    uses: ./.github/workflows/zig-build.yml
+    secrets: inherit
+    with:
+      os: darwin
+      arch: x64
+      cpu: haswell
 
   macOS-dependencies:
     name: macOS Dependencies
@@ -89,7 +57,6 @@ jobs:
           - cpu: haswell
             arch: x86_64
             tag: bun-darwin-x64
-            obj: bun-obj-darwin-x64
             runner: macos-12-large
             artifact: bun-obj-darwin-x64
     steps:
@@ -164,7 +131,6 @@ jobs:
           - cpu: haswell
             arch: x86_64
             tag: bun-darwin-x64
-            obj: bun-obj-darwin-x64
             runner: macos-12-large
             artifact: bun-obj-darwin-x64
     steps:
@@ -237,7 +203,7 @@ jobs:
           - cpu: haswell
             arch: x86_64
             tag: bun-darwin-x64
-            obj: bun-obj-darwin-x64
+            obj: bun-darwin-x86_64-macos-none-haswell-zig # ${{ jobs.macOS-zig.outputs.artifact }}
             package: bun-darwin-x64
             runner: macos-12-large
             artifact: bun-obj-darwin-x64

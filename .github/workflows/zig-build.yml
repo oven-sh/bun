@@ -1,7 +1,7 @@
 name: zig-build
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       os:
         type: string # e.g. 'linux', 'darwin', 'windows'

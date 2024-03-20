@@ -97,7 +97,6 @@ pub const ShellCompletions = @import("./cli/shell_completions.zig");
 pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
 pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
-pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -783,11 +782,6 @@ pub const Arguments = struct {
                         entry_points = entry_points[1..];
                     }
                 },
-                .ExecCommand => {
-                    if (entry_points.len > 0 and (strings.eqlComptime(entry_points[0], "exec"))) {
-                        entry_points = entry_points[1..];
-                    }
-                },
                 else => {},
             }
 
@@ -1312,7 +1306,6 @@ pub const Command = struct {
 
             RootCommandMatcher.case("run") => .RunCommand,
             RootCommandMatcher.case("help") => .HelpCommand,
-            RootCommandMatcher.case("exec") => .ExecCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
@@ -1854,12 +1847,6 @@ pub const Command = struct {
                 Output.flush();
                 try HelpCommand.exec(allocator);
             },
-            .ExecCommand => {
-                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .ExecCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .ExecCommand);
-                try ExecCommand.exec(ctx);
-                return;
-            },
         }
     }
 
@@ -1983,7 +1970,6 @@ pub const Command = struct {
         UpdateCommand,
         UpgradeCommand,
         ReplCommand,
-        ExecCommand,
         ReservedCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
@@ -2183,10 +2169,6 @@ pub const Command = struct {
                 },
                 Command.Tag.InstallCompletionsCommand => {
                     Output.pretty("<b>Usage<r>: <b><green>bun completions<r>", .{});
-                    Output.flush();
-                },
-                Command.Tag.ExecCommand => {
-                    Output.pretty("<b>Usage<r>: <b><green>bun exec [...cmd]<r>", .{});
                     Output.flush();
                 },
                 else => {

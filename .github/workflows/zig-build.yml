@@ -1,0 +1,67 @@
+name: Zig Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      os:
+        type: string # e.g. 'linux', 'darwin', 'windows'
+        required: true
+      arch:
+        type: string # e.g. 'x64' or 'arm64'
+        required: true
+      cpu:
+        type: string # e.g. 'native', 'nehalem', 'haswell'
+        required: true
+      target:
+        type: string # e.g. 'build_release_obj'
+        required: true
+
+jobs:
+  zig-build:
+    name: Zig Build
+    runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-zig-build' || 'ubuntu-latest' }}
+    steps:
+      # - name: Login to Container Registry
+      #   uses: docker/login-action@v3
+      #   with:
+      #     registry: ghcr.io
+      #     username: ${{ github.actor }}
+      #     password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Environment
+        run: |
+          echo "OS=${{ inputs.os }}" >> $GITHUB_ENV
+          echo "ARCH=${{ contains(runner.arch, 'x64') && 'x86_64' || 'aarch64' }}" >> $GITHUB_ENV
+          echo "BUILDARCH="${{ contains(runner.arch, 'x64') && 'amd64' || 'arm64' }}" >> $GITHUB_ENV
+          if [ $os = "darwin" ]; then
+            echo "TRIPLET=${ARCH}-macos-none" >> $GITHUB_ENV
+          elseif [ $os = "windows" ]; then
+            echo "TRIPLET=${ARCH}-windows-msvc" >> $GITHUB_ENV
+          fi
+          echo "$OS"
+          echo "$ARCH"
+          echo "$BUILDARCH"
+
+      # - name: Compile Zig
+      #   uses: docker/build-push-action@v5
+      #   with:
+      #     push: false
+      #     target: ${{ inputs.target }}
+      #     build-args: |
+      #       BUILDARCH=${BUILDARCH}
+      #       BUILD_MACHINE_ARCH=${{ contains(runner.arch, 'x64') && 'x86_64' || 'aarch64' }}
+      #       TRIPLET=${{ contains(inputs.arch, 'x64') && 'x86_64' || 'aarch64' }}-macos-none
+      #       ARCH=${{ contains(inputs.arch, 'x64') && 'x86_64' || 'aarch64' }}
+      #       CPU_TARGET=${{ inputs.cpu }}
+      #       GIT_SHA=${{ github.sha }}
+      #     platforms: |
+      #       linux/${BUILDARCH}
+      #     outputs: |
+      #       type=local,dest=${{ runner.temp }}/release
+
+      # - name: Upload Zig Object
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: ${{ matrix.tag }}
+      #     path: ${{runner.temp}}/release/bun-zig.o
+      #     if-no-files-found: error

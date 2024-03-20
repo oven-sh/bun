@@ -793,8 +793,7 @@ describe("deno_task", () => {
 
   test("stacktrace", async () => {
     // const folder = TestBuilder.tmpdir();
-    const code = /* ts */ `
-    import { $ } from 'bun'
+    const code = /* ts */ `import { $ } from 'bun'
 
     $.throws(true)
 
@@ -816,6 +815,32 @@ describe("deno_task", () => {
       .exitCode(1)
       .stdout(s => expect(s).toInclude(`[eval]:${lineNr}`))
       .run();
+  });
+
+  test("big_data", async () => {
+    const writerCode = /* ts */ `
+
+    const writer = Bun.stdout.writer();
+    const buf = new Uint8Array(128 * 1024).fill('a'.charCodeAt(0))
+    for (let i = 0; i < 10; i++) {
+      writer.write(buf);
+    }
+    writer.flush()
+    `;
+
+    const { stdout, stderr, exitCode } = Bun.spawnSync(
+      [BUN, "-e", `await Bun.$\`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${$.escape(writerCode)} | cat\``],
+      {
+        env: bunEnv,
+      },
+    );
+
+    expect(stderr.length).toEqual(0);
+    expect(exitCode).toEqual(0);
+    expect(stdout.length).toEqual(128 * 1024 * 10);
+    for (let i = 0; i < stdout.length; i++) {
+      expect(stdout[i]).toEqual("a".charCodeAt(0));
+    }
   });
 });
 

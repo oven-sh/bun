@@ -3098,6 +3098,48 @@ pub const Interpreter = struct {
             waiting_write_err,
         },
 
+        /// If a subprocess and its stdout/stderr exit immediately, we queue
+        /// completion of this `Cmd` onto the event loop to avoid having the Cmd
+        /// unexpectedly deinitalizing deeper in the callstack and becoming
+        /// undefined memory.
+        pub const ShellAsyncSubprocessDone = struct {
+            cmd: *Cmd,
+            concurrent_task: JSC.EventLoopTask,
+
+            pub fn format(this: *const ShellAsyncSubprocessDone, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                _ = fmt; // autofix
+                _ = opts; // autofix
+                try writer.print("ShellAsyncSubprocessDone(0x{x}, cmd=0{x})", .{ @intFromPtr(this), @intFromPtr(this.cmd) });
+            }
+
+            pub fn enqueue(this: *ShellAsyncSubprocessDone) void {
+                log("{} enqueue", .{this});
+                const ctx = this;
+                const evtloop = this.cmd.base.eventLoop();
+
+                if (evtloop == .js) {
+                    evtloop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(ctx, .manual_deinit));
+                } else {
+                    evtloop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(ctx, "runFromMainThreadMini"));
+                }
+            }
+
+            pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
+                this.runFromMainThread();
+            }
+
+            pub fn runFromMainThread(this: *ShellAsyncSubprocessDone) void {
+                log("{} runFromMainThread", .{this});
+                defer this.deinit();
+                this.cmd.parent.childDone(this.cmd, this.cmd.exit_code orelse 0);
+            }
+
+            pub fn deinit(this: *ShellAsyncSubprocessDone) void {
+                log("{} deinit", .{this});
+                bun.destroy(this);
+            }
+        };
+
         const Subprocess = bun.shell.subproc.ShellSubprocess;
 
         pub const Exec = union(enum) {
@@ -3730,7 +3772,15 @@ pub const Interpreter = struct {
                 .stderr => this.bufferedOutputCloseStderr(err),
             }
             if (this.hasFinished()) {
-                this.parent.childDone(this, this.exit_code orelse 0);
+                if (!this.spawn_arena_freed) {
+                    var async_subprocess_done = bun.new(ShellAsyncSubprocessDone, .{
+                        .cmd = this,
+                        .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.base.eventLoop()),
+                    });
+                    async_subprocess_done.enqueue();
+                } else {
+                    this.parent.childDone(this, this.exit_code orelse 0);
+                }
             }
         }
 
@@ -4810,8 +4860,14 @@ pub const Interpreter = struct {
                 done,
             } = .idle,
 
+            pub fn format(this: *const Touch, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                _ = fmt; // autofix
+                _ = opts; // autofix
+                try writer.print("Touch(0x{x}, state={s})", .{ @intFromPtr(this), @tagName(this.state) });
+            }
+
             pub fn deinit(this: *Touch) void {
-                _ = this;
+                log("{} deinit", .{this});
             }
 
             pub fn start(this: *Touch) Maybe(void) {
@@ -4896,6 +4952,8 @@ pub const Interpreter = struct {
             }
 
             pub fn onShellTouchTaskDone(this: *Touch, task: *ShellTouchTask) void {
+                log("{} onShellTouchTaskDone {} tasks_done={d} tasks_count={d}", .{ this, task, this.state.exec.tasks_done, this.state.exec.tasks_count });
+
                 defer bun.default_allocator.destroy(task);
                 this.state.exec.tasks_done += 1;
                 const err = task.err;
@@ -4971,6 +5029,12 @@ pub const Interpreter = struct {
                 event_loop: JSC.EventLoopHandle,
                 concurrent_task: JSC.EventLoopTask,
 
+                pub fn format(this: *const ShellTouchTask, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                    _ = fmt; // autofix
+                    _ = opts; // autofix
+                    try writer.print("ShellTouchTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
+                }
+
                 const print = bun.Output.scoped(.ShellTouchTask, false);
 
                 pub fn deinit(this: *ShellTouchTask) void {
@@ -4994,12 +5058,12 @@ pub const Interpreter = struct {
                 }
 
                 pub fn schedule(this: *@This()) void {
-                    print("schedule", .{});
+                    print("{} schedule", .{this});
                     WorkPool.schedule(&this.task);
                 }
 
                 pub fn runFromMainThread(this: *@This()) void {
-                    print("runFromJS", .{});
+                    print("{} runFromJS", .{this});
                     this.touch.onShellTouchTaskDone(this);
                 }
 
@@ -5009,6 +5073,7 @@ pub const Interpreter = struct {
 
                 fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
                     var this: *ShellTouchTask = @fieldParentPtr(ShellTouchTask, "task", task);
+                    print("{} runFromThreadPool", .{this});
 
                     // We have to give an absolute path
                     const filepath: [:0]const u8 = brk: {
@@ -5362,6 +5427,12 @@ pub const Interpreter = struct {
                     return out;
                 }
 
+                pub fn format(this: *const ShellMkdirTask, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
+                    _ = fmt_; // autofix
+                    _ = options_; // autofix
+                    try writer.print("ShellMkdirTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
+                }
+
                 pub fn create(
                     mkdir: *Mkdir,
                     opts: Opts,
@@ -5383,12 +5454,12 @@ pub const Interpreter = struct {
                 }
 
                 pub fn schedule(this: *@This()) void {
-                    print("schedule", .{});
+                    print("{} schedule", .{this});
                     WorkPool.schedule(&this.task);
                 }
 
                 pub fn runFromMainThread(this: *@This()) void {
-                    print("runFromJS", .{});
+                    print("{} runFromJS", .{this});
                     this.mkdir.onShellMkdirTaskDone(this);
                 }
 
@@ -5398,6 +5469,7 @@ pub const Interpreter = struct {
 
                 fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
                     var this: *ShellMkdirTask = @fieldParentPtr(ShellMkdirTask, "task", task);
+                    print("{} runFromThreadPool", .{this});
 
                     // We have to give an absolute path to our mkdir
                     // implementation for it to work with cwd
@@ -9125,6 +9197,9 @@ pub const Interpreter = struct {
             if (is_dead) {
                 this.skipDead();
             } else {
+                if (bun.Environment.allow_assert) {
+                    if (!is_dead) std.debug.assert(current_writer.written == current_writer.len);
+                }
                 this.__idx += 1;
             }
 
@@ -9139,15 +9214,15 @@ pub const Interpreter = struct {
 
             if (this.total_bytes_written >= SHRINK_THRESHOLD) {
                 log("IOWriter(0x{x}, fd={}) exceeded shrink threshold: truncating", .{ @intFromPtr(this), this.fd });
-                const remaining_len = this.total_bytes_written - SHRINK_THRESHOLD;
+                const remaining_len = this.buf.items.len - this.total_bytes_written;
                 if (remaining_len == 0) {
                     this.buf.clearRetainingCapacity();
                     this.total_bytes_written = 0;
                 } else {
-                    const slice = this.buf.items[SHRINK_THRESHOLD..this.total_bytes_written];
+                    const slice = this.buf.items[this.total_bytes_written..this.buf.items.len];
                     std.mem.copyForwards(u8, this.buf.items[0..remaining_len], slice);
                     this.buf.items.len = remaining_len;
-                    this.total_bytes_written = remaining_len;
+                    this.total_bytes_written = 0;
                 }
                 this.writers.truncate(this.__idx);
                 this.__idx = 0;
@@ -9966,7 +10041,8 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 },
                 .heap => {
                     const new_len = this.heap.len - starting_idx;
-                    this.heap.replaceRange(0, starting_idx, this.heap.ptr[starting_idx..this.heap.len]) catch bun.outOfMemory();
+                    std.mem.copyForwards(T, this.heap.ptr[0..new_len], this.heap.ptr[starting_idx..this.heap.len]);
+                    // this.heap.replaceRange(0, starting_idx, this.heap.ptr[starting_idx..this.heap.len]) catch bun.outOfMemory();
                     this.heap.len = @intCast(new_len);
                 },
             }

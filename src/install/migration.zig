@@ -1009,7 +1009,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
     // This is definitely a memory leak, but it's fine because there is no install api, so this can only be leaked once per process.
     // This operation is neccecary because callers of `loadFromDisk` assume the data is written into the passed `this`.
     // You'll find that not cleaning the lockfile will cause `bun install` to not actually install anything since it doesnt have any hoisted trees.
-    this.* = (try this.cleanWithLogger(&[_]Install.PackageManager.UpdateRequest{}, log, false)).*;
+    this.* = (try this.cleanWithLogger(&[_]Install.PackageManager.UpdateRequest{}, log, false, .silent)).*;
 
     // if (Environment.isDebug) {
     //     const dump_file = try std.fs.cwd().createFileZ("after-clean.json", .{});

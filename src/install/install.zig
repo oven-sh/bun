@@ -9165,6 +9165,7 @@ pub const PackageManager = struct {
             this.lockfile = try this.lockfile.maybeCloneFilteringRootPackages(
                 this.options.local_package_features,
                 this.options.enable.exact_versions,
+                log_level,
             );
         }
 
@@ -9937,6 +9938,7 @@ pub const PackageManager = struct {
             manager.package_json_updates,
             manager.log,
             manager.options.enable.exact_versions,
+            log_level,
         );
         if (manager.lockfile.packages.len > 0) {
             root = manager.lockfile.packages.get(0);

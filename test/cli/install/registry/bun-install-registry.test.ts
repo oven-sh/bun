@@ -2691,6 +2691,33 @@ for (const forceWaiterThread of [false, true]) {
       expect(out).toBeEmpty();
     });
 
+    test("failing root lifecycle script should print output correctly", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "fooooooooo",
+          version: "1.0.0",
+          scripts: {
+            preinstall: `${bunExe().replace(/\\/g, "\\\\")} -e "throw new Error('Oops!')"`,
+          },
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      expect(await exited).toBe(1);
+      expect(await Bun.readableStreamToText(stdout)).toBeEmpty();
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("error: Oops!");
+      expect(err).toContain('error: preinstall script from "fooooooooo" exited with 1');
+    });
+
     test("--ignore-scripts should skip lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),

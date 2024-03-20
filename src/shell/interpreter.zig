@@ -18,6 +18,7 @@
 //!     use undefined memory.
 const std = @import("std");
 const builtin = @import("builtin");
+const string = []const u8;
 const bun = @import("root").bun;
 const os = std.os;
 const Arena = std.heap.ArenaAllocator;
@@ -1148,18 +1149,21 @@ pub const Interpreter = struct {
 
     pub fn initAndRunFromFile(mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
         const src = src: {
             var file = try std.fs.cwd().openFile(path, .{});
             defer file.close();
             break :src try file.reader().readAllAlloc(arena.allocator(), std.math.maxInt(u32));
         };
-        defer arena.deinit();
+        return initAndRunFromFileSource(mini, &arena, path, src);
+    }
 
+    pub fn initAndRunFromFileSource(mini: *JSC.MiniEventLoop, arena: *bun.ArenaAllocator, path: string, src: string) !bun.shell.ExitCode {
         const jsobjs: []JSValue = &[_]JSValue{};
         var out_parser: ?bun.shell.Parser = null;
         var out_lex_result: ?bun.shell.LexResult = null;
         const script = ThisInterpreter.parse(
-            &arena,
+            arena,
             src,
             jsobjs,
             &[_]bun.String{},
@@ -1183,7 +1187,7 @@ pub const Interpreter = struct {
         };
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
-        var interp = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
+        var interp = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, arena, script_heap, jsobjs)) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return 1;
@@ -9459,7 +9463,7 @@ inline fn fastMod(val: anytype, comptime rhs: comptime_int) @TypeOf(val) {
     return val & (rhs - 1);
 }
 
-fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) void {
+pub fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) void {
     switch (event_loop) {
         .mini => e.throwMini(),
         .js => e.throwJS(event_loop.js.global),

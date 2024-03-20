@@ -1,7 +1,6 @@
 name: zig-build
 
 on:
-  push:
   workflow_dispatch:
     inputs:
       os:
@@ -13,15 +12,54 @@ on:
       cpu:
         type: string # e.g. 'native', 'nehalem', 'haswell'
         required: true
-      target:
-        type: string # e.g. 'build_release_obj'
-        required: true
 
 jobs:
   zig-build:
     name: zig-build
-    runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-zig-build' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
+    # runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-zig-build' || 'ubuntu-latest' }}
     steps:
+      - name: Detect Target
+        run: |
+          arch="${{ inputs.arch }}"
+          os="${{ inputs.os }}"
+          case $arch in
+            x64 | x86_64)
+              arch="x86_64"
+              buildarch="amd64"
+              ;;
+            arm64 | aarch64)
+              arch="aarch64"
+              buildarch="arm64"
+              ;;
+            *)
+              echo "Unknown architecture: $arch"
+              exit 1
+              ;;
+          esac
+          case $os in
+            linux)
+              os="linux"
+              triplet="${arch}-linux-gnu"
+              ;;
+            darwin | macos)
+              os="macos"
+              triplet="${arch}-macos-none"
+              ;;
+            windows | win32)
+              os="windows"
+              triplet="${arch}-windows-msvc"
+              ;;
+            *)
+              echo "Unknown operating system: $os"
+              exit 1
+              ;;
+          esac
+          echo "ARCH=$arch" >> $GITHUB_ENV
+          echo "BUILDARCH=$buildarch" >> $GITHUB_ENV
+          echo "OS=$os" >> $GITHUB_ENV
+          echo "TRIPLET=$triplet" >> $GITHUB_ENV
+
       - name: Login to Container Registry
         uses: docker/login-action@v3
         with:
@@ -33,21 +71,21 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           push: false
-          target: ${{ inputs.target }}
+          target: build_release_obj
           build-args: |
-            BUILD_MACHINE_ARCH=${{ contains(runner.arch, 'x64') && 'x86_64' || 'aarch64' }}
-            TRIPLET=${{ contains(inputs.arch, 'x64') && 'x86_64' || 'aarch64' }}-macos-none
-            ARCH=${{ contains(inputs.arch, 'x64') && 'x86_64' || 'aarch64' }}
+            TRIPLET=${{ env.TRIPLET }}
+            BUILD_MACHINE_ARCH=${{ env.ARCH }}
+            ARCH=${{ env.ARCH }}
             CPU_TARGET=${{ inputs.cpu }}
             GIT_SHA=${{ github.sha }}
           platforms: |
-            linux/${{ contains(runner.arch, 'x64') && 'amd64' || 'arm64' }}
+            linux/${{ env.ARCH }}
           outputs: |
             type=local,dest=${{ runner.temp }}/release
 
       - name: Upload Zig Object
         uses: actions/upload-artifact@v4
         with:
-          name: zig
+          name: ${{ env.TRIPLET }}-${{ inputs.cpu }}-zig
           path: ${{ runner.temp }}/release/bun-zig.o
           if-no-files-found: error

@@ -2812,9 +2812,10 @@ pub fn selfExePath() ![:0]u8 {
     };
     if (memo.set) return memo.value[0..memo.len :0];
     const init = try std.fs.selfExePath(&memo.value);
-    memo.value[init.len] = 0;
+    memo.len = init.len;
+    memo.value[memo.len] = 0;
     memo.set = true;
-    return memo.value[0..init.len :0];
+    return memo.value[0..memo.len :0];
 }
 
 pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");

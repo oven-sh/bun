@@ -1,6 +1,7 @@
 name: zig-build
 
 on:
+  push:
   workflow_dispatch:
     inputs:
       os:
@@ -48,5 +49,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zig
-          path: ${{runner.temp}}/release/bun-zig.o
+          path: ${{ runner.temp }}/release/bun-zig.o
           if-no-files-found: error

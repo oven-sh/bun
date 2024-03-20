@@ -1222,7 +1222,7 @@ pub const Command = struct {
     }
 
     pub fn isNode(argv0: []const u8) bool {
-        return strings.endsWithComptime(argv0, "node");
+        return strings.endsWithComptime(argv0, "node" ++ bun.exe_suffix);
     }
 
     pub fn which() Tag {

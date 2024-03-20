@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
 import { join, sep } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp, readdir } from "fs/promises";
@@ -869,7 +869,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     expect(err).not.toContain("panic:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
+      "Checked 19 installs across 23 packages (no changes)",
     ]);
 
     expect(await exited).toBe(0);
@@ -2657,9 +2657,10 @@ for (const forceWaiterThread of [false, true]) {
         expect.stringContaining("1 package installed"),
       ]);
       expect(await exited).toBe(0);
-      expect(await file(join(packageDir, "test.txt")).text()).toBe(packageDir + "/");
-      expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(packageDir + "/");
-      expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(packageDir + "/");
+      const packageDir_expected = packageDir.replaceAll(sep, "/") + "/";
+      expect(await file(join(packageDir, "test.txt")).text()).toBe(packageDir_expected);
+      expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(packageDir_expected);
+      expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(packageDir_expected);
     });
 
     test("failing lifecycle script should print output", async () => {
@@ -3301,13 +3302,13 @@ for (const forceWaiterThread of [false, true]) {
         env,
       });
 
-      expect(await exited).toBe(0);
       const err = await new Response(stderr).text();
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("panic:");
       expect(err).toContain("v");
+      expect(await exited).toBe(0);
     });
 
     // if this test fails, `electron` might be removed from the default list
@@ -4036,7 +4037,7 @@ for (const forceWaiterThread of [false, true]) {
           name: "foo",
           version: "1.0.0",
           scripts: {
-            postinstall: 'node -p \'require("fs").writeFileSync("postinstall.txt", "postinstall")\'',
+            postinstall: `node -p 'require("fs").writeFileSync("postinstall.txt","postinstall")'`,
           },
         }),
       );
@@ -4344,7 +4345,7 @@ for (const forceWaiterThread of [false, true]) {
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
           out = await Bun.readableStreamToText(stdout);
-          expect(out).toContain("./node_modules/uses-what-bin @1.0.0");
+          expect(out).toContain("./node_modules/uses-what-bin @1.0.0".replaceAll("/", sep));
           expect(await exited).toBe(0);
         });
       }

@@ -5,6 +5,7 @@ const logger = bun.logger;
 const Environment = bun.Environment;
 const Command = @import("../cli.zig").Command;
 const Install = @import("../install/install.zig");
+const LifecycleScriptSubprocess = Install.LifecycleScriptSubprocess;
 const PackageID = Install.PackageID;
 const String = @import("../install/semver.zig").String;
 const PackageManager = Install.PackageManager;
@@ -339,6 +340,14 @@ pub const TrustCommand = struct {
                 for (entry.items) |info| {
                     if (info.skip) continue;
 
+                    while (LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= pm.options.max_concurrent_lifecycle_scripts) {
+                        if (pm.options.log_level.isVerbose()) {
+                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.Monotonic)});
+                        }
+
+                        pm.sleep();
+                    }
+
                     switch (pm.options.log_level) {
                         inline else => |log_level| try pm.spawnPackageLifecycleScripts(ctx, info.scripts_list, log_level),
                     }
@@ -350,7 +359,7 @@ pub const TrustCommand = struct {
                 }
 
                 while (pm.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
-                    pm.event_loop.loop().tick();
+                    pm.sleep();
                 }
             }
         }

@@ -9,9 +9,9 @@ on:
       arch:
         type: string # e.g. 'x64' or 'arm64'
         required: true
-      cpu:
-        type: string # e.g. 'native', 'nehalem', 'haswell'
-        required: true
+      baseline:
+        type: boolean
+        required: false
 
 jobs:
   zig-build:
@@ -20,9 +20,7 @@ jobs:
     steps:
       - name: Detect Target
         run: |
-          arch="${{ inputs.arch }}"
-          os="${{ inputs.os }}"
-          case $arch in
+          case "${{ inputs.arch }}" in
             x64 | x86_64)
               arch="x86_64"
               buildarch="amd64"
@@ -32,33 +30,39 @@ jobs:
               buildarch="arm64"
               ;;
             *)
-              echo "Unknown architecture: $arch"
+              echo "Unsupported architecture"
               exit 1
               ;;
           esac
-          case $os in
+          case "${{ inputs.os }}" in
             linux)
-              os="linux"
               triplet="${arch}-linux-gnu"
               ;;
             darwin | macos)
-              os="macos"
               triplet="${arch}-macos-none"
               ;;
             windows | win32)
-              os="windows"
               triplet="${arch}-windows-msvc"
               ;;
             *)
-              echo "Unknown operating system: $os"
+              echo "Unsupported operating system"
               exit 1
               ;;
           esac
+          if [ "$arch" = "x86_64" ]; then
+            if [ -n "${{ inputs.baseline }}" ]; then
+              cpu="nehalem"
+            else
+              cpu="haswell"
+            fi
+          else
+            cpu="native"
+          fi
           echo "ARCH=$arch" >> $GITHUB_ENV
           echo "BUILDARCH=$buildarch" >> $GITHUB_ENV
-          echo "OS=$os" >> $GITHUB_ENV
+          echo "CPU_TARGET=$cpu" >> $GITHUB_ENV
           echo "TRIPLET=$triplet" >> $GITHUB_ENV
-          artifact="bun-$triplet-$arch-zig"
+          artifact="bun-zig-$triplet-$cpu"
           echo "ARTIFACT=$artifact" >> $GITHUB_ENV
           echo "artifact=$artifact" >> $GITHUB_OUTPUT
 
@@ -78,8 +82,8 @@ jobs:
             TRIPLET=${{ env.TRIPLET }}
             BUILD_MACHINE_ARCH=${{ env.ARCH }}
             ARCH=${{ env.ARCH }}
-            CPU_TARGET=${{ inputs.cpu }}
-            GIT_SHA=${{ github.sha }}
+            CPU_TARGET=${{ env.CPU_TARGET }}
+            GIT_SHA=${{ env.GITHUB_SHA }}
           platforms: |
             linux/${{ env.ARCH }}
           outputs: |

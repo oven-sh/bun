@@ -207,7 +207,7 @@ jobs:
           - cpu: haswell
             arch: x86_64
             tag: bun-darwin-x64
-            obj: bun-darwin-x86_64-macos-none-haswell-zig # ${{ jobs.macOS-zig.outputs.artifact }}
+            obj: bun-zig-x86_64-macos-none-haswell # ${{ jobs.macOS-zig.outputs.artifact }}
             package: bun-darwin-x64
             runner: macos-12-large
             artifact: bun-obj-darwin-x64

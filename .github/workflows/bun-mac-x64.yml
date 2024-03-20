@@ -48,7 +48,7 @@ jobs:
     with:
       os: darwin
       arch: x64
-      cpu: haswell
+      baseline: true
 
   macOS-dependencies:
     name: macOS Dependencies

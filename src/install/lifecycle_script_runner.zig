@@ -131,17 +131,39 @@ pub const LifecycleScriptSubprocess = struct {
 
         const combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
 
+        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const lifecycle_script_path, var lifecycle_script_file = if (Environment.isWindows or shell_bin == null) blk: {
+            const tempdir = this.manager.getTemporaryDirectory();
+            var lifecycle_script_name = bun.span(try bun.fs.FileSystem.instance.tmpname("lifecycle-script", &path_buf, 12345));
+            @memcpy(path_buf[lifecycle_script_name.len..].ptr, ".bun.sh\x00");
+            lifecycle_script_name.len += 7;
+
+            const lifecycle_script_file = try tempdir.createFile(lifecycle_script_name, .{});
+            errdefer lifecycle_script_file.close();
+            bun.path.platformToPosixInPlace(u8, combined_script);
+            try lifecycle_script_file.writeAll(combined_script);
+            const lifecycle_script_path = try bun.getFdPath(lifecycle_script_file.handle, &path_buf2);
+            path_buf2[lifecycle_script_path.len] = 0;
+
+            break :blk .{
+                path_buf2[0..lifecycle_script_path.len :0],
+                lifecycle_script_file,
+            };
+        } else .{ "", null };
+        if (lifecycle_script_file) |*f| f.close();
+
         log("{s} - {s} $ {s}", .{ this.package_name, this.scriptName(), combined_script });
 
-        var argv = if (shell_bin != null or !Environment.isWindows) [_]?[*:0]const u8{
+        var argv = if (shell_bin != null and !Environment.isWindows) [_]?[*:0]const u8{
             shell_bin.?,
             "-c",
             combined_script,
             null,
         } else [_]?[*:0]const u8{
             try bun.selfExePath(),
-            "exec",
-            combined_script,
+            "run",
+            lifecycle_script_path,
             null,
         };
         if (Environment.isWindows) {
@@ -171,6 +193,7 @@ pub const LifecycleScriptSubprocess = struct {
             .windows = if (Environment.isWindows)
                 .{
                     .loop = JSC.EventLoopHandle.init(&manager.event_loop),
+                    .verbatim_arguments = true,
                 }
             else {},
         };

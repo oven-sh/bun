@@ -2592,22 +2592,30 @@ pub const PackageManager = struct {
         };
         defer node_gyp_file.close();
 
-        var bytes: string = switch (Environment.os) {
-            else => "#!/usr/bin/env node\nrequire(\"child_process\").spawnSync(\"bun\",[\"x\",\"node-gyp\",...process.argv.slice(2)],{stdio:\"inherit\"})",
-            .windows => "@node -e \"require('child_process').spawnSync('bun',['x','node-gyp',...process.argv.slice(2)],{stdio:'inherit'})\"",
+        const shebang = switch (Environment.os) {
+            .windows =>
+            \\0</* :{
+            \\  @echo off
+            \\  node %~f0 %*
+            \\  exit /b %errorlevel%
+            \\:} */0;
+            \\
+            ,
+            else =>
+            \\#!/usr/bin/env node
+            \\
+            ,
         };
-        var index: usize = 0;
-        while (index < bytes.len) {
-            switch (bun.sys.write(bun.toFD(node_gyp_file.handle), bytes[index..])) {
-                .result => |written| {
-                    index += written;
-                },
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@tagName(err.getErrno())});
-                    Global.crash();
-                },
-            }
-        }
+        const content =
+            \\const child_process = require("child_process");
+            \\child_process.spawnSync("bun", ["x", "node-gyp", ...process.argv.slice(2)], { stdio: "inherit" });
+            \\
+        ;
+
+        node_gyp_file.writeAll(shebang ++ content) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@errorName(err)});
+            Global.crash();
+        };
 
         // Add our node-gyp tempdir to the path
         const existing_path = this.env.get("PATH") orelse "";

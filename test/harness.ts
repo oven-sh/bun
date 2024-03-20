@@ -1,7 +1,7 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { readlink, readFile } from "fs/promises";
-import { isAbsolute } from "path";
+import { readlink, readFile, writeFile } from "fs/promises";
+import { isAbsolute, sep } from "path";
 import { openSync, closeSync } from "node:fs";
 
 export const isMacOS = process.platform === "darwin";
@@ -556,4 +556,22 @@ export function toTOMLString(opts: object) {
     ret += `${key} = ${JSON.stringify(value)}` + "\n";
   }
   return ret;
+}
+
+const shebang_posix = (program: string) => `#!/usr/bin/env ${program}
+`;
+
+const shebang_windows = (program: string) => `0</* :{
+  @echo off
+  ${program} %~f0 %*
+  exit /b %errorlevel%
+:} */0;
+`;
+
+export function writeShebangScript(path: string, program: string, data: string) {
+  if (!isWindows) {
+    return writeFile(path, shebang_posix(program) + "\n" + data, { mode: 0o777 });
+  } else {
+    return writeFile(path + ".cmd", shebang_windows(program) + "\n" + data);
+  }
 }

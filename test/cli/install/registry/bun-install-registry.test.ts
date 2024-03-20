@@ -1444,6 +1444,231 @@ describe("hoisting", async () => {
     } as any);
     expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
   });
+
+  describe("devDependencies", () => {
+    test("from normal dependency", async () => {
+      // Root package should choose no-deps@1.0.1.
+      //
+      // `normal-dep-and-dev-dep` should install `no-deps@1.0.0` and `normal-dep@1.0.1`.
+      // It should not hoist (skip) `no-deps` for `normal-dep-and-dev-dep`.
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "normal-dep-and-dev-dep": "1.0.2",
+          },
+          devDependencies: {
+            "no-deps": "1.0.1",
+          },
+        }),
+      );
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        stdin: "ignore",
+        env,
+      });
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("panic:");
+      expect(await exited).toBe(0);
+
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+        name: "no-deps",
+        version: "1.0.1",
+      });
+
+      expect(
+        await file(
+          join(packageDir, "node_modules", "normal-dep-and-dev-dep", "node_modules", "no-deps", "package.json"),
+        ).json(),
+      ).toEqual({
+        name: "no-deps",
+        version: "1.0.0",
+      });
+    });
+
+    test("from workspace", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+          devDependencies: {
+            "no-deps": "1.0.1",
+          },
+        }),
+      );
+
+      await mkdir(join(packageDir, "packages", "moo"), { recursive: true });
+      await writeFile(
+        join(packageDir, "packages", "moo", "package.json"),
+        JSON.stringify({
+          name: "moo",
+          version: "1.2.3",
+          dependencies: {
+            "no-deps": "2.0.0",
+            "normal-dep-and-dev-dep": "1.0.0",
+          },
+          devDependencies: {
+            "no-deps": "1.1.0",
+          },
+        }),
+      );
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stderr: "pipe",
+        stdout: "ignore",
+        stdin: "ignore",
+        env,
+      });
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("panic:");
+      expect(await exited).toBe(0);
+
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+        name: "no-deps",
+        version: "1.0.1",
+      });
+
+      expect(
+        await file(join(packageDir, "node_modules", "moo", "node_modules", "no-deps", "package.json")).json(),
+      ).toEqual({
+        name: "no-deps",
+        version: "1.1.0",
+      });
+    });
+
+    test("from linked package", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "1.1.0",
+            "folder-dep": "file:./folder-dep",
+          },
+          devDependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+      );
+
+      await mkdir(join(packageDir, "folder-dep"));
+      await writeFile(
+        join(packageDir, "folder-dep", "package.json"),
+        JSON.stringify({
+          name: "folder-dep",
+          version: "1.2.3",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "normal-dep-and-dev-dep": "1.0.1",
+          },
+          devDependencies: {
+            "no-deps": "1.0.1",
+          },
+        }),
+      );
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stderr: "pipe",
+        stdout: "ignore",
+        stdin: "ignore",
+        env,
+      });
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("panic:");
+      expect(await exited).toBe(0);
+
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+        name: "no-deps",
+        version: "2.0.0",
+      });
+      expect(
+        await file(
+          join(packageDir, "node_modules", "normal-dep-and-dev-dep", "node_modules", "no-deps", "package.json"),
+        ).json(),
+      ).toEqual({
+        "name": "no-deps",
+        "version": "1.1.0",
+      });
+      expect(
+        await file(join(packageDir, "node_modules", "folder-dep", "node_modules", "no-deps", "package.json")).json(),
+      ).toEqual({
+        name: "no-deps",
+        version: "1.0.1",
+      });
+    });
+    test("dependency with normal dependency same as root", async () => {
+      await writeFile(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "one-dep": "1.0.0",
+          },
+          devDependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+      );
+
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stderr: "pipe",
+        stdout: "ignore",
+        stdin: "ignore",
+        env,
+      });
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("panic:");
+      expect(await exited).toBe(0);
+
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+        name: "no-deps",
+        version: "2.0.0",
+      });
+      expect(
+        await file(join(packageDir, "node_modules", "one-dep", "node_modules", "no-deps", "package.json")).json(),
+      ).toEqual({
+        name: "no-deps",
+        version: "1.0.1",
+      });
+    });
+  });
 });
 
 describe("workspaces", async () => {

@@ -3877,6 +3877,10 @@ pub const NodeFS = struct {
         return Maybe(Return.CopyFile).success;
     }
 
+    // copy_file_range() is frequently not supported across devices, such as tmpfs.
+    // This is relevant for `bun install`
+    // However, sendfile() is supported across devices.
+    // Only on Linux. There are constraints though. It cannot be used if the file type does not support
     pub noinline fn copyFileUsingSendfileOnLinuxWithReadWriteFallback(src: [:0]const u8, dest: [:0]const u8, src_fd: FileDescriptor, dest_fd: FileDescriptor, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
         while (true) {
             const amt = switch (bun.sys.sendfile(src_fd, dest_fd, std.math.maxInt(i32) - 1)) {
@@ -4063,6 +4067,7 @@ pub const NodeFS = struct {
                     const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.mem.page_size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
+                            .INTR => continue,
                             inline .XDEV, .NOSYS => |errno| brk: {
                                 if (comptime errno == .NOSYS) {
                                     bun.disableCopyFileRangeSyscall();
@@ -4083,6 +4088,7 @@ pub const NodeFS = struct {
                     const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
+                            .INTR => continue,
                             inline .XDEV, .NOSYS => |errno| brk: {
                                 if (comptime errno == .NOSYS) {
                                     bun.disableCopyFileRangeSyscall();

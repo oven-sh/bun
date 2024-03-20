@@ -412,14 +412,22 @@ pub fn chdir(destination: anytype) Maybe(void) {
     return Maybe(void).todo();
 }
 
-pub fn sendfile(in: bun.FileDescriptor, out: bun.FileDescriptor, len: usize) Maybe(usize) {
-    // we set a maximum to avoid EINVAL
-    const rc = std.os.linux.sendfile(out.cast(), in.cast(), null, @min(len, std.math.maxInt(i32) - 1));
-    if (Maybe(usize).errnoSysFd(rc, .sendfile, in)) |err| {
-        return err;
-    }
+pub fn sendfile(src: bun.FileDescriptor, dest: bun.FileDescriptor, len: usize) Maybe(usize) {
+    while (true) {
+        const rc = std.os.linux.sendfile(
+            dest.cast(),
+            src.cast(),
+            null,
+            // we set a maximum to avoid EINVAL
+            @min(len, std.math.maxInt(i32) - 1),
+        );
+        if (Maybe(usize).errnoSysFd(rc, .sendfile, src)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
 
-    return .{ .result = rc };
+        return .{ .result = rc };
+    }
 }
 
 pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {

@@ -319,11 +319,10 @@ pub const RuntimeTranspilerStore = struct {
             var resolved_source = this.resolved_source;
             const specifier = brk: {
                 if (this.parse_error == null) {
-                    resolved_source.source_url = resolved_source.specifier.createIfDifferent(this.path.text);
-                    break :brk resolved_source.specifier;
+                    break :brk bun.String.createUTF8(this.path.text);
                 }
 
-                break :brk bun.String.createUTF8(this.path.text);
+                break :brk resolved_source.specifier;
             };
 
             resolved_source.tag = brk: {

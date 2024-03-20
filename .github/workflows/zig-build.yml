@@ -16,8 +16,7 @@ on:
 jobs:
   zig-build:
     name: zig-build
-    runs-on: ubuntu-latest
-    # runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-zig-build' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-zig-build' || 'ubuntu-latest' }}
     steps:
       - name: Detect Target
         run: |
@@ -59,6 +58,9 @@ jobs:
           echo "BUILDARCH=$buildarch" >> $GITHUB_ENV
           echo "OS=$os" >> $GITHUB_ENV
           echo "TRIPLET=$triplet" >> $GITHUB_ENV
+          artifact="bun-$triplet-$arch-zig"
+          echo "ARTIFACT=$artifact" >> $GITHUB_ENV
+          echo "artifact=$artifact" >> $GITHUB_OUTPUT
 
       - name: Login to Container Registry
         uses: docker/login-action@v3
@@ -67,7 +69,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compile Zig
+      - name: Compile Zig Object
         uses: docker/build-push-action@v5
         with:
           push: false
@@ -86,6 +88,6 @@ jobs:
       - name: Upload Zig Object
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.TRIPLET }}-${{ inputs.cpu }}-zig
+          name: ${{ env.ARTIFACT }}
           path: ${{ runner.temp }}/release/bun-zig.o
           if-no-files-found: error

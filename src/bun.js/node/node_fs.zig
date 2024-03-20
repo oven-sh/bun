@@ -3877,6 +3877,24 @@ pub const NodeFS = struct {
         return Maybe(Return.CopyFile).success;
     }
 
+    pub noinline fn copyFileUsingSendfileOnLinuxWithReadWriteFallback(src: [:0]const u8, dest: [:0]const u8, src_fd: FileDescriptor, dest_fd: FileDescriptor, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
+        while (true) {
+            const amt = switch (bun.sys.sendfile(src_fd, dest_fd, std.math.maxInt(i32) - 1)) {
+                .err => {
+                    return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, stat_size, wrote);
+                },
+                .result => |amount| amount,
+            };
+
+            wrote.* += amt;
+            if (amt == 0) {
+                break;
+            }
+        }
+
+        return Maybe(Return.CopyFile).success;
+    }
+
     /// https://github.com/libuv/libuv/pull/2233
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
@@ -4034,7 +4052,7 @@ pub const NodeFS = struct {
             var off_out_copy = @as(i64, @bitCast(@as(u64, 0)));
 
             if (!bun.canUseCopyFileRangeSyscall()) {
-                return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                return copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
             }
 
             if (size == 0) {
@@ -4049,7 +4067,7 @@ pub const NodeFS = struct {
                                 if (comptime errno == .NOSYS) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
-                                break :brk copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                                break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
                             },
                             else => return err,
                         };
@@ -4069,7 +4087,7 @@ pub const NodeFS = struct {
                                 if (comptime errno == .NOSYS) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
-                                break :brk copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                                break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
                             },
                             else => return err,
                         };
@@ -6359,7 +6377,7 @@ pub const NodeFS = struct {
             var off_out_copy = @as(i64, @bitCast(@as(u64, 0)));
 
             if (!bun.canUseCopyFileRangeSyscall()) {
-                return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                return copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
             }
 
             if (size == 0) {
@@ -6374,7 +6392,7 @@ pub const NodeFS = struct {
                                 if (comptime errno == .NOSYS) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
-                                break :brk copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                                break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
                             },
                             else => return err,
                         };
@@ -6394,7 +6412,7 @@ pub const NodeFS = struct {
                                 if (comptime errno == .NOSYS) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
-                                break :brk copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                                break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
                             },
                             else => return err,
                         };

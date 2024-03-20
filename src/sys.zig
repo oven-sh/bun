@@ -412,6 +412,16 @@ pub fn chdir(destination: anytype) Maybe(void) {
     return Maybe(void).todo();
 }
 
+pub fn sendfile(in: bun.FileDescriptor, out: bun.FileDescriptor, len: usize) Maybe(usize) {
+    // we set a maximum to avoid EINVAL
+    const rc = std.os.linux.sendfile(out.cast(), in.cast(), null, @min(len, std.math.maxInt(i32) - 1));
+    if (Maybe(usize).errnoSysFd(rc, .sendfile, in)) |err| {
+        return err;
+    }
+
+    return .{ .result = rc };
+}
+
 pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
     if (Environment.isWindows) {
         return sys_uv.stat(path);

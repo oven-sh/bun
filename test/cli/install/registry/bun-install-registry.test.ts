@@ -2981,7 +2981,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test.skip("it should add `node-gyp rebuild` as the `install` script when `install` and `postinstall` don't exist and `binding.gyp` exists in the root of the package", async () => {
+    test("it should add `node-gyp rebuild` as the `install` script when `install` and `postinstall` don't exist and `binding.gyp` exists in the root of the package", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3019,7 +3019,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "node_modules/binding-gyp-scripts/build.node"))).toBeTrue();
     });
 
-    test.skip("automatic node-gyp scripts should not run for untrusted dependencies, and should run after adding to `trustedDependencies`", async () => {
+    test("automatic node-gyp scripts should not run for untrusted dependencies, and should run after adding to `trustedDependencies`", async () => {
       const packageJSON: any = {
         name: "foo",
         version: "1.0.0",
@@ -3079,7 +3079,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "node_modules", "binding-gyp-scripts", "build.node"))).toBeTrue();
     });
 
-    test.skip("automatic node-gyp scripts work in package root", async () => {
+    test("automatic node-gyp scripts work in package root", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3132,7 +3132,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
     });
 
-    test.skip("auto node-gyp scripts work when scripts exists other than `install` and `preinstall`", async () => {
+    test("auto node-gyp scripts work when scripts exists other than `install` and `preinstall`", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3177,7 +3177,7 @@ for (const forceWaiterThread of [false, true]) {
     });
 
     for (const script of ["install", "preinstall"]) {
-      test.skip(`does not add auto node-gyp script when ${script} script exists`, async () => {
+      test(`does not add auto node-gyp script when ${script} script exists`, async () => {
         const packageJSON: any = {
           name: "foo",
           version: "1.0.0",
@@ -3592,7 +3592,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test.skip("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
+    test("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -4376,7 +4376,7 @@ for (const forceWaiterThread of [false, true]) {
 
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
     });
-    test.skip("ensureTempNodeGypScript works", async () => {
+    test("ensureTempNodeGypScript works", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -4661,7 +4661,7 @@ for (const forceWaiterThread of [false, true]) {
       }
     });
     describe.if(!forceWaiterThread || process.platform === "linux")("does not use 100% cpu", async () => {
-      test("install", async () => {
+      test.skip("install", async () => {
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({

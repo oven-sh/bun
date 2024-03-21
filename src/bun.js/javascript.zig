@@ -1557,7 +1557,7 @@ pub const VirtualMachine = struct {
                 .source_url = bun.String.init(source_url),
                 .hash = 0,
                 .allocator = null,
-                .needs_deref = false,
+                .source_code_needs_deref = false,
             };
         }
         var source = this.refCountedString(code, hash_, !add_double_ref);
@@ -1572,7 +1572,7 @@ pub const VirtualMachine = struct {
             .source_url = bun.String.init(source_url),
             .hash = source.hash,
             .allocator = source,
-            .needs_deref = false,
+            .source_code_needs_deref = false,
         };
     }
 

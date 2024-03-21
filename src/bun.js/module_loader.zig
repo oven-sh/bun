@@ -144,7 +144,7 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String
         .source_url = bun.String.init(@tagName(name)),
         .hash = 0,
         .tag = name,
-        .needs_deref = false,
+        .source_code_needs_deref = false,
     };
 }
 
@@ -2287,7 +2287,7 @@ pub const ModuleLoader = struct {
                         .source_url = specifier,
                         .hash = 0,
                         .tag = .esm,
-                        .needs_deref = true,
+                        .source_code_needs_deref = true,
                     };
                 },
 
@@ -2392,7 +2392,7 @@ pub const ModuleLoader = struct {
                         .specifier = specifier,
                         .source_url = specifier.dupeRef(),
                         .hash = 0,
-                        .needs_deref = false,
+                        .source_code_needs_deref = false,
                     };
                 }
 
@@ -2402,7 +2402,7 @@ pub const ModuleLoader = struct {
                     .specifier = specifier,
                     .source_url = specifier.dupeRef(),
                     .hash = 0,
-                    .needs_deref = false,
+                    .source_code_needs_deref = false,
                 };
             }
         }

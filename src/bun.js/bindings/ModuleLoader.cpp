@@ -596,7 +596,7 @@ JSValue fetchCommonJSModule(
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
 
-    ASSERT(Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false) == nullptr);
+    Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false);
     getSourceCodeStringForDeref();
 
     if (res->success && res->result.value.commonJSExportsLen) {

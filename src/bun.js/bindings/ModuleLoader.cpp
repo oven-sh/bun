@@ -764,7 +764,7 @@ static JSValue fetchESMSourceCode(
             return pendingCtx;
         }
     } else {
-        ASSERT(Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false) == nullptr);
+        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false);
         getSourceCodeStringForDeref();
     }
 

@@ -2049,7 +2049,7 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
     "",
     " + what-bin@1.5.0",
     "",
-    expect.stringContaining("1 package installed"),
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(Bun.which("what-bin", { PATH: join(packageDir, "node_modules", ".bin") })).toBe(
@@ -2297,7 +2297,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         " + all-lifecycle-scripts@1.0.0",
         "",
-        expect.stringContaining("1 package installed"),
+        " 1 package installed",
       ]);
       expect(await exited).toBe(0);
       expect(await file(join(packageDir, "preinstall.txt")).text()).toBe("preinstall exists!");
@@ -2352,7 +2352,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         " + all-lifecycle-scripts@1.0.0",
         "",
-        expect.stringContaining("1 package installed"),
+        " 1 package installed",
       ]);
 
       expect(await file(join(packageDir, "preinstall.txt")).text()).toBe("preinstall!");
@@ -2794,7 +2794,7 @@ for (const forceWaiterThread of [false, true]) {
         " + lifecycle-postinstall@1.0.0",
         "",
         // @ts-ignore
-        expect.stringContaining("1 package installed"),
+        " 1 package installed",
       ]);
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
@@ -2819,7 +2819,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         " + lifecycle-postinstall@1.0.0",
         "",
-        expect.stringContaining("1 package installed"),
+        " 1 package installed",
       ]);
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
@@ -2879,7 +2879,7 @@ for (const forceWaiterThread of [false, true]) {
         " + another-init-cwd@1.0.0",
         " + lifecycle-init-cwd@1.0.0",
         "",
-        expect.stringContaining("1 package installed"),
+        " 1 package installed",
       ]);
       expect(await exited).toBe(0);
       const packageDir_expected = packageDir.replaceAll(sep, "/") + "/";
@@ -3112,7 +3112,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         " + node-gyp@1.5.0",
         "",
-        expect.stringContaining("1 package installed"),
+        " 1 package installed",
       ]);
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
@@ -3170,7 +3170,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         " + node-gyp@1.5.0",
         "",
-        expect.stringContaining("1 package installed"),
+        " 1 package installed",
       ]);
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
@@ -3210,7 +3210,7 @@ for (const forceWaiterThread of [false, true]) {
           "",
           " + node-gyp@1.5.0",
           "",
-          expect.stringContaining("1 package installed"),
+          " 1 package installed",
         ]);
         expect(await exited).toBe(0);
         expect(await exists(join(packageDir, "build.node"))).toBeFalse();
@@ -3652,7 +3652,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         " + electron@1.0.0",
         "",
-        expect.stringContaining("1 package installed"),
+        " 1 package installed",
       ]);
       expect(out).not.toContain("Blocked");
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
@@ -3821,7 +3821,7 @@ for (const forceWaiterThread of [false, true]) {
         "",
         " + electron@1.0.0",
         "",
-        expect.stringContaining("1 package installed"),
+        " 1 package installed",
       ]);
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
@@ -4015,7 +4015,7 @@ for (const forceWaiterThread of [false, true]) {
             "",
             " installed no-deps@1.0.0",
             "",
-            expect.stringContaining("1 package installed"),
+            " 1 package installed",
           ]);
           expect(await exited).toBe(0);
           expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeTrue();
@@ -4053,7 +4053,7 @@ for (const forceWaiterThread of [false, true]) {
             "",
             " installed no-deps@2.0.0",
             "",
-            expect.stringContaining("1 package installed"),
+            " 1 package installed",
           ]);
           expect(await exited).toBe(0);
           expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeTrue();
@@ -4289,7 +4289,7 @@ for (const forceWaiterThread of [false, true]) {
           "",
           " + electron@1.0.0",
           "",
-          expect.stringContaining("1 package installed"),
+          " 1 package installed",
         ]);
         expect(await exited).toBe(0);
         expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
@@ -4883,7 +4883,7 @@ test("it should be able to find binary in node_modules/.bin from parent director
     "",
     " + what-bin@1.0.0",
     "",
-    expect.stringContaining("1 package installed"),
+    " 1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(await file(join(packageDir, "morePackageDir", "missing-bin.txt")).text()).toBe("missing-bin@WHAT");

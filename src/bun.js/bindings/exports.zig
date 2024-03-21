@@ -206,6 +206,7 @@ pub const ResolvedSource = extern struct {
 
     /// This is for source_code
     source_code_needs_deref: bool = true,
+    source_map_generation_counter: u32 = 0,
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };

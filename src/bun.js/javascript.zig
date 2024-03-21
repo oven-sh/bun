@@ -176,7 +176,11 @@ pub const SavedSourceMap = struct {
         ParsedSourceMap,
         SavedMappings,
     });
-    pub const HashTable = std.HashMap(u64, *anyopaque, IdentityContext(u64), 80);
+    pub const HashTableValue = struct {
+        ptr: Value,
+        generation_counter: u32 = 0,
+    };
+    pub const HashTable = std.HashMap(u64, HashTableValue, IdentityContext(u64), 80);
 
     /// This is a pointer to the map located on the VirtualMachine struct
     map: *HashTable,
@@ -184,17 +188,43 @@ pub const SavedSourceMap = struct {
     mutex: bun.Lock = bun.Lock.init(),
 
     pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
-        try this.putMappings(source, chunk.buffer);
+        _ = try this.putMappings(source, chunk.buffer);
     }
 
     pub const SourceMapHandler = js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk);
+
+    pub fn delete(this: *SavedSourceMap, source_url: []const u8, generation_counter: u32) bool {
+        var value = brk: {
+            const hash = bun.hash(source_url);
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            const val = this.map.get(hash) orelse return false;
+            if (val.generation_counter != generation_counter) {
+                return false;
+            }
+            std.debug.assert(this.map.remove(hash));
+            break :brk val.ptr;
+        };
+
+        if (value.get(ParsedSourceMap)) |source_map_| {
+            var source_map: *ParsedSourceMap = source_map_;
+            source_map.deinit(default_allocator);
+            return true;
+        } else if (value.get(SavedMappings)) |saved_mappings| {
+            var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
+            saved.deinit();
+            return true;
+        }
+
+        return false;
+    }
 
     pub fn deinit(this: *SavedSourceMap) void {
         {
             this.mutex.lock();
             var iter = this.map.valueIterator();
             while (iter.next()) |val| {
-                var value = Value.from(val.*);
+                var value = val.ptr;
                 if (value.get(ParsedSourceMap)) |source_map_| {
                     var source_map: *ParsedSourceMap = source_map_;
                     source_map.deinit(default_allocator);
@@ -210,12 +240,15 @@ pub const SavedSourceMap = struct {
         this.map.deinit();
     }
 
-    pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
+    pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !u32 {
         this.mutex.lock();
         defer this.mutex.unlock();
         const entry = try this.map.getOrPut(bun.hash(source.path.text));
+        var generation_counter: u32 = 0;
         if (entry.found_existing) {
-            var value = Value.from(entry.value_ptr.*);
+            const existing = entry.value_ptr.*;
+            generation_counter = existing.generation_counter + 1;
+            var value = existing.ptr;
             if (value.get(ParsedSourceMap)) |source_map_| {
                 var source_map: *ParsedSourceMap = source_map_;
                 source_map.deinit(default_allocator);
@@ -226,17 +259,22 @@ pub const SavedSourceMap = struct {
             }
         }
 
-        entry.value_ptr.* = Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)).ptr();
+        entry.value_ptr.* = .{
+            .ptr = Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)),
+            .generation_counter = generation_counter,
+        };
+
+        return generation_counter;
     }
 
     pub fn get(this: *SavedSourceMap, path: string) ?ParsedSourceMap {
-        const mapping = this.map.getEntry(bun.hash(path)) orelse return null;
-        switch (Value.from(mapping.value_ptr.*).tag()) {
+        const mapping = (this.map.get(bun.hash(path)) orelse return null).ptr;
+        switch (mapping.tag()) {
             Value.Tag.ParsedSourceMap => {
-                return Value.from(mapping.value_ptr.*).as(ParsedSourceMap).*;
+                return mapping.as(ParsedSourceMap).*;
             },
             Value.Tag.SavedMappings => {
-                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
+                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(mapping.as(ParsedSourceMap))) };
                 defer saved.deinit();
                 const result = default_allocator.create(ParsedSourceMap) catch unreachable;
                 result.* = saved.toMapping(default_allocator, path) catch {
@@ -607,7 +645,7 @@ pub const VirtualMachine = struct {
     debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
-
+    const vmlog = Output.scoped(.vm, false);
     pub const OnException = fn (*ZigException) void;
 
     pub fn uwsLoop(this: *const VirtualMachine) *uws.Loop {
@@ -671,9 +709,19 @@ pub const VirtualMachine = struct {
         this.eventLoop().wakeup();
     }
 
+    /// Clear an entry from the sourcemap if that entry exists.
+    export fn Bun__pruneSourceMap(module_key: *bun.String) callconv(.C) bool {
+        const utf8 = module_key.toUTF8(bun.default_allocator);
+        defer utf8.deinit();
+        const result = JSC.VirtualMachine.get().source_mappings.delete(utf8.slice());
+        vmlog("pruneSourceMap({s}) = {}", .{ utf8.slice(), result });
+        return result;
+    }
+
     const SourceMapHandlerGetter = struct {
         vm: *VirtualMachine,
         printer: *js_printer.BufferPrinter,
+        source_map_generation_counter: u32 = 0,
 
         pub fn get(this: *SourceMapHandlerGetter) js_printer.SourceMapHandler {
             if (this.vm.debugger == null) {
@@ -709,10 +757,11 @@ pub const VirtualMachine = struct {
         }
     };
 
-    pub inline fn sourceMapHandler(this: *VirtualMachine, printer: *js_printer.BufferPrinter) SourceMapHandlerGetter {
+    pub inline fn sourceMapHandler(this: *VirtualMachine, printer: *js_printer.BufferPrinter, source_map_generation_counter: *u32) SourceMapHandlerGetter {
         return SourceMapHandlerGetter{
             .vm = this,
             .printer = printer,
+            .source_map_generation_counter = source_map_generation_counter,
         };
     }
 

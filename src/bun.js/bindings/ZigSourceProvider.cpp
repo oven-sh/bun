@@ -164,8 +164,15 @@ void SourceProvider::cacheBytecode(const BytecodeCacheGenerator& generator)
     if (update)
         m_cachedBytecode->addGlobalUpdate(*update);
 }
+extern "C" bool Bun__pruneSourceMap(BunString*, unsigned);
 SourceProvider::~SourceProvider()
 {
+    if (!this->sourceOrigin().isNull()) {
+        const auto& url = this->sourceOrigin().url();
+        const auto& wtf = url.protocolIsFile() ? url.fileSystemPath() : this->sourceOrigin().string();
+        auto str = Bun::toString(wtf);
+        Bun__pruneSourceMap(&str, this->m_resolvedSource.sourceMapGenerationCounter);
+    }
 }
 void SourceProvider::commitCachedBytecode()
 {

@@ -399,7 +399,7 @@ extern "C" void Bun__onFulfillAsyncModule(
 {
     WTF::String sourceCodeStringForDeref;
     const auto getSourceCodeStringForDeref = [&]() {
-        if (res->success && res->result.value.needsDeref && res->result.value.source_code.tag == BunStringTag::WTFStringImpl) {
+        if (res->result.value.needsDeref && res->result.value.source_code.tag == BunStringTag::WTFStringImpl) {
             res->result.value.needsDeref = false;
             sourceCodeStringForDeref = String(res->result.value.source_code.impl.wtf);
         }
@@ -412,7 +412,7 @@ extern "C" void Bun__onFulfillAsyncModule(
         throwException(scope, res->result.err, globalObject);
         auto* exception = scope.exception();
         scope.clearException();
-        return promise->reject(promise->globalObject(), exception);
+        return promise->reject(globalObject, exception);
     }
 
     getSourceCodeStringForDeref();
@@ -421,8 +421,8 @@ extern "C" void Bun__onFulfillAsyncModule(
     if (auto entry = globalObject->esmRegistryMap()->get(globalObject, specifierValue)) {
         if (res->result.value.commonJSExportsLen) {
             if (entry.isObject()) {
-                if (auto isEvaluated = entry.getAs<bool>(globalObject, Bun::builtinNames(vm).evaluatedPublicName())) {
-                    if (isEvaluated) {
+                if (auto isEvaluated = entry.getObject()->getIfPropertyExists(globalObject, Bun::builtinNames(vm).evaluatedPublicName())) {
+                    if (isEvaluated.isTrue()) {
                         // it's a race! we lost.
                         return;
                     }
@@ -432,18 +432,19 @@ extern "C" void Bun__onFulfillAsyncModule(
             auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->result.value);
             if (created.has_value()) {
                 JSSourceCode* code = JSSourceCode::create(vm, WTFMove(created.value()));
-                promise->resolve(promise->globalObject(), code);
+                promise->resolve(globalObject, code);
             } else {
                 auto* exception = scope.exception();
                 scope.clearException();
-                promise->reject(promise->globalObject(), exception);
+                promise->reject(globalObject, exception);
             }
         } else {
             auto&& provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
-            promise->resolve(promise->globalObject(), JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+            promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
         }
     } else {
         // the module has since been deleted from the registry.
+        // let's not keep it forever for no reason.
     }
 }
 
@@ -759,7 +760,6 @@ static JSValue fetchESMSourceCode(
         auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true);
         getSourceCodeStringForDeref();
         if (pendingCtx) {
-            PendingAsyncModuleInternalPromiseSet::get(globalObject)->add(vm, pendingCtx);
             return pendingCtx;
         }
     } else {

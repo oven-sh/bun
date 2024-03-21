@@ -8505,24 +8505,28 @@ pub const Interpreter = struct {
                     },
                     1 => {
                         const first_arg = args[0][0..std.mem.len(args[0]) :0];
-                        const exit_code = std.fmt.parseInt(ExitCode, first_arg, 10) catch {
-                            @panic("TODO");
+                        const exit_code: ExitCode = std.fmt.parseInt(u8, first_arg, 10) catch |err| switch (err) {
+                            error.Overflow => @intCast((std.fmt.parseInt(usize, first_arg, 10) catch return this.fail("exit: numeric argument required")) % 256),
+                            error.InvalidCharacter => return this.fail("exit: numeric argument required"),
                         };
                         this.bltn.done(exit_code);
                         return Maybe(void).success;
                     },
                     else => {
-                        const msg = "exit: too many arguments";
-                        if (this.bltn.stderr.needsIO()) {
-                            this.state = .waiting_io;
-                            this.bltn.stderr.enqueue(this, msg);
-                            return Maybe(void).success;
-                        }
-                        _ = this.bltn.writeNoIO(.stderr, msg);
-                        this.bltn.done(1);
-                        return Maybe(void).success;
+                        return this.fail("exit: too many arguments");
                     },
                 }
+            }
+
+            fn fail(this: *Exit, msg: string) Maybe(void) {
+                if (this.bltn.stderr.needsIO()) {
+                    this.state = .waiting_io;
+                    this.bltn.stderr.enqueue(this, msg);
+                    return Maybe(void).success;
+                }
+                _ = this.bltn.writeNoIO(.stderr, msg);
+                this.bltn.done(1);
+                return Maybe(void).success;
             }
 
             pub fn next(this: *Exit) void {

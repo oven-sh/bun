@@ -148,7 +148,7 @@ pub const LifecycleScriptSubprocess = struct {
 
             break :blk .{
                 path_buf2[0..lifecycle_script_path.len :0],
-                lifecycle_script_file,
+                @as(?std.fs.File, lifecycle_script_file),
             };
         } else .{ "", null };
         if (lifecycle_script_file) |*f| f.close();

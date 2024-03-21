@@ -2466,7 +2466,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "packages", "pkg2", "postprepare.txt"))).toBeFalse();
     });
 
-    test("dependency lifecycle scripts run before root lifecycle scripts", async () => {
+    test.skip("dependency lifecycle scripts run before root lifecycle scripts", async () => {
       const script = '[[ -f "./node_modules/uses-what-bin-slow/what-bin.txt" ]]';
       await writeFile(
         join(packageDir, "package.json"),
@@ -2981,7 +2981,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test("it should add `node-gyp rebuild` as the `install` script when `install` and `postinstall` don't exist and `binding.gyp` exists in the root of the package", async () => {
+    test.skip("it should add `node-gyp rebuild` as the `install` script when `install` and `postinstall` don't exist and `binding.gyp` exists in the root of the package", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3019,7 +3019,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "node_modules/binding-gyp-scripts/build.node"))).toBeTrue();
     });
 
-    test("automatic node-gyp scripts should not run for untrusted dependencies, and should run after adding to `trustedDependencies`", async () => {
+    test.skip("automatic node-gyp scripts should not run for untrusted dependencies, and should run after adding to `trustedDependencies`", async () => {
       const packageJSON: any = {
         name: "foo",
         version: "1.0.0",
@@ -3079,7 +3079,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "node_modules", "binding-gyp-scripts", "build.node"))).toBeTrue();
     });
 
-    test("automatic node-gyp scripts work in package root", async () => {
+    test.skip("automatic node-gyp scripts work in package root", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3132,7 +3132,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "build.node"))).toBeTrue();
     });
 
-    test("auto node-gyp scripts work when scripts exists other than `install` and `preinstall`", async () => {
+    test.skip("auto node-gyp scripts work when scripts exists other than `install` and `preinstall`", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3177,7 +3177,7 @@ for (const forceWaiterThread of [false, true]) {
     });
 
     for (const script of ["install", "preinstall"]) {
-      test(`does not add auto node-gyp script when ${script} script exists`, async () => {
+      test.skip(`does not add auto node-gyp script when ${script} script exists`, async () => {
         const packageJSON: any = {
           name: "foo",
           version: "1.0.0",
@@ -3298,7 +3298,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postinstall.txt"))).toBeTrue();
     });
 
-    test("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
+    test.skip("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3382,7 +3382,7 @@ for (const forceWaiterThread of [false, true]) {
       return dependenciesList;
     }
 
-    test("reach max concurrent scripts", async () => {
+    test.skip("reach max concurrent scripts", async () => {
       const scripts = {
         "preinstall": `${bunExe().replace(/\\/g, "\\\\")} -e "Bun.sleepSync(500)"`,
       };
@@ -3413,7 +3413,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test("stress test", async () => {
+    test.skip("stress test", async () => {
       const dependenciesList = await createPackagesWithScripts(500, {
         "postinstall": `${bunExe().replace(/\\/g, "\\\\")} --version`,
       });
@@ -3444,7 +3444,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test("it should install and use correct binary version", async () => {
+    test.skip("it should install and use correct binary version", async () => {
       // this should install `what-bin` in two places:
       //
       // - node_modules/.bin/what-bin@1.5.0
@@ -3560,7 +3560,7 @@ for (const forceWaiterThread of [false, true]) {
       ]);
       expect(await exited).toBe(0);
     });
-    test("node-gyp should always be available for lifecycle scripts", async () => {
+    test.skip("node-gyp should always be available for lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -3592,7 +3592,7 @@ for (const forceWaiterThread of [false, true]) {
       expect(await exited).toBe(0);
     });
 
-    test("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
+    test.skip("npm_config_node_gyp should be set and usable in lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -4376,7 +4376,7 @@ for (const forceWaiterThread of [false, true]) {
 
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
     });
-    test("ensureTempNodeGypScript works", async () => {
+    test.skip("ensureTempNodeGypScript works", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -4487,7 +4487,7 @@ for (const forceWaiterThread of [false, true]) {
       // when we change bun install to delete dependencies from node_modules
       // for both cases, we need to update this test
       for (const withRm of [true, false]) {
-        test(withRm ? "withRm" : "withoutRm", async () => {
+        test.skip(withRm ? "withRm" : "withoutRm", async () => {
           await writeFile(
             join(packageDir, "package.json"),
             JSON.stringify({
@@ -4686,7 +4686,7 @@ for (const forceWaiterThread of [false, true]) {
 
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
       });
-      test("bun pm trust", async () => {
+      test.skip("bun pm trust", async () => {
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({

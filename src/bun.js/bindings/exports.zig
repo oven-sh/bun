@@ -205,7 +205,7 @@ pub const ResolvedSource = extern struct {
     tag: Tag = Tag.javascript,
 
     /// This is for source_code
-    needs_deref: bool = true,
+    source_code_needs_deref: bool = true,
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };

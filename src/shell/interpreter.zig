@@ -4430,6 +4430,7 @@ pub const Interpreter = struct {
             };
         }
 
+        /// **WARNING** You should make sure that stdout/stderr does not need IO (e.g. `.needsIO(.stderr)` is false before caling `.writeNoIO(.stderr, buf)`)
         pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []const u8) usize {
             if (comptime io_kind != .stdout and io_kind != .stderr) {
                 @compileError("Bad IO" ++ @tagName(io_kind));
@@ -4440,7 +4441,7 @@ pub const Interpreter = struct {
             var io: *BuiltinIO.Output = &@field(this, @tagName(io_kind));
 
             switch (io.*) {
-                .fd => @panic("writeNoIO can't write to a file descriptor"),
+                .fd => @panic("writeNoIO(. " ++ @tagName(io_kind) ++ ", buf) can't write to a file descriptor, did you check that needsIO(." ++ @tagName(io_kind) ++ ") was false?"),
                 .buf => {
                     log("{s} write to buf len={d} str={s}{s}\n", .{ this.kind.asString(), buf.len, buf[0..@min(buf.len, 16)], if (buf.len > 16) "..." else "" });
                     io.buf.appendSlice(buf) catch bun.outOfMemory();

@@ -86,6 +86,8 @@ const Dependency = @import("../install/dependency.zig");
 const Async = bun.Async;
 const String = bun.String;
 
+const debug = Output.scoped(.ModuleLoader, true);
+
 // Setting BUN_OVERRIDE_MODULE_PATH to the path to the bun repo will make it so modules are loaded
 // from there instead of the ones embedded into the binary.
 // In debug mode, this is set automatically for you, using the path relative to this file.
@@ -217,16 +219,40 @@ fn setBreakPointOnFirstLine() bool {
 }
 
 pub const RuntimeTranspilerStore = struct {
-    const debug = Output.scoped(.compile, false);
-
     generation_number: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     store: TranspilerJob.Store,
     enabled: bool = true,
+    queue: Queue = Queue{},
+
+    pub const Queue = bun.UnboundedQueue(TranspilerJob, .next);
 
     pub fn init(allocator: std.mem.Allocator) RuntimeTranspilerStore {
         return RuntimeTranspilerStore{
             .store = TranspilerJob.Store.init(allocator),
         };
+    }
+
+    // Thsi is run at the top of the event loop on the JS thread.
+    pub fn drain(this: *RuntimeTranspilerStore) void {
+        var batch = this.queue.popBatch();
+        var iter = batch.iterator();
+        if (iter.next()) |job| {
+            // we run just one job first to see if there are more
+            job.runFromJSThread();
+        } else {
+            return;
+        }
+        var vm = @fieldParentPtr(JSC.VirtualMachine, "transpiler_store", this);
+        const event_loop = vm.eventLoop();
+        const global = vm.global;
+        const jsc_vm = vm.jsc;
+        while (iter.next()) |job| {
+            // if there are more, we need to drain the microtasks from the previous run
+            event_loop.drainMicrotasksWithGlobal(global, jsc_vm);
+            job.runFromJSThread();
+        }
+
+        // immediately after this is called, the microtasks will be drained again.
     }
 
     pub fn transpile(
@@ -236,7 +262,6 @@ pub const RuntimeTranspilerStore = struct {
         path: Fs.Path,
         referrer: []const u8,
     ) *anyopaque {
-        debug("transpile({s})", .{path.text});
         var job: *TranspilerJob = this.store.get();
         const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
         const promise = JSC.JSInternalPromise.create(globalObject);
@@ -253,6 +278,8 @@ pub const RuntimeTranspilerStore = struct {
                 .file = {},
             },
         };
+        if (comptime Environment.allow_assert)
+            debug("transpile({s}, {s}, async)", .{ path.text, @tagName(job.loader) });
         job.schedule();
         return promise;
     }
@@ -271,6 +298,7 @@ pub const RuntimeTranspilerStore = struct {
         parse_error: ?anyerror = null,
         resolved_source: ResolvedSource = ResolvedSource{},
         work_task: JSC.WorkPoolTask = .{ .callback = runFromWorkerThread },
+        next: ?*TranspilerJob = null,
 
         pub const Store = bun.HiveArray(TranspilerJob, 64).Fallback;
 
@@ -302,9 +330,8 @@ pub const RuntimeTranspilerStore = struct {
         threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
         pub fn dispatchToMainThread(this: *TranspilerJob) void {
-            this.vm.eventLoop().enqueueTaskConcurrent(
-                JSC.ConcurrentTask.fromCallback(this, runFromJSThread),
-            );
+            this.vm.transpiler_store.queue.push(this);
+            this.vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.vm.transpiler_store));
         }
 
         pub fn runFromJSThread(this: *TranspilerJob) void {
@@ -413,7 +440,7 @@ pub const RuntimeTranspilerStore = struct {
                 .hot, .watch => {
                     if (vm.bun_watcher.indexOf(hash)) |index| {
                         const _fd = vm.bun_watcher.watchlist().items(.fd)[index];
-                        fd = if (_fd.int() > 0) _fd else null;
+                        fd = if (!_fd.isStdio()) _fd else null;
                         package_json = vm.bun_watcher.watchlist().items(.package_json)[index];
                     }
                 },
@@ -567,6 +594,7 @@ pub const RuntimeTranspilerStore = struct {
                     .source_url = duped.createIfDifferent(path.text),
                     .hash = 0,
                 };
+                this.resolved_source.source_code.value.WTFStringImpl.ensureHash();
                 return;
             }
 
@@ -637,20 +665,31 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             const duped = String.createUTF8(specifier);
+            const source_code = brk: {
+                const written = printer.ctx.getWritten();
+
+                const result = cache.output_code orelse bun.String.createLatin1(written);
+
+                if (written.len > 1024 * 1024 * 2 or vm.smol) {
+                    printer.ctx.buffer.deinit();
+                    source_code_printer.?.* = printer;
+                }
+
+                // In a benchmarking loading @babel/standalone 100 times:
+                //
+                // After ensureHash:
+                // 354.00 ms    4.2%	354.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                //
+                // Before ensureHash:
+                // 506.00 ms    6.1%	506.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                //
+                result.value.WTFStringImpl.ensureHash();
+
+                break :brk result;
+            };
             this.resolved_source = ResolvedSource{
                 .allocator = null,
-                .source_code = brk: {
-                    const written = printer.ctx.getWritten();
-
-                    const result = cache.output_code orelse bun.String.createLatin1(written);
-
-                    if (written.len > 1024 * 1024 * 2 or vm.smol) {
-                        printer.ctx.buffer.deinit();
-                        source_code_printer.?.* = printer;
-                    }
-
-                    break :brk result;
-                },
+                .source_code = source_code,
                 .specifier = duped,
                 .source_url = duped.createIfDifferent(path.text),
                 .commonjs_exports = null,
@@ -667,8 +706,6 @@ pub const RuntimeTranspilerStore = struct {
 pub const ModuleLoader = struct {
     transpile_source_code_arena: ?*bun.ArenaAllocator = null,
     eval_source: ?*logger.Source = null,
-
-    const debug = Output.scoped(.ModuleLoader, true);
 
     /// This must be called after calling transpileSourceCode
     pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
@@ -1065,6 +1102,7 @@ pub const ModuleLoader = struct {
             var spec = bun.String.init(ZigString.init(this.specifier).withEncoding());
             var ref = bun.String.init(ZigString.init(this.referrer).withEncoding());
             Bun__onFulfillAsyncModule(
+                this.globalThis,
                 this.promise.get().?,
                 &errorable,
                 &spec,
@@ -1107,6 +1145,7 @@ pub const ModuleLoader = struct {
             log.deinit();
 
             Bun__onFulfillAsyncModule(
+                globalThis,
                 promise,
                 &errorable,
                 &specifier,
@@ -1419,6 +1458,7 @@ pub const ModuleLoader = struct {
         }
 
         extern "C" fn Bun__onFulfillAsyncModule(
+            globalObject: *JSC.JSGlobalObject,
             promiseValue: JSC.JSValue,
             res: *JSC.ErrorableResolvedSource,
             specifier: *bun.String,
@@ -2135,7 +2175,6 @@ pub const ModuleLoader = struct {
         JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.bundler.allocator);
         defer log.deinit();
-        debug("transpileFile: {any}", .{specifier_ptr.*});
 
         var _specifier = specifier_ptr.toUTF8(jsc_vm.allocator);
         var referrer_slice = referrer.toUTF8(jsc_vm.allocator);
@@ -2211,6 +2250,9 @@ pub const ModuleLoader = struct {
                 break :loader options.Loader.tsx;
             }
         };
+
+        if (comptime Environment.allow_assert)
+            debug("transpile({s}, {s}, sync)", .{ specifier, @tagName(synchronous_loader) });
 
         defer jsc_vm.module_loader.resetArena(jsc_vm);
 

@@ -567,6 +567,7 @@ pub const RuntimeTranspilerStore = struct {
                     .source_url = duped.createIfDifferent(path.text),
                     .hash = 0,
                 };
+                this.resolved_source.source_code.value.WTFStringImpl.ensureHash();
                 return;
             }
 
@@ -637,20 +638,31 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             const duped = String.createUTF8(specifier);
+            const source_code = brk: {
+                const written = printer.ctx.getWritten();
+
+                const result = cache.output_code orelse bun.String.createLatin1(written);
+
+                if (written.len > 1024 * 1024 * 2 or vm.smol) {
+                    printer.ctx.buffer.deinit();
+                    source_code_printer.?.* = printer;
+                }
+
+                // In a benchmarking loading @babel/standalone 100 times:
+                //
+                // Before ensureHash:
+                // 354.00 ms    4.2%	354.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                //
+                // After ensureHash:
+                // 506.00 ms    6.1%	506.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                //
+                result.value.WTFStringImpl.ensureHash();
+
+                break :brk result;
+            };
             this.resolved_source = ResolvedSource{
                 .allocator = null,
-                .source_code = brk: {
-                    const written = printer.ctx.getWritten();
-
-                    const result = cache.output_code orelse bun.String.createLatin1(written);
-
-                    if (written.len > 1024 * 1024 * 2 or vm.smol) {
-                        printer.ctx.buffer.deinit();
-                        source_code_printer.?.* = printer;
-                    }
-
-                    break :brk result;
-                },
+                .source_code = source_code,
                 .specifier = duped,
                 .source_url = duped.createIfDifferent(path.text),
                 .commonjs_exports = null,

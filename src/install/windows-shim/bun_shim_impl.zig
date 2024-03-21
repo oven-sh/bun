@@ -694,7 +694,9 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 buf2_u8[shebang_arg_len_u8 + 2 * "\"".len ..][0..length_of_filename_u8],
                 buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8],
             );
-            read_ptr = @ptrFromInt(@intFromPtr(buf2_u8) + length_of_filename_u8 + 2 * ("\"".len + nt_object_prefix.len));
+
+            const advance = length_of_filename_u8 + shebang_arg_len_u8 + 2 * "\"".len;
+            var write_ptr: [*]u16 = @ptrFromInt(@intFromPtr(buf2_u8) + advance);
 
             if (user_arguments_u8.len > 0) {
                 // Copy the user arguments in:
@@ -703,13 +705,13 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
                 //        |    |filename_len                                         where the user args go
                 //        |    the quote
                 //        shebang_arg_len
-                @memcpy(@as([*]u8, @ptrCast(read_ptr)), user_arguments_u8);
-                read_ptr = @ptrFromInt(@intFromPtr(read_ptr) + user_arguments_u8.len);
+                @memcpy(@as([*]u8, @ptrCast(write_ptr)), user_arguments_u8);
+                write_ptr = @ptrFromInt(@intFromPtr(write_ptr) + user_arguments_u8.len);
             }
 
             // BUF2: 'node "C:\Users\dave\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
             //                                                                           ^ null terminator
-            @as(*align(1) u16, @ptrCast(read_ptr)).* = 0;
+            @as(*align(1) u16, @ptrCast(write_ptr)).* = 0;
 
             break :spawn_command_line @ptrCast(buf2_u16);
         },

@@ -6,6 +6,7 @@
 
 #include <JavaScriptCore/BytecodeCacheError.h>
 #include "ZigGlobalObject.h"
+#include "wtf/Assertions.h"
 
 #include <JavaScriptCore/Completion.h>
 #include <wtf/Scope.h>
@@ -27,6 +28,8 @@ using SourceOrigin = JSC::SourceOrigin;
 using String = WTF::String;
 using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
+extern "C" unsigned Bun__transpiler_generation_number;
+
 static uintptr_t getSourceProviderMapKey(ResolvedSource& resolvedSource)
 {
     switch (resolvedSource.source_code.tag) {
@@ -43,7 +46,7 @@ static uintptr_t getSourceProviderMapKey(ResolvedSource& resolvedSource)
     }
 }
 
-static SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
+SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 {
     if (isBuiltin) {
         if (sourceURL.startsWith("node:"_s)) {
@@ -55,6 +58,7 @@ static SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
         }
     }
 
+    ASSERT_WITH_MESSAGE(!sourceURL.startsWith("file://"_s), "sourceURL should not already be a file URL");
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
@@ -92,7 +96,7 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
 
-Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
+Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource& resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
 {
 
     auto string = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
@@ -103,8 +107,8 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
     bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && !isBuiltin && BunTest__shouldGenerateCodeCoverage(resolvedSource.source_url);
 
     if (resolvedSource.needsDeref && !isBuiltin) {
+        resolvedSource.needsDeref = false;
         resolvedSource.source_code.deref();
-
         // Do not deref either source_url or specifier
         // Specifier's lifetime is the JSValue, mostly
         // source_url is owned by the string above

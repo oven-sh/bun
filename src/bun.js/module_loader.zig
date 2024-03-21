@@ -677,10 +677,10 @@ pub const RuntimeTranspilerStore = struct {
 
                 // In a benchmarking loading @babel/standalone 100 times:
                 //
-                // Before ensureHash:
+                // After ensureHash:
                 // 354.00 ms    4.2%	354.00 ms	 	  WTF::StringImpl::hashSlowCase() const
                 //
-                // After ensureHash:
+                // Before ensureHash:
                 // 506.00 ms    6.1%	506.00 ms	 	  WTF::StringImpl::hashSlowCase() const
                 //
                 result.value.WTFStringImpl.ensureHash();

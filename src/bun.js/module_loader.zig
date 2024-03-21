@@ -318,7 +318,7 @@ pub const RuntimeTranspilerStore = struct {
             this.log = logger.Log.init(bun.default_allocator);
             var resolved_source = this.resolved_source;
             const specifier = brk: {
-                if (this.parse_error == null) {
+                if (this.parse_error != null) {
                     break :brk bun.String.createUTF8(this.path.text);
                 }
 

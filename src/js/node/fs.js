@@ -511,6 +511,8 @@ var defaultReadStreamOptions = {
   autoDestroy: true,
 };
 
+let { FileHandle, kRef, kUnref, kFd } = promises.$data;
+
 var ReadStreamClass;
 
 ReadStream = (function (InternalReadStream) {
@@ -559,11 +561,22 @@ ReadStream = (function (InternalReadStream) {
 
       // This is kinda hacky but we create a temporary object to assign props that we will later pull into the `this` context after we call super
       var tempThis = {};
+      let handle = null;
       if (fd != null) {
         if (typeof fd !== "number") {
-          throw new TypeError("Expected options.fd to be a number");
+          if (fd instanceof FileHandle) {
+            tempThis.fd = fd[kFd];
+            if (tempThis.fd < 0) {
+              throw new Error("Expected a valid file descriptor");
+            }
+            fd[kRef]();
+            handle = fd;
+          } else {
+            throw new TypeError("Expected options.fd to be a number or FileHandle");
+          }
+        } else {
+          tempThis.fd = tempThis[readStreamPathOrFdSymbol] = fd;
         }
-        tempThis.fd = tempThis[readStreamPathOrFdSymbol] = fd;
         tempThis.autoClose = false;
       } else if (typeof pathOrFd === "string") {
         if (pathOrFd.startsWith("file://")) {
@@ -590,6 +603,7 @@ ReadStream = (function (InternalReadStream) {
         // NOTE: this fs is local to constructor, from options
         tempThis.fd = overridden_fs.openSync(pathOrFd, flags, mode);
       }
+
       // Get FileRef from fd
       var fileRef = Bun.file(tempThis.fd);
 
@@ -612,8 +626,7 @@ ReadStream = (function (InternalReadStream) {
 
       // Assign the tempThis props to this
       Object.assign(this, tempThis);
-      this.#fileRef = fileRef;
-
+      this.#handle = handle;
       this.end = end;
       this._read = this.#internalRead;
       this.start = start;
@@ -642,7 +655,7 @@ ReadStream = (function (InternalReadStream) {
       $assert(overridden_fs);
       this.#fs = overridden_fs;
     }
-    #fileRef;
+    #handle;
     #fs;
     file;
     path;
@@ -673,9 +686,16 @@ ReadStream = (function (InternalReadStream) {
     _destroy(err, cb) {
       super._destroy(err, cb);
       try {
-        var fd = this.fd;
         this[readStreamPathFastPathSymbol] = false;
+        var handle = this.#handle;
+        if (handle) {
+          handle[kUnref]();
+          this.fd = null;
+          this.#handle = null;
+          return;
+        }
 
+        var fd = this.fd;
         if (!fd) {
           cb(err);
         } else {
@@ -1156,25 +1176,6 @@ function createWriteStream(path, options) {
   return new WriteStream(path, options);
 }
 
-// NOTE: This was too smart and doesn't actually work
-// WriteStream = Object.defineProperty(
-//   function WriteStream(path, options) {
-//     var _InternalWriteStream = getLazyWriteStream();
-//     return new _InternalWriteStream(path, options);
-//   },
-//   Symbol.hasInstance,
-//   { value: (instance) => instance[writeStreamSymbol] === true },
-// );
-
-// ReadStream = Object.defineProperty(
-//   function ReadStream(path, options) {
-//     var _InternalReadStream = getLazyReadStream();
-//     return new _InternalReadStream(path, options);
-//   },
-//   Symbol.hasInstance,
-//   { value: (instance) => instance[readStreamSymbol] === true },
-// );
-
 Object.defineProperties(fs, {
   createReadStream: {
     value: createReadStream,
@@ -1188,12 +1189,6 @@ Object.defineProperties(fs, {
   WriteStream: {
     value: WriteStream,
   },
-  // ReadStream: {
-  //   get: () => getLazyReadStream(),
-  // },
-  // WriteStream: {
-  //   get: () => getLazyWriteStream(),
-  // },
 });
 
 // lol
@@ -1201,7 +1196,6 @@ Object.defineProperties(fs, {
 realpath.native = realpath;
 realpathSync.native = realpathSync;
 
-let lazy_cpSync = null;
 // attempt to use the native code version if possible
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
@@ -1211,8 +1205,7 @@ function cpSync(src, dest, options) {
     throw new TypeError("options must be an object");
   }
   if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
-    if (!lazy_cpSync) lazy_cpSync = require("../internal/fs/cp-sync");
-    return lazy_cpSync(src, dest, options);
+    return require("../internal/fs/cp-sync")(src, dest, options);
   }
   return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }

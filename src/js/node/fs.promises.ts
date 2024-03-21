@@ -5,7 +5,6 @@ const constants = $processBindingConstants.fs;
 const EventEmitter = require("node:events");
 
 var PromisePrototypeThen = Promise.prototype.then;
-var PromiseResolve = Promise.resolve;
 var SafePromisePrototypeFinally = Promise.prototype.finally; //TODO
 var SymbolAsyncDispose = Symbol.asyncDispose;
 var ObjectFreeze = Object.freeze;
@@ -23,11 +22,6 @@ const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze({ __proto__: null });
 
 var fs = Bun.fs();
-
-// note: this is not quite the same as how node does it
-// in some cases, node swaps around arguments or makes small tweaks to the return type
-// this is just better than nothing.
-const notrace = "::bunternal::";
 
 function watch(
   filename: string | Buffer | URL,
@@ -102,7 +96,6 @@ function watch(
   };
 }
 
-let lazy_cp: any = null;
 // attempt to use the native code version if possible
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
@@ -112,8 +105,7 @@ function cp(src, dest, options) {
     throw new TypeError("options must be an object");
   }
   if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
-    if (!lazy_cp) lazy_cp = require("../internal/fs/cp-sync");
-    return lazy_cp!(src, dest, options);
+    return require("../internal/fs/cp")(src, dest, options);
   }
   return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }
@@ -149,12 +141,20 @@ class Dir {
     }
   }
 }
+
 async function opendir(dir: string) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   return new Dir(entries, dir);
 }
 
-const real_export = {
+const private_symbols = {
+  kRef,
+  kUnref,
+  kFd,
+  FileHandle: null,
+};
+
+const exports = {
   access: fs.access.bind(fs),
   appendFile: fs.appendFile.bind(fs),
   close: fs.close.bind(fs),
@@ -213,10 +213,13 @@ const real_export = {
   },
   constants,
   watch,
-
   opendir,
+
+  // "$data" is reuse of private symbol
+  // this is used to export the private symbols to 'fs.js' without making it public.
+  $data: private_symbols,
 };
-export default real_export;
+export default exports;
 
 {
   const {
@@ -234,11 +237,12 @@ export default real_export;
     write,
     writev,
     close,
-  } = real_export;
+  } = exports;
+
   // Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
   // These functions await the result so that errors propagate correctly with
   // async stack traces and so that the ref counting is correct.
-  var FileHandle = class FileHandle extends EventEmitter {
+  var FileHandle = (private_symbols.FileHandle = class FileHandle extends EventEmitter {
     constructor(fd) {
       super();
       this[kFd] = fd ? fd : -1;
@@ -440,6 +444,7 @@ export default real_export;
         this[kClosePromise] = SafePromisePrototypeFinally.$call(close(this[kFd]), () => {
           this[kClosePromise] = undefined;
         });
+        this[kFd] = -1;
       } else {
         this[kClosePromise] = SafePromisePrototypeFinally.$call(
           new Promise((resolve, reject) => {
@@ -472,13 +477,21 @@ export default real_export;
     createReadStream(options) {
       const fd = this[kFd];
       throwEBADFIfNecessary(fs.createReadStream, fd);
-      return require("node:fs").createReadStream("", { fd, highWaterMark: 64 * 1024, ...(options || {}) });
+      let stream = require("node:fs").createReadStream("", {
+        fd: this,
+        highWaterMark: 64 * 1024,
+        ...(options || {}),
+      });
+      this[kRef]();
+      return stream;
     }
 
     createWriteStream(options) {
       const fd = this[kFd];
       throwEBADFIfNecessary(fs.createWriteStream, fd);
-      return require("node:fs").createWriteStream("", { fd, ...(options || {}) });
+      let stream = require("node:fs").createWriteStream("", { fd, ...(options || {}) });
+      this[kRef]();
+      return stream;
     }
 
     [kTransfer]() {
@@ -503,7 +516,7 @@ export default real_export;
         PromisePrototypeThen.$call(this.close(), this[kCloseResolve], this[kCloseReject]);
       }
     }
-  };
+  });
 }
 
 function throwEBADFIfNecessary(fn, fd) {

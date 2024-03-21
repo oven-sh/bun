@@ -217,12 +217,17 @@ function Install-Bun {
     exit 1
   }
 
-  $env:IS_BUN_AUTO_UPDATE = "1"
-  $null = "$(& "${BunBin}\bun.exe" completions)"
-  if ($LASTEXITCODE -ne 0) {
-    Write-Output "Install Failed - could not finalize installation"
-    Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
-    exit 1
+  try {
+    $env:IS_BUN_AUTO_UPDATE = "1"
+    $output = "$(& "${BunBin}\bun.exe" completions 2>&1)"
+    if ($LASTEXITCODE -ne 0) {
+      Write-Output $output
+      Write-Output "Install Failed - could not finalize installation"
+      Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
+      exit 1
+    }
+  } catch {
+    # it is possible on powershell 5 that an error
   }
   $env:IS_BUN_AUTO_UPDATE = $null
 
@@ -238,7 +243,7 @@ function Install-Bun {
   Write-Output "${C_GREEN}Bun ${DisplayVersion} was installed successfully!${C_RESET}"
   Write-Output "The binary is located at ${BunBin}\bun.exe`n"
 
-  Write-Warning "Bun for Windows is currently experimental.`nFor a more stable experience, please install Bun within WSL:`nhttps://bun.sh/docs/installation`n"
+  Write-Warning "Bun for Windows is currently experimental and must not be used in production.`nFor a more stable experience, install Bun within WSL:`nhttps://bun.sh/docs/installation`n"
 
   $hasExistingOther = $false;
   try {

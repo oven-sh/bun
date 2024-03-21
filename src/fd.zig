@@ -245,6 +245,9 @@ pub const FDImpl = packed struct {
             .windows => result: {
                 switch (this.kind) {
                     .uv => {
+                        std.debug.getStderrMutex().lock();
+                        std.debug.dumpCurrentStackTrace(@returnAddress());
+                        std.debug.getStderrMutex().unlock();
                         var req: libuv.fs_t = libuv.fs_t.uninitialized;
                         defer req.deinit();
                         const rc = libuv.uv_fs_close(libuv.Loop.get(), &req, this.value.as_uv, null);

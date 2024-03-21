@@ -116,7 +116,6 @@ describe("FileHandle", () => {
     const chunk = await reader.read();
     expect(chunk.value instanceof Uint8Array).toBe(true);
     reader.releaseLock();
-    await stream.cancel();
   });
 
   it("FileHandle#createReadStream", async () => {

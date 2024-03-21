@@ -3399,15 +3399,32 @@ pub const FileReader = struct {
             file_type: bun.io.FileType = .file,
         };
 
-        pub fn openFileBlob(
-            file: *Blob.FileStore,
-        ) JSC.Maybe(OpenedFileBlob) {
+        pub fn openFileBlob(file: *Blob.FileStore) JSC.Maybe(OpenedFileBlob) {
             var this = OpenedFileBlob{ .fd = bun.invalid_fd };
             var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 
-            const fd = if (file.pathlike != .path)
-                // We will always need to close the file descriptor.
-                file.pathlike.fd
+            const fd = if (file.pathlike == .fd)
+                if (file.pathlike.fd.isStdio())
+                    file.pathlike.fd
+                else switch (Syscall.dupWithFlags(file.pathlike.fd, brk: {
+                    if (comptime Environment.isPosix) {
+                        if (bun.FDTag.get(file.pathlike.fd) == .none and !(file.is_atty orelse false)) {
+                            break :brk std.os.O.NONBLOCK;
+                        }
+                    }
+
+                    break :brk 0;
+                })) {
+                    .result => |fd| switch (bun.sys.toLibUVOwnedFD(fd, .dup, .close_on_fail)) {
+                        .result => |owned_fd| owned_fd,
+                        .err => |err| {
+                            return .{ .err = err };
+                        },
+                    },
+                    .err => |err| {
+                        return .{ .err = err.withFd(file.pathlike.fd) };
+                    },
+                }
             else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
                 .result => |fd| fd,
                 .err => |err| {

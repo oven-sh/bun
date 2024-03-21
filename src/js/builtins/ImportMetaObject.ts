@@ -13,23 +13,24 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
     //    $throwTypeError("Requested module is already fetched.");
     let entry = registry.$get(key)!,
       moduleRecordPromise,
-      state,
+      state = 0,
       // entry.fetch is a Promise<SourceCode>
       // SourceCode is not a string, it's a JSC::SourceCode object
       fetch: Promise<SourceCode> | undefined;
 
     if (entry) {
-      ({ state = 0, fetch } = entry);
+      ({ state, fetch } = entry);
     }
 
     if (
+      !entry ||
       // if we need to fetch it
-      state <= $ModuleFetch &&
-      // either:
-      // - we've never fetched it
-      // - a fetch is in progress
-      (!$isPromise(fetch) || $getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) ===
-        $promiseStatePending
+      (state <= $ModuleFetch &&
+        // either:
+        // - we've never fetched it
+        // - a fetch is in progress
+        (!$isPromise(fetch) ||
+          ($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending))
     ) {
       // force it to be no longer pending
       $fulfillModuleSync(key);

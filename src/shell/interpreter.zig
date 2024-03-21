@@ -3041,10 +3041,14 @@ pub const Interpreter = struct {
         fn writePipe(pipes: []Pipe, proc_idx: usize, cmd_count: usize, io: *IO, evtloop: JSC.EventLoopHandle) IO.OutKind {
             // Last command in the pipeline should write to stdout
             if (proc_idx == cmd_count - 1) return io.stdout.ref();
-            return .{ .fd = .{ .writer = IOWriter.init(pipes[proc_idx][1], .{
-                .pollable = true,
-                .is_socket = bun.Environment.isPosix,
-            }, evtloop) } };
+            return .{
+                .fd = .{
+                    .writer = IOWriter.init(pipes[proc_idx][1], .{
+                        .pollable = true,
+                        .is_socket = bun.Environment.isPosix,
+                    }, evtloop),
+                },
+            };
         }
 
         fn readPipe(pipes: []Pipe, proc_idx: usize, io: *IO, evtloop: JSC.EventLoopHandle) IO.InKind {

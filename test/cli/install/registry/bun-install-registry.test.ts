@@ -2924,7 +2924,7 @@ for (const forceWaiterThread of [false, true]) {
           name: "fooooooooo",
           version: "1.0.0",
           scripts: {
-            preinstall: `${bunExe().replace(/\\/g, "\\\\")} -e "throw new Error('Oops!')"`,
+            preinstall: `${bunExe()} -e "throw new Error('Oops!')"`,
           },
         }),
       );
@@ -3384,7 +3384,7 @@ for (const forceWaiterThread of [false, true]) {
 
     test.skip("reach max concurrent scripts", async () => {
       const scripts = {
-        "preinstall": `${bunExe().replace(/\\/g, "\\\\")} -e "Bun.sleepSync(500)"`,
+        "preinstall": `${bunExe()} -e "Bun.sleepSync(500)"`,
       };
 
       const dependenciesList = await createPackagesWithScripts(4, scripts);
@@ -3415,7 +3415,7 @@ for (const forceWaiterThread of [false, true]) {
 
     test.skip("stress test", async () => {
       const dependenciesList = await createPackagesWithScripts(500, {
-        "postinstall": `${bunExe().replace(/\\/g, "\\\\")} --version`,
+        "postinstall": `${bunExe()} --version`,
       });
 
       // the script is quick, default number for max concurrent scripts
@@ -4668,7 +4668,7 @@ for (const forceWaiterThread of [false, true]) {
             name: "foo",
             version: "1.0.0",
             scripts: {
-              preinstall: `${bunExe().replace(/\\/g, "\\\\")} -e "Bun.sleepSync(1000)"`,
+              preinstall: `${bunExe()} -e "Bun.sleepSync(1000)"`,
             },
           }),
         );

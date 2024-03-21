@@ -104,8 +104,11 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
 
     if (resolvedSource.needsDeref && !isBuiltin) {
         resolvedSource.source_code.deref();
-        resolvedSource.specifier.deref();
-        // source_url gets deref'd by the WTF::String above.
+
+        // Do not deref either source_url or specifier
+        // Specifier's lifetime is the JSValue, mostly
+        // source_url is owned by the string above
+        // https://github.com/oven-sh/bun/issues/9521
     }
 
     auto provider = adoptRef(*new SourceProvider(

@@ -144,7 +144,7 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String
         .source_url = bun.String.init(@tagName(name)),
         .hash = 0,
         .tag = name,
-        .needs_deref = false,
+        .source_code_needs_deref = false,
     };
 }
 
@@ -312,12 +312,18 @@ pub const RuntimeTranspilerStore = struct {
             const promise = this.promise.swap();
             const globalThis = this.globalThis;
             this.poll_ref.unref(vm);
-            var specifier = if (this.parse_error == null) this.resolved_source.specifier else bun.String.createUTF8(this.path.text);
+
             const referrer = bun.String.createUTF8(this.referrer);
             var log = this.log;
             this.log = logger.Log.init(bun.default_allocator);
             var resolved_source = this.resolved_source;
-            resolved_source.source_url = specifier.dupeRef();
+            const specifier = brk: {
+                if (this.parse_error != null) {
+                    break :brk bun.String.createUTF8(this.path.text);
+                }
+
+                break :brk resolved_source.specifier;
+            };
 
             resolved_source.tag = brk: {
                 if (resolved_source.commonjs_exports_len > 0) {
@@ -544,7 +550,7 @@ pub const RuntimeTranspilerStore = struct {
                         },
                     },
                     .specifier = duped,
-                    .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.init(path.text),
+                    .source_url = duped.createIfDifferent(path.text),
                     .hash = 0,
                     .commonjs_exports_len = if (entry.metadata.module_type == .cjs) std.math.maxInt(u32) else 0,
                 };
@@ -558,7 +564,7 @@ pub const RuntimeTranspilerStore = struct {
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
                     .specifier = duped,
-                    .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.init(path.text),
+                    .source_url = duped.createIfDifferent(path.text),
                     .hash = 0,
                 };
                 return;
@@ -646,7 +652,7 @@ pub const RuntimeTranspilerStore = struct {
                     break :brk result;
                 },
                 .specifier = duped,
-                .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.createUTF8(path.text),
+                .source_url = duped.createIfDifferent(path.text),
                 .commonjs_exports = null,
                 .commonjs_exports_len = if (parse_result.ast.exports_kind == .cjs)
                     std.math.maxInt(u32)
@@ -1205,7 +1211,7 @@ pub const ModuleLoader = struct {
 
             const msg_args = .{
                 result.name,
-                result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items),
+                result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items, .any),
             };
 
             const msg: []u8 = try switch (result.err) {
@@ -1255,7 +1261,7 @@ pub const ModuleLoader = struct {
                     .{
                         bun.asByteSlice(@errorName(err)),
                         result.name,
-                        result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items),
+                        result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items, .any),
                     },
                 ),
             };
@@ -1666,7 +1672,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.createUTF8(parse_result.source.contents),
                         .specifier = input_specifier,
-                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                        .source_url = input_specifier.createIfDifferent(path.text),
 
                         .hash = 0,
                         .tag = ResolvedSource.Tag.json_for_object_loader,
@@ -1682,7 +1688,7 @@ pub const ModuleLoader = struct {
                             else => @compileError("unreachable"),
                         },
                         .specifier = input_specifier,
-                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                        .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
                     };
                 }
@@ -1692,7 +1698,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
                         .specifier = input_specifier,
-                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                        .source_url = input_specifier.createIfDifferent(path.text),
 
                         .hash = 0,
                     };
@@ -1720,7 +1726,7 @@ pub const ModuleLoader = struct {
                             },
                         },
                         .specifier = input_specifier,
-                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                        .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
                         .commonjs_exports_len = if (entry.metadata.module_type == .cjs) std.math.maxInt(u32) else 0,
                         .tag = brk: {
@@ -1870,7 +1876,7 @@ pub const ModuleLoader = struct {
                         break :brk result;
                     },
                     .specifier = input_specifier,
-                    .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                    .source_url = input_specifier.createIfDifferent(path.text),
                     .commonjs_exports = if (commonjs_exports.len > 0)
                         commonjs_exports.ptr
                     else
@@ -1924,7 +1930,7 @@ pub const ModuleLoader = struct {
             //         .allocator = if (jsc_vm.has_loaded) &jsc_vm.allocator else null,
             //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
             //         .specifier = ZigString.init(specifier),
-            //         .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+            //         .source_url = input_specifier.createIfDifferent(path.text),
             //         .hash = 0,
             //         .tag = ResolvedSource.Tag.wasm,
             //     };
@@ -1949,7 +1955,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.static(@embedFile("../js/wasi-runner.js")),
                         .specifier = input_specifier,
-                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                        .source_url = input_specifier.createIfDifferent(path.text),
                         .tag = .esm,
                         .hash = 0,
                     };
@@ -2009,7 +2015,7 @@ pub const ModuleLoader = struct {
                     .allocator = null,
                     .source_code = bun.String.createUTF8(sqlite_module_source_code_string),
                     .specifier = input_specifier,
-                    .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                    .source_url = input_specifier.createIfDifferent(path.text),
                     .tag = .esm,
                     .hash = 0,
                 };
@@ -2039,7 +2045,7 @@ pub const ModuleLoader = struct {
                     .allocator = &jsc_vm.allocator,
                     .source_code = public_url,
                     .specifier = input_specifier,
-                    .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                    .source_url = input_specifier.createIfDifferent(path.text),
                     .hash = 0,
                 };
             },
@@ -2282,7 +2288,7 @@ pub const ModuleLoader = struct {
                         .source_url = specifier,
                         .hash = 0,
                         .tag = .esm,
-                        .needs_deref = true,
+                        .source_code_needs_deref = true,
                     };
                 },
 
@@ -2387,7 +2393,7 @@ pub const ModuleLoader = struct {
                         .specifier = specifier,
                         .source_url = specifier.dupeRef(),
                         .hash = 0,
-                        .needs_deref = false,
+                        .source_code_needs_deref = false,
                     };
                 }
 
@@ -2397,7 +2403,7 @@ pub const ModuleLoader = struct {
                     .specifier = specifier,
                     .source_url = specifier.dupeRef(),
                     .hash = 0,
-                    .needs_deref = false,
+                    .source_code_needs_deref = false,
                 };
             }
         }

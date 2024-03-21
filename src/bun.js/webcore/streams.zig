@@ -959,17 +959,15 @@ pub const StreamResult = union(Tag) {
 };
 
 pub const Signal = struct {
-    ptr: *anyopaque = dead,
-    vtable: VTable = VTable.Dead,
-
-    pub const dead = @as(*anyopaque, @ptrFromInt(0xaaaaaaaa));
+    ptr: ?*anyopaque = null,
+    vtable: ?*const VTable = null,
 
     pub fn clear(this: *Signal) void {
-        this.ptr = dead;
+        this.ptr = null;
     }
 
     pub fn isDead(this: Signal) bool {
-        return this.ptr == dead;
+        return this.ptr == null;
     }
 
     pub fn initWithType(comptime Type: type, handler: *Type) Signal {
@@ -977,7 +975,7 @@ pub const Signal = struct {
         @setRuntimeSafety(false);
         return .{
             .ptr = handler,
-            .vtable = VTable.wrap(Type),
+            .vtable = comptime &VTable.wrap(Type),
         };
     }
 
@@ -985,44 +983,32 @@ pub const Signal = struct {
         return initWithType(std.meta.Child(@TypeOf(handler)), handler);
     }
 
-    pub fn close(this: Signal, err: ?Syscall.Error) void {
+    pub fn close(this: *Signal, err: ?Syscall.Error) void {
         if (this.isDead())
             return;
-        this.vtable.close(this.ptr, err);
+        this.vtable.?.close(this.ptr.?, err);
     }
-    pub fn ready(this: Signal, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void {
+
+    pub fn ready(this: *Signal, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void {
         if (this.isDead())
             return;
-        this.vtable.ready(this.ptr, amount, offset);
+        this.vtable.?.ready(this.ptr.?, amount, offset);
     }
-    pub fn start(this: Signal) void {
+
+    pub fn start(this: *Signal) void {
         if (this.isDead())
             return;
-        this.vtable.start(this.ptr);
+        this.vtable.?.start(this.ptr.?);
     }
 
     pub const VTable = struct {
         pub const OnCloseFn = *const (fn (this: *anyopaque, err: ?Syscall.Error) void);
         pub const OnReadyFn = *const (fn (this: *anyopaque, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void);
         pub const OnStartFn = *const (fn (this: *anyopaque) void);
+
         close: OnCloseFn,
         ready: OnReadyFn,
         start: OnStartFn,
-
-        const DeadFns = struct {
-            pub fn close(_: *anyopaque, _: ?Syscall.Error) void {
-                unreachable;
-            }
-            pub fn ready(_: *anyopaque, _: ?Blob.SizeType, _: ?Blob.SizeType) void {
-                unreachable;
-            }
-
-            pub fn start(_: *anyopaque) void {
-                unreachable;
-            }
-        };
-
-        pub const Dead = VTable{ .close = DeadFns.close, .ready = DeadFns.ready, .start = DeadFns.start };
 
         pub fn wrap(
             comptime Wrapped: type,

@@ -28,7 +28,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     string(STRIP ${MACOS_VERSION} MACOS_VERSION)
 
     if(MACOS_VERSION VERSION_LESS ${MACOSX_DEPLOYMENT_TARGET})
-        message(FATAL_ERROR "\nThe current version of macOS (${MACOS_VERSION}) is less than the deployment target (${MACOSX_DEPLOYMENT_TARGET}).\nThis makes icucore fail to run at start.\nTo fix this, please either:\n- Upgrade to the latest version of macOS\n- Use `xcode-select` to switch to an SDK version <= ${MACOS_VERSION}")
+        message(WARNING "\nThe current version of macOS (${MACOS_VERSION}) is less than the deployment target (${MACOSX_DEPLOYMENT_TARGET}).\nThis makes icucore fail to run at start.\nTo fix this, please either:\n- Upgrade to the latest version of macOS\n- Use `xcode-select` to switch to an SDK version <= ${MACOS_VERSION}")
     endif()
 endif()
 

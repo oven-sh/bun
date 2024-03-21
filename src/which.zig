@@ -58,7 +58,11 @@ const win_extensionsW = .{
     bun.strings.w("cmd"),
     bun.strings.w("bat"),
 };
-const win_extensions = .{ "exe", "cmd", "bat" };
+const win_extensions = .{
+    "exe",
+    "cmd",
+    "bat",
+};
 
 pub fn endsWithExtension(str: []const u8) bool {
     if (str.len < 4) return false;

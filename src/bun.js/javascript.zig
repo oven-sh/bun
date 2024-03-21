@@ -1557,7 +1557,7 @@ pub const VirtualMachine = struct {
                 .source_url = bun.String.init(source_url),
                 .hash = 0,
                 .allocator = null,
-                .needs_deref = false,
+                .source_code_needs_deref = false,
             };
         }
         var source = this.refCountedString(code, hash_, !add_double_ref);
@@ -1572,7 +1572,7 @@ pub const VirtualMachine = struct {
             .source_url = bun.String.init(source_url),
             .hash = source.hash,
             .allocator = source,
-            .needs_deref = false,
+            .source_code_needs_deref = false,
         };
     }
 
@@ -1626,35 +1626,35 @@ pub const VirtualMachine = struct {
             return builtin;
         }
 
-        var virtual_source: ?*logger.Source = null;
-
-        var display_specifier = _specifier.toUTF8(bun.default_allocator);
+        const display_specifier = _specifier.toUTF8(bun.default_allocator);
         defer display_specifier.deinit();
-        var specifier_clone = _specifier.toUTF8(bun.default_allocator);
+        const specifier_clone = _specifier.toUTF8(bun.default_allocator);
         defer specifier_clone.deinit();
         var display_slice = display_specifier.slice();
         const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice(), &display_slice);
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
         const path = Fs.Path.init(specifier_clone.slice());
-        var loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
-            if (strings.eqlLong(specifier, jsc_vm.main, true)) {
-                break :brk options.Loader.js;
+        const loader, const virtual_source = brk: {
+            if (jsc_vm.module_loader.eval_source) |eval_source| {
+                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
+                    break :brk .{ .tsx, eval_source };
+                }
+                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
+                    break :brk .{ .tsx, eval_source };
+                }
             }
 
-            break :brk options.Loader.file;
+            break :brk .{
+                jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk2: {
+                    if (strings.eqlLong(specifier, jsc_vm.main, true)) {
+                        break :brk2 options.Loader.js;
+                    }
+                    break :brk2 options.Loader.file;
+                },
+                null,
+            };
         };
-
-        if (jsc_vm.module_loader.eval_source) |eval_source| {
-            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                virtual_source = eval_source;
-                loader = .tsx;
-            }
-            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
-                virtual_source = eval_source;
-                loader = .tsx;
-            }
-        }
 
         // .print_source, which is used by exceptions avoids duplicating the entire source code
         // but that means we have to be careful of the lifetime of the source code

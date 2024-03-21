@@ -132,10 +132,10 @@ describe("parse shell", () => {
         {
           exprs: [
             {
-              cond: {
+              binary: {
                 op: "Or",
                 left: {
-                  cond: {
+                  binary: {
                     op: "And",
                     left: {
                       cmd: {
@@ -180,10 +180,10 @@ describe("parse shell", () => {
         {
           exprs: [
             {
-              cond: {
+              binary: {
                 op: "And",
                 left: {
-                  cond: {
+                  binary: {
                     op: "And",
                     left: {
                       assign: [{ label: "FOO", value: { simple: { Text: "bar" } } }],
@@ -281,7 +281,7 @@ describe("parse shell", () => {
         {
           exprs: [
             {
-              cond: {
+              binary: {
                 op: "And",
                 left: {
                   cmd: {
@@ -400,7 +400,7 @@ describe("parse shell", () => {
         {
           exprs: [
             {
-              cond: {
+              binary: {
                 op: "And",
                 left: {
                   cmd: {

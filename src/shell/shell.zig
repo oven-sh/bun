@@ -342,7 +342,7 @@ pub const AST = struct {
 
     pub const Expr = union(Expr.Tag) {
         assign: []Assign,
-        cond: *Conditional,
+        binary: *Binary,
         pipeline: *Pipeline,
         cmd: *Cmd,
         subshell: Script,
@@ -356,10 +356,10 @@ pub const AST = struct {
             };
         }
 
-        pub const Tag = enum { assign, cond, pipeline, cmd, subshell };
+        pub const Tag = enum { assign, binary, pipeline, cmd, subshell };
     };
 
-    pub const Conditional = struct {
+    pub const Binary = struct {
         op: Op,
         left: Expr,
         right: Expr,
@@ -717,13 +717,13 @@ pub const Parser = struct {
     }
 
     fn parse_expr(self: *Parser) !AST.Expr {
-        return self.parse_cond();
+        return self.parse_binary();
     }
 
-    fn parse_cond(self: *Parser) !AST.Expr {
+    fn parse_binary(self: *Parser) !AST.Expr {
         var left = try self.parse_pipeline();
         while (self.match_any_comptime(&.{ .DoubleAmpersand, .DoublePipe })) {
-            const op: AST.Conditional.Op = op: {
+            const op: AST.Binary.Op = op: {
                 const previous = @as(TokenTag, self.prev());
                 switch (previous) {
                     .DoubleAmpersand => break :op .And,
@@ -733,8 +733,8 @@ pub const Parser = struct {
             };
 
             const right = try self.parse_pipeline();
-            const conditional = try self.allocate(AST.Conditional, .{ .op = op, .left = left, .right = right });
-            left = .{ .cond = conditional };
+            const binary = try self.allocate(AST.Binary, .{ .op = op, .left = left, .right = right });
+            left = .{ .binary = binary };
         }
 
         return left;
@@ -1211,6 +1211,11 @@ pub const TokenTag = enum {
     Var,
     Text,
     JSObjRef,
+    If,
+    Then,
+    Else,
+    Elif,
+    Fi,
     Delimit,
     Eof,
 };
@@ -1260,6 +1265,12 @@ pub const Token = union(TokenTag) {
     Text: TextRange,
     JSObjRef: u32,
 
+    If,
+    Then,
+    Else,
+    Elif,
+    Fi,
+
     Delimit,
     Eof,
 
@@ -1293,6 +1304,11 @@ pub const Token = union(TokenTag) {
             .Var => strpool[self.Var.start..self.Var.end],
             .Text => strpool[self.Text.start..self.Text.end],
             .JSObjRef => "JSObjRef",
+            .If => "if",
+            .Then => "then",
+            .Else => "else",
+            .Elif => "elif",
+            .Fi => "fi",
             .Delimit => "Delimit",
             .Eof => "EOF",
         }
@@ -2716,6 +2732,12 @@ pub const Test = struct {
         Text: []const u8,
         JSObjRef: u32,
 
+        If,
+        Then,
+        Else,
+        Elif,
+        Fi,
+
         Delimit,
         Eof,
 
@@ -2743,6 +2765,11 @@ pub const Test = struct {
                 .CmdSubstEnd => return .CmdSubstEnd,
                 .OpenParen => return .OpenParen,
                 .CloseParen => return .CloseParen,
+                .If => return .If,
+                .Then => return .Then,
+                .Else => return .Else,
+                .Elif => return .Elif,
+                .Fi => return .Fi,
                 .Delimit => return .Delimit,
                 .Eof => return .Eof,
             }

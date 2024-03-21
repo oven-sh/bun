@@ -80,7 +80,7 @@ pub const StateKind = enum(u8) {
     stmt,
     assign,
     cmd,
-    cond,
+    binary,
     pipeline,
     expansion,
 };
@@ -2383,7 +2383,7 @@ pub const Interpreter = struct {
         }
     };
 
-    /// In pipelines and conditional expressions, assigns (e.g. `FOO=bar BAR=baz &&
+    /// In pipelines and binary expressions, assigns (e.g. `FOO=bar BAR=baz &&
     /// echo hi` or `FOO=bar BAR=baz | echo hi`) have no effect on the environment
     /// of the shell, so we can skip them.
     const Assigns = struct {
@@ -2405,7 +2405,7 @@ pub const Interpreter = struct {
 
         const ParentPtr = StatePtrUnion(.{
             Stmt,
-            Cond,
+            Binary,
             Cmd,
             Pipeline,
         });
@@ -2550,7 +2550,7 @@ pub const Interpreter = struct {
         io: IO,
 
         const ChildPtr = StatePtrUnion(.{
-            Cond,
+            Binary,
             Pipeline,
             Cmd,
             Assigns,
@@ -2590,10 +2590,10 @@ pub const Interpreter = struct {
 
             const child = &this.node.exprs[this.idx];
             switch (child.*) {
-                .cond => {
-                    const cond = Cond.init(this.base.interpreter, this.base.shell, child.cond, Cond.ParentPtr.init(this), this.io.copy());
-                    this.currently_executing = ChildPtr.init(cond);
-                    cond.start();
+                .binary => {
+                    const binary = Binary.init(this.base.interpreter, this.base.shell, child.binary, Binary.ParentPtr.init(this), this.io.copy());
+                    this.currently_executing = ChildPtr.init(binary);
+                    binary.start();
                 },
                 .cmd => {
                     const cmd = Cmd.init(this.base.interpreter, this.base.shell, child.cmd, Cmd.ParentPtr.init(this), this.io.copy());
@@ -2638,11 +2638,11 @@ pub const Interpreter = struct {
         }
     };
 
-    pub const Cond = struct {
+    pub const Binary = struct {
         base: State,
-        node: *const ast.Conditional,
-        /// Based on precedence rules conditional can only be child of a stmt or
-        /// another conditional
+        node: *const ast.Binary,
+        /// Based on precedence rules binary expr can only be child of a stmt or
+        /// another binary expr
         parent: ParentPtr,
         left: ?ExitCode = null,
         right: ?ExitCode = null,
@@ -2652,38 +2652,38 @@ pub const Interpreter = struct {
         const ChildPtr = StatePtrUnion(.{
             Cmd,
             Pipeline,
-            Cond,
+            Binary,
             Assigns,
         });
 
         const ParentPtr = StatePtrUnion(.{
             Stmt,
-            Cond,
+            Binary,
         });
 
         pub fn init(
             interpreter: *ThisInterpreter,
             shell_state: *ShellState,
-            node: *const ast.Conditional,
+            node: *const ast.Binary,
             parent: ParentPtr,
             io: IO,
-        ) *Cond {
-            var cond = interpreter.allocator.create(Cond) catch |err| {
+        ) *Binary {
+            var binary = interpreter.allocator.create(Binary) catch |err| {
                 std.debug.print("Ruh roh: {any}\n", .{err});
                 @panic("Ruh roh");
             };
-            cond.node = node;
-            cond.base = .{ .kind = .cond, .interpreter = interpreter, .shell = shell_state };
-            cond.parent = parent;
-            cond.io = io;
-            cond.left = null;
-            cond.right = null;
-            cond.currently_executing = null;
-            return cond;
+            binary.node = node;
+            binary.base = .{ .kind = .binary, .interpreter = interpreter, .shell = shell_state };
+            binary.parent = parent;
+            binary.io = io;
+            binary.left = null;
+            binary.right = null;
+            binary.currently_executing = null;
+            return binary;
         }
 
-        fn start(this: *Cond) void {
-            log("conditional start {x} ({s})", .{ @intFromPtr(this), @tagName(this.node.op) });
+        fn start(this: *Binary) void {
+            log("binary start {x} ({s})", .{ @intFromPtr(this), @tagName(this.node.op) });
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.left == null);
                 std.debug.assert(this.right == null);
@@ -2701,16 +2701,16 @@ pub const Interpreter = struct {
         }
 
         /// Returns null if child is assignments
-        fn makeChild(this: *Cond, left: bool) ?ChildPtr {
+        fn makeChild(this: *Binary, left: bool) ?ChildPtr {
             const node = if (left) &this.node.left else &this.node.right;
             switch (node.*) {
                 .cmd => {
                     const cmd = Cmd.init(this.base.interpreter, this.base.shell, node.cmd, Cmd.ParentPtr.init(this), this.io.copy());
                     return ChildPtr.init(cmd);
                 },
-                .cond => {
-                    const cond = Cond.init(this.base.interpreter, this.base.shell, node.cond, Cond.ParentPtr.init(this), this.io.copy());
-                    return ChildPtr.init(cond);
+                .binary => {
+                    const binary = Binary.init(this.base.interpreter, this.base.shell, node.binary, Binary.ParentPtr.init(this), this.io.copy());
+                    return ChildPtr.init(binary);
                 },
                 .pipeline => {
                     const pipeline = Pipeline.init(this.base.interpreter, this.base.shell, node.pipeline, Pipeline.ParentPtr.init(this), this.io.copy());
@@ -2725,12 +2725,12 @@ pub const Interpreter = struct {
             }
         }
 
-        pub fn childDone(this: *Cond, child: ChildPtr, exit_code: ExitCode) void {
+        pub fn childDone(this: *Binary, child: ChildPtr, exit_code: ExitCode) void {
             if (comptime bun.Environment.allow_assert) {
                 std.debug.assert(this.left == null or this.right == null);
                 std.debug.assert(this.currently_executing != null);
             }
-            log("conditional child done {x} ({s}) {s}", .{ @intFromPtr(this), @tagName(this.node.op), if (this.left == null) "left" else "right" });
+            log("binary child done {x} ({s}) {s}", .{ @intFromPtr(this), @tagName(this.node.op), if (this.left == null) "left" else "right" });
 
             child.deinit();
             this.currently_executing = null;
@@ -2757,7 +2757,7 @@ pub const Interpreter = struct {
             this.parent.childDone(this, exit_code);
         }
 
-        pub fn deinit(this: *Cond) void {
+        pub fn deinit(this: *Binary) void {
             if (this.currently_executing) |child| {
                 child.deinit();
             }
@@ -2770,7 +2770,7 @@ pub const Interpreter = struct {
         base: State,
         node: *const ast.Pipeline,
         /// Based on precedence rules pipeline can only be child of a stmt or
-        /// conditional
+        /// binary
         parent: ParentPtr,
         exited_count: u32,
         cmds: ?[]CmdOrResult,
@@ -2790,7 +2790,7 @@ pub const Interpreter = struct {
 
         const ParentPtr = StatePtrUnion(.{
             Stmt,
-            Cond,
+            Binary,
         });
 
         const ChildPtr = StatePtrUnion(.{
@@ -3202,7 +3202,7 @@ pub const Interpreter = struct {
 
         const ParentPtr = StatePtrUnion(.{
             Stmt,
-            Cond,
+            Binary,
             Pipeline,
             // Expansion,
             // TODO

@@ -23,7 +23,7 @@ class GlobalObject;
 void forEachSourceProvider(WTF::Function<void(JSC::SourceID)>);
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
 void* sourceMappingForSourceURL(const WTF::String& sourceURL);
-
+JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
 class SourceProvider final : public JSC::SourceProvider {
     WTF_MAKE_FAST_ALLOCATED;
     using Base = JSC::SourceProvider;
@@ -36,7 +36,7 @@ class SourceProvider final : public JSC::SourceProvider {
     using SourceOrigin = JSC::SourceOrigin;
 
 public:
-    static Ref<SourceProvider> create(Zig::GlobalObject*, ResolvedSource resolvedSource, JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module, bool isBuiltIn = false);
+    static Ref<SourceProvider> create(Zig::GlobalObject*, ResolvedSource& resolvedSource, JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module, bool isBuiltIn = false);
     ~SourceProvider();
     unsigned hash() const override;
     StringView source() const override { return StringView(m_source.get()); }

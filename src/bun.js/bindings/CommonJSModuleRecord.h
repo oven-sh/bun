@@ -1,6 +1,8 @@
 #pragma once
+#include "JavaScriptCore/JSGlobalObject.h"
 #include "root.h"
 #include "headers-handwritten.h"
+#include "wtf/NakedPtr.h"
 
 namespace Zig {
 class GlobalObject;
@@ -34,30 +36,34 @@ public:
     mutable JSC::WriteBarrier<JSString> m_dirname;
     mutable JSC::WriteBarrier<Unknown> m_paths;
     mutable JSC::WriteBarrier<Unknown> m_parent;
-    mutable JSC::WriteBarrier<JSSourceCode> sourceCode;
     bool ignoreESModuleAnnotation { false };
+    JSC::SourceCode sourceCode = JSC::SourceCode();
+
+    void setSourceCode(JSC::SourceCode&& sourceCode);
 
     static void destroy(JSC::JSCell*);
     ~JSCommonJSModule();
 
+    void clearSourceCode() { sourceCode = JSC::SourceCode(); }
+
     void finishCreation(JSC::VM& vm,
         JSC::JSString* id, JSValue filename,
-        JSC::JSString* dirname, JSC::JSSourceCode* sourceCode);
+        JSC::JSString* dirname, const JSC::SourceCode& sourceCode);
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
-    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource resolvedSource, bool isBuiltIn);
-    inline bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource resolvedSource)
+    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
+    inline bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
     {
         return evaluate(globalObject, sourceURL, resolvedSource, false);
     }
     bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, const SyntheticSourceProvider::SyntheticSourceGenerator& generator);
-    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, JSSourceCode* sourceCode);
+    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, const JSC::SourceCode& sourceCode);
 
     static JSCommonJSModule* create(JSC::VM& vm, JSC::Structure* structure,
         JSC::JSString* id,
         JSValue filename,
-        JSC::JSString* dirname, JSC::JSSourceCode* sourceCode);
+        JSC::JSString* dirname, const JSC::SourceCode& sourceCode);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
@@ -79,9 +85,10 @@ public:
     JSValue exportsObject();
     JSValue id();
 
+    bool load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::NakedPtr<JSC::Exception>&);
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
-
 
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
@@ -106,25 +113,21 @@ public:
     }
 };
 
-JSCommonJSModule* createCommonJSModuleWithoutRunning(
-    Zig::GlobalObject* globalObject,
-    Ref<Zig::SourceProvider> sourceProvider,
-    const WTF::String& sourceURL,
-    ResolvedSource source);
-
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
-    ResolvedSource source,
+    JSC::JSValue specifierValue,
+    ResolvedSource& source,
     bool isBuiltIn);
 
 inline std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
-    ResolvedSource source)
+    JSC::JSValue specifierValue,
+    ResolvedSource& source)
 {
-    return createCommonJSModule(globalObject, source, false);
+    return createCommonJSModule(globalObject, specifierValue, source, false);
 }
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {

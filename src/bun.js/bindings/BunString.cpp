@@ -27,6 +27,7 @@
 #include "JSDOMOperation.h"
 
 #include "GCDefferalContext.h"
+#include "wtf/text/StringImpl.h"
 
 extern "C" void mi_free(void* ptr);
 
@@ -559,4 +560,9 @@ extern "C" bool WTFStringImpl__isThreadSafe(
     //     return wtf->characters8() == reinterpret_cast_ptr<const LChar*>(reinterpret_cast<const uint8_t*>(wtf) + tailOffset<const LChar*>());
 
     // return wtf->characters16() == reinterpret_cast_ptr<const UChar*>(reinterpret_cast<const uint16_t*>(wtf) + tailOffset<const UChar*>());
+}
+
+extern "C" void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)
+{
+    str->hash();
 }

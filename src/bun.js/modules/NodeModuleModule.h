@@ -124,7 +124,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
   }
 
   auto *out = Bun::JSCommonJSModule::create(vm, structure, idString, jsNull(),
-                                            dirname, nullptr);
+                                            dirname, SourceCode());
 
   if (!parentValue.isUndefined())
     out->putDirect(vm, JSC::Identifier::fromString(vm, "parent"_s), parentValue,

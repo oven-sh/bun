@@ -121,6 +121,13 @@ pub const WTFStringImplStruct = extern struct {
         return ZigString.Slice.init(this.refCountAllocator(), this.latin1Slice());
     }
 
+    extern fn Bun__WTFStringImpl__ensureHash(this: WTFStringImpl) void;
+    /// Compute the hash() if necessary
+    pub fn ensureHash(this: WTFStringImpl) void {
+        JSC.markBinding(@src());
+        Bun__WTFStringImpl__ensureHash(this);
+    }
+
     pub fn toUTF8(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.is8Bit()) {
             if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch bun.outOfMemory()) |utf8| {

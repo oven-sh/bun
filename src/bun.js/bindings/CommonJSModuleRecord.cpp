@@ -30,6 +30,8 @@
  */
 
 #include "headers.h"
+#include "JavaScriptCore/JSCast.h"
+#include <JavaScriptCore/JSMapInlines.h>
 #include "root.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "headers-handwritten.h"
@@ -68,6 +70,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include "PathInlines.h"
+#include "wtf/NakedPtr.h"
 #include "wtf/URL.h"
 
 extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
@@ -173,34 +176,44 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     return exception.get() == nullptr;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionLoadModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
+bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::NakedPtr<JSC::Exception>& exception)
 {
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSCommonJSModule* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->argument(0));
-    if (!moduleObject) {
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(true)));
+    if (this->hasEvaluated || this->sourceCode.isNull()) {
+        return true;
     }
-
-    if (moduleObject->hasEvaluated || moduleObject->sourceCode.isNull()) {
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(true)));
-    }
-
-    WTF::NakedPtr<Exception> exception;
 
     evaluateCommonJSModuleOnce(
         globalObject->vm(),
         jsCast<Zig::GlobalObject*>(globalObject),
-        moduleObject,
-        moduleObject->m_dirname.get(),
-        moduleObject->m_filename.get(),
+        this,
+        this->m_dirname.get(),
+        this->m_filename.get(),
         exception);
 
     if (exception.get()) {
         // On error, remove the module from the require map/
         // so that it can be re-evaluated on the next require.
-        globalObject->requireMap()->remove(globalObject, moduleObject->id());
+        globalObject->requireMap()->remove(globalObject, this->id());
 
+        return false;
+    }
+
+    return true;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionLoadModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSCommonJSModule* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->argument(0));
+    if (!moduleObject) {
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(true)));
+    }
+
+    WTF::NakedPtr<Exception> exception;
+
+    if (!moduleObject->load(vm, globalObject, exception)) {
         throwException(globalObject, throwScope, exception.get());
         exception.clear();
         return JSValue::encode({});
@@ -1021,13 +1034,13 @@ bool JSCommonJSModule::evaluate(
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
+    JSValue specifierValue,
     ResolvedSource& source,
     bool isBuiltIn)
 {
     JSCommonJSModule* moduleObject = nullptr;
     WTF::String sourceURL = source.source_url.toWTFString();
 
-    JSValue specifierValue = Bun::toJS(globalObject, source.specifier);
     JSValue entry = globalObject->requireMap()->get(globalObject, specifierValue);
     bool ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     SourceOrigin sourceOrigin;
@@ -1038,7 +1051,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     if (!moduleObject) {
         auto& vm = globalObject->vm();
-        auto* requireMapKey = jsStringWithCache(vm, sourceURL);
+        auto* requireMapKey = specifierValue.toString(globalObject);
         auto index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
         JSString* dirname;
         JSString* filename = requireMapKey;
@@ -1102,6 +1115,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
                         moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
                     }
+                } else {
+                    // require map was cleared of the entry
                 }
             },
             sourceOrigin,

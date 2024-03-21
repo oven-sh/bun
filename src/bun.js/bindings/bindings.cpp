@@ -3062,7 +3062,7 @@ void JSC__JSInternalPromise__rejectAsHandledException(JSC__JSInternalPromise* ar
 JSC__JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC__JSGlobalObject* arg0,
     JSC__JSValue JSValue1)
 {
-    return reinterpret_cast<JSC::JSInternalPromise*>(
+    return jsCast<JSC::JSInternalPromise*>(
         JSC::JSInternalPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1)));
 }
 

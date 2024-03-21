@@ -1,6 +1,8 @@
 #pragma once
+#include "JavaScriptCore/JSGlobalObject.h"
 #include "root.h"
 #include "headers-handwritten.h"
+#include "wtf/NakedPtr.h"
 
 namespace Zig {
 class GlobalObject;
@@ -83,6 +85,8 @@ public:
     JSValue exportsObject();
     JSValue id();
 
+    bool load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::NakedPtr<JSC::Exception>&);
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
@@ -114,14 +118,16 @@ JSC::Structure* createCommonJSModuleStructure(
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
+    JSC::JSValue specifierValue,
     ResolvedSource& source,
     bool isBuiltIn);
 
 inline std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
+    JSC::JSValue specifierValue,
     ResolvedSource& source)
 {
-    return createCommonJSModule(globalObject, source, false);
+    return createCommonJSModule(globalObject, specifierValue, source, false);
 }
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {

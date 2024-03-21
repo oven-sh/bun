@@ -424,6 +424,7 @@ extern "C" void Bun__onFulfillAsyncModule(
                 if (auto isEvaluated = entry.getObject()->getIfPropertyExists(globalObject, Bun::builtinNames(vm).evaluatedPublicName())) {
                     if (isEvaluated.isTrue()) {
                         // it's a race! we lost.
+                        // https://github.com/oven-sh/bun/issues/6946
                         return;
                     }
                 }

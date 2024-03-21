@@ -1,5 +1,3 @@
-#include "JavaScriptCore/BuiltinNames.h"
-#include "JavaScriptCore/JSCast.h"
 #include "root.h"
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSGlobalObject.h"

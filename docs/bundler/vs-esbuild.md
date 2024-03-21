@@ -7,7 +7,7 @@ There are a few behavioral differences to note.
 
 ## Performance
 
-With an performance-minded API coupled with the extensively optimized Zig-based JS/TS parser, Bun's bundler is 1.75x faster than esbuild on esbuild's [three.js benchmark](https://github.com/oven-sh/bun/tree/main/bench/bundle).
+With a performance-minded API coupled with the extensively optimized Zig-based JS/TS parser, Bun's bundler is 1.75x faster than esbuild on esbuild's [three.js benchmark](https://github.com/oven-sh/bun/tree/main/bench/bundle).
 
 {% image src="/images/bundler-speed.png" caption="Bundling 10 copies of three.js from scratch, with sourcemaps and minification" /%}
 

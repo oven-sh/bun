@@ -1,0 +1,93 @@
+name: zig-build
+
+on:
+  workflow_call:
+    inputs:
+      cpu:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+
+env:
+  LLVM_VERSION: 16
+
+jobs:
+  dependencies:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Packages (macOS)
+        if: ${{ runner.os == 'macOS' }}
+        env:
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: |
+          brew install --force \
+            ccache \
+            rust \
+            llvm@${LLVM_VERSION} \
+            pkg-config \
+            coreutils \
+            libtool \
+            cmake \
+            libiconv \
+            automake \
+            openssl@1.1 \
+            ninja \
+            gnu-sed
+
+          echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
+          echo "$(brew --prefix llvm@${LLVM_VERSION})/bin" >> $GITHUB_PATH
+          brew link --overwrite llvm@${LLVM_VERSION}
+
+      - name: Hash Dependencies
+        id: dependencies
+        run: |
+          print_versions() {
+            git submodule | grep -v WebKit
+            llvm-config --version
+            rustc --version
+            cat $(echo scripts/build*.sh scripts/all-dependencies.sh | tr " " "\n" | sort)
+          }
+
+          echo "sha=$(print_versions | sha1sum | cut -c 1-10)" >> $GITHUB_OUTPUT
+
+      - name: Cache Dependencies
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/bun-deps
+          key: bun-deps-${{ inputs.runner }}-${{ steps.dependencies.outputs.sha }}
+
+      - name: Build Dependencies
+        if: ${{ !steps.cache-restore.outputs.cache-hit }}
+        env:
+          CPU_TARGET: ${{ inputs.cpu }}
+          BUN_DEPS_OUT_DIR: ${{ runner.temp }}/bun-deps
+        run: |
+          mkdir -p $BUN_DEPS_OUT_DIR
+          bash ./scripts/clean-dependencies.sh
+          bash ./scripts/all-dependencies.sh
+
+      - name: Cache Dependencies
+        if: ${{ !steps.cache-restore.outputs.cache-hit }}
+        id: cache-save
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/bun-deps
+          key: ${{ steps.cache-restore.outputs.cache-primary-key }}
+
+      - name: Upload Dependencies
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.runner }}-deps
+          path: ${{ runner.temp }}/bun-deps
+          if-no-files-found: error

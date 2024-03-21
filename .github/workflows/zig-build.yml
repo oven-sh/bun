@@ -83,7 +83,7 @@ jobs:
             BUILD_MACHINE_ARCH=${{ env.ARCH }}
             ARCH=${{ env.ARCH }}
             CPU_TARGET=${{ env.CPU_TARGET }}
-            GIT_SHA=${{ env.GITHUB_SHA }}
+            GIT_SHA=${{ github.sha }}
           platforms: |
             linux/${{ env.ARCH }}
           outputs: |

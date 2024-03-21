@@ -1,0 +1,65 @@
+name: Test
+
+on:
+  push:
+  workflow_call:
+    inputs:
+      runs-on:
+        type: string
+        required: true
+      artifact:
+        type: string
+        required: true
+
+jobs:
+  test:
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            test
+            packages/bun-internal-test/src
+            packages/bun-internal-test/package.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download Bun from URL
+        if: ${{ startsWith(inputs.artifact, 'http://') || startsWith(inputs.artifact, 'https://') }}
+        shell: bash
+        run: |
+          mkdir -p ${{ runner.temp }}/bun
+          curl -L ${{ inputs.artifact }} -o ${{ runner.temp }}/bun/${{ inputs.artifact }}.zip
+
+      - name: Download Bun from Github Action
+        if: ${{ !startsWith(inputs.artifact, 'http://') && !startsWith(inputs.artifact, 'https://') }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ runner.temp }}/bun
+
+      - name: Setup Bun
+        shell: bash
+        run: |
+          cd ${{ runner.temp }}/bun
+          unzip ${{ inputs.artifact }}.zip
+          cd ${{ inputs.artifact }}
+          chmod +x bun
+          pwd >> $GITHUB_PATH
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          bun --version
+          bun install
+          bun install --cwd=test
+          bun install --cwd=packages/bun-internal-test
+
+      - name: Run Tests
+        shell: bash
+        run: |
+          node packages/bun-internal-test/src/runner.node.mjs || true

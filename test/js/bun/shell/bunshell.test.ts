@@ -842,6 +842,60 @@ describe("deno_task", () => {
       expect(stdout[i]).toEqual("a".charCodeAt(0));
     }
   });
+
+  // https://github.com/oven-sh/bun/issues/9458
+  test("input", async () => {
+    const inputCode = /* ts */ `
+    const downArrow = '\\x1b[B';
+    const enterKey = '\\x0D';
+    await Bun.sleep(100)
+    const writer = Bun.stdout.writer();
+    writer.write(downArrow)
+    await Bun.sleep(100)
+    writer.write(enterKey)
+    writer.flush()
+    `;
+
+    const code = /* ts */ `
+    const { select } = require('@inquirer/prompts');
+
+    async function run() {
+      const foobar = await select({
+        message: 'Foo or Bar',
+        choices: [
+          { name: 'Foo', value: 'foo' },
+          { name: 'Bar', value: 'bar' },
+        ],
+      });
+      console.error('Choice:', foobar);
+    }
+
+    run();
+    `;
+
+    const packagejson = `
+    {
+      "name": "stuff",
+      "module": "index.ts",
+      "type": "module",
+      "devDependencies": {
+        "@types/bun": "latest"
+      },
+      "peerDependencies": {
+        "typescript": "^5.0.0"
+      },
+      "dependencies": {
+        "@inquirer/prompts": "v4.3.0"
+      }
+    }
+    `;
+
+    await TestBuilder.command`echo ${packagejson} > package.json; BUN_DEBUG_QUIET_LOGS=1 ${BUN} i &> /dev/null; BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${inputCode} | BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code}`
+      .ensureTempDir()
+      .stdout(() => {})
+      .stderr("Choice: bar\n")
+      .run();
+  });
 });
 
 function stringifyBuffer(buffer: Uint8Array): string {

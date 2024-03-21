@@ -605,7 +605,11 @@ pub const Interpreter = struct {
     has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
-    done: ?*bool = null,
+    flags: packed struct(u8) {
+        done: bool = false,
+        quiet: bool = false,
+        __unused: u6 = 0,
+    } = .{},
     exit_code: ?*ExitCode = null,
 
     const InterpreterChildPtr = StatePtrUnion(.{
@@ -1078,29 +1082,7 @@ pub const Interpreter = struct {
             .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
         };
 
-        log("Duping stdout", .{});
-        const stdout_fd = switch (ShellSyscall.dup(shell.STDOUT_FD)) {
-            .result => |fd| fd,
-            .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
-        };
-
-        log("Duping stderr", .{});
-        const stderr_fd = switch (ShellSyscall.dup(shell.STDERR_FD)) {
-            .result => |fd| fd,
-            .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
-        };
-
         const stdin_reader = IOReader.init(stdin_fd, event_loop);
-        const stdout_writer = IOWriter.init(
-            stdout_fd,
-            .{
-                .pollable = isPollable(stdout_fd, event_loop.stdout().data.file.mode),
-            },
-            event_loop,
-        );
-        const stderr_writer = IOWriter.init(stderr_fd, .{
-            .pollable = isPollable(stderr_fd, event_loop.stderr().data.file.mode),
-        }, event_loop);
 
         interpreter.* = .{
             .event_loop = event_loop,
@@ -1125,23 +1107,14 @@ pub const Interpreter = struct {
                 .stdin = .{
                     .fd = stdin_reader,
                 },
-                .stdout = .{
-                    .fd = .{
-                        .writer = stdout_writer,
-                    },
-                },
-                .stderr = .{
-                    .fd = .{
-                        .writer = stderr_writer,
-                    },
-                },
+                // By default stdout/stderr should be an IOWriter writing to a dup'ed stdout/stderr
+                // But if the user later calls `.setQuiet(true)` then all those syscalls/initialization was pointless work
+                // So we cheaply initialize them now as `.pipe`
+                // When `Interpreter.run()` is called, we check if `this.flags.quiet == false`, if so then we then properly initialize the IOWriter
+                .stdout = .pipe,
+                .stderr = .pipe,
             },
         };
-
-        if (event_loop == .js) {
-            interpreter.root_io.stdout.fd.captured = &interpreter.root_shell._buffered_stdout.owned;
-            interpreter.root_io.stderr.fd.captured = &interpreter.root_shell._buffered_stderr.owned;
-        }
 
         return .{ .result = interpreter };
     }
@@ -1193,17 +1166,26 @@ pub const Interpreter = struct {
         var exit_code: ExitCode = 1;
 
         const IsDone = struct {
-            done: bool = false,
+            interp: *const Interpreter,
 
             fn isDone(this: *anyopaque) bool {
                 const asdlfk = bun.cast(*const @This(), this);
-                return asdlfk.done;
+                return asdlfk.interp.flags.done;
             }
         };
-        var is_done: IsDone = .{};
-        interp.done = &is_done.done;
+        var is_done: IsDone = .{
+            .interp = interp,
+        };
         interp.exit_code = &exit_code;
-        try interp.run();
+        switch (try interp.run()) {
+            .err => |e| {
+                defer interp.deinitEverything();
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{}<r>", .{ std.fs.path.basename(path), e.toSystemError() });
+                bun.Global.exit(1);
+                return 1;
+            },
+            else => {},
+        }
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         return exit_code;
     }
@@ -1233,7 +1215,7 @@ pub const Interpreter = struct {
         };
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
-        var interp = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
+        var interp: *ThisInterpreter = switch (ThisInterpreter.init(.{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return 1;
@@ -1241,33 +1223,102 @@ pub const Interpreter = struct {
             .result => |i| i,
         };
         const IsDone = struct {
-            done: bool = false,
+            interp: *const Interpreter,
 
             fn isDone(this: *anyopaque) bool {
                 const asdlfk = bun.cast(*const @This(), this);
-                return asdlfk.done;
+                return asdlfk.interp.flags.done;
             }
         };
-        var is_done: IsDone = .{};
+        var is_done: IsDone = .{
+            .interp = interp,
+        };
         var exit_code: ExitCode = 1;
-        interp.done = &is_done.done;
         interp.exit_code = &exit_code;
-        try interp.run();
+        switch (try interp.run()) {
+            .err => |e| {
+                defer interp.deinitEverything();
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{}<r>", .{ path_for_errors, e.toSystemError() });
+                bun.Global.exit(1);
+                return 1;
+            },
+            else => {},
+        }
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         interp.deinitEverything();
         return exit_code;
     }
 
-    pub fn run(this: *ThisInterpreter) !void {
+    fn setupIOBeforeRun(this: *ThisInterpreter) Maybe(void) {
+        if (!this.flags.quiet) {
+            const event_loop = this.event_loop;
+
+            log("Duping stdout", .{});
+            const stdout_fd = switch (ShellSyscall.dup(shell.STDOUT_FD)) {
+                .result => |fd| fd,
+                .err => |err| return .{ .err = err },
+            };
+
+            log("Duping stderr", .{});
+            const stderr_fd = switch (ShellSyscall.dup(shell.STDERR_FD)) {
+                .result => |fd| fd,
+                .err => |err| return .{ .err = err },
+            };
+
+            const stdout_writer = IOWriter.init(
+                stdout_fd,
+                .{
+                    .pollable = isPollable(stdout_fd, event_loop.stdout().data.file.mode),
+                },
+                event_loop,
+            );
+            const stderr_writer = IOWriter.init(stderr_fd, .{
+                .pollable = isPollable(stderr_fd, event_loop.stderr().data.file.mode),
+            }, event_loop);
+
+            this.root_io = .{
+                .stdin = this.root_io.stdin,
+                .stdout = .{
+                    .fd = .{
+                        .writer = stdout_writer,
+                    },
+                },
+                .stderr = .{
+                    .fd = .{
+                        .writer = stderr_writer,
+                    },
+                },
+            };
+
+            if (event_loop == .js) {
+                this.root_io.stdout.fd.captured = &this.root_shell._buffered_stdout.owned;
+                this.root_io.stderr.fd.captured = &this.root_shell._buffered_stderr.owned;
+            }
+        }
+
+        return Maybe(void).success;
+    }
+
+    pub fn run(this: *ThisInterpreter) !Maybe(void) {
+        if (this.setupIOBeforeRun().asErr()) |e| {
+            return .{ .err = e };
+        }
         var root = Script.init(this, &this.root_shell, this.script, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .SeqCst);
         root.start();
+
+        return Maybe(void).success;
     }
 
     pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         _ = callframe; // autofix
 
-        _ = globalThis;
+        if (this.setupIOBeforeRun().asErr()) |e| {
+            defer this.deinitEverything();
+            const shellerr = bun.shell.ShellErr.newSys(e);
+            throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
+            return .undefined;
+        }
         incrPendingActivityFlag(&this.has_pending_activity);
         var root = Script.init(this, &this.root_shell, this.script, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .SeqCst);
@@ -1307,7 +1358,7 @@ pub const Interpreter = struct {
             defer this.deinitAfterJSRun();
             _ = this.resolve.call(&.{JSValue.jsNumberFromU16(exit_code)});
         } else {
-            this.done.?.* = true;
+            this.flags.done = true;
             this.exit_code.?.* = exit_code;
         }
     }
@@ -1375,14 +1426,9 @@ pub const Interpreter = struct {
         return .undefined;
     }
 
-    pub fn setQuiet(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
-        _ = globalThis;
-        _ = callframe;
-        this.root_io.stdout.deref();
-        this.root_io.stderr.deref();
-        this.root_io.stdout = .pipe;
-        this.root_io.stderr = .pipe;
+        this.flags.quiet = true;
         return .undefined;
     }
 
@@ -3477,13 +3523,13 @@ pub const Interpreter = struct {
             const args = args: {
                 this.args.append(null) catch bun.outOfMemory();
 
-                if (bun.Environment.allow_assert) {
-                    for (this.args.items) |maybe_arg| {
-                        if (maybe_arg) |arg| {
-                            log("ARG: {s}\n", .{arg});
-                        }
+                // if (bun.Environment.allow_assert) {
+                for (this.args.items) |maybe_arg| {
+                    if (maybe_arg) |arg| {
+                        log("ARG: {s}\n", .{arg});
                     }
                 }
+                // }
 
                 const first_arg = this.args.items[0] orelse {
                     // If no args then this is a bug

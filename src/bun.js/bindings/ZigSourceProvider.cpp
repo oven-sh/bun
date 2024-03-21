@@ -28,8 +28,6 @@ using SourceOrigin = JSC::SourceOrigin;
 using String = WTF::String;
 using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
-extern "C" unsigned Bun__transpiler_generation_number;
-
 static uintptr_t getSourceProviderMapKey(ResolvedSource& resolvedSource)
 {
     switch (resolvedSource.source_code.tag) {

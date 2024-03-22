@@ -55,7 +55,7 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
     return null;
 }
 
-const win_extensionsW = .{
+const win_extensionsW = [_][:0]const u16{
     bun.strings.w("exe"),
     bun.strings.w("cmd"),
     bun.strings.w("bat"),
@@ -79,8 +79,18 @@ pub fn endsWithExtension(str: []const u8) bool {
 
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by whichWin)
 fn searchBin(buf: *bun.WPathBuffer, path_size: usize, check_windows_extensions: bool) ?[:0]const u16 {
-    if (bun.sys.existsOSPath(buf[0..path_size :0], true))
+    if (!bun.Environment.isWindows and bun.sys.existsOSPath(buf[0..path_size :0], true))
         return buf[0..path_size :0];
+    if (bun.Environment.isWindows) {
+        const haystack = buf[0..path_size :0];
+        for (win_extensionsW) |ext| {
+            if (path_size < 4) continue;
+            if (!bun.strings.endsWithGeneric(u16, haystack, ext)) continue;
+            if (haystack[haystack.len - 4] != '.') continue;
+            if (!bun.sys.existsOSPath(buf[0..path_size :0], true)) continue;
+            return haystack;
+        }
+    }
 
     if (check_windows_extensions) {
         buf[path_size] = '.';

@@ -1348,7 +1348,6 @@ pub const Command = struct {
         "pm",
         "x",
         "repl",
-        "exec",
     };
 
     const reject_list = default_completions_list ++ [_]string{

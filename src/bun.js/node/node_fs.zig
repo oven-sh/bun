@@ -3877,6 +3877,28 @@ pub const NodeFS = struct {
         return Maybe(Return.CopyFile).success;
     }
 
+    // copy_file_range() is frequently not supported across devices, such as tmpfs.
+    // This is relevant for `bun install`
+    // However, sendfile() is supported across devices.
+    // Only on Linux. There are constraints though. It cannot be used if the file type does not support
+    pub noinline fn copyFileUsingSendfileOnLinuxWithReadWriteFallback(src: [:0]const u8, dest: [:0]const u8, src_fd: FileDescriptor, dest_fd: FileDescriptor, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
+        while (true) {
+            const amt = switch (bun.sys.sendfile(src_fd, dest_fd, std.math.maxInt(i32) - 1)) {
+                .err => {
+                    return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, stat_size, wrote);
+                },
+                .result => |amount| amount,
+            };
+
+            wrote.* += amt;
+            if (amt == 0) {
+                break;
+            }
+        }
+
+        return Maybe(Return.CopyFile).success;
+    }
+
     /// https://github.com/libuv/libuv/pull/2233
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
@@ -4034,7 +4056,7 @@ pub const NodeFS = struct {
             var off_out_copy = @as(i64, @bitCast(@as(u64, 0)));
 
             if (!bun.canUseCopyFileRangeSyscall()) {
-                return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                return copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
             }
 
             if (size == 0) {
@@ -4045,11 +4067,12 @@ pub const NodeFS = struct {
                     const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.mem.page_size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
+                            .INTR => continue,
                             inline .XDEV, .NOSYS => |errno| brk: {
                                 if (comptime errno == .NOSYS) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
-                                break :brk copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                                break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
                             },
                             else => return err,
                         };
@@ -4065,11 +4088,12 @@ pub const NodeFS = struct {
                     const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
+                            .INTR => continue,
                             inline .XDEV, .NOSYS => |errno| brk: {
                                 if (comptime errno == .NOSYS) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
-                                break :brk copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                                break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
                             },
                             else => return err,
                         };
@@ -6370,7 +6394,7 @@ pub const NodeFS = struct {
             var off_out_copy = @as(i64, @bitCast(@as(u64, 0)));
 
             if (!bun.canUseCopyFileRangeSyscall()) {
-                return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                return copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
             }
 
             if (size == 0) {
@@ -6385,7 +6409,7 @@ pub const NodeFS = struct {
                                 if (comptime errno == .NOSYS) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
-                                break :brk copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                                break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
                             },
                             else => return err,
                         };
@@ -6405,7 +6429,7 @@ pub const NodeFS = struct {
                                 if (comptime errno == .NOSYS) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
-                                break :brk copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+                                break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
                             },
                             else => return err,
                         };

@@ -408,7 +408,7 @@ pub const Handle = extern struct {
 fn HandleMixin(comptime Type: type) type {
     return struct {
         pub fn getData(this: *const Type, comptime DataType: type) ?*DataType {
-            return @ptrCast(uv_handle_get_data(@ptrCast(this)));
+            return @alignCast(@ptrCast(uv_handle_get_data(@ptrCast(this))));
         }
         pub fn getLoop(this: *const Type) *Loop {
             return uv_handle_get_loop(@ptrCast(this));

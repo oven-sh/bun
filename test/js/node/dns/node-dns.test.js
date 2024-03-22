@@ -183,7 +183,7 @@ test("dns.resolveNs (empty string) ", done => {
     );
     done(err);
   });
-}, 20_000);
+});
 
 test("dns.resolvePtr (ptr.socketify.dev)", done => {
   dns.resolvePtr("ptr.socketify.dev", (err, results) => {

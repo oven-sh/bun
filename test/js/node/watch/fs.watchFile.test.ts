@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 // before it is actually watching, we need to repeat the operation to avoid
 // a race condition.
 function repeat(fn: any) {
-  const interval = setInterval(fn, 20);
+  const interval = setInterval(fn, 20).unref();
   return interval;
 }
 const encodingFileName = `新建文夹件.txt`;

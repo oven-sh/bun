@@ -53,20 +53,15 @@ jobs:
         cpu: [haswell, nehalem]
         arch: [x86_64]
     name: Zig Build
-    runs-on: med-ubuntu
+    runs-on: namespace-profile-zig-build
     timeout-minutes: 60
     if: github.repository_owner == 'oven-sh'
     steps:
       - run: git config --global core.autocrlf false && git config --global core.eol lf
       - uses: actions/checkout@v4
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v2
-        id: buildx
-        with:
-          install: true
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -79,8 +74,7 @@ jobs:
           echo "canary_revision=$(GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash ./scripts/calculate-canary-revision.sh --raw)" >> $GITHUB_OUTPUT
 
       - name: Compile Zig Object
-        uses: docker/build-push-action@v3
-        if: runner.arch == 'X64'
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: false
@@ -102,10 +96,11 @@ jobs:
           outputs: type=local,dest=${{runner.temp}}/release
 
       - name: Upload Zig Object
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-zig${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
           path: ${{runner.temp}}/release/bun-zig.o
+          if-no-files-found: "error"
 
   windows-dependencies:
     name: Dependencies
@@ -138,7 +133,7 @@ jobs:
 
       - name: Try fetch dependencies
         id: cache-deps-restore
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v4
         with:
           path: bun-deps
           key: bun-deps-${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-${{ steps.submodule-versions.outputs.sha }}
@@ -165,15 +160,16 @@ jobs:
           .\scripts\all-dependencies.ps1
 
       - name: Upload Dependencies
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-deps${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
           path: bun-deps/
+          if-no-files-found: "error"
 
       - name: Cache Dependencies
         if: ${{ !steps.cache-deps-restore.outputs.cache-hit }}
         id: cache-deps-save
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v4
         with:
           path: bun-deps
           key: ${{ steps.cache-deps-restore.outputs.cache-primary-key }}
@@ -204,10 +200,11 @@ jobs:
         if: ${{ env.canary == 'true' }}
         run: |
           echo "canary_revision=$(GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" bash ./scripts/calculate-canary-revision.sh --raw)" > build-codegen-win32-x64/.canary_revision
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-codegen
           path: build-codegen-win32-x64/
+          if-no-files-found: "error"
 
   windows-cpp:
     name: C++ Build
@@ -228,7 +225,7 @@ jobs:
           version: ${{ env.LLVM_VERSION }}
       - run: choco install -y ninja
       - name: Download Codegen
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-codegen
           path: build
@@ -263,10 +260,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
           .\compile-cpp-only.ps1 -v
           if ($LASTEXITCODE -ne 0) { throw "C++ compilation failed" }
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-cpp${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
           path: build/bun-cpp-objects.a
+          if-no-files-found: "error"
 
   windows-link:
     strategy:
@@ -288,22 +286,22 @@ jobs:
           version: ${{ env.LLVM_VERSION }}
       - run: choco install -y ninja
       - name: Download Codegen
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-codegen
           path: build
       - name: Download Dependencies
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-deps${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
           path: bun-deps
       - name: Download Zig Object
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-zig${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
           path: bun-zig
       - name: Download C++ Objects
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}-cpp${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
           path: bun-cpp
@@ -336,14 +334,16 @@ jobs:
           cp -r build\bun.pdb "$Dist\bun.pdb"
           Compress-Archive "$Dist" "$Dist.zip"
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}
           path: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}.zip
-      - uses: actions/upload-artifact@v3
+          if-no-files-found: "error"
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile
           path: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile.zip
+          if-no-files-found: "error"
       - name: Release
         id: release
         uses: ncipollo/release-action@v1
@@ -398,12 +398,12 @@ jobs:
       - run: git config --global core.autocrlf false && git config --global core.eol lf
       - id: checkout
         name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: false
       - id: download
         name: Download Release
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.tag }}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile
           path: ${{runner.temp}}/release
@@ -417,6 +417,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: secondlife/setup-cygwin@v1
+        with:
+          packages: bash
       - name: Install dependencies
         run: |
           # bun install --verbose
@@ -431,14 +434,15 @@ jobs:
         name: Run tests
         env:
           SMTP_SENDGRID_SENDER: ${{ secrets.SMTP_SENDGRID_SENDER }}
+          TMPDIR: ${{runner.temp}}
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
+          SHELLOPTS: igncr
+          BUN_PATH_BASE: ${{runner.temp}}
+          BUN_PATH: release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile/bun.exe
         run: |
-          try {
-            $ErrorActionPreference = "SilentlyContinue"
-            $null = node packages/bun-internal-test/src/runner.node.mjs ${{runner.temp}}/release/${{env.tag}}-${{ matrix.arch == 'x86_64' && 'x64' || 'aarch64' }}${{ matrix.cpu == 'nehalem' && '-baseline' || '' }}-profile/bun.exe || $true
-          } catch {}
-          $ErrorActionPreference = "Stop"
+          node packages/bun-internal-test/src/runner.node.mjs  || true
+        shell: bash
       - uses: sarisia/actions-status-discord@v1
         if: always() && steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
         with:

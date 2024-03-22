@@ -392,7 +392,12 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 
     internal_finalize_bsd_addr(addr);
 
+#if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
+// skip the extra fcntl calls.
+    return accepted_fd;
+#else
     return bsd_set_nonblocking(apple_no_sigpipe(accepted_fd));
+#endif
 }
 
 int bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
@@ -473,7 +478,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
             setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval3, sizeof(optval3));
         }
 #else
-    #if /*defined(__linux) &&*/ defined(SO_REUSEPORT)
+    #if /*defined(__linux__) &&*/ defined(SO_REUSEPORT)
         if (!(options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
             int optval = 1;
             setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval, sizeof(optval));
@@ -562,8 +567,91 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 #endif
 #include <sys/stat.h>
 #include <stddef.h>
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, int options) {
 
+static int bsd_create_unix_socket_address(const char *path, size_t path_len, int* dirfd_linux_workaround_for_unix_path_len, struct sockaddr_un *server_address, size_t* addrlen) {
+    memset(server_address, 0, sizeof(struct sockaddr_un));
+    server_address->sun_family = AF_UNIX;
+
+    if (path_len == 0) {
+        #if defined(_WIN32)
+            // simulate ENOENT
+            SetLastError(ERROR_PATH_NOT_FOUND);
+        #else
+            errno = ENOENT;
+        #endif
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    *addrlen = sizeof(struct sockaddr_un);
+
+    #if defined(__linux__)
+        // Unix socket addresses have a maximum length of 108 bytes on Linux
+        // As a workaround, we can use /proc/self/fd/ as a directory to shorten the path
+        if (path_len >= sizeof(server_address->sun_path) && path[0] != '\0') {
+            size_t dirname_len = path_len;
+            // get the basename
+            while (dirname_len > 1 && path[dirname_len - 1] != '/') {
+                dirname_len--;
+            }
+
+            // if the path is just a single character, or the path is too long, we cannot use this method
+            if (dirname_len < 2 || (path_len - dirname_len + 1) >= sizeof(server_address->sun_path)) {
+                errno = ENAMETOOLONG;
+                return LIBUS_SOCKET_ERROR;
+            }
+
+            char dirname_buf[4096];
+            if (dirname_len + 1 > sizeof(dirname_buf)) {
+                errno = ENAMETOOLONG;
+                return LIBUS_SOCKET_ERROR;
+            }
+
+            memcpy(dirname_buf, path, dirname_len);
+            dirname_buf[dirname_len] = 0;
+
+            int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_PATH | O_DIRECTORY, 0700);
+            if (socket_dir_fd == -1) {
+                errno = ENAMETOOLONG;
+                return LIBUS_SOCKET_ERROR;
+            }
+
+            int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%s", socket_dir_fd, path + dirname_len);
+            if (sun_path_len >= sizeof(server_address->sun_path) || sun_path_len < 0) {
+                close(socket_dir_fd);
+                errno = ENAMETOOLONG;
+                return LIBUS_SOCKET_ERROR;
+            }
+
+            *dirfd_linux_workaround_for_unix_path_len = socket_dir_fd;
+            return 0;
+        } else if (path_len < sizeof(server_address->sun_path)) {
+            memcpy(server_address->sun_path, path, path_len);
+
+            // abstract domain sockets
+            if (server_address->sun_path[0] == 0) {
+                *addrlen = offsetof(struct sockaddr_un, sun_path) + path_len;
+            }
+
+            return 0;
+        }
+    #endif
+
+    if (path_len >= sizeof(server_address->sun_path)) {
+        #if defined(_WIN32)
+            // simulate ENAMETOOLONG
+            SetLastError(ERROR_FILENAME_EXCED_RANGE);    
+        #else
+            errno = ENAMETOOLONG;
+        #endif
+        
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    memcpy(server_address->sun_path, path, path_len);
+    return 0;
+}
+
+static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char* path, int options, struct sockaddr_un* server_address, size_t addrlen) {
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
 
     listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0);
@@ -579,21 +667,43 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, int opti
     _chmod(path, S_IREAD | S_IWRITE | S_IEXEC);
 #endif
 
-    struct sockaddr_un server_address;
-    memset(&server_address, 0, sizeof(server_address));
-    server_address.sun_family = AF_UNIX;
-    strcpy(server_address.sun_path, path);
-    int size = offsetof(struct sockaddr_un, sun_path) + strlen(server_address.sun_path);
 #ifdef _WIN32
     _unlink(path);
 #else
     unlink(path);
 #endif
 
-    if (bind(listenFd, (struct sockaddr *)&server_address, size) || listen(listenFd, 512)) {
+    if (bind(listenFd, (struct sockaddr *)server_address, addrlen) || listen(listenFd, 512)) {
+        #if defined(_WIN32)
+          int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
+        #endif
         bsd_close_socket(listenFd);
+        #if defined(_WIN32)
+            if (shouldSimulateENOENT) {
+                SetLastError(ERROR_PATH_NOT_FOUND);
+            }
+        #endif
         return LIBUS_SOCKET_ERROR;
     }
+
+    return listenFd;
+}
+
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t len, int options) {
+    int dirfd_linux_workaround_for_unix_path_len = -1;
+    struct sockaddr_un server_address;
+    size_t addrlen = 0;
+    if (bsd_create_unix_socket_address(path, len, &dirfd_linux_workaround_for_unix_path_len, &server_address, &addrlen)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    LIBUS_SOCKET_DESCRIPTOR listenFd = internal_bsd_create_listen_socket_unix(path, options, &server_address, addrlen);
+
+#if defined(__linux__)
+    if (dirfd_linux_workaround_for_unix_path_len != -1) {
+        close(dirfd_linux_workaround_for_unix_path_len);
+    }
+#endif
 
     return listenFd;
 }
@@ -858,24 +968,44 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, co
 #endif
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, int options) {
-
-    struct sockaddr_un server_address;
-    memset(&server_address, 0, sizeof(server_address));
-    server_address.sun_family = AF_UNIX;
-    strcpy(server_address.sun_path, server_path);
-    int size = offsetof(struct sockaddr_un, sun_path) + strlen(server_address.sun_path);
-
+static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen) {
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0);
 
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
     }
 
-    if (connect(fd, (struct sockaddr *)&server_address, size) != 0 && errno != EINPROGRESS) {
+    if (connect(fd, (struct sockaddr *)server_address, addrlen) != 0 && errno != EINPROGRESS) {
+        #if defined(_WIN32)
+          int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
+        #endif
         bsd_close_socket(fd);
+        #if defined(_WIN32)
+            if (shouldSimulateENOENT) {
+                SetLastError(ERROR_PATH_NOT_FOUND);
+            }
+        #endif
         return LIBUS_SOCKET_ERROR;
     }
+
+    return fd;
+}
+
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t len, int options) {
+    struct sockaddr_un server_address;
+    size_t addrlen = 0;
+    int dirfd_linux_workaround_for_unix_path_len = -1;
+    if (bsd_create_unix_socket_address(server_path, len, &dirfd_linux_workaround_for_unix_path_len, &server_address, &addrlen)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    LIBUS_SOCKET_DESCRIPTOR fd = internal_bsd_create_connect_socket_unix(server_path, len, options, &server_address, addrlen);
+
+    #if defined(__linux__)
+    if (dirfd_linux_workaround_for_unix_path_len != -1) {
+        close(dirfd_linux_workaround_for_unix_path_len);
+    }
+    #endif
 
     return fd;
 }

@@ -23,6 +23,7 @@ import { spawnSync } from "node:child_process";
 import nodefs from "node:fs";
 import { join as joinPath } from "node:path";
 import { unlinkSync } from "node:fs";
+import { PassThrough } from "node:stream";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
@@ -174,8 +175,8 @@ describe("node:http", () => {
 
   describe("request", () => {
     function runTest(done: Function, callback: (server: Server, port: number, done: (err?: Error) => void) => void) {
-      var timer;
-      var server = createServer((req, res) => {
+      let timer;
+      const server = createServer((req, res) => {
         if (req.headers.__proto__ !== {}.__proto__) {
           throw new Error("Headers should inherit from Object.prototype");
         }
@@ -187,6 +188,15 @@ describe("node:http", () => {
               Location: `http://localhost:${server.port}/redirected`,
             });
             res.end("Got redirect!\n");
+            return;
+          }
+          if (reqUrl.pathname === "/multi-chunk-response") {
+            res.writeHead(200, { "Content-Type": "text/plain" });
+            const toWrite = "a".repeat(512);
+            for (let i = 0; i < 4; i++) {
+              res.write(toWrite);
+            }
+            res.end();
             return;
           }
           if (reqUrl.pathname === "/multiple-set-cookie") {
@@ -653,6 +663,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("reassign writeHead method, issue#3585", done => {
       runTest(done, (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}/customWriteHead`, res => {
@@ -663,6 +674,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("uploading file by 'formdata/multipart', issue#3116", done => {
       runTest(done, (server, serverPort, done) => {
         const boundary = "----FormBoundary" + Date.now();
@@ -706,6 +718,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("request via http proxy, issue#4295", done => {
       const proxyServer = createServer(function (req, res) {
         let option = url.parse(req.url);
@@ -763,10 +776,43 @@ describe("node:http", () => {
         req.end();
       });
     });
+
+    it("should correctly stream a multi-chunk response #5320", async done => {
+      runTest(done, (server, serverPort, done) => {
+        const req = request({ host: "localhost", port: `${serverPort}`, path: "/multi-chunk-response", method: "GET" });
+
+        req.on("error", err => done(err));
+
+        req.on("response", async res => {
+          const body = res.pipe(new PassThrough({ highWaterMark: 512 }));
+          const response = new Response(body);
+          const text = await response.text();
+
+          expect(text.length).toBe(2048);
+          done();
+        });
+
+        req.end();
+      });
+    });
+
+    it("should emit a socket event when connecting", async done => {
+      runTest(done, async (server, serverPort, done) => {
+        const req = request(`http://localhost:${serverPort}`, {});
+        await new Promise((resolve, reject) => {
+          req.on("error", reject);
+          req.on("socket", function onRequestSocket(socket) {
+            req.destroy();
+            done();
+            resolve();
+          });
+        });
+      });
+    });
   });
 
   describe("signal", () => {
-    it.skip("should abort and close the server", done => {
+    it("should abort and close the server", done => {
       const server = createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("Hello World");
@@ -1674,6 +1720,23 @@ it("#4415.4 IncomingMessage es5", () => {
   const im = Object.create(IncomingMessage.prototype);
   IncomingMessage.call(im, { url: "/foo" });
   expect(im.url).toBe("/foo");
+});
+
+it("#9242.1 Server has constructor", () => {
+  const s = new Server();
+  expect(s.constructor).toBe(Server);
+});
+it("#9242.2 IncomingMessage has constructor", () => {
+  const im = new IncomingMessage("http://localhost");
+  expect(im.constructor).toBe(IncomingMessage);
+});
+it("#9242.3 OutgoingMessage has constructor", () => {
+  const om = new OutgoingMessage();
+  expect(om.constructor).toBe(OutgoingMessage);
+});
+it("#9242.4 ServerResponse has constructor", () => {
+  const sr = new ServerResponse({});
+  expect(sr.constructor).toBe(ServerResponse);
 });
 
 // Windows doesnt support SIGUSR1

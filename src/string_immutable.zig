@@ -8,12 +8,20 @@ const bun = @import("root").bun;
 pub const joiner = @import("./string_joiner.zig");
 const log = bun.Output.scoped(.STR, true);
 const js_lexer = @import("./js_lexer.zig");
+const grapheme = @import("./grapheme.zig");
 
 pub const Encoding = enum {
     ascii,
     utf8,
     latin1,
     utf16,
+};
+
+/// Returned by classification functions that do not discriminate between utf8 and ascii.
+pub const EncodingNonAscii = enum {
+    utf8,
+    utf16,
+    latin1,
 };
 
 pub inline fn containsChar(self: string, char: u8) bool {
@@ -734,6 +742,20 @@ pub fn withoutTrailingSlashWindowsPath(this: string) []const u8 {
     return href;
 }
 
+/// This will remove ONE trailing slash at the end of a string,
+/// but on Windows it will not remove the \ in "C:\"
+pub fn pathWithoutTrailingSlashOne(str: []const u8) []const u8 {
+    return if (str.len > 0 and charIsAnySlash(str[str.len - 1]))
+        if (Environment.isWindows and str.len == 3 and str[1] == ':')
+            // Preserve "C:\"
+            str
+        else
+            // Remove one slash
+            str[0 .. str.len - 1]
+    else
+        str;
+}
+
 pub fn withoutLeadingSlash(this: string) []const u8 {
     return std.mem.trimLeft(u8, this, "/");
 }
@@ -1032,8 +1054,8 @@ pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) 
     return buf;
 }
 
-pub inline fn joinAlloc(allocator: std.mem.Allocator, strs: anytype) ![]u8 {
-    const buf = try allocator.alloc(u8, len: {
+pub inline fn concatAllocT(comptime T: type, allocator: std.mem.Allocator, strs: anytype) ![]T {
+    const buf = try allocator.alloc(T, len: {
         var len: usize = 0;
         inline for (strs) |s| {
             len += s.len;
@@ -1041,28 +1063,24 @@ pub inline fn joinAlloc(allocator: std.mem.Allocator, strs: anytype) ![]u8 {
         break :len len;
     });
 
-    var remain = buf;
-    inline for (strs) |s| {
-        if (s.len > 0) {
-            @memcpy(remain, s);
-            remain = remain[s.len..];
-        }
-    }
-
-    return buf;
+    return concatBufT(T, buf, strs) catch |e| switch (e) {
+        error.NoSpaceLeft => unreachable, // exact size calculated
+    };
 }
 
-pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8 {
+pub inline fn concatBufT(comptime T: type, out: []T, strs: anytype) ![]T {
     var remain = out;
-    var count: usize = 0;
-    inline for (0..parts_len) |i| {
-        const part = parts[i];
-        bun.copy(u8, remain, part);
-        remain = remain[part.len..];
-        count += part.len;
+    var n: usize = 0;
+    inline for (strs) |s| {
+        if (s.len > remain.len) {
+            return error.NoSpaceLeft;
+        }
+        @memcpy(remain.ptr, s);
+        remain = remain[s.len..];
+        n += s.len;
     }
 
-    return out[0..count];
+    return out[0..n];
 }
 
 pub fn index(self: string, str: string) i32 {
@@ -1777,17 +1795,8 @@ pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 
 pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var path_to_use = utf8;
 
-    if (bun.strings.containsChar(utf8, '/')) {
-        @memcpy(renormalized[0..utf8.len], utf8);
-        for (renormalized[0..utf8.len]) |*c| {
-            if (c.* == '/') {
-                c.* = '\\';
-            }
-        }
-        path_to_use = renormalized[0..utf8.len];
-    }
+    var path_to_use = normalizeSlashesOnly(&renormalized, utf8, '\\');
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
     if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
@@ -1795,6 +1804,23 @@ pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     }
 
     return toWPath(wbuf, path_to_use);
+}
+
+pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash: u8) []const u8 {
+    comptime std.debug.assert(desired_slash == '/' or desired_slash == '\\');
+    const undesired_slash = if (desired_slash == '/') '\\' else '/';
+
+    if (bun.strings.containsChar(utf8, undesired_slash)) {
+        @memcpy(buf[0..utf8.len], utf8);
+        for (buf[0..utf8.len]) |*c| {
+            if (c.* == undesired_slash) {
+                c.* = desired_slash;
+            }
+        }
+        return buf[0..utf8.len];
+    }
+
+    return utf8;
 }
 
 pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
@@ -1827,13 +1853,13 @@ pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
         if (bun.path.Platform.windows.isAbsoluteT(T, path) and
             isWindowsAbsolutePathMissingDriveLetter(T, path))
         {
-            std.debug.panic("Do not pass posix paths to windows APIs, was given '{s}' (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)", .{
-                if (T == u8) path else std.unicode.fmtUtf16le(path),
+            std.debug.panic("Internal Error: Do not pass posix paths to Windows APIs, was given '{s}'" ++ if (Environment.isDebug) " (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)" else ". Please open an issue on GitHub with a reproduction.", .{
+                if (T == u8) path else bun.fmt.utf16(path),
             });
         }
-        if (hasPrefixComptimeType(T, path, ":/")) {
+        if (hasPrefixComptimeType(T, path, ":/") and Environment.isDebug) {
             std.debug.panic("Path passed to windows API '{s}' is almost certainly invalid. Where did the drive letter go?", .{
-                if (T == u8) path else std.unicode.fmtUtf16le(path),
+                if (T == u8) path else bun.fmt.utf16(path),
             });
         }
     }
@@ -4204,10 +4230,6 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     return "";
 }
 
-pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
-    return firstNonASCII16CheckMin(Slice, slice, true);
-}
-
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number
 /// The final element is the end index of the desired line
 const LineRange = struct {
@@ -4349,73 +4371,55 @@ pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: us
     return results;
 }
 
-pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime check_min: bool) ?u32 {
+pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
     var remaining = slice;
+    const remaining_start = remaining.ptr;
 
-    if (comptime Environment.enableSIMD and Environment.isNative) {
+    if (Environment.enableSIMD and Environment.isNative) {
         const end_ptr = remaining.ptr + remaining.len - (remaining.len % ascii_u16_vector_size);
-        if (remaining.len > ascii_u16_vector_size) {
-            const remaining_start = remaining.ptr;
+        if (remaining.len >= ascii_u16_vector_size) {
             while (remaining.ptr != end_ptr) {
                 const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
                 const max_value = @reduce(.Max, vec);
 
-                if (comptime check_min) {
-                    // by using @reduce here, we make it only do one comparison
-                    // @reduce doesn't tell us the index though
-                    const min_value = @reduce(.Min, vec);
-                    if (min_value < 0x20 or max_value > 127) {
-                        remaining.len -= (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
+                if (max_value > 127) {
+                    const cmp = vec > max_u16_ascii;
+                    const bitmask: u8 = @as(u8, @bitCast(cmp));
+                    const index_of_first_nonascii_in_vector = @ctz(bitmask);
 
-                        // this is really slow
-                        // it does it element-wise for every single u8 on the vector
-                        // instead of doing the SIMD instructions
-                        // it removes a loop, but probably is slower in the end
-                        const cmp = @as(AsciiVectorU16U1, @bitCast(vec > max_u16_ascii)) |
-                            @as(AsciiVectorU16U1, @bitCast(vec < min_u16_ascii));
-                        const bitmask: u8 = @as(u8, @bitCast(cmp));
-                        const first = @ctz(bitmask);
+                    const offset_of_vector_in_input = (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
+                    const out: u32 = @intCast(offset_of_vector_in_input + index_of_first_nonascii_in_vector);
 
-                        return @as(u32, @intCast(@as(u32, first) +
-                            @as(u32, @intCast(slice.len - remaining.len))));
+                    if (comptime Environment.isDebug) {
+                        for (0..index_of_first_nonascii_in_vector) |i| {
+                            if (vec[i] > 127) {
+                                bun.Output.panic("firstNonASCII16: found non-ASCII character in ASCII vector before the first non-ASCII character", .{});
+                            }
+                        }
+
+                        if (slice[out] <= 127) {
+                            bun.Output.panic("firstNonASCII16: Expected non-ascii character", .{});
+                        }
                     }
-                } else if (comptime !check_min) {
-                    if (max_value > 127) {
-                        remaining.len -= (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
 
-                        const cmp = vec > max_u16_ascii;
-                        const bitmask: u8 = @as(u8, @bitCast(cmp));
-                        const first = @ctz(bitmask);
-
-                        return @as(u32, @intCast(@as(u32, first) +
-                            @as(u32, @intCast(slice.len - remaining.len))));
-                    }
+                    return out;
                 }
 
                 remaining.ptr += ascii_u16_vector_size;
             }
             remaining.len -= (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
         }
+
+        std.debug.assert(remaining.len < ascii_u16_vector_size);
     }
 
-    if (comptime check_min) {
-        var i: usize = 0;
-        for (remaining) |char| {
-            if (char > 127 or char < 0x20) {
-                return @as(u32, @truncate(i));
-            }
+    var i: usize = (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
 
-            i += 1;
+    for (remaining) |char| {
+        if (char > 127) {
+            return @truncate(i);
         }
-    } else {
-        var i: usize = 0;
-        for (remaining) |char| {
-            if (char > 127) {
-                return @as(u32, @truncate(i));
-            }
-
-            i += 1;
-        }
+        i += 1;
     }
 
     return null;
@@ -4529,13 +4533,6 @@ test "firstNonASCII16" {
         const no = std.mem.bytesAsSlice(u16, toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3"));
         try std.testing.expectEqual(@as(u32, 366), firstNonASCII16(@TypeOf(no), no).?);
     }
-}
-
-test "print UTF16" {
-    var err = std.io.getStdErr();
-    const utf16 = comptime toUTF16Literal("❌ ✅ opkay ");
-    try bun.fmt.str.formatUTF16(utf16, err.writer());
-    // std.unicode.fmtUtf16le(utf16le: []const u16)
 }
 
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
@@ -5391,7 +5388,7 @@ pub fn convertUTF8toUTF16InBuffer(
     //
     // the reason i didn't implement the fallback is purely because our
     // code in this file is too chaotic. it is left as a TODO
-    if (input.len == 0) return &[_]u16{};
+    if (input.len == 0) return buf[0..0];
     const result = bun.simdutf.convert.utf8.to.utf16.le(input, buf);
     return buf[0..result];
 }
@@ -5799,11 +5796,241 @@ pub fn isFullWidthCodepointType(comptime T: type, cp: T) bool {
     };
 }
 
-pub fn visibleCodepointWidth(cp: anytype) u3 {
-    return visibleCodepointWidthType(@TypeOf(cp), cp);
+pub fn isAmgiguousCodepointType(comptime T: type, cp: T) bool {
+    return switch (cp) {
+        0xA1,
+        0xA4,
+        0xA7,
+        0xA8,
+        0xAA,
+        0xAD,
+        0xAE,
+        0xB0...0xB4,
+        0xB6...0xBA,
+        0xBC...0xBF,
+        0xC6,
+        0xD0,
+        0xD7,
+        0xD8,
+        0xDE...0xE1,
+        0xE6,
+        0xE8...0xEA,
+        0xEC,
+        0xED,
+        0xF0,
+        0xF2,
+        0xF3,
+        0xF7...0xFA,
+        0xFC,
+        0xFE,
+        0x101,
+        0x111,
+        0x113,
+        0x11B,
+        0x126,
+        0x127,
+        0x12B,
+        0x131...0x133,
+        0x138,
+        0x13F...0x142,
+        0x144,
+        0x148...0x14B,
+        0x14D,
+        0x152,
+        0x153,
+        0x166,
+        0x167,
+        0x16B,
+        0x1CE,
+        0x1D0,
+        0x1D2,
+        0x1D4,
+        0x1D6,
+        0x1D8,
+        0x1DA,
+        0x1DC,
+        0x251,
+        0x261,
+        0x2C4,
+        0x2C7,
+        0x2C9...0x2CB,
+        0x2CD,
+        0x2D0,
+        0x2D8...0x2DB,
+        0x2DD,
+        0x2DF,
+        0x300...0x36F,
+        0x391...0x3A1,
+        0x3A3...0x3A9,
+        0x3B1...0x3C1,
+        0x3C3...0x3C9,
+        0x401,
+        0x410...0x44F,
+        0x451,
+        0x2010,
+        0x2013...0x2016,
+        0x2018,
+        0x2019,
+        0x201C,
+        0x201D,
+        0x2020...0x2022,
+        0x2024...0x2027,
+        0x2030,
+        0x2032,
+        0x2033,
+        0x2035,
+        0x203B,
+        0x203E,
+        0x2074,
+        0x207F,
+        0x2081...0x2084,
+        0x20AC,
+        0x2103,
+        0x2105,
+        0x2109,
+        0x2113,
+        0x2116,
+        0x2121,
+        0x2122,
+        0x2126,
+        0x212B,
+        0x2153,
+        0x2154,
+        0x215B...0x215E,
+        0x2160...0x216B,
+        0x2170...0x2179,
+        0x2189,
+        0x2190...0x2199,
+        0x21B8,
+        0x21B9,
+        0x21D2,
+        0x21D4,
+        0x21E7,
+        0x2200,
+        0x2202,
+        0x2203,
+        0x2207,
+        0x2208,
+        0x220B,
+        0x220F,
+        0x2211,
+        0x2215,
+        0x221A,
+        0x221D...0x2220,
+        0x2223,
+        0x2225,
+        0x2227...0x222C,
+        0x222E,
+        0x2234...0x2237,
+        0x223C,
+        0x223D,
+        0x2248,
+        0x224C,
+        0x2252,
+        0x2260,
+        0x2261,
+        0x2264...0x2267,
+        0x226A,
+        0x226B,
+        0x226E,
+        0x226F,
+        0x2282,
+        0x2283,
+        0x2286,
+        0x2287,
+        0x2295,
+        0x2299,
+        0x22A5,
+        0x22BF,
+        0x2312,
+        0x2460...0x24E9,
+        0x24EB...0x254B,
+        0x2550...0x2573,
+        0x2580...0x258F,
+        0x2592...0x2595,
+        0x25A0,
+        0x25A1,
+        0x25A3...0x25A9,
+        0x25B2,
+        0x25B3,
+        0x25B6,
+        0x25B7,
+        0x25BC,
+        0x25BD,
+        0x25C0,
+        0x25C1,
+        0x25C6...0x25C8,
+        0x25CB,
+        0x25CE...0x25D1,
+        0x25E2...0x25E5,
+        0x25EF,
+        0x2605,
+        0x2606,
+        0x2609,
+        0x260E,
+        0x260F,
+        0x261C,
+        0x261E,
+        0x2640,
+        0x2642,
+        0x2660,
+        0x2661,
+        0x2663...0x2665,
+        0x2667...0x266A,
+        0x266C,
+        0x266D,
+        0x266F,
+        0x269E,
+        0x269F,
+        0x26BF,
+        0x26C6...0x26CD,
+        0x26CF...0x26D3,
+        0x26D5...0x26E1,
+        0x26E3,
+        0x26E8,
+        0x26E9,
+        0x26EB...0x26F1,
+        0x26F4,
+        0x26F6...0x26F9,
+        0x26FB,
+        0x26FC,
+        0x26FE,
+        0x26FF,
+        0x273D,
+        0x2776...0x277F,
+        0x2B56...0x2B59,
+        0x3248...0x324F,
+        0xE000...0xF8FF,
+        0xFE00...0xFE0F,
+        0xFFFD,
+        0x1F100...0x1F10A,
+        0x1F110...0x1F12D,
+        0x1F130...0x1F169,
+        0x1F170...0x1F18D,
+        0x1F18F,
+        0x1F190,
+        0x1F19B...0x1F1AC,
+        0xE0100...0xE01EF,
+        0xF0000...0xFFFFD,
+        0x100000...0x10FFFD,
+        => true,
+        else => false,
+    };
 }
 
-pub fn visibleCodepointWidthType(comptime T: type, cp: T) usize {
+pub fn visibleCodepointWidth(cp: u32, ambiguousAsWide: bool) u3 {
+    return visibleCodepointWidthType(u32, cp, ambiguousAsWide);
+}
+
+pub fn visibleCodepointWidthMaybeEmoji(cp: u32, maybe_emoji: bool, ambiguousAsWide: bool) u3 {
+    // UCHAR_EMOJI=57,
+    if (maybe_emoji and icu_hasBinaryProperty(cp, 57)) {
+        return 2;
+    }
+    return visibleCodepointWidth(cp, ambiguousAsWide);
+}
+
+pub fn visibleCodepointWidthType(comptime T: type, cp: T, ambiguousAsWide: bool) u3 {
     if (isZeroWidthCodepointType(T, cp)) {
         return 0;
     }
@@ -5811,46 +6038,55 @@ pub fn visibleCodepointWidthType(comptime T: type, cp: T) usize {
     if (isFullWidthCodepointType(T, cp)) {
         return 2;
     }
+    if (ambiguousAsWide and isAmgiguousCodepointType(T, cp)) {
+        return 2;
+    }
 
     return 1;
 }
 
 pub const visible = struct {
-    fn visibleASCIIWidth(input_: anytype) usize {
+    // Ref: https://cs.stanford.edu/people/miles/iso8859.html
+    fn visibleLatin1Width(input_: []const u8) usize {
         var length: usize = 0;
         var input = input_;
-
-        if (comptime Environment.enableSIMD) {
-            // https://zig.godbolt.org/z/hxhjncvq7
-            const ElementType = std.meta.Child(@TypeOf(input_));
-            const simd = 16 / @sizeOf(ElementType);
-            if (input.len >= simd) {
-                const input_end = input.ptr + input.len - (input.len % simd);
-                while (input.ptr != input_end) {
-                    const chunk: @Vector(simd, ElementType) = input[0..simd].*;
-                    input = input[simd..];
-
-                    const cmp: @Vector(simd, ElementType) = @splat(0x1f);
-                    const match1: @Vector(simd, u1) = @bitCast(chunk >= cmp);
-                    const match: @Vector(simd, ElementType) = match1;
-
-                    length += @reduce(.Add, match);
-                }
-            }
-
-            // this is a deliberate compiler optimization
-            // it disables auto-vectorizing the "input" for loop.
-            if (!(input.len < simd)) unreachable;
+        const input_end_ptr = input.ptr + input.len - (input.len % 16);
+        var input_ptr = input.ptr;
+        while (input_ptr != input_end_ptr) {
+            const input_chunk: [16]u8 = input_ptr[0..16].*;
+            const sums: @Vector(16, u8) = [16]u8{
+                visibleLatin1WidthScalar(input_chunk[0]),
+                visibleLatin1WidthScalar(input_chunk[1]),
+                visibleLatin1WidthScalar(input_chunk[2]),
+                visibleLatin1WidthScalar(input_chunk[3]),
+                visibleLatin1WidthScalar(input_chunk[4]),
+                visibleLatin1WidthScalar(input_chunk[5]),
+                visibleLatin1WidthScalar(input_chunk[6]),
+                visibleLatin1WidthScalar(input_chunk[7]),
+                visibleLatin1WidthScalar(input_chunk[8]),
+                visibleLatin1WidthScalar(input_chunk[9]),
+                visibleLatin1WidthScalar(input_chunk[10]),
+                visibleLatin1WidthScalar(input_chunk[11]),
+                visibleLatin1WidthScalar(input_chunk[12]),
+                visibleLatin1WidthScalar(input_chunk[13]),
+                visibleLatin1WidthScalar(input_chunk[14]),
+                visibleLatin1WidthScalar(input_chunk[15]),
+            };
+            length += @reduce(.Add, sums);
+            input_ptr += 16;
         }
+        input.len %= 16;
+        input.ptr = input_ptr;
 
-        for (input) |c| {
-            length += if (c > 0x1f) 1 else 0;
-        }
-
+        for (input) |byte| length += visibleLatin1WidthScalar(byte);
         return length;
     }
 
-    fn visibleASCIIWidthExcludeANSIColors(input_: anytype) usize {
+    fn visibleLatin1WidthScalar(c: u8) u1 {
+        return if ((c >= 127 and c <= 159) or c < 32) 0 else 1;
+    }
+
+    fn visibleLatin1WidthExcludeANSIColors(input_: anytype) usize {
         var length: usize = 0;
         var input = input_;
 
@@ -5858,7 +6094,7 @@ pub const visible = struct {
         const indexFn = if (comptime ElementType == u8) strings.indexOfCharUsize else strings.indexOfChar16Usize;
 
         while (indexFn(input, '\x1b')) |i| {
-            length += visibleASCIIWidth(input[0..i]);
+            length += visibleLatin1Width(input[0..i]);
             input = input[i..];
 
             if (input.len < 3) return length;
@@ -5871,7 +6107,7 @@ pub const visible = struct {
             }
         }
 
-        length += visibleASCIIWidth(input);
+        length += visibleLatin1Width(input);
 
         return length;
     }
@@ -5895,7 +6131,7 @@ pub const visible = struct {
             };
 
             const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
-            len += visibleCodepointWidthType(u32, cp);
+            len += visibleCodepointWidth(cp, false);
 
             bytes = bytes[@min(i + skip, bytes.len)..];
         }
@@ -5905,51 +6141,115 @@ pub const visible = struct {
         return len;
     }
 
-    fn visibleUTF16WidthFn(input: []const u16, comptime asciiFn: anytype) usize {
-        var bytes = input;
+    fn visibleUTF16WidthFn(input_: []const u16, exclude_ansi_colors: bool, ambiguousAsWide: bool) usize {
+        var input = input_;
         var len: usize = 0;
-        while (bun.strings.firstNonASCII16CheckMin([]const u16, bytes, false)) |i| {
-            len += asciiFn(bytes[0..i]);
-            bytes = bytes[i..];
+        var prev: ?u21 = 0;
+        var break_state = grapheme.BreakState{};
+        var break_start: u21 = 0;
+        var saw_1b = false;
+        var saw_bracket = false;
+        var stretch_len: usize = 0;
 
-            const utf8 = utf16CodepointWithFFFD([]const u16, bytes);
-            len += visibleCodepointWidthType(u32, utf8.code_point);
-            bytes = bytes[@min(@as(usize, utf8.len), bytes.len)..];
+        while (true) {
+            {
+                const idx = firstNonASCII16([]const u16, input) orelse input.len;
+                for (0..idx) |j| {
+                    const cp = input[j];
+                    defer prev = cp;
+
+                    if (saw_bracket) {
+                        if (cp == 'm') {
+                            saw_1b = false;
+                            saw_bracket = false;
+                            stretch_len = 0;
+                            continue;
+                        }
+                        stretch_len += visibleCodepointWidth(cp, ambiguousAsWide);
+                        continue;
+                    }
+                    if (saw_1b) {
+                        if (cp == '[') {
+                            saw_bracket = true;
+                            stretch_len = 0;
+                            continue;
+                        }
+                        len += visibleCodepointWidth(cp, ambiguousAsWide);
+                        continue;
+                    }
+                    if (!exclude_ansi_colors or cp != 0x1b) {
+                        if (prev) |prev_| {
+                            const should_break = grapheme.graphemeBreak(prev_, cp, &break_state);
+                            if (should_break) {
+                                len += visibleCodepointWidthMaybeEmoji(break_start, cp == 0xFE0F, ambiguousAsWide);
+                                break_start = cp;
+                            } else {
+                                //
+                            }
+                        } else {
+                            len += visibleCodepointWidth(cp, ambiguousAsWide);
+                            break_start = cp;
+                        }
+                        continue;
+                    }
+                    saw_1b = true;
+                    continue;
+                }
+                len += stretch_len;
+                input = input[idx..];
+            }
+            if (input.len == 0) break;
+            const replacement = utf16CodepointWithFFFD([]const u16, input);
+            defer input = input[replacement.len..];
+            if (replacement.fail) continue;
+            const cp: u21 = @intCast(replacement.code_point);
+            defer prev = cp;
+
+            if (prev) |prev_| {
+                const should_break = grapheme.graphemeBreak(prev_, cp, &break_state);
+                if (should_break) {
+                    len += visibleCodepointWidthMaybeEmoji(break_start, cp == 0xFE0F, ambiguousAsWide);
+                    break_start = cp;
+                }
+            } else {
+                len += visibleCodepointWidth(cp, ambiguousAsWide);
+                break_start = cp;
+            }
         }
-
-        len += asciiFn(bytes);
-
+        if (break_start > 0) {
+            len += visibleCodepointWidthMaybeEmoji(break_start, (prev orelse 0) == 0xFE0F, ambiguousAsWide);
+        }
         return len;
     }
 
     fn visibleLatin1WidthFn(input: []const u8) usize {
-        return visibleASCIIWidth(input);
+        return visibleLatin1Width(input);
     }
 
     pub const width = struct {
-        pub fn ascii(input: []const u8) usize {
-            return visibleASCIIWidth(input);
+        pub fn latin1(input: []const u8) usize {
+            return visibleLatin1Width(input);
         }
 
         pub fn utf8(input: []const u8) usize {
-            return visibleUTF8WidthFn(input, visibleASCIIWidth);
+            return visibleUTF8WidthFn(input, visibleLatin1Width);
         }
 
-        pub fn utf16(input: []const u16) usize {
-            return visibleUTF16WidthFn(input, visibleASCIIWidth);
+        pub fn utf16(input: []const u16, ambiguousAsWide: bool) usize {
+            return visibleUTF16WidthFn(input, false, ambiguousAsWide);
         }
 
         pub const exclude_ansi_colors = struct {
-            pub fn ascii(input: []const u8) usize {
-                return visibleASCIIWidthExcludeANSIColors(input);
+            pub fn latin1(input: []const u8) usize {
+                return visibleLatin1WidthExcludeANSIColors(input);
             }
 
             pub fn utf8(input: []const u8) usize {
-                return visibleUTF8WidthFn(input, visibleASCIIWidthExcludeANSIColors);
+                return visibleUTF8WidthFn(input, visibleLatin1WidthExcludeANSIColors);
             }
 
-            pub fn utf16(input: []const u16) usize {
-                return visibleUTF16WidthFn(input, visibleASCIIWidthExcludeANSIColors);
+            pub fn utf16(input: []const u16, ambiguousAsWide: bool) usize {
+                return visibleUTF16WidthFn(input, true, ambiguousAsWide);
             }
         };
     };
@@ -5994,3 +6294,6 @@ pub fn withoutSuffixComptime(input: []const u8, comptime suffix: []const u8) []c
     }
     return input;
 }
+
+// extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
+extern fn icu_hasBinaryProperty(c: u32, which: c_uint) bool;

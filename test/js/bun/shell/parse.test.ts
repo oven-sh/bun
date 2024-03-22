@@ -39,15 +39,15 @@ describe("parse shell", () => {
 
   test("basic redirect", () => {
     const expected = {
-      "stmts": [
+      stmts: [
         {
-          "exprs": [
+          exprs: [
             {
-              "cmd": {
-                "assigns": [],
-                "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
-                "redirect": redirect({ stdout: true }),
-                "redirect_file": { atom: { "simple": { "Text": "lmao.txt" } } },
+              cmd: {
+                assigns: [],
+                name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "foo" } }],
+                redirect: redirect({ stdout: true }),
+                redirect_file: { atom: { simple: { Text: "lmao.txt" } } },
               },
             },
           ],
@@ -61,23 +61,23 @@ describe("parse shell", () => {
 
   test("compound atom", () => {
     const expected = {
-      "stmts": [
+      stmts: [
         {
-          "exprs": [
+          exprs: [
             {
-              "cmd": {
-                "assigns": [],
-                "name_and_args": [
+              cmd: {
+                assigns: [],
+                name_and_args: [
                   {
-                    "compound": {
-                      "atoms": [{ "Text": "FOO " }, { "Var": "NICE" }, { "Text": "!" }],
+                    compound: {
+                      atoms: [{ Text: "FOO " }, { Var: "NICE" }, { Text: "!" }],
                       brace_expansion_hint: false,
                       glob_hint: false,
                     },
                   },
                 ],
-                "redirect": redirect({}),
-                "redirect_file": null,
+                redirect: redirect({}),
+                redirect_file: null,
               },
             },
           ],
@@ -92,26 +92,26 @@ describe("parse shell", () => {
 
   test("pipelines", () => {
     const expected = {
-      "stmts": [
+      stmts: [
         {
-          "exprs": [
+          exprs: [
             {
-              "pipeline": {
-                "items": [
+              pipeline: {
+                items: [
                   {
-                    "cmd": {
-                      "assigns": [],
-                      "name_and_args": [{ "simple": { "Text": "echo" } }],
-                      "redirect": redirect({ stdout: true }),
-                      "redirect_file": { atom: { "simple": { "Text": "foo.txt" } } },
+                    cmd: {
+                      assigns: [],
+                      name_and_args: [{ simple: { Text: "echo" } }],
+                      redirect: redirect({ stdout: true }),
+                      redirect_file: { atom: { simple: { Text: "foo.txt" } } },
                     },
                   },
                   {
-                    "cmd": {
-                      "assigns": [],
-                      "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "hi" } }],
-                      "redirect": redirect({}),
-                      "redirect_file": null,
+                    cmd: {
+                      assigns: [],
+                      name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "hi" } }],
+                      redirect: redirect({}),
+                      redirect_file: null,
                     },
                   },
                 ],
@@ -128,39 +128,39 @@ describe("parse shell", () => {
 
   test("conditional execution", () => {
     const expected = {
-      "stmts": [
+      stmts: [
         {
-          "exprs": [
+          exprs: [
             {
-              "cond": {
-                "op": "Or",
-                "left": {
-                  "cond": {
-                    "op": "And",
-                    "left": {
-                      "cmd": {
-                        "assigns": [],
-                        "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
-                        "redirect": redirect(),
-                        "redirect_file": null,
+              cond: {
+                op: "Or",
+                left: {
+                  cond: {
+                    op: "And",
+                    left: {
+                      cmd: {
+                        assigns: [],
+                        name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "foo" } }],
+                        redirect: redirect(),
+                        redirect_file: null,
                       },
                     },
-                    "right": {
-                      "cmd": {
-                        "assigns": [],
-                        "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "bar" } }],
-                        "redirect": redirect(),
-                        "redirect_file": null,
+                    right: {
+                      cmd: {
+                        assigns: [],
+                        name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "bar" } }],
+                        redirect: redirect(),
+                        redirect_file: null,
                       },
                     },
                   },
                 },
-                "right": {
-                  "cmd": {
-                    "assigns": [],
-                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "lmao" } }],
-                    "redirect": redirect(),
-                    "redirect_file": null,
+                right: {
+                  cmd: {
+                    assigns: [],
+                    name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "lmao" } }],
+                    redirect: redirect(),
+                    redirect_file: null,
                   },
                 },
               },
@@ -176,53 +176,55 @@ describe("parse shell", () => {
 
   test("precedence", () => {
     const expected = {
-      "stmts": [
+      stmts: [
         {
-          "exprs": [
+          exprs: [
             {
-              "cond": {
-                "op": "And",
-                "left": {
-                  "cond": {
-                    "op": "And",
-                    "left": {
-                      "assign": [{ "label": "FOO", "value": { "simple": { "Text": "bar" } } }],
+              cond: {
+                op: "And",
+                left: {
+                  cond: {
+                    op: "And",
+                    left: {
+                      assign: [{ label: "FOO", value: { simple: { Text: "bar" } } }],
                     },
-                    "right": {
-                      "cmd": {
-                        "assigns": [],
-                        "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
-                        "redirect": redirect(),
-                        "redirect_file": null,
+                    right: {
+                      cmd: {
+                        assigns: [],
+                        name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "foo" } }],
+                        redirect: redirect(),
+                        redirect_file: null,
                       },
                     },
                   },
                 },
-                "right": {
-                  "pipeline": {
-                    "items": [
+                right: {
+                  pipeline: {
+                    items: [
                       {
-                        "cmd": {
-                          "assigns": [],
-                          "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "bar" } }],
-                          "redirect": redirect(),
-                          "redirect_file": null,
+                        cmd: {
+                          assigns: [],
+                          name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "bar" } }],
+                          redirect: redirect(),
+                          redirect_file: null,
                         },
                       },
                       {
-                        "cmd": {
-                          "assigns": [],
-                          "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "lmao" } }],
-                          "redirect": redirect(),
-                          "redirect_file": null,
+                        cmd: {
+                          assigns: [],
+                          name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "lmao" } }],
+                          redirect: redirect(),
+                          redirect_file: null,
                         },
                       },
                       {
-                        "cmd": {
-                          "assigns": [],
-                          "name_and_args": [{ "simple": { "Text": "cat" } }],
-                          "redirect": redirect({ stdout: true }),
-                          "redirect_file": { atom: { "simple": { "Text": "foo.txt" } } },
+                        cmd: {
+                          assigns: [],
+                          name_and_args: [{ simple: { Text: "cat" } }],
+                          redirect: redirect({ stdout: true }),
+                          redirect_file: {
+                            atom: { simple: { Text: "foo.txt" } },
+                          },
                         },
                       },
                     ],
@@ -242,24 +244,25 @@ describe("parse shell", () => {
 
   test("assigns", () => {
     const expected = {
-      "stmts": [
+      stmts: [
         {
-          "exprs": [
+          exprs: [
             {
-              "cmd": {
-                "assigns": [
-                  { "label": "FOO", "value": { "simple": { "Text": "bar" } } },
-                  { "label": "BAR", "value": { "simple": { "Text": "baz" } } },
+              cmd: {
+                assigns: [
+                  { label: "FOO", value: { simple: { Text: "bar" } } },
+                  { label: "BAR", value: { simple: { Text: "baz" } } },
                 ],
-                "name_and_args": [{ "simple": { "Text": "export" } }, { "simple": { "Text": "LMAO=nice" } }],
-                "redirect": {
-                  "stdin": false,
-                  "stdout": false,
-                  "stderr": false,
-                  "append": false,
-                  "__unused": 0,
+                name_and_args: [{ simple: { Text: "export" } }, { simple: { Text: "LMAO=nice" } }],
+                redirect: {
+                  stdin: false,
+                  stdout: false,
+                  stderr: false,
+                  append: false,
+                  duplicate_out: false,
+                  __unused: 0,
                 },
-                "redirect_file": null,
+                redirect_file: null,
               },
             },
           ],
@@ -274,26 +277,26 @@ describe("parse shell", () => {
 
   test("redirect js obj", () => {
     const expected = {
-      "stmts": [
+      stmts: [
         {
-          "exprs": [
+          exprs: [
             {
-              "cond": {
-                "op": "And",
-                "left": {
-                  "cmd": {
-                    "assigns": [],
-                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
-                    "redirect": redirect({ stdout: true }),
-                    "redirect_file": { "jsbuf": { "idx": 0 } },
+              cond: {
+                op: "And",
+                left: {
+                  cmd: {
+                    assigns: [],
+                    name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "foo" } }],
+                    redirect: redirect({ stdout: true }),
+                    redirect_file: { jsbuf: { idx: 0 } },
                   },
                 },
-                "right": {
-                  "cmd": {
-                    "assigns": [],
-                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "foo" } }],
-                    "redirect": redirect({ stdout: true }),
-                    "redirect_file": { "jsbuf": { "idx": 1 } },
+                right: {
+                  cmd: {
+                    assigns: [],
+                    name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "foo" } }],
+                    redirect: redirect({ stdout: true }),
+                    redirect_file: { jsbuf: { idx: 1 } },
                   },
                 },
               },
@@ -313,70 +316,73 @@ describe("parse shell", () => {
 
   test("cmd subst", () => {
     const expected = {
-      "stmts": [
+      stmts: [
         {
-          "exprs": [
+          exprs: [
             {
-              "cmd": {
-                "assigns": [],
-                "name_and_args": [
-                  { "simple": { "Text": "echo" } },
+              cmd: {
+                assigns: [],
+                name_and_args: [
+                  { simple: { Text: "echo" } },
                   {
-                    "simple": {
-                      "cmd_subst": {
-                        "script": {
-                          "stmts": [
+                    simple: {
+                      cmd_subst: {
+                        script: {
+                          stmts: [
                             {
-                              "exprs": [
+                              exprs: [
                                 {
-                                  "cmd": {
-                                    "assigns": [],
-                                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "1" } }],
-                                    "redirect": {
-                                      "stdin": false,
-                                      "stdout": false,
-                                      "stderr": false,
-                                      "append": false,
-                                      "__unused": 0,
+                                  cmd: {
+                                    assigns: [],
+                                    name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "1" } }],
+                                    redirect: {
+                                      stdin: false,
+                                      stdout: false,
+                                      stderr: false,
+                                      append: false,
+                                      duplicate_out: false,
+                                      __unused: 0,
                                     },
-                                    "redirect_file": null,
+                                    redirect_file: null,
                                   },
                                 },
                               ],
                             },
                             {
-                              "exprs": [
+                              exprs: [
                                 {
-                                  "cmd": {
-                                    "assigns": [],
-                                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "2" } }],
-                                    "redirect": {
-                                      "stdin": false,
-                                      "stdout": false,
-                                      "stderr": false,
-                                      "append": false,
-                                      "__unused": 0,
+                                  cmd: {
+                                    assigns: [],
+                                    name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "2" } }],
+                                    redirect: {
+                                      stdin: false,
+                                      stdout: false,
+                                      stderr: false,
+                                      append: false,
+                                      duplicate_out: false,
+                                      __unused: 0,
                                     },
-                                    "redirect_file": null,
+                                    redirect_file: null,
                                   },
                                 },
                               ],
                             },
                           ],
                         },
-                        "quoted": true,
+                        quoted: true,
                       },
                     },
                   },
                 ],
-                "redirect": {
-                  "stdin": false,
-                  "stdout": false,
-                  "stderr": false,
-                  "append": false,
-                  "__unused": 0,
+                redirect: {
+                  stdin: false,
+                  stdout: false,
+                  stderr: false,
+                  append: false,
+                  duplicate_out: false,
+                  __unused: 0,
                 },
-                "redirect_file": null,
+                redirect_file: null,
               },
             },
           ],
@@ -390,60 +396,72 @@ describe("parse shell", () => {
 
   test("cmd subst edgecase", () => {
     const expected = {
-      "stmts": [
+      stmts: [
         {
-          "exprs": [
+          exprs: [
             {
-              "cond": {
-                "op": "And",
-                "left": {
-                  "cmd": {
-                    "assigns": [],
-                    "name_and_args": [
-                      { "simple": { "Text": "echo" } },
+              cond: {
+                op: "And",
+                left: {
+                  cmd: {
+                    assigns: [],
+                    name_and_args: [
+                      { simple: { Text: "echo" } },
                       {
-                        "simple": {
-                          "cmd_subst": {
-                            "script": {
-                              "stmts": [
+                        simple: {
+                          cmd_subst: {
+                            script: {
+                              stmts: [
                                 {
-                                  "exprs": [
+                                  exprs: [
                                     {
-                                      "cmd": {
-                                        "assigns": [],
-                                        "name_and_args": [
-                                          { "simple": { "Text": "ls" } },
-                                          { "simple": { "Text": "foo" } },
-                                        ],
-                                        "redirect": {
-                                          "stdin": false,
-                                          "stdout": false,
-                                          "stderr": false,
-                                          "append": false,
-                                          "__unused": 0,
+                                      cmd: {
+                                        assigns: [],
+                                        name_and_args: [{ simple: { Text: "ls" } }, { simple: { Text: "foo" } }],
+                                        redirect: {
+                                          stdin: false,
+                                          stdout: false,
+                                          stderr: false,
+                                          append: false,
+                                          duplicate_out: false,
+                                          __unused: 0,
                                         },
-                                        "redirect_file": null,
+                                        redirect_file: null,
                                       },
                                     },
                                   ],
                                 },
                               ],
                             },
-                            "quoted": false,
+                            quoted: false,
                           },
                         },
                       },
                     ],
-                    "redirect": { "stdin": false, "stdout": false, "stderr": false, "append": false, "__unused": 0 },
-                    "redirect_file": null,
+                    redirect: {
+                      stdin: false,
+                      stdout: false,
+                      stderr: false,
+                      append: false,
+                      duplicate_out: false,
+                      __unused: 0,
+                    },
+                    redirect_file: null,
                   },
                 },
-                "right": {
-                  "cmd": {
-                    "assigns": [],
-                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "nice" } }],
-                    "redirect": { "stdin": false, "stdout": false, "stderr": false, "append": false, "__unused": 0 },
-                    "redirect_file": null,
+                right: {
+                  cmd: {
+                    assigns: [],
+                    name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "nice" } }],
+                    redirect: {
+                      stdin: false,
+                      stdout: false,
+                      stderr: false,
+                      append: false,
+                      duplicate_out: false,
+                      __unused: 0,
+                    },
+                    redirect_file: null,
                   },
                 },
               },
@@ -459,57 +477,59 @@ describe("parse shell", () => {
   describe("bad syntax", () => {
     test("cmd subst edgecase", () => {
       const expected = {
-        "stmts": [
+        stmts: [
           {
-            "exprs": [
+            exprs: [
               {
-                "cmd": {
-                  "assigns": [],
-                  "name_and_args": [
-                    { "simple": { "Text": "echo" } },
+                cmd: {
+                  assigns: [],
+                  name_and_args: [
+                    { simple: { Text: "echo" } },
                     {
-                      "simple": {
-                        "cmd_subst": {
-                          "script": {
-                            "stmts": [
+                      simple: {
+                        cmd_subst: {
+                          script: {
+                            stmts: [
                               {
-                                "exprs": [
+                                exprs: [
                                   {
-                                    "cmd": {
-                                      "assigns": [
+                                    cmd: {
+                                      assigns: [
                                         {
-                                          "label": "FOO",
-                                          "value": { "simple": { "Text": "bar" } },
+                                          label: "FOO",
+                                          value: { simple: { Text: "bar" } },
                                         },
                                       ],
-                                      "name_and_args": [{ "simple": { "Var": "FOO" } }],
-                                      "redirect": {
-                                        "stdin": false,
-                                        "stdout": false,
-                                        "stderr": false,
-                                        "append": false,
-                                        "__unused": 0,
+                                      name_and_args: [{ simple: { Var: "FOO" } }],
+                                      redirect: {
+                                        stdin: false,
+                                        stdout: false,
+                                        stderr: false,
+                                        append: false,
+                                        duplicate_out: false,
+                                        __unused: 0,
                                       },
-                                      "redirect_file": null,
+                                      redirect_file: null,
                                     },
                                   },
                                 ],
                               },
                             ],
                           },
-                          "quoted": false,
+                          quoted: false,
                         },
                       },
                     },
                   ],
-                  "redirect": {
-                    "stdin": false,
-                    "stdout": false,
-                    "stderr": false,
-                    "append": false,
-                    "__unused": 0,
+                  redirect: {
+                    stdin: false,
+                    stdout: false,
+                    stderr: false,
+                    append: false,
+                    duplicate_out: false,
+                    __unused: 0,
                   },
-                  "redirect_file": null,
+                  redirect_file: null,
                 },
               },
             ],
@@ -522,32 +542,33 @@ describe("parse shell", () => {
 
     test("cmd edgecase", () => {
       const expected = {
-        "stmts": [
+        stmts: [
           {
-            "exprs": [
+            exprs: [
               {
-                "assign": [
-                  { "label": "FOO", "value": { "simple": { "Text": "bar" } } },
-                  { "label": "BAR", "value": { "simple": { "Text": "baz" } } },
+                assign: [
+                  { label: "FOO", value: { simple: { Text: "bar" } } },
+                  { label: "BAR", value: { simple: { Text: "baz" } } },
                 ],
               },
               {
-                "cmd": {
-                  "assigns": [
+                cmd: {
+                  assigns: [
                     {
-                      "label": "BUN_DEBUG_QUIET_LOGS",
-                      "value": { "simple": { "Text": "1" } },
+                      label: "BUN_DEBUG_QUIET_LOGS",
+                      value: { simple: { Text: "1" } },
                     },
                   ],
-                  "name_and_args": [{ "simple": { "Text": "echo" } }],
-                  "redirect": {
-                    "stdin": false,
-                    "stdout": false,
-                    "stderr": false,
-                    "append": false,
-                    "__unused": 0,
+                  name_and_args: [{ simple: { Text: "echo" } }],
+                  redirect: {
+                    stdin: false,
+                    stdout: false,
+                    stderr: false,
+                    append: false,
+                    duplicate_out: false,
+                    __unused: 0,
                   },
-                  "redirect_file": null,
+                  redirect_file: null,
                 },
               },
             ],

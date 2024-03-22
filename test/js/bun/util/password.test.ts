@@ -174,16 +174,12 @@ describe("verify", () => {
   });
 });
 
-test("bcrypt longer than 72 characters is the SHA-512", async () => {
+test("bcrypt uses the SHA-512 of passwords longer than 72 characters", async () => {
   const boop = Buffer.from("hey".repeat(100));
   const hashed = await password.hash(boop, "bcrypt");
-  expect(await password.verify(Bun.SHA512.hash(boop), hashed, "bcrypt")).toBeTrue();
-});
-
-test("bcrypt shorter than 72 characters is NOT the SHA-512", async () => {
-  const boop = Buffer.from("hey".repeat(3));
-  const hashed = await password.hash(boop, "bcrypt");
-  expect(await password.verify(Bun.SHA512.hash(boop), hashed, "bcrypt")).toBeFalse();
+  expect(await password.verify(boop, hashed, "bcrypt")).toBeTrue();
+  const boop2 = Buffer.from("hey".repeat(24));
+  expect(await password.verify(boop2, hashed, "bcrypt")).toBeFalse();
 });
 
 const defaultAlgorithm = "argon2id";

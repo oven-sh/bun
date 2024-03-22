@@ -54,9 +54,9 @@ pub fn open(file_path: [:0]const u8, c_flags: bun.Mode, _perm: bun.Mode) Maybe(b
     const rc = uv.uv_fs_open(uv.Loop.get(), &req, file_path.ptr, flags, perm, null);
     log("uv open({s}, {d}, {d}) = {d}", .{ file_path, flags, perm, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .open, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .open } }
     else
-        .{ .result = bun.toFD(@as(i32, @intCast(req.result.value))) };
+        .{ .result = bun.toFD(@as(i32, @intCast(req.result.int()))) };
 }
 
 pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
@@ -67,7 +67,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
     log("uv mkdir({s}, {d}) = {d}", .{ file_path, flags, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .mkdir, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .mkdir } }
     else
         .{ .result = {} };
 }
@@ -81,7 +81,7 @@ pub fn chmod(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
     log("uv chmod({s}, {d}) = {d}", .{ file_path, flags, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .chmod, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .chmod } }
     else
         .{ .result = {} };
 }
@@ -94,7 +94,7 @@ pub fn fchmod(fd: FileDescriptor, flags: bun.Mode) Maybe(void) {
 
     log("uv fchmod({}, {d}) = {d}", .{ uv_fd, flags, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fchmod, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .fchmod } }
     else
         .{ .result = {} };
 }
@@ -107,7 +107,7 @@ pub fn chown(file_path: [:0]const u8, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(
 
     log("uv chown({s}, {d}, {d}) = {d}", .{ file_path, uid, gid, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .chown, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .chown } }
     else
         .{ .result = {} };
 }
@@ -121,7 +121,7 @@ pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void
 
     log("uv chown({}, {d}, {d}) = {d}", .{ uv_fd, uid, gid, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fchown, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .fchown } }
     else
         .{ .result = {} };
 }
@@ -134,7 +134,7 @@ pub fn access(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
     log("uv access({s}, {d}) = {d}", .{ file_path, flags, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .access, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .access } }
     else
         .{ .result = {} };
 }
@@ -147,7 +147,7 @@ pub fn rmdir(file_path: [:0]const u8) Maybe(void) {
 
     log("uv rmdir({s}) = {d}", .{ file_path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .rmdir, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .rmdir } }
     else
         .{ .result = {} };
 }
@@ -160,7 +160,7 @@ pub fn unlink(file_path: [:0]const u8) Maybe(void) {
 
     log("uv unlink({s}) = {d}", .{ file_path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .unlink, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .unlink } }
     else
         .{ .result = {} };
 }
@@ -174,14 +174,14 @@ pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe(usize) {
 
     if (rc.errno()) |errno| {
         log("uv readlink({s}) = {d}, [err]", .{ file_path, rc.int() });
-        return .{ .err = .{ .errno = errno, .syscall = .readlink, .from_libuv = true } };
+        return .{ .err = .{ .errno = errno, .syscall = .readlink } };
     } else {
         // Seems like `rc` does not contain the errno?
         std.debug.assert(rc.int() == 0);
         const slice = bun.span(req.ptrAs([*:0]u8));
         if (slice.len > buf.len) {
             log("uv readlink({s}) = {d}, {s} TRUNCATED", .{ file_path, rc.int(), slice });
-            return .{ .err = .{ .errno = @intFromEnum(E.NOMEM), .syscall = .readlink, .from_libuv = true } };
+            return .{ .err = .{ .errno = @intFromEnum(E.NOMEM), .syscall = .readlink } };
         }
         log("uv readlink({s}) = {d}, {s}", .{ file_path, rc.int(), slice });
         @memcpy(buf[0..slice.len], slice);
@@ -198,7 +198,7 @@ pub fn rename(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 
     log("uv rename({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .rename, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .rename } }
     else
         .{ .result = {} };
 }
@@ -212,7 +212,7 @@ pub fn link(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
 
     log("uv link({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .link, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .link } }
     else
         .{ .result = {} };
 }
@@ -226,7 +226,7 @@ pub fn symlinkUV(from: [:0]const u8, to: [:0]const u8, flags: c_int) Maybe(void)
 
     log("uv symlink({s}, {s}) = {d}", .{ from, to, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .symlink, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .symlink } }
     else
         .{ .result = {} };
 }
@@ -239,7 +239,7 @@ pub fn ftruncate(fd: FileDescriptor, size: isize) Maybe(void) {
 
     log("uv ftruncate({}, {d}) = {d}", .{ uv_fd, size, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .ftruncate, .fd = fd, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .ftruncate, .fd = fd } }
     else
         .{ .result = {} };
 }
@@ -252,7 +252,7 @@ pub fn fstat(fd: FileDescriptor) Maybe(bun.Stat) {
 
     log("uv fstat({}) = {d}", .{ uv_fd, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fstat, .fd = fd, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .fstat, .fd = fd } }
     else
         .{ .result = req.statbuf };
 }
@@ -265,7 +265,7 @@ pub fn fdatasync(fd: FileDescriptor) Maybe(void) {
 
     log("uv fdatasync({}) = {d}", .{ uv_fd, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fdatasync, .fd = fd, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .fdatasync, .fd = fd } }
     else
         .{ .result = {} };
 }
@@ -278,7 +278,7 @@ pub fn fsync(fd: FileDescriptor) Maybe(void) {
 
     log("uv fsync({d}) = {d}", .{ uv_fd, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .fsync, .fd = fd, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .fsync, .fd = fd } }
     else
         .{ .result = {} };
 }
@@ -291,7 +291,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
 
     log("uv stat({s}) = {d}", .{ path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .stat, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .stat } }
     else
         .{ .result = req.statbuf };
 }
@@ -304,7 +304,7 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
 
     log("uv lstat({s}) = {d}", .{ path, rc.int() });
     return if (rc.errno()) |errno|
-        .{ .err = .{ .errno = errno, .syscall = .lstat, .from_libuv = true } }
+        .{ .err = .{ .errno = errno, .syscall = .lstat } }
     else
         .{ .result = req.statbuf };
 }
@@ -345,14 +345,14 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
     }
 
     if (rc.errno()) |errno| {
-        return .{ .err = .{ .errno = errno, .fd = fd, .syscall = .read, .from_libuv = true } };
+        return .{ .err = .{ .errno = errno, .fd = fd, .syscall = .read } };
     } else {
         return .{ .result = @as(usize, @intCast(rc.int())) };
     }
 }
-
 pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, position: i64) Maybe(usize) {
-    const uv_fd = bun.uvfdcast(fd);
+    // TODO: @paperdave is this bad?
+    const uv_fd = bun.uvfdcast(bun.toLibUVOwnedFD(fd));
     comptime std.debug.assert(bun.PlatformIOVec == uv.uv_buf_t);
 
     const debug_timer = bun.Output.DebugTimer.start();
@@ -379,7 +379,7 @@ pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, positio
     }
 
     if (rc.errno()) |errno| {
-        return .{ .err = .{ .errno = errno, .fd = fd, .syscall = .write, .from_libuv = true } };
+        return .{ .err = .{ .errno = errno, .fd = fd, .syscall = .write } };
     } else {
         return .{ .result = @as(usize, @intCast(rc.int())) };
     }

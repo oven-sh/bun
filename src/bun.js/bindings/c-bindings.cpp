@@ -32,11 +32,7 @@ extern "C" void bun_warn_avx_missing(const char* url)
     strcpy(buf + len + strlen(url), "\n\0");
     write(STDERR_FILENO, buf, strlen(buf));
 }
-#else
-extern "C" void bun_warn_avx_missing(char* url)
-{
-}
-#endif // CPU(X86_64)
+#endif
 
 extern "C" int32_t get_process_priority(uint32_t pid)
 {
@@ -59,12 +55,9 @@ extern "C" int32_t set_process_priority(uint32_t pid, int32_t priority)
 #endif // OS(WINDOWS)
 }
 
+#if !OS(WINDOWS)
 extern "C" bool is_executable_file(const char* path)
 {
-#if OS(WINDOWS)
-    return false;
-#else
-
 #if defined(O_EXEC)
     // O_EXEC is macOS specific
     int fd = open(path, O_EXEC | O_CLOEXEC, 0);
@@ -80,8 +73,8 @@ extern "C" bool is_executable_file(const char* path)
 
     // regular file and user can execute
     return S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR);
-#endif // OS(WINDOWS)
 }
+#endif
 
 extern "C" void bun_ignore_sigpipe()
 {
@@ -128,6 +121,12 @@ extern "C" void dump_zone_malloc_stats()
     }
 }
 
+#elif OS(DARWIN)
+
+extern "C" void dump_zone_malloc_stats()
+{
+}
+
 #endif
 
 #if OS(WINDOWS)
@@ -171,7 +170,7 @@ extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 #endif
 
 // close_range is glibc > 2.33, which is very new
-static ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
+extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
     return syscall(__NR_close_range, start, end, flags);
 }
@@ -277,3 +276,47 @@ void lshpack_wrapper_deinit(lshpack_wrapper* self)
     self->free(self);
 }
 }
+
+#if OS(LINUX)
+
+#include <linux/fs.h>
+
+static inline void make_pos_h_l(unsigned long* pos_h, unsigned long* pos_l,
+    off_t offset)
+{
+#if __BITS_PER_LONG == 64
+    *pos_l = offset;
+    *pos_h = 0;
+#else
+    *pos_l = offset & 0xffffffff;
+    *pos_h = ((uint64_t)offset) >> 32;
+#endif
+}
+extern "C" ssize_t sys_preadv2(int fd, const struct iovec* iov, int iovcnt,
+    off_t offset, unsigned int flags)
+{
+	return syscall(SYS_preadv2, fd, iov, iovcnt, offset, offset>>32, RWF_NOWAIT);
+}
+extern "C" ssize_t sys_pwritev2(int fd, const struct iovec* iov, int iovcnt,
+    off_t offset, unsigned int flags)
+{
+    unsigned long pos_l, pos_h;
+
+    make_pos_h_l(&pos_h, &pos_l, offset);
+    return syscall(__NR_pwritev2, fd, iov, iovcnt, pos_l, pos_h, flags);
+}
+#else
+extern "C" ssize_t preadv2(int fd, const struct iovec* iov, int iovcnt,
+    off_t offset, unsigned int flags)
+{
+    errno = ENOSYS;
+    return -1;
+}
+extern "C" ssize_t pwritev2(int fd, const struct iovec* iov, int iovcnt,
+    off_t offset, unsigned int flags)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
+#endif

@@ -13,7 +13,7 @@ $ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
+$ sudo apt install curl wget lsb-release software-properties-common cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
 ```
 
 ```bash#Arch
@@ -24,7 +24,17 @@ $ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-
 $ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
+```bash#openSUSE Tumbleweed
+$ sudo zypper install go cmake ninja automake git rustup && rustup toolchain install stable
+```
+
 {% /codetabs %}
+
+{% callout }
+
+**Note**: The Zig compiler is automatically installed and updated by the build scripts. Manual installation is not required.
+
+{% /callout }
 
 Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
 
@@ -77,6 +87,10 @@ $ sudo pacman -S llvm clang lld
 $ sudo dnf install 'dnf-command(copr)'
 $ sudo dnf copr enable -y @fedora-llvm-team/llvm-snapshots
 $ sudo dnf install llvm clang lld
+```
+
+```bash#openSUSE Tumbleweed
+$ sudo zypper install clang16 lld16 llvm16
 ```
 
 {% /codetabs %}
@@ -141,6 +155,8 @@ Advanced uses can pass CMake flags to customize the build.
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
+
+If you use a different editor, make sure that you tell ZLS to use the automatically installed Zig compiler, which is located at `./.cache/zig/zig` (`zig.exe` on Windows).
 
 ## Code generation scripts
 

@@ -527,7 +527,7 @@ pub const TextDecoder = struct {
         while (remainder.len > 0) {
             switch (remainder[0]) {
                 0...127 => {
-                    const count: usize = if (strings.firstNonASCII16CheckMin(Slice, remainder, false)) |index| index + 1 else remainder.len;
+                    const count: usize = if (strings.firstNonASCII16(Slice, remainder)) |index| index + 1 else remainder.len;
 
                     buffer.ensureUnusedCapacity(allocator, count) catch unreachable;
 
@@ -599,9 +599,13 @@ pub const TextDecoder = struct {
         };
 
         if (arguments.len > 1 and arguments[1].isObject()) {
-            if (arguments[1].get(globalThis, "stream")) |stream| {
-                if (stream.toBoolean()) {
+            if (arguments[1].fastGet(globalThis, .stream)) |stream| {
+                if (stream.coerce(bool, globalThis)) {
                     return this.decodeSlice(globalThis, array_buffer.slice(), true);
+                }
+
+                if (globalThis.hasException()) {
+                    return JSValue.zero;
                 }
             }
         }

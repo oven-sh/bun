@@ -14,6 +14,7 @@ const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const JSC = @import("root").bun.JSC;
 const Shimmer = JSC.Shimmer;
+const ConsoleObject = JSC.ConsoleObject;
 const FFI = @import("./FFI.zig");
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
 const MutableString = bun.MutableString;
@@ -709,7 +710,7 @@ pub const ZigString = extern struct {
         }
 
         if (self.is16Bit()) {
-            try bun.fmt.formatUTF16(self.utf16Slice(), writer);
+            try bun.fmt.formatUTF16Type(@TypeOf(self.utf16Slice()), self.utf16Slice(), writer);
             return;
         }
 
@@ -1610,6 +1611,25 @@ pub const SystemError = extern struct {
     pub const name = "SystemError";
     pub const namespace = "";
 
+    pub fn getErrno(this: *const SystemError) bun.C.E {
+        // The inverse in bun.sys.Error.toSystemError()
+        return @enumFromInt(this.errno * -1);
+    }
+
+    pub fn deref(this: *const SystemError) void {
+        this.path.deref();
+        this.code.deref();
+        this.message.deref();
+        this.syscall.deref();
+    }
+
+    pub fn ref(this: *SystemError) void {
+        this.path.ref();
+        this.code.ref();
+        this.message.ref();
+        this.syscall.ref();
+    }
+
     pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer {
             this.path.deref();
@@ -2098,15 +2118,15 @@ pub const JSPromise = extern struct {
             };
         }
 
-        pub fn get(this: *Strong) *JSC.JSPromise {
+        pub fn get(this: *const Strong) *JSC.JSPromise {
             return this.strong.get().?.asPromise().?;
         }
 
-        pub fn value(this: *Strong) JSValue {
+        pub fn value(this: *const Strong) JSValue {
             return this.strong.get().?;
         }
 
-        pub fn valueOrEmpty(this: *Strong) JSValue {
+        pub fn valueOrEmpty(this: *const Strong) JSValue {
             return this.strong.get() orelse .zero;
         }
 
@@ -2878,7 +2898,7 @@ pub const JSGlobalObject = extern struct {
     pub fn queueMicrotask(
         this: *JSGlobalObject,
         function: JSValue,
-        args: []JSC.JSValue,
+        args: []const JSC.JSValue,
     ) void {
         this.queueMicrotaskJob(
             function,
@@ -3588,8 +3608,8 @@ pub const JSValue = enum(JSValueReprInt) {
                     return this.asInt32();
                 }
 
-                if (this.isNumber()) {
-                    return @as(i32, @truncate(this.coerceDoubleTruncatingIntoInt64()));
+                if (this.getNumber()) |num| {
+                    return coerceJSValueDoubleTruncatingT(i32, num);
                 }
 
                 return this.coerceToInt32(globalThis);
@@ -3745,6 +3765,18 @@ pub const JSValue = enum(JSValueReprInt) {
 
         if (comptime ZigType == FetchHeaders) {
             return FetchHeaders.cast(value);
+        }
+
+        if (comptime ZigType == JSC.WebCore.Body.Value) {
+            if (value.as(JSC.WebCore.Request)) |req| {
+                return req.getBodyValue();
+            }
+
+            if (value.as(JSC.WebCore.Response)) |res| {
+                return res.getBodyValue();
+            }
+
+            return null;
         }
 
         if (comptime @hasDecl(ZigType, "fromJS") and @TypeOf(ZigType.fromJS) == fn (JSC.JSValue) ?*ZigType) {
@@ -3905,7 +3937,7 @@ pub const JSValue = enum(JSValueReprInt) {
             .quote_strings = true,
         };
 
-        JSC.ConsoleObject.format(
+        JSC.ConsoleObject.format2(
             .Debug,
             globalObject,
             @as([*]const JSValue, @ptrCast(&this)),
@@ -3958,14 +3990,6 @@ pub const JSValue = enum(JSValueReprInt) {
                 else => jsNumberFromInt64(@as(i64, @intCast(number))),
             },
             else => {
-                // windows
-                if (comptime Number == std.os.fd_t) {
-                    return jsNumber(bun.toFD(number));
-                }
-                if (Number == bun.FileDescriptor) {
-                    return jsNumber(number.int());
-                }
-
                 @compileError("Type transformation missing for number of type: " ++ @typeName(Number));
             },
         };
@@ -4051,6 +4075,22 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    pub fn print(
+        this: JSValue,
+        globalObject: *JSGlobalObject,
+        message_type: ConsoleObject.MessageType,
+        message_level: ConsoleObject.MessageLevel,
+    ) void {
+        JSC.ConsoleObject.messageWithTypeAndLevel(
+            undefined,
+            message_type,
+            message_level,
+            globalObject,
+            &[_]JSC.JSValue{this},
+            1,
+        );
+    }
+
     /// Create a JSValue string from a zig format-print (fmt + args)
     pub fn printString(globalThis: *JSGlobalObject, comptime stack_buffer_size: usize, comptime fmt: []const u8, args: anytype) !JSValue {
         var stack_fallback = std.heap.stackFallback(stack_buffer_size, globalThis.allocator());
@@ -4092,6 +4132,11 @@ pub const JSValue = enum(JSValueReprInt) {
             globalThis,
             value,
         });
+    }
+
+    pub fn hasOwnPropertyValue(this: JSValue, globalThis: *JSGlobalObject, value: JSC.JSValue) bool {
+        // TODO: add a binding for this
+        return hasOwnProperty(this, globalThis, value.getZigString(globalThis));
     }
 
     pub fn hasOwnProperty(this: JSValue, globalThis: *JSGlobalObject, key: ZigString) bool {
@@ -4139,21 +4184,28 @@ pub const JSValue = enum(JSValueReprInt) {
         return jsNumberFromDouble(@floatFromInt(i));
     }
 
-    pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {
-        const double_value = this.asDouble();
+    fn coerceJSValueDoubleTruncatingT(comptime T: type, num: f64) T {
+        return coerceJSValueDoubleTruncatingTT(T, T, num);
+    }
 
-        if (std.math.isNan(double_value))
-            return std.math.minInt(i64);
-
-        // coerce NaN or Infinity to either -maxInt or maxInt
-        if (std.math.isInf(double_value)) {
-            return if (double_value < 0) @as(i64, std.math.minInt(i64)) else @as(i64, std.math.maxInt(i64));
+    fn coerceJSValueDoubleTruncatingTT(comptime T: type, comptime Out: type, num: f64) Out {
+        if (std.math.isNan(num)) {
+            return 0;
         }
 
-        return @as(
-            i64,
-            @intFromFloat(double_value),
-        );
+        if (num <= std.math.minInt(T) or std.math.isNegativeInf(num)) {
+            return std.math.minInt(T);
+        }
+
+        if (num >= std.math.maxInt(T) or std.math.isPositiveInf(num)) {
+            return std.math.maxInt(T);
+        }
+
+        return @intFromFloat(num);
+    }
+
+    pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {
+        return coerceJSValueDoubleTruncatingT(i64, this.asNumber());
     }
 
     /// Decimal values are truncated without rounding.
@@ -4489,8 +4541,9 @@ pub const JSValue = enum(JSValueReprInt) {
     /// Call `toString()` on the JSValue and clone the result.
     /// On exception, this returns null.
     pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) ?ZigString.Slice {
-        var str = this.toStringOrNull(globalThis) orelse return null;
-        return str.toSlice(globalThis, globalThis.allocator());
+        const str = bun.String.tryFromJS(this, globalThis) orelse return null;
+        defer str.deref();
+        return str.toUTF8(bun.default_allocator);
     }
 
     /// Call `toString()` on the JSValue and clone the result.
@@ -4541,7 +4594,14 @@ pub const JSValue = enum(JSValueReprInt) {
         toString,
         redirect,
         inspectCustom,
+        highWaterMark,
+        path,
+        stream,
         asyncIterator,
+
+        pub fn has(property: []const u8) bool {
+            return bun.ComptimeEnumMap(BuiltinName).has(property);
+        }
     };
 
     // intended to be more lightweight than ZigString
@@ -4612,6 +4672,12 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
+        if (comptime bun.Environment.isDebug) {
+            if (BuiltinName.has(property)) {
+                Output.debugWarn("get(\"{s}\") called. Please use fastGet(.{s}) instead!", .{ property, property });
+            }
+        }
+
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @as(u32, @intCast(property.len)));
         return if (@intFromEnum(value) != 0) value else return null;
     }
@@ -4637,6 +4703,19 @@ pub const JSValue = enum(JSValueReprInt) {
         std.debug.assert(this.isCell());
         const function = this.fastGet(global, BuiltinName.toString) orelse return false;
         return function.isCell() and function.isCallable(global.vm());
+    }
+
+    pub fn getTruthyComptime(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
+        if (comptime bun.ComptimeEnumMap(BuiltinName).has(property)) {
+            if (fastGet(this, global, @field(BuiltinName, property))) |prop| {
+                if (prop.isEmptyOrUndefinedOrNull()) return null;
+                return prop;
+            }
+
+            return null;
+        }
+
+        return getTruthy(this, global, property);
     }
 
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
@@ -4696,6 +4775,15 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn getOptionalEnum(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime Enum: type) !?Enum {
+        if (comptime BuiltinName.has(property_name)) {
+            if (fastGet(this, globalThis, @field(BuiltinName, property_name))) |prop| {
+                if (prop.isEmptyOrUndefinedOrNull())
+                    return null;
+                return try toEnum(prop, globalThis, property_name, Enum);
+            }
+            return null;
+        }
+
         if (get(this, globalThis, property_name)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull())
                 return null;
@@ -4748,7 +4836,12 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn getOptional(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8, comptime T: type) !?T {
-        if (getTruthy(this, globalThis, property_name)) |prop| {
+        const prop = (if (comptime BuiltinName.has(property_name))
+            fastGet(this, globalThis, @field(BuiltinName, property_name))
+        else
+            get(this, globalThis, property_name)) orelse return null;
+
+        if (!prop.isEmptyOrUndefinedOrNull()) {
             switch (comptime T) {
                 bool => {
                     if (prop.isBoolean()) {
@@ -4895,6 +4988,22 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    /// Check if the JSValue is either a signed 32-bit integer or a double and
+    /// return the value as a f64
+    ///
+    /// This does not call `valueOf` on the JSValue
+    pub fn getNumber(this: JSValue) ?f64 {
+        if (this.isInt32()) {
+            return @as(f64, @floatFromInt(this.asInt32()));
+        }
+
+        if (isNumber(this)) {
+            return asDouble(this);
+        }
+
+        return null;
+    }
+
     pub fn asNumber(this: JSValue) f64 {
         if (this.isInt32()) {
             return @as(f64, @floatFromInt(this.asInt32()));
@@ -4960,16 +5069,7 @@ pub const JSValue = enum(JSValueReprInt) {
         if (comptime bun.Environment.allow_assert) {
             std.debug.assert(this.isNumber());
         }
-        const double = this.asDouble();
-        if (std.math.isPositiveInf(double)) {
-            return std.math.maxInt(i52);
-        } else if (std.math.isNegativeInf(double)) {
-            return std.math.minInt(i52);
-        } else if (std.math.isNan(double)) {
-            return 0;
-        }
-
-        return @as(i64, @intFromFloat(@max(@min(double, std.math.maxInt(i52)), std.math.minInt(i52))));
+        return coerceJSValueDoubleTruncatingTT(i52, i64, this.asNumber());
     }
 
     pub fn toInt32(this: JSValue) i32 {
@@ -4977,8 +5077,8 @@ pub const JSValue = enum(JSValueReprInt) {
             return asInt32(this);
         }
 
-        if (this.isNumber()) {
-            return @as(i32, @intCast(@min(@max(this.asInt52(), std.math.minInt(i32)), std.math.maxInt(i32))));
+        if (this.getNumber()) |num| {
+            return coerceJSValueDoubleTruncatingT(i32, num);
         }
 
         if (comptime bun.Environment.allow_assert) {
@@ -5303,6 +5403,32 @@ pub const JSValue = enum(JSValueReprInt) {
             .{ .data = bytes[0..@intCast(value.size)], .handle = value.handle.? }
         else
             null;
+    }
+
+    extern fn Bun__ProxyObject__getInternalField(this: JSValue, field: ProxyInternalField) JSValue;
+
+    const ProxyInternalField = enum(u32) {
+        target = 0,
+        handler = 1,
+    };
+
+    /// Asserts `this` is a proxy
+    pub fn getProxyInternalField(this: JSValue, field: ProxyInternalField) JSValue {
+        return Bun__ProxyObject__getInternalField(this, field);
+    }
+
+    extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *bun.String) bool;
+
+    /// Returned memory is read-only memory of the s_info assigned to a JSCell
+    pub fn getClassInfoName(this: JSValue) ?[]const u8 {
+        var out: bun.String = undefined;
+        if (!JSC__JSValue__getClassInfoName(this, &out)) return null;
+        // we assume the class name is ASCII text
+        const data = out.latin1();
+        if (bun.Environment.allow_assert) {
+            std.debug.assert(bun.strings.isAllASCII(data));
+        }
+        return data;
     }
 };
 

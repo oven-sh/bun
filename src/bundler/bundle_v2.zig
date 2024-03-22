@@ -460,13 +460,12 @@ pub const BundleV2 = struct {
         return visitor.reachable.toOwnedSlice();
     }
 
-    fn isDone(ptr: *anyopaque) bool {
-        var this = bun.cast(*const BundleV2, ptr);
+    fn isDone(this: *BundleV2) bool {
         return @atomicLoad(usize, &this.graph.parse_pending, .Monotonic) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .Monotonic) == 0;
     }
 
     pub fn waitForParse(this: *BundleV2) void {
-        this.loop().tick(this, isDone);
+        this.loop().tick(this, &isDone);
 
         debug("Parsed {d} files, producing {d} ASTs", .{ this.graph.input_files.len, this.graph.ast.len });
     }
@@ -1550,7 +1549,7 @@ pub const BundleV2 = struct {
     pub fn generateInNewThreadWrap(instance: *BundleThread) void {
         Output.Source.configureNamedThread("Bundler");
 
-        instance.waker = bun.Async.Waker.init(bun.default_allocator) catch @panic("Failed to create waker");
+        instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
 
         var has_bundled = false;
         while (true) {
@@ -1617,6 +1616,7 @@ pub const BundleV2 = struct {
                 .main_fields = &.{},
                 .extension_order = &.{},
                 .env_files = &.{},
+                .conditions = config.conditions.map.keys(),
             },
             completion.env,
         );
@@ -2107,7 +2107,7 @@ pub const BundleV2 = struct {
                 }
 
                 if (this.bun_watcher != null) {
-                    if (empty_result.watcher_data.fd.int() > 0 and empty_result.watcher_data.fd != bun.invalid_fd) {
+                    if (empty_result.watcher_data.fd != .zero and empty_result.watcher_data.fd != bun.invalid_fd) {
                         this.bun_watcher.?.addFile(
                             empty_result.watcher_data.fd,
                             input_files.items(.source)[empty_result.source_index.get()].path.text,
@@ -2126,7 +2126,7 @@ pub const BundleV2 = struct {
                 {
                     // to minimize contention, we add watcher here
                     if (this.bun_watcher != null) {
-                        if (result.watcher_data.fd.int() > 0 and result.watcher_data.fd != bun.invalid_fd) {
+                        if (result.watcher_data.fd != .zero and result.watcher_data.fd != bun.invalid_fd) {
                             this.bun_watcher.?.addFile(
                                 result.watcher_data.fd,
                                 result.source.path.text,
@@ -2783,7 +2783,7 @@ pub const ParseTask = struct {
                     file_path.text,
                     task.contents_or_fd.fd.dir,
                     false,
-                    if (task.contents_or_fd.fd.file.int() > 0)
+                    if (task.contents_or_fd.fd.file != .zero)
                         task.contents_or_fd.fd.file
                     else
                         null,
@@ -2820,12 +2820,12 @@ pub const ParseTask = struct {
 
         errdefer if (task.contents_or_fd == .fd) entry.deinit(allocator);
 
-        const will_close_file_descriptor = task.contents_or_fd == .fd and entry.fd.int() > 2 and this.ctx.bun_watcher == null;
+        const will_close_file_descriptor = task.contents_or_fd == .fd and !entry.fd.isStdio() and this.ctx.bun_watcher == null;
         if (will_close_file_descriptor) {
             _ = entry.closeFD();
         }
 
-        if (!will_close_file_descriptor and entry.fd.int() > 2) task.contents_or_fd = .{
+        if (!will_close_file_descriptor and !entry.fd.isStdio()) task.contents_or_fd = .{
             .fd = .{
                 .file = entry.fd,
                 .dir = bun.invalid_fd,
@@ -4513,7 +4513,6 @@ const LinkerContext = struct {
                         stmt.loc,
                     ),
                     expr,
-                    this.allocator,
                 );
                 try this.graph.generateSymbolImportAndUse(source_index, 0, module_ref, 1, Index.init(source_index));
             },
@@ -7521,7 +7520,6 @@ const LinkerContext = struct {
                                     },
                                     Logger.Loc.Empty,
                                 ),
-                                temp_allocator,
                             ),
                         ) catch unreachable;
                     },
@@ -8725,7 +8723,6 @@ const LinkerContext = struct {
                                                 value = value.joinWithComma(
                                                     binding.assign(
                                                         other,
-                                                        temp_allocator,
                                                     ),
                                                     temp_allocator,
                                                 );

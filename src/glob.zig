@@ -339,7 +339,7 @@ pub fn GlobWalker_(
                     };
                 };
 
-                log("Transition(dirpath={s}, fd={d}, component_idx={d})", .{ dir_path, fd, component_idx });
+                log("Transition(dirpath={s}, fd={}, component_idx={d})", .{ dir_path, fd, component_idx });
 
                 this.iter_state.directory.fd = fd;
                 const iterator = DirIterator.iterate(fd.asDir(), .u8);

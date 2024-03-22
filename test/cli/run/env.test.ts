@@ -261,7 +261,7 @@ describe("package scripts load from .env.production and .env.development", () =>
       "name": "foo",
       "version": "2.0",
       "scripts": {
-        "test": `${bunExe()} run index.ts`,
+        "test": `'${bunExe()}' run index.ts`,
       },
     };
     const dir = tempDirWithFiles("dotenv-package-script-prod", {
@@ -279,7 +279,7 @@ describe("package scripts load from .env.production and .env.development", () =>
       "name": "foo",
       "version": "2.0",
       "scripts": {
-        "test": `${bunExe()} run index.ts`,
+        "test": `'${bunExe()}' run index.ts`,
       },
     };
     const dir = tempDirWithFiles("dotenv-package-script-prod", {
@@ -701,7 +701,9 @@ console.log(dynamic().NODE_ENV);
 
 test("NODE_ENV default is not propogated in bun run", () => {
   const getenv =
-    process.platform !== "win32" ? "env | grep NODE_ENV && exit 1 || true" : "node -e if(process.env.NODE_ENV)throw(1)";
+    process.platform !== "win32"
+      ? "env | grep NODE_ENV && exit 1 || true"
+      : "node -e 'if(process.env.NODE_ENV)throw(1)'";
   const tmp = tempDirWithFiles("default-node-env", {
     "package.json": '{"scripts":{"show-env":' + JSON.stringify(getenv) + "}}",
   });
@@ -723,4 +725,14 @@ todoOnPosix("setting process.env coerces the value to a string", () => {
   expect(process.env.SET_TO_TRUE).toBe("true");
   expect(process.env.SET_TO_BUN).toBe("bun!");
   expect(did_call).toBe(1);
+});
+
+test("NODE_ENV=test loads .env.test even when .env.production exists", () => {
+  const dir = tempDirWithFiles("dotenv", {
+    "index.ts": "console.log(process.env.AWESOME);",
+    ".env.production": "AWESOME=production",
+    ".env.test": "AWESOME=test",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`, { NODE_ENV: "test" });
+  expect(stdout).toBe("test");
 });

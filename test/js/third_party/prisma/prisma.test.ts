@@ -1,7 +1,7 @@
 // @known-failing-on-windows: 1 failing
 
-import { test as bunTest, expect, describe } from "bun:test";
-import { generateClient } from "./helper.ts";
+import { test as bunTest, it as bunIt, expect, describe } from "bun:test";
+import { generate, generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";
 import { createCanvas } from "@napi-rs/canvas";
 
@@ -191,7 +191,7 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
 
         for (let i = 0; i < 10; i++) {
           const loadAllUsers10Times = await Promise.all(
-            new Array(10).fill(0).map(() => prisma.user.findMany({ where: { testId } })),
+            new Array(10).fill(0).map(() => prisma.user.findMany({ where: { testId }, orderBy: { id: "asc" } })),
           );
           for (const users of loadAllUsers10Times) {
             expect(users).toEqual(createdUsers);
@@ -205,5 +205,9 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
       },
       20000,
     );
+
+    bunIt("generates client successfully", async () => {
+      generate(type);
+    });
   });
 });

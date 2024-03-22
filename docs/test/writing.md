@@ -327,7 +327,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.assertions()`](https://jestjs.io/docs/expect#expectassertionsnumber)
 
 ---
@@ -337,7 +337,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.hasAssertions()`](https://jestjs.io/docs/expect#expecthasassertions)
 
 ---

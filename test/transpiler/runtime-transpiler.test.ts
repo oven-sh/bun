@@ -34,6 +34,7 @@ describe("// @bun", () => {
       cwd: import.meta.dir,
       env: bunEnv,
       stderr: "inherit",
+      stdout: "pipe",
     });
     expect(stdout.toString()).toBe("Hello world!\n");
     expect(exitCode).toBe(0);

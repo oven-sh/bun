@@ -25,14 +25,24 @@ pub const subproc = @import("./subproc.zig");
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
 pub const Interpreter = eval.Interpreter;
-pub const InterpreterMini = eval.InterpreterMini;
 pub const Subprocess = subproc.ShellSubprocess;
-pub const SubprocessMini = subproc.ShellSubprocessMini;
+pub const IOWriter = Interpreter.IOWriter;
+pub const IOReader = Interpreter.IOReader;
+// pub const IOWriter = interpret.IOWriter;
+// pub const SubprocessMini = subproc.ShellSubprocessMini;
 
 const GlobWalker = Glob.GlobWalker_(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
-pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue.";
+pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue!";
+
+/// Using these instead of `bun.STD{IN,OUT,ERR}_FD` to makesure we use uv fd
+pub const STDIN_FD: bun.FileDescriptor = if (bun.Environment.isWindows) bun.FDImpl.fromUV(0).encode() else bun.STDIN_FD;
+pub const STDOUT_FD: bun.FileDescriptor = if (bun.Environment.isWindows) bun.FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+pub const STDERR_FD: bun.FileDescriptor = if (bun.Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+
+pub const POSIX_DEV_NULL: [:0]const u8 = "/dev/null";
+pub const WINDOWS_DEV_NULL: [:0]const u8 = "NUL";
 
 /// The strings in this type are allocated with event loop ctx allocator
 pub const ShellErr = union(enum) {
@@ -41,9 +51,13 @@ pub const ShellErr = union(enum) {
     invalid_arguments: struct { val: []const u8 = "" },
     todo: []const u8,
 
-    pub fn newSys(e: Syscall.Error) @This() {
+    pub fn newSys(e: anytype) @This() {
         return .{
-            .sys = e.toSystemError(),
+            .sys = switch (@TypeOf(e)) {
+                Syscall.Error => e.toSystemError(),
+                JSC.SystemError => e,
+                else => @compileError("Invalid `e`: " ++ @typeName(e)),
+            },
         };
     }
 
@@ -68,8 +82,9 @@ pub const ShellErr = union(enum) {
         }
     }
 
-    pub fn throwJS(this: @This(), globalThis: *JSC.JSGlobalObject) void {
-        switch (this) {
+    pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) void {
+        defer this.deinit(bun.default_allocator);
+        switch (this.*) {
             .sys => {
                 const err = this.sys.toErrorInstance(globalThis);
                 globalThis.throwValue(err);
@@ -78,7 +93,7 @@ pub const ShellErr = union(enum) {
                 var str = JSC.ZigString.init(this.custom);
                 str.markUTF8();
                 const err_value = str.toErrorInstance(globalThis);
-                globalThis.vm().throwError(globalThis, err_value);
+                globalThis.throwValue(err_value);
                 // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
             .invalid_arguments => {
@@ -91,6 +106,7 @@ pub const ShellErr = union(enum) {
     }
 
     pub fn throwMini(this: @This()) void {
+        defer this.deinit(bun.default_allocator);
         switch (this) {
             .sys => {
                 const err = this.sys;
@@ -442,7 +458,26 @@ pub const AST = struct {
             stdout: bool = false,
             stderr: bool = false,
             append: bool = false,
-            __unused: u4 = 0,
+            /// 1>&2 === stdout=true and duplicate_out=true
+            /// 2>&1 === stderr=true and duplicate_out=true
+            duplicate_out: bool = false,
+            __unused: u3 = 0,
+
+            pub fn redirectsElsewhere(this: RedirectFlags, io_kind: enum { stdin, stdout, stderr }) bool {
+                return switch (io_kind) {
+                    .stdin => this.stdin,
+                    .stdout => if (this.duplicate_out) !this.stdout else this.stdout,
+                    .stderr => if (this.duplicate_out) !this.stderr else this.stderr,
+                };
+            }
+
+            pub fn @"2>&1"() RedirectFlags {
+                return .{ .stderr = true, .duplicate = true };
+            }
+
+            pub fn @"1>&2"() RedirectFlags {
+                return .{ .stdout = true, .duplicate = true };
+            }
 
             pub fn toFlags(this: RedirectFlags) bun.Mode {
                 const read_write_flags: bun.Mode = if (this.stdin) std.os.O.RDONLY else std.os.O.WRONLY | std.os.O.CREAT;
@@ -792,6 +827,7 @@ pub const Parser = struct {
                 }
 
                 const redirect_file = try self.parse_atom() orelse {
+                    if (redirect.duplicate_out) break :redirect_file null;
                     try self.add_error("Redirection with no file", .{});
                     return ParseError.Expected;
                 };
@@ -808,6 +844,8 @@ pub const Parser = struct {
             .redirect_file = redirect_file,
         } };
     }
+
+    const ParsedRedirect = struct { flags: AST.Cmd.RedirectFlags, redirect: AST.Cmd.Redirect };
 
     /// Try to parse an assignment. If no assignment could be parsed then return
     /// null and backtrack the parser state
@@ -1812,9 +1850,67 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return false;
         }
 
+        // TODO Arbitrary file descriptor redirect
         fn eat_redirect(self: *@This(), first: InputChar) ?AST.Cmd.RedirectFlags {
             var flags: AST.Cmd.RedirectFlags = .{};
             switch (first.char) {
+                '0' => flags.stdin = true,
+                '1' => flags.stdout = true,
+                '2' => flags.stderr = true,
+                // Just allow the std file descriptors for now
+                else => return null,
+            }
+            var dir: RedirectDirection = .out;
+            if (self.peek()) |input| {
+                if (input.escaped) return null;
+                switch (input.char) {
+                    '>' => {
+                        _ = self.eat();
+                        dir = .out;
+                        const is_double = self.eat_simple_redirect_operator(dir);
+                        if (is_double) flags.append = true;
+                        if (self.peek()) |peeked| {
+                            if (!peeked.escaped and peeked.char == '&') {
+                                _ = self.eat();
+                                if (self.peek()) |peeked2| {
+                                    switch (peeked2.char) {
+                                        '1' => {
+                                            _ = self.eat();
+                                            if (!flags.stdout and flags.stderr) {
+                                                flags.duplicate_out = true;
+                                                flags.stdout = true;
+                                                flags.stderr = false;
+                                            } else return null;
+                                        },
+                                        '2' => {
+                                            _ = self.eat();
+                                            if (!flags.stderr and flags.stdout) {
+                                                flags.duplicate_out = true;
+                                                flags.stderr = true;
+                                                flags.stdout = false;
+                                            } else return null;
+                                        },
+                                        else => return null,
+                                    }
+                                }
+                            }
+                        }
+                        return flags;
+                    },
+                    '<' => {
+                        dir = .in;
+                        const is_double = self.eat_simple_redirect_operator(dir);
+                        if (is_double) flags.append = true;
+                        return flags;
+                    },
+                    else => return null,
+                }
+            } else return null;
+        }
+
+        fn eat_redirect_old(self: *@This(), first: InputChar) ?AST.Cmd.RedirectFlags {
+            var flags: AST.Cmd.RedirectFlags = .{};
+            if (self.matchesAsciiLiteral("2>&1")) {} else if (self.matchesAsciiLiteral("1>&2")) {} else switch (first.char) {
                 '0'...'9' => {
                     // Codepoint int casts are safe here because the digits are in the ASCII range
                     var count: usize = 1;
@@ -1960,13 +2056,25 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         fn appendStringToStrPool(self: *@This(), bunstr: bun.String) !void {
             const start = self.strpool.items.len;
-            if (bunstr.is8Bit() or bunstr.isUTF8()) {
-                try self.strpool.appendSlice(bunstr.byteSlice());
-            } else {
+            if (bunstr.isUTF16()) {
                 const utf16 = bunstr.utf16();
                 const additional = bun.simdutf.simdutf__utf8_length_from_utf16le(utf16.ptr, utf16.len);
                 try self.strpool.ensureUnusedCapacity(additional);
                 try bun.strings.convertUTF16ToUTF8Append(&self.strpool, bunstr.utf16());
+            } else if (bunstr.isUTF8()) {
+                try self.strpool.appendSlice(bunstr.byteSlice());
+            } else if (bunstr.is8Bit()) {
+                if (isAllAscii(bunstr.byteSlice())) {
+                    try self.strpool.appendSlice(bunstr.byteSlice());
+                } else {
+                    const bytes = bunstr.byteSlice();
+                    const non_ascii_idx = bun.strings.firstNonASCII(bytes) orelse 0;
+
+                    if (non_ascii_idx > 0) {
+                        try self.strpool.appendSlice(bytes[0..non_ascii_idx]);
+                    }
+                    self.strpool = try bun.strings.allocateLatin1IntoUTF8WithList(self.strpool, self.strpool.items.len, []const u8, bytes[non_ascii_idx..]);
+                }
             }
             const end = self.strpool.items.len;
             self.j += @intCast(end - start);
@@ -1988,10 +2096,33 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return std.mem.eql(u8, bytes[0 .. LEX_JS_STRING_PREFIX.len - 1], LEX_JS_STRING_PREFIX[1..]);
         }
 
-        fn eatJSSubstitutionIdx(self: *@This(), comptime literal: []const u8, comptime name: []const u8, comptime validate: *const fn (*@This(), usize) bool) ?usize {
+        fn bumpCursorAscii(self: *@This(), new_idx: usize, prev_ascii_char: ?u7, cur_ascii_char: u7) void {
+            if (comptime encoding == .ascii) {
+                self.chars.src.i = new_idx;
+                if (prev_ascii_char) |pc| self.chars.prev = .{ .char = pc };
+                self.chars.current = .{ .char = cur_ascii_char };
+                return;
+            }
+            self.chars.src.cursor = CodepointIterator.Cursor{
+                .i = @intCast(new_idx),
+                .c = cur_ascii_char,
+                .width = 1,
+            };
+            self.chars.src.next_cursor = self.chars.src.cursor;
+            SrcUnicode.nextCursor(&self.chars.src.iter, &self.chars.src.next_cursor);
+            if (prev_ascii_char) |pc| self.chars.prev = .{ .char = pc };
+            self.chars.current = .{ .char = cur_ascii_char };
+        }
+
+        fn matchesAsciiLiteral(self: *@This(), literal: []const u8) bool {
             const bytes = self.chars.srcBytesAtCursor();
-            if (literal.len - 1 >= bytes.len) return null;
-            if (std.mem.eql(u8, bytes[0 .. literal.len - 1], literal[1..])) {
+            if (literal.len >= bytes.len) return false;
+            return std.mem.eql(u8, bytes[0..literal.len], literal[0..]);
+        }
+
+        fn eatJSSubstitutionIdx(self: *@This(), comptime literal: []const u8, comptime name: []const u8, comptime validate: *const fn (*@This(), usize) bool) ?usize {
+            if (self.matchesAsciiLiteral(literal[1..literal.len])) {
+                const bytes = self.chars.srcBytesAtCursor();
                 var i: usize = 0;
                 var digit_buf: [32]u8 = undefined;
                 var digit_buf_count: u8 = 0;
@@ -2032,26 +2163,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 // }
 
                 // Bump the cursor
-                brk: {
-                    const new_idx = self.chars.cursorPos() + i;
-                    const prev_ascii_char: ?u7 = if (digit_buf_count == 1) null else @truncate(digit_buf[digit_buf_count - 2]);
-                    const cur_ascii_char: u7 = @truncate(digit_buf[digit_buf_count - 1]);
-                    if (comptime encoding == .ascii) {
-                        self.chars.src.i = new_idx;
-                        if (prev_ascii_char) |pc| self.chars.prev = .{ .char = pc };
-                        self.chars.current = .{ .char = cur_ascii_char };
-                        break :brk;
-                    }
-                    self.chars.src.cursor = CodepointIterator.Cursor{
-                        .i = @intCast(new_idx),
-                        .c = cur_ascii_char,
-                        .width = 1,
-                    };
-                    self.chars.src.next_cursor = self.chars.src.cursor;
-                    SrcUnicode.nextCursor(&self.chars.src.iter, &self.chars.src.next_cursor);
-                    if (prev_ascii_char) |pc| self.chars.prev = .{ .char = pc };
-                    self.chars.current = .{ .char = cur_ascii_char };
-                }
+                const new_idx = self.chars.cursorPos() + i;
+                const prev_ascii_char: ?u7 = if (digit_buf_count == 1) null else @truncate(digit_buf[digit_buf_count - 2]);
+                const cur_ascii_char: u7 = @truncate(digit_buf[digit_buf_count - 1]);
+                self.bumpCursorAscii(new_idx, prev_ascii_char, cur_ascii_char);
 
                 // return self.string_refs[idx];
                 return idx;
@@ -2473,16 +2588,6 @@ fn isValidVarNameSlowAscii(var_name: []const u8) bool {
 }
 
 var stderr_mutex = std.Thread.Mutex{};
-pub fn closefd(fd: bun.FileDescriptor) void {
-    if (Syscall.close2(fd)) |err| {
-        _ = err;
-        log("ERR closefd: {d}\n", .{fd});
-        // stderr_mutex.lock();
-        // defer stderr_mutex.unlock();
-        // const stderr = std.io.getStdErr().writer();
-        // err.toSystemError().format("error", .{}, stderr) catch @panic("damn");
-    }
-}
 
 pub fn hasEqSign(str: []const u8) ?u32 {
     if (isAllAscii(str)) {
@@ -2899,16 +3004,15 @@ const SPECIAL_CHARS = [_]u8{ '$', '>', '&', '|', '=', ';', '\n', '{', '}', ',', 
 const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };
 
 pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !bool {
-    // latin-1 or ascii
-    if (bunstr.is8Bit()) {
-        try escape8Bit(bunstr.byteSlice(), outbuf, add_quotes);
-        return true;
-    }
     if (bunstr.isUTF16()) {
         return try escapeUtf16(bunstr.utf16(), outbuf, add_quotes);
     }
-    // Otherwise is utf-8
-    try escapeWTF8(bunstr.byteSlice(), outbuf, add_quotes);
+    if (bunstr.isUTF8()) {
+        try escapeWTF8(bunstr.byteSlice(), outbuf, add_quotes);
+        return true;
+    }
+    // otherwise should be latin-1 or ascii
+    try escape8Bit(bunstr.byteSlice(), outbuf, add_quotes);
     return true;
 }
 
@@ -3078,3 +3182,4 @@ pub fn needsEscapeUtf8AsciiLatin1Slow(str: []const u8) bool {
     }
     return false;
 }
+pub const ExitCode = eval.ExitCode;

@@ -2404,6 +2404,9 @@ describe("expect()", () => {
     expect(o).toContainKey("c");
     expect(o).not.toContainKey("z");
     expect(o).not.toContainKey({ a: "foo" });
+    expect(() => {
+      expect(undefined).not.toContainKey(["id"]);
+    }).toThrow("undefined is not an object");
   });
 
   test("toContainAnyKeys", () => {
@@ -2421,6 +2424,19 @@ describe("expect()", () => {
     expect({ a: "foo", 1: "test" }).toContainKeys(["a", 1]);
     expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["a", "b", "e"]);
     expect({ a: "foo", b: "bar", c: "baz" }).not.toContainKeys(["z"]);
+
+    expect(undefined).not.toContainKeys(["id"]);
+    expect("").toContainKeys([]);
+    expect("").not.toContainKeys(["id"]);
+    expect(false).toContainKeys([]);
+    expect(false).not.toContainKeys(["id"]);
+
+    expect(() => {
+      expect(undefined).toContainKeys(["id"]);
+    }).toThrow(/(Received:)(.*undefined)/);
+    expect(() => {
+      expect(null).toContainKeys(["id"]);
+    }).toThrow(/(Received:)(.*null)/);
   });
 
   test("toBeTruthy()", () => {
@@ -4246,6 +4262,24 @@ describe("expect()", () => {
       const parsed = JSON.parse(JSON.stringify([obj, obj])).map(a => new Date(a));
       expect(parsed).toEqual([obj, obj]);
     });
+  });
+
+  test("expect.hasAssertions doesn't throw when valid", () => {
+    expect.hasAssertions();
+    expect("a").toEqual("a");
+  });
+
+  test("expect.assertions doesn't throw when valid", () => {
+    expect.assertions(1);
+    expect("a").toEqual("a");
+  });
+
+  test("expect.hasAssertions returns undefined", () => {
+    expect(expect.hasAssertions()).toBeUndefined();
+  });
+
+  test("expect.assertions returns undefined", () => {
+    expect(expect.assertions(1)).toBeUndefined();
   });
 
   const mocked = mock(() => {});

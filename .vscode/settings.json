@@ -52,37 +52,37 @@
   },
 
   // JavaScript
-  "prettier.enable": false,
+  "prettier.enable": true,
   "eslint.workingDirectories": ["${workspaceFolder}/packages/bun-types"],
   "[javascript]": {
-    "editor.defaultFormatter": "biomejs.biome",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
   "[javascriptreact]": {
-    "editor.defaultFormatter": "biomejs.biome"
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
 
   // TypeScript
   "typescript.tsdk": "${workspaceFolder}/node_modules/typescript/lib",
   "[typescript]": {
-    "editor.defaultFormatter": "biomejs.biome"
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[typescriptreact]": {
-    "editor.defaultFormatter": "biomejs.biome"
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
 
   // JSON
   "[json]": {
-    "editor.defaultFormatter": "biomejs.biome",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
   "[jsonc]": {
-    "editor.defaultFormatter": "biomejs.biome",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
   
   // Markdown
   "[markdown]": {
-    "editor.defaultFormatter": "biomejs.biome",
-    "editor.unicodeHighlight.ambiguousCharacters": false,
-    "editor.unicodeHighlight.invisibleCharacters": false,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.unicodeHighlight.ambiguousCharacters": true,
+    "editor.unicodeHighlight.invisibleCharacters": true,
     "diffEditor.ignoreTrimWhitespace": false,
     "editor.wordWrap": "on",
     "editor.quickSuggestions": {
@@ -94,12 +94,12 @@
 
   // TOML
   "[toml]": {
-    "editor.defaultFormatter": "biomejs.biome",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
 
   // YAML
   "[yaml]": {
-    "editor.defaultFormatter": "biomejs.biome",
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
 
   // Files

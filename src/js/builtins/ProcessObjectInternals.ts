@@ -27,25 +27,19 @@
 export function getStdioWriteStream(fd) {
   const tty = require("node:tty");
 
-  const stream = tty.WriteStream(fd);
+  let stream;
+  if (tty.isatty(fd)) {
+    stream = new tty.WriteStream(fd);
+    process.on("SIGWINCH", () => {
+      stream._refreshSize();
+    });
+    stream._type = "tty";
+  } else {
+    stream = new (require("node:fs").WriteStream)(fd, { autoClose: false, fd });
+    stream._type = "fs";
+  }
 
-  process.on("SIGWINCH", () => {
-    stream._refreshSize();
-  });
-
-  if (fd === 1) {
-    stream.destroySoon = stream.destroy;
-    stream._destroy = function (err, cb) {
-      cb(err);
-      this._undestroy();
-
-      if (!this._writableState.emitClose) {
-        process.nextTick(() => {
-          this.emit("close");
-        });
-      }
-    };
-  } else if (fd === 2) {
+  if (fd === 1 || fd === 2) {
     stream.destroySoon = stream.destroy;
     stream._destroy = function (err, cb) {
       cb(err);
@@ -59,11 +53,10 @@ export function getStdioWriteStream(fd) {
     };
   }
 
-  stream._type = "tty";
   stream._isStdio = true;
   stream.fd = fd;
 
-  return stream;
+  return [stream, stream[require("internal/shared").fileSinkSymbol]];
 }
 
 export function getStdinStream(fd) {
@@ -132,6 +125,7 @@ export function getStdinStream(fd) {
   const originalOn = stream.on;
 
   let stream_destroyed = false;
+  let stream_endEmitted = false;
   stream.on = function (event, listener) {
     // Streams don't generally required to present any data when only
     // `readable` events are present, i.e. `readableFlowing === false`
@@ -190,7 +184,10 @@ export function getStdinStream(fd) {
 
         if (shouldUnref) unref();
       } else {
-        stream.emit("end");
+        if (!stream_endEmitted) {
+          stream_endEmitted = true;
+          stream.emit("end");
+        }
         if (!stream_destroyed) {
           stream_destroyed = true;
           stream.destroy();
@@ -204,10 +201,9 @@ export function getStdinStream(fd) {
 
   stream._read = function (size) {
     $debug("_read();", reader);
-    if (!reader) {
-      // TODO: this is wrong
-      this.push(null);
-    } else if (!shouldUnref) {
+    if (!reader) return;
+
+    if (!shouldUnref) {
       internalRead(this);
     }
   };
@@ -353,36 +349,50 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
   //
   // it throws "Cannot convert a Symbol value to a string"
 
+  (internalEnv as any)[Bun.inspect.custom] = () => {
+    let o = {};
+    for (let k of envMapList) {
+      o[k] = internalEnv[k.toUpperCase()];
+    }
+    return o;
+  };
+
+  (internalEnv as any).toJSON = () => {
+    return { ...internalEnv };
+  };
+
   return new Proxy(internalEnv, {
     get(_, p) {
-      return typeof p === "string" ? Reflect.get(internalEnv, p.toUpperCase()) : undefined;
+      return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
     },
     set(_, p, value) {
-      var k = String(p).toUpperCase();
+      const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!Reflect.has(internalEnv, k)) {
+      value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
+      if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
-      return Reflect.set(internalEnv, k, String(value));
+      internalEnv[k] = value;
+      return true;
     },
     has(_, p) {
-      return typeof p === "string" ? Reflect.has(internalEnv, p.toUpperCase()) : false;
+      return typeof p !== "symbol" ? String(p).toUpperCase() in internalEnv : false;
     },
     deleteProperty(_, p) {
-      let k = String(p).toUpperCase();
-      let i = envMapList.findIndex(x => x.toUpperCase() === p);
+      const k = String(p).toUpperCase();
+      const i = envMapList.findIndex(x => x.toUpperCase() === k);
       if (i !== -1) {
         envMapList.splice(i, 1);
       }
-      return typeof p === "string" ? Reflect.deleteProperty(internalEnv, k) : true;
+      return typeof p !== "symbol" ? delete internalEnv[k] : false;
     },
     defineProperty(_, p, attributes) {
-      var k = String(p).toUpperCase();
+      const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      if (!Reflect.has(internalEnv, k)) {
+      if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
-      return Reflect.defineProperty(internalEnv, k, attributes);
+      return $Object.$defineProperty(internalEnv, k, attributes);
     },
     getOwnPropertyDescriptor(target, p) {
       return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p.toUpperCase()) : undefined;

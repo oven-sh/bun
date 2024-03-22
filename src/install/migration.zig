@@ -120,7 +120,7 @@ const dependency_keys = .{
 pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Log, data: string, path: string) !LoadFromDiskResult {
     debug("begin lockfile migration", .{});
 
-    try this.initEmpty(allocator);
+    this.initEmpty(allocator);
     Install.initializeStore();
 
     const json_src = logger.Source.initPathString(path, data);
@@ -177,6 +177,9 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 else => return error.InvalidNPMLockfile,
             };
 
+            // due to package paths and resolved properties for links and workspaces always having
+            // forward slashes, we depend on `processWorkspaceNamesArray` to always return workspace
+            // paths with forward slashes on windows
             const workspace_packages_count = try Lockfile.Package.processWorkspaceNamesArray(
                 &workspaces,
                 allocator,
@@ -387,20 +390,14 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         try this.workspace_paths.ensureTotalCapacity(allocator, wksp.map.unmanaged.entries.len);
         try this.workspace_versions.ensureTotalCapacity(allocator, wksp.map.unmanaged.entries.len);
 
-        var path_buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
         for (wksp.map.keys(), wksp.map.values()) |k, v| {
             const name_hash = stringHash(v.name);
 
-            this.workspace_paths.putAssumeCapacity(
-                name_hash,
-                builder.append(
-                    String,
-                    if (comptime Environment.isWindows)
-                        bun.path.normalizeBuf(k, &path_buf, .windows)
-                    else
-                        k,
-                ),
-            );
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(!strings.containsChar(k, '\\'));
+            }
+
+            this.workspace_paths.putAssumeCapacity(name_hash, builder.append(String, k));
 
             if (v.version) |version_string| {
                 const sliced_version = Semver.SlicedString.init(version_string, version_string);
@@ -486,6 +483,14 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                 } else .all,
 
                 .man_dir = String{},
+
+                .has_install_script = if (pkg.get("hasInstallScript")) |has_install_script_expr| brk: {
+                    if (has_install_script_expr.data != .e_boolean) return error.InvalidNPMLockfile;
+                    break :brk if (has_install_script_expr.data.e_boolean.value)
+                        .true
+                    else
+                        .false;
+                } else .false,
 
                 .integrity = if (pkg.get("integrity")) |integrity|
                     try Integrity.parse(
@@ -1004,7 +1009,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
     // This is definitely a memory leak, but it's fine because there is no install api, so this can only be leaked once per process.
     // This operation is neccecary because callers of `loadFromDisk` assume the data is written into the passed `this`.
     // You'll find that not cleaning the lockfile will cause `bun install` to not actually install anything since it doesnt have any hoisted trees.
-    this.* = (try this.cleanWithLogger(&[_]Install.PackageManager.UpdateRequest{}, log, false)).*;
+    this.* = (try this.cleanWithLogger(&[_]Install.PackageManager.UpdateRequest{}, log, false, .silent)).*;
 
     // if (Environment.isDebug) {
     //     const dump_file = try std.fs.cwd().createFileZ("after-clean.json", .{});
@@ -1016,9 +1021,15 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         try this.verifyData();
     }
 
-    this.meta_hash = try this.generateMetaHash(false);
+    this.meta_hash = try this.generateMetaHash(false, this.packages.len);
 
-    return LoadFromDiskResult{ .ok = .{ .lockfile = this, .was_migrated = true } };
+    return LoadFromDiskResult{
+        .ok = .{
+            .lockfile = this,
+            .was_migrated = true,
+            .serializer_result = .{},
+        },
+    };
 }
 
 fn packageNameFromPath(pkg_path: []const u8) []const u8 {

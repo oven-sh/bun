@@ -87,7 +87,7 @@ pub const Body = struct {
             try formatter.writeIndent(Writer, writer);
             try Blob.writeFormatForSize(this.value.size(), writer, enable_ansi_colors);
         } else if (this.value == .Locked) {
-            if (this.value.Locked.readable) |stream| {
+            if (this.value.Locked.readable.get()) |stream| {
                 try formatter.printComma(Writer, writer, enable_ansi_colors);
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
@@ -102,7 +102,7 @@ pub const Body = struct {
 
     pub const PendingValue = struct {
         promise: ?JSValue = null,
-        readable: ?JSC.WebCore.ReadableStream = null,
+        readable: JSC.WebCore.ReadableStream.Strong = .{},
         // writable: JSC.WebCore.Sink
 
         global: *JSGlobalObject,
@@ -126,7 +126,7 @@ pub const Body = struct {
         /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
         /// If the size is unknown will be 0
         fn sizeHint(this: *const PendingValue) Blob.SizeType {
-            if (this.readable) |readable| {
+            if (this.readable.get()) |readable| {
                 if (readable.ptr == .Bytes) {
                     return readable.ptr.Bytes.size_hint;
                 }
@@ -141,11 +141,48 @@ pub const Body = struct {
             return this.toAnyBlobAllowPromise();
         }
 
+        pub fn isDisturbed(this: *const PendingValue, comptime T: type, globalObject: *JSC.JSGlobalObject, this_value: JSC.JSValue) bool {
+            if (this.promise != null) {
+                return true;
+            }
+
+            if (T.bodyGetCached(this_value)) |body_value| {
+                if (JSC.WebCore.ReadableStream.isDisturbedValue(body_value, globalObject)) {
+                    return true;
+                }
+
+                return false;
+            }
+
+            if (this.readable.get()) |readable| {
+                return readable.isDisturbed(globalObject);
+            }
+
+            return false;
+        }
+
+        pub fn hasPendingPromise(this: *PendingValue) bool {
+            const promise = this.promise orelse return false;
+
+            if (promise.asAnyPromise()) |internal| {
+                if (internal.status(this.global.vm()) != .Pending) {
+                    promise.unprotect();
+                    this.promise = null;
+                    return false;
+                }
+
+                return true;
+            }
+
+            this.promise = null;
+            return false;
+        }
+
         pub fn toAnyBlobAllowPromise(this: *PendingValue) ?AnyBlob {
-            var stream = if (this.readable != null) &this.readable.? else return null;
+            var stream = if (this.readable.get()) |readable| readable else return null;
 
             if (stream.toAnyBlob(this.global)) |blob| {
-                this.readable = null;
+                this.readable.deinit();
                 return blob;
             }
 
@@ -154,8 +191,7 @@ pub const Body = struct {
 
         pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
             value.action = action;
-
-            if (value.readable) |readable| handle_stream: {
+            if (value.readable.get()) |readable| handle_stream: {
                 switch (action) {
                     .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer => {
                         value.promise = switch (action) {
@@ -167,13 +203,11 @@ pub const Body = struct {
                                 if (value.onStartBuffering != null) {
                                     if (readable.isDisturbed(globalThis)) {
                                         form_data.?.deinit();
-                                        readable.value.unprotect();
-                                        value.readable = null;
+                                        value.readable.deinit();
                                         value.action = .{ .none = {} };
                                         return JSC.JSPromise.rejectedPromiseValue(globalThis, globalThis.createErrorInstance("ReadableStream is already used", .{}));
                                     } else {
-                                        readable.detachIfPossible(globalThis);
-                                        value.readable = null;
+                                        value.readable.deinit();
                                     }
 
                                     break :handle_stream;
@@ -191,10 +225,10 @@ pub const Body = struct {
                             else => unreachable,
                         };
                         value.promise.?.ensureStillAlive();
-                        readable.value.unprotect();
 
-                        // js now owns the memory
-                        value.readable = null;
+                        readable.detachIfPossible(globalThis);
+                        value.readable.deinit();
+                        value.promise.?.protect();
 
                         return value.promise.?;
                     },
@@ -389,17 +423,15 @@ pub const Body = struct {
 
                     this.* = .{
                         .Locked = .{
-                            .readable = JSC.WebCore.ReadableStream.fromJS(value, globalThis).?,
+                            .readable = JSC.WebCore.ReadableStream.Strong.init(JSC.WebCore.ReadableStream.fromJS(value, globalThis).?, globalThis),
                             .global = globalThis,
                         },
                     };
-                    this.Locked.readable.?.value.protect();
-
                     return value;
                 },
                 .Locked => {
                     var locked = &this.Locked;
-                    if (locked.readable) |readable| {
+                    if (locked.readable.get()) |readable| {
                         return readable.value;
                     }
                     if (locked.promise != null) {
@@ -419,11 +451,10 @@ pub const Body = struct {
                         return JSC.WebCore.ReadableStream.empty(globalThis);
                     }
 
-                    var reader = bun.default_allocator.create(JSC.WebCore.ByteStream.Source) catch unreachable;
-                    reader.* = .{
+                    var reader = JSC.WebCore.ByteStream.Source.new(.{
                         .context = undefined,
                         .globalThis = globalThis,
-                    };
+                    });
 
                     reader.context.setup();
 
@@ -435,17 +466,16 @@ pub const Body = struct {
                         reader.context.size_hint = @as(Blob.SizeType, @truncate(drain_result.owned.size_hint));
                     }
 
-                    locked.readable = .{
+                    locked.readable = JSC.WebCore.ReadableStream.Strong.init(.{
                         .ptr = .{ .Bytes = &reader.context },
-                        .value = reader.toJS(globalThis),
-                    };
-                    locked.readable.?.value.protect();
+                        .value = reader.toReadableStream(globalThis),
+                    }, globalThis);
 
                     if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
-                        onReadableStreamAvailable(locked.task.?, locked.readable.?);
+                        onReadableStreamAvailable(locked.task.?, locked.readable.get().?);
                     }
 
-                    return locked.readable.?.value;
+                    return locked.readable.get().?.value;
                 },
                 .Error => {
                     // TODO: handle error properly
@@ -545,17 +575,15 @@ pub const Body = struct {
 
                 switch (readable.ptr) {
                     .Blob => |blob| {
+                        const store = blob.detachStore() orelse {
+                            return Body.Value{ .Blob = Blob.initEmpty(globalThis) };
+                        };
+
                         readable.forceDetach(globalThis);
 
                         const result: Value = .{
-                            .Blob = Blob.initWithStore(blob.store, globalThis),
+                            .Blob = Blob.initWithStore(store, globalThis),
                         };
-                        blob.store.ref();
-
-                        if (!blob.done) {
-                            blob.done = true;
-                            blob.deinit();
-                        }
 
                         return result;
                     },
@@ -579,30 +607,22 @@ pub const Body = struct {
         }
 
         pub fn fromReadableStreamWithoutLockCheck(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
-            readable.value.protect();
             return .{
                 .Locked = .{
-                    .readable = readable,
+                    .readable = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis),
                     .global = globalThis,
                 },
             };
-        }
-
-        pub fn fromReadableStream(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
-            if (readable.isLocked(globalThis)) {
-                return .{ .Error = ZigString.init("Cannot use a locked ReadableStream").toErrorInstance(globalThis) };
-            }
-
-            return fromReadableStreamWithoutLockCheck(readable, globalThis);
         }
 
         pub fn resolve(to_resolve: *Value, new: *Value, global: *JSGlobalObject) void {
             log("resolve", .{});
             if (to_resolve.* == .Locked) {
                 var locked = &to_resolve.Locked;
-                if (locked.readable) |readable| {
-                    readable.done();
-                    locked.readable = null;
+
+                if (locked.readable.get()) |readable| {
+                    readable.done(global);
+                    locked.readable.deinit();
                 }
 
                 if (locked.onReceiveValue) |callback| {
@@ -811,17 +831,19 @@ pub const Body = struct {
             if (this.* == .Locked) {
                 var locked = this.Locked;
                 locked.deinit = true;
-                if (locked.promise) |promise| {
+                if (locked.hasPendingPromise()) {
+                    const promise = locked.promise.?;
+                    locked.promise = null;
+
                     if (promise.asAnyPromise()) |internal| {
                         internal.reject(global, error_instance);
                     }
-                    JSC.C.JSValueUnprotect(global, promise.asObjectRef());
-                    locked.promise = null;
+                    promise.unprotect();
                 }
 
-                if (locked.readable) |readable| {
-                    readable.done();
-                    locked.readable = null;
+                if (locked.readable.get()) |readable| {
+                    readable.done(global);
+                    locked.readable.deinit();
                 }
                 // will be unprotected by body value deinit
                 error_instance.protect();
@@ -835,12 +857,6 @@ pub const Body = struct {
             // will be unprotected by body value deinit
             error_instance.protect();
             this.* = .{ .Error = error_instance };
-        }
-
-        pub fn toErrorString(this: *Value, comptime err: string, global: *JSGlobalObject) void {
-            var error_str = ZigString.init(err);
-            const error_instance = error_str.toErrorInstance(global);
-            return this.toErrorInstance(error_instance, global);
         }
 
         pub fn toError(this: *Value, err: anyerror, global: *JSGlobalObject) void {
@@ -859,10 +875,8 @@ pub const Body = struct {
             if (tag == .Locked) {
                 if (!this.Locked.deinit) {
                     this.Locked.deinit = true;
-
-                    if (this.Locked.readable) |*readable| {
-                        readable.done();
-                    }
+                    this.Locked.readable.deinit();
+                    this.Locked.readable = .{};
                 }
 
                 return;
@@ -940,7 +954,7 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getText(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
@@ -948,7 +962,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.promise != null) {
+                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
 
@@ -980,7 +994,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 switch (this.getBodyValue().*) {
                     .Used => true,
                     .Locked => |*pending| brk: {
-                        if (pending.readable) |*stream| {
+                        if (pending.readable.get()) |*stream| {
                             break :brk stream.isDisturbed(globalObject);
                         }
 
@@ -994,7 +1008,7 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getJSON(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
@@ -1002,7 +1016,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.promise != null) {
+                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
                 return value.Locked.setPromise(globalObject, .{ .getJSON = {} });
@@ -1024,7 +1038,7 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getArrayBuffer(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
@@ -1033,7 +1047,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.promise != null) {
+                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
                 return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = {} });
@@ -1047,7 +1061,7 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getFormData(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            _: *JSC.CallFrame,
+            callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
@@ -1056,7 +1070,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.promise != null) {
+                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
                     return handleBodyAlreadyUsed(globalObject);
                 }
             }
@@ -1126,8 +1140,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
             }
 
-            var blob = value.use();
-            var ptr = bun.new(Blob, blob);
+            var blob = bun.new(Blob, value.use());
             blob.allocator = getAllocator(globalObject);
 
             if (blob.content_type.len == 0 and blob.store != null) {
@@ -1140,7 +1153,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 }
             }
 
-            return JSC.JSPromise.resolvedPromiseValue(globalObject, ptr.toJS(globalObject));
+            return JSC.JSPromise.resolvedPromiseValue(globalObject, blob.toJS(globalObject));
         }
     };
 }
@@ -1165,7 +1178,7 @@ pub const BodyValueBufferer = struct {
     pub fn deinit(this: *@This()) void {
         this.stream_buffer.deinit();
         if (this.byte_stream) |byte_stream| {
-            byte_stream.unpipe();
+            byte_stream.unpipeWithoutDeref();
         }
         this.readable_stream_ref.deinit();
 
@@ -1387,10 +1400,9 @@ pub const BodyValueBufferer = struct {
     fn bufferLockedBodyValue(sink: *@This(), value: *JSC.WebCore.Body.Value) !void {
         std.debug.assert(value.* == .Locked);
         const locked = &value.Locked;
-        if (locked.readable) |stream_| {
-            const stream: JSC.WebCore.ReadableStream = stream_;
-            stream.value.ensureStillAlive();
-
+        if (locked.readable.get()) |stream| {
+            // keep the stream alive until we're done with it
+            sink.readable_stream_ref = locked.readable;
             value.* = .{ .Used = {} };
 
             if (stream.isLocked(sink.global)) {
@@ -1419,13 +1431,9 @@ pub const BodyValueBufferer = struct {
                         log("byte stream has_received_last_chunk {}", .{bytes.len});
                         sink.onFinishedBuffering(sink.ctx, bytes, null, false);
                         // is safe to detach here because we're not going to receive any more data
-                        stream.detachIfPossible(sink.global);
+                        stream.done(sink.global);
                         return;
                     }
-                    // keep the stream alive until we're done with it
-                    sink.readable_stream_ref = try JSC.WebCore.ReadableStream.Strong.init(stream, sink.global);
-                    // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
-                    stream.detachIfPossible(sink.global);
 
                     byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onStreamPipe).init(sink);
                     sink.byte_stream = byte_stream;

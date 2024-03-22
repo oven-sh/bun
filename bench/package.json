@@ -12,7 +12,7 @@
     "fast-glob": "3.3.1",
     "fdir": "^6.1.0",
     "mitata": "^0.1.6",
-    "string-width": "^7.0.0",
+    "string-width": "7.1.0",
     "zx": "^7.2.3"
   },
   "scripts": {

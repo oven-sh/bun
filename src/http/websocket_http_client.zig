@@ -319,7 +319,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
                 out.tcp.?.timeout(120);
                 return out;
-            } else {
+            } else |_| {
+                // TODO: handle error better than just returning null
                 client.clearData();
                 client.destroy();
             }
@@ -939,6 +940,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         header_fragment: ?u8 = null,
 
+        payload_length_frame_bytes: [8]u8 = [_]u8{0} ** 8,
+        payload_length_frame_len: u8 = 0,
+
         initial_data_handler: ?*InitialDataHandler = null,
         event_loop: *JSC.EventLoop = undefined,
 
@@ -1193,6 +1197,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             }
 
             var header_bytes: [@sizeOf(usize)]u8 = [_]u8{0} ** @sizeOf(usize);
+
+            // In the WebSocket specification, control frames may not be fragmented.
+            // However, the frame parser should handle fragmented control frames nonetheless.
+            // Whether or not the frame parser is given a set of fragmented bytes to parse is subject
+            // to the strategy in which the client buffers and coalesces received bytes.
+
             while (true) {
                 log("onData ({s})", .{@tagName(receive_state)});
 
@@ -1323,22 +1333,33 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                             .extended_payload_length_16 => @as(usize, 2),
                             else => unreachable,
                         };
-                        // we need to wait for more data
-                        if (data.len == 0) return;
 
-                        if (data.len < byte_size) {
-                            this.terminate(ErrorCode.control_frame_is_fragmented);
-                            terminated = true;
+                        // we need to wait for more data
+                        if (data.len == 0) {
+                            break;
+                        }
+
+                        // copy available payload length bytes to a buffer held on this client instance
+                        const total_received = @min(byte_size - this.payload_length_frame_len, data.len);
+                        @memcpy(this.payload_length_frame_bytes[this.payload_length_frame_len..][0..total_received], data[0..total_received]);
+                        this.payload_length_frame_len += @intCast(total_received);
+                        data = data[total_received..];
+
+                        // short read on payload length - we need to wait for more data
+                        // whatever bytes were returned from the short read are kept in `payload_length_frame_bytes`
+                        if (this.payload_length_frame_len < byte_size) {
                             break;
                         }
 
                         // Multibyte length quantities are expressed in network byte order
                         receive_body_remain = switch (byte_size) {
-                            8 => @as(usize, std.mem.readInt(u64, data[0..8], .big)),
-                            2 => @as(usize, std.mem.readInt(u16, data[0..2], .big)),
+                            8 => @as(usize, std.mem.readInt(u64, this.payload_length_frame_bytes[0..8], .big)),
+                            2 => @as(usize, std.mem.readInt(u16, this.payload_length_frame_bytes[0..2], .big)),
                             else => unreachable,
                         };
-                        data = data[byte_size..];
+
+                        this.payload_length_frame_len = 0;
+
                         receive_state = .need_body;
 
                         if (receive_body_remain == 0) {

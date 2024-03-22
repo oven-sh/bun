@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "invalid enum value"
 /**
  * These tests are derived from the [deno_task_shell](https://github.com/denoland/deno_task_shell/) rm tests, which are developed and maintained by the Deno authors.
  * Copyright 2018-2023 the Deno authors.
@@ -14,11 +13,19 @@ import { ShellOutput } from "bun";
 import { TestBuilder, sortedShellOutput } from "../util";
 
 const fileExists = async (path: string): Promise<boolean> =>
-  $`ls -d ${path}`.then(o => o.stdout.toString() == `${path}\n`);
+  $`ls -d ${path}`.then(o => o.stdout.toString() === `${path}\n`);
 
 $.nothrow();
 
+const BUN = process.argv0;
+const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
+
 describe("bunshell rm", () => {
+  TestBuilder.command`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}; rm -rf node_modules/`
+    .ensureTempDir()
+    .doesNotExist("node_modules")
+    .runAsTest("node_modules");
+
   test("force", async () => {
     const files = {
       "existent.txt": "",
@@ -134,3 +141,29 @@ foo/
     }
   });
 });
+
+function packagejson() {
+  return `{
+  "name": "dummy",
+  "dependencies": {
+    "@biomejs/biome": "^1.5.3",
+    "@vscode/debugadapter": "^1.61.0",
+    "esbuild": "^0.17.15",
+    "eslint": "^8.20.0",
+    "eslint-config-prettier": "^8.5.0",
+    "mitata": "^0.1.3",
+    "peechy": "0.4.34",
+    "prettier": "3.2.2",
+    "react": "next",
+    "react-dom": "next",
+    "source-map-js": "^1.0.2",
+    "typescript": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.25",
+    "@typescript-eslint/eslint-plugin": "^5.31.0",
+    "@typescript-eslint/parser": "^5.31.0"
+  },
+  "version": "0.0.0"
+}`;
+}

@@ -346,17 +346,41 @@ pub const AST = struct {
         pipeline: *Pipeline,
         cmd: *Cmd,
         subshell: Script,
+        @"if": *If,
 
         pub fn asPipelineItem(this: *Expr) ?PipelineItem {
             return switch (this.*) {
                 .assign => .{ .assigns = this.assign },
                 .cmd => .{ .cmd = this.cmd },
                 .subshell => .{ .subshell = this.subshell },
+                .@"if" => .{ .@"if" = this.@"if" },
                 else => null,
             };
         }
 
-        pub const Tag = enum { assign, binary, pipeline, cmd, subshell };
+        pub const Tag = enum {
+            assign,
+            binary,
+            pipeline,
+            cmd,
+            subshell,
+            @"if",
+        };
+    };
+
+    pub const If = struct {
+        cond: Stmt,
+        then: Stmt,
+        elif: ?Stmt = null,
+        @"else": ?Stmt = null,
+
+        pub fn to_expr(this: If, alloc: Allocator) !Expr {
+            const @"if" = try alloc.create(If);
+            @"if".* = this;
+            return .{
+                .@"if" = @"if",
+            };
+        }
     };
 
     pub const Binary = struct {
@@ -375,6 +399,7 @@ pub const AST = struct {
         cmd: *Cmd,
         assigns: []Assign,
         subshell: Script,
+        @"if": *If,
     };
 
     pub const CmdOrAssigns = union(CmdOrAssigns.Tag) {
@@ -660,6 +685,9 @@ pub const Parser = struct {
         this.errors = subparser.errors;
     }
 
+    /// Main parse function
+    ///
+    /// Loosely based on the shell gramar documented in the spec: https://pubs.opengroup.org/onlinepubs/009604499/utilities/xcu_chap02.html#tag_02_10
     pub fn parse(self: *Parser) !AST.Script {
         // Check for subshell syntax which is not supported rn
         for (self.tokens) |tok| {
@@ -741,7 +769,7 @@ pub const Parser = struct {
     }
 
     fn parse_pipeline(self: *Parser) !AST.Expr {
-        var expr = try self.parse_subshell();
+        var expr = try self.parse_compound_cmd();
 
         if (self.peek() == .Pipe) {
             var pipeline_items = std.ArrayList(AST.PipelineItem).init(self.alloc);
@@ -751,7 +779,7 @@ pub const Parser = struct {
             });
 
             while (self.match(.Pipe)) {
-                expr = try self.parse_subshell();
+                expr = try self.parse_compound_cmd();
                 try pipeline_items.append(expr.asPipelineItem() orelse {
                     try self.add_error_expected_pipeline_item(@as(AST.Expr.Tag, expr));
                     return ParseError.Expected;
@@ -764,8 +792,8 @@ pub const Parser = struct {
         return expr;
     }
 
-    /// Placeholder for when we fully support subshells
-    fn parse_subshell(self: *Parser) anyerror!AST.Expr {
+    fn parse_compound_cmd(self: *Parser) anyerror!AST.Expr {
+        // Placeholder for when we fully support subshells
         // if (self.peek() == .OpenParen) {
         //     _ = self.expect(.OpenParen);
         //     const script = try self.parse_impl(true);
@@ -773,10 +801,69 @@ pub const Parser = struct {
         //     return .{ .subshell = script };
         // }
         // return (try self.parse_cmd_or_assigns()).to_expr(self.alloc);
-        return (try self.parse_cmd_or_assigns()).to_expr(self.alloc);
+
+        if (self.peek() == .If)
+            return (try self.parse_if_clause()).to_expr(self.alloc);
+
+        return (try self.parse_simple_cmd()).to_expr(self.alloc);
     }
 
-    fn parse_cmd_or_assigns(self: *Parser) !AST.CmdOrAssigns {
+    fn parse_if_clause(self: *Parser) !AST.If {
+        _ = self.expect(.If);
+        const cond = try self.parse_stmt();
+        if (!self.match(.Then)) {
+            try self.add_error("Expected \"then\" but got: {s}", .{@tagName(self.peek())});
+            return ParseError.Expected;
+        }
+        const then = try self.parse_stmt();
+        switch (self.peek()) {
+            .Else => {
+                _ = self.expect(.Else);
+                const @"else" = try self.parse_stmt();
+                if (!self.match(.Fi)) {
+                    try self.add_error("Expected \"fi\" but got: {s}", .{@tagName(self.peek())});
+                    return ParseError.Expected;
+                }
+                return .{
+                    .cond = cond,
+                    .then = then,
+                    .@"else" = @"else",
+                };
+            },
+            .Elif => {
+                _ = self.expect(.Elif);
+                const elif = try self.parse_stmt();
+                if (!self.match(.Else)) {
+                    try self.add_error("Expected \"else\" but got: {s}", .{@tagName(self.peek())});
+                    return ParseError.Expected;
+                }
+                const @"else" = try self.parse_stmt();
+                if (!self.match(.Fi)) {
+                    try self.add_error("Expected \"fi\" but got: {s}", .{@tagName(self.peek())});
+                    return ParseError.Expected;
+                }
+                return .{
+                    .cond = cond,
+                    .then = then,
+                    .@"else" = @"else",
+                    .elif = elif,
+                };
+            },
+            .Fi => {
+                _ = self.expect(.Fi);
+                return .{
+                    .cond = cond,
+                    .then = then,
+                };
+            },
+            else => {
+                try self.add_error("Expected \"else\", \"elif\", or \"fi\" but got: {s}", .{@tagName(self.peek())});
+                return ParseError.Expected;
+            },
+        }
+    }
+
+    fn parse_simple_cmd(self: *Parser) !AST.CmdOrAssigns {
         var assigns = std.ArrayList(AST.Assign).init(self.alloc);
         while (if (self.inside_subshell == null)
             !self.check_any_comptime(&.{ .Semicolon, .Newline, .Eof })
@@ -1526,6 +1613,37 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 // 3. word breakers (spaces, etc.)
                 else if (!escaped) escaped: {
                     switch (char) {
+                        // maybe `if`
+                        'i' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.eatIf()) |tok| {
+                                try self.break_word(true);
+                                try self.tokens.append(tok);
+                            } else break :escaped;
+                        },
+                        't' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.eatThen()) |tok| {
+                                try self.break_word(true);
+                                try self.tokens.append(tok);
+                            } else break :escaped;
+                        },
+                        'e' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            const maybe_tok = self.eatElse() orelse self.eatElif();
+                            if (maybe_tok) |tok| {
+                                try self.break_word(true);
+                                try self.tokens.append(tok);
+                            } else break :escaped;
+                        },
+                        'f' => {
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.eatFi()) |tok| {
+                                try self.break_word(true);
+                                try self.tokens.append(tok);
+                            } else break :escaped;
+                        },
+
                         '#' => {
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             const whitespace_preceding =
@@ -2094,6 +2212,114 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             }
             const end = self.strpool.items.len;
             self.j += @intCast(end - start);
+        }
+
+        fn eatIf(self: *@This()) ?Token {
+            var p = self.peek() orelse return null;
+            if (p.escaped or p.char != 'f') return null;
+            const state = self.make_snapshot();
+            _ = self.eat();
+            // In the case of EOF just return if token
+            p = self.peek() orelse return .If;
+            do_backtrack: {
+                if (p.escaped) break :do_backtrack;
+                switch (p.char) {
+                    ' ', '\r', '\n', '\t', '(' => return .If,
+                    else => break :do_backtrack,
+                }
+            }
+            self.backtrack(state);
+            return null;
+        }
+
+        fn eatThen(self: *@This()) ?Token {
+            if (!self.matchesAsciiLiteral("hen")) return null;
+            const state = self.make_snapshot();
+
+            var i: usize = 0;
+            i += "then".len - 1;
+            const new_idx = self.chars.cursorPos() + i;
+            const prev_ascii_char: ?u7 = 'e';
+            const cur_ascii_char: u7 = 'n';
+            self.bumpCursorAscii(new_idx, prev_ascii_char, cur_ascii_char);
+
+            // In the case of EOF just return then token
+            const p = self.peek() orelse return .Then;
+            do_backtrack: {
+                if (p.escaped) break :do_backtrack;
+                switch (p.char) {
+                    ' ', '\r', '\n', '\t', '(' => return .Then,
+                    else => break :do_backtrack,
+                }
+            }
+            self.backtrack(state);
+            return null;
+        }
+
+        fn eatElse(self: *@This()) ?Token {
+            if (!self.matchesAsciiLiteral("lse")) return null;
+            const state = self.make_snapshot();
+
+            var i: usize = 0;
+            i += "else".len - 1;
+            const new_idx = self.chars.cursorPos() + i;
+            const prev_ascii_char: ?u7 = 's';
+            const cur_ascii_char: u7 = 'e';
+            self.bumpCursorAscii(new_idx, prev_ascii_char, cur_ascii_char);
+
+            // In the case of EOF just return else token
+            const p = self.peek() orelse return .Else;
+            do_backtrack: {
+                if (p.escaped) break :do_backtrack;
+                switch (p.char) {
+                    ' ', '\r', '\n', '\t', '(' => return .Else,
+                    else => break :do_backtrack,
+                }
+            }
+            self.backtrack(state);
+            return null;
+        }
+
+        fn eatElif(self: *@This()) ?Token {
+            if (!self.matchesAsciiLiteral("lif")) return null;
+            const state = self.make_snapshot();
+
+            var i: usize = 0;
+            i += "elif".len - 1;
+            const new_idx = self.chars.cursorPos() + i;
+            const prev_ascii_char: ?u7 = 'i';
+            const cur_ascii_char: u7 = 'f';
+            self.bumpCursorAscii(new_idx, prev_ascii_char, cur_ascii_char);
+
+            // In the case of EOF just return elif token
+            const p = self.peek() orelse return .Elif;
+            do_backtrack: {
+                if (p.escaped) break :do_backtrack;
+                switch (p.char) {
+                    ' ', '\r', '\n', '\t', '(' => return .Elif,
+                    else => break :do_backtrack,
+                }
+            }
+            self.backtrack(state);
+            return null;
+        }
+
+        fn eatFi(self: *@This()) ?Token {
+            var p = self.peek() orelse return null;
+            if (p.escaped or p.char != 'i') return null;
+            const state = self.make_snapshot();
+            _ = self.eat();
+            // In the case of EOF just return fi token
+            p = self.peek() orelse return .Fi;
+            do_backtrack: {
+                if (p.escaped) break :do_backtrack;
+                switch (p.char) {
+                    ' ', '\r', '\n', '\t', '(' => return .Fi,
+                    else => break :do_backtrack,
+                }
+            }
+            self.backtrack(state);
+            return null;
         }
 
         fn handleJSStringRef(self: *@This(), bunstr: bun.String) !void {

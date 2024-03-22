@@ -2613,6 +2613,7 @@ pub const Interpreter = struct {
                 .subshell => {
                     @panic(SUBSHELL_TODO_ERROR);
                 },
+                .@"if" => @panic("IF todo"),
             }
         }
 
@@ -2722,6 +2723,7 @@ pub const Interpreter = struct {
                     return ChildPtr.init(assign_machine);
                 },
                 .subshell => @panic(SUBSHELL_TODO_ERROR),
+                .@"if" => @panic("If"),
             }
         }
 
@@ -2890,6 +2892,7 @@ pub const Interpreter = struct {
                     // in a pipeline assignments have no effect
                     .assigns => {},
                     .subshell => @panic(SUBSHELL_TODO_ERROR),
+                    .@"if" => @panic("If"),
                 }
             }
 

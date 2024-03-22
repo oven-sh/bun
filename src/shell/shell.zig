@@ -368,11 +368,15 @@ pub const AST = struct {
         };
     };
 
+    /// TODO: If we know cond/then/elif/else is just a single command we don't need to store the stmt
     pub const If = struct {
         cond: Stmt,
         then: Stmt,
-        elif: ?Stmt = null,
-        @"else": ?Stmt = null,
+        /// From the spec:
+        ///
+        /// else_part        : Elif compound_list Then else_part
+        ///                  | Else compound_list
+        else_parts: SmolList(Stmt, 1) = SmolList(Stmt, 1).zeroes,
 
         pub fn to_expr(this: If, alloc: Allocator) !Expr {
             const @"if" = try alloc.create(If);
@@ -599,6 +603,10 @@ pub const AST = struct {
         brace_begin,
         brace_end,
         comma,
+        If,
+        Then,
+        Elif,
+        Else,
         cmd_subst: struct {
             script: Script,
             quoted: bool = false,
@@ -717,7 +725,9 @@ pub const Parser = struct {
         else
             !self.match_any(&.{ .Eof, self.inside_subshell.?.closing_tok() }))
         {
+            self.skip_newlines();
             try stmts.append(try self.parse_stmt());
+            self.skip_newlines();
         }
         if (self.inside_subshell) |kind| {
             _ = self.expect_any(&.{ .Eof, kind.closing_tok() });
@@ -808,36 +818,69 @@ pub const Parser = struct {
         return (try self.parse_simple_cmd()).to_expr(self.alloc);
     }
 
+    fn skip_newlines(self: *Parser) void {
+        while (self.match(.Newline)) {}
+    }
+
+    fn parse_if_body(self: *Parser) !AST.Stmt {
+        self.skip_newlines();
+        const ret = try self.parse_stmt();
+        self.skip_newlines();
+        return ret;
+    }
+
     fn parse_if_clause(self: *Parser) !AST.If {
         _ = self.expect(.If);
-        const cond = try self.parse_stmt();
+
+        const cond = try self.parse_if_body();
+
         if (!self.match(.Then)) {
             try self.add_error("Expected \"then\" but got: {s}", .{@tagName(self.peek())});
             return ParseError.Expected;
         }
-        const then = try self.parse_stmt();
+
+        const then = try self.parse_if_body();
+
+        var else_parts: SmolList(AST.Stmt, 1) = SmolList(AST.Stmt, 1).zeroes;
+
         switch (self.peek()) {
             .Else => {
                 _ = self.expect(.Else);
-                const @"else" = try self.parse_stmt();
+                const @"else" = try self.parse_if_body();
                 if (!self.match(.Fi)) {
                     try self.add_error("Expected \"fi\" but got: {s}", .{@tagName(self.peek())});
                     return ParseError.Expected;
                 }
+                else_parts.append(@"else");
                 return .{
                     .cond = cond,
                     .then = then,
-                    .@"else" = @"else",
+                    .else_parts = else_parts,
                 };
             },
             .Elif => {
-                _ = self.expect(.Elif);
-                const elif = try self.parse_stmt();
-                if (!self.match(.Else)) {
-                    try self.add_error("Expected \"else\" but got: {s}", .{@tagName(self.peek())});
-                    return ParseError.Expected;
+                while (true) {
+                    _ = self.expect(.Elif);
+                    const elif_cond = try self.parse_if_body();
+                    if (!self.match(.Then)) {
+                        try self.add_error("Expected \"then\" but got: {s}", .{@tagName(self.peek())});
+                        return ParseError.Expected;
+                    }
+                    const then_part = try self.parse_if_body();
+                    else_parts.append(elif_cond);
+                    else_parts.append(then_part);
+
+                    switch (self.peek()) {
+                        .Elif => continue,
+                        .Else => {
+                            _ = self.expect(.Else);
+                            const else_part = try self.parse_if_body();
+                            else_parts.append(else_part);
+                            break;
+                        },
+                        else => break,
+                    }
                 }
-                const @"else" = try self.parse_stmt();
                 if (!self.match(.Fi)) {
                     try self.add_error("Expected \"fi\" but got: {s}", .{@tagName(self.peek())});
                     return ParseError.Expected;
@@ -845,8 +888,7 @@ pub const Parser = struct {
                 return .{
                     .cond = cond,
                     .then = then,
-                    .@"else" = @"else",
-                    .elif = elif,
+                    .else_parts = else_parts,
                 };
             },
             .Fi => {
@@ -1061,6 +1103,20 @@ pub const Parser = struct {
                         if (next_delimits) {
                             _ = self.match(.Delimit);
                             if (should_break) break;
+                        }
+                    },
+                    .If, .Then, .Elif, .Else => {
+                        _ = self.expect(@as(TokenTag, peeked));
+                        const tags: []const TokenTag = &.{ .If, .Then, .Elif, .Else };
+                        inline for (tags) |tag| {
+                            const thistag = @as(TokenTag, peeked);
+                            if (tag == thistag) {
+                                try atoms.append(@unionInit(AST.SimpleAtom, @tagName(tag), {}));
+                                if (next_delimits) {
+                                    _ = self.match(.Delimit);
+                                    if (should_break) break;
+                                }
+                            }
                         }
                     },
                     .CmdSubstBegin => {
@@ -3436,3 +3492,196 @@ pub fn needsEscapeUtf8AsciiLatin1Slow(str: []const u8) bool {
     return false;
 }
 pub const ExitCode = eval.ExitCode;
+
+/// A list that can store its items inlined, and promote itself to a heap allocated bun.ByteList
+pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
+    return union(enum) {
+        inlined: Inlined,
+        heap: ByteList,
+
+        const ByteList = bun.BabyList(T);
+
+        pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const slc = this.slice();
+            try writer.print("{}", .{slc});
+        }
+
+        pub fn jsonStringify(this: *const @This(), writer: anytype) !void {
+            const slc = this.slice();
+            try writer.write(slc);
+        }
+
+        pub const zeroes: @This() = .{
+            .inlined = .{},
+        };
+
+        pub const Inlined = struct {
+            items: [INLINED_MAX]T = undefined,
+            len: u32 = 0,
+
+            pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
+                var list = bun.BabyList(T).initCapacity(bun.default_allocator, n) catch bun.outOfMemory();
+                list.append(bun.default_allocator, this.items[0..INLINED_MAX]) catch bun.outOfMemory();
+                list.push(bun.default_allocator, new) catch bun.outOfMemory();
+                return list;
+            }
+
+            pub fn orderedRemove(this: *Inlined, idx: usize) T {
+                if (this.len - 1 == idx) return this.pop();
+                const slice_to_shift = this.items[idx + 1 .. this.len];
+                std.mem.copyForwards(T, this.items[idx .. this.len - 1], slice_to_shift);
+                this.len -= 1;
+            }
+
+            pub fn swapRemove(this: *Inlined, idx: usize) T {
+                if (this.len - 1 == idx) return this.pop();
+
+                const old_item = this.items[idx];
+                this.items[idx] = this.pop();
+                return old_item;
+            }
+
+            pub fn pop(this: *Inlined) T {
+                const ret = this.items[this.items.len - 1];
+                this.len -= 1;
+                return ret;
+            }
+        };
+
+        pub inline fn len(this: *const @This()) usize {
+            return switch (this.*) {
+                .inlined => this.inlined.len,
+                .heap => this.heap.len,
+            };
+        }
+
+        pub fn orderedRemove(this: *@This(), idx: usize) void {
+            switch (this.*) {
+                .heap => {
+                    var list = this.heap.listManaged(bun.default_allocator);
+                    _ = list.orderedRemove(idx);
+                },
+                .inlined => {
+                    _ = this.inlined.orderedRemove(idx);
+                },
+            }
+        }
+
+        pub fn swapRemove(this: *@This(), idx: usize) void {
+            switch (this.*) {
+                .heap => {
+                    var list = this.heap.listManaged(bun.default_allocator);
+                    _ = list.swapRemove(idx);
+                },
+                .inlined => {
+                    _ = this.inlined.swapRemove(idx);
+                },
+            }
+        }
+
+        pub fn truncate(this: *@This(), starting_idx: usize) void {
+            switch (this.*) {
+                .inlined => {
+                    if (starting_idx >= this.inlined.len) return;
+                    const slice_to_move = this.inlined.items[starting_idx..this.inlined.len];
+                    std.mem.copyForwards(T, this.inlined.items[0..starting_idx], slice_to_move);
+                },
+                .heap => {
+                    const new_len = this.heap.len - starting_idx;
+                    this.heap.replaceRange(0, starting_idx, this.heap.ptr[starting_idx..this.heap.len]) catch bun.outOfMemory();
+                    this.heap.len = @intCast(new_len);
+                },
+            }
+        }
+
+        pub inline fn sliceMutable(this: *@This()) []T {
+            return switch (this.*) {
+                .inlined => {
+                    if (this.inlined.len == 0) return &[_]T{};
+                    return this.inlined.items[0..this.inlined.len];
+                },
+                .heap => {
+                    if (this.heap.len == 0) return &[_]T{};
+                    return this.heap.slice();
+                },
+            };
+        }
+
+        pub inline fn slice(this: *const @This()) []const T {
+            return switch (this.*) {
+                .inlined => {
+                    if (this.inlined.len == 0) return &[_]T{};
+                    return this.inlined.items[0..this.inlined.len];
+                },
+                .heap => {
+                    if (this.heap.len == 0) return &[_]T{};
+                    return this.heap.slice();
+                },
+            };
+        }
+
+        pub inline fn get(this: *@This(), idx: usize) *T {
+            return switch (this.*) {
+                .inlined => {
+                    if (bun.Environment.allow_assert) {
+                        if (idx >= this.inlined.len) @panic("Index out of bounds");
+                    }
+                    return &this.inlined.items[idx];
+                },
+                .heap => &this.heap.ptr[idx],
+            };
+        }
+
+        pub inline fn getConst(this: *const @This(), idx: usize) *const T {
+            return switch (this.*) {
+                .inlined => {
+                    if (bun.Environment.allow_assert) {
+                        if (idx >= this.inlined.len) @panic("Index out of bounds");
+                    }
+                    return &this.inlined.items[idx];
+                },
+                .heap => &this.heap.ptr[idx],
+            };
+        }
+
+        pub fn append(this: *@This(), new: T) void {
+            switch (this.*) {
+                .inlined => {
+                    if (this.inlined.len == INLINED_MAX) {
+                        this.* = .{ .heap = this.inlined.promote(INLINED_MAX, new) };
+                        return;
+                    }
+                    this.inlined.items[this.inlined.len] = new;
+                    this.inlined.len += 1;
+                },
+                .heap => {
+                    this.heap.push(bun.default_allocator, new) catch bun.outOfMemory();
+                },
+            }
+        }
+
+        pub fn clearRetainingCapacity(this: *@This()) void {
+            switch (this.*) {
+                .inlined => {
+                    this.inlined.len = 0;
+                },
+                .heap => {
+                    this.heap.clearRetainingCapacity();
+                },
+            }
+        }
+
+        pub fn last(this: *@This()) ?*T {
+            if (this.len() == 0) return null;
+            return this.get(this.len() - 1);
+        }
+
+        pub fn lastUnchecked(this: *@This()) *T {
+            return this.get(this.len() - 1);
+        }
+
+        pub fn lastUncheckedConst(this: *const @This()) *const T {
+            return this.getConst(this.len() - 1);
+        }
+    };
+}

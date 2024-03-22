@@ -48,6 +48,7 @@ const shell = @import("./shell.zig");
 const Token = shell.Token;
 const ShellError = shell.ShellError;
 const ast = shell.AST;
+const SmolList = shell.SmolList;
 
 const GlobWalker = @import("../glob.zig").GlobWalker_(null, true);
 
@@ -83,6 +84,7 @@ pub const StateKind = enum(u8) {
     binary,
     pipeline,
     expansion,
+    if_clause,
 };
 
 /// Copy-on-write
@@ -2048,6 +2050,10 @@ pub const Interpreter = struct {
                 .comma => {
                     str_list.append(',') catch bun.outOfMemory();
                 },
+                .If => str_list.appendSlice("if") catch bun.outOfMemory(),
+                .Else => str_list.appendSlice("else") catch bun.outOfMemory(),
+                .Elif => str_list.appendSlice("elif") catch bun.outOfMemory(),
+                .Then => str_list.appendSlice("then") catch bun.outOfMemory(),
                 .cmd_subst => {
                     // TODO:
                     // if the command substution is comprised of solely shell variable assignments then it should do nothing
@@ -2127,6 +2133,10 @@ pub const Interpreter = struct {
                     has_cmd_subst.* = true;
                     return 0;
                 },
+                .If => @tagName(.If).len,
+                .Else => @tagName(.Else).len,
+                .Elif => @tagName(.Elif).len,
+                .Then => @tagName(.Then).len,
             };
         }
 
@@ -2334,7 +2344,7 @@ pub const Interpreter = struct {
                     const stmt_node = &this.node.stmts[this.state.normal.idx];
                     this.state.normal.idx += 1;
                     var io = this.getIO();
-                    var stmt = Stmt.init(this.base.interpreter, this.base.shell, stmt_node, this, io.ref().*) catch bun.outOfMemory();
+                    var stmt = Stmt.init(this.base.interpreter, this.base.shell, stmt_node, this, io.ref().*);
                     stmt.start();
                     return;
                 },
@@ -2352,6 +2362,8 @@ pub const Interpreter = struct {
                 this.parent.childDone(this, exit_code);
                 return;
             }
+
+            @panic("Looks like you've got a bad case of undefined memory kid");
         }
 
         fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) void {
@@ -2543,30 +2555,39 @@ pub const Interpreter = struct {
     pub const Stmt = struct {
         base: State,
         node: *const ast.Stmt,
-        parent: *Script,
+        parent: ParentPtr,
         idx: usize,
         last_exit_code: ?ExitCode,
         currently_executing: ?ChildPtr,
         io: IO,
+
+        const ParentPtr = StatePtrUnion(.{
+            Script,
+            If,
+        });
 
         const ChildPtr = StatePtrUnion(.{
             Binary,
             Pipeline,
             Cmd,
             Assigns,
+            If,
         });
 
         pub fn init(
             interpreter: *ThisInterpreter,
             shell_state: *ShellState,
             node: *const ast.Stmt,
-            parent: *Script,
+            parent: anytype,
             io: IO,
-        ) !*Stmt {
-            var script = try interpreter.allocator.create(Stmt);
+        ) *Stmt {
+            var script = interpreter.allocator.create(Stmt) catch bun.outOfMemory();
             script.base = .{ .kind = .stmt, .interpreter = interpreter, .shell = shell_state };
             script.node = node;
-            script.parent = parent;
+            script.parent = switch (@TypeOf(parent)) {
+                ParentPtr => parent,
+                else => ParentPtr.init(parent),
+            };
             script.idx = 0;
             script.last_exit_code = null;
             script.currently_executing = null;
@@ -2586,7 +2607,7 @@ pub const Interpreter = struct {
 
         pub fn next(this: *Stmt) void {
             if (this.idx >= this.node.exprs.len)
-                return this.parent.childDone(Script.ChildPtr.init(this), this.last_exit_code orelse 0);
+                return this.parent.childDone(this, this.last_exit_code orelse 0);
 
             const child = &this.node.exprs[this.idx];
             switch (child.*) {
@@ -2613,7 +2634,10 @@ pub const Interpreter = struct {
                 .subshell => {
                     @panic(SUBSHELL_TODO_ERROR);
                 },
-                .@"if" => @panic("IF todo"),
+                .@"if" => {
+                    const if_clause = If.init(this.base.interpreter, this.base.shell, child.@"if", If.ParentPtr.init(this), this.io.copy());
+                    if_clause.start();
+                },
             }
         }
 
@@ -2655,6 +2679,7 @@ pub const Interpreter = struct {
             Pipeline,
             Binary,
             Assigns,
+            If,
         });
 
         const ParentPtr = StatePtrUnion(.{
@@ -2723,7 +2748,11 @@ pub const Interpreter = struct {
                     return ChildPtr.init(assign_machine);
                 },
                 .subshell => @panic(SUBSHELL_TODO_ERROR),
-                .@"if" => @panic("If"),
+                .@"if" => {
+                    var if_clause = If.init(this.base.interpreter, this.base.shell, node.@"if", If.ParentPtr.init(this), this.io.copy());
+                    if_clause.start();
+                    return ChildPtr.init(if_clause);
+                },
             }
         }
 
@@ -2798,10 +2827,13 @@ pub const Interpreter = struct {
         const ChildPtr = StatePtrUnion(.{
             Cmd,
             Assigns,
+            If,
         });
 
+        const PipelineItem = TaggedPointerUnion(.{ Cmd, If });
+
         const CmdOrResult = union(enum) {
-            cmd: *Cmd,
+            cmd: PipelineItem,
             result: ExitCode,
         };
 
@@ -2843,7 +2875,10 @@ pub const Interpreter = struct {
             const cmd_count = brk: {
                 var i: u32 = 0;
                 for (this.node.items) |*item| {
-                    if (item.* == .cmd) i += 1;
+                    if (switch (item.*) {
+                        .cmd, .@"if" => true,
+                        else => false,
+                    }) i += 1;
                 }
                 break :brk i;
             };
@@ -2869,9 +2904,7 @@ pub const Interpreter = struct {
             const evtloop = this.base.eventLoop();
             for (this.node.items) |*item| {
                 switch (item.*) {
-                    .cmd => {
-                        const kind = "subproc";
-                        _ = kind;
+                    .@"if", .cmd => {
                         var cmd_io = this.getIO();
                         const stdin = if (cmd_count > 1) Pipeline.readPipe(pipes, i, &cmd_io, evtloop) else cmd_io.stdin.ref();
                         const stdout = if (cmd_count > 1) Pipeline.writePipe(pipes, i, cmd_count, &cmd_io, evtloop) else cmd_io.stdout.ref();
@@ -2886,13 +2919,18 @@ pub const Interpreter = struct {
                                 return .yield;
                             },
                         };
-                        this.cmds.?[i] = .{ .cmd = Cmd.init(this.base.interpreter, subshell_state, item.cmd, Cmd.ParentPtr.init(this), cmd_io) };
+                        this.cmds.?[i] = .{
+                            .cmd = switch (item.*) {
+                                .@"if" => PipelineItem.init(If.init(this.base.interpreter, subshell_state, item.@"if", If.ParentPtr.init(this), cmd_io)),
+                                .cmd => PipelineItem.init(Cmd.init(this.base.interpreter, subshell_state, item.cmd, Cmd.ParentPtr.init(this), cmd_io)),
+                                else => @panic("Pipeline runnable should be a command or an if conditional, this appears to be a bug in Bun."),
+                            },
+                        };
                         i += 1;
                     },
                     // in a pipeline assignments have no effect
                     .assigns => {},
                     .subshell => @panic(SUBSHELL_TODO_ERROR),
-                    .@"if" => @panic("If"),
                 }
             }
 
@@ -2923,8 +2961,9 @@ pub const Interpreter = struct {
 
             for (cmds) |*cmd_or_result| {
                 std.debug.assert(cmd_or_result.* == .cmd);
+                log("Pipeline start cmd", .{});
                 var cmd = cmd_or_result.cmd;
-                cmd.start();
+                cmd.call("start", .{}, void);
             }
         }
 
@@ -2952,16 +2991,22 @@ pub const Interpreter = struct {
                 _ = ptr_value;
                 for (this.cmds.?, 0..) |cmd_or_result, i| {
                     if (cmd_or_result == .cmd) {
-                        if (@intFromPtr(cmd_or_result.cmd) == @as(usize, @intCast(child.ptr.repr._ptr))) break :brk i;
+                        const ptr = @as(usize, cmd_or_result.cmd.repr._ptr);
+                        if (ptr == @as(usize, @intCast(child.ptr.repr._ptr))) break :brk i;
                     }
                 }
                 unreachable;
             };
 
             log("pipeline child done {x} ({d}) i={d}", .{ @intFromPtr(this), exit_code, idx });
+            // We duped the subshell for commands in the pipeline so we need to
+            // deinitialize it.
             if (child.ptr.is(Cmd)) {
                 const cmd = child.as(Cmd);
                 cmd.base.shell.deinit();
+            } else if (child.ptr.is(If)) {
+                const if_clause = child.as(If);
+                if_clause.base.shell.deinit();
             }
 
             child.deinit();
@@ -2987,7 +3032,7 @@ pub const Interpreter = struct {
             if (this.cmds == null) return;
             for (this.cmds.?) |*cmd_or_result| {
                 if (cmd_or_result.* == .cmd) {
-                    cmd_or_result.cmd.deinit();
+                    cmd_or_result.cmd.call("deinit", .{}, void);
                 }
             }
             if (this.pipes) |pipes| {
@@ -3054,6 +3099,156 @@ pub const Interpreter = struct {
             // First command in the pipeline should read from stdin
             if (proc_idx == 0) return io.stdin.ref();
             return .{ .fd = IOReader.init(pipes[proc_idx - 1][0], evtloop) };
+        }
+    };
+
+    pub const If = struct {
+        base: State,
+        node: *const ast.If,
+        parent: ParentPtr,
+        io: IO,
+        state: union(enum) {
+            idle,
+            exec_cond,
+            exec_then,
+            exec_elif: struct {
+                idx: usize = 0,
+            },
+            exec_else,
+            waiting_write_err,
+            done,
+        } = .idle,
+
+        const ParentPtr = StatePtrUnion(.{
+            Stmt,
+            Binary,
+            Pipeline,
+        });
+
+        const ChildPtr = StatePtrUnion(.{
+            Stmt,
+        });
+
+        pub fn format(this: *const If, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("If(0x{x}, state={s})", .{ @intFromPtr(this), @tagName(this.state) });
+        }
+
+        pub fn init(
+            interpreter: *ThisInterpreter,
+            shell_state: *ShellState,
+            node: *const ast.If,
+            parent: ParentPtr,
+            io: IO,
+        ) *If {
+            const this = interpreter.allocator.create(If) catch bun.outOfMemory();
+            this.* = .{
+                .base = .{ .kind = .cmd, .interpreter = interpreter, .shell = shell_state },
+                .node = node,
+                .parent = parent,
+                .io = io,
+            };
+            return this;
+        }
+
+        pub fn start(this: *If) void {
+            this.next();
+        }
+
+        fn next(this: *If) void {
+            while (this.state != .done) {
+                switch (this.state) {
+                    .idle => {
+                        this.state = .exec_cond;
+                    },
+                    .exec_cond => {
+                        log("{} exec=cond", .{this});
+                        this.spawnBlock(&this.node.cond);
+                        return;
+                    },
+                    .exec_then => {
+                        log("{} exec=then", .{this});
+                        this.spawnBlock(&this.node.then);
+                        return;
+                    },
+                    .exec_elif => {
+                        std.debug.assert(this.state.exec_elif.idx == 0);
+                        log("{} exec=elif0", .{this});
+                        this.spawnBlock(this.node.else_parts.getConst(0));
+                        return;
+                    },
+                    .exec_else => {
+                        log("{} exec=else", .{this});
+                        this.spawnBlock(this.node.else_parts.lastUncheckedConst());
+                        return;
+                    },
+                    .waiting_write_err => return, // yield execution
+                    .done => std.debug.assert(false),
+                }
+            }
+
+            this.parent.childDone(this, 0);
+        }
+
+        /// Spawn the cond/then/else/elif of the if clause
+        fn spawnBlock(this: *If, stmt: *const ast.Stmt) void {
+            treat_as_stmt: {
+                switch (stmt.exprs.len) {
+                    // TODO: optimization, instead of going through indirection of executing whole stmt, just execute the underlying expression
+                    1 => break :treat_as_stmt,
+                    else => break :treat_as_stmt,
+                }
+            }
+
+            var newstmt = Stmt.init(this.base.interpreter, this.base.shell, stmt, this, this.io.copy());
+            newstmt.start();
+        }
+
+        pub fn deinit(this: *If) void {
+            log("{} deinit", .{this});
+            this.io.deref();
+        }
+
+        pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) void {
+            switch (this.state) {
+                .exec_cond => {
+                    defer child.deinit();
+                    if (exit_code == 0) {
+                        this.state = .exec_then;
+                    } else {
+                        if (this.node.else_parts.len() == 1) {
+                            this.state = .exec_else;
+                        } else this.state = .{ .exec_elif = .{} };
+                    }
+                    this.next();
+                },
+                .exec_then => {
+                    defer child.deinit();
+                    this.parent.childDone(this, exit_code);
+                },
+                .exec_elif => {
+                    defer child.deinit();
+                    if (exit_code == 0) {
+                        log("{} exec=then{d}", .{ this, this.state.exec_elif.idx + 1 });
+                        const next_node = this.node.else_parts.getConst(this.state.exec_elif.idx + 1);
+                        this.state = .exec_then;
+                        this.spawnBlock(next_node);
+                    } else {
+                        this.state.exec_elif.idx += 2;
+                        if (this.state.exec_elif.idx == this.node.else_parts.len() -| 1) {
+                            this.state = .exec_else;
+                            this.next();
+                            return;
+                        }
+                        log("{} exec=elif{d}", .{ this, this.state.exec_elif.idx });
+                        this.spawnBlock(this.node.else_parts.getConst(this.state.exec_elif.idx));
+                    }
+                },
+                .exec_else => {
+                    defer child.deinit();
+                    this.parent.childDone(this, exit_code);
+                },
+                .idle, .waiting_write_err, .done => @panic("Invalid state"),
+            }
         }
     };
 
@@ -9289,8 +9484,10 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
                     const Ty = comptime Ptr.typeFromTag(tag.value);
-                    const ChildPtr = getChildPtrType(Ty);
-                    const child_ptr = ChildPtr.init(child);
+                    const child_ptr = brk: {
+                        const ChildPtr = getChildPtrType(Ty);
+                        break :brk ChildPtr.init(child);
+                    };
                     var casted = this.as(Ty);
                     casted.childDone(child_ptr, exit_code);
                     return;
@@ -9884,160 +10081,6 @@ pub fn FlagParser(comptime Opts: type) type {
             }
 
             return .continue_parsing;
-        }
-    };
-}
-
-/// A list that can store its items inlined, and promote itself to a heap allocated bun.ByteList
-pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
-    return union(enum) {
-        inlined: Inlined,
-        heap: ByteList,
-
-        const ByteList = bun.BabyList(T);
-
-        pub const Inlined = struct {
-            items: [INLINED_MAX]T = undefined,
-            len: u32 = 0,
-
-            pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
-                var list = bun.BabyList(T).initCapacity(bun.default_allocator, n) catch bun.outOfMemory();
-                list.append(bun.default_allocator, this.items[0..INLINED_MAX]) catch bun.outOfMemory();
-                list.push(bun.default_allocator, new) catch bun.outOfMemory();
-                return list;
-            }
-
-            pub fn orderedRemove(this: *Inlined, idx: usize) T {
-                if (this.len - 1 == idx) return this.pop();
-                const slice_to_shift = this.items[idx + 1 .. this.len];
-                std.mem.copyForwards(T, this.items[idx .. this.len - 1], slice_to_shift);
-                this.len -= 1;
-            }
-
-            pub fn swapRemove(this: *Inlined, idx: usize) T {
-                if (this.len - 1 == idx) return this.pop();
-
-                const old_item = this.items[idx];
-                this.items[idx] = this.pop();
-                return old_item;
-            }
-
-            pub fn pop(this: *Inlined) T {
-                const ret = this.items[this.items.len - 1];
-                this.len -= 1;
-                return ret;
-            }
-        };
-
-        pub inline fn len(this: *@This()) usize {
-            return switch (this.*) {
-                .inlined => this.inlined.len,
-                .heap => this.heap.len,
-            };
-        }
-
-        pub fn orderedRemove(this: *@This(), idx: usize) void {
-            switch (this.*) {
-                .heap => {
-                    var list = this.heap.listManaged(bun.default_allocator);
-                    _ = list.orderedRemove(idx);
-                },
-                .inlined => {
-                    _ = this.inlined.orderedRemove(idx);
-                },
-            }
-        }
-
-        pub fn swapRemove(this: *@This(), idx: usize) void {
-            switch (this.*) {
-                .heap => {
-                    var list = this.heap.listManaged(bun.default_allocator);
-                    _ = list.swapRemove(idx);
-                },
-                .inlined => {
-                    _ = this.inlined.swapRemove(idx);
-                },
-            }
-        }
-
-        pub fn truncate(this: *@This(), starting_idx: usize) void {
-            switch (this.*) {
-                .inlined => {
-                    if (starting_idx >= this.inlined.len) return;
-                    const slice_to_move = this.inlined.items[starting_idx..this.inlined.len];
-                    std.mem.copyForwards(T, this.inlined.items[0..starting_idx], slice_to_move);
-                },
-                .heap => {
-                    const new_len = this.heap.len - starting_idx;
-                    this.heap.replaceRange(0, starting_idx, this.heap.ptr[starting_idx..this.heap.len]) catch bun.outOfMemory();
-                    this.heap.len = @intCast(new_len);
-                },
-            }
-        }
-
-        pub inline fn sliceMutable(this: *@This()) []T {
-            return switch (this.*) {
-                .inlined => {
-                    if (this.inlined.len == 0) return &[_]T{};
-                    return this.inlined.items[0..this.inlined.len];
-                },
-                .heap => {
-                    if (this.heap.len == 0) return &[_]T{};
-                    return this.heap.slice();
-                },
-            };
-        }
-
-        pub inline fn slice(this: *@This()) []const T {
-            return switch (this.*) {
-                .inlined => {
-                    if (this.inlined.len == 0) return &[_]T{};
-                    return this.inlined.items[0..this.inlined.len];
-                },
-                .heap => {
-                    if (this.heap.len == 0) return &[_]T{};
-                    return this.heap.slice();
-                },
-            };
-        }
-
-        pub inline fn get(this: *@This(), idx: usize) *T {
-            return switch (this.*) {
-                .inlined => {
-                    if (bun.Environment.allow_assert) {
-                        if (idx >= this.inlined.len) @panic("Index out of bounds");
-                    }
-                    return &this.inlined.items[idx];
-                },
-                .heap => &this.heap.ptr[idx],
-            };
-        }
-
-        pub fn append(this: *@This(), new: T) void {
-            switch (this.*) {
-                .inlined => {
-                    if (this.inlined.len == INLINED_MAX) {
-                        this.* = .{ .heap = this.inlined.promote(INLINED_MAX, new) };
-                        return;
-                    }
-                    this.inlined.items[this.inlined.len] = new;
-                    this.inlined.len += 1;
-                },
-                .heap => {
-                    this.heap.push(bun.default_allocator, new) catch bun.outOfMemory();
-                },
-            }
-        }
-
-        pub fn clearRetainingCapacity(this: *@This()) void {
-            switch (this.*) {
-                .inlined => {
-                    this.inlined.len = 0;
-                },
-                .heap => {
-                    this.heap.clearRetainingCapacity();
-                },
-            }
         }
     };
 }

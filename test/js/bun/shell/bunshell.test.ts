@@ -819,6 +819,72 @@ describe("deno_task", () => {
   });
 });
 
+describe('if_clause', () => {
+  TestBuilder.command`
+  if
+    echo cond;
+  then
+    echo then;
+  elif
+    echo elif;
+  then
+    echo elif then;
+  else
+    echo else;
+  fi`.stdout('cond\nthen\n').runAsTest('basic')
+
+  TestBuilder.command`
+  if
+    echo cond
+  then
+    echo then
+  elif
+    echo elif
+  then
+    echo elif then
+  else
+    echo else
+  fi`.stdout('cond\nthen\n').runAsTest('basic without semicolon')
+
+  TestBuilder.command`
+  if
+    lkfjslkdjfsldf
+  then
+    echo shouldnt see this
+  else
+    echo okay here
+  fi`
+    .stdout('okay here\n')
+    .stderr('bun: command not found: lkfjslkdjfsldf\n')
+    .runAsTest('else basic')
+
+  TestBuilder.command`
+  if
+    lkfjslkdjfsldf
+  then
+    echo shouldnt see this
+  elif
+    sdfkjsldf
+  then
+    echo shouldnt see this either
+  else
+    echo okay here
+  fi`
+    .stdout('okay here\n')
+    .stderr('bun: command not found: lkfjslkdjfsldf\nbun: command not found: sdfkjsldf\n')
+    .runAsTest('else')
+
+  TestBuilder.command`
+  if
+    echo hi
+  then
+    echo hey
+  else
+    echo uh oh
+  fi | cat
+  `.stdout('hi\nhey\n').runAsTest('in pipeline')
+})
+
 function stringifyBuffer(buffer: Uint8Array): string {
   const sentinel = sentinelByte(buffer);
   const str = new TextDecoder().decode(buffer.slice(0, sentinel));

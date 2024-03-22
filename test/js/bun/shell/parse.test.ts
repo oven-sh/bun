@@ -520,26 +520,27 @@ describe("parse shell", () => {
                       },
                     ],
                   },
-                  "elif": null,
-                  "else": {
-                    "exprs": [
-                      {
-                        "cmd": {
-                          "assigns": [],
-                          "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "lol" } }],
-                          "redirect": {
-                            "stdin": false,
-                            "stdout": false,
-                            "stderr": false,
-                            "append": false,
-                            "duplicate_out": false,
-                            "__unused": 0,
+                  "else_parts": [
+                    {
+                      "exprs": [
+                        {
+                          "cmd": {
+                            "assigns": [],
+                            "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "lol" } }],
+                            "redirect": {
+                              "stdin": false,
+                              "stdout": false,
+                              "stderr": false,
+                              "append": false,
+                              "duplicate_out": false,
+                              "__unused": 0,
+                            },
+                            "redirect_file": null,
                           },
-                          "redirect_file": null,
                         },
-                      },
-                    ],
-                  },
+                      ],
+                    },
+                  ],
                 },
               },
             ],
@@ -553,6 +554,121 @@ describe("parse shell", () => {
       then echo lmao
       else echo lol
       fi`)
+      expect(result).toEqual(expected)
+    })
+
+    test('elif', () => {
+      const expected = {
+        "stmts": [
+          {
+            "exprs": [
+              {
+                "if": {
+                  "cond": {
+                    "exprs": [
+                      {
+                        "cmd": {
+                          "assigns": [],
+                          "name_and_args": [{ "simple": { "Text": "a" } }],
+                          "redirect": {
+                            "stdin": false,
+                            "stdout": false,
+                            "stderr": false,
+                            "append": false,
+                            "duplicate_out": false,
+                            "__unused": 0,
+                          },
+                          "redirect_file": null,
+                        },
+                      },
+                    ],
+                  },
+                  "then": {
+                    "exprs": [
+                      {
+                        "cmd": {
+                          "assigns": [],
+                          "name_and_args": [{ "simple": { "Text": "b" } }],
+                          "redirect": {
+                            "stdin": false,
+                            "stdout": false,
+                            "stderr": false,
+                            "append": false,
+                            "duplicate_out": false,
+                            "__unused": 0,
+                          },
+                          "redirect_file": null,
+                        },
+                      },
+                    ],
+                  },
+                  "else_parts": [
+                    {
+                      "exprs": [
+                        {
+                          "cmd": {
+                            "assigns": [],
+                            "name_and_args": [{ "simple": { "Text": "c" } }],
+                            "redirect": {
+                              "stdin": false,
+                              "stdout": false,
+                              "stderr": false,
+                              "append": false,
+                              "duplicate_out": false,
+                              "__unused": 0,
+                            },
+                            "redirect_file": null,
+                          },
+                        },
+                      ],
+                    },
+                    {
+                      "exprs": [
+                        {
+                          "cmd": {
+                            "assigns": [],
+                            "name_and_args": [{ "simple": { "Text": "d" } }],
+                            "redirect": {
+                              "stdin": false,
+                              "stdout": false,
+                              "stderr": false,
+                              "append": false,
+                              "duplicate_out": false,
+                              "__unused": 0,
+                            },
+                            "redirect_file": null,
+                          },
+                        },
+                      ],
+                    },
+                    {
+                      "exprs": [
+                        {
+                          "cmd": {
+                            "assigns": [],
+                            "name_and_args": [{ "simple": { "Text": "e" } }],
+                            "redirect": {
+                              "stdin": false,
+                              "stdout": false,
+                              "stderr": false,
+                              "append": false,
+                              "duplicate_out": false,
+                              "__unused": 0,
+                            },
+                            "redirect_file": null,
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      }
+
+      let result = JSON.parse($.parse`if a; then b; elif c; then d; else e; fi`)
       expect(result).toEqual(expected)
     })
 
@@ -605,26 +721,27 @@ describe("parse shell", () => {
                               },
                             ],
                           },
-                          "elif": null,
-                          "else": {
-                            "exprs": [
-                              {
-                                "cmd": {
-                                  "assigns": [],
-                                  "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "lol" } }],
-                                  "redirect": {
-                                    "stdin": false,
-                                    "stdout": false,
-                                    "stderr": false,
-                                    "append": false,
-                                    "duplicate_out": false,
-                                    "__unused": 0,
+                          "else_parts": [
+                            {
+                              "exprs": [
+                                {
+                                  "cmd": {
+                                    "assigns": [],
+                                    "name_and_args": [{ "simple": { "Text": "echo" } }, { "simple": { "Text": "lol" } }],
+                                    "redirect": {
+                                      "stdin": false,
+                                      "stdout": false,
+                                      "stderr": false,
+                                      "append": false,
+                                      "duplicate_out": false,
+                                      "__unused": 0,
+                                    },
+                                    "redirect_file": null,
                                   },
-                                  "redirect_file": null,
                                 },
-                              },
-                            ],
-                          },
+                              ],
+                            },
+                          ],
                         },
                       },
                       {

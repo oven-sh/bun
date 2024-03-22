@@ -194,12 +194,28 @@ pub const InstallCompletionsCommand = struct {
 
         if (Environment.isWindows) {
             installUninstallerWindows() catch {};
-        }
 
-        // TODO: https://github.com/oven-sh/bun/issues/8939
-        if (Environment.isWindows) {
-            Output.errGeneric("PowerShell completions are not yet written for Bun yet.", .{});
-            Output.printErrorln("See https://github.com/oven-sh/bun/issues/8939", .{});
+            // https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_profiles?view=powershell-7.4
+            // $PROFILE.CurrentUserAllHosts
+            // https://github.com/PowerShell/PowerShell/blob/4faf52726dd16ea97aaafa8faa5fff4c5c824f93/src/System.Management.Automation/engine/hostifaces/HostUtilities.cs#L228
+            // https://github.com/PowerShell/PowerShell/blob/4faf52726dd16ea97aaafa8faa5fff4c5c824f93/src/System.Management.Automation/CoreCLR/CorePsPlatform.cs#L171
+            // These says
+            // HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders
+            // HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders
+            // to use https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath ?
+
+            std.fs.cwd().makePath(SHGetKnownFolderPath("Personal") ++ "\\PowerShell")
+            std.fs.cwd().makePath(SHGetKnownFolderPath("Personal") ++ "\\WindowsPowerShell")
+
+            const contents = read("/completions/bun.ps1")
+
+            std.fs.open(SHGetKnownFolderPath("Personal") ++ "\\PowerShell\\profile.ps1", .{ .write = true, .append = true })
+            try file.writeAll(contents);
+            file.close();
+            std.fs.open(SHGetKnownFolderPath("Personal") ++ "\\WindowsPowerShell\\profile.ps1")
+            try file.writeAll(contents);
+            file.close();
+
             return;
         }
 

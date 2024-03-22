@@ -121,6 +121,13 @@ pub const WTFStringImplStruct = extern struct {
         return ZigString.Slice.init(this.refCountAllocator(), this.latin1Slice());
     }
 
+    extern fn Bun__WTFStringImpl__ensureHash(this: WTFStringImpl) void;
+    /// Compute the hash() if necessary
+    pub fn ensureHash(this: WTFStringImpl) void {
+        JSC.markBinding(@src());
+        Bun__WTFStringImpl__ensureHash(this);
+    }
+
     pub fn toUTF8(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.is8Bit()) {
             if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch bun.outOfMemory()) |utf8| {
@@ -306,6 +313,16 @@ pub const String = extern struct {
             .Empty => return &[_]u8{},
             else => unreachable,
         }
+    }
+
+    pub fn createIfDifferent(other: String, utf8_slice: []const u8) String {
+        if (other.tag == .WTFStringImpl) {
+            if (other.eqlUTF8(utf8_slice)) {
+                return other.dupeRef();
+            }
+        }
+
+        return createUTF8(utf8_slice);
     }
 
     fn createUninitializedLatin1(len: usize) struct { String, []u8 } {

@@ -106,6 +106,10 @@ pub fn exitWide(code: u32) noreturn {
 }
 
 pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
+    if (comptime @TypeOf(sig) == bun.SignalCode) {
+        return raiseIgnoringPanicHandler(@intFromEnum(sig));
+    }
+
     Output.flush();
     @import("./crash_reporter.zig").on_error = null;
     if (!Environment.isWindows) {

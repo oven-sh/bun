@@ -23,6 +23,10 @@ pub fn initCapacity(
     };
 }
 
+pub fn countZ(this: *StringBuilder, slice: string) void {
+    this.cap += slice.len + 1;
+}
+
 pub fn count(this: *StringBuilder, slice: string) void {
     this.cap += slice.len;
 }
@@ -48,6 +52,22 @@ pub fn append16(this: *StringBuilder, slice: []const u16) ?[:0]u8 {
     }
 
     return null;
+}
+
+pub fn appendZ(this: *StringBuilder, slice: string) [:0]const u8 {
+    if (comptime Environment.allow_assert) {
+        assert(this.len + 1 <= this.cap); // didn't count everything
+        assert(this.ptr != null); // must call allocate first
+    }
+
+    bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
+    this.ptr.?[this.len + slice.len] = 0;
+    const result = this.ptr.?[this.len..this.cap][0..slice.len :0];
+    this.len += slice.len + 1;
+
+    if (comptime Environment.allow_assert) assert(this.len <= this.cap);
+
+    return result;
 }
 
 pub fn append(this: *StringBuilder, slice: string) string {

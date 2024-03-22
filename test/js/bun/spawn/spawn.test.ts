@@ -1,7 +1,7 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { closeSync, fstatSync, openSync } from "fs";
-import { gcTick as _gcTick, bunEnv, bunExe, isWindows, withoutAggressiveGC } from "harness";
+import { gcTick as _gcTick, bunEnv, bunExe, isLinux, isMacOS, isPosix, isWindows, withoutAggressiveGC } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "path";
@@ -504,8 +504,8 @@ for (let [gcTick, label] of [
   });
 }
 
-// This is a posix only test
-if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && !isWindows) {
+// This is a test which should only be used when pidfd and EVTFILT_PROC is NOT available
+if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS) {
   it("with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD", async () => {
     const result = spawnSync({
       cmd: [bunExe(), "test", path.resolve(import.meta.path)],

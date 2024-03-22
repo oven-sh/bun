@@ -407,6 +407,20 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "bun install [folder]",
+      "program": "${workspaceFolder}/build/bun-debug",
+      "args": ["install"],
+      "cwd": "${fileDirname}",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "bun test [*] (ci)",
       "program": "node",
       "args": ["src/runner.node.mjs"],

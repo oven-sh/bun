@@ -1,5 +1,5 @@
 const EventEmitter = require("node:events");
-const { throwNotImplemented } = require("$shared");
+const { throwNotImplemented } = require("internal/shared");
 
 declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;

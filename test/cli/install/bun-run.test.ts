@@ -1,10 +1,9 @@
-// @known-failing-on-windows: 1 failing
 import { file, spawn, spawnSync } from "bun";
 import { afterEach, beforeEach, expect, it, describe } from "bun:test";
 import { bunEnv, bunExe, bunEnv as env, isWindows } from "harness";
 import { mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, sep } from "path";
 import { readdirSorted } from "./dummy.registry";
 
 let run_dir: string;
@@ -124,7 +123,7 @@ for (let withRun of [false, true]) {
         expect(exitCode).toBe(200);
       });
 
-      it("exit signal works", async () => {
+      it.skipIf(isWindows)("exit signal works", async () => {
         {
           const { stdout, stderr, exitCode, signalCode } = spawnSync({
             cmd: [bunExe(), "run", "bash", "-c", "kill -4 $$"],
@@ -309,7 +308,7 @@ it("should download dependencies to run local file", async () => {
 import { file } from "bun";
 import decompress from "decompress@4.2.1";
 
-const buffer = await file("${join(import.meta.dir, "baz-0.0.3.tgz")}").arrayBuffer();
+const buffer = await file("${join(import.meta.dir, "baz-0.0.3.tgz").replaceAll(sep, "/")}").arrayBuffer();
 for (const entry of await decompress(Buffer.from(buffer))) {
   console.log(\`\${entry.type}: \${entry.path}\`);
 }

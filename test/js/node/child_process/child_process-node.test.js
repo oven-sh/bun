@@ -370,7 +370,9 @@ describe("child_process cwd", () => {
 describe("child_process default options", () => {
   it("should use process.env as default env", done => {
     process.env.TMPDIR = platformTmpDir;
-    let child = spawn("printenv", [], {});
+
+    // fake printenv
+    let child = spawn(bunExe(), ["--print", "process.env"], {});
     let response = "";
 
     child.stdout.setEncoding("utf8");

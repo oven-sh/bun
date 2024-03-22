@@ -2469,7 +2469,7 @@ for (const forceWaiterThread of [
       expect(await exists(join(packageDir, "packages", "pkg2", "postprepare.txt"))).toBeFalse();
     });
 
-    test.skip("dependency lifecycle scripts run before root lifecycle scripts", async () => {
+    test.skipIf(isWindows)("dependency lifecycle scripts run before root lifecycle scripts", async () => {
       const script = '[[ -f "./node_modules/uses-what-bin-slow/what-bin.txt" ]]';
       await writeFile(
         join(packageDir, "package.json"),
@@ -3338,7 +3338,7 @@ for (const forceWaiterThread of [
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postinstall.txt"))).toBeTrue();
     });
 
-    test.skip("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
+    test.skipIf(isWindows)("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({

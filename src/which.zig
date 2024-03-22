@@ -15,6 +15,20 @@ fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u8 {
+
+    // handle absolute paths
+    if (std.fs.path.isAbsolute(bin)) {
+        bun.copy(u8, buf, bin);
+        buf[bin.len] = 0;
+        const binZ: [:0]u8 = buf[0..bin.len :0];
+        if (bun.Environment.isWindows) return binZ;
+        if (bun.sys.isExecutableFilePath(binZ)) return binZ;
+
+        // note that directories are often executable
+        // TODO: should we return null here? What about the case where ytou have
+        //   /foo/bar/baz as a path and you're in /home/jarred?
+    }
+
     if (bun.Environment.os == .windows) {
         var convert_buf: bun.WPathBuffer = undefined;
         const result = whichWin(&convert_buf, path, cwd, bin) orelse return null;
@@ -24,18 +38,6 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
         return buf[0..result_converted.len :0];
     }
     if (bin.len == 0) return null;
-
-    // handle absolute paths
-    if (std.fs.path.isAbsolute(bin)) {
-        bun.copy(u8, buf, bin);
-        buf[bin.len] = 0;
-        const binZ: [:0]u8 = buf[0..bin.len :0];
-        if (bun.sys.isExecutableFilePath(binZ)) return binZ;
-
-        // note that directories are often executable
-        // TODO: should we return null here? What about the case where ytou have
-        //   /foo/bar/baz as a path and you're in /home/jarred?
-    }
 
     if (cwd.len > 0) {
         if (isValid(buf, std.mem.trimRight(u8, cwd, std.fs.path.sep_str), bin)) |len| {
@@ -121,14 +123,6 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     const check_windows_extensions = !endsWithExtension(bin);
-
-    // handle absolute paths
-    if (std.fs.path.isAbsolute(bin)) {
-        const normalized_bin = PosixToWinNormalizer.resolveCWDWithExternalBuf(&path_buf, bin) catch return null;
-        const bin_utf16 = bun.strings.convertUTF8toUTF16InBuffer(buf, normalized_bin);
-        buf[bin_utf16.len] = 0;
-        return searchBin(buf, bin_utf16.len, check_windows_extensions);
-    }
 
     // check if bin is in cwd
     if (searchBinInPath(buf, &path_buf, cwd, bin, check_windows_extensions)) |bin_path| {

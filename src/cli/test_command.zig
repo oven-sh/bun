@@ -753,10 +753,6 @@ pub const TestCommand = struct {
             };
 
             scanner.scan(dir_to_scan);
-
-            while (scanner.dirs_to_scan.readItem()) |entry| {
-                _ = bun.sys.close(entry.relative_dir);
-            }
             scanner.dirs_to_scan.deinit();
 
             break :scan .{ scanner.results.items, scanner.search_count };

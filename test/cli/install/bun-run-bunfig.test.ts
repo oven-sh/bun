@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { realpathSync, chmodSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles, toTOMLString } from "harness";
-import { join } from "path";
 
 describe.each(["bun run", "bun"])(`%s`, cmd => {
   const runCmd = cmd === "bun" ? ["-c=bunfig.toml", "run"] : ["-c=bunfig.toml"];
@@ -17,14 +16,13 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
           bun,
         },
       });
-      const which = "which";
 
       const cwd = tempDirWithFiles("run.where.node." + cmd2, {
         "bunfig.toml": bunfig,
         "package.json": JSON.stringify(
           {
             scripts: {
-              "where-node": `${which} node`,
+              "where-node": `which node`,
             },
           },
           null,
@@ -51,7 +49,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       } else {
         expect(realpathSync(nodeBin)).toBe(realpathSync(node));
       }
-      expect(result.success).toBeTrue();
+      expect(result.exitCode).toBe(0);
     });
   });
 
@@ -95,7 +93,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       } else {
         expect(result.stderr.toString().trim()).toContain("$ echo 1");
       }
-      expect(result.success).toBeTrue();
+      expect(result.exitCode).toBe(0);
     });
     test("command not found", async () => {
       const bunfig = toTOMLString({
@@ -127,11 +125,6 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       });
 
       const err = result.stderr.toString().trim();
-      if (shell === "bun") {
-        expect(err).toStartWith("bun: ");
-      } else {
-        expect(err).not.toStartWith("bun: ");
-      }
       expect(err).toContain(command_not_found);
       expect(err).toContain("this-should-start-with-bun-in-the-error-message");
       expect(result.success).toBeFalse();

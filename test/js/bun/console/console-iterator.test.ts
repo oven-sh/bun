@@ -1,6 +1,7 @@
 import { spawnSync, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunExe } from "harness";
+import { bunExe, bunEnv } from "harness";
+import { join } from "lodash";
 
 describe("should work for static input", () => {
   const inputs = [
@@ -11,6 +12,7 @@ describe("should work for static input", () => {
     "Hello\nWorld\n",
     "1",
     "💕 Red Heart ✨ Sparkles 🔥 Fire\n💕 Red Heart ✨ Sparkles\n💕 Red Heart\n💕\n\nnormal",
+    "a\n§\nb",
   ];
 
   for (let input of inputs) {
@@ -18,9 +20,7 @@ describe("should work for static input", () => {
       const { stdout } = spawnSync({
         cmd: [bunExe(), import.meta.dir + "/" + "console-iterator-run.ts"],
         stdin: Buffer.from(input),
-        env: {
-          BUN_DEBUG_QUIET_LOGS: "1",
-        },
+        env: bunEnv,
       });
       expect(stdout.toString()).toBe(input.replaceAll("\n", ""));
     });
@@ -36,6 +36,7 @@ describe("should work for streaming input", () => {
     "Hello\nWorld\n",
     "1",
     "💕 Red Heart ✨ Sparkles 🔥 Fire\n 💕 Red Heart ✨ Sparkles\n 💕 Red Heart\n 💕 \n\nnormal",
+    "a\n§\nb",
   ];
 
   for (let input of inputs) {
@@ -44,9 +45,7 @@ describe("should work for streaming input", () => {
         cmd: [bunExe(), import.meta.dir + "/" + "console-iterator-run.ts"],
         stdin: "pipe",
         stdout: "pipe",
-        env: {
-          BUN_DEBUG_QUIET_LOGS: "1",
-        },
+        env: bunEnv,
       });
       const { stdout, stdin } = proc;
       stdin.write(input.slice(0, (input.length / 2) | 0));
@@ -68,9 +67,7 @@ it("can use the console iterator more than once", async () => {
     cmd: [bunExe(), import.meta.dir + "/" + "console-iterator-run-2.ts"],
     stdin: "pipe",
     stdout: "pipe",
-    env: {
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env: bunEnv,
   });
   const { stdout, stdin } = proc;
   stdin.write("hello\nworld\nbreak\nanother\nbreak\n");

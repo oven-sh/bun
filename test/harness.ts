@@ -231,9 +231,8 @@ export async function runWithErrorPromise(cb: () => unknown): Promise<Error | un
 }
 
 export function fakeNodeRun(dir: string, file: string | string[], env?: Record<string, string>) {
-  var path = require("path");
   const result = Bun.spawnSync([bunExe(), "--bun", "node", ...(Array.isArray(file) ? file : [file])], {
-    cwd: dir ?? path.dirname(file),
+    cwd: dir,
     env: {
       ...bunEnv,
       NODE_ENV: undefined,
@@ -552,8 +551,8 @@ export function toTOMLString(opts: object) {
   const props = makeFlatPropertyMap(opts);
   let ret = "";
   for (const [key, value] of Object.entries(props)) {
-    if (value === undefined) continue;
-    ret += `${key} = ${JSON.stringify(value)}` + "\n";
+    if (!value) continue;
+    ret += `${key} = ${JSON.stringify(value)}\n`;
   }
   return ret;
 }

@@ -698,6 +698,10 @@ pub inline fn endsWith(self: string, str: string) bool {
     return str.len == 0 or @call(bun.callmod_inline, std.mem.endsWith, .{ u8, self, str });
 }
 
+pub inline fn endsWithGeneric(comptime T: type, self: []const T, str: []const T) bool {
+    return str.len == 0 or @call(bun.callmod_inline, std.mem.endsWith, .{ T, self, str });
+}
+
 pub inline fn endsWithComptime(self: string, comptime str: anytype) bool {
     return self.len >= str.len and eqlComptimeIgnoreLen(self[self.len - str.len .. self.len], comptime str);
 }

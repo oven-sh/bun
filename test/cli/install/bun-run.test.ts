@@ -124,29 +124,43 @@ for (let withRun of [false, true]) {
         expect(exitCode).toBe(200);
       });
 
-      it.skipIf(isWindows)("exit signal works", async () => {
-        {
-          const { stdout, stderr, exitCode, signalCode } = spawnSync({
-            cmd: [bunExe(), "run", "bash", "-c", "kill -4 $$"],
-            cwd: run_dir,
-            env: bunEnv,
-          });
+      describe.each(["--silent", "not silent"])("%s", silentOption => {
+        const silent = silentOption === "--silent";
+        it("exit signal works", async () => {
+          {
+            const { stdout, stderr, exitCode, signalCode } = spawnSync({
+              cmd: [bunExe(), silent ? "--silent" : "", "run", "bash", "-c", "kill -4 $$"].filter(Boolean),
+              cwd: run_dir,
+              env: bunEnv,
+            });
 
-          expect(stderr.toString()).toBe("");
-          expect(signalCode).toBe("SIGILL");
-          expect(exitCode).toBe(null);
-        }
-        {
-          const { stdout, stderr, exitCode, signalCode } = spawnSync({
-            cmd: [bunExe(), "run", "bash", "-c", "kill -9 $$"],
-            cwd: run_dir,
-            env: bunEnv,
-          });
+            if (silent) {
+              expect(stderr.toString()).toBe("");
+            } else {
+              expect(stderr.toString()).toContain("bash");
+              expect(stderr.toString()).toContain("SIGILL");
+            }
 
-          expect(stderr.toString()).toBe("");
-          expect(signalCode).toBe("SIGKILL");
-          expect(exitCode).toBe(null);
-        }
+            expect(signalCode).toBe("SIGILL");
+            expect(exitCode).toBe(null);
+          }
+          {
+            const { stdout, stderr, exitCode, signalCode } = spawnSync({
+              cmd: [bunExe(), silent ? "--silent" : "", "run", "bash", "-c", "kill -9 $$"],
+              cwd: run_dir,
+              env: bunEnv,
+            });
+
+            if (silent) {
+              expect(stderr.toString()).toBe("");
+            } else {
+              expect(stderr.toString()).toContain("bash");
+              expect(stderr.toString()).toContain("SIGKILL");
+            }
+            expect(signalCode).toBe("SIGKILL");
+            expect(exitCode).toBe(null);
+          }
+        });
       });
 
       for (let withLogLevel of [true, false]) {

@@ -1251,6 +1251,7 @@ pub const PackageInstall = struct {
 
                 var in_buf: if (Environment.isWindows) bun.OSPathBuffer else void = undefined;
                 var out_buf: if (Environment.isWindows) bun.OSPathBuffer else void = undefined;
+                var copy_file_state: bun.CopyFileState = .{};
 
                 while (try walker.next()) |entry| {
                     if (entry.kind != .file) continue;
@@ -1301,7 +1302,7 @@ pub const PackageInstall = struct {
                             _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                         }
 
-                        bun.copyFile(in_file.handle, outfile.handle) catch |err| {
+                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
                             progress_.root.end();
 
                             progress_.refresh();

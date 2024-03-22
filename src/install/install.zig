@@ -8266,7 +8266,7 @@ pub const PackageManager = struct {
                 const tree_id = entry.tree_id;
                 if (this.canRunScripts(tree_id)) {
                     _ = this.pending_lifecycle_scripts.swapRemove(i);
-                    this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level) catch |err| {
+                    this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level, false) catch |err| {
                         if (comptime log_level != .silent) {
                             const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                             const args = .{ name, @errorName(err) };
@@ -8304,7 +8304,7 @@ pub const PackageManager = struct {
                     PackageManager.instance.sleep();
                 }
 
-                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level) catch |err| {
+                this.manager.spawnPackageLifecycleScripts(this.command_ctx, entry.list, log_level, false) catch |err| {
                     if (comptime log_level != .silent) {
                         const fmt = "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n";
                         const args = .{ package_name, @errorName(err) };
@@ -9187,23 +9187,6 @@ pub const PackageManager = struct {
             );
         }
 
-        const root_lifecycle_scripts_count = brk: {
-            if (this.options.do.run_scripts and
-                this.options.do.install_packages and
-                this.root_lifecycle_scripts != null)
-            {
-                var counter: usize = 0;
-
-                for (this.root_lifecycle_scripts.?.items) |item| {
-                    if (item != null) counter += 1;
-                }
-
-                this.total_scripts += counter;
-                break :brk counter;
-            }
-            break :brk 0;
-        };
-
         var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
         var install_node: Progress.Node = undefined;
@@ -9217,7 +9200,7 @@ pub const PackageManager = struct {
             download_node = root_node.start(ProgressStrings.download(), 0);
 
             install_node = root_node.start(ProgressStrings.install(), this.lockfile.packages.len);
-            scripts_node = root_node.start(ProgressStrings.script(), root_lifecycle_scripts_count);
+            scripts_node = root_node.start(ProgressStrings.script(), 0);
             this.downloads_node = &download_node;
             this.scripts_node = &scripts_node;
         }
@@ -9512,18 +9495,12 @@ pub const PackageManager = struct {
 
             installer.completeRemainingScripts(log_level);
 
-            if (root_lifecycle_scripts_count > 0) {
-                // root lifecycle scripts can run now that all dependencies are installed
-                // and their lifecycle script have finished
-                try this.spawnPackageLifecycleScripts(ctx, this.root_lifecycle_scripts.?, log_level);
-            }
-
             while (this.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
                 if (PackageManager.verbose_install) {
                     if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{this.pending_lifecycle_script_tasks.load(.Monotonic)});
                 }
 
-                PackageManager.instance.sleep();
+                this.sleep();
             }
 
             if (comptime log_level.showProgress()) {
@@ -10163,6 +10140,22 @@ pub const PackageManager = struct {
             }
         }
 
+        if (manager.options.do.run_scripts) {
+            if (manager.root_lifecycle_scripts) |scripts| {
+                // root lifecycle scripts can run now that all dependencies are installed, dependency scripts
+                // have finished, and lockfiles have been saved
+                try manager.spawnPackageLifecycleScripts(ctx, scripts, log_level, true);
+
+                while (manager.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
+                    if (PackageManager.verbose_install) {
+                        if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{manager.pending_lifecycle_script_tasks.load(.Monotonic)});
+                    }
+
+                    manager.sleep();
+                }
+            }
+        }
+
         var printed_timestamp = false;
         if (comptime log_level != .silent) {
             if (manager.options.do.summary) {
@@ -10283,6 +10276,7 @@ pub const PackageManager = struct {
         ctx: Command.Context,
         list: Lockfile.Package.Scripts.List,
         comptime log_level: PackageManager.Options.LogLevel,
+        comptime foreground: bool,
     ) !void {
         var any_scripts = false;
         for (list.items) |maybe_item| {
@@ -10330,7 +10324,7 @@ pub const PackageManager = struct {
         try this_bundler.env.map.put("PATH", original_path);
         PATH.deinit();
 
-        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, log_level);
+        try LifecycleScriptSubprocess.spawnPackageScripts(this, list, envp, log_level, foreground);
     }
 };
 

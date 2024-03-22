@@ -31,6 +31,9 @@ pub const LifecycleScriptSubprocess = struct {
 
     has_incremented_alive_count: bool = false,
 
+    foreground: bool = false,
+    log_level: PackageManager.Options.LogLevel,
+
     pub usingnamespace bun.New(@This());
 
     pub const min_milliseconds_to_log = 500;
@@ -107,19 +110,6 @@ pub const LifecycleScriptSubprocess = struct {
         this.stdout.setParent(this);
         this.stderr.setParent(this);
 
-        if (manager.scripts_node) |scripts_node| {
-            manager.setNodeName(
-                scripts_node,
-                this.package_name,
-                PackageManager.ProgressStrings.script_emoji,
-                true,
-            );
-            if (manager.finished_installing.load(.Monotonic)) {
-                scripts_node.activate();
-                manager.progress.refresh();
-            }
-        }
-
         this.current_script_index = next_script_index;
         this.has_called_process_exit = false;
 
@@ -131,6 +121,22 @@ pub const LifecycleScriptSubprocess = struct {
         try copy_script.append(0);
 
         const combined_script: [:0]u8 = copy_script.items[0 .. copy_script.items.len - 1 :0];
+
+        if (this.foreground and this.log_level != .silent) {
+            Output.prettyError("<r><d><magenta>$<r> <d><b>{s}<r>\n", .{combined_script});
+            Output.flush();
+        } else if (manager.scripts_node) |scripts_node| {
+            manager.setNodeName(
+                scripts_node,
+                this.package_name,
+                PackageManager.ProgressStrings.script_emoji,
+                true,
+            );
+            if (manager.finished_installing.load(.Monotonic)) {
+                scripts_node.activate();
+                manager.progress.refresh();
+            }
+        }
 
         log("{s} - {s} $ {s}", .{ this.package_name, this.scriptName(), combined_script });
 
@@ -146,7 +152,7 @@ pub const LifecycleScriptSubprocess = struct {
         }
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = .ignore,
-            .stdout = if (this.manager.options.log_level.isVerbose())
+            .stdout = if (this.manager.options.log_level.isVerbose() or (this.log_level != .silent and this.foreground))
                 .inherit
             else if (Environment.isPosix)
                 .buffer
@@ -154,7 +160,7 @@ pub const LifecycleScriptSubprocess = struct {
                 .{
                     .buffer = this.stdout.source.?.pipe,
                 },
-            .stderr = if (this.manager.options.log_level.isVerbose())
+            .stderr = if (this.manager.options.log_level.isVerbose() or (this.log_level != .silent and this.foreground))
                 .inherit
             else if (Environment.isPosix)
                 .buffer
@@ -284,11 +290,11 @@ pub const LifecycleScriptSubprocess = struct {
                     Global.exit(exit.code);
                 }
 
-                if (this.manager.scripts_node) |scripts_node| {
+                if (!this.foreground and this.manager.scripts_node != null) {
                     if (this.manager.finished_installing.load(.Monotonic)) {
-                        scripts_node.completeOne();
+                        this.manager.scripts_node.?.completeOne();
                     } else {
-                        _ = @atomicRmw(usize, &scripts_node.unprotected_completed_items, .Add, 1, .Monotonic);
+                        _ = @atomicRmw(usize, &this.manager.scripts_node.?.unprotected_completed_items, .Add, 1, .Monotonic);
                     }
                 }
 
@@ -399,12 +405,15 @@ pub const LifecycleScriptSubprocess = struct {
         list: Lockfile.Package.Scripts.List,
         envp: [:null]?[*:0]u8,
         comptime log_level: PackageManager.Options.LogLevel,
+        comptime foreground: bool,
     ) !void {
         var lifecycle_subprocess = LifecycleScriptSubprocess.new(.{
             .manager = manager,
             .envp = envp,
             .scripts = list,
             .package_name = list.package_name,
+            .foreground = foreground,
+            .log_level = log_level,
         });
 
         if (comptime log_level.isVerbose()) {

@@ -473,7 +473,7 @@ pub const Channel = opaque {
         opts.flags = ARES_FLAG_NOCHECKRESP;
         opts.sock_state_cb = &SockStateWrap.onSockState;
         opts.sock_state_cb_data = @as(*anyopaque, @ptrCast(this));
-        opts.timeout = 1000;
+        opts.timeout = -1;
         opts.tries = 3;
 
         const optmask: c_int =

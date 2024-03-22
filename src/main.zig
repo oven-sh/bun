@@ -2,8 +2,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 pub const build_options = @import("build_options");
 
-const panicky = @import("./panic_handler.zig");
-const MainPanicHandler = panicky.NewPanicHandler(std.builtin.default_panic);
+const bun = @import("root").bun;
+const Output = bun.Output;
+const Environment = bun.Environment;
+
+const panic_handler = @import("./panic_handler.zig");
+const MainPanicHandler = panic_handler.NewPanicHandler(std.builtin.default_panic);
 
 pub const io_mode = .blocking;
 
@@ -26,9 +30,6 @@ extern fn SetConsoleMode(console_handle: *anyopaque, mode: u32) u32;
 extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
 pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
 pub fn main() void {
-    const bun = @import("root").bun;
-    const Output = bun.Output;
-    const Environment = bun.Environment;
     // This should appear before we make any calls at all to libuv.
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {

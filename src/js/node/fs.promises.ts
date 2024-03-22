@@ -5,7 +5,7 @@ const constants = $processBindingConstants.fs;
 const EventEmitter = require("node:events");
 
 var PromisePrototypeThen = Promise.prototype.then;
-var SafePromisePrototypeFinally = Promise.prototype.finally; //TODO
+var PromisePrototypeFinally = Promise.prototype.finally; //TODO
 var SymbolAsyncDispose = Symbol.asyncDispose;
 var ObjectFreeze = Object.freeze;
 
@@ -177,8 +177,7 @@ const exports = {
   mkdir: fs.mkdir.bind(fs),
   mkdtemp: fs.mkdtemp.bind(fs),
   open: async (path, flags, mode) => {
-    const fd = await fs.open(path, flags, mode);
-    return new FileHandle(fd);
+    return new FileHandle(await fs.open(path, flags, mode));
   },
   read: fs.read.bind(fs),
   write: fs.write.bind(fs),
@@ -430,23 +429,23 @@ export default exports;
       }
     }
 
-    async close() {
-      if (this[kFd] === -1) {
-        return;
+    close = () => {
+      const fd = this[kFd];
+      if (fd === -1) {
+        return Promise.resolve();
       }
 
       if (this[kClosePromise]) {
         return this[kClosePromise];
       }
 
-      this[kRefs]--;
-      if (this[kRefs] === 0) {
-        this[kClosePromise] = SafePromisePrototypeFinally.$call(close(this[kFd]), () => {
+      if (--this[kRefs] === 0) {
+        this[kFd] = -1;
+        this[kClosePromise] = PromisePrototypeFinally.$call(close(fd), () => {
           this[kClosePromise] = undefined;
         });
-        this[kFd] = -1;
       } else {
-        this[kClosePromise] = SafePromisePrototypeFinally.$call(
+        this[kClosePromise] = PromisePrototypeFinally.$call(
           new Promise((resolve, reject) => {
             this[kCloseResolve] = resolve;
             this[kCloseReject] = reject;
@@ -461,7 +460,7 @@ export default exports;
 
       this.emit("close");
       return this[kClosePromise];
-    }
+    };
 
     async [SymbolAsyncDispose]() {
       return this.close();
@@ -474,24 +473,23 @@ export default exports;
       return Bun.file(fd).stream();
     }
 
-    createReadStream(options) {
+    createReadStream(options = kEmptyObject) {
       const fd = this[kFd];
       throwEBADFIfNecessary(fs.createReadStream, fd);
-      let stream = require("node:fs").createReadStream("", {
+      return require("node:fs").createReadStream("", {
         fd: this,
         highWaterMark: 64 * 1024,
-        ...(options || {}),
+        ...options,
       });
-      this[kRef]();
-      return stream;
     }
 
-    createWriteStream(options) {
+    createWriteStream(options = kEmptyObject) {
       const fd = this[kFd];
       throwEBADFIfNecessary(fs.createWriteStream, fd);
-      let stream = require("node:fs").createWriteStream("", { fd, ...(options || {}) });
-      this[kRef]();
-      return stream;
+      return require("node:fs").createWriteStream("", {
+        fd: this,
+        ...options,
+      });
     }
 
     [kTransfer]() {
@@ -507,13 +505,15 @@ export default exports;
     }
 
     [kRef]() {
+      console.log("ref");
       this[kRefs]++;
+      console.log(this[kRefs]);
     }
 
     [kUnref]() {
-      const refCount = this[kRefs]--;
-      if (refCount === 1) {
-        PromisePrototypeThen.$call(this.close(), this[kCloseResolve], this[kCloseReject]);
+      if (--this[kRefs] === 0) {
+        this[kFd] = -1;
+        this.close().$then(this[kCloseResolve], this[kCloseReject]);
       }
     }
   });
@@ -522,7 +522,7 @@ export default exports;
 function throwEBADFIfNecessary(fn, fd) {
   if (fd === -1) {
     // eslint-disable-next-line no-restricted-syntax
-    const err = new Error("file closed");
+    const err = new Error("Bad file descriptor");
     err.code = "EBADF";
     err.name = "SystemError";
     err.syscall = fn.name;

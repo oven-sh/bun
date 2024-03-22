@@ -146,8 +146,6 @@ describe("FileHandle", () => {
     {
       await using fd = await fs.promises.open(path, "w");
       const stream = fd.createWriteStream();
-      stream.write("Test file written successfully");
-      stream.end();
 
       await new Promise((resolve, reject) => {
         stream.on("error", e => {
@@ -155,9 +153,34 @@ describe("FileHandle", () => {
         });
 
         stream.on("finish", () => {
-          expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
           resolve(true);
         });
+
+        stream.write("Test file written successfully");
+        stream.end();
+      });
+    }
+
+    expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+  });
+
+  it("FileHandle#createWriteStream fixture 2", async () => {
+    const path = `${tmpdir()}/${Date.now()}.createWriteStream.txt`;
+    {
+      await using fd = await fs.promises.open(path, "w");
+      const stream = fd.createWriteStream();
+
+      await new Promise((resolve, reject) => {
+        stream.on("error", e => {
+          reject(e);
+        });
+
+        stream.on("close", () => {
+          resolve(true);
+        });
+
+        stream.write("Test file written successfully");
+        stream.end();
       });
     }
 
@@ -1120,7 +1143,7 @@ describe("readFileSync", () => {
     expect(text).toBe("File read successfully");
   });
 
-  it.skipIf(isWindows)("works with special files in the filesystem", () => {
+  it.skipIf(isWindows)("works with special posix files in the filesystem", () => {
     const text = readFileSync("/dev/null", "utf8");
     gc();
     expect(text).toBe("");

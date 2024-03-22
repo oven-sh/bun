@@ -512,6 +512,7 @@ var defaultReadStreamOptions = {
 };
 
 let { FileHandle, kRef, kUnref, kFd } = promises.$data;
+let kHandle = Symbol("kHandle");
 
 var ReadStreamClass;
 
@@ -684,7 +685,6 @@ ReadStream = (function (InternalReadStream) {
     }
 
     _destroy(err, cb) {
-      super._destroy(err, cb);
       try {
         this[readStreamPathFastPathSymbol] = false;
         var handle = this.#handle;
@@ -692,16 +692,17 @@ ReadStream = (function (InternalReadStream) {
           handle[kUnref]();
           this.fd = null;
           this.#handle = null;
+          super._destroy(err, cb);
           return;
         }
 
         var fd = this.fd;
         if (!fd) {
-          cb(err);
+          super._destroy(err, cb);
         } else {
           $assert(this.#fs);
           this.#fs.close(fd, er => {
-            cb(er || err);
+            super._destroy(er || err, cb);
           });
           this.fd = null;
         }
@@ -912,11 +913,22 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
   } = options;
 
   var tempThis = {};
+  var handle = null;
   if (fd != null) {
     if (typeof fd !== "number") {
-      throw new Error("Expected options.fd to be a number");
+      if (fd instanceof FileHandle) {
+        tempThis.fd = fd[kFd];
+        if (tempThis.fd < 0) {
+          throw new Error("Expected a valid file descriptor");
+        }
+        fd[kRef]();
+        handle = fd;
+      } else {
+        throw new TypeError("Expected options.fd to be a number or FileHandle");
+      }
+    } else {
+      tempThis.fd = fd;
     }
-    tempThis.fd = fd;
     tempThis[_writeStreamPathFastPathSymbol] = false;
   } else if (typeof path === "string") {
     if (path.length === 0) {
@@ -973,6 +985,7 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
 
   this.start = start;
   this[_fs] = fs;
+  this[kHandle] = handle;
   this.flags = flags;
   this.mode = mode;
   this.bytesWritten = 0;
@@ -994,6 +1007,7 @@ var WriteStreamClass = (WriteStream = function WriteStream(path, options = defau
 
   return this;
 });
+
 const NativeWritable = Stream.NativeWritable;
 const WriteStreamPrototype = (WriteStream.prototype = Object.create(NativeWritable.prototype));
 
@@ -1068,10 +1082,19 @@ function WriteStream_handleWrite(er, bytes) {
 
 function WriteStream_internalClose(err, cb) {
   this[_writeStreamPathFastPathSymbol] = false;
+  console.log("WriteStream_internalClose", this);
+  var handle = this[kHandle];
+  if (handle) {
+    handle[kUnref]();
+    this.fd = null;
+    this[kHandle] = null;
+    NativeWritable.prototype._destroy.$apply(this, err, cb);
+    return;
+  }
   var fd = this.fd;
   this[_fs].close(fd, er => {
     this.fd = null;
-    cb(err || er);
+    NativeWritable.prototype._destroy.$apply(this, er || err, cb);
   });
 }
 
@@ -1088,7 +1111,7 @@ WriteStreamPrototype._construct = function _construct(callback) {
 
 WriteStreamPrototype._destroy = function _destroy(err, cb) {
   if (this.fd === null) {
-    return cb(err);
+    return NativeWritable.prototype._destroy.$apply(this, err, cb);
   }
 
   if (this[kIoDone]) {
@@ -1153,10 +1176,6 @@ WriteStreamPrototype.end = function end(chunk, encoding, cb) {
   return NativeWritable.prototype.end.$call(this, chunk, encoding, cb, native);
 };
 
-WriteStreamPrototype._destroy = function _destroy(err, cb) {
-  this.close(err, cb);
-};
-
 function WriteStream_errorOrDestroy(err) {
   var {
     _readableState: r = { destroyed: false, autoDestroy: false },
@@ -1192,7 +1211,6 @@ Object.defineProperties(fs, {
 });
 
 // lol
-// @ts-ignore
 realpath.native = realpath;
 realpathSync.native = realpathSync;
 

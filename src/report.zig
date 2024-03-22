@@ -76,8 +76,8 @@ pub const CrashReportWriter = struct {
             _ = bun.sys.mkdirA(dirname, 0);
         }
 
-        const call = bun.sys.open(file_path, std.os.O.TRUNC, 0).unwrap() catch return;
-        var file = std.fs.File{ .handle = bun.fdcast(call) };
+        const call = bun.sys.openA(file_path, std.os.O.CREAT | std.os.O.TRUNC, 0).unwrap() catch return;
+        var file = call.asFile();
         this.file = std.io.bufferedWriter(
             file.writer(),
         );
@@ -107,7 +107,11 @@ pub const CrashReportWriter = struct {
 
 pub fn printMetadata() void {
     @setCold(true);
-    crash_report_writer.generateFile();
+
+    if (comptime !Environment.isWindows) {
+        // TODO(@paperdave): report files do not work on windows, and report files in general are buggy
+        crash_report_writer.generateFile();
+    }
 
     const cmd_label: string = if (CLI.cmd) |tag| @tagName(tag) else "Unknown";
 
@@ -119,10 +123,12 @@ pub fn printMetadata() void {
 
     const analytics_platform = Platform.forOS();
 
+    const maybe_baseline = if (Environment.baseline) " (baseline)" else "";
+
     crash_report_writer.print(
         \\
         \\<r>----- bun meta -----
-    ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ " {s}\n" ++
+    ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ maybe_baseline ++ " {s}\n" ++
         \\{s}: {}
         \\
     , .{
@@ -177,7 +183,9 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
     const had_printed_fatal = has_printed_fatal;
     if (!has_printed_fatal) {
         has_printed_fatal = true;
-        crash_report_writer.generateFile();
+        if (comptime !Environment.isWindows) {
+            crash_report_writer.generateFile();
+        }
 
         if (err_) |err| {
             if (Output.isEmojiEnabled()) {
@@ -233,11 +241,8 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
         crash_report_writer.flush();
 
         // It only is a real crash report if it's not coming from Zig
-
-        if (comptime !@import("root").bun.JSC.is_bindgen) {
-            std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
-            Bun__crashReportDumpStackTrace(&crash_report_writer);
-        }
+        std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+        Bun__crashReportDumpStackTrace(&crash_report_writer);
 
         crash_report_writer.flush();
 
@@ -245,7 +250,12 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
     }
 
     if (!had_printed_fatal) {
-        crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{});
+        if (Environment.isWindows) {
+            // TODO(@paperdave) change this to the original one once bun windows is stable
+            crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or join in #windows channel in https://bun.sh/discord\n\n", .{});
+        } else {
+            crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{});
+        }
         crash_report_writer.flush();
     }
 }
@@ -254,13 +264,15 @@ var globalError_ranOnce = false;
 var error_return_trace: ?*std.builtin.StackTrace = null;
 
 export fn Bun__crashReportWrite(ctx: *CrashReportWriter, bytes_ptr: [*]const u8, len: usize) void {
-    if (error_return_trace) |trace| {
-        if (len > 0) {
-            ctx.print("{s}\n{}", .{ bytes_ptr[0..len], trace });
-        } else {
-            ctx.print("{}\n", .{trace});
+    if (!Environment.isWindows) {
+        if (error_return_trace) |trace| {
+            if (len > 0) {
+                ctx.print("{s}\n{}", .{ bytes_ptr[0..len], trace });
+            } else {
+                ctx.print("{}\n", .{trace});
+            }
+            return;
         }
-        return;
     }
 
     if (len > 0) {
@@ -275,7 +287,10 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     if (has_printed_fatal) return;
     has_printed_fatal = true;
 
-    crash_report_writer.generateFile();
+    if (comptime !Environment.isWindows) {
+        // TODO(@paperdave): report files do not work on windows, and report files in general are buggy
+        crash_report_writer.generateFile();
+    }
 
     const name = switch (signal) {
         std.os.SIG.SEGV => error.SegmentationFault,
@@ -289,13 +304,15 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         .{ @errorName(name), bun.fmt.hexIntUpper(addr) },
     );
     printMetadata();
-    if (comptime Environment.isDebug) {
+    if (comptime Environment.isDebug and !Environment.isWindows) {
         error_return_trace = @errorReturnTrace();
     }
 
-    if (comptime !@import("root").bun.JSC.is_bindgen) {
-        std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
-        Bun__crashReportDumpStackTrace(&crash_report_writer);
+    if (!Environment.isWindows) {
+        if (comptime !@import("root").bun.JSC.is_bindgen) {
+            std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+            Bun__crashReportDumpStackTrace(&crash_report_writer);
+        }
     }
 
     if (!had_printed_fatal) {
@@ -309,8 +326,10 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     }
 
     crash_report_writer.file = null;
-    if (error_return_trace) |trace| {
-        std.debug.dumpStackTrace(trace.*);
+    if (!Environment.isWindows) {
+        if (error_return_trace) |trace| {
+            std.debug.dumpStackTrace(trace.*);
+        }
     }
     Global.runExitCallbacks();
     std.c._exit(128 + @as(u8, @truncate(@as(u8, @intCast(@max(signal, 0))))));
@@ -318,6 +337,8 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
 
 pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace())) noreturn {
     @setCold(true);
+
+    bun.maybeHandlePanicDuringProcessReload();
 
     error_return_trace = trace_;
 
@@ -354,7 +375,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
             );
             Global.exit(1);
         },
-        error.InvalidArgument, error.InstallFailed, error.InvalidPackageJSON => {
+        error.InvalidArgument => {
             Global.exit(1);
         },
         error.SystemFdQuotaExceeded => {
@@ -498,18 +519,20 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
         },
         // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
         error.NotOpenForReading, error.Unexpected => {
-            if (trace_) |trace| {
-                print_stacktrace: {
-                    const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                    Output.disableBuffering();
-                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            if (!Environment.isWindows) {
+                if (trace_) |trace| {
+                    print_stacktrace: {
+                        const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                        Output.disableBuffering();
+                        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                    }
                 }
             }
 
             if (comptime Environment.isPosix) {
                 const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
 
-                if (limit.cur > 0 and limit.cur < (8096 * 2)) {
+                if (limit.cur > 0 and limit.cur < (8192 * 2)) {
                     Output.prettyError(
                         \\
                         \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
@@ -566,7 +589,7 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
                 Global.exit(1);
             }
         },
-        error.FileNotFound => {
+        error.ENOENT, error.FileNotFound => {
             Output.prettyError(
                 "\n<r><red>error<r><d>:<r> <b>FileNotFound<r>\nBun could not find a file, and the code that produces this error is missing a better error.\n",
                 .{},
@@ -577,11 +600,13 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
 
             Output.flush();
 
-            if (trace_) |trace| {
-                print_stacktrace: {
-                    const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                    Output.disableBuffering();
-                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            if (!Environment.isWindows) {
+                if (trace_) |trace| {
+                    print_stacktrace: {
+                        const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                        Output.disableBuffering();
+                        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                    }
                 }
             }
 
@@ -592,12 +617,13 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
                 "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nBun could not find a package.json file.\n",
                 .{},
             );
-
-            if (trace_) |trace| {
-                print_stacktrace: {
-                    const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-                    Output.disableBuffering();
-                    std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            if (!Environment.isWindows) {
+                if (trace_) |trace| {
+                    print_stacktrace: {
+                        const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                        Output.disableBuffering();
+                        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+                    }
                 }
             }
 
@@ -607,11 +633,13 @@ pub noinline fn globalError(err: anyerror, trace_: @TypeOf(@errorReturnTrace()))
     }
 
     Report.fatal(err, null);
-    if (trace_) |trace| {
-        print_stacktrace: {
-            const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
-            Output.disableBuffering();
-            std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+    if (!Environment.isWindows) {
+        if (trace_) |trace| {
+            print_stacktrace: {
+                const debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
+                Output.disableBuffering();
+                std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch break :print_stacktrace;
+            }
         }
     }
 

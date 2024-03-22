@@ -232,7 +232,8 @@ for (const entrypoint of bundledEntryPoints) {
       .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
         throw new Error(`Builtin Bundler: do not use import.meta.require() (in ${file_path}))`);
       })
-      .replace(/__intrinsic__/g, "@") + "\n";
+      .replace(/__intrinsic__/g, "@")
+      .replace(/__no_intrinsic__/g, "") + "\n";
   captured = captured.replace(
     /function\s*\(.*?\)\s*{/,
     '$&"use strict";' +
@@ -307,10 +308,10 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
       .map((id, n) => {
         return `case Field::${idToEnumName(id)}: {
       INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${idToPublicSpecifierOrEnumName(id)}"_s, ${JSON.stringify(
-          id.replace(/\.[mc]?[tj]s$/, ".js"),
-        )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
-          .replace(/\.[mc]?[tj]s$/, "")
-          .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
+        id.replace(/\.[mc]?[tj]s$/, ".js"),
+      )}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "builtin://${id
+        .replace(/\.[mc]?[tj]s$/, "")
+        .replace(/[^a-zA-Z0-9]+/g, "/")}"_s);
     }`;
       })
       .join("\n    ")}
@@ -335,7 +336,15 @@ if (!debug) {
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
-  ${moduleList.map((id, n) => declareASCIILiteral(`${idToEnumName(id)}Code`, outputs.get(id.slice(0, -3)))).join("\n")}
+  ${moduleList
+    .map((id, n) => {
+      const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
+      if (!out) {
+        throw new Error(`Missing output for ${id}`);
+      }
+      return declareASCIILiteral(`${idToEnumName(id)}Code`, out);
+    })
+    .join("\n")}
 }
 }`,
   );

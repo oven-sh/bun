@@ -1,4 +1,5 @@
 import { it, expect } from "bun:test";
+import { ospath } from "harness";
 import { join, resolve } from "path";
 
 function resolveFrom(from) {
@@ -7,19 +8,19 @@ function resolveFrom(from) {
 
 it("#imports", async () => {
   const baz = await import.meta.resolve("#foo", join(await import.meta.resolve("package-json-imports/baz"), "../"));
-  expect(baz.endsWith("foo/private-foo.js")).toBe(true);
+  expect(baz).toBe(resolve(import.meta.dir, "node_modules/package-json-imports/foo/private-foo.js"));
 
   const subpath = await import.meta.resolve(
     "#foo/bar",
     join(await import.meta.resolve("package-json-imports/baz"), "../"),
   );
-  expect(subpath.endsWith("foo/private-foo.js")).toBe(true);
+  expect(subpath).toBe(resolve(import.meta.dir, "node_modules/package-json-imports/foo/private-foo.js"));
 
   const react = await import.meta.resolve(
     "#internal-react",
     join(await import.meta.resolve("package-json-imports/baz"), "../"),
   );
-  expect(react.endsWith("/react/index.js")).toBe(true);
+  expect(react).toBe(resolve(import.meta.dir, "../../../../node_modules/react/index.js"));
 
   // Check that #foo is not resolved to the package.json file.
   try {
@@ -70,6 +71,7 @@ it("import.meta.resolve", async () => {
   expect(await import.meta.resolve("foo/bar")).toBe(join(import.meta.path, "../baz.js"));
   expect(await import.meta.resolve("@faasjs/baz")).toBe(join(import.meta.path, "../baz.js"));
   expect(await import.meta.resolve("@faasjs/bar")).toBe(join(import.meta.path, "../bar/src/index.js"));
+  expect(await import.meta.resolve("@faasjs/larger/bar")).toBe(join(import.meta.path, "../bar/larger-index.js"));
 
   // works with package.json "exports"
   expect(await import.meta.resolve("package-json-exports/baz")).toBe(

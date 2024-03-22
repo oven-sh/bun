@@ -68,8 +68,6 @@ public:
         if (UNLIKELY(!thisObject))
             return throwThisTypeError(lexicalGlobalObject, throwScope, "EventTarget", operationName);
 
-        auto& wrapped = thisObject->wrapped();
-
         RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, thisObject.get())));
     }
 };

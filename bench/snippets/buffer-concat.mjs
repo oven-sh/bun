@@ -16,8 +16,8 @@ for (let size of [32, 2048, 1024 * 16, 1024 * 1024 * 2, 1024 * 1024 * 16]) {
     size > 1024 * 1024
       ? new Intl.NumberFormat(undefined, { unit: "megabyte", style: "unit" })
       : size > 1024
-      ? new Intl.NumberFormat(undefined, { unit: "kilobyte", style: "unit" })
-      : new Intl.NumberFormat(undefined, { unit: "byte", style: "unit" });
+        ? new Intl.NumberFormat(undefined, { unit: "kilobyte", style: "unit" })
+        : new Intl.NumberFormat(undefined, { unit: "byte", style: "unit" });
 
   bench(
     `Buffer.concat(${fmt.format(

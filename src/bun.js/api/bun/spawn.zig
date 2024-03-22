@@ -2,7 +2,7 @@ const JSC = @import("root").bun.JSC;
 const bun = @import("root").bun;
 const string = bun.string;
 const std = @import("std");
-
+const Output = bun.Output;
 fn _getSystem() type {
     // this is a workaround for a Zig stage1 bug
     // the "usingnamespace" is evaluating in dead branches
@@ -22,7 +22,7 @@ fn _getSystem() type {
 const Environment = bun.Environment;
 const system = _getSystem();
 
-const Maybe = JSC.Node.Maybe;
+const Maybe = JSC.Maybe;
 
 const fd_t = std.os.fd_t;
 const pid_t = std.os.pid_t;
@@ -42,7 +42,7 @@ pub const BunSpawn = struct {
 
         kind: FileActionType = .none,
         path: ?[*:0]const u8 = null,
-        fds: [2]c_int = .{ 0, 0 },
+        fds: [2]bun.FileDescriptor,
         flags: c_int = 0,
         mode: c_int = 0,
 
@@ -80,41 +80,38 @@ pub const BunSpawn = struct {
             self.actions.deinit(bun.default_allocator);
         }
 
-        pub fn open(self: *Actions, fd: fd_t, path: []const u8, flags: u32, mode: i32) !void {
+        pub fn open(self: *Actions, fd: bun.FileDescriptor, path: []const u8, flags: u32, mode: i32) !void {
             const posix_path = try toPosixPath(path);
 
             return self.openZ(fd, &posix_path, flags, mode);
         }
 
-        pub fn openZ(self: *Actions, fd: fd_t, path: [*:0]const u8, flags: u32, mode: i32) !void {
+        pub fn openZ(self: *Actions, fd: bun.FileDescriptor, path: [*:0]const u8, flags: u32, mode: i32) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .open,
                 .path = (try bun.default_allocator.dupeZ(u8, bun.span(path))).ptr,
                 .flags = @intCast(flags),
                 .mode = @intCast(mode),
-                .fds = .{ fd, 0 },
+                .fds = .{ fd, bun.toFD(0) },
             });
         }
 
-        pub fn close(self: *Actions, fd: fd_t) !void {
+        pub fn close(self: *Actions, fd: bun.FileDescriptor) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .close,
-                .fds = .{ fd, 0 },
+                .fds = .{ fd, bun.toFD(0) },
             });
         }
 
-        pub fn dup2(self: *Actions, fd: fd_t, newfd: fd_t) !void {
+        pub fn dup2(self: *Actions, fd: bun.FileDescriptor, newfd: bun.FileDescriptor) !void {
             try self.actions.append(bun.default_allocator, .{
                 .kind = .dup2,
-                .fds = .{ @truncate(fd), @truncate(newfd) },
+                .fds = .{ fd, newfd },
             });
         }
 
-        pub fn inherit(self: *Actions, fd: fd_t) !void {
-            _ = self;
-            _ = fd;
-
-            @panic("not implemented");
+        pub fn inherit(self: *Actions, fd: bun.FileDescriptor) !void {
+            try self.dup2(fd, fd);
         }
 
         pub fn chdir(self: *Actions, path: []const u8) !void {
@@ -234,13 +231,13 @@ pub const PosixSpawn = struct {
             self.* = undefined;
         }
 
-        pub fn open(self: *PosixSpawnActions, fd: fd_t, path: []const u8, flags: u32, mode: mode_t) !void {
+        pub fn open(self: *PosixSpawnActions, fd: bun.FileDescriptor, path: []const u8, flags: u32, mode: mode_t) !void {
             const posix_path = try toPosixPath(path);
             return self.openZ(fd, &posix_path, flags, mode);
         }
 
-        pub fn openZ(self: *PosixSpawnActions, fd: fd_t, path: [*:0]const u8, flags: u32, mode: mode_t) !void {
-            switch (errno(system.posix_spawn_file_actions_addopen(&self.actions, fd, path, @as(c_int, @bitCast(flags)), mode))) {
+        pub fn openZ(self: *PosixSpawnActions, fd: bun.FileDescriptor, path: [*:0]const u8, flags: u32, mode: mode_t) !void {
+            switch (errno(system.posix_spawn_file_actions_addopen(&self.actions, fd.cast(), path, @as(c_int, @bitCast(flags)), mode))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,
@@ -250,8 +247,8 @@ pub const PosixSpawn = struct {
             }
         }
 
-        pub fn close(self: *PosixSpawnActions, fd: fd_t) !void {
-            switch (errno(system.posix_spawn_file_actions_addclose(&self.actions, fd))) {
+        pub fn close(self: *PosixSpawnActions, fd: bun.FileDescriptor) !void {
+            switch (errno(system.posix_spawn_file_actions_addclose(&self.actions, fd.cast()))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,
@@ -261,8 +258,8 @@ pub const PosixSpawn = struct {
             }
         }
 
-        pub fn dup2(self: *PosixSpawnActions, fd: fd_t, newfd: fd_t) !void {
-            switch (errno(system.posix_spawn_file_actions_adddup2(&self.actions, fd, newfd))) {
+        pub fn dup2(self: *PosixSpawnActions, fd: bun.FileDescriptor, newfd: bun.FileDescriptor) !void {
+            switch (errno(system.posix_spawn_file_actions_adddup2(&self.actions, fd.cast(), newfd.cast()))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,
@@ -272,8 +269,8 @@ pub const PosixSpawn = struct {
             }
         }
 
-        pub fn inherit(self: *PosixSpawnActions, fd: fd_t) !void {
-            switch (errno(system.posix_spawn_file_actions_addinherit_np(&self.actions, fd))) {
+        pub fn inherit(self: *PosixSpawnActions, fd: bun.FileDescriptor) !void {
+            switch (errno(system.posix_spawn_file_actions_addinherit_np(&self.actions, fd.cast()))) {
                 .SUCCESS => return,
                 .BADF => return error.InvalidFileDescriptor,
                 .NOMEM => return error.SystemResources,
@@ -316,12 +313,14 @@ pub const PosixSpawn = struct {
 
         extern fn posix_spawn_bun(
             pid: *c_int,
+            path: [*:0]const u8,
             request: *const BunSpawnRequest,
             argv: [*:null]?[*:0]const u8,
             envp: [*:null]?[*:0]const u8,
         ) isize;
 
         pub fn spawn(
+            path: [*:0]const u8,
             req_: BunSpawnRequest,
             argv: [*:null]?[*:0]const u8,
             envp: [*:null]?[*:0]const u8,
@@ -329,7 +328,7 @@ pub const PosixSpawn = struct {
             var req = req_;
             var pid: c_int = 0;
 
-            const rc = posix_spawn_bun(&pid, &req, argv, envp);
+            const rc = posix_spawn_bun(&pid, path, &req, argv, envp);
             if (comptime bun.Environment.allow_assert)
                 bun.sys.syslog("posix_spawn_bun({s}) = {d} ({d})", .{
                     bun.span(argv[0] orelse ""),
@@ -360,6 +359,7 @@ pub const PosixSpawn = struct {
     ) Maybe(pid_t) {
         if (comptime Environment.isLinux) {
             return BunSpawnRequest.spawn(
+                path,
                 .{
                     .actions = if (actions) |act| .{
                         .ptr = act.actions.items.ptr,
@@ -412,8 +412,8 @@ pub const PosixSpawn = struct {
     /// See also `std.os.waitpid` for an alternative if your child process was spawned via `fork` and
     /// `execve` method.
     pub fn waitpid(pid: pid_t, flags: u32) Maybe(WaitPidResult) {
-        const Status = c_int;
-        var status: Status = 0;
+        const PidStatus = c_int;
+        var status: PidStatus = 0;
         while (true) {
             const rc = system.waitpid(pid, &status, @as(c_int, @intCast(flags)));
             switch (errno(rc)) {
@@ -432,8 +432,8 @@ pub const PosixSpawn = struct {
 
     /// Same as waitpid, but also returns resource usage information.
     pub fn wait4(pid: pid_t, flags: u32, usage: ?*std.os.rusage) Maybe(WaitPidResult) {
-        const Status = c_int;
-        var status: Status = 0;
+        const PidStatus = c_int;
+        var status: PidStatus = 0;
         while (true) {
             const rc = system.wait4(pid, &status, @as(c_int, @intCast(flags)), usage);
             switch (errno(rc)) {
@@ -449,4 +449,7 @@ pub const PosixSpawn = struct {
             }
         }
     }
+
+    pub usingnamespace @import("./process.zig");
+    pub usingnamespace @import("./spawn/stdio.zig");
 };

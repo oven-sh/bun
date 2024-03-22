@@ -5,6 +5,8 @@ import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "os";
 
+const isWindows = process.platform === "win32";
+
 it("TransformStream", async () => {
   // https://developer.mozilla.org/en-US/docs/Web/API/TransformStream
   const TextEncoderStreamInterface = {
@@ -418,7 +420,7 @@ it("ReadableStream.prototype.values", async () => {
   expect(chunks.join("")).toBe("helloworld");
 });
 
-it("Bun.file() read text from pipe", async () => {
+it.skipIf(isWindows)("Bun.file() read text from pipe", async () => {
   try {
     unlinkSync("/tmp/fifo");
   } catch (e) {}
@@ -434,7 +436,7 @@ it("Bun.file() read text from pipe", async () => {
   const proc = Bun.spawn({
     cmd: ["bash", join(import.meta.dir + "/", "bun-streams-test-fifo.sh"), "/tmp/fifo"],
     stderr: "inherit",
-    stdout: null,
+    stdout: "pipe",
     stdin: null,
     env: {
       FIFO_TEST: large,

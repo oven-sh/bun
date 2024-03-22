@@ -11,6 +11,16 @@ import { expect, mock, spyOn, test, describe } from "bun:test";
 import { fn, iCallFn, variable, default as defaultValue, rexported, rexportedAs } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
+test("mock.module async", async () => {
+  mock.module("i-am-async-and-mocked", async () => {
+    await 42;
+    await Bun.sleep(0);
+    return { a: 123 };
+  });
+
+  expect((await import("i-am-async-and-mocked")).a).toBe(123);
+});
+
 test("mock.restore", () => {
   const original = spyFixture.iSpy;
   spyOn(spyFixture, "iSpy");

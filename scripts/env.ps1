@@ -34,7 +34,9 @@ $CC = "clang-cl"
 $CXX = "clang-cl"
 
 $CFLAGS = '/O2'
+# $CFLAGS = '/O2 /MT'
 $CXXFLAGS = '/O2'
+# $CXXFLAGS = '/O2 /MT'
 
 if ($Baseline) {
   $CFLAGS += ' -march=nehalem'
@@ -49,7 +51,6 @@ $CMAKE_FLAGS = @(
   "-DCMAKE_C_FLAGS=`"$CFLAGS`"",
   "-DCMAKE_CXX_FLAGS=`"$CXXFLAGS`""
 )
-
 $env:CC = "clang-cl"
 $env:CXX = "clang-cl"
 $env:CFLAGS = $CFLAGS

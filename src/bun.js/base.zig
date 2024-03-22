@@ -52,7 +52,7 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
         bool => return JSC.JSValue.jsBoolean(if (comptime Type != ValueType) value.* else value),
         *JSC.JSGlobalObject => return value.toJSValue(),
         []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {
-            const str = bun.String.create(value);
+            const str = bun.String.createUTF8(value);
             defer str.deref();
             return str.toJS(globalObject);
         },
@@ -168,7 +168,7 @@ pub fn createError(
 ) JSC.JSValue {
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
         var zig_str = JSC.ZigString.init(fmt);
-        if (comptime !strings.isAllASCIISimple(fmt)) {
+        if (comptime !strings.isAllASCII(fmt)) {
             zig_str.markUTF16();
         }
 
@@ -252,7 +252,7 @@ pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
 
 /// Print a JSValue to stdout; this is only meant for debugging purposes
 pub fn dump(value: JSValue, globalObject: *JSC.JSGlobalObject) !void {
-    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+    var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject };
     try Output.errorWriter().print("{}\n", .{value.toFmt(globalObject, &formatter)});
     Output.flush();
 }
@@ -943,11 +943,11 @@ pub fn DOMCall(
             arguments_ptr: [*]const JSC.JSValue,
             arguments_len: usize,
         ) callconv(.C) JSValue {
-            return @call(.auto, @field(Container, functionName), .{
+            return @field(Container, functionName)(
                 globalObject,
                 thisValue,
                 arguments_ptr[0..arguments_len],
-            });
+            );
         }
 
         pub const fastpath = @field(Container, functionName ++ "WithoutTypeChecks");
@@ -1196,11 +1196,8 @@ pub fn wrapInstanceMethod(
             var args: Args = undefined;
 
             const has_exception_ref: bool = comptime brk: {
-                var i: usize = 0;
-                while (i < FunctionTypeInfo.params.len) : (i += 1) {
-                    const ArgType = FunctionTypeInfo.params[i].type.?;
-
-                    if (ArgType == JSC.C.ExceptionRef) {
+                for (FunctionTypeInfo.params) |param| {
+                    if (param.type.? == JSC.C.ExceptionRef) {
                         break :brk true;
                     }
                 }
@@ -1210,11 +1207,9 @@ pub fn wrapInstanceMethod(
             var exception_value = [_]JSC.C.JSValueRef{null};
             const exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
 
-            comptime var i: usize = 0;
-            inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
-                const ArgType = comptime FunctionTypeInfo.params[i].type.?;
-
-                switch (comptime ArgType) {
+            inline for (FunctionTypeInfo.params, 0..) |param, i| {
+                const ArgType = param.type.?;
+                switch (ArgType) {
                     *Container => {
                         args[i] = this;
                     },
@@ -1373,11 +1368,9 @@ pub fn wrapStaticMethod(
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 
-            comptime var i: usize = 0;
-            inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
-                const ArgType = comptime FunctionTypeInfo.params[i].type.?;
-
-                switch (comptime ArgType) {
+            inline for (FunctionTypeInfo.params, 0..) |param, i| {
+                const ArgType = param.type.?;
+                switch (param.type.?) {
                     *JSC.JSGlobalObject => {
                         args[i] = globalThis.ptr();
                     },
@@ -1743,3 +1736,13 @@ pub const MemoryReportingAllocator = struct {
         .free = @ptrCast(&MemoryReportingAllocator.free),
     };
 };
+
+/// According to https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date,
+/// maximum Date in JavaScript is less than Number.MAX_SAFE_INTEGER (u52).
+pub const init_timestamp = std.math.maxInt(JSC.JSTimeType);
+pub const JSTimeType = u52;
+
+pub fn toJSTime(sec: isize, nsec: isize) JSTimeType {
+    const millisec = @as(u64, @intCast(@divTrunc(nsec, std.time.ns_per_ms)));
+    return @as(JSTimeType, @truncate(@as(u64, @intCast(sec * std.time.ms_per_s)) + millisec));
+}

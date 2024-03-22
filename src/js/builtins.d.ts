@@ -23,7 +23,7 @@ declare var $overriddenName: string;
 /** ??? */
 declare var $linkTimeConstant: never;
 /** Assign to this directly above a function declaration (like a decorator) to set visibility */
-declare var $visibility: "Public" | "Private";
+declare var $visibility: "Public" | "Private" | "PrivateRecursive";
 /** ??? */
 declare var $nakedConstructor: never;
 /** Assign to this directly above a function declaration (like a decorator) to set intrinsic */
@@ -107,7 +107,7 @@ declare function $isArrayIterator(obj: unknown): obj is Iterator<any>;
 declare function $isMapIterator(obj: unknown): obj is Iterator<any>;
 declare function $isSetIterator(obj: unknown): obj is Iterator<any>;
 declare function $isUndefinedOrNull(obj: unknown): obj is null | undefined;
-declare function $tailCallForwardArguments(): TODO;
+declare function $tailCallForwardArguments(fn: CallableFunction, thisValue: ThisType): any;
 /**
  * **NOTE** - use `throw new TypeError()` instead. it compiles to the same builtin
  * @deprecated
@@ -465,8 +465,8 @@ type PromiseFieldType = typeof $promiseFieldFlags | typeof $promiseFieldReaction
 type PromiseFieldToValue<X extends PromiseFieldType, V> = X extends typeof $promiseFieldFlags
   ? number
   : X extends typeof $promiseFieldReactionsOrResult
-  ? V | any
-  : any;
+    ? V | any
+    : any;
 type WellKnownSymbol = keyof { [K in keyof SymbolConstructor as SymbolConstructor[K] extends symbol ? K : never]: K };
 
 // You can also `@` on any method on a classes to avoid prototype pollution and secret internals
@@ -480,8 +480,7 @@ declare interface PromiseConstructor<T> extends ClassWithIntrinsics<PromiseConst
 
 declare interface UnderlyingSource {
   $lazy?: boolean;
-  $bunNativeType?: number;
-  $bunNativePtr?: number;
+  $bunNativePtr?: undefined | TODO;
   autoAllocateChunkSize?: number;
 }
 

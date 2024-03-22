@@ -1,7 +1,7 @@
 // Hardcoded module "node:repl"
 // This is a stub! None of this is actually implemented yet.
 // It only exists to make some packages which import this module work.
-const { throwNotImplemented } = require("$shared");
+const { throwNotImplemented } = require("internal/shared");
 
 function REPLServer() {
   throwNotImplemented("node:repl REPLServer");

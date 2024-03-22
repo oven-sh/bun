@@ -81,6 +81,7 @@ pub const ExternalModules = struct {
     node_modules: std.BufSet = undefined,
     abs_paths: std.BufSet = undefined,
     patterns: []const WildcardPattern = undefined,
+
     pub const WildcardPattern = struct {
         prefix: string,
         suffix: string,
@@ -649,12 +650,25 @@ pub const Loader = enum(u8) {
     base64,
     dataurl,
     text,
+    bunsh,
+    sqlite,
+    sqlite_embedded,
+
+    pub inline fn isSQLite(this: Loader) bool {
+        return switch (this) {
+            .sqlite, .sqlite_embedded => true,
+            else => false,
+        };
+    }
 
     pub fn shouldCopyForBundling(this: Loader) bool {
         return switch (this) {
             .file,
             // TODO: CSS
             .css,
+            .napi,
+            .sqlite,
+            .sqlite_embedded,
             => true,
             else => false,
         };
@@ -681,7 +695,7 @@ pub const Loader = enum(u8) {
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
-            .jsx, .js, .ts, .tsx, .json, .wasm => true,
+            .jsx, .js, .ts, .tsx, .json, .wasm, .bunsh => true,
             else => false,
         };
     }
@@ -700,6 +714,7 @@ pub const Loader = enum(u8) {
         map.set(Loader.wasm, "input.wasm");
         map.set(Loader.napi, "input.node");
         map.set(Loader.text, "input.txt");
+        map.set(Loader.bunsh, "input.bunsh");
         break :brk map;
     };
 
@@ -720,7 +735,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            JSC.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, or json", .{}, global, exception);
+            JSC.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{}, global, exception);
             return null;
         };
     }
@@ -744,6 +759,9 @@ pub const Loader = enum(u8) {
         .{ "base64", Loader.base64 },
         .{ "txt", Loader.text },
         .{ "text", Loader.text },
+        .{ "bunsh", Loader.bunsh },
+        .{ "sqlite", Loader.sqlite },
+        .{ "sqlite_embedded", Loader.sqlite_embedded },
     });
 
     pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
@@ -765,6 +783,8 @@ pub const Loader = enum(u8) {
         .{ "base64", Api.Loader.base64 },
         .{ "txt", Api.Loader.text },
         .{ "text", Api.Loader.text },
+        .{ "bunsh", Api.Loader.file },
+        .{ "sqlite", Api.Loader.sqlite },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -790,7 +810,7 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
-            .file => .file,
+            .file, .bunsh => .file,
             .json => .json,
             .toml => .toml,
             .wasm => .wasm,
@@ -798,6 +818,7 @@ pub const Loader = enum(u8) {
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
+            .sqlite_embedded, .sqlite => .sqlite,
         };
     }
 
@@ -816,6 +837,7 @@ pub const Loader = enum(u8) {
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
+            .sqlite => .sqlite,
             else => .file,
         };
     }
@@ -853,7 +875,7 @@ pub const Loader = enum(u8) {
     }
 };
 
-pub const defaultLoaders = ComptimeStringMap(Loader, .{
+const default_loaders_posix = .{
     .{ ".jsx", Loader.jsx },
     .{ ".json", Loader.json },
     .{ ".js", Loader.jsx },
@@ -873,7 +895,16 @@ pub const defaultLoaders = ComptimeStringMap(Loader, .{
     .{ ".node", Loader.napi },
     .{ ".txt", Loader.text },
     .{ ".text", Loader.text },
-});
+};
+const default_loaders_win32 = default_loaders_posix ++ .{
+    .{ ".sh", Loader.bunsh },
+};
+
+const default_loaders = if (Environment.isWindows) default_loaders_win32 else default_loaders_posix;
+pub const defaultLoaders = ComptimeStringMap(
+    Loader,
+    default_loaders,
+);
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub const ESMConditions = struct {
@@ -909,6 +940,18 @@ pub const ESMConditions = struct {
             .import = import_condition_map,
             .require = require_condition_map,
         };
+    }
+
+    pub fn appendSlice(self: *ESMConditions, conditions: []const string) !void {
+        try self.default.ensureUnusedCapacity(conditions.len);
+        try self.import.ensureUnusedCapacity(conditions.len);
+        try self.require.ensureUnusedCapacity(conditions.len);
+
+        for (conditions) |condition| {
+            self.default.putAssumeCapacityNoClobber(condition, {});
+            self.import.putAssumeCapacityNoClobber(condition, {});
+            self.require.putAssumeCapacityNoClobber(condition, {});
+        }
     }
 };
 
@@ -1663,6 +1706,10 @@ pub const BundleOptions = struct {
 
         opts.conditions = try ESMConditions.init(allocator, Target.DefaultConditions.get(opts.target));
 
+        if (transform.conditions.len > 0) {
+            opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();
+        }
+
         switch (opts.target) {
             .node => {
                 opts.import_path_format = .relative;
@@ -1979,12 +2026,11 @@ pub const OutputFile = struct {
     }
 
     pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        try bun.C.moveFileZ(bun.fdcast(file.value.move.dir), bun.sliceTo(&(try std.os.toPosixPath(file.value.move.getPathname())), 0), bun.fdcast(dir), bun.sliceTo(&(try std.os.toPosixPath(rel_path)), 0));
+        try bun.C.moveFileZ(file.value.move.dir, bun.sliceTo(&(try std.os.toPosixPath(file.value.move.getPathname())), 0), dir, bun.sliceTo(&(try std.os.toPosixPath(rel_path)), 0));
     }
 
     pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        var dir_obj = std.fs.Dir{ .fd = bun.fdcast(dir) };
-        const file_out = (try dir_obj.createFile(rel_path, .{}));
+        const file_out = (try dir.asDir().createFile(rel_path, .{}));
 
         const fd_out = file_out.handle;
         var do_close = false;
@@ -1995,6 +2041,9 @@ pub const OutputFile = struct {
             Fs.FileSystem.setMaxFd(fd_out);
             Fs.FileSystem.setMaxFd(fd_in);
             do_close = Fs.FileSystem.instance.fs.needToCloseFiles();
+
+            // use paths instead of bun.getFdPathW()
+            @panic("TODO windows");
         }
 
         defer {
@@ -2017,7 +2066,7 @@ pub const OutputFile = struct {
             .noop => JSC.JSValue.undefined,
             .copy => |copy| brk: {
                 const file_blob = JSC.WebCore.Blob.Store.initFile(
-                    if (copy.fd != 0)
+                    if (copy.fd != .zero)
                         JSC.Node.PathOrFileDescriptor{
                             .fd = copy.fd,
                         }
@@ -2453,7 +2502,7 @@ pub const RouteConfig = struct {
     static_dir_handle: ?std.fs.Dir = null,
     static_dir_enabled: bool = false,
     single_page_app_routing: bool = false,
-    single_page_app_fd: StoredFileDescriptorType = 0,
+    single_page_app_fd: StoredFileDescriptorType = .zero,
 
     pub fn toAPI(this: *const RouteConfig) Api.LoadedRouteConfig {
         return .{
@@ -2563,10 +2612,24 @@ pub const PathTemplate = struct {
         return strings.contains(this.data, comptime "[" ++ @tagName(field) ++ "]");
     }
 
+    inline fn writeReplacingSlashesOnWindows(w: anytype, slice: []const u8) !void {
+        if (Environment.isWindows) {
+            var remain = slice;
+            while (strings.indexOfChar(remain, '/')) |i| {
+                try w.writeAll(remain[0..i]);
+                try w.writeByte('\\');
+                remain = remain[i + 1 ..];
+            }
+            try w.writeAll(remain);
+        } else {
+            try w.writeAll(slice);
+        }
+    }
+
     pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var remain = self.data;
         while (strings.indexOfChar(remain, '[')) |j| {
-            try writer.writeAll(remain[0..j]);
+            try writeReplacingSlashesOnWindows(writer, remain[0..j]);
             remain = remain[j + 1 ..];
             if (remain.len == 0) {
                 // TODO: throw error
@@ -2593,15 +2656,15 @@ pub const PathTemplate = struct {
             const placeholder = remain[0..end_len];
 
             const field = PathTemplate.Placeholder.map.get(placeholder) orelse {
-                try writer.writeAll(placeholder);
+                try writeReplacingSlashesOnWindows(writer, placeholder);
                 remain = remain[end_len..];
                 continue;
             };
 
             switch (field) {
-                .dir => try writer.writeAll(if (self.placeholder.dir.len > 0) self.placeholder.dir else "."),
-                .name => try writer.writeAll(self.placeholder.name),
-                .ext => try writer.writeAll(self.placeholder.ext),
+                .dir => try writeReplacingSlashesOnWindows(writer, if (self.placeholder.dir.len > 0) self.placeholder.dir else "."),
+                .name => try writeReplacingSlashesOnWindows(writer, self.placeholder.name),
+                .ext => try writeReplacingSlashesOnWindows(writer, self.placeholder.ext),
                 .hash => {
                     if (self.placeholder.hash) |hash| {
                         try writer.print("{any}", .{(hashFormatter(hash))});
@@ -2611,7 +2674,7 @@ pub const PathTemplate = struct {
             remain = remain[end_len + 1 ..];
         }
 
-        try writer.writeAll(remain);
+        try writeReplacingSlashesOnWindows(writer, remain);
     }
 
     pub const hashFormatter = bun.fmt.hexIntLower;

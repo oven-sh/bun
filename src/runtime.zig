@@ -117,15 +117,15 @@ pub const Fallback = struct {
 
     pub inline fn scriptContent() string {
         if (comptime Environment.isDebug) {
-            const dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
-            var env = std.process.getEnvMap(default_allocator) catch unreachable;
-
+            const dirpath = comptime bun.Environment.base_path ++ (bun.Dirname.dirname(u8, @src().file) orelse "");
+            var buf: bun.PathBuffer = undefined;
+            const user = bun.getUserName(&buf) orelse "";
             const dir = std.mem.replaceOwned(
                 u8,
                 default_allocator,
                 dirpath,
                 "jarred",
-                env.get("USER").?,
+                user,
             ) catch unreachable;
             const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "fallback.out.js" }) catch unreachable;
             const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
@@ -197,71 +197,7 @@ pub const Fallback = struct {
 };
 
 pub const Runtime = struct {
-    pub const ProdSourceContent = @embedFile("./runtime.out.js");
-    pub const ProdSourceContentNode = @embedFile("./runtime.node.out.js");
-    pub const ProdSourceContentBun = @embedFile("./runtime.bun.out.js");
-    pub const ProdSourceContentWithRefresh = @embedFile("./runtime.out.refresh.js");
-
-    pub inline fn sourceContentWithoutRefresh() string {
-        if (comptime Environment.isDebug) {
-            const dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
-            var env = std.process.getEnvMap(default_allocator) catch unreachable;
-
-            const dir = std.mem.replaceOwned(
-                u8,
-                default_allocator,
-                dirpath,
-                "jarred",
-                env.get("USER").?,
-            ) catch unreachable;
-            const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.js" }) catch unreachable;
-            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
-                "Missing bun/src/runtime.out.js. " ++ "Please run \"make runtime_js_dev\"",
-                ProdSourceContent,
-            );
-            defer file.close();
-            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
-        } else {
-            return ProdSourceContent;
-        }
-    }
-
-    pub inline fn sourceContent(with_refresh: bool) string {
-        if (with_refresh) return sourceContentWithRefresh();
-        return sourceContentWithoutRefresh();
-    }
-
-    pub inline fn sourceContentNode() string {
-        return ProdSourceContentNode;
-    }
-
-    pub inline fn sourceContentBun() string {
-        return ProdSourceContentBun;
-    }
-
-    pub inline fn sourceContentWithRefresh() string {
-        if (comptime Environment.isDebug) {
-            const dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
-            var env = std.process.getEnvMap(default_allocator) catch unreachable;
-
-            const dir = std.mem.replaceOwned(
-                u8,
-                default_allocator,
-                dirpath,
-                "jarred",
-                env.get("USER").?,
-            ) catch unreachable;
-            const runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.refresh.js" }) catch unreachable;
-            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
-                "Missing bun/src/runtime.out.refresh.js. " ++ "Please run \"make runtime_js_dev\"",
-                ProdSourceContentWithRefresh,
-            );
-            defer file.close();
-            return file.readToEndAlloc(default_allocator, file.getEndPos() catch 0) catch unreachable;
-        } else {
-            return ProdSourceContentWithRefresh;
-        }
-    }
+    pub const source_code = @embedFile("./runtime.out.js");
 
     pub const version_hash = @import("build_options").runtime_js_version;
     var version_hash_int: u32 = 0;
@@ -313,7 +249,7 @@ pub const Runtime = struct {
 
         /// Use `import.meta.require()` instead of require()?
         /// This is only supported in Bun.
-        dynamic_require: bool = false,
+        use_import_meta_require: bool = false,
 
         replace_exports: ReplaceableExport.Map = .{},
 
@@ -331,7 +267,14 @@ pub const Runtime = struct {
 
         emit_decorator_metadata: bool = false,
 
+        /// If true and if the source is transpiled as cjs, don't wrap the module.
+        /// This is used for `--print` entry points so we can get the result.
+        remove_cjs_module_wrapper: bool = false,
+
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+
+        // TODO: make this a bitset of all unsupported features
+        lower_using: bool = true,
 
         const hash_fields_for_runtime_transpiler = .{
             .top_level_await,
@@ -345,10 +288,11 @@ pub const Runtime = struct {
             .set_breakpoint_on_first_line,
             .trim_unused_imports,
             .should_fold_typescript_constant_expressions,
-            .dynamic_require,
+            .use_import_meta_require,
             .dont_bundle_twice,
             .commonjs_at_runtime,
             .emit_decorator_metadata,
+            .lower_using,
 
             // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
         };
@@ -412,6 +356,8 @@ pub const Runtime = struct {
         __legacyDecorateParamTS: ?GeneratedSymbol = null,
         __legacyMetadataTS: ?GeneratedSymbol = null,
         @"$$typeof": ?GeneratedSymbol = null,
+        __using: ?GeneratedSymbol = null,
+        __callDispose: ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
             // __HMRClient goes first
@@ -436,6 +382,8 @@ pub const Runtime = struct {
             "__legacyDecorateParamTS",
             "__legacyMetadataTS",
             "$$typeof",
+            "__using",
+            "__callDispose",
         };
         const all_sorted: [all.len]string = brk: {
             @setEvalBranchQuota(1000000);
@@ -483,104 +431,9 @@ pub const Runtime = struct {
                     defer this.i += 1;
 
                     switch (this.i) {
-                        0 => {
-                            if (@field(this.runtime_imports, all[0])) |val| {
-                                return Entry{ .key = 0, .value = val.ref };
-                            }
-                        },
-                        1 => {
-                            if (@field(this.runtime_imports, all[1])) |val| {
-                                return Entry{ .key = 1, .value = val.ref };
-                            }
-                        },
-                        2 => {
-                            if (@field(this.runtime_imports, all[2])) |val| {
-                                return Entry{ .key = 2, .value = val.ref };
-                            }
-                        },
-                        3 => {
-                            if (@field(this.runtime_imports, all[3])) |val| {
-                                return Entry{ .key = 3, .value = val.ref };
-                            }
-                        },
-                        4 => {
-                            if (@field(this.runtime_imports, all[4])) |val| {
-                                return Entry{ .key = 4, .value = val.ref };
-                            }
-                        },
-                        5 => {
-                            if (@field(this.runtime_imports, all[5])) |val| {
-                                return Entry{ .key = 5, .value = val.ref };
-                            }
-                        },
-                        6 => {
-                            if (@field(this.runtime_imports, all[6])) |val| {
-                                return Entry{ .key = 6, .value = val.ref };
-                            }
-                        },
-                        7 => {
-                            if (@field(this.runtime_imports, all[7])) |val| {
-                                return Entry{ .key = 7, .value = val.ref };
-                            }
-                        },
-                        8 => {
-                            if (@field(this.runtime_imports, all[8])) |val| {
-                                return Entry{ .key = 8, .value = val.ref };
-                            }
-                        },
-                        9 => {
-                            if (@field(this.runtime_imports, all[9])) |val| {
-                                return Entry{ .key = 9, .value = val.ref };
-                            }
-                        },
-                        10 => {
-                            if (@field(this.runtime_imports, all[10])) |val| {
-                                return Entry{ .key = 10, .value = val.ref };
-                            }
-                        },
-                        11 => {
-                            if (@field(this.runtime_imports, all[11])) |val| {
-                                return Entry{ .key = 11, .value = val.ref };
-                            }
-                        },
-                        12 => {
-                            if (@field(this.runtime_imports, all[12])) |val| {
-                                return Entry{ .key = 12, .value = val.ref };
-                            }
-                        },
-                        13 => {
-                            if (@field(this.runtime_imports, all[13])) |val| {
-                                return Entry{ .key = 13, .value = val.ref };
-                            }
-                        },
-                        14 => {
-                            if (@field(this.runtime_imports, all[14])) |val| {
-                                return Entry{ .key = 14, .value = val.ref };
-                            }
-                        },
-                        15 => {
-                            if (@field(this.runtime_imports, all[15])) |val| {
-                                return Entry{ .key = 15, .value = val.ref };
-                            }
-                        },
-                        16 => {
-                            if (@field(this.runtime_imports, all[16])) |val| {
-                                return Entry{ .key = 16, .value = val.ref };
-                            }
-                        },
-                        17 => {
-                            if (@field(this.runtime_imports, all[17])) |val| {
-                                return Entry{ .key = 17, .value = val.ref };
-                            }
-                        },
-                        18 => {
-                            if (@field(this.runtime_imports, all[18])) |val| {
-                                return Entry{ .key = 18, .value = val.ref };
-                            }
-                        },
-                        19 => {
-                            if (@field(this.runtime_imports, all[19])) |val| {
-                                return Entry{ .key = 19, .value = val.ref };
+                        inline 0...21 => |t| {
+                            if (@field(this.runtime_imports, all[t])) |val| {
+                                return Entry{ .key = t, .value = val.ref };
                             }
                         },
                         else => {
@@ -627,26 +480,7 @@ pub const Runtime = struct {
             key: anytype,
         ) ?Ref {
             return switch (key) {
-                0 => (@field(imports, all[0]) orelse return null).ref,
-                1 => (@field(imports, all[1]) orelse return null).ref,
-                2 => (@field(imports, all[2]) orelse return null).ref,
-                3 => (@field(imports, all[3]) orelse return null).ref,
-                4 => (@field(imports, all[4]) orelse return null).ref,
-                5 => (@field(imports, all[5]) orelse return null).ref,
-                6 => (@field(imports, all[6]) orelse return null).ref,
-                7 => (@field(imports, all[7]) orelse return null).ref,
-                8 => (@field(imports, all[8]) orelse return null).ref,
-                9 => (@field(imports, all[9]) orelse return null).ref,
-                10 => (@field(imports, all[10]) orelse return null).ref,
-                11 => (@field(imports, all[11]) orelse return null).ref,
-                12 => (@field(imports, all[12]) orelse return null).ref,
-                13 => (@field(imports, all[13]) orelse return null).ref,
-                14 => (@field(imports, all[14]) orelse return null).ref,
-                15 => (@field(imports, all[15]) orelse return null).ref,
-                16 => (@field(imports, all[16]) orelse return null).ref,
-                17 => (@field(imports, all[17]) orelse return null).ref,
-                18 => (@field(imports, all[18]) orelse return null).ref,
-                19 => (@field(imports, all[19]) orelse return null).ref,
+                inline 0...21 => |t| (@field(imports, all[t]) orelse return null).ref,
                 else => null,
             };
         }

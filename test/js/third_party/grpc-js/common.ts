@@ -149,7 +149,10 @@ export enum ConnectivityState {
 export class MockSubchannel implements grpc.experimental.SubchannelInterface {
   private state: grpc.connectivityState;
   private listeners: Set<grpc.experimental.ConnectivityStateListener> = new Set();
-  constructor(private readonly address: string, initialState: grpc.connectivityState = grpc.connectivityState.IDLE) {
+  constructor(
+    private readonly address: string,
+    initialState: grpc.connectivityState = grpc.connectivityState.IDLE,
+  ) {
     this.state = initialState;
   }
   getConnectivityState(): grpc.connectivityState {

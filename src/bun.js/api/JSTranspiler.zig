@@ -147,7 +147,7 @@ pub const TransformTask = struct {
         const parse_options = Bundler.Bundler.ParseOptions{
             .allocator = allocator,
             .macro_remappings = this.macro_map,
-            .dirname_fd = 0,
+            .dirname_fd = .zero,
             .file_descriptor = null,
             .loader = this.loader,
             .jsx = jsx,
@@ -467,7 +467,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     }
 
     transpiler.runtime.allow_runtime = false;
-    transpiler.runtime.dynamic_require = switch (transpiler.transform.target orelse .browser) {
+    transpiler.runtime.use_import_meta_require = switch (transpiler.transform.target orelse .browser) {
         .bun, .bun_macro => true,
         else => false,
     };
@@ -868,7 +868,7 @@ fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const
     const parse_options = Bundler.Bundler.ParseOptions{
         .allocator = allocator,
         .macro_remappings = this.transpiler_options.macro_map,
-        .dirname_fd = 0,
+        .dirname_fd = .zero,
         .file_descriptor = null,
         .loader = loader orelse this.transpiler_options.default_loader,
         .jsx = jsx,
@@ -1196,7 +1196,7 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
     });
     var i: usize = 0;
     while (named_exports_iter.next()) |entry| {
-        names[i] = bun.String.create(entry.key_ptr.*);
+        names[i] = bun.String.createUTF8(entry.key_ptr.*);
         i += 1;
     }
     return bun.String.toJSArray(global, names);

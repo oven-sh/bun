@@ -98,11 +98,9 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                 break :brk i;
             };
 
-            comptime var i = len_indexes[len];
-
             // This benchmarked faster for both small and large lists of strings than using a big switch statement
             // But only so long as the keys are a sorted list.
-            inline while (i < end) : (i += 1) {
+            inline for (len_indexes[len]..end) |i| {
                 if (strings.eqlComptimeCheckLenWithType(KeyType, str, kvs[i].key, false)) {
                     return kvs[i].value;
                 }
@@ -121,11 +119,9 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                 break :brk i;
             };
 
-            comptime var i = len_indexes[len];
-
             // This benchmarked faster for both small and large lists of strings than using a big switch statement
             // But only so long as the keys are a sorted list.
-            inline while (i < end) : (i += 1) {
+            inline for (len_indexes[len]..end) |i| {
                 if (eqls(str, kvs[i].key)) {
                     return kvs[i].value;
                 }
@@ -176,6 +172,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             }
 
             const str = @import("root").bun.String.tryFromJS(input, globalThis) orelse return null;
+            defer str.deref();
             return getWithEql(str, @import("root").bun.String.eqlComptime);
         }
 
@@ -188,6 +185,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             }
 
             const str = @import("root").bun.String.tryFromJS(input, globalThis) orelse return null;
+            defer str.deref();
             return str.inMapCaseInsensitive(@This());
         }
 
@@ -475,19 +473,17 @@ pub fn compareString(input: []const u8) !void {
 
     std.debug.print("For string: \"{s}\" (has a match? {d})\n", .{ str, @intFromBool(TestEnum2.map.has(str)) });
 
-    var i: usize = 0;
     var is_eql = false;
     var timer = try std.time.Timer.start();
 
-    while (i < 99999999) : (i += 1) {
+    for (0..99999999) |_| {
         is_eql = @call(.never_inline, TestEnum2.map.has, .{str});
     }
     const new = timer.lap();
 
     std.debug.print("- new {}\n", .{std.fmt.fmtDuration(new)});
 
-    i = 0;
-    while (i < 99999999) : (i += 1) {
+    for (0..99999999) |_| {
         is_eql = @call(.never_inline, TestEnum2.official.has, .{str});
     }
 

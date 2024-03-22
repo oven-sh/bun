@@ -101,8 +101,8 @@ pub const URL = struct {
         return "localhost";
     }
 
-    pub fn displayHost(this: *const URL) strings.HostFormatter {
-        return strings.HostFormatter{
+    pub fn displayHost(this: *const URL) bun.fmt.HostFormatter {
+        return bun.fmt.HostFormatter{
             .host = if (this.host.len > 0) this.host else this.displayHostname(),
             .port = if (this.port.len > 0) this.getPort() else null,
             .is_https = this.isHTTPS(),
@@ -322,9 +322,8 @@ pub const URL = struct {
     }
 
     pub fn parseProtocol(url: *URL, str: string) ?u31 {
-        var i: u31 = 0;
         if (str.len < "://".len) return null;
-        while (i < str.len) : (i += 1) {
+        for (0..str.len) |i| {
             switch (str[i]) {
                 '/', '?', '%' => {
                     return null;
@@ -332,7 +331,7 @@ pub const URL = struct {
                 ':' => {
                     if (i + 3 <= str.len and str[i + 1] == '/' and str[i + 2] == '/') {
                         url.protocol = str[0..i];
-                        return i + 3;
+                        return @intCast(i + 3);
                     }
                 },
                 else => {},
@@ -343,19 +342,16 @@ pub const URL = struct {
     }
 
     pub fn parseUsername(url: *URL, str: string) ?u31 {
-        var i: u31 = 0;
-
         // reset it
         url.username = "";
 
         if (str.len < "@".len) return null;
-
-        while (i < str.len) : (i += 1) {
+        for (0..str.len) |i| {
             switch (str[i]) {
                 ':', '@' => {
                     // we found a username, everything before this point in the slice is a username
                     url.username = str[0..i];
-                    return i + 1;
+                    return @intCast(i + 1);
                 },
                 // if we reach a slash or "?", there's no username
                 '?', '/' => {
@@ -368,20 +364,17 @@ pub const URL = struct {
     }
 
     pub fn parsePassword(url: *URL, str: string) ?u31 {
-        var i: u31 = 0;
-
         // reset it
         url.password = "";
 
         if (str.len < "@".len) return null;
-
-        while (i < str.len) : (i += 1) {
+        for (0..str.len) |i| {
             switch (str[i]) {
                 '@' => {
                     // we found a password, everything before this point in the slice is a password
                     url.password = str[0..i];
                     if (Environment.allow_assert) std.debug.assert(str[i..].len < 2 or std.mem.readInt(u16, str[i..][0..2], .little) != std.mem.readInt(u16, "//", .little));
-                    return i + 1;
+                    return @intCast(i + 1);
                 },
                 // if we reach a slash or "?", there's no password
                 '?', '/' => {
@@ -569,7 +562,7 @@ pub const QueryStringMap = struct {
     pub fn getAll(this: *const QueryStringMap, input: string, target: []string) usize {
         const hash = bun.hash(input);
         const _slice = this.list.slice();
-        return @call(.always_inline, getAllWithHashFromOffset, .{ this, target, hash, 0, _slice });
+        return @call(bun.callmod_inline, getAllWithHashFromOffset, .{ this, target, hash, 0, _slice });
     }
 
     pub fn getAllWithHashFromOffset(this: *const QueryStringMap, target: []string, hash: u64, offset: usize, _slice: Param.List.Slice) usize {
@@ -802,7 +795,7 @@ pub const QueryStringMap = struct {
 
 pub const PercentEncoding = struct {
     pub fn decode(comptime Writer: type, writer: Writer, input: string) !u32 {
-        return @call(.always_inline, decodeFaultTolerant, .{ Writer, writer, input, null, false });
+        return @call(bun.callmod_inline, decodeFaultTolerant, .{ Writer, writer, input, null, false });
     }
 
     pub fn decodeFaultTolerant(

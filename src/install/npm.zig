@@ -368,6 +368,41 @@ pub const OperatingSystem = enum(u16) {
     }
 };
 
+pub const Libc = enum(u8) {
+    none = 0,
+    _,
+
+    pub const glibc: u8 = 1 << 1;
+    pub const musl: u8 = 1 << 2;
+
+    pub const NameMap = ComptimeStringMap(u8, .{
+        .{ "glibc", glibc },
+        .{ "musl", musl },
+    });
+
+    pub inline fn has(this: Libc, other: u8) bool {
+        return (@intFromEnum(this) & other) != 0;
+    }
+
+    pub fn apply(this_: Libc, str: []const u8) Libc {
+        if (str.len == 0) {
+            return this_;
+        }
+        const this = @intFromEnum(this_);
+
+        const is_not = str[0] == '!';
+        const offset: usize = if (str[0] == '!') 1 else 0;
+
+        const field: u8 = NameMap.get(str[offset..]) orelse return this_;
+
+        if (is_not) {
+            return @as(Libc, @enumFromInt(this & ~field));
+        } else {
+            return @as(Libc, @enumFromInt(this | field));
+        }
+    }
+};
+
 /// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#cpu
 /// https://nodejs.org/api/os.html#osarch
 pub const Architecture = enum(u16) {
@@ -483,13 +518,18 @@ pub const PackageVersion = extern struct {
     /// `"cpu"` field in package.json
     cpu: Architecture = Architecture.all,
 
-    pub fn verify(this: *const PackageVersion) void {
-        if (comptime !Environment.allow_assert)
-            return;
+    /// `"libc"` field in package.json, not exposed in npm registry api yet.
+    libc: Libc = Libc.none,
 
-        this.man_dir.value.assertDefined();
-    }
+    /// `hasInstallScript` field in registry API.
+    has_install_script: bool = false,
 };
+
+comptime {
+    if (@sizeOf(Npm.PackageVersion) != 224) {
+        @compileError(std.fmt.comptimePrint("Npm.PackageVersion has unexpected size {d}", .{@sizeOf(Npm.PackageVersion)}));
+    }
+}
 
 pub const NpmPackage = extern struct {
     /// HTTP response headers
@@ -522,23 +562,6 @@ pub const PackageManifest = struct {
     package_versions: []const PackageVersion = &[_]PackageVersion{},
     extern_strings_bin_entries: []const ExternalString = &[_]ExternalString{},
 
-    pub fn verify(this: *const PackageManifest) void {
-        if (comptime !Environment.allow_assert)
-            return;
-
-        for (this.extern_strings_bin_entries) |*entry| {
-            entry.value.assertDefined();
-        }
-
-        for (this.external_strings_for_versions) |entry| {
-            entry.value.assertDefined();
-        }
-
-        for (this.package_versions) |package| {
-            package.tarball_url.value.assertDefined();
-        }
-    }
-
     pub inline fn name(this: *const PackageManifest) string {
         return this.pkg.name.slice(this.string_buf);
     }
@@ -565,13 +588,11 @@ pub const PackageManifest = struct {
                 };
             }
             const Sort = struct {
-                fn lessThan(trash: *i32, lhs: Data, rhs: Data) bool {
-                    _ = trash;
+                fn lessThan(_: void, lhs: Data, rhs: Data) bool {
                     return lhs.alignment > rhs.alignment;
                 }
             };
-            var trash: i32 = undefined; // workaround for stage1 compiler bug
-            std.sort.pdq(Data, &data, &trash, Sort.lessThan);
+            std.sort.pdq(Data, &data, {}, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var names: [fields.len][]const u8 = undefined;
             for (data, 0..) |elem, i| {
@@ -646,7 +667,7 @@ pub const PackageManifest = struct {
         }
 
         pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
-            const file_id = bun.Wyhash.hash(0, this.name());
+            const file_id = bun.Wyhash11.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
             var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
@@ -663,7 +684,7 @@ pub const PackageManifest = struct {
         }
 
         pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
-            const file_id = bun.Wyhash.hash(0, package_name);
+            const file_id = bun.Wyhash11.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
             const hex_fmt = bun.fmt.hexIntLower(file_id);
             const file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
@@ -715,8 +736,6 @@ pub const PackageManifest = struct {
                     );
                 }
             }
-
-            package_manifest.verify();
 
             return package_manifest;
         }
@@ -1189,6 +1208,37 @@ pub const PackageManifest = struct {
                         }
                     }
 
+                    if (prop.value.?.asProperty("libc")) |libc| {
+                        package_version.libc = Libc.none;
+
+                        switch (libc.expr.data) {
+                            .e_array => |arr| {
+                                const items = arr.slice();
+                                if (items.len > 0) {
+                                    package_version.libc = Libc.none;
+                                    for (items) |item| {
+                                        if (item.asString(allocator)) |libc_str_| {
+                                            package_version.libc = package_version.libc.apply(libc_str_);
+                                        }
+                                    }
+                                }
+                            },
+                            .e_string => |stri| {
+                                package_version.libc = Libc.apply(.none, stri.data);
+                            },
+                            else => {},
+                        }
+                    }
+
+                    if (prop.value.?.asProperty("hasInstallScript")) |has_install_script| {
+                        switch (has_install_script.expr.data) {
+                            .e_boolean => |val| {
+                                package_version.has_install_script = val.value;
+                            },
+                            else => {},
+                        }
+                    }
+
                     bin: {
                         // bins are extremely repetitive
                         // We try to avoid storing copies the string
@@ -1354,8 +1404,8 @@ pub const PackageManifest = struct {
                                 var this_names = dependency_names[0..count];
                                 var this_versions = dependency_values[0..count];
 
-                                var name_hasher = bun.Wyhash.init(0);
-                                var version_hasher = bun.Wyhash.init(0);
+                                var name_hasher = bun.Wyhash11.init(0);
+                                var version_hasher = bun.Wyhash11.init(0);
 
                                 const is_peer = comptime strings.eqlComptime(pair.prop, "peerDependencies");
 
@@ -1519,12 +1569,12 @@ pub const PackageManifest = struct {
                     }
 
                     if (!parsed_version.version.tag.hasPre()) {
-                        release_versions[0] = parsed_version.version.fill();
+                        release_versions[0] = parsed_version.version.min();
                         versioned_package_releases[0] = package_version;
                         release_versions = release_versions[1..];
                         versioned_package_releases = versioned_package_releases[1..];
                     } else {
-                        prerelease_versions[0] = parsed_version.version.fill();
+                        prerelease_versions[0] = parsed_version.version.min();
                         versioned_package_prereleases[0] = package_version;
                         prerelease_versions = prerelease_versions[1..];
                         versioned_package_prereleases = versioned_package_prereleases[1..];
@@ -1552,7 +1602,7 @@ pub const PackageManifest = struct {
 
                         const sliced_string = dist_tag_value_literal.value.sliced(string_buf);
 
-                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string).version.fill();
+                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string).version.min();
                         dist_tag_i += 1;
                     }
                 }

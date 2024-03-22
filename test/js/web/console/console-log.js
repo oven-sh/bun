@@ -53,6 +53,8 @@ console.log("Is it a bug or a feature that formatting numbers like %d is colored
 
 console.log("String %s should be 2nd word, 456 == %s and percent s %s == %s", "123", "456", "%s", "What", "okay");
 
+console.log("%s%s without space should work", "123", "456");
+
 const infinteLoop = {
   foo: {
     name: "baz",
@@ -171,3 +173,36 @@ console.log(hole([1, 2, 3], 0));
 
 // TODO: handle DerivedArray
 // It appears to not be set and I don't know why.
+
+console.log({ "": "" });
+
+{
+  // proxy
+  const proxy = Proxy.revocable(
+    { hello: 2 },
+    {
+      get(target, prop, receiver) {
+        console.log("FAILED: GET", prop);
+        return Reflect.get(target, prop, receiver);
+      },
+      set(target, prop, value, receiver) {
+        console.log("FAILED: SET", prop, value);
+        return Reflect.set(target, prop, value, receiver);
+      },
+    },
+  );
+  console.log(proxy.proxy);
+  proxy.revoke();
+  console.log(proxy.proxy);
+}
+
+{
+  // proxy custom inspect
+  const proxy = new Proxy(
+    {
+      [Bun.inspect.custom]: () => "custom inspect",
+    },
+    {},
+  );
+  console.log(proxy);
+}

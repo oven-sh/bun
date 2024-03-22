@@ -1,3 +1,4 @@
+#pragma once
 /*
  * Authored by Alex Hultman, 2018-2020.
  * Intellectual property of third-party.
@@ -574,13 +575,13 @@ public:
 
     /* options, callback, path to unix domain socket */
     TemplatedApp &&listen(int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string path) {
-        handler(httpContext ? httpContext->listen(path.c_str(), options) : nullptr);
+        handler(httpContext ? httpContext->listen_unix(path.data(), path.length(), options) : nullptr);
         return std::move(*this);
     }
 
     /* callback, path to unix domain socket */
-    TemplatedApp &&listen(MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string path) {
-        handler(httpContext ? httpContext->listen(path.c_str(), 0) : nullptr);
+    TemplatedApp &&listen(MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string path, int options) {
+        handler(httpContext ? httpContext->listen_unix(path.data(), path.length(), options) : nullptr);
         return std::move(*this);
     }
 

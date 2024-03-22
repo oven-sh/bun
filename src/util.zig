@@ -30,10 +30,8 @@ pub fn fromEntries(
             try map.ensureUnusedCapacity(allocator, entries.len);
         }
 
-        comptime var i: usize = 0;
-
-        inline while (i < std.meta.fields(EntryType).len) : (i += 1) {
-            map.putAssumeCapacity(entries[i].@"0", entries[i].@"1");
+        inline for (entries) |entry| {
+            map.putAssumeCapacity(entry[0], entry[1]);
         }
 
         return map;
@@ -47,7 +45,7 @@ pub fn fromEntries(
         if (comptime @hasDecl(EntryType, "iterator")) {
             var iter = entries.iterator();
             while (iter.next()) |entry| {
-                map.putAssumeCapacity(entry.@"0", entry.@"1");
+                map.putAssumeCapacity(entry[0], entry[1]);
             }
 
             return map;
@@ -60,7 +58,7 @@ pub fn fromEntries(
         }
 
         inline for (comptime std.meta.fieldNames(@TypeOf(EntryType))) |entry| {
-            map.putAssumeCapacity(entry.@"0", entry.@"1");
+            map.putAssumeCapacity(entry[0], entry[1]);
         }
 
         return map;
@@ -71,10 +69,8 @@ pub fn fromEntries(
             try map.ensureUnusedCapacity(allocator, std.meta.fields(std.meta.Child(EntryType)).len);
         }
 
-        comptime var i: usize = 0;
-
-        inline while (i < std.meta.fields(std.meta.Child(EntryType)).len) : (i += 1) {
-            map.putAssumeCapacity(entries.*[i].@"0", entries.*[i].@"1");
+        inline for (entries) |entry| {
+            map.putAssumeCapacity(entry[0], entry[1]);
         }
 
         return map;

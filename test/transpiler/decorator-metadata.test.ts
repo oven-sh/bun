@@ -458,8 +458,8 @@ describe("decorator metadata", () => {
         p5: readonly [number, string],
         // prettier-ignore
         p6: (string | string),
-        // prettier-ignore
-        p7: (string & string),
+        // prettier-ignoreormat ignore
+        p7: string & string,
         p8: boolean extends true ? "a" : "b",
         // @ts-ignore
         p9: Loser extends Loser ? string : Foo,

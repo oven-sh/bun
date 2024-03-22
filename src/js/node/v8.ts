@@ -1,6 +1,6 @@
 // Hardcoded module "node:v8"
 // This is a stub! None of this is actually implemented yet.
-const { hideFromStack, throwNotImplemented } = require("$shared");
+const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
 
 function notimpl(message) {

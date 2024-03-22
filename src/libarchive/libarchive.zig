@@ -375,12 +375,12 @@ pub const Archive = struct {
         contents: MutableString,
         filename_hash: u64 = 0,
         found: bool = false,
-        fd: FileDescriptorType = 0,
+        fd: FileDescriptorType = .zero,
         pub fn init(filepath: string, estimated_size: usize, allocator: std.mem.Allocator) !Plucker {
             return Plucker{
                 .contents = try MutableString.init(allocator, estimated_size),
                 .filename_hash = bun.hash(filepath),
-                .fd = 0,
+                .fd = .zero,
                 .found = false,
             };
         }
@@ -471,7 +471,7 @@ pub const Archive = struct {
 
     pub fn extractToDir(
         file_buffer: []const u8,
-        dir_: std.fs.Dir,
+        dir: std.fs.Dir,
         ctx: ?*Archive.Context,
         comptime ContextType: type,
         appender: ContextType,
@@ -479,10 +479,6 @@ pub const Archive = struct {
         comptime close_handles: bool,
         comptime log: bool,
     ) !u32 {
-        if (Environment.isWindows) {
-            @panic("TODO: sort out the file descriptor issues here.");
-        }
-
         var entry: *lib.archive_entry = undefined;
 
         var stream: BufferReadStream = undefined;
@@ -491,8 +487,9 @@ pub const Archive = struct {
         _ = stream.openRead();
         const archive = stream.archive;
         var count: u32 = 0;
-        const dir = dir_;
         const dir_fd = dir.fd;
+
+        var w_path_buf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
 
         loop: while (true) {
             const r = @as(Status, @enumFromInt(lib.archive_read_next_header(archive, &entry)));
@@ -502,15 +499,40 @@ pub const Archive = struct {
                 Status.retry => continue :loop,
                 Status.failed, Status.fatal => return error.Fail,
                 else => {
-                    var pathname: [:0]const u8 = bun.sliceTo(lib.archive_entry_pathname(entry).?, 0);
+                    // TODO:
+                    // Due to path separator replacement and other copies that happen internally, libarchive changes the
+                    // storage type of paths on windows to wide character strings. Using `archive_entry_pathname` or `archive_entry_pathname_utf8`
+                    // on an wide character string will return null if there are non-ascii characters.
+                    // (this can be seen by installing @fastify/send, which has a path "@fastify\send\test\fixtures\snow ☃")
+                    //
+                    // Ideally, we find a way to tell libarchive to not convert the strings to wide characters and also to not
+                    // replace path separators. We can do both of these with our own normalization and utf8/utf16 string conversion code.
+                    var pathname: bun.OSPathSliceZ = if (comptime Environment.isWindows) brk: {
+                        const normalized = bun.path.normalizeBufT(
+                            u16,
+                            std.mem.span(lib.archive_entry_pathname_w(entry)),
+                            &w_path_buf,
+                            .windows,
+                        );
+                        w_path_buf[normalized.len] = 0;
+                        break :brk w_path_buf[0..normalized.len :0];
+                    } else std.mem.sliceTo(lib.archive_entry_pathname(entry), 0);
 
                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
                         if (appender.needs_first_dirname) {
-                            appender.onFirstDirectoryName(strings.withoutTrailingSlash(bun.asByteSlice(pathname)));
+                            if (comptime Environment.isWindows) {
+                                const list = std.ArrayList(u8).init(default_allocator);
+                                var result = try strings.toUTF8ListWithType(list, []const u16, pathname[0..pathname.len]);
+                                // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
+                                defer result.deinit();
+                                appender.onFirstDirectoryName(strings.withoutTrailingSlash(result.items));
+                            } else {
+                                appender.onFirstDirectoryName(strings.withoutTrailingSlash(bun.asByteSlice(pathname)));
+                            }
                         }
                     }
 
-                    var tokenizer = std.mem.tokenize(u8, bun.asByteSlice(pathname), std.fs.path.sep_str);
+                    var tokenizer = std.mem.tokenizeScalar(bun.OSPathChar, pathname, std.fs.path.sep);
                     comptime var depth_i: usize = 0;
 
                     inline while (depth_i < depth_to_skip) : (depth_i += 1) {
@@ -518,15 +540,15 @@ pub const Archive = struct {
                     }
 
                     const pathname_ = tokenizer.rest();
-                    pathname = @as([*]const u8, @ptrFromInt(@intFromPtr(pathname_.ptr)))[0..pathname_.len :0];
+                    pathname = @as([*]const bun.OSPathChar, @ptrFromInt(@intFromPtr(pathname_.ptr)))[0..pathname_.len :0];
                     if (pathname.len == 0) continue;
 
                     const kind = C.kindFromMode(lib.archive_entry_filetype(entry));
 
-                    const slice = bun.asByteSlice(pathname);
+                    const path_slice: bun.OSPathSlice = pathname.ptr[0..pathname.len];
 
                     if (comptime log) {
-                        Output.prettyln(" {s}", .{pathname});
+                        Output.prettyln(" {}", .{bun.fmt.fmtOSPath(path_slice, .{})});
                     }
 
                     count += 1;
@@ -545,15 +567,15 @@ pub const Archive = struct {
                                 mode |= 0o1;
 
                             if (comptime Environment.isWindows) {
-                                std.os.mkdirat(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
+                                std.os.mkdiratW(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
                                     if (err == error.PathAlreadyExists or err == error.NotDir) break;
-                                    try bun.makePath(dir, std.fs.path.dirname(slice) orelse return err);
-                                    try std.os.mkdirat(dir_fd, pathname, 0o777);
+                                    try bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return err);
+                                    try std.os.mkdiratW(dir_fd, pathname, 0o777);
                                 };
                             } else {
                                 std.os.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
                                     if (err == error.PathAlreadyExists or err == error.NotDir) break;
-                                    try bun.makePath(dir, std.fs.path.dirname(slice) orelse return err);
+                                    try bun.makePath(dir, std.fs.path.dirname(path_slice) orelse return err);
                                     try std.os.mkdiratZ(dir_fd, pathname, 0o777);
                                 };
                             }
@@ -561,12 +583,12 @@ pub const Archive = struct {
                         Kind.sym_link => {
                             const link_target = lib.archive_entry_symlink(entry).?;
                             if (comptime Environment.isWindows) {
-                                @panic("TODO on Windows");
+                                @panic("TODO on Windows: Extracting archives containing symbolic links.");
                             }
                             std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
                                 switch (err) {
                                     error.AccessDenied, error.FileNotFound => {
-                                        dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
+                                        dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
                                         break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
                                     },
                                     else => {
@@ -576,36 +598,72 @@ pub const Archive = struct {
                             };
                         },
                         Kind.file => {
-                            const mode = @as(std.os.mode_t, @intCast(lib.archive_entry_perm(entry)));
-                            const file = dir.createFileZ(pathname, .{ .truncate = true, .mode = mode }) catch |err| brk: {
-                                switch (err) {
-                                    error.AccessDenied, error.FileNotFound => {
-                                        dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
-                                        break :brk try dir.createFileZ(pathname, .{
-                                            .truncate = true,
-                                            .mode = mode,
-                                        });
-                                    },
-                                    else => {
-                                        return err;
-                                    },
+                            const mode: bun.Mode = if (comptime Environment.isWindows) 0 else @intCast(lib.archive_entry_perm(entry));
+
+                            const file_handle_native = brk: {
+                                if (Environment.isWindows) {
+                                    const flags = std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC;
+                                    switch (bun.sys.openatWindows(bun.toFD(dir_fd), pathname, flags)) {
+                                        .result => |fd| break :brk fd,
+                                        .err => |e| switch (e.errno) {
+                                            @intFromEnum(bun.C.E.PERM), @intFromEnum(bun.C.E.NOENT) => {
+                                                bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
+                                                break :brk try bun.sys.openatWindows(bun.toFD(dir_fd), pathname, flags).unwrap();
+                                            },
+                                            else => {
+                                                return bun.errnoToZigErr(e.errno);
+                                            },
+                                        },
+                                    }
+                                } else {
+                                    break :brk (dir.createFileZ(pathname, .{ .truncate = true, .mode = mode }) catch |err| {
+                                        switch (err) {
+                                            error.AccessDenied, error.FileNotFound => {
+                                                dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
+                                                break :brk (try dir.createFileZ(pathname, .{
+                                                    .truncate = true,
+                                                    .mode = mode,
+                                                })).handle;
+                                            },
+                                            else => {
+                                                return err;
+                                            },
+                                        }
+                                    }).handle;
                                 }
                             };
-                            defer if (comptime close_handles) file.close();
+                            const file_handle = bun.toLibUVOwnedFD(file_handle_native);
+
+                            defer if (comptime close_handles) {
+                                // On windows, AV hangs these closes really badly.
+                                // 'bun i @mui/icons-material' takes like 20 seconds to extract
+                                // mostly spend on waiting for things to close closing
+                                //
+                                // Using Async.Closer defers closing the file to a different thread,
+                                // which can make the NtSetInformationFile call fail.
+                                //
+                                // Using async closing doesnt actually improve end user performance
+                                // probably because our process is still waiting on AV to do it's thing.
+                                //
+                                // But this approach does not actually solve the problem, it just
+                                // defers the close to a different thread. And since we are already
+                                // on a worker thread, that doesn't help us.
+                                _ = bun.sys.close(file_handle);
+                            };
 
                             const entry_size = @max(lib.archive_entry_size(entry), 0);
                             const size = @as(usize, @intCast(entry_size));
                             if (size > 0) {
                                 if (ctx) |ctx_| {
                                     const hash: u64 = if (ctx_.pluckers.len > 0)
-                                        bun.hash(slice)
+                                        bun.hash(std.mem.sliceAsBytes(path_slice))
                                     else
                                         @as(u64, 0);
 
                                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "appendMutable")) {
                                         const result = ctx.?.all_files.getOrPutAdapted(hash, Context.U64Context{}) catch unreachable;
                                         if (!result.found_existing) {
-                                            result.value_ptr.* = (try appender.appendMutable(@TypeOf(slice), slice)).ptr;
+                                            result.value_ptr.* = (try appender.appendMutable(@TypeOf(path_slice), path_slice)).ptr;
                                         }
                                     }
 
@@ -616,35 +674,44 @@ pub const Archive = struct {
                                             const read = lib.archive_read_data(archive, plucker_.contents.list.items.ptr, size);
                                             try plucker_.contents.inflate(@as(usize, @intCast(read)));
                                             plucker_.found = read > 0;
-                                            plucker_.fd = bun.toFD(file.handle);
+                                            plucker_.fd = file_handle;
                                             continue :loop;
                                         }
                                     }
                                 }
                                 // archive_read_data_into_fd reads in chunks of 1 MB
                                 // #define	MAX_WRITE	(1024 * 1024)
-                                if (size > 1_000_000) {
-                                    C.preallocate_file(
-                                        file.handle,
-                                        0,
-                                        entry_size,
-                                    ) catch {};
+                                if (comptime Environment.isLinux) {
+                                    if (size > 1_000_000) {
+                                        C.preallocate_file(
+                                            file_handle.cast(),
+                                            0,
+                                            entry_size,
+                                        ) catch {};
+                                    }
                                 }
 
                                 var retries_remaining: u8 = 5;
                                 possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
-                                    switch (lib.archive_read_data_into_fd(archive, bun.uvfdcast(file.handle))) {
+                                    switch (lib.archive_read_data_into_fd(archive, bun.uvfdcast(file_handle))) {
                                         lib.ARCHIVE_EOF => break :loop,
                                         lib.ARCHIVE_OK => break :possibly_retry,
                                         lib.ARCHIVE_RETRY => {
                                             if (comptime log) {
-                                                Output.prettyErrorln("[libarchive] Error extracting {s}, retry {d} / {d}", .{ pathname_, retries_remaining, 5 });
+                                                Output.err("libarchive error", "extracting {}, retry {d} / {d}", .{
+                                                    bun.fmt.fmtOSPath(path_slice, .{}),
+                                                    retries_remaining,
+                                                    5,
+                                                });
                                             }
                                         },
                                         else => {
                                             if (comptime log) {
                                                 const archive_error = std.mem.span(lib.archive_error_string(archive));
-                                                Output.prettyErrorln("[libarchive] Error extracting {s}: {s}", .{ pathname_, archive_error });
+                                                Output.err("libarchive error", "extracting {}: {s}", .{
+                                                    bun.fmt.fmtOSPath(path_slice, .{}),
+                                                    archive_error,
+                                                });
                                             }
                                             return error.Fail;
                                         },

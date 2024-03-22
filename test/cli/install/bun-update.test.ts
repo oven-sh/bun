@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env } from "harness";
+import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
 import { readFile, access, mkdir, readlink, realpath, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import {
@@ -20,6 +20,11 @@ beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
+
+expect.extend({
+  toBeValidBin,
+  toHaveBins,
+});
 
 it("should update to latest version of dependency", async () => {
   const urls: string[] = [];
@@ -53,7 +58,7 @@ it("should update to latest version of dependency", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -74,8 +79,8 @@ it("should update to latest version of dependency", async () => {
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-run"]);
-  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "baz", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
@@ -97,7 +102,7 @@ it("should update to latest version of dependency", async () => {
   } = spawn({
     cmd: [bunExe(), "update", "baz"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -119,8 +124,8 @@ it("should update to latest version of dependency", async () => {
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);
   expect(requested).toBe(4);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-exec"]);
-  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-exec"))).toBe(join("..", "baz", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-exec"]);
+  expect(join(package_dir, "node_modules", ".bin", "baz-exec")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
@@ -166,7 +171,7 @@ it("should update to latest versions of dependencies", async () => {
   } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -193,8 +198,8 @@ it("should update to latest versions of dependencies", async () => {
   ]);
   expect(requested).toBe(4);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "baz"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-run"]);
-  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "baz", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
+  expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
@@ -218,7 +223,7 @@ it("should update to latest versions of dependencies", async () => {
   } = spawn({
     cmd: [bunExe(), "update"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -245,8 +250,8 @@ it("should update to latest versions of dependencies", async () => {
   ]);
   expect(requested).toBe(8);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "@barn", "baz"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-exec"]);
-  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-exec"))).toBe(join("..", "baz", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-exec"]);
+  expect(join(package_dir, "node_modules", ".bin", "baz-exec")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
@@ -284,7 +289,7 @@ it("lockfile should not be modified when there are no version changes, issue#588
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -307,7 +312,7 @@ it("lockfile should not be modified when there are no version changes, issue#588
     const { exited } = spawn({
       cmd: [bunExe(), "update"],
       cwd: package_dir, // package.json is not changed
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,

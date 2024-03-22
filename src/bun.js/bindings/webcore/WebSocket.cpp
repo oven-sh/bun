@@ -442,8 +442,15 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (this->m_upgradeClient == nullptr) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-        this->decPendingActivityCount();
-        return Exception { SyntaxError, "WebSocket connection failed"_s };
+
+        context.postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            ASSERT(scriptExecutionContext());
+            protectedThis->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+            protectedThis->dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
+            protectedThis->decPendingActivityCount();
+        });
+
+        return {};
     }
 
     m_state = CONNECTING;
@@ -496,6 +503,7 @@ ExceptionOr<void> WebSocket::send(ArrayBuffer& binaryData)
     }
     char* data = static_cast<char*>(binaryData.data());
     size_t length = binaryData.byteLength();
+
     this->sendWebSocketData(data, length, Opcode::Binary);
 
     return {};

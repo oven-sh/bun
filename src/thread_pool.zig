@@ -228,7 +228,7 @@ pub fn ConcurrentFunction(
 
             pub fn callback(task: *Task) void {
                 const routine = @fieldParentPtr(@This(), "task", task);
-                @call(.always_inline, Fn, routine.args);
+                @call(bun.callmod_inline, Fn, routine.args);
             }
         };
 
@@ -1202,8 +1202,7 @@ pub const Node = struct {
                 // Copy the nodes we will steal from the target's array to our own.
                 // Atomically load from the target buffer array as it may be pushing and atomically storing to it.
                 // Atomic store to our array as other steal() threads may be atomically loading from it as above.
-                var i: Index = 0;
-                while (i < steal_size) : (i += 1) {
+                for (0..steal_size) |i| {
                     const node = buffer.array[(buffer_head +% i) % capacity].load(.Unordered);
                     self.array[(tail +% i) % capacity].store(node, .Unordered);
                 }

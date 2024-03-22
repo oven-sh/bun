@@ -1049,7 +1049,7 @@ describe("bundler", () => {
       ]);
     },
   });
-  itBundled("ts/ExportType*", {
+  itBundled("ts/ExportTypeSTAR", {
     files: {
       "/entry.ts": /* ts */ `
         export type * as Foo from "foo";

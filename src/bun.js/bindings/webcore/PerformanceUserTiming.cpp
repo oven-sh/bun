@@ -184,6 +184,7 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(const String
         return measure.releaseException();
 
     addPerformanceEntry(m_measuresMap, measureName, measure.returnValue().get());
+    m_measureCounter += 1;
     return measure.releaseReturnValue();
 }
 

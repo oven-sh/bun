@@ -21,6 +21,19 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+const todoOnWindows = process.platform === "win32" ? test.todo : test;
+
+if (typeof Bun !== "undefined") {
+  const aggressiveGC = Bun.unsafe.gcAggressionLevel();
+  beforeAll(() => {
+    Bun.unsafe.gcAggressionLevel(0);
+  });
+
+  afterAll(() => {
+    Bun.unsafe.gcAggressionLevel(aggressiveGC);
+  });
+}
+
 describe("v8 date parser", () => {
   // https://github.com/v8/v8/blob/c45b7804109ece574f71fd45417b4ad498a99e6f/test/webkit/date-parse-comments-test.js#L27
   test("test/webkit/date-parse-comments-test.js", () => {
@@ -437,7 +450,8 @@ describe("v8 date parser", () => {
   });
 
   // https://github.com/v8/v8/blob/c45b7804109ece574f71fd45417b4ad498a99e6f/test/intl/regress-1451943.js#L5
-  test("test/intl/regress-1451943.js", () => {
+  // TODO: fix this on windows, see https://github.com/v8/v8/commit/8cf4ef33389eb4f47b37ffede388dbdcce16e1ee#diff-9adde1d14b1ec0068b077d06b5dadf0aae9717f63c809263604f9853d27d11db
+  todoOnWindows("test/intl/regress-1451943.js", () => {
     let beforeOct1582GregorianTransition = new Date("1582-01-01T00:00Z");
     let afterOct1582GregorianTransition = new Date("1583-01-01T00:00Z");
 

@@ -243,9 +243,7 @@ fn HashMapMixin(
             const hash = ctx.hash(key);
             assert(hash != Self.empty_hash);
 
-            var i = hash >> self.shift;
-            while (true) : (i += 1) {
-                const entry = self.entries[i];
+            for (self.entries[hash >> self.shift ..]) |entry| {
                 if (entry.hash >= hash) {
                     if (!ctx.eql(entry.key, key)) {
                         return null;
@@ -260,13 +258,23 @@ fn HashMapMixin(
             return self.hasContext(key, undefined);
         }
 
+        pub fn hasWithHash(self: *Self, key_hash: u64) bool {
+            assert(key_hash != Self.empty_hash);
+
+            for (self.entries[key_hash >> self.shift ..]) |entry| {
+                if (entry.hash >= key_hash) {
+                    return entry.hash == key_hash;
+                }
+            }
+
+            return false;
+        }
+
         pub fn hasContext(self: *Self, key: K, ctx: Context) bool {
             const hash = ctx.hash(key);
             assert(hash != Self.empty_hash);
 
-            var i = hash >> self.shift;
-            while (true) : (i += 1) {
-                const entry = self.entries[i];
+            for (self.entries[hash >> self.shift ..]) |entry| {
                 if (entry.hash >= hash) {
                     if (!ctx.eql(entry.key, key)) {
                         return false;
@@ -275,6 +283,7 @@ fn HashMapMixin(
                 }
                 // self.get_probe_count += 1;
             }
+            unreachable;
         }
 
         pub fn delete(self: *Self, key: K) ?V {
@@ -502,9 +511,7 @@ pub fn SortedHashMap(comptime V: type, comptime max_load_percentage: comptime_in
         pub fn get(self: *Self, key: [32]u8) ?V {
             assert(cmp(key, empty_hash) != .eq);
 
-            var i = idx(key, self.shift);
-            while (true) : (i += 1) {
-                const entry = self.entries[i];
+            for (self.entries[idx(key, self.shift)..]) |entry| {
                 if (cmp(entry.hash, key).compare(.gte)) {
                     if (cmp(entry.hash, key) != .eq) {
                         return null;
@@ -551,8 +558,7 @@ pub fn SortedHashMap(comptime V: type, comptime max_load_percentage: comptime_in
 test "StaticHashMap: put, get, delete, grow" {
     var map: AutoStaticHashMap(usize, usize, 512) = .{};
 
-    var seed: usize = 0;
-    while (seed < 128) : (seed += 1) {
+    for (0..128) |seed| {
         var rng = std.rand.DefaultPrng.init(seed);
 
         const keys = try testing.allocator.alloc(usize, 512);
@@ -581,8 +587,7 @@ test "StaticHashMap: put, get, delete, grow" {
 }
 
 test "HashMap: put, get, delete, grow" {
-    var seed: usize = 0;
-    while (seed < 128) : (seed += 1) {
+    for (0..128) |seed| {
         var rng = std.rand.DefaultPrng.init(seed);
 
         const keys = try testing.allocator.alloc(usize, 512);
@@ -629,8 +634,7 @@ test "SortedHashMap: cmp" {
 }
 
 test "SortedHashMap: put, get, delete, grow" {
-    var seed: usize = 0;
-    while (seed < 128) : (seed += 1) {
+    for (0..128) |seed| {
         var rng = std.rand.DefaultPrng.init(seed);
 
         const keys = try testing.allocator.alloc([32]u8, 512);

@@ -298,7 +298,7 @@ Valid values are:
 ---
 
 - `"fallback"`
-- Check local `node_modules` first, the auto-install any packages that aren't found. You can enable this from the CLI with `bun -i`.
+- Check local `node_modules` first, then auto-install any packages that aren't found. You can enable this from the CLI with `bun -i`.
 
 {% /table %}
 
@@ -426,4 +426,94 @@ editor = "code"
 # - "nvim", "neovim"
 # - "vim","vi"
 # - "emacs"
-``` -->
+```
+-->
+
+## `bun run`
+
+The `bun run` command can be configured under the `[run]` section. These apply to the `bun run` command and the `bun` command when running a file or executable or script.
+
+Currently, `bunfig.toml` isn't always automatically loaded for `bun run` in a local project (it does check for a global `bunfig.toml`), so you might still need to pass `-c` or `-c=bunfig.toml` to use these settings.
+
+### `run.shell` - use the system shell or Bun's shell
+
+The shell to use when running package.json scripts via `bun run` or `bun`. On Windows, this defaults to `"bun"` and on other platforms it defaults to `"system"`.
+
+To always use the system shell instead of Bun's shell (default behavior unless Windows):
+
+```toml
+[run]
+# default outside of Windows
+shell = "system"
+```
+
+To always use Bun's shell instead of the system shell:
+
+```toml
+[run]
+# default on Windows
+shell = "bun"
+```
+
+### `run.bun` - auto alias `node` to `bun`
+
+When `true`, this prepends `$PATH` with a `node` symlink that points to the `bun` binary for all scripts or executables invoked by `bun run` or `bun`.
+
+This means that if you have a script that runs `node`, it will actually run `bun` instead, without needing to change your script. This works recursively, so if your script runs another script that runs `node`, it will also run `bun` instead. This applies to shebangs as well, so if you have a script with a shebang that points to `node`, it will actually run `bun` instead.
+
+By default, this is enabled if `node` is not already in your `$PATH`.
+
+```toml
+[run]
+# equivalent to `bun --bun` for all `bun run` commands
+bun = true
+```
+
+You can test this by running:
+
+```sh
+$ bun --bun which node # /path/to/bun
+$ bun which node # /path/to/node
+```
+
+This option is equivalent to prefixing all `bun run` commands with `--bun`:
+
+```sh
+bun --bun run dev
+bun --bun dev
+bun run --bun dev
+```
+
+If set to `false`, this will disable the `node` symlink.
+
+### `run.silent` - suppress reporting the command being run
+
+When `true`, suppresses the output of the command being run by `bun run` or `bun`.
+
+```toml
+[run]
+silent = true
+```
+
+Without this option, the command being run will be printed to the console:
+
+```sh
+$ bun run dev
+> $ echo "Running \"dev\"..."
+Running "dev"...
+```
+
+With this option, the command being run will not be printed to the console:
+
+```sh
+$ bun run dev
+Running "dev"...
+```
+
+This is equivalent to passing `--silent` to all `bun run` commands:
+
+```sh
+bun --silent run dev
+bun --silent dev
+bun run --silent dev
+```

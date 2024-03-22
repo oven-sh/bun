@@ -3047,6 +3047,10 @@ export namespace JSC {
        * Whether the expression should be considered to be in a user gesture or not.
        */
       emulateUserGesture?: boolean | undefined;
+      /**
+       * Whether to automatically await returned promise.
+       */
+      awaitPromise?: boolean | undefined;
     };
     /**
      * Calls function with given declaration on the given object. Object group of the result is inherited from the target object.

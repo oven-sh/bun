@@ -7,6 +7,7 @@ const assert = require("node:assert");
 const BufferModule = require("node:buffer");
 const StreamModule = require("node:stream");
 const Util = require("node:util");
+const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) =>
@@ -1740,8 +1741,8 @@ var require_deflate = __commonJS({
           s.strategy === Z_HUFFMAN_ONLY
             ? deflate_huff(s, flush)
             : s.strategy === Z_RLE
-            ? deflate_rle(s, flush)
-            : configuration_table[s.level].func(s, flush);
+              ? deflate_rle(s, flush)
+              : configuration_table[s.level].func(s, flush);
         if (bstate === BS_FINISH_STARTED || bstate === BS_FINISH_DONE) {
           s.status = FINISH_STATE;
         }
@@ -4117,8 +4118,18 @@ var require_lib = __commonJS({
       }
     }
     function zlibBufferSync(engine, buffer) {
-      if (typeof buffer === "string") buffer = Buffer2.from(buffer);
-      if (!Buffer2.isBuffer(buffer)) throw new TypeError("Not a string or buffer");
+      if (typeof buffer === "string") {
+        buffer = Buffer2.from(buffer);
+      } else if (!isArrayBufferView(buffer)) {
+        if (!isAnyArrayBuffer(buffer)) {
+          throw new ERR_INVALID_ARG_TYPE(
+            "buffer",
+            ["string", "Buffer", "TypedArray", "DataView", "ArrayBuffer"],
+            buffer,
+          );
+        }
+        buffer = Buffer2.from(buffer);
+      }
       var flushFlag = engine._finishFlushFlag;
       return engine._processChunk(buffer, flushFlag);
     }
@@ -4424,6 +4435,12 @@ var require_lib = __commonJS({
     util.inherits(Unzip, Zlib);
   },
 });
+
+function ERR_INVALID_ARG_TYPE(name, type, value) {
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
+  err.code = "ERR_INVALID_ARG_TYPE";
+  return err;
+}
 
 // zlib.js
 export default require_lib();

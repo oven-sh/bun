@@ -21,15 +21,15 @@ error: error 1
 `;
 
 exports[`Error 1`] = `
-" 5 |   const err2 = new Error("error 2", { cause: err });
- 6 |   expect(Bun.inspect(err2).replaceAll(import.meta.dir, "[dir]")).toMatchSnapshot();
- 7 | });
- 8 | 
- 9 | test("Error", () => {
-10 |   const err = new Error("my message");
+" 9 |       .replaceAll("//", "/"),
+10 |   ).toMatchSnapshot();
+11 | });
+12 | 
+13 | test("Error", () => {
+14 |   const err = new Error("my message");
                    ^
 error: my message
-      at [dir]/inspect-error.test.js:10:15
+      at [dir]/inspect-error.test.js:14:15
 "
 `;
 

@@ -111,10 +111,6 @@ pub const Location = struct {
     }
 
     pub fn clone(this: Location, allocator: std.mem.Allocator) !Location {
-        // mostly to catch undefined memory
-        bun.assertDefined(this.namespace);
-        bun.assertDefined(this.file);
-
         return Location{
             .file = try allocator.dupe(u8, this.file),
             .namespace = this.namespace,
@@ -128,10 +124,6 @@ pub const Location = struct {
     }
 
     pub fn cloneWithBuilder(this: Location, string_builder: *StringBuilder) Location {
-        // mostly to catch undefined memory
-        bun.assertDefined(this.namespace);
-        bun.assertDefined(this.file);
-
         return Location{
             .file = string_builder.append(this.file),
             .namespace = this.namespace,
@@ -145,9 +137,6 @@ pub const Location = struct {
     }
 
     pub fn toAPI(this: *const Location) Api.Location {
-        bun.assertDefined(this.file);
-        bun.assertDefined(this.namespace);
-
         return Api.Location{
             .file = this.file,
             .namespace = this.namespace,
@@ -163,10 +152,6 @@ pub const Location = struct {
     pub fn deinit(_: *Location, _: std.mem.Allocator) void {}
 
     pub fn init(file: string, namespace: string, line: i32, column: i32, length: u32, line_text: ?string, suggestion: ?string) Location {
-        // mostly to catch undefined memory
-        bun.assertDefined(file);
-        bun.assertDefined(namespace);
-
         return Location{
             .file = file,
             .namespace = namespace,
@@ -197,10 +182,6 @@ pub const Location = struct {
             if (full_line.len > 80 + data.column_count) {
                 full_line = full_line[@max(data.column_count, 40) - 40 .. @min(data.column_count + 40, full_line.len - 40) + 40];
             }
-
-            bun.assertDefined(source.path.text);
-            bun.assertDefined(source.path.namespace);
-            bun.assertDefined(full_line);
 
             return Location{
                 .file = source.path.text,
@@ -818,14 +799,7 @@ pub const Log = struct {
             var string_builder = StringBuilder{};
             var notes_count: usize = 0;
             {
-                var i: usize = 0;
-                var j: usize = other.msgs.items.len - self.msgs.items.len;
-
-                while (i < self.msgs.items.len) : ({
-                    i += 1;
-                    j += 1;
-                }) {
-                    const msg: Msg = self.msgs.items[i];
+                for (self.msgs.items) |msg| {
                     msg.count(&string_builder);
 
                     if (msg.notes) |notes| {
@@ -839,14 +813,7 @@ pub const Log = struct {
             var note_i: usize = 0;
 
             {
-                var i: usize = 0;
-                var j: usize = other.msgs.items.len - self.msgs.items.len;
-
-                while (i < self.msgs.items.len) : ({
-                    i += 1;
-                    j += 1;
-                }) {
-                    const msg: Msg = self.msgs.items[i];
+                for (self.msgs.items, (other.msgs.items.len - self.msgs.items.len)..) |msg, j| {
                     other.msgs.items[j] = msg.cloneWithBuilder(notes_buf[note_i..], &string_builder);
                     note_i += (msg.notes orelse &[_]Data{}).len;
                 }
@@ -1217,17 +1184,6 @@ pub const Log = struct {
     }
 
     pub inline fn addMsg(self: *Log, msg: Msg) !void {
-        if (comptime Environment.allow_assert) {
-            if (msg.notes) |notes| {
-                bun.assertDefined(notes);
-                for (notes) |note| {
-                    bun.assertDefined(note.text);
-                    if (note.location) |loc| {
-                        bun.assertDefined(loc);
-                    }
-                }
-            }
-        }
         try self.msgs.append(msg);
     }
 
@@ -1328,7 +1284,7 @@ pub const Source = struct {
 
     index: Index = Index.source(0),
 
-    pub fn fmtIdentifier(this: *const Source) strings.FormatValidIdentifier {
+    pub fn fmtIdentifier(this: *const Source) bun.fmt.FormatValidIdentifier {
         return this.path.name.fmtIdentifier();
     }
 
@@ -1423,7 +1379,7 @@ pub const Source = struct {
 
         if (quote == '"' or quote == '\'') {
             var i: usize = 1;
-            var c: u8 = undefined;
+            var c: u8 = 0;
             while (i < text.len) {
                 c = text[i];
 

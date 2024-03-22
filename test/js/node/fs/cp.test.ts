@@ -1,4 +1,5 @@
 import fs from "fs";
+import { join } from "path";
 import { describe, test, expect, jest } from "bun:test";
 import { tempDirWithFiles } from "harness";
 
@@ -245,7 +246,7 @@ for (const [name, copy] of impls) {
       let prev = process.cwd();
       process.chdir(basename);
 
-      await copy(basename + "/from", basename + "/result", {
+      await copy(join(basename, "from"), join(basename, "result"), {
         filter,
         recursive: true,
       });
@@ -253,9 +254,9 @@ for (const [name, copy] of impls) {
       process.chdir(prev);
 
       expect(filter.mock.calls.sort((a, b) => a[0].localeCompare(b[0]))).toEqual([
-        [basename + "/from", basename + "/result"],
-        [basename + "/from/a.txt", basename + "/result/a.txt"],
-        [basename + "/from/b.txt", basename + "/result/b.txt"],
+        [join(basename, "from"), join(basename, "result")],
+        [join(basename, "from", "a.txt"), join(basename, "result", "a.txt")],
+        [join(basename, "from", "b.txt"), join(basename, "result", "b.txt")],
       ]);
     });
 
@@ -283,6 +284,27 @@ for (const [name, copy] of impls) {
 
       assertContent(basename + "/hello/world/a.txt", "a");
       assertContent(basename + "/hello/world/b.txt", "b");
+    });
+
+    test("relative paths for directories", async () => {
+      const basename = tempDirWithFiles("cp", {
+        "from/a.txt": "a",
+        "from/b.txt": "b",
+        "from/a.dir": { "c.txt": "c" },
+      });
+
+      const filter = jest.fn((src: string) => true);
+
+      let prev = process.cwd();
+      process.chdir(basename);
+
+      await copy("from", "result", {
+        recursive: true,
+      });
+
+      process.chdir(prev);
+
+      assertContent(basename + "/result/a.dir/c.txt", "c");
     });
   });
 }

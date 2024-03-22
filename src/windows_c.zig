@@ -9,21 +9,15 @@ const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 
 pub fn getTotalMemory() usize {
-    return 0;
-}
-pub fn getSystemMemory() usize {
-    return 0;
+    return uv.uv_get_total_memory();
 }
 
 pub fn getFreeMemory() usize {
-    return 0;
-}
-
-pub fn getSystemUptime() usize {
-    return 0;
+    return uv.uv_get_free_memory();
 }
 
 pub fn getSystemLoadavg() [3]f32 {
+    // loadavg is not supported on windows even in node
     return .{ 0, 0, 0 };
 }
 
@@ -701,16 +695,16 @@ pub const SystemErrno = enum(u16) {
                 return init(@as(Win32Error, @enumFromInt(code)));
             } else {
                 if (comptime bun.Environment.allow_assert)
-                    bun.Output.debug("Unknown error code: {}\n", .{code});
+                    bun.Output.debugWarn("Unknown error code: {any}\n", .{code});
 
                 return null;
             }
         }
 
-        if (comptime @TypeOf(code) == Win32Error) {
-            return switch (code) {
+        if (comptime @TypeOf(code) == Win32Error or @TypeOf(code) == std.os.windows.Win32Error) {
+            return switch (@as(Win32Error, @enumFromInt(@intFromEnum(code)))) {
                 Win32Error.NOACCESS => SystemErrno.EACCES,
-                @as(Win32Error, @enumFromInt(10013)) => SystemErrno.EACCES,
+                Win32Error.WSAEACCES => SystemErrno.EACCES,
                 Win32Error.ELEVATION_REQUIRED => SystemErrno.EACCES,
                 Win32Error.CANT_ACCESS_FILE => SystemErrno.EACCES,
                 Win32Error.ADDRESS_ALREADY_ASSOCIATED => SystemErrno.EADDRINUSE,
@@ -771,7 +765,7 @@ pub const SystemErrno = enum(u16) {
                 Win32Error.WSAENETUNREACH => SystemErrno.ENETUNREACH,
                 Win32Error.WSAENOBUFS => SystemErrno.ENOBUFS,
                 Win32Error.BAD_PATHNAME => SystemErrno.ENOENT,
-                Win32Error.DIRECTORY => SystemErrno.ENOENT,
+                Win32Error.DIRECTORY => SystemErrno.ENOTDIR,
                 Win32Error.ENVVAR_NOT_FOUND => SystemErrno.ENOENT,
                 Win32Error.FILE_NOT_FOUND => SystemErrno.ENOENT,
                 Win32Error.INVALID_NAME => SystemErrno.ENOENT,
@@ -793,7 +787,7 @@ pub const SystemErrno = enum(u16) {
                 Win32Error.DIR_NOT_EMPTY => SystemErrno.ENOTEMPTY,
                 Win32Error.WSAENOTSOCK => SystemErrno.ENOTSOCK,
                 Win32Error.NOT_SUPPORTED => SystemErrno.ENOTSUP,
-                Win32Error.BROKEN_PIPE => SystemErrno.EOF,
+                Win32Error.BROKEN_PIPE => SystemErrno.EPIPE,
                 Win32Error.ACCESS_DENIED => SystemErrno.EPERM,
                 Win32Error.PRIVILEGE_NOT_HELD => SystemErrno.EPERM,
                 Win32Error.BAD_PIPE => SystemErrno.EPIPE,
@@ -809,7 +803,7 @@ pub const SystemErrno = enum(u16) {
                 Win32Error.META_EXPANSION_TOO_LONG => SystemErrno.E2BIG,
                 Win32Error.WSAESOCKTNOSUPPORT => SystemErrno.ESOCKTNOSUPPORT,
                 Win32Error.DELETE_PENDING => SystemErrno.EBUSY,
-                else => return null,
+                else => null,
             };
         }
 
@@ -1195,10 +1189,240 @@ pub const E = enum(u16) {
     UV_EUNATCH = -uv.UV_EUNATCH,
 };
 
+pub const S = struct {
+    pub const IFMT = 0o170000;
+
+    pub const IFDIR = 0o040000;
+    pub const IFCHR = 0o020000;
+    pub const IFBLK = 0o060000;
+    pub const IFREG = 0o100000;
+    pub const IFIFO = 0o010000;
+    pub const IFLNK = 0o120000;
+    pub const IFSOCK = 0o140000;
+
+    pub const ISUID = 0o4000;
+    pub const ISGID = 0o2000;
+    pub const ISVTX = 0o1000;
+    pub const IRUSR = 0o400;
+    pub const IWUSR = 0o200;
+    pub const IXUSR = 0o100;
+    pub const IRWXU = 0o700;
+    pub const IRGRP = 0o040;
+    pub const IWGRP = 0o020;
+    pub const IXGRP = 0o010;
+    pub const IRWXG = 0o070;
+    pub const IROTH = 0o004;
+    pub const IWOTH = 0o002;
+    pub const IXOTH = 0o001;
+    pub const IRWXO = 0o007;
+
+    pub inline fn ISREG(m: i32) bool {
+        return m & IFMT == IFREG;
+    }
+
+    pub inline fn ISDIR(m: i32) bool {
+        return m & IFMT == IFDIR;
+    }
+
+    pub inline fn ISCHR(m: i32) bool {
+        return m & IFMT == IFCHR;
+    }
+
+    pub inline fn ISBLK(m: i32) bool {
+        return m & IFMT == IFBLK;
+    }
+
+    pub inline fn ISFIFO(m: i32) bool {
+        return m & IFMT == IFIFO;
+    }
+
+    pub inline fn ISLNK(m: i32) bool {
+        return m & IFMT == IFLNK;
+    }
+
+    pub inline fn ISSOCK(m: i32) bool {
+        return m & IFMT == IFSOCK;
+    }
+};
+
 pub fn getErrno(_: anytype) E {
     if (Win32Error.get().toSystemErrno()) |sys| {
         return sys.toE();
     }
 
     return .SUCCESS;
+}
+
+const Maybe = bun.JSC.Maybe;
+
+const w = std.os.windows;
+
+extern "c" fn _umask(Mode) Mode;
+pub const umask = _umask;
+
+/// Derived from std.os.windows.renameAtW
+/// Allows more errors
+pub fn renameAtW(
+    old_dir_fd: bun.FileDescriptor,
+    old_path_w: []const u16,
+    new_dir_fd: bun.FileDescriptor,
+    new_path_w: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    if (comptime bun.Environment.allow_assert) {
+        // if the directories are the same and the destination path is absolute, the old path name is kept
+        if (old_dir_fd == new_dir_fd) {
+            std.debug.assert(!std.fs.path.isAbsoluteWindowsWTF16(new_path_w));
+        }
+    }
+
+    const src_fd = switch (bun.sys.openFileAtWindows(
+        old_dir_fd,
+        old_path_w,
+        // access_mask
+        w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+        // create disposition
+        w.FILE_OPEN,
+        // create options
+        w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+    )) {
+        .err => |err| return Maybe(void){ .err = err },
+        .result => |fd| fd,
+    };
+    defer _ = bun.sys.close(src_fd);
+
+    return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
+}
+
+const log = bun.Output.scoped(.SYS, false);
+
+/// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
+/// Does not close the file descriptor.
+///
+/// For this to succeed
+/// - source_fd must have been opened with access_mask=w.DELETE
+/// - new_path_w must be the name of a file. it cannot be a path relative to new_dir_fd. see moveOpenedFileAtLoose
+pub fn moveOpenedFileAt(
+    src_fd: bun.FileDescriptor,
+    new_dir_fd: bun.FileDescriptor,
+    new_file_name: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    // FILE_RENAME_INFORMATION_EX and FILE_RENAME_POSIX_SEMANTICS require >= win10_rs1,
+    // but FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5. We check >= rs5 here
+    // so that we only use POSIX_SEMANTICS when we know IGNORE_READONLY_ATTRIBUTE will also be
+    // supported in order to avoid either (1) using a redundant call that we can know in advance will return
+    // STATUS_NOT_SUPPORTED or (2) only setting IGNORE_READONLY_ATTRIBUTE when >= rs5
+    // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
+    comptime std.debug.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+
+    if (bun.Environment.allow_assert) {
+        std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '\\') == null); // Call moveOpenedFileAtLoose
+        std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '/') == null); // Call moveOpenedFileAtLoose
+    }
+
+    const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + (bun.MAX_PATH_BYTES - 1);
+    var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION_EX)) = undefined;
+
+    const struct_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) - 1 + new_file_name.len * 2;
+    if (struct_len > struct_buf_len) return Maybe(void).errno(bun.C.E.NAMETOOLONG, .NtSetInformationFile);
+
+    const rename_info = @as(*w.FILE_RENAME_INFORMATION_EX, @ptrCast(&rename_info_buf));
+    var io_status_block: w.IO_STATUS_BLOCK = undefined;
+
+    var flags: w.ULONG = w.FILE_RENAME_POSIX_SEMANTICS | w.FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
+    if (replace_if_exists) flags |= w.FILE_RENAME_REPLACE_IF_EXISTS;
+    rename_info.* = .{
+        .Flags = flags,
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(new_file_name)) null else new_dir_fd.cast(),
+        .FileNameLength = @intCast(new_file_name.len * 2), // already checked error.NameTooLong
+        .FileName = undefined,
+    };
+    @memcpy(@as([*]u16, &rename_info.FileName)[0..new_file_name.len], new_file_name);
+    const rc = w.ntdll.NtSetInformationFile(
+        src_fd.cast(),
+        &io_status_block,
+        rename_info,
+        @intCast(struct_len), // already checked for error.NameTooLong
+        .FileRenameInformationEx,
+    );
+    log("moveOpenedFileAt({} ->> {} '{}', {s}) = {s}", .{ src_fd, new_dir_fd, bun.fmt.utf16(new_file_name), if (replace_if_exists) "replace_if_exists" else "no flag", @tagName(rc) });
+
+    if (bun.Environment.isDebug) {
+        if (rc == .ACCESS_DENIED) {
+            bun.Output.debugWarn("moveOpenedFileAt was called on a file descriptor without access_mask=w.DELETE", .{});
+        }
+    }
+
+    return if (rc == .SUCCESS)
+        Maybe(void).success
+    else
+        Maybe(void).errno(rc, .NtSetInformationFile);
+}
+
+/// Same as moveOpenedFileAt but allows new_path to be a path relative to new_dir_fd.
+///
+/// Aka: moveOpenedFileAtLoose(fd, dir, ".\\a\\relative\\not-normalized-path.txt", false);
+pub fn moveOpenedFileAtLoose(
+    src_fd: bun.FileDescriptor,
+    new_dir_fd: bun.FileDescriptor,
+    new_path: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    std.debug.assert(std.mem.indexOfScalar(u16, new_path, '/') == null); // Call bun.strings.toWPathNormalized first
+
+    const without_leading_dot_slash = if (new_path.len >= 2 and new_path[0] == '.' and new_path[1] == '\\')
+        new_path[2..]
+    else
+        new_path;
+
+    if (std.mem.lastIndexOfScalar(u16, new_path, '\\')) |last_slash| {
+        const dirname = new_path[0..last_slash];
+        const fd = switch (bun.sys.openDirAtWindows(new_dir_fd, dirname, false, true)) {
+            .err => |e| return .{ .err = e },
+            .result => |fd| fd,
+        };
+        defer _ = bun.sys.close(fd);
+
+        const basename = new_path[last_slash + 1 ..];
+        return moveOpenedFileAt(src_fd, fd, basename, replace_if_exists);
+    }
+
+    // easy mode
+    return moveOpenedFileAt(src_fd, new_dir_fd, without_leading_dot_slash, replace_if_exists);
+}
+
+const FILE_DISPOSITION_DO_NOT_DELETE: w.ULONG = 0x00000000;
+const FILE_DISPOSITION_DELETE: w.ULONG = 0x00000001;
+const FILE_DISPOSITION_POSIX_SEMANTICS: w.ULONG = 0x00000002;
+const FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK: w.ULONG = 0x00000004;
+const FILE_DISPOSITION_ON_CLOSE: w.ULONG = 0x00000008;
+const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: w.ULONG = 0x00000010;
+
+/// Extracted from standard library except this takes an open file descriptor
+///
+/// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL
+pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
+    comptime std.debug.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+    var info = w.FILE_DISPOSITION_INFORMATION_EX{
+        .Flags = FILE_DISPOSITION_DELETE |
+            FILE_DISPOSITION_POSIX_SEMANTICS |
+            FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
+    };
+
+    var io: w.IO_STATUS_BLOCK = undefined;
+    const rc = w.ntdll.NtSetInformationFile(
+        fd.cast(),
+        &io,
+        &info,
+        @sizeOf(w.FILE_DISPOSITION_INFORMATION_EX),
+        .FileDispositionInformationEx,
+    );
+
+    log("deleteOpenedFile({}) = {s}", .{ fd, @tagName(rc) });
+
+    return if (rc == .SUCCESS)
+        Maybe(void).success
+    else
+        Maybe(void).errno(rc, .NtSetInformationFile);
 }

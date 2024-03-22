@@ -114,8 +114,28 @@ pub const GlobalDefinesKey = [_][]const string{
     &[_]string{ "Math", "tanh" },
     &[_]string{ "Math", "trunc" },
 
+    // Symbol: Static methods
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol#static_methods
     &[_]string{ "Symbol", "for" },
     &[_]string{ "Symbol", "keyFor" },
+
+    // Symbol: Static properties
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol#static_properties
+    &[_]string{ "Symbol", "asyncDispose" },
+    &[_]string{ "Symbol", "asyncIterator" },
+    &[_]string{ "Symbol", "dispose" },
+    &[_]string{ "Symbol", "hasInstance" },
+    &[_]string{ "Symbol", "isConcatSpreadable" },
+    &[_]string{ "Symbol", "iterator" },
+    &[_]string{ "Symbol", "match" },
+    &[_]string{ "Symbol", "matchAll" },
+    &[_]string{ "Symbol", "replace" },
+    &[_]string{ "Symbol", "search" },
+    &[_]string{ "Symbol", "species" },
+    &[_]string{ "Symbol", "split" },
+    &[_]string{ "Symbol", "toPrimitive" },
+    &[_]string{ "Symbol", "toStringTag" },
+    &[_]string{ "Symbol", "unscopables" },
 
     // Reflect: Static methods
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect#static_methods
@@ -859,7 +879,6 @@ pub const pure_global_identifiers = .{
     .{ "top", pure_global_identifier_define },
     .{ "webkitURL", pure_global_identifier_define },
     .{ "window", pure_global_identifier_define },
-
     .{ "crypto", pure_global_identifier_define },
 };
 

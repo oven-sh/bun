@@ -16,7 +16,7 @@ ARG BUILD_MACHINE_ARCH=x86_64
 ARG BUILDARCH=amd64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG GIT_SHA=""
-ARG BUN_VERSION="bun-v1.0.7"
+ARG BUN_VERSION="bun-v1.0.30"
 ARG BUN_DOWNLOAD_URL_BASE="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${BUN_VERSION}"
 ARG CANARY=0
 ARG ASSERTIONS=OFF
@@ -290,7 +290,6 @@ ENV CCACHE_DIR=/ccache
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/zstd ${BUN_DIR}/src/deps/zstd
-COPY .prettierrc.cjs ${BUN_DIR}/.prettierrc.cjs
 
 WORKDIR $BUN_DIR
 
@@ -373,14 +372,14 @@ ENV CCACHE_DIR=/ccache
 RUN --mount=type=cache,target=/ccache  mkdir ${BUN_DIR}/build \
   && cd ${BUN_DIR}/build \
   && mkdir -p tmp_modules tmp_functions js codegen \
-  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_DEBUG_JSC=${ASSERTIONS} -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit -DCANARY=${CANARY} -DZIG_COMPILER=system \
+  && cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DUSE_LTO=ON -DUSE_DEBUG_JSC=${ASSERTIONS} -DBUN_CPP_ONLY=1 -DWEBKIT_DIR=/build/bun/bun-webkit -DCANARY=${CANARY} -DZIG_COMPILER=system \
   && bash compile-cpp-only.sh -v
 
 FROM bun-base-with-zig as bun-codegen-for-zig
 
-COPY package.json bun.lockb Makefile .gitmodules .prettierrc.cjs ${BUN_DIR}/
+COPY package.json bun.lockb Makefile .gitmodules ${BUN_DIR}/
 COPY src/runtime ${BUN_DIR}/src/runtime
-COPY src/runtime.js src/runtime.footer*.js src/react-refresh.js ${BUN_DIR}/src/
+COPY src/runtime.js src/runtime.bun.js ${BUN_DIR}/src/
 COPY packages/bun-error ${BUN_DIR}/packages/bun-error
 COPY src/fallback.ts ${BUN_DIR}/src/fallback.ts
 COPY src/api ${BUN_DIR}/src/api
@@ -420,6 +419,7 @@ RUN mkdir -p build \
   && cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
+  -DUSE_LTO=ON \
   -DZIG_OPTIMIZE="${ZIG_OPTIMIZE}" \
   -DCPU_TARGET="${CPU_TARGET}" \
   -DZIG_TARGET="${TRIPLET}" \
@@ -477,6 +477,7 @@ RUN cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUN_LINK_ONLY=1 \
   -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
+  -DUSE_LTO=ON \
   -DUSE_DEBUG_JSC=${ASSERTIONS} \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
   -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \
@@ -541,6 +542,7 @@ RUN cmake .. \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DCANARY="${CANARY}" \
   -DZIG_COMPILER=system \
+  -DUSE_LTO=ON \
   && ninja -v \
   && ./bun --revision \
   && mkdir -p /build/out \

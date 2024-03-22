@@ -1,7 +1,9 @@
 import { describe, it, expect } from "bun:test";
-import { gcTick } from "harness";
+import { gcTick, isWindows } from "harness";
 
-describe("Bun.mmap", async () => {
+// We do not support mmap() on Windows
+// Maybe we can add it later.
+describe.skipIf(isWindows)("Bun.mmap", async () => {
   await gcTick();
   const path = `/tmp/bun-mmap-test_${Math.random()}.txt`;
   await gcTick();

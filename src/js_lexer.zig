@@ -73,6 +73,8 @@ pub const JSONOptions = struct {
 
     /// mark as originally for a macro to enable inlining
     was_originally_macro: bool = false,
+
+    always_decode_escape_sequences: bool = false,
 };
 
 pub fn decodeUTF8(bytes: string, allocator: std.mem.Allocator) ![]const u16 {
@@ -99,6 +101,7 @@ pub fn NewLexer(
         json_options.ignore_trailing_escape_sequences,
         json_options.json_warn_duplicate_keys,
         json_options.was_originally_macro,
+        json_options.always_decode_escape_sequences,
     );
 }
 
@@ -110,6 +113,7 @@ fn NewLexer_(
     comptime json_options_ignore_trailing_escape_sequences: bool,
     comptime json_options_json_warn_duplicate_keys: bool,
     comptime json_options_was_originally_macro: bool,
+    comptime json_options_always_decode_escape_sequences: bool,
 ) type {
     const json_options = JSONOptions{
         .is_json = json_options_is_json,
@@ -119,6 +123,7 @@ fn NewLexer_(
         .ignore_trailing_escape_sequences = json_options_ignore_trailing_escape_sequences,
         .json_warn_duplicate_keys = json_options_json_warn_duplicate_keys,
         .was_originally_macro = json_options_was_originally_macro,
+        .always_decode_escape_sequences = json_options_always_decode_escape_sequences,
     };
     return struct {
         const LexerType = @This();
@@ -153,6 +158,7 @@ fn NewLexer_(
         token: T = T.t_end_of_file,
         has_newline_before: bool = false,
         has_pure_comment_before: bool = false,
+        has_no_side_effect_comment_before: bool = false,
         preserve_all_comments_before: bool = false,
         is_legacy_octal_literal: bool = false,
         is_log_disabled: bool = false,
@@ -196,6 +202,7 @@ fn NewLexer_(
                 .token = self.token,
                 .has_newline_before = self.has_newline_before,
                 .has_pure_comment_before = self.has_pure_comment_before,
+                .has_no_side_effect_comment_before = self.has_no_side_effect_comment_before,
                 .preserve_all_comments_before = self.preserve_all_comments_before,
                 .is_legacy_octal_literal = self.is_legacy_octal_literal,
                 .is_log_disabled = self.is_log_disabled,
@@ -307,8 +314,7 @@ fn NewLexer_(
             defer it.current = original_i;
 
             var end_ix = original_i;
-            var found: usize = 0;
-            while (found < n) : (found += 1) {
+            for (0..n) |_| {
                 const next_codepoint = it.nextCodepointSlice();
                 if (next_codepoint.len == 0) break;
                 end_ix += next_codepoint.len;
@@ -665,11 +671,17 @@ fn NewLexer_(
         pub const InnerStringLiteral = packed struct { suffix_len: u3, needs_slow_path: bool };
 
         fn parseStringLiteralInnter(lexer: *LexerType, comptime quote: CodePoint) !InnerStringLiteral {
+            const check_for_backslash = comptime is_json and json_options.always_decode_escape_sequences;
             var needs_slow_path = false;
             var suffix_len: u3 = if (comptime quote == 0) 0 else 1;
+            var has_backslash: if (check_for_backslash) bool else void = if (check_for_backslash) false else {};
             stringLiteral: while (true) {
                 switch (lexer.code_point) {
                     '\\' => {
+                        if (comptime check_for_backslash) {
+                            has_backslash = true;
+                        }
+
                         lexer.step();
 
                         // Handle Windows CRLF
@@ -782,6 +794,8 @@ fn NewLexer_(
 
                 lexer.step();
             }
+
+            if (comptime check_for_backslash) needs_slow_path = needs_slow_path or has_backslash;
 
             return InnerStringLiteral{ .needs_slow_path = needs_slow_path, .suffix_len = suffix_len };
         }
@@ -1140,6 +1154,7 @@ fn NewLexer_(
         pub fn next(lexer: *LexerType) !void {
             lexer.has_newline_before = lexer.end == 0;
             lexer.has_pure_comment_before = false;
+            lexer.has_no_side_effect_comment_before = false;
             lexer.prev_token_was_await_keyword = false;
 
             while (true) {
@@ -1957,6 +1972,11 @@ fn NewLexer_(
                                             lexer.has_pure_comment_before = true;
                                             continue;
                                         }
+                                        // TODO: implement NO_SIDE_EFFECTS
+                                        // else if (strings.hasPrefixWithWordBoundary(chunk, "__NO_SIDE_EFFECTS__")) {
+                                        //     lexer.has_no_side_effect_comment_before = true;
+                                        //     continue;
+                                        // }
                                     }
 
                                     if (strings.hasPrefixWithWordBoundary(chunk, "bun")) {

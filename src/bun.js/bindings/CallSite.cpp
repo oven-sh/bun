@@ -36,8 +36,6 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
         }
     }
 
-    JSC::JSObject* calleeObject = JSC::jsCast<JSC::JSObject*>(stackFrame.callee());
-
     // Initialize "this" and "function" (and set the "IsStrict" flag if needed)
     JSC::CallFrame* callFrame = stackFrame.callFrame();
     if (isStrictFrame) {
@@ -60,8 +58,8 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
 
     const auto* sourcePositions = stackFrame.getSourcePositions();
     if (sourcePositions) {
-        m_lineNumber = JSC::jsNumber(sourcePositions->line.oneBasedInt());
-        m_columnNumber = JSC::jsNumber(sourcePositions->startColumn.oneBasedInt());
+        m_lineNumber = sourcePositions->line.oneBasedInt();
+        m_columnNumber = sourcePositions->startColumn.oneBasedInt();
     }
 
     if (stackFrame.isEval()) {
@@ -88,13 +86,11 @@ void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb)
 {
-    JSString* myTypeName = jsTypeStringForValue(globalObject, thisValue());
-    JSString* myFunction = functionName().toString(globalObject);
     JSString* myFunctionName = functionName().toString(globalObject);
     JSString* mySourceURL = sourceURL().toString(globalObject);
 
-    JSString* myColumnNumber = columnNumber().toInt32(globalObject) != -1 ? columnNumber().toString(globalObject) : jsEmptyString(vm);
-    JSString* myLineNumber = lineNumber().toInt32(globalObject) != -1 ? lineNumber().toString(globalObject) : jsEmptyString(vm);
+    JSString* myColumnNumber = columnNumber() >= 0 ? JSValue(columnNumber()).toString(globalObject) : jsEmptyString(vm);
+    JSString* myLineNumber = lineNumber() >= 0 ? JSValue(lineNumber()).toString(globalObject) : jsEmptyString(vm);
 
     bool myIsConstructor = isConstructor();
 

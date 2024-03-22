@@ -319,7 +319,7 @@ describe("dynamic import", () => {
 describe("import statement", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", async () => {
     laterCode = `
-import Hello from "${resolve(import.meta.dir, "hello2.svelte")}";
+import Hello from ${JSON.stringify(resolve(import.meta.dir, "hello2.svelte"))};
 export default Hello;
 `;
     const { default: SvelteApp } = await import("delay:hello2.svelte");

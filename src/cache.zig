@@ -166,29 +166,30 @@ pub const Fs = struct {
     ) !Entry {
         var rfs = _fs.fs;
 
-        var file_handle: std.fs.File = if (_file_handle) |__file| std.fs.File{ .handle = bun.fdcast(__file) } else undefined;
+        var file_handle: std.fs.File = if (_file_handle) |__file| __file.asFile() else undefined;
 
         if (_file_handle == null) {
-            if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd > 0) {
-                file_handle = std.fs.Dir.openFile(std.fs.Dir{ .fd = dirname_fd }, std.fs.path.basename(path), .{ .mode = .read_only }) catch |err| brk: {
+            if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd != .zero) {
+                file_handle = (bun.sys.openatA(dirname_fd, std.fs.path.basename(path), std.os.O.RDONLY, 0).unwrap() catch |err| brk: {
                     switch (err) {
-                        error.FileNotFound => {
-                            const handle = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
+                        error.ENOENT => {
+                            const handle = try bun.openFile(path, .{ .mode = .read_only });
                             Output.prettyErrorln(
-                                "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {d}<r>. You don't need to do anything, but this indicates a bug.",
+                                "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
                                 .{ path, dirname_fd },
                             );
-                            break :brk handle;
+                            break :brk bun.toFD(handle.handle);
                         },
                         else => return err,
                     }
-                };
+                }).asFile();
             } else {
-                file_handle = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
+                file_handle = try bun.openFile(path, .{ .mode = .read_only });
             }
         }
 
-        debug("openat({d}, {s}) = {d}", .{ dirname_fd, path, file_handle.handle });
+        if (comptime !Environment.isWindows) // skip on Windows because NTCreateFile will do it.
+            debug("openat({}, {s}) = {}", .{ dirname_fd, path, bun.toFD(file_handle.handle) });
 
         const will_close = rfs.needToCloseFiles() and _file_handle == null;
         defer {
@@ -215,7 +216,7 @@ pub const Fs = struct {
 
         return Entry{
             .contents = file.contents,
-            .fd = if (FeatureFlags.store_file_descriptors and !will_close) file_handle.handle else bun.invalid_fd,
+            .fd = if (FeatureFlags.store_file_descriptors and !will_close) bun.toFD(file_handle.handle) else bun.invalid_fd,
         };
     }
 };

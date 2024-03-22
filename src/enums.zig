@@ -246,8 +246,7 @@ pub fn EnumSet(comptime E: type) type {
                 /// Initializes the set using a struct of bools
                 pub fn init(init_values: EnumFieldStruct(E, bool, false)) Self {
                     var result = Self{};
-                    comptime var i: usize = 0;
-                    inline while (i < Self.len) : (i += 1) {
+                    inline for (0..Self.len) |i| {
                         const key = comptime Indexer.keyForIndex(i);
                         const tag = comptime @tagName(key);
                         if (@field(init_values, tag)) {
@@ -274,8 +273,7 @@ pub fn EnumMap(comptime E: type, comptime V: type) type {
                 /// Initializes the map using a sparse struct of optionals
                 pub fn init(init_values: EnumFieldStruct(E, ?V, @as(?V, null))) Self {
                     var result = Self{};
-                    comptime var i: usize = 0;
-                    inline while (i < Self.len) : (i += 1) {
+                    inline for (0..Self.len) |i| {
                         const key = comptime Indexer.keyForIndex(i);
                         const tag = comptime @tagName(key);
                         if (@field(init_values, tag)) |*v| {
@@ -307,8 +305,7 @@ pub fn EnumMap(comptime E: type, comptime V: type) type {
                         .bits = Self.BitSet.initFull(),
                         .values = undefined,
                     };
-                    comptime var i: usize = 0;
-                    inline while (i < Self.len) : (i += 1) {
+                    inline for (0..Self.len) |i| {
                         const key = comptime Indexer.keyForIndex(i);
                         const tag = comptime @tagName(key);
                         result.values[i] = @field(init_values, tag);
@@ -734,8 +731,7 @@ pub fn EnumArray(comptime E: type, comptime V: type) type {
                 /// Initializes values in the enum array, with the specified default.
                 pub fn initDefault(comptime default: ?V, init_values: EnumFieldStruct(E, V, default)) Self {
                     var result = Self{ .values = undefined };
-                    comptime var i: usize = 0;
-                    inline while (i < Self.len) : (i += 1) {
+                    inline for (0..Self.len) |i| {
                         const key = comptime Indexer.keyForIndex(i);
                         const tag = @tagName(key);
                         result.values[i] = @field(init_values, tag);

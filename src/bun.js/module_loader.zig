@@ -58,7 +58,7 @@ const NewClass = @import("./base.zig").NewClass;
 const JSGlobalObject = @import("root").bun.JSC.JSGlobalObject;
 const ExceptionValueRef = @import("root").bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = @import("root").bun.JSC.JSPrivateDataPtr;
-const ZigConsoleClient = @import("root").bun.JSC.ZigConsoleClient;
+const ConsoleObject = @import("root").bun.JSC.ConsoleObject;
 const Node = @import("root").bun.JSC.Node;
 const ZigException = @import("root").bun.JSC.ZigException;
 const ZigStackTrace = @import("root").bun.JSC.ZigStackTrace;
@@ -85,6 +85,8 @@ const VirtualMachine = JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
 const Async = bun.Async;
 const String = bun.String;
+
+const debug = Output.scoped(.ModuleLoader, true);
 
 // Setting BUN_OVERRIDE_MODULE_PATH to the path to the bun repo will make it so modules are loaded
 // from there instead of the ones embedded into the binary.
@@ -144,7 +146,7 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String
         .source_url = bun.String.init(@tagName(name)),
         .hash = 0,
         .tag = name,
-        .needs_deref = false,
+        .source_code_needs_deref = false,
     };
 }
 
@@ -157,7 +159,7 @@ fn dumpSource(specifier: string, printer: anytype) void {
 }
 
 fn dumpSourceString(specifier: string, written: []const u8) void {
-    if (Environment.isWindows or !Environment.isDebug) return;
+    if (!Environment.isDebug) return;
 
     const BunDebugHolder = struct {
         pub var dir: ?std.fs.Dir = null;
@@ -168,15 +170,40 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
     defer BunDebugHolder.lock.unlock();
 
     const dir = BunDebugHolder.dir orelse dir: {
-        const dir = std.fs.cwd().makeOpenPath("/tmp/bun-debug-src/", .{}) catch return;
+        const base_name = switch (Environment.os) {
+            else => "/tmp/bun-debug-src/",
+            .windows => brk: {
+                const temp = bun.fs.FileSystem.RealFS.platformTempDir();
+                var win_temp_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+                @memcpy(win_temp_buffer[0..temp.len], temp);
+                const suffix = "\\bun-debug-src";
+                @memcpy(win_temp_buffer[temp.len .. temp.len + suffix.len], suffix);
+                win_temp_buffer[temp.len + suffix.len] = 0;
+                break :brk win_temp_buffer[0 .. temp.len + suffix.len :0];
+            },
+        };
+        const dir = std.fs.cwd().makeOpenPath(base_name, .{}) catch |e| {
+            Output.debug("Failed to dump source string: {}", .{e});
+            return;
+        };
         BunDebugHolder.dir = dir;
         break :dir dir;
     };
 
     if (std.fs.path.dirname(specifier)) |dir_path| {
-        var parent = dir.makeOpenPath(dir_path[1..], .{}) catch return;
+        const root_len = switch (Environment.os) {
+            else => "/".len,
+            .windows => bun.path.windowsFilesystemRoot(dir_path).len,
+        };
+        var parent = dir.makeOpenPath(dir_path[root_len..], .{}) catch |e| {
+            Output.debug("Failed to dump source string: makeOpenPath({s}[{d}..]) {}", .{ dir_path, root_len, e });
+            return;
+        };
         defer parent.close();
-        parent.writeFile(std.fs.path.basename(specifier), written) catch return;
+        parent.writeFile(std.fs.path.basename(specifier), written) catch |e| {
+            Output.debug("Failed to dump source string: writeFile {}", .{e});
+            return;
+        };
     } else {
         dir.writeFile(std.fs.path.basename(specifier), written) catch return;
     }
@@ -192,16 +219,40 @@ fn setBreakPointOnFirstLine() bool {
 }
 
 pub const RuntimeTranspilerStore = struct {
-    const debug = Output.scoped(.compile, false);
-
     generation_number: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     store: TranspilerJob.Store,
     enabled: bool = true,
+    queue: Queue = Queue{},
+
+    pub const Queue = bun.UnboundedQueue(TranspilerJob, .next);
 
     pub fn init(allocator: std.mem.Allocator) RuntimeTranspilerStore {
         return RuntimeTranspilerStore{
             .store = TranspilerJob.Store.init(allocator),
         };
+    }
+
+    // Thsi is run at the top of the event loop on the JS thread.
+    pub fn drain(this: *RuntimeTranspilerStore) void {
+        var batch = this.queue.popBatch();
+        var iter = batch.iterator();
+        if (iter.next()) |job| {
+            // we run just one job first to see if there are more
+            job.runFromJSThread();
+        } else {
+            return;
+        }
+        var vm = @fieldParentPtr(JSC.VirtualMachine, "transpiler_store", this);
+        const event_loop = vm.eventLoop();
+        const global = vm.global;
+        const jsc_vm = vm.jsc;
+        while (iter.next()) |job| {
+            // if there are more, we need to drain the microtasks from the previous run
+            event_loop.drainMicrotasksWithGlobal(global, jsc_vm);
+            job.runFromJSThread();
+        }
+
+        // immediately after this is called, the microtasks will be drained again.
     }
 
     pub fn transpile(
@@ -211,7 +262,6 @@ pub const RuntimeTranspilerStore = struct {
         path: Fs.Path,
         referrer: []const u8,
     ) *anyopaque {
-        debug("transpile({s})", .{path.text});
         var job: *TranspilerJob = this.store.get();
         const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
         const promise = JSC.JSInternalPromise.create(globalObject);
@@ -228,6 +278,8 @@ pub const RuntimeTranspilerStore = struct {
                 .file = {},
             },
         };
+        if (comptime Environment.allow_assert)
+            debug("transpile({s}, {s}, async)", .{ path.text, @tagName(job.loader) });
         job.schedule();
         return promise;
     }
@@ -246,6 +298,7 @@ pub const RuntimeTranspilerStore = struct {
         parse_error: ?anyerror = null,
         resolved_source: ResolvedSource = ResolvedSource{},
         work_task: JSC.WorkPoolTask = .{ .callback = runFromWorkerThread },
+        next: ?*TranspilerJob = null,
 
         pub const Store = bun.HiveArray(TranspilerJob, 64).Fallback;
 
@@ -277,9 +330,8 @@ pub const RuntimeTranspilerStore = struct {
         threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
         pub fn dispatchToMainThread(this: *TranspilerJob) void {
-            this.vm.eventLoop().enqueueTaskConcurrent(
-                JSC.ConcurrentTask.fromCallback(this, runFromJSThread),
-            );
+            this.vm.transpiler_store.queue.push(this);
+            this.vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.vm.transpiler_store));
         }
 
         pub fn runFromJSThread(this: *TranspilerJob) void {
@@ -287,12 +339,18 @@ pub const RuntimeTranspilerStore = struct {
             const promise = this.promise.swap();
             const globalThis = this.globalThis;
             this.poll_ref.unref(vm);
-            var specifier = if (this.parse_error == null) this.resolved_source.specifier else bun.String.create(this.path.text);
-            const referrer = bun.String.create(this.referrer);
+
+            const referrer = bun.String.createUTF8(this.referrer);
             var log = this.log;
             this.log = logger.Log.init(bun.default_allocator);
             var resolved_source = this.resolved_source;
-            resolved_source.source_url = specifier.dupeRef();
+            const specifier = brk: {
+                if (this.parse_error != null) {
+                    break :brk bun.String.createUTF8(this.path.text);
+                }
+
+                break :brk resolved_source.specifier;
+            };
 
             resolved_source.tag = brk: {
                 if (resolved_source.commonjs_exports_len > 0) {
@@ -376,13 +434,13 @@ pub const RuntimeTranspilerStore = struct {
 
             var fd: ?StoredFileDescriptorType = null;
             var package_json: ?*PackageJSON = null;
-            const hash = JSC.Watcher.getHash(path.text);
+            const hash = JSC.GenericWatcher.getHash(path.text);
 
             switch (vm.bun_watcher) {
                 .hot, .watch => {
                     if (vm.bun_watcher.indexOf(hash)) |index| {
                         const _fd = vm.bun_watcher.watchlist().items(.fd)[index];
-                        fd = if (_fd > 0) _fd else null;
+                        fd = if (!_fd.isStdio()) _fd else null;
                         package_json = vm.bun_watcher.watchlist().items(.package_json)[index];
                     }
                 },
@@ -406,12 +464,17 @@ pub const RuntimeTranspilerStore = struct {
             //
             var should_close_input_file_fd = fd == null;
 
-            var input_file_fd: StoredFileDescriptorType = 0;
+            var input_file_fd: StoredFileDescriptorType = .zero;
+
+            const is_main = vm.main.len == path.text.len and
+                vm.main_hash == hash and
+                strings.eqlLong(vm.main, path.text, false);
+
             var parse_options = Bundler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
                 .loader = loader,
-                .dirname_fd = 0,
+                .dirname_fd = .zero,
                 .file_descriptor = fd,
                 .file_fd_ptr = &input_file_fd,
                 .file_hash = hash,
@@ -421,18 +484,19 @@ pub const RuntimeTranspilerStore = struct {
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
-                .inject_jest_globals = bundler.options.rewrite_jest_for_tests and
-                    vm.main.len == path.text.len and
-                    vm.main_hash == hash and
-                    strings.eqlLong(vm.main, path.text, false),
-                .set_breakpoint_on_first_line = vm.debugger != null and vm.debugger.?.set_breakpoint_on_first_line and strings.eqlLong(vm.main, path.text, true) and setBreakPointOnFirstLine(),
+                .inject_jest_globals = bundler.options.rewrite_jest_for_tests and is_main,
+                .set_breakpoint_on_first_line = vm.debugger != null and
+                    vm.debugger.?.set_breakpoint_on_first_line and
+                    is_main and
+                    setBreakPointOnFirstLine(),
                 .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
+                .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
             };
 
             defer {
-                if (should_close_input_file_fd and input_file_fd != 0) {
+                if (should_close_input_file_fd and input_file_fd != .zero) {
                     _ = bun.sys.close(input_file_fd);
-                    input_file_fd = 0;
+                    input_file_fd = .zero;
                 }
             }
 
@@ -451,7 +515,7 @@ pub const RuntimeTranspilerStore = struct {
                 false,
             ) orelse {
                 if (vm.isWatcherEnabled()) {
-                    if (input_file_fd != 0) {
+                    if (input_file_fd != .zero) {
                         if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                             should_close_input_file_fd = false;
                             vm.bun_watcher.addFile(
@@ -459,7 +523,7 @@ pub const RuntimeTranspilerStore = struct {
                                 path.text,
                                 hash,
                                 loader,
-                                0,
+                                .zero,
                                 package_json,
                                 true,
                             ) catch {};
@@ -472,7 +536,7 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             if (vm.isWatcherEnabled()) {
-                if (input_file_fd != 0) {
+                if (input_file_fd != .zero) {
                     if (!is_node_override and
                         std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules"))
                     {
@@ -482,7 +546,7 @@ pub const RuntimeTranspilerStore = struct {
                             path.text,
                             hash,
                             loader,
-                            0,
+                            .zero,
                             package_json,
                             true,
                         ) catch {};
@@ -491,13 +555,13 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (cache.entry) |*entry| {
-                const duped = String.create(specifier);
+                const duped = String.createUTF8(specifier);
                 vm.source_mappings.putMappings(parse_result.source, .{
                     .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
                     .allocator = bun.default_allocator,
                 }) catch {};
 
-                if (comptime Environment.allow_assert) {
+                if (comptime Environment.dump_source) {
                     dumpSourceString(specifier, entry.output_code.byteSlice());
                 }
 
@@ -506,14 +570,14 @@ pub const RuntimeTranspilerStore = struct {
                     .source_code = switch (entry.output_code) {
                         .string => entry.output_code.string,
                         .utf8 => brk: {
-                            const result = bun.String.create(entry.output_code.utf8);
+                            const result = bun.String.createUTF8(entry.output_code.utf8);
                             cache.output_code_allocator.free(entry.output_code.utf8);
                             entry.output_code.utf8 = "";
                             break :brk result;
                         },
                     },
                     .specifier = duped,
-                    .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.init(path.text),
+                    .source_url = duped.createIfDifferent(path.text),
                     .hash = 0,
                     .commonjs_exports_len = if (entry.metadata.module_type == .cjs) std.math.maxInt(u32) else 0,
                 };
@@ -522,14 +586,15 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (parse_result.already_bundled) {
-                const duped = String.create(specifier);
+                const duped = String.createUTF8(specifier);
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
                     .specifier = duped,
-                    .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.init(path.text),
+                    .source_url = duped.createIfDifferent(path.text),
                     .hash = 0,
                 };
+                this.resolved_source.source_code.ensureHash();
                 return;
             }
 
@@ -539,6 +604,7 @@ pub const RuntimeTranspilerStore = struct {
                 if (JSC.HardcodedModule.Aliases.get(import_record.path.text, bundler.options.target)) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
+                    import_record.is_external_without_side_effects = true;
                     continue;
                 }
 
@@ -553,6 +619,7 @@ pub const RuntimeTranspilerStore = struct {
                         import_record.path.namespace = "bun";
                         import_record.tag = .bun_test;
                         import_record.path.text = "test";
+                        import_record.is_external_without_side_effects = true;
                         continue;
                     }
                 }
@@ -560,6 +627,7 @@ pub const RuntimeTranspilerStore = struct {
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
+                    import_record.is_external_without_side_effects = true;
 
                     if (strings.eqlComptime(import_record.path.text, "test")) {
                         import_record.tag = .bun_test;
@@ -596,23 +664,34 @@ pub const RuntimeTranspilerStore = struct {
                 dumpSource(specifier, &printer);
             }
 
-            const duped = String.create(specifier);
+            const duped = String.createUTF8(specifier);
+            const source_code = brk: {
+                const written = printer.ctx.getWritten();
+
+                const result = cache.output_code orelse bun.String.createLatin1(written);
+
+                if (written.len > 1024 * 1024 * 2 or vm.smol) {
+                    printer.ctx.buffer.deinit();
+                    source_code_printer.?.* = printer;
+                }
+
+                // In a benchmarking loading @babel/standalone 100 times:
+                //
+                // After ensureHash:
+                // 354.00 ms    4.2%	354.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                //
+                // Before ensureHash:
+                // 506.00 ms    6.1%	506.00 ms	 	  WTF::StringImpl::hashSlowCase() const
+                //
+                result.ensureHash();
+
+                break :brk result;
+            };
             this.resolved_source = ResolvedSource{
                 .allocator = null,
-                .source_code = brk: {
-                    const written = printer.ctx.getWritten();
-
-                    const result = cache.output_code orelse bun.String.createLatin1(written);
-
-                    if (written.len > 1024 * 1024 * 2 or vm.smol) {
-                        printer.ctx.buffer.deinit();
-                        source_code_printer.?.* = printer;
-                    }
-
-                    break :brk result;
-                },
+                .source_code = source_code,
                 .specifier = duped,
-                .source_url = if (duped.eqlUTF8(path.text)) duped.dupeRef() else String.create(path.text),
+                .source_url = duped.createIfDifferent(path.text),
                 .commonjs_exports = null,
                 .commonjs_exports_len = if (parse_result.ast.exports_kind == .cjs)
                     std.math.maxInt(u32)
@@ -626,9 +705,7 @@ pub const RuntimeTranspilerStore = struct {
 
 pub const ModuleLoader = struct {
     transpile_source_code_arena: ?*bun.ArenaAllocator = null,
-    eval_script: ?*logger.Source = null,
-
-    const debug = Output.scoped(.ModuleLoader, true);
+    eval_source: ?*logger.Source = null,
 
     /// This must be called after calling transpileSourceCode
     pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
@@ -1025,6 +1102,7 @@ pub const ModuleLoader = struct {
             var spec = bun.String.init(ZigString.init(this.specifier).withEncoding());
             var ref = bun.String.init(ZigString.init(this.referrer).withEncoding());
             Bun__onFulfillAsyncModule(
+                this.globalThis,
                 this.promise.get().?,
                 &errorable,
                 &spec,
@@ -1067,6 +1145,7 @@ pub const ModuleLoader = struct {
             log.deinit();
 
             Bun__onFulfillAsyncModule(
+                globalThis,
                 promise,
                 &errorable,
                 &specifier,
@@ -1171,7 +1250,7 @@ pub const ModuleLoader = struct {
 
             const msg_args = .{
                 result.name,
-                result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items),
+                result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items, .any),
             };
 
             const msg: []u8 = try switch (result.err) {
@@ -1221,7 +1300,7 @@ pub const ModuleLoader = struct {
                     .{
                         bun.asByteSlice(@errorName(err)),
                         result.name,
-                        result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items),
+                        result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items, .any),
                     },
                 ),
             };
@@ -1326,7 +1405,7 @@ pub const ModuleLoader = struct {
                             path.text,
                             this.hash,
                             options.Loader.fromAPI(this.loader),
-                            0,
+                            .zero,
                             this.package_json,
                             true,
                         ) catch {};
@@ -1379,6 +1458,7 @@ pub const ModuleLoader = struct {
         }
 
         extern "C" fn Bun__onFulfillAsyncModule(
+            globalObject: *JSC.JSGlobalObject,
             promiseValue: JSC.JSValue,
             res: *JSC.ErrorableResolvedSource,
             specifier: *bun.String,
@@ -1419,7 +1499,7 @@ pub const ModuleLoader = struct {
             .js, .jsx, .ts, .tsx, .json, .toml, .text => {
                 jsc_vm.transpiled_count += 1;
                 jsc_vm.bundler.resetStore();
-                const hash = JSC.Watcher.getHash(path.text);
+                const hash = JSC.GenericWatcher.getHash(path.text);
                 const is_main = jsc_vm.main.len == path.text.len and
                     jsc_vm.main_hash == hash and
                     strings.eqlLong(jsc_vm.main, path.text, false);
@@ -1445,10 +1525,14 @@ pub const ModuleLoader = struct {
                 defer {
                     if (give_back_arena) {
                         if (jsc_vm.module_loader.transpile_source_code_arena == null) {
-                            if (jsc_vm.smol) {
-                                _ = arena_.?.reset(.free_all);
-                            } else {
-                                _ = arena_.?.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                            // when .print_source is used
+                            // caller is responsible for freeing the arena
+                            if (flags != .print_source) {
+                                if (jsc_vm.smol) {
+                                    _ = arena_.?.reset(.free_all);
+                                } else {
+                                    _ = arena_.?.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
+                                }
                             }
 
                             jsc_vm.module_loader.transpile_source_code_arena = arena_;
@@ -1466,8 +1550,8 @@ pub const ModuleLoader = struct {
                 var package_json: ?*PackageJSON = null;
 
                 if (jsc_vm.bun_watcher.indexOf(hash)) |index| {
-                    const _fd = jsc_vm.bun_watcher.watchlist().items(.fd)[index];
-                    fd = if (_fd > 0) _fd else null;
+                    const maybe_fd = jsc_vm.bun_watcher.watchlist().items(.fd)[index];
+                    fd = if (maybe_fd != .zero) maybe_fd else null;
                     package_json = jsc_vm.bun_watcher.watchlist().items(.package_json)[index];
                 }
 
@@ -1526,9 +1610,12 @@ pub const ModuleLoader = struct {
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
-                    .set_breakpoint_on_first_line = is_main and jsc_vm.debugger != null and jsc_vm.debugger.?.set_breakpoint_on_first_line and setBreakPointOnFirstLine(),
-
+                    .set_breakpoint_on_first_line = is_main and
+                        jsc_vm.debugger != null and
+                        jsc_vm.debugger.?.set_breakpoint_on_first_line and
+                        setBreakPointOnFirstLine(),
                     .runtime_transpiler_cache = if (!disable_transpilying and !JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
+                    .remove_cjs_module_wrapper = is_main and jsc_vm.module_loader.eval_source != null,
                 };
                 defer {
                     if (should_close_input_file_fd and input_file_fd != bun.invalid_fd) {
@@ -1555,7 +1642,7 @@ pub const ModuleLoader = struct {
                         ) orelse {
                             if (comptime !disable_transpilying) {
                                 if (jsc_vm.isWatcherEnabled()) {
-                                    if (input_file_fd != 0) {
+                                    if (input_file_fd != .zero) {
                                         if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                             should_close_input_file_fd = false;
                                             jsc_vm.bun_watcher.addFile(
@@ -1563,7 +1650,7 @@ pub const ModuleLoader = struct {
                                                 path.text,
                                                 hash,
                                                 loader,
-                                                0,
+                                                .zero,
                                                 package_json,
                                                 true,
                                             ) catch {};
@@ -1598,7 +1685,7 @@ pub const ModuleLoader = struct {
 
                 if (comptime !disable_transpilying) {
                     if (jsc_vm.isWatcherEnabled()) {
-                        if (input_file_fd != 0) {
+                        if (input_file_fd != .zero) {
                             if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                 should_close_input_file_fd = false;
                                 jsc_vm.bun_watcher.addFile(
@@ -1606,7 +1693,7 @@ pub const ModuleLoader = struct {
                                     path.text,
                                     hash,
                                     loader,
-                                    0,
+                                    .zero,
                                     package_json,
                                     true,
                                 ) catch {};
@@ -1623,9 +1710,9 @@ pub const ModuleLoader = struct {
                 if (loader == .json and !path.isJSONCFile()) {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = bun.String.create(parse_result.source.contents),
+                        .source_code = bun.String.createUTF8(parse_result.source.contents),
                         .specifier = input_specifier,
-                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                        .source_url = input_specifier.createIfDifferent(path.text),
 
                         .hash = 0,
                         .tag = ResolvedSource.Tag.json_for_object_loader,
@@ -1641,7 +1728,7 @@ pub const ModuleLoader = struct {
                             else => @compileError("unreachable"),
                         },
                         .specifier = input_specifier,
-                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                        .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
                     };
                 }
@@ -1651,7 +1738,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
                         .specifier = input_specifier,
-                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                        .source_url = input_specifier.createIfDifferent(path.text),
 
                         .hash = 0,
                     };
@@ -1672,14 +1759,14 @@ pub const ModuleLoader = struct {
                         .source_code = switch (entry.output_code) {
                             .string => entry.output_code.string,
                             .utf8 => brk: {
-                                const result = bun.String.create(entry.output_code.utf8);
+                                const result = bun.String.createUTF8(entry.output_code.utf8);
                                 cache.output_code_allocator.free(entry.output_code.utf8);
                                 entry.output_code.utf8 = "";
                                 break :brk result;
                             },
                         },
                         .specifier = input_specifier,
-                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                        .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
                         .commonjs_exports_len = if (entry.metadata.module_type == .cjs) std.math.maxInt(u32) else 0,
                         .tag = brk: {
@@ -1829,7 +1916,7 @@ pub const ModuleLoader = struct {
                         break :brk result;
                     },
                     .specifier = input_specifier,
-                    .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                    .source_url = input_specifier.createIfDifferent(path.text),
                     .commonjs_exports = if (commonjs_exports.len > 0)
                         commonjs_exports.ptr
                     else
@@ -1883,7 +1970,7 @@ pub const ModuleLoader = struct {
             //         .allocator = if (jsc_vm.has_loaded) &jsc_vm.allocator else null,
             //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
             //         .specifier = ZigString.init(specifier),
-            //         .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+            //         .source_url = input_specifier.createIfDifferent(path.text),
             //         .hash = 0,
             //         .tag = ResolvedSource.Tag.wasm,
             //     };
@@ -1908,7 +1995,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = bun.String.static(@embedFile("../js/wasi-runner.js")),
                         .specifier = input_specifier,
-                        .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                        .source_url = input_specifier.createIfDifferent(path.text),
                         .tag = .esm,
                         .hash = 0,
                     };
@@ -1931,6 +2018,49 @@ pub const ModuleLoader = struct {
                 );
             },
 
+            .sqlite_embedded, .sqlite => {
+                const sqlite_module_source_code_string = brk: {
+                    if (jsc_vm.hot_reload == .hot) {
+                        break :brk 
+                        \\// Generated code
+                        \\import {Database} from 'bun:sqlite';
+                        \\const {path} = import.meta;
+                        \\
+                        \\// Don't reload the database if it's already loaded
+                        \\const registry = (globalThis[Symbol.for("bun:sqlite:hot")] ??= new Map());
+                        \\
+                        \\export let db = registry.get(path);
+                        \\export const __esModule = true;
+                        \\if (!db) {
+                        \\   // Load the database
+                        \\   db = new Database(path);
+                        \\   registry.set(path, db);
+                        \\}
+                        \\
+                        \\export default db;
+                        ;
+                    }
+
+                    break :brk 
+                    \\// Generated code
+                    \\import {Database} from 'bun:sqlite';
+                    \\export const db = new Database(import.meta.path);
+                    \\
+                    \\export const __esModule = true;
+                    \\export default db;
+                    ;
+                };
+
+                return ResolvedSource{
+                    .allocator = null,
+                    .source_code = bun.String.createUTF8(sqlite_module_source_code_string),
+                    .specifier = input_specifier,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .tag = .esm,
+                    .hash = 0,
+                };
+            },
+
             else => {
                 var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
                 const allocator = stack_buf.get();
@@ -1940,7 +2070,7 @@ pub const ModuleLoader = struct {
                 if (!jsc_vm.origin.isEmpty()) {
                     writer.writeAll("export default `") catch unreachable;
                     // TODO: escape backtick char, though we might already do that
-                    @import("./api/bun.zig").getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
+                    JSC.API.Bun.getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
                     writer.writeAll("`;\n") catch unreachable;
                 } else {
                     writer.writeAll("export default ") catch unreachable;
@@ -1949,12 +2079,12 @@ pub const ModuleLoader = struct {
                     writer.writeAll(";\n") catch unreachable;
                 }
 
-                const public_url = bun.String.create(buf.toOwnedSliceLeaky());
+                const public_url = bun.String.createUTF8(buf.toOwnedSliceLeaky());
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
                     .source_code = public_url,
                     .specifier = input_specifier,
-                    .source_url = if (input_specifier.eqlUTF8(path.text)) input_specifier.dupeRef() else String.init(path.text),
+                    .source_url = input_specifier.createIfDifferent(path.text),
                     .hash = 0,
                 };
             },
@@ -2038,13 +2168,13 @@ pub const ModuleLoader = struct {
         globalObject: *JSC.JSGlobalObject,
         specifier_ptr: *const bun.String,
         referrer: *const bun.String,
+        type_attribute: ?*const bun.String,
         ret: *ErrorableResolvedSource,
         allow_promise: bool,
     ) ?*anyopaque {
         JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.bundler.allocator);
         defer log.deinit();
-        debug("transpileFile: {any}", .{specifier_ptr.*});
 
         var _specifier = specifier_ptr.toUTF8(jsc_vm.allocator);
         var referrer_slice = referrer.toUTF8(jsc_vm.allocator);
@@ -2064,10 +2194,20 @@ pub const ModuleLoader = struct {
         // The concurrent one only handles javascript-like loaders right now.
         var loader: ?options.Loader = jsc_vm.bundler.options.loaders.get(path.name.ext);
 
-        if (jsc_vm.module_loader.eval_script) |eval_script| {
+        if (jsc_vm.module_loader.eval_source) |eval_source| {
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                virtual_source = eval_script;
+                virtual_source = eval_source;
                 loader = .tsx;
+            }
+            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
+                virtual_source = eval_source;
+                loader = .tsx;
+            }
+        }
+
+        if (type_attribute) |attribute| {
+            if (attribute.eqlComptime("sqlite")) {
+                loader = .sqlite;
             }
         }
 
@@ -2110,6 +2250,9 @@ pub const ModuleLoader = struct {
                 break :loader options.Loader.tsx;
             }
         };
+
+        if (comptime Environment.allow_assert)
+            debug("transpile({s}, {s}, sync)", .{ specifier, @tagName(synchronous_loader) });
 
         defer jsc_vm.module_loader.resetArena(jsc_vm);
 
@@ -2171,7 +2314,7 @@ pub const ModuleLoader = struct {
         if (specifier.eqlComptime(Runtime.Runtime.Imports.Name)) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = String.init(Runtime.Runtime.sourceContentBun()),
+                .source_code = String.init(Runtime.Runtime.source_code),
                 .specifier = specifier,
                 .source_url = specifier,
                 .hash = Runtime.Runtime.versionHash(),
@@ -2181,12 +2324,12 @@ pub const ModuleLoader = struct {
                 .@"bun:main" => {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = bun.String.create(jsc_vm.entry_point.source.contents),
+                        .source_code = bun.String.createUTF8(jsc_vm.entry_point.source.contents),
                         .specifier = specifier,
                         .source_url = specifier,
                         .hash = 0,
                         .tag = .esm,
-                        .needs_deref = true,
+                        .source_code_needs_deref = true,
                     };
                 },
 
@@ -2255,6 +2398,7 @@ pub const ModuleLoader = struct {
                 .@"node-fetch" => return jsSyntheticModule(.@"node-fetch", specifier),
                 .@"@vercel/fetch" => return jsSyntheticModule(.vercel_fetch, specifier),
                 .@"utf-8-validate" => return jsSyntheticModule(.@"utf-8-validate", specifier),
+                .@"abort-controller" => return jsSyntheticModule(.@"abort-controller", specifier),
                 .undici => return jsSyntheticModule(.undici, specifier),
                 .ws => return jsSyntheticModule(.ws, specifier),
             }
@@ -2264,7 +2408,7 @@ pub const ModuleLoader = struct {
             if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(spec.slice()))) |entry| {
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.create(entry.source.contents),
+                    .source_code = bun.String.createUTF8(entry.source.contents),
                     .specifier = specifier,
                     .source_url = specifier.dupeRef(),
                     .hash = 0,
@@ -2274,13 +2418,33 @@ pub const ModuleLoader = struct {
             const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
             defer specifier_utf8.deinit();
             if (graph.files.get(specifier_utf8.slice())) |file| {
+                if (file.loader == .sqlite or file.loader == .sqlite_embedded) {
+                    const code =
+                        \\/* Generated code */
+                        \\import {Database} from 'bun:sqlite';
+                        \\import {readFileSync} from 'node:fs';
+                        \\export const db = new Database(readFileSync(import.meta.path));
+                        \\
+                        \\export const __esModule = true;
+                        \\export default db;
+                    ;
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = bun.String.init(code),
+                        .specifier = specifier,
+                        .source_url = specifier.dupeRef(),
+                        .hash = 0,
+                        .source_code_needs_deref = false,
+                    };
+                }
+
                 return ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.static(file.contents),
                     .specifier = specifier,
                     .source_url = specifier.dupeRef(),
                     .hash = 0,
-                    .needs_deref = false,
+                    .source_code_needs_deref = false,
                 };
             }
         }
@@ -2375,6 +2539,7 @@ const SavedSourceMap = JSC.SavedSourceMap;
 
 pub const HardcodedModule = enum {
     bun,
+    @"abort-controller",
     @"bun:ffi",
     @"bun:jsc",
     @"bun:main",
@@ -2516,6 +2681,7 @@ pub const HardcodedModule = enum {
             .{ "ws", HardcodedModule.ws },
             .{ "@vercel/fetch", HardcodedModule.@"@vercel/fetch" },
             .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
+            .{ "abort-controller", HardcodedModule.@"abort-controller" },
         },
     );
 
@@ -2681,6 +2847,10 @@ pub const HardcodedModule = enum {
 
             .{ "inspector/promises", .{ .path = "inspector" } },
             .{ "node:inspector/promises", .{ .path = "inspector" } },
+
+            // Polyfills we force to native
+            .{ "abort-controller", .{ .path = "abort-controller" } },
+            .{ "abort-controller/polyfill", .{ .path = "abort-controller" } },
         };
 
         const node_alias_kvs = .{
@@ -2720,3 +2890,50 @@ pub const HardcodedModule = enum {
         }
     };
 };
+
+/// Support embedded .node files
+export fn Bun__resolveEmbeddedNodeFile(vm: *JSC.VirtualMachine, in_out_str: *bun.String) bool {
+    var graph = vm.standalone_module_graph orelse return false;
+    const utf8 = in_out_str.toUTF8(bun.default_allocator);
+    defer utf8.deinit();
+    const file = graph.find(utf8.slice()) orelse return false;
+
+    if (comptime Environment.isLinux) {
+        // TODO: use /proc/fd/12346 instead! Avoid the copy!
+    }
+
+    // atomically write to a tmpfile and then move it to the final destination
+    var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname("node", &tmpname_buf, bun.hash(file.name)) catch return false, 0);
+
+    const tmpdir = bun.fs.FileSystem.instance.tmpdir();
+
+    // First we open the tmpfile, to avoid any other work in the event of failure.
+    const tmpfile = bun.Tmpfile.create(bun.toFD(tmpdir.fd), tmpfilename).unwrap() catch return false;
+    defer {
+        _ = bun.sys.close(tmpfile.fd);
+    }
+
+    switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+        &tmpname_buf, // not used
+
+        .{
+            .data = .{
+                .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(file.contents),
+            },
+            .dirfd = bun.toFD(tmpdir.fd),
+            .file = .{
+                .fd = tmpfile.fd,
+            },
+            .encoding = .buffer,
+        },
+    )) {
+        .err => {
+            return false;
+        },
+        else => {},
+    }
+
+    in_out_str.* = bun.String.createUTF8(bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename));
+    return true;
+}

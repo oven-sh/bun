@@ -10,7 +10,7 @@ const libuv = bun.windows.libuv;
 
 const allow_assert = env.allow_assert;
 
-const log = bun.Output.scoped(.fs, false);
+const log = bun.sys.syslog;
 fn handleToNumber(handle: FDImpl.System) FDImpl.SystemAsInt {
     if (env.os == .windows) {
         // intCast fails if 'fd > 2^62'
@@ -20,8 +20,12 @@ fn handleToNumber(handle: FDImpl.System) FDImpl.SystemAsInt {
         return handle;
     }
 }
+
 fn numberToHandle(handle: FDImpl.SystemAsInt) FDImpl.System {
     if (env.os == .windows) {
+        if (!@inComptime()) {
+            std.debug.assert(handle != FDImpl.invalid_value);
+        }
         return @ptrFromInt(handle);
     } else {
         return handle;
@@ -30,13 +34,15 @@ fn numberToHandle(handle: FDImpl.SystemAsInt) FDImpl.System {
 
 pub fn uv_get_osfhandle(in: c_int) libuv.uv_os_fd_t {
     const out = libuv.uv_get_osfhandle(in);
-    log("uv_get_osfhandle({d}) = {d}", .{ in, @intFromPtr(out) });
+    // TODO: this is causing a dead lock because is also used on fd format
+    // log("uv_get_osfhandle({d}) = {d}", .{ in, @intFromPtr(out) });
     return out;
 }
 
 pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
     const out = libuv.uv_open_osfhandle(in);
-    log("uv_get_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
+    // TODO: this is causing a dead lock because is also used on fd format
+    // log("uv_open_osfhandle({d}) = {d}", .{ @intFromPtr(in), out });
     return out;
 }
 
@@ -44,7 +50,7 @@ pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) c_int {
 ///
 /// bun.FileDescriptor is the bitcast of this struct, which is essentially a tagged pointer.
 ///
-/// You can aquire one with FDImpl.decode(fd), and convert back to it with FDImpl.encode(fd).
+/// You can acquire one with FDImpl.decode(fd), and convert back to it with FDImpl.encode(fd).
 ///
 /// On Windows builds we have two kinds of file descriptors:
 /// - system: A "std.os.windows.HANDLE" that windows APIs can interact with.
@@ -76,12 +82,12 @@ pub const FDImpl = packed struct {
         else => System,
     };
 
-    const Value = if (env.os == .windows)
+    pub const Value = if (env.os == .windows)
         packed union { as_system: SystemAsInt, as_uv: UV }
     else
         packed union { as_system: SystemAsInt };
 
-    const Kind = if (env.os == .windows)
+    pub const Kind = if (env.os == .windows)
         enum(u1) { system = 0, uv = 1 }
     else
         enum(u0) { system };
@@ -95,6 +101,13 @@ pub const FDImpl = packed struct {
         }
     }
 
+    pub fn fromSystemWithoutAssertion(system_fd: System) FDImpl {
+        return FDImpl{
+            .kind = .system,
+            .value = .{ .as_system = handleToNumber(system_fd) },
+        };
+    }
+
     pub fn fromSystem(system_fd: System) FDImpl {
         if (env.os == .windows) {
             // the current process fd is max usize
@@ -102,10 +115,7 @@ pub const FDImpl = packed struct {
             std.debug.assert(@intFromPtr(system_fd) <= std.math.maxInt(SystemAsInt));
         }
 
-        return FDImpl{
-            .kind = .system,
-            .value = .{ .as_system = handleToNumber(system_fd) },
-        };
+        return fromSystemWithoutAssertion(system_fd);
     }
 
     pub fn fromUV(uv_fd: UV) FDImpl {
@@ -122,7 +132,17 @@ pub const FDImpl = packed struct {
     }
 
     pub fn isValid(this: FDImpl) bool {
-        return this.value.as_system != invalid_value;
+        return switch (env.os) {
+            // the 'zero' value on posix is debatable. it can be standard in.
+            // TODO(@paperdave): steamroll away every use of bun.FileDescriptor.zero
+            else => this.value.as_system != invalid_value,
+            .windows => switch (this.kind) {
+                // zero is not allowed in addition to the invalid value (zero would be a null ptr)
+                .system => this.value.as_system != invalid_value and this.value.as_system != 0,
+                // the libuv tag is always fine
+                .uv => true,
+            },
+        };
     }
 
     /// When calling this function, you may not be able to close the returned fd.
@@ -139,11 +159,12 @@ pub const FDImpl = packed struct {
 
     /// Convert to bun.FileDescriptor
     pub fn encode(this: FDImpl) bun.FileDescriptor {
-        return @bitCast(this);
+        // https://github.com/ziglang/zig/issues/18462
+        return @enumFromInt(@as(bun.FileDescriptorInt, @bitCast(this)));
     }
 
     pub fn decode(fd: bun.FileDescriptor) FDImpl {
-        return @bitCast(fd);
+        return @bitCast(@intFromEnum(fd));
     }
 
     /// When calling this function, you should consider the FD struct to now be invalid.
@@ -171,8 +192,8 @@ pub const FDImpl = packed struct {
             // This branch executes always on linux (uv() is no-op),
             // or on Windows when given a UV file descriptor.
             const fd = this.uv();
-            if (fd == bun.STDOUT_FD or fd == bun.STDERR_FD) {
-                log("close({}) SKIPPED", .{this});
+            if (fd == 1 or fd == 2) {
+                log("close({}) SKIPPED", .{fd});
                 return null;
             }
         }
@@ -196,29 +217,34 @@ pub const FDImpl = packed struct {
             std.debug.assert(this.value.as_system != invalid_value); // probably a UAF
         }
 
+        // Format the file descriptor for logging BEFORE closing it.
+        // Otherwise the file descriptor is always invalid after closing it.
+        var buf: if (env.isDebug) [1050]u8 else void = undefined;
+        const this_fmt = if (env.isDebug) std.fmt.bufPrint(&buf, "{}", .{this}) catch unreachable;
+
         const result: ?bun.sys.Error = switch (env.os) {
             .linux => result: {
-                const fd = this.system();
+                const fd = this.encode();
                 std.debug.assert(fd != bun.invalid_fd);
-                std.debug.assert(fd > -1);
-                break :result switch (linux.getErrno(linux.close(fd))) {
+                std.debug.assert(fd.cast() > -1);
+                break :result switch (linux.getErrno(linux.close(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
             },
             .mac => result: {
-                const fd = this.system();
+                const fd = this.encode();
                 std.debug.assert(fd != bun.invalid_fd);
-                std.debug.assert(fd > -1);
-                break :result switch (bun.sys.system.getErrno(bun.sys.system.@"close$NOCANCEL"(fd))) {
+                std.debug.assert(fd.cast() > -1);
+                break :result switch (bun.sys.system.getErrno(bun.sys.system.@"close$NOCANCEL"(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
             },
             .windows => result: {
-                var req: libuv.fs_t = libuv.fs_t.uninitialized;
                 switch (this.kind) {
                     .uv => {
+                        var req: libuv.fs_t = libuv.fs_t.uninitialized;
                         defer req.deinit();
                         const rc = libuv.uv_fs_close(libuv.Loop.get(), &req, this.value.as_uv, null);
                         break :result if (rc.errno()) |errno|
@@ -229,17 +255,14 @@ pub const FDImpl = packed struct {
                     .system => {
                         std.debug.assert(this.value.as_system != 0);
                         const handle: System = @ptrFromInt(@as(u64, this.value.as_system));
-                        if (std.os.windows.kernel32.CloseHandle(handle) == 0) {
-                            const errno = switch (std.os.windows.kernel32.GetLastError()) {
-                                .INVALID_HANDLE => @intFromEnum(os.E.BADF),
-                                else => |i| @intFromEnum(i),
-                            };
-                            break :result bun.sys.Error{
-                                .errno = errno,
+                        break :result switch (bun.windows.NtClose(handle)) {
+                            .SUCCESS => null,
+                            else => |rc| bun.sys.Error{
+                                .errno = if (bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno()) |errno| @intFromEnum(errno) else 1,
                                 .syscall = .CloseHandle,
                                 .fd = this.encode(),
-                            };
-                        }
+                            },
+                        };
                     },
                 }
             },
@@ -250,12 +273,12 @@ pub const FDImpl = packed struct {
             if (result) |err| {
                 if (err.errno == @intFromEnum(os.E.BADF)) {
                     // TODO(@paperdave): Zig Compiler Bug, if you remove `this` from the log. An error is correctly printed, but with the wrong reference trace
-                    bun.Output.debugWarn("close({}) = EBADF. This is an indication of a file descriptor UAF", .{this});
+                    bun.Output.debugWarn("close({s}) = EBADF. This is an indication of a file descriptor UAF", .{this_fmt});
                 } else {
-                    log("close({}) = err {d}", .{ this, err.errno });
+                    log("close({s}) = {}", .{ this_fmt, err });
                 }
             } else {
-                log("close({})", .{this});
+                log("close({s})", .{this_fmt});
             }
         }
 
@@ -266,6 +289,14 @@ pub const FDImpl = packed struct {
     pub fn fromJS(value: JSValue) ?FDImpl {
         if (!value.isInt32()) return null;
         const fd = value.asInt32();
+        if (comptime env.isWindows) {
+            return switch (bun.FDTag.get(fd)) {
+                .stdin => FDImpl.decode(bun.STDIN_FD),
+                .stdout => FDImpl.decode(bun.STDOUT_FD),
+                .stderr => FDImpl.decode(bun.STDERR_FD),
+                else => FDImpl.fromUV(fd),
+            };
+        }
         return FDImpl.fromUV(fd);
     }
 
@@ -277,6 +308,16 @@ pub const FDImpl = packed struct {
         if (!JSC.Node.Valid.fileDescriptor(fd, global, exception_ref)) {
             return error.JSException;
         }
+
+        if (comptime env.isWindows) {
+            return switch (bun.FDTag.get(fd)) {
+                .stdin => FDImpl.decode(bun.STDIN_FD),
+                .stdout => FDImpl.decode(bun.STDOUT_FD),
+                .stderr => FDImpl.decode(bun.STDERR_FD),
+                else => FDImpl.fromUV(fd),
+            };
+        }
+
         return FDImpl.fromUV(fd);
     }
 
@@ -285,17 +326,69 @@ pub const FDImpl = packed struct {
         return JSValue.jsNumberFromInt32(value.makeLibUVOwned().uv());
     }
 
-    pub fn format(this: FDImpl, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: FDImpl, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (!this.isValid()) {
+            try writer.writeAll("[invalid_fd]");
+            return;
+        }
+
+        if (fmt.len != 0) {
+            // The reason for this error is because formatting FD as an integer on windows is
+            // ambiguous and almost certainly a mistake. You probably meant to format fd.cast().
+            //
+            // Remember this formatter will
+            // - on posix, print the numebr
+            // - on windows, print if it is a handle or a libuv file descriptor
+            // - in debug on all platforms, print the path of the file descriptor
+            //
+            // Not having this error caused a linux+debug only crash in bun.sys.getFdPath because
+            // we forgot to change the thing being printed to "fd.cast()" when FDImpl was introduced.
+            @compileError("invalid format string for FDImpl.format. must be empty like '{}'");
+        }
+
         switch (env.os) {
             else => {
-                try writer.print("{d}", .{this.system()});
+                const fd = this.system();
+                try writer.print("{d}", .{fd});
+                if (env.isDebug and fd >= 3) print_with_path: {
+                    var path_buf: bun.PathBuffer = undefined;
+                    const path = std.os.getFdPath(fd, &path_buf) catch break :print_with_path;
+                    try writer.print("[{s}]", .{path});
+                }
             },
             .windows => {
                 switch (this.kind) {
-                    .system => try writer.print("{d}[handle]", .{this.value.as_system}),
-                    .uv => try writer.print("{d}[libuv]", .{this.value.as_system}),
+                    .system => {
+                        if (env.isDebug) {
+                            const peb = std.os.windows.peb();
+                            const handle = this.system();
+                            if (handle == peb.ProcessParameters.hStdInput) {
+                                return try writer.print("{d}[stdin handle]", .{this.value.as_system});
+                            } else if (handle == peb.ProcessParameters.hStdOutput) {
+                                return try writer.print("{d}[stdout handle]", .{this.value.as_system});
+                            } else if (handle == peb.ProcessParameters.hStdError) {
+                                return try writer.print("{d}[stderr handle]", .{this.value.as_system});
+                            } else if (handle == peb.ProcessParameters.CurrentDirectory.Handle) {
+                                return try writer.print("{d}[cwd handle]", .{this.value.as_system});
+                            } else print_with_path: {
+                                var fd_path: bun.WPathBuffer = undefined;
+                                const path = std.os.windows.GetFinalPathNameByHandle(handle, .{ .volume_name = .Nt }, &fd_path) catch break :print_with_path;
+                                return try writer.print("{d}[{}]", .{
+                                    this.value.as_system,
+                                    bun.fmt.utf16(path),
+                                });
+                            }
+                        }
+
+                        try writer.print("{d}[handle]", .{this.value.as_system});
+                    },
+                    .uv => try writer.print("{d}[libuv]", .{this.value.as_uv}),
                 }
             },
         }
+    }
+
+    pub fn assertValid(this: FDImpl) void {
+        std.debug.assert(this.isValid());
     }
 };

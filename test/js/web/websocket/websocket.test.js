@@ -1,9 +1,11 @@
 import { describe, it, expect } from "bun:test";
 import { bunExe, bunEnv, gc } from "harness";
 import { readFileSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
+import process from "process";
 
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
+const isWindows = process.platform === "win32";
 
 describe("WebSocket", () => {
   it("should connect", async () => {
@@ -428,6 +430,35 @@ describe("WebSocket", () => {
     ws.close();
     gc(true);
   });
+
+  it("should report failing websocket construction to onerror/onclose", async () => {
+    let did_report_error = false;
+    let did_report_close = false;
+
+    try {
+      const url = `wss://some-random-domain.smth`;
+      await new Promise((resolve, reject) => {
+        const ws = new WebSocket(url, {});
+        let timeout = setTimeout(() => {
+          reject.call();
+        }, 500);
+
+        ws.onclose = () => {
+          did_report_close = true;
+          clearTimeout(timeout);
+          resolve.call();
+        };
+
+        ws.onerror = () => {
+          did_report_error = true;
+        };
+      });
+    } finally {
+    }
+
+    expect(did_report_error).toBe(true);
+    expect(did_report_close).toBe(true);
+  });
 });
 
 describe("websocket in subprocess", () => {
@@ -477,7 +508,11 @@ describe("websocket in subprocess", () => {
 
     subprocess.kill();
 
-    expect(await subprocess.exited).toBe(129);
+    if (isWindows) {
+      expect(await subprocess.exited).toBe(1);
+    } else {
+      expect(await subprocess.exited).toBe(143);
+    }
   });
 
   it("should exit with invalid url", async () => {
@@ -531,6 +566,7 @@ describe("websocket in subprocess", () => {
   });
 
   it("should exit after server stop and 0 messages", async () => {
+    const { promise, resolve } = Promise.withResolvers();
     const server = Bun.serve({
       port: 0,
       fetch(req, server) {
@@ -541,7 +577,9 @@ describe("websocket in subprocess", () => {
         return new Response("http response");
       },
       websocket: {
-        open(ws) {},
+        open(ws) {
+          resolve();
+        },
         message(ws, message) {},
         close(ws) {},
       },
@@ -549,12 +587,12 @@ describe("websocket in subprocess", () => {
 
     const subprocess = Bun.spawn({
       cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
-      stderr: "pipe",
-      stdin: "pipe",
-      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "inherit",
+      stdout: "inherit",
       env: bunEnv,
     });
-
+    await promise;
     server.stop(true);
     expect(await subprocess.exited).toBe(0);
   });

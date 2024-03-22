@@ -1,0 +1,6 @@
+*.exe
+*.ll
+*.obj
+*.bunx
+/build
+!bun_shim_impl.exe

@@ -69,6 +69,8 @@ pub fn setThreadName(name: StringTypes.stringZ) void {
         _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
+    } else if (Environment.isWindows) {
+        // _ = std.os.SetThreadDescription(std.os.GetCurrentThread(), name);
     }
 }
 
@@ -90,13 +92,24 @@ pub fn runExitCallbacks() void {
 
 /// Flushes stdout and stderr and exits with the given code.
 pub fn exit(code: u8) noreturn {
+    exitWide(@as(u32, code));
+}
+
+pub fn exitWide(code: u32) noreturn {
     runExitCallbacks();
     Output.flush();
     std.mem.doNotOptimizeAway(&Bun__atexit);
-    std.c.exit(code);
+    if (Environment.isWindows) {
+        bun.windows.libuv.uv_library_shutdown();
+    }
+    std.c.exit(@bitCast(code));
 }
 
 pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
+    if (comptime @TypeOf(sig) == bun.SignalCode) {
+        return raiseIgnoringPanicHandler(@intFromEnum(sig));
+    }
+
     Output.flush();
     @import("./crash_reporter.zig").on_error = null;
     if (!Environment.isWindows) {
@@ -188,7 +201,7 @@ const string = @import("root").bun.string;
 
 pub const BunInfo = struct {
     bun_version: string,
-    platform: Analytics.GenerateHeader.GeneratePlatform.Platform = undefined,
+    platform: Analytics.GenerateHeader.GeneratePlatform.Platform,
     framework: string = "",
     framework_version: string = "",
 

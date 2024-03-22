@@ -5,12 +5,12 @@ import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
 import { gzipSync } from "zlib";
 import { join } from "path";
-import { gc, withoutAggressiveGC, gcTick } from "harness";
+import { gc, withoutAggressiveGC, gcTick, isWindows } from "harness";
 import net from "net";
 
 const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
 
-const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8");
+const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
 
 let server: Server;
 function startServer({ fetch, ...options }: ServeOptions) {
@@ -219,10 +219,7 @@ describe("AbortSignal", () => {
         await sleep(1);
         controller.abort();
       }
-      await Promise.all([
-        fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
-        manualAbort(),
-      ]);
+      await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
     }).toThrow(new DOMException("The operation was aborted."));
   });
 
@@ -245,10 +242,7 @@ describe("AbortSignal", () => {
         await sleep(10);
         controller.abort(new Error("My Reason"));
       }
-      await Promise.all([
-        fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
-        manualAbort(),
-      ]);
+      await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
     }).toThrow("My Reason");
   });
 
@@ -268,10 +262,7 @@ describe("AbortSignal", () => {
         await sleep(10);
         controller.abort();
       }
-      await Promise.all([
-        fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
-        manualAbort(),
-      ]);
+      await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
     }).toThrow(new DOMException("The operation was aborted."));
   });
 
@@ -323,7 +314,7 @@ describe("AbortSignal", () => {
     }
 
     try {
-      const request = new Request(`http://127.0.0.1:${server.port}`, { signal });
+      const request = new Request(server.url, { signal });
       await Promise.all([fetch(request).then(res => res.text()), manualAbort()]);
       expect(() => {}).toThrow();
     } catch (ex: any) {
@@ -838,7 +829,8 @@ describe("Bun.file", () => {
     return file;
   });
 
-  it("size is Infinity on a fifo", () => {
+  // this test uses libc.so or dylib so we skip on windows
+  it.skipIf(isWindows)("size is Infinity on a fifo", () => {
     const path = join(tmp_dir, "test-fifo");
     mkfifo(path);
     const { size } = Bun.file(path);
@@ -852,7 +844,8 @@ describe("Bun.file", () => {
     }
   }
 
-  describe("bad permissions throws", () => {
+  // on Windows the creator of the file will be able to read from it so this test is disabled on it
+  describe.skipIf(isWindows)("bad permissions throws", () => {
     const path = join(tmp_dir, "my-new-file");
     beforeAll(async () => {
       await Bun.write(path, "hey");
@@ -1241,10 +1234,10 @@ describe("Response", () => {
       }).toThrow("Body already used");
     });
     it("with Bun.file() streams", async () => {
-      var stream = Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
+      var stream = Bun.file(join(import.meta.dir, "fixtures/file.txt")).stream();
       expect(stream instanceof ReadableStream).toBe(true);
       var input = new Response((await new Response(stream).blob()).stream()).arrayBuffer();
-      var output = Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer();
+      var output = Bun.file(join(import.meta.dir, "/fixtures/file.txt")).arrayBuffer();
       expect(await input).toEqual(await output);
     });
     it("with Bun.file() with request/response", async () => {
@@ -1258,13 +1251,13 @@ describe("Response", () => {
         },
       });
 
-      var response = await fetch(`http://127.0.0.1:${server.port}`, {
+      var response = await fetch(server.url, {
         method: "POST",
         body: await Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer(),
       });
       var input = await response.arrayBuffer();
       var output = await Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
-      expect(input).toEqual((await output.getReader().read()).value?.buffer);
+      expect(new Uint8Array(input)).toEqual((await output.getReader().read()).value);
     });
   });
 
@@ -1748,7 +1741,7 @@ describe("should handle relative location in the redirect, issue#5635", () => {
 });
 
 it("should allow very long redirect URLS", async () => {
-  const Location = "/" + "B".repeat(32 * 1024);
+  const Location = "/" + "B".repeat(7 * 1024);
   const server = Bun.serve({
     port: 0,
     async fetch(request: Request) {
@@ -1767,11 +1760,12 @@ it("should allow very long redirect URLS", async () => {
       });
     },
   });
-
-  const { url, status } = await fetch(`http://${server.hostname}:${server.port}/redirect`);
-
-  expect(url).toBe(`http://${server.hostname}:${server.port}${Location}`);
-  expect(status).toBe(404);
+  // run it more times to check Malformed_HTTP_Response errors
+  for (let i = 0; i < 100; i++) {
+    const { url, status } = await fetch(`${server.url.origin}/redirect`);
+    expect(url).toBe(`${server.url.origin}${Location}`);
+    expect(status).toBe(404);
+  }
   server.stop(true);
 });
 

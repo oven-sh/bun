@@ -54,11 +54,14 @@ pub fn initializeStore() void {
     js_ast.Stmt.Data.Store.create(default_allocator);
 }
 
-const skip_dirs = &[_]string{ "node_modules", ".git" };
-const skip_files = &[_]string{
-    "package-lock.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
+const skip_dirs = &[_]bun.OSPathSlice{
+    bun.OSPathLiteral("node_modules"),
+    bun.OSPathLiteral(".git"),
+};
+const skip_files = &[_]bun.OSPathSlice{
+    bun.OSPathLiteral("package-lock.json"),
+    bun.OSPathLiteral("yarn.lock"),
+    bun.OSPathLiteral("pnpm-lock.yaml"),
 };
 
 const never_conflict = &[_]string{
@@ -148,7 +151,14 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     proc.stdout_behavior = .Inherit;
     proc.stderr_behavior = .Inherit;
     proc.cwd = cwd;
-    _ = proc.spawnAndWait() catch undefined;
+
+    if (Environment.isWindows) {
+        bun.WindowsSpawnWorkaround.spawnWindows(&proc) catch return;
+    } else {
+        proc.spawn() catch return;
+    }
+
+    _ = proc.wait() catch {};
 }
 
 // We don't want to allocate memory each time
@@ -433,12 +443,12 @@ pub const CreateCommand = struct {
                 if (!create_options.skip_package_json) {
                     const plucker = pluckers[0];
 
-                    if (plucker.found and plucker.fd != 0) {
+                    if (plucker.found and plucker.fd != .zero) {
                         node.name = "Updating package.json";
                         progress.refresh();
 
                         package_json_contents = plucker.contents;
-                        package_json_file = std.fs.File{ .handle = bun.fdcast(plucker.fd) };
+                        package_json_file = plucker.fd.asFile();
                     }
                 }
             },
@@ -480,35 +490,37 @@ pub const CreateCommand = struct {
                         while (try walker.next()) |entry| {
                             if (entry.kind != .file) continue;
 
-                            var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
-                                if (std.fs.path.dirname(entry.path)) |entry_dirname| {
-                                    destination_dir_.makePath(entry_dirname) catch {};
+                            const createFile = if (comptime Environment.isWindows) std.fs.Dir.createFileW else std.fs.Dir.createFile;
+                            var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
+                                if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                                    bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                                 }
-                                break :brk destination_dir_.createFile(entry.path, .{}) catch |err| {
+                                break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
                                     node_.end();
 
                                     progress_.refresh();
 
-                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                    Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                                     Global.exit(1);
                                 };
                             };
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            var infile = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
+                            const openFile = if (comptime Environment.isWindows) std.fs.Dir.openFileW else std.fs.Dir.openFile;
+                            var infile = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
                             if (comptime Environment.isPosix) {
                                 // Assumption: you only really care about making sure something that was executable is still executable
                                 const stat = infile.stat() catch continue;
-                                _ = C.fchmod(outfile.handle, stat.mode);
+                                _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                             } else {
                                 @panic("TODO on Windows");
                             }
 
                             CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
-                                Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                                 Global.exit(1);
                             };
                         }
@@ -550,6 +562,7 @@ pub const CreateCommand = struct {
                         package_json_contents = try MutableString.init(ctx.allocator, size);
                         package_json_contents.list.expandToCapacity();
 
+                        const prev_file_pos = if (comptime Environment.isWindows) try pkg.getPos() else 0;
                         _ = pkg.preadAll(package_json_contents.list.items, 0) catch |err| {
                             package_json_file = null;
 
@@ -560,6 +573,7 @@ pub const CreateCommand = struct {
                             Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
                             break :read_package_json;
                         };
+                        if (comptime Environment.isWindows) try pkg.seekTo(prev_file_pos);
                         // The printer doesn't truncate, so we must do so manually
                         std.os.ftruncate(pkg.handle, 0) catch {};
 
@@ -1427,9 +1441,13 @@ pub const CreateCommand = struct {
                 Output.flush();
             }
 
-            _ = try process.spawnAndWait();
-
-            _ = process.kill() catch undefined;
+            if (Environment.isWindows) {
+                try bun.WindowsSpawnWorkaround.spawnWindows(&process);
+            } else {
+                try process.spawn();
+            }
+            _ = try process.wait();
+            _ = try process.kill();
         }
 
         if (postinstall_tasks.items.len > 0) {
@@ -1568,6 +1586,10 @@ pub const CreateCommand = struct {
 
         const create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
+        if (positionals.len == 0) {
+            bun.CLI.Command.Tag.printHelp(.CreateCommand, false);
+            Global.crash();
+        }
 
         var env_loader: DotEnv.Loader = brk: {
             const map = try ctx.allocator.create(DotEnv.Map);
@@ -1722,31 +1744,31 @@ pub const Example = struct {
         var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
         {
             var folders = [3]std.fs.Dir{
-                .{ .fd = bun.fdcast(bun.invalid_fd) },
-                .{ .fd = bun.fdcast(bun.invalid_fd) },
-                .{ .fd = bun.fdcast(bun.invalid_fd) },
+                bun.invalid_fd.asDir(),
+                bun.invalid_fd.asDir(),
+                bun.invalid_fd.asDir(),
             };
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                 var parts = [_]string{home_dir};
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[0] = std.fs.cwd().openDir(outdir_path, .{}) catch .{ .fd = bun.fdcast(bun.invalid_fd) };
+                folders[0] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
             }
 
             {
                 var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch .{ .fd = bun.fdcast(bun.invalid_fd) };
+                folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
             }
 
             if (env_loader.map.get(bun.DotEnv.home_env)) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch .{ .fd = bun.fdcast(bun.invalid_fd) };
+                folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.asDir();
             }
 
             // subfolders with package.json
             for (folders) |folder| {
-                if (folder.fd != bun.fdcast(bun.invalid_fd)) {
+                if (folder.fd != bun.invalid_fd.cast()) {
                     var iter = folder.iterate();
 
                     loop: while (iter.next() catch null) |entry_| {
@@ -1755,7 +1777,7 @@ pub const Example = struct {
                         switch (entry.kind) {
                             .directory => {
                                 inline for (skip_dirs) |skip_dir| {
-                                    if (strings.eqlComptime(entry.name, skip_dir)) {
+                                    if (strings.eqlComptime(entry.name, comptime bun.pathLiteral(skip_dir))) {
                                         continue :loop;
                                     }
                                 }
@@ -1847,7 +1869,7 @@ pub const Example = struct {
 
         const http_proxy: ?URL = env_loader.getHttpProxy(api_url);
         const mutable = try ctx.allocator.create(MutableString);
-        mutable.* = try MutableString.init(ctx.allocator, 8096);
+        mutable.* = try MutableString.init(ctx.allocator, 8192);
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
@@ -2248,18 +2270,30 @@ const GitHandler = struct {
     ) !bool {
         const git_start = std.time.nanoTimestamp();
 
-        // This feature flag is disabled.
-        // using libgit2 is slower than the CLI.
-        // [481.00ms] git
-        // [89.00ms] git
-        // if (comptime FeatureFlags.use_libgit2) {
-        // }
+        // Not sure why...
+        // But using libgit for this operation is slower than the CLI!
+        // Used to have a feature flag to try it but was removed:
+        // https://github.com/oven-sh/bun/commit/deafd3d0d42fb8d7ddf2b06cde2d7c7ee8bc7144
+        //
+        // ~/Build/throw
+        // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
+        // Benchmark #1: bun create react3 app --force --no-install
+        //   Time (mean ± σ):     974.6 ms ±   6.8 ms    [User: 170.5 ms, System: 798.3 ms]
+        //   Range (min … max):   960.8 ms … 984.6 ms    10 runs
+        //
+        // ❯ mv /usr/local/opt/libgit2/lib/libgit2.dylib /usr/local/opt/libgit2/lib/libgit2.dylib.1
+        //
+        // ~/Build/throw
+        // ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
+        // Benchmark #1: bun create react3 app --force --no-install
+        //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
+        //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
 
         if (which(&bun_path_buf, PATH, destination, "git")) |git| {
             const git_commands = .{
-                &[_]string{ bun.asByteSlice(git), "init", "--quiet" },
-                &[_]string{ bun.asByteSlice(git), "add", destination, "--ignore-errors" },
-                &[_]string{ bun.asByteSlice(git), "commit", "-am", "Initial commit (via bun create)", "--quiet" },
+                &[_]string{ git, "init", "--quiet" },
+                &[_]string{ git, "add", destination, "--ignore-errors" },
+                &[_]string{ git, "commit", "-am", "Initial commit (via bun create)", "--quiet" },
             };
 
             if (comptime verbose) {
@@ -2277,7 +2311,7 @@ const GitHandler = struct {
                 process.stderr_behavior = .Inherit;
 
                 _ = try process.spawnAndWait();
-                _ = process.kill() catch undefined;
+                _ = process.kill() catch {};
             }
 
             Output.prettyError("\n", .{});

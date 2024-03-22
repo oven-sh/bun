@@ -506,6 +506,38 @@ pub const Bunfig = struct {
                         }
                     }
                 }
+
+                if (json.get("run")) |run_expr| {
+                    if (run_expr.get("silent")) |silent| {
+                        if (silent.asBool()) |value| {
+                            this.ctx.debug.silent = value;
+                        } else {
+                            try this.addError(silent.loc, "Expected boolean");
+                        }
+                    }
+
+                    if (run_expr.get("shell")) |shell| {
+                        if (shell.asString(allocator)) |value| {
+                            if (strings.eqlComptime(value, "bun")) {
+                                this.ctx.debug.use_system_shell = false;
+                            } else if (strings.eqlComptime(value, "system")) {
+                                this.ctx.debug.use_system_shell = true;
+                            } else {
+                                try this.addError(shell.loc, "Invalid shell, only 'bun' and 'system' are supported");
+                            }
+                        } else {
+                            try this.addError(shell.loc, "Expected string");
+                        }
+                    }
+
+                    if (run_expr.get("bun")) |bun_flag| {
+                        if (bun_flag.asBool()) |value| {
+                            this.ctx.debug.run_in_bun = value;
+                        } else {
+                            try this.addError(bun_flag.loc, "Expected boolean");
+                        }
+                    }
+                }
             }
 
             if (json.get("bundle")) |_bun| {

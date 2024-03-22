@@ -359,7 +359,7 @@ export const spawnSync = ((...args): SyncSubprocess => {
     }
     let input: ArrayBufferView | string | undefined;
     if (opts.stdio[0] && typeof opts.stdio[0] !== 'string') {
-        stdio[0] = null; // will be overriden by chp.spawnSync "input" option
+        stdio[0] = null; // will be overridden by chp.spawnSync "input" option
         //! Due to the fully async nature of Blobs, Responses and Requests,
         //! we can't synchronously get the data out of them here in userland.
         if (opts.stdio[0] instanceof Blob) throw new NotImplementedError('Bun.spawnSync({ stdin: <Blob> })', spawnSync);

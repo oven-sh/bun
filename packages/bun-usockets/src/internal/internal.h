@@ -143,6 +143,7 @@ struct us_internal_callback_t {
   int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
+  unsigned has_added_timer_to_event_loop;
 };
 
 #endif
@@ -288,8 +289,8 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
     int port, int options, int socket_ext_size);
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *path,
-    int options, int socket_ext_size);
+    struct us_internal_ssl_socket_context_t *context, const char *path, 
+    size_t pathlen, int options, int socket_ext_size);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
@@ -297,7 +298,7 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
     struct us_internal_ssl_socket_context_t *context, const char *server_path,
-    int options, int socket_ext_size);
+    size_t pathlen, int options, int socket_ext_size);
 
 int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
                                  const char *data, int length, int msg_more);

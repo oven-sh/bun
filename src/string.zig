@@ -121,6 +121,13 @@ pub const WTFStringImplStruct = extern struct {
         return ZigString.Slice.init(this.refCountAllocator(), this.latin1Slice());
     }
 
+    extern fn Bun__WTFStringImpl__ensureHash(this: WTFStringImpl) void;
+    /// Compute the hash() if necessary
+    pub fn ensureHash(this: WTFStringImpl) void {
+        JSC.markBinding(@src());
+        Bun__WTFStringImpl__ensureHash(this);
+    }
+
     pub fn toUTF8(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.is8Bit()) {
             if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch bun.outOfMemory()) |utf8| {
@@ -280,11 +287,16 @@ pub const String = extern struct {
     extern fn BunString__fromLatin1(bytes: [*]const u8, len: usize) String;
     extern fn BunString__fromBytes(bytes: [*]const u8, len: usize) String;
     extern fn BunString__fromUTF16(bytes: [*]const u16, len: usize) String;
+    extern fn BunString__fromUTF16ToLatin1(bytes: [*]const u16, len: usize) String;
     extern fn BunString__fromLatin1Unitialized(len: usize) String;
     extern fn BunString__fromUTF16Unitialized(len: usize) String;
 
     pub fn isGlobal(this: String) bool {
         return this.tag == Tag.ZigString and this.value.ZigString.isGloballyAllocated();
+    }
+
+    pub fn ensureHash(this: String) void {
+        if (this.tag == .WTFStringImpl) this.value.WTFStringImpl.ensureHash();
     }
 
     pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) ![]u8 {
@@ -305,6 +317,16 @@ pub const String = extern struct {
             .Empty => return &[_]u8{},
             else => unreachable,
         }
+    }
+
+    pub fn createIfDifferent(other: String, utf8_slice: []const u8) String {
+        if (other.tag == .WTFStringImpl) {
+            if (other.eqlUTF8(utf8_slice)) {
+                return other.dupeRef();
+            }
+        }
+
+        return createUTF8(utf8_slice);
     }
 
     fn createUninitializedLatin1(len: usize) struct { String, []u8 } {
@@ -361,7 +383,7 @@ pub const String = extern struct {
         return BunString__fromLatin1(bytes.ptr, bytes.len);
     }
 
-    pub fn create(bytes: []const u8) String {
+    pub fn createUTF8(bytes: []const u8) String {
         JSC.markBinding(@src());
         if (bytes.len == 0) return String.empty;
         return BunString__fromBytes(bytes.ptr, bytes.len);
@@ -369,14 +391,17 @@ pub const String = extern struct {
 
     pub fn createUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
+        if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {
+            return BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len);
+        }
         return BunString__fromUTF16(bytes.ptr, bytes.len);
     }
 
-    pub fn createFromOSPath(os_path: bun.OSPathSliceWithoutSentinel) String {
+    pub fn createFromOSPath(os_path: bun.OSPathSlice) String {
         return switch (@TypeOf(os_path)) {
-            []const u8 => create(os_path),
+            []const u8 => createUTF8(os_path),
             []const u16 => createUTF16(os_path),
-            else => comptime unreachable,
+            else => @compileError("unreachable"),
         };
     }
 
@@ -404,7 +429,7 @@ pub const String = extern struct {
             return new;
         }
 
-        return create(this.byteSlice());
+        return createUTF8(this.byteSlice());
     }
 
     extern fn BunString__createAtom(bytes: [*]const u8, len: usize) String;
@@ -431,7 +456,7 @@ pub const String = extern struct {
             }
         }
 
-        return create(bytes);
+        return createUTF8(bytes);
     }
 
     pub fn utf8ByteLength(this: String) usize {
@@ -496,6 +521,7 @@ pub const String = extern struct {
     }
 
     pub fn toErrorInstance(this: *const String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        defer this.deref();
         return JSC__createError(globalObject, this);
     }
 
@@ -667,7 +693,7 @@ pub const String = extern struct {
         return "";
     }
 
-    pub fn encoding(self: String) bun.strings.Encoding {
+    pub fn encoding(self: String) bun.strings.EncodingNonAscii {
         if (self.isUTF16()) {
             return .utf16;
         }
@@ -706,7 +732,7 @@ pub const String = extern struct {
         this: *String,
     ) JSC.JSValue;
 
-    pub fn toJSForParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSByParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
         return BunString__toJSON(globalObject, self);
     }
@@ -728,8 +754,10 @@ pub const String = extern struct {
     }
 
     pub inline fn utf8(self: String) []const u8 {
-        if (comptime bun.Environment.allow_assert)
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(self.tag == .ZigString or self.tag == .StaticZigString);
             std.debug.assert(self.canBeUTF8());
+        }
         return self.value.ZigString.slice();
     }
 
@@ -933,13 +961,23 @@ pub const String = extern struct {
         };
     }
 
-    pub fn visibleWidth(this: *const String) usize {
+    pub fn visibleWidth(this: *const String, ambiguousAsWide: bool) usize {
         if (this.isUTF8()) {
-            return bun.strings.visibleUTF8Width(this.utf8());
+            return bun.strings.visible.width.utf8(this.utf8());
         } else if (this.isUTF16()) {
-            return bun.strings.visibleUTF16Width(this.utf16());
+            return bun.strings.visible.width.utf16(this.utf16(), ambiguousAsWide);
         } else {
-            return bun.strings.visibleLatin1Width(this.latin1());
+            return bun.strings.visible.width.latin1(this.latin1());
+        }
+    }
+
+    pub fn visibleWidthExcludeANSIColors(this: *const String, ambiguousAsWide: bool) usize {
+        if (this.isUTF8()) {
+            return bun.strings.visible.width.exclude_ansi_colors.utf8(this.utf8());
+        } else if (this.isUTF16()) {
+            return bun.strings.visible.width.exclude_ansi_colors.utf16(this.utf16(), ambiguousAsWide);
+        } else {
+            return bun.strings.visible.width.exclude_ansi_colors.latin1(this.latin1());
         }
     }
 
@@ -1126,7 +1164,7 @@ pub const String = extern struct {
             inline for (0..n) |i| {
                 slices_holded[i].deinit();
             }
-            return create(result);
+            return createUTF8(result);
         }
     }
 
@@ -1138,21 +1176,20 @@ pub const String = extern struct {
     }
 
     pub export fn BunString__getStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        var str: String = String.dead;
-
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {
             return JSC.jsNumber(@as(i32, 0));
         }
 
-        str = args[0].toBunString(globalObject);
+        const str = args[0].toBunString(globalObject);
+        defer str.deref();
 
         if (str.isEmpty()) {
             return JSC.jsNumber(@as(i32, 0));
         }
 
-        const width = str.visibleWidth();
+        const width = str.visibleWidth(false);
         return JSC.jsNumber(width);
     }
 };
@@ -1256,7 +1293,7 @@ pub const SliceWithUnderlyingString = struct {
             }
 
             if (this.utf8.allocator.get()) |_| {
-                if (bun.strings.toUTF16Alloc(bun.default_allocator, this.utf8.slice(), false) catch null) |utf16| {
+                if (bun.strings.toUTF16Alloc(bun.default_allocator, this.utf8.slice(), false, false) catch null) |utf16| {
                     this.utf8.deinit();
                     this.utf8 = .{};
                     return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, globalObject);
@@ -1269,7 +1306,7 @@ pub const SliceWithUnderlyingString = struct {
                 }
             }
 
-            const out = bun.String.create(this.utf8.slice());
+            const out = bun.String.createUTF8(this.utf8.slice());
             defer out.deref();
             return out.toJS(globalObject);
         }

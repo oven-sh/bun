@@ -1,7 +1,6 @@
 // This code is based on https://github.com/frmdstryr/zhp/blob/a4b5700c289c3619647206144e10fb414113a888/src/websocket.zig
 // Thank you @frmdstryr.
 const std = @import("std");
-const native_endian = @import("builtin").target.cpu.arch.endian();
 
 const os = std.os;
 const bun = @import("root").bun;
@@ -91,12 +90,10 @@ pub const WebsocketHeader = packed struct {
     }
 
     pub fn slice(self: WebsocketHeader) [2]u8 {
-        if (native_endian == .big) return @as([2]u8, @as(u16, @bitCast(self)));
         return @as([2]u8, @bitCast(@byteSwap(@as(u16, @bitCast(self)))));
     }
 
     pub fn fromSlice(bytes: [2]u8) WebsocketHeader {
-        if (native_endian == .big) return @as(WebsocketHeader, @bitCast(@as(u16, @bitCast(bytes))));
         return @as(WebsocketHeader, @bitCast(@byteSwap(@as(u16, @bitCast(bytes)))));
     }
 };
@@ -150,7 +147,7 @@ pub const Websocket = struct {
     stream: std.net.Stream,
 
     err: ?anyerror = null,
-    buf: [8096]u8 = undefined,
+    buf: [8192]u8 = undefined,
     read_stream: ReadStream,
     reader: ReadStream.Reader,
     flags: u32 = 0,
@@ -193,7 +190,7 @@ pub const Websocket = struct {
 
     // Close and send the status
     pub fn close(self: *Websocket, code: u16) !void {
-        const c = if (native_endian == .Big) code else @byteSwap(code);
+        const c = @byteSwap(code);
         const data = @as([2]u8, @bitCast(c));
         _ = try self.writeMessage(.Close, &data);
     }

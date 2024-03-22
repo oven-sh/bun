@@ -93,7 +93,7 @@ $ bun test --timeout 10000
 
 Many other flags become irrelevant or obsolete when using `bun test`.
 
-- `transform` — Buns supports TypeScript & JSX. Other file types can be configured with [Plugins](/docs/runtime/plugins).
+- `transform` — Bun supports TypeScript & JSX. Other file types can be configured with [Plugins](/docs/runtime/plugins).
 - `extensionsToTreatAsEsm`
 - `haste` — Bun uses it's own internal source maps
 - `watchman`, `watchPlugins`, `watchPathIgnorePatterns` — use `--watch` to run tests in watch mode

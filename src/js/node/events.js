@@ -1,14 +1,17 @@
 // Reimplementation of https://nodejs.org/api/events.html
+
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
-const { throwNotImplemented } = require("$shared");
+const { throwNotImplemented } = require("internal/shared");
 
 const SymbolFor = Symbol.for;
+
 const kCapture = Symbol("kCapture");
 const kErrorMonitor = SymbolFor("events.errorMonitor");
 const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
 const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned");
 const kWatermarkData = SymbolFor("nodejs.watermarkData");
 const kRejection = SymbolFor("nodejs.rejection");
+const kFirstEventParam = SymbolFor("nodejs.kFirstEventParam");
 const captureRejectionSymbol = SymbolFor("nodejs.rejection");
 const ArrayPrototypeSlice = Array.prototype.slice;
 
@@ -354,9 +357,70 @@ function once(emitter, type, options) {
   });
 }
 
-function on(emitter, type, options) {
-  var { signal, close, highWatermark = Number.MAX_SAFE_INTEGER, lowWatermark = 1 } = options || {};
-  throwNotImplemented("events.on", 2679);
+function on(emitter, event, options = {}) {
+  const signal = options.signal;
+
+  const { FixedQueue } = require("internal/fixed_queue");
+  const unconsumedPromises = new FixedQueue();
+  const unconsumedEvents = new FixedQueue();
+  const unconsumedErrors = new FixedQueue();
+  let done = false;
+
+  const eventHandlerBody = ev => {
+    // If there is a pending Promise -> resolve with current event value.
+    if (!unconsumedPromises.isEmpty()) {
+      const { resolve } = unconsumedPromises.shift();
+      return resolve(ev);
+    }
+    // Else: Add event value to queue so it can be consumed by a future Promise.
+    unconsumedEvents.push(ev);
+  };
+  const eventHandler = options[kFirstEventParam] ? eventHandlerBody : (...args) => eventHandlerBody(args);
+  emitter.on(event, eventHandler);
+
+  const errorHandler = ex => {
+    if (!unconsumedPromises.isEmpty()) {
+      const { reject } = unconsumedPromises.shift();
+      return reject(ex);
+    }
+    unconsumedErrors.push(ex);
+  };
+  emitter.on("error", errorHandler);
+
+  signal?.addEventListener("abort", () => {
+    emitter.emit("error", new AbortError(undefined, { cause: signal?.reason }));
+  });
+
+  // If any of the close events is emitted -> remove listeners
+  // and yield only the remaining queued-up values in iterator.
+  for (const evName of options?.close || []) {
+    emitter.on(evName, () => {
+      emitter.removeListener(event, eventHandler);
+      emitter.removeListener("error", errorHandler);
+      while (!unconsumedPromises.isEmpty()) {
+        unconsumedPromises.shift().resolve();
+      }
+      done = true;
+    });
+  }
+
+  // Create AsyncGeneratorFunction which handles the Iterator logic
+  const iterator = async function* () {
+    while (!done || !unconsumedEvents.isEmpty() || !unconsumedErrors.isEmpty()) {
+      if (!unconsumedEvents.isEmpty()) {
+        yield Promise.$resolve(unconsumedEvents.shift());
+      } else if (!unconsumedErrors.isEmpty()) {
+        yield Promise.$reject(unconsumedErrors.shift());
+      } else {
+        const { promise, reject, resolve } = $newPromiseCapability(Promise);
+        unconsumedPromises.push({ reject, resolve });
+        yield promise;
+      }
+    }
+  };
+
+  // Return AsyncGenerator
+  return iterator();
 }
 
 function getEventListeners(emitter, type) {

@@ -13,6 +13,7 @@
 #include <uv.h>
 #include <windows.h>
 #endif // !OS(WINDOWS)
+#include <lshpack.h>
 
 #if CPU(X86_64) && !OS(WINDOWS)
 extern "C" void bun_warn_avx_missing(const char* url)
@@ -31,11 +32,7 @@ extern "C" void bun_warn_avx_missing(const char* url)
     strcpy(buf + len + strlen(url), "\n\0");
     write(STDERR_FILENO, buf, strlen(buf));
 }
-#else
-extern "C" void bun_warn_avx_missing(char* url)
-{
-}
-#endif // CPU(X86_64)
+#endif
 
 extern "C" int32_t get_process_priority(uint32_t pid)
 {
@@ -58,12 +55,9 @@ extern "C" int32_t set_process_priority(uint32_t pid, int32_t priority)
 #endif // OS(WINDOWS)
 }
 
+#if !OS(WINDOWS)
 extern "C" bool is_executable_file(const char* path)
 {
-#if OS(WINDOWS)
-    return false;
-#else
-
 #if defined(O_EXEC)
     // O_EXEC is macOS specific
     int fd = open(path, O_EXEC | O_CLOEXEC, 0);
@@ -79,8 +73,8 @@ extern "C" bool is_executable_file(const char* path)
 
     // regular file and user can execute
     return S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR);
-#endif // OS(WINDOWS)
 }
+#endif
 
 extern "C" void bun_ignore_sigpipe()
 {
@@ -127,6 +121,12 @@ extern "C" void dump_zone_malloc_stats()
     }
 }
 
+#elif OS(DARWIN)
+
+extern "C" void dump_zone_malloc_stats()
+{
+}
+
 #endif
 
 #if OS(WINDOWS)
@@ -159,4 +159,164 @@ extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 
     return 0;
 }
+#endif
+
+#if OS(LINUX)
+
+#include <sys/syscall.h>
+
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
+
+// close_range is glibc > 2.33, which is very new
+extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
+{
+    return syscall(__NR_close_range, start, end, flags);
+}
+
+extern "C" void on_before_reload_process_linux()
+{
+    // close all file descriptors except stdin, stdout, stderr and possibly IPC.
+    // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
+    // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
+    bun_close_range(8, ~0U, CLOSE_RANGE_CLOEXEC);
+
+    // reset all signals to default
+    sigset_t signal_set;
+    sigemptyset(&signal_set);
+    sigprocmask(SIG_SETMASK, &signal_set, nullptr);
+}
+
+#endif
+
+#define LSHPACK_MAX_HEADER_SIZE 65536
+
+static thread_local char shared_header_buffer[LSHPACK_MAX_HEADER_SIZE];
+
+extern "C" {
+typedef void* (*lshpack_wrapper_alloc)(size_t size);
+typedef void (*lshpack_wrapper_free)(void*);
+typedef struct {
+    struct lshpack_enc enc;
+    struct lshpack_dec dec;
+    lshpack_wrapper_free free;
+} lshpack_wrapper;
+
+typedef struct {
+    const char* name;
+    size_t name_len;
+    const char* value;
+    size_t value_len;
+} lshpack_header;
+
+lshpack_wrapper* lshpack_wrapper_init(lshpack_wrapper_alloc alloc, lshpack_wrapper_free free, unsigned max_capacity)
+{
+    lshpack_wrapper* coders = (lshpack_wrapper*)alloc(sizeof(lshpack_wrapper));
+    if (!coders)
+        return nullptr;
+    coders->free = free;
+    if (lshpack_enc_init(&coders->enc) != 0)
+        return nullptr;
+    lshpack_dec_init(&coders->dec);
+    lshpack_enc_set_max_capacity(&coders->enc, max_capacity);
+    lshpack_dec_set_max_capacity(&coders->dec, max_capacity);
+    return coders;
+}
+
+size_t lshpack_wrapper_encode(lshpack_wrapper* self,
+    const unsigned char* name, size_t name_len,
+    const unsigned char* val, size_t val_len,
+    int never_index,
+    unsigned char* buffer, size_t buffer_len, size_t buffer_offset)
+{
+    if (name_len + val_len > LSHPACK_MAX_HEADER_SIZE)
+        return 0;
+
+    lsxpack_header_t hdr;
+    memset(&hdr, 0, sizeof(lsxpack_header_t));
+    memcpy(&shared_header_buffer[0], name, name_len);
+    memcpy(&shared_header_buffer[name_len], val, val_len);
+    lsxpack_header_set_offset2(&hdr, &shared_header_buffer[0], 0, name_len, name_len, val_len);
+    if (never_index) {
+        hdr.indexed_type = 2;
+    }
+    auto* start = buffer + buffer_offset;
+    auto* ptr = lshpack_enc_encode(&self->enc, start, buffer + buffer_len, &hdr);
+    if (!ptr)
+        return 0;
+    return ptr - start;
+}
+
+size_t lshpack_wrapper_decode(lshpack_wrapper* self,
+    const unsigned char* src, size_t src_len,
+    lshpack_header* output)
+{
+    lsxpack_header_t hdr;
+    memset(&hdr, 0, sizeof(lsxpack_header_t));
+    lsxpack_header_prepare_decode(&hdr, &shared_header_buffer[0], 0, LSHPACK_MAX_HEADER_SIZE);
+
+    const unsigned char* s = src;
+
+    auto rc = lshpack_dec_decode(&self->dec, &s, s + src_len, &hdr);
+    if (rc != 0)
+        return 0;
+
+    output->name = lsxpack_header_get_name(&hdr);
+    output->name_len = hdr.name_len;
+    output->value = lsxpack_header_get_value(&hdr);
+    output->value_len = hdr.val_len;
+    return s - src;
+}
+
+void lshpack_wrapper_deinit(lshpack_wrapper* self)
+{
+    lshpack_dec_cleanup(&self->dec);
+    lshpack_enc_cleanup(&self->enc);
+    self->free(self);
+}
+}
+
+#if OS(LINUX)
+
+#include <linux/fs.h>
+
+static inline void make_pos_h_l(unsigned long* pos_h, unsigned long* pos_l,
+    off_t offset)
+{
+#if __BITS_PER_LONG == 64
+    *pos_l = offset;
+    *pos_h = 0;
+#else
+    *pos_l = offset & 0xffffffff;
+    *pos_h = ((uint64_t)offset) >> 32;
+#endif
+}
+extern "C" ssize_t sys_preadv2(int fd, const struct iovec* iov, int iovcnt,
+    off_t offset, unsigned int flags)
+{
+	return syscall(SYS_preadv2, fd, iov, iovcnt, offset, offset>>32, RWF_NOWAIT);
+}
+extern "C" ssize_t sys_pwritev2(int fd, const struct iovec* iov, int iovcnt,
+    off_t offset, unsigned int flags)
+{
+    unsigned long pos_l, pos_h;
+
+    make_pos_h_l(&pos_h, &pos_l, offset);
+    return syscall(__NR_pwritev2, fd, iov, iovcnt, pos_l, pos_h, flags);
+}
+#else
+extern "C" ssize_t preadv2(int fd, const struct iovec* iov, int iovcnt,
+    off_t offset, unsigned int flags)
+{
+    errno = ENOSYS;
+    return -1;
+}
+extern "C" ssize_t pwritev2(int fd, const struct iovec* iov, int iovcnt,
+    off_t offset, unsigned int flags)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
 #endif

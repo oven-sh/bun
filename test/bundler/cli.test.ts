@@ -52,4 +52,15 @@ describe("bun build", () => {
       fs.rmSync(baseDir, { recursive: true, force: true });
     }
   });
+
+  test("works with utf8 bom", () => {
+    const tmp = fs.mkdtempSync(path.join(tmpdir(), "bun-build-utf8-bom-"));
+    const src = path.join(tmp, "index.js");
+    fs.writeFileSync(src, '\ufeffconsole.log("hello world");', { encoding: "utf8" });
+    const { exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "build", src],
+      env: bunEnv,
+    });
+    expect(exitCode).toBe(0);
+  });
 });

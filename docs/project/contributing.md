@@ -13,7 +13,7 @@ $ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
+$ sudo apt install curl wget lsb-release software-properties-common cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
 ```
 
 ```bash#Arch
@@ -24,7 +24,17 @@ $ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-
 $ sudo dnf install cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
+```bash#openSUSE Tumbleweed
+$ sudo zypper install go cmake ninja automake git rustup && rustup toolchain install stable
+```
+
 {% /codetabs %}
+
+{% callout }
+
+**Note**: The Zig compiler is automatically installed and updated by the build scripts. Manual installation is not required.
+
+{% /callout }
 
 Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
 
@@ -79,6 +89,10 @@ $ sudo dnf copr enable -y @fedora-llvm-team/llvm-snapshots
 $ sudo dnf install llvm clang lld
 ```
 
+```bash#openSUSE Tumbleweed
+$ sudo zypper install clang16 lld16 llvm16
+```
+
 {% /codetabs %}
 
 If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-16.0.6).
@@ -104,6 +118,8 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 ```
 
 {% /codetabs %}
+
+> ⚠️ Ubuntu distributions may require installation of the C++ standard library independently. See the [troubleshooting section](#span-file-not-found-on-ubuntu) for more information.
 
 ## Building Bun
 
@@ -139,6 +155,8 @@ Advanced uses can pass CMake flags to customize the build.
 ## VSCode
 
 VSCode is the recommended IDE for working on Bun, as it has been configured. Once opening, you can run `Extensions: Show Recommended Extensions` to install the recommended extensions for Zig and C++. ZLS is automatically configured.
+
+If you use a different editor, make sure that you tell ZLS to use the automatically installed Zig compiler, which is located at `./.cache/zig/zig` (`zig.exe` on Windows).
 
 ## Code generation scripts
 
@@ -250,6 +268,16 @@ Bun relies on C++20 features like `std::span`, which are not available in GCC ve
 fatal error: 'span' file not found
 #include <span>
          ^~~~~~
+```
+
+The issue may manifest when initially running `bun setup` as Clang being unable to compile a simple program:
+
+```
+The C++ compiler
+
+  "/usr/bin/clang++-16"
+
+is not able to compile a simple test program.
 ```
 
 To fix the error, we need to update the GCC version to 11. To do this, we'll need to check if the latest version is available in the distribution's official repositories or use a third-party repository that provides GCC 11 packages. Here are general steps:

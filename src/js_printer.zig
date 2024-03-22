@@ -153,12 +153,11 @@ fn ws(comptime str: []const u8) Whitespacer {
         pub const with = str;
 
         pub const without = brk: {
-            var buf = [_]u8{0} ** str.len;
-            var i: usize = 0;
+            var buf = std.mem.zeroes([str.len]u8);
             var buf_i: usize = 0;
-            while (i < str.len) : (i += 1) {
-                if (str[i] != ' ') {
-                    buf[buf_i] = str[i];
+            for (str) |c| {
+                if (c != ' ') {
+                    buf[buf_i] = c;
                     buf_i += 1;
                 }
             }
@@ -488,7 +487,6 @@ pub const Options = struct {
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
-    rewrite_require_resolve: bool = true,
     allocator: std.mem.Allocator = default_allocator,
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
@@ -1853,7 +1851,7 @@ fn NewPrinter(
         }
 
         pub fn printRequireError(p: *Printer, text: string) void {
-            p.print("(()=>{ throw new Error(`Cannot require module ");
+            p.print("(()=>{throw new Error(`Cannot require module ");
             p.printQuotedUTF8(text, false);
             p.print("`);})()");
         }
@@ -2029,14 +2027,12 @@ fn NewPrinter(
                     }
                 }
 
-                if (comptime is_bun_platform) {
-                    if (p.options.module_type == .esm) {
-                        p.print("import.meta.require");
-                    } else {
-                        p.print("require");
-                    }
+                if (p.options.module_type == .esm and is_bun_platform) {
+                    p.print("import.meta.require");
+                } else if (p.options.require_ref) |ref| {
+                    p.printSymbol(ref);
                 } else {
-                    p.printSymbol(p.options.require_ref.?);
+                    p.print("require");
                 }
 
                 p.print("(");
@@ -2387,20 +2383,25 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .cjs or !is_bun_platform) {
-                        p.print("require");
-                    } else {
+                    if (p.options.module_type == .esm and is_bun_platform) {
                         p.print("import.meta.require");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                    } else {
+                        p.print("require");
                     }
                 },
                 .e_require_resolve_call_target => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .cjs or !is_bun_platform) {
-                        p.print("require.resolve");
+                    if (p.options.module_type == .esm and is_bun_platform) {
+                        p.print("import.meta.require.resolve");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                        p.print(".resolve");
                     } else {
-                        p.print("import.meta.resolveSync");
+                        p.print("require.resolve");
                     }
                 },
                 .e_require_string => |e| {
@@ -2409,24 +2410,28 @@ fn NewPrinter(
                     }
                 },
                 .e_require_resolve_string => |e| {
-                    if (p.options.rewrite_require_resolve) {
-                        // require.resolve("../src.js") => "../src.js"
-                        p.printSpaceBeforeIdentifier();
-                        p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    const wrap = level.gte(.new) or flags.contains(.forbid_call);
+                    if (wrap) {
+                        p.print("(");
+                    }
+
+                    p.printSpaceBeforeIdentifier();
+
+                    if (p.options.module_type == .esm and is_bun_platform) {
+                        p.print("import.meta.require.resolve");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                        p.print(".resolve");
                     } else {
-                        const wrap = level.gte(.new) or flags.contains(.forbid_call);
-                        if (wrap) {
-                            p.print("(");
-                        }
+                        p.print("require.resolve");
+                    }
 
-                        p.printSpaceBeforeIdentifier();
-                        p.print("require.resolve(");
-                        p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    p.print("(");
+                    p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    p.print(")");
+
+                    if (wrap) {
                         p.print(")");
-
-                        if (wrap) {
-                            p.print(")");
-                        }
                     }
                 },
                 .e_import => |e| {
@@ -2473,7 +2478,7 @@ fn NewPrinter(
                     if (e.optional_chain == null) {
                         flags.insert(.has_non_optional_chain_parent);
                     } else {
-                        if (flags.contains(.has_non_optional_chain_parent) and e.optional_chain.? == .ccontinue) {
+                        if (flags.contains(.has_non_optional_chain_parent)) {
                             wrap = true;
                             p.print("(");
                         }
@@ -4234,6 +4239,12 @@ fn NewPrinter(
                         .k_var => {
                             p.printDeclStmt(s.is_export, "var", s.decls.slice());
                         },
+                        .k_using => {
+                            p.printDeclStmt(s.is_export, "using", s.decls.slice());
+                        },
+                        .k_await_using => {
+                            p.printDeclStmt(s.is_export, "await using", s.decls.slice());
+                        },
                     }
                 },
                 .s_if => |s| {
@@ -4703,6 +4714,11 @@ fn NewPrinter(
                     }
 
                     p.printImportRecordPath(record);
+
+                    if ((record.tag.loader() orelse options.Loader.file).isSQLite()) {
+                        // we do not preserve "embed": "true" since it is not necessary
+                        p.printWhitespacer(ws(" with { type: \"sqlite\" }"));
+                    }
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {
@@ -4934,7 +4950,7 @@ fn NewPrinter(
                 return;
             }
 
-            @call(.always_inline, printModuleId, .{ p, p.importRecord(import_record_index).module_id });
+            @call(bun.callmod_inline, printModuleId, .{ p, p.importRecord(import_record_index).module_id });
         }
 
         pub fn printCallModuleID(p: *Printer, module_id: u32) void {
@@ -4950,19 +4966,6 @@ fn NewPrinter(
         inline fn printModuleIdAssumeEnabled(p: *Printer, module_id: u32) void {
             p.print("$");
             std.fmt.formatInt(module_id, 16, .lower, .{}, p) catch unreachable;
-        }
-
-        pub fn printBundledRequire(p: *Printer, require: E.RequireString) void {
-            if (p.importRecord(require.import_record_index).is_internal) {
-                return;
-            }
-
-            p.printSymbol(p.options.runtime_imports.__require.?.ref);
-
-            // d is for default
-            p.print(".d(");
-            p.printLoadFromBundle(require.import_record_index);
-            p.print(")");
         }
 
         pub fn printBundledRexport(p: *Printer, name: string, import_record_index: u32) void {
@@ -5011,6 +5014,12 @@ fn NewPrinter(
                         },
                         .k_const => {
                             p.printDecls("const", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
+                        },
+                        .k_using => {
+                            p.printDecls("using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
+                        },
+                        .k_await_using => {
+                            p.printDecls("await using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                     }
                 },
@@ -5387,11 +5396,11 @@ pub fn NewWriter(
         }
 
         pub inline fn prevChar(writer: *const Self) u8 {
-            return @call(.always_inline, getLastByte, .{&writer.ctx});
+            return @call(bun.callmod_inline, getLastByte, .{&writer.ctx});
         }
 
         pub inline fn prevPrevChar(writer: *const Self) u8 {
-            return @call(.always_inline, getLastLastByte, .{&writer.ctx});
+            return @call(bun.callmod_inline, getLastLastByte, .{&writer.ctx});
         }
 
         pub fn reserve(writer: *Self, count: u32) anyerror![*]u8 {

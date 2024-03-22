@@ -796,9 +796,6 @@
     "eslintConfig": {
       "$ref": "https://json.schemastore.org/eslintrc.json"
     },
-    "prettier": {
-      "$ref": "https://json.schemastore.org/prettierrc.json"
-    },
     "stylelint": {
       "$ref": "https://json.schemastore.org/stylelintrc.json"
     },

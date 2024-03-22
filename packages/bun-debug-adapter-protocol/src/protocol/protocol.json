@@ -3420,7 +3420,7 @@
         },
         "offset": {
           "type": "integer",
-          "description": "The offset from the instruction reference.\nThis can be negative."
+          "description": "The offset from the instruction reference in bytes.\nThis can be negative."
         },
         "condition": {
           "type": "string",
@@ -3467,6 +3467,11 @@
         "offset": {
           "type": "integer",
           "description": "The offset from the instruction reference.\nThis can be negative."
+        },
+        "reason": {
+          "type": "string",
+          "description": "A machine-readable explanation of why a breakpoint may not be verified. If a breakpoint is verified or a specific reason is not known, the adapter should omit this property. Possible values include:\n\n- `pending`: Indicates a breakpoint might be verified in the future, but the adapter cannot verify it in the current state.\n - `failed`: Indicates a breakpoint was not able to be verified, and the adapter does not believe it can be verified without intervention.",
+          "enum": ["pending", "failed"]
         }
       },
       "required": ["verified"]
@@ -3750,6 +3755,11 @@
         "endColumn": {
           "type": "integer",
           "description": "The end column of the range that corresponds to this instruction, if any."
+        },
+        "presentationHint": {
+          "type": "string",
+          "description": "A hint for how to present the instruction in the UI.\n\nA value of `invalid` may be used to indicate this instruction is 'filler' and cannot be reached by the program. For example, unreadable memory addresses may be presented is 'invalid.'",
+          "enum": ["normal", "invalid"]
         }
       },
       "required": ["address", "instruction"]

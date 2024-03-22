@@ -1941,10 +1941,12 @@ console.log(resolve.length)
     });
 
     describe("Browsers", () => {
-      it('require.resolve("my-module") -> "/resolved/my-module"', () => {
-        // the module resolver & linker doesn't run with Bun.Transpiler
-        // so in this test, it becomes the same path string
-        expectPrinted_(`export const foo = require.resolve('my-module')`, `export const foo = "my-module"`);
+      it('require.resolve("my-module") is untouched', () => {
+        // we used to inline the string for this, but that is always incorrect as require.resolve builds an exact path.
+        expectPrinted_(
+          `export const foo = require.resolve('my-module')`,
+          `export const foo = require.resolve("my-module")`,
+        );
       });
     });
 
@@ -2956,6 +2958,12 @@ console.log(foo, array);
       expectPrinted("1 != 2", "!0");
       expectPrinted("1 != '1'", '1 != "1"');
 
+      expectPrinted('"" == 0', "!0");
+      expectPrinted("1n == 1n", "!0");
+      expectPrinted("1234n == 1234n", "!0");
+      expectPrinted("0x00n == 0n", "0x00n == 0n");
+      expectPrinted("1n == 2n", "1n == 2n");
+
       expectPrinted("'a' === '\\x61'", "!0");
       expectPrinted("'a' === '\\x62'", "!1");
       expectPrinted("'a' === 'abc'", "!1");
@@ -3318,6 +3326,57 @@ console.log("boop");
   it("can parse 'a<b>' as typescript", () => {
     ts.expectPrinted("a<b>", "a");
     expect(new Bun.Transpiler({ loader: "ts" }).transformSync(`a<b>`)).toBe(`a;\n`);
+  });
+
+  const prepareForSnapshot = code => {
+    return code.replace(/(__using|__callDispose)_([a-z0-9]+)/g, "$1");
+  };
+  const expectCapturePrintedSnapshot = code => {
+    const result = parsed(`(async() => {${code}})()`, false, false);
+    expect(result).toEndWith("})();\n");
+    const of_relevance = result
+      .slice(result.indexOf("() => {") + 9, result.lastIndexOf("})();") - 1)
+      .trim()
+      .split("\n")
+      .map(x => x.trim())
+      .filter(x => x.length > 0)
+      .join("\n");
+    expect(prepareForSnapshot(of_relevance)).toMatchSnapshot();
+  };
+  const expectPrintedSnapshot = code => {
+    expect(prepareForSnapshot(parsed(`${code}`, false, false))).toMatchSnapshot();
+  };
+
+  it("using statements work right", () => {
+    expectCapturePrintedSnapshot(`using x = a;`);
+    expectCapturePrintedSnapshot(`await using x = a;`);
+
+    expectCapturePrintedSnapshot(`for (using a of b) c(a)`);
+    expectCapturePrintedSnapshot(`for await (using a of b) c(a)`);
+    expectCapturePrintedSnapshot(`for (await using a of b) c(a)`);
+    expectCapturePrintedSnapshot(`for await (await using a of b) c(a)`);
+
+    expectCapturePrintedSnapshot(`for (using a of b) { c(a); a(c) }`);
+    expectCapturePrintedSnapshot(`for await (using a of b) { c(a); a(c) }`);
+    expectCapturePrintedSnapshot(`for (await using a of b) { c(a); a(c) }`);
+    expectCapturePrintedSnapshot(`for await (await using a of b) { c(a); a(c) }`);
+  });
+
+  it("using top level", () => {
+    expectPrintedSnapshot(`
+      using a = b;
+      export function c(e) {
+        using f = g(a);
+        return f.h;
+      }
+      await using j = c(i);
+      using k = l(m);
+      export { k };
+      import { using } from 'n';
+      using o = using;
+      await using p = await using;
+      export var q = r;
+    `);
   });
 });
 

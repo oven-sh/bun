@@ -34,6 +34,7 @@
     macro("node:string_decoder"_s, NodeStringDecoder) \
     macro("node:util/types"_s, NodeUtilTypes)  \
     macro("utf-8-validate"_s, UTF8Validate) \
+    macro("abort-controller"_s, AbortControllerModule) \
 
 #if ASSERT_ENABLED
 

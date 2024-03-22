@@ -3,6 +3,8 @@ import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { bunEnv, bunExe, nodeExe } from "harness";
 import { isIP } from "node:net";
+import path from "node:path";
+
 const strings = [
   {
     label: "string (ascii)",
@@ -19,7 +21,7 @@ const strings = [
     message: "utf8-😶",
     bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x98, 0xb6],
   },
-];
+] as const;
 
 const buffers = [
   {
@@ -37,9 +39,9 @@ const buffers = [
     message: Buffer.from("utf8-🤩"),
     bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0xa4, 0xa9],
   },
-];
+] as const;
 
-const messages = [...strings, ...buffers];
+const messages = [...strings, ...buffers] as const;
 
 const binaryTypes = [
   {
@@ -589,14 +591,13 @@ function test(
 
 async function connect(server: Server): Promise<void> {
   const url = new URL(`ws://${server.hostname}:${server.port}/`);
-  const { pathname } = new URL("./websocket-client-echo.mjs", import.meta.url);
+  const pathname = path.resolve(import.meta.dir, "./websocket-client-echo.mjs");
   // @ts-ignore
   const client = spawn({
     cmd: [nodeExe() ?? bunExe(), pathname, url],
     cwd: import.meta.dir,
-    env: bunEnv,
-    stderr: "ignore",
-    stdout: "pipe",
+    env: { ...bunEnv, "LOG_MESSAGES": "0" },
+    stdio: ["inherit", "pipe", "inherit"],
   });
   clients.push(client);
   for await (const chunk of client.stdout) {

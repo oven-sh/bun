@@ -206,7 +206,8 @@ $$capture_start$$(${fn.async ? "async " : ""}${
           )
       )
         .replace(/^\((async )?function\(/, "($1function (")
-        .replace(/__intrinsic__/g, "@") + "\n";
+        .replace(/__intrinsic__/g, "@")
+        .replace(/__no_intrinsic__/g, "") + "\n";
 
     bundledFunctions.push({
       name: fn.name,
@@ -222,8 +223,8 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       overriddenName: fn.directives.getter
         ? `"get ${fn.name}"_s`
         : fn.directives.overriddenName
-        ? `"${fn.directives.overriddenName}"_s`
-        : "ASCIILiteral()",
+          ? `"${fn.directives.overriddenName}"_s`
+          : "ASCIILiteral()",
     });
   }
 
@@ -357,9 +358,7 @@ for (const { basename, internal } of files) {
   if (internal) {
     bundledCPP += `#define DECLARE_GLOBAL_STATIC(name) \\
     Zig::GlobalObject::GlobalPropertyInfo( \\
-        clientData.builtinFunctions().${low(basename)}Builtins().name##PrivateName(), ${low(
-      basename,
-    )}().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
+        clientData.builtinFunctions().${low(basename)}Builtins().name##PrivateName(), ${low(basename)}().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
     WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
   #undef DECLARE_GLOBAL_STATIC
   `;

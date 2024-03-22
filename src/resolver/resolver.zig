@@ -581,9 +581,6 @@ pub const Resolver = struct {
     }
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
-        // TODO: enable auto-install on Windows
-        if (Environment.isWindows) return false;
-
         // TODO(@paperdave): make this configurable. the rationale for disabling
         // auto-install in standalone mode is that such executable must either:
         //

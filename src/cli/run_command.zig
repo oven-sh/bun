@@ -739,6 +739,7 @@ pub const RunCommand = struct {
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
             try bun.strings.toUTF8AppendToList(PATH, dir_slice[prefix.len..]);
+            try PATH.append(std.fs.path.delimiter);
         }
     }
 

@@ -432,6 +432,7 @@ const Scanner = struct {
                 FileSystem.setMaxFd(child_dir.fd);
                 _ = this.readDirWithName(path2, child_dir) catch continue;
             } else {
+                defer _ = bun.sys.close(entry.relative_dir);
                 const dir = entry.relative_dir.asDir();
                 std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
@@ -439,7 +440,6 @@ const Scanner = struct {
                 var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
                 const child_dir = bun.openDirAbsolute(path2) catch continue;
                 path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
-                FileSystem.setMaxFd(child_dir.fd);
                 _ = this.readDirWithName(path2, child_dir) catch bun.outOfMemory();
             }
         }
@@ -753,6 +753,10 @@ pub const TestCommand = struct {
             };
 
             scanner.scan(dir_to_scan);
+
+            while (scanner.dirs_to_scan.readItem()) |entry| {
+                _ = bun.sys.close(entry.relative_dir);
+            }
             scanner.dirs_to_scan.deinit();
 
             break :scan .{ scanner.results.items, scanner.search_count };

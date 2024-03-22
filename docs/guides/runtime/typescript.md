@@ -16,7 +16,7 @@ Below is the full set of recommended `compilerOptions` for a Bun project. With t
 {
   "compilerOptions": {
     // Enable latest features
-    "lib": ["ESNext"],
+    "lib": ["ESNext","DOM"],
     "target": "ESNext",
     "module": "ESNext",
     "moduleDetection": "force",

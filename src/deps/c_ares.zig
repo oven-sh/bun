@@ -474,7 +474,7 @@ pub const Channel = opaque {
         opts.sock_state_cb = &SockStateWrap.onSockState;
         opts.sock_state_cb_data = @as(*anyopaque, @ptrCast(this));
         opts.timeout = -1;
-        opts.tries = 3;
+        opts.tries = 4;
 
         const optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS |

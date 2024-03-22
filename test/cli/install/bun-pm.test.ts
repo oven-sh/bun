@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { hash, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunEnv as env } from "harness";
@@ -47,23 +46,30 @@ it("should list top-level dependency", async () => {
       },
     }),
   );
-  expect(
-    await spawn({
+  {
+    const { stderr, stdout, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
-    }).exited,
-  ).toBe(0);
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    expect(await exited).toBe(0);
+  }
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   expect(requested).toBe(2);
   urls.length = 0;
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -103,23 +109,30 @@ it("should list all dependencies", async () => {
       },
     }),
   );
-  expect(
-    await spawn({
+  {
+    const { stderr, stdout, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
-    }).exited,
-  ).toBe(0);
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    expect(await exited).toBe(0);
+  }
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   expect(requested).toBe(2);
   urls.length = 0;
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls", "--all"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -160,23 +173,30 @@ it("should list top-level aliased dependency", async () => {
       },
     }),
   );
-  expect(
-    await spawn({
+  {
+    const { stderr, stdout, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
-    }).exited,
-  ).toBe(0);
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    expect(await exited).toBe(0);
+  }
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   expect(requested).toBe(2);
   urls.length = 0;
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -216,23 +236,30 @@ it("should list aliased dependencies", async () => {
       },
     }),
   );
-  expect(
-    await spawn({
+  {
+    const { stderr, stdout, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
-    }).exited,
-  ).toBe(0);
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    expect(await exited).toBe(0);
+  }
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   expect(requested).toBe(2);
   urls.length = 0;
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "pm", "ls", "--all"],
     cwd: package_dir,
-    stdout: null,
+    stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -274,19 +301,26 @@ it("should remove all cache", async () => {
     }),
   );
   let cache_dir: string = join(package_dir, "node_modules", ".cache");
-  expect(
-    await spawn({
+  {
+    const { stderr, stdout, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env: {
         ...env,
         BUN_INSTALL_CACHE_DIR: cache_dir,
       },
-    }).exited,
-  ).toBe(0);
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    expect(await exited).toBe(0);
+  }
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   expect(requested).toBe(2);
   expect(await readdirSorted(cache_dir)).toContain("bar");
@@ -330,7 +364,7 @@ it("should remove all cache", async () => {
   expect(stderr2).toBeDefined();
   expect(await new Response(stderr2).text()).toBe("");
   expect(stdout2).toBeDefined();
-  expect(await new Response(stdout2).text()).toBe("Cache directory deleted:\n  " + cache_dir + "\n");
+  expect(await new Response(stdout2).text()).toInclude("Cleared 'bun install' cache\n");
   expect(await exited2).toBe(0);
   expect(await exists(cache_dir)).toBeFalse();
 });

@@ -249,6 +249,42 @@ writer.unref();
 writer.ref();
 ```
 
+## Directories
+
+Bun's implementation of `node:fs` is fast, and we haven't implemented a Bun-specific API for reading directories just yet. For now, you should use `node:fs` for working with directories in Bun.
+
+### Reading directories (readdir)
+
+To read a directory in Bun, use `readdir` from `node:fs`.
+
+```ts
+import { readdir } from "node:fs/promises";
+
+// read all the files in the current directory
+const files = await readdir(import.meta.dir);
+```
+
+#### Reading directories recursively
+
+To recursively read a directory in Bun, use `readdir` with `recursive: true`.
+
+```ts
+import { readdir } from "node:fs/promises";
+
+// read all the files in the current directory, recursively
+const files = await readdir("../", { recursive: true });
+```
+
+### Creating directories (mkdir)
+
+To recursively create a directory, use `mkdir` in `node:fs`:
+
+```ts
+import { mkdir } from "node:fs/promises";
+
+await mkdir("path/to/dir", { recursive: true });
+```
+
 ## Benchmarks
 
 The following is a 3-line implementation of the Linux `cat` command.

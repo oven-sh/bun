@@ -435,7 +435,7 @@ export default [
     name: "NodeJSFS",
     construct: true,
     noConstructor: true,
-    finalize: false,
+    finalize: true,
 
     klass: {},
     proto: {

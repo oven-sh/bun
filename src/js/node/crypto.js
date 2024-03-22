@@ -1465,32 +1465,32 @@ var require_algorithms = __commonJS({
       "ecdsa-with-SHA1": {
         sign: "ecdsa",
         hash: "sha1",
-        id: "",
+        id: "3021300906052b0e03021a05000414",
       },
       sha1: {
         sign: "ecdsa/rsa",
         hash: "sha1",
-        id: "",
+        id: "3021300906052b0e03021a05000414",
       },
       sha256: {
         sign: "ecdsa/rsa",
         hash: "sha256",
-        id: "",
+        id: "3031300d060960864801650304020105000420",
       },
       sha224: {
         sign: "ecdsa/rsa",
         hash: "sha224",
-        id: "",
+        id: "302d300d06096086480165030402040500041c",
       },
       sha384: {
         sign: "ecdsa/rsa",
         hash: "sha384",
-        id: "",
+        id: "3041300d060960864801650304020205000430",
       },
       sha512: {
         sign: "ecdsa/rsa",
         hash: "sha512",
-        id: "",
+        id: "3051300d060960864801650304020305000440",
       },
       "DSA-SHA": {
         sign: "dsa",
@@ -12039,9 +12039,9 @@ const {
   verify: nativeVerify,
 } = $lazy("internal/crypto");
 
-const kCryptoKey = Symbol.for("::bunKeyObjectCryptoKey::");
 class KeyObject {
-  [kCryptoKey];
+  // we use $bunNativePtr so that util.types.isKeyObject can detect it
+  $bunNativePtr = undefined;
   constructor(key) {
     // TODO: check why this is fails
     // if(!(key instanceof CryptoKey)) {
@@ -12050,7 +12050,7 @@ class KeyObject {
     if (typeof key !== "object") {
       throw new TypeError('The "key" argument must be an instance of CryptoKey.');
     }
-    this[kCryptoKey] = key;
+    this.$bunNativePtr = key;
   }
   toString() {
     return "[object KeyObject]";
@@ -12058,21 +12058,21 @@ class KeyObject {
 
   static from(key) {
     if (key instanceof KeyObject) {
-      key = key[kCryptoKey];
+      key = key.$bunNativePtr;
     }
     return new KeyObject(key);
   }
 
   get asymmetricKeyDetails() {
-    return asymmetricKeyDetails(this[kCryptoKey]);
+    return asymmetricKeyDetails(this.$bunNativePtr);
   }
 
   get symmetricKeySize() {
-    return symmetricKeySize(this[kCryptoKey]);
+    return symmetricKeySize(this.$bunNativePtr);
   }
 
   get asymmetricKeyType() {
-    return asymmetricKeyType(this[kCryptoKey]);
+    return asymmetricKeyType(this.$bunNativePtr);
   }
 
   ["export"](options) {
@@ -12110,18 +12110,18 @@ class KeyObject {
           }
         }
     }
-    return exports(this[kCryptoKey], options);
+    return exports(this.$bunNativePtr, options);
   }
 
   equals(otherKey) {
     if (!(otherKey instanceof KeyObject)) {
       throw new TypeError("otherKey must be a KeyObject");
     }
-    return equals(this[kCryptoKey], otherKey[kCryptoKey]);
+    return equals(this.$bunNativePtr, otherKey.$bunNativePtr);
   }
 
   get type() {
-    return this[kCryptoKey].type;
+    return this.$bunNativePtr.type;
   }
 }
 
@@ -12233,7 +12233,7 @@ function _createPublicKey(key) {
   } else if (typeof key === "object") {
     if (key instanceof KeyObject || key instanceof CryptoKey) {
       if (key.type === "private") {
-        return KeyObject.from(createPublicKey({ key: key[kCryptoKey] || key, format: "" }));
+        return KeyObject.from(createPublicKey({ key: key.$bunNativePtr || key, format: "" }));
       }
       const error = new TypeError(
         `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected private`,
@@ -12261,7 +12261,7 @@ function _createPublicKey(key) {
         key.key = actual_key;
       } else if (actual_key instanceof KeyObject || actual_key instanceof CryptoKey) {
         if (actual_key.type === "private") {
-          return KeyObject.from(createPublicKey({ key: actual_key[kCryptoKey] || actual_key, format: "" }));
+          return KeyObject.from(createPublicKey({ key: actual_key.$bunNativePtr || actual_key, format: "" }));
         }
         const error = new TypeError(
           `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${actual_key.type}, expected private`,
@@ -12322,7 +12322,7 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
           .update(data)
           .sign(key);
       } else {
-        result = nativeSign(key[kCryptoKey], data, algorithm, dsaEncoding, padding, saltLength);
+        result = nativeSign(key.$bunNativePtr, data, algorithm, dsaEncoding, padding, saltLength);
       }
       callback(null, result);
     } catch (err) {
@@ -12334,7 +12334,7 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
         .update(data)
         .sign(key);
     } else {
-      return nativeSign(key[kCryptoKey], data, algorithm, dsaEncoding, padding, saltLength);
+      return nativeSign(key.$bunNativePtr, data, algorithm, dsaEncoding, padding, saltLength);
     }
   }
 };
@@ -12365,7 +12365,7 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
           .update(data)
           .verify(key, signature);
       } else {
-        result = nativeVerify(key[kCryptoKey], data, signature, algorithm, dsaEncoding, padding, saltLength);
+        result = nativeVerify(key.$bunNativePtr, data, signature, algorithm, dsaEncoding, padding, saltLength);
       }
       callback(null, result);
     } catch (err) {
@@ -12377,7 +12377,7 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
         .update(data)
         .verify(key, signature);
     } else {
-      return nativeVerify(key[kCryptoKey], data, signature, algorithm, dsaEncoding, padding, saltLength);
+      return nativeVerify(key.$bunNativePtr, data, signature, algorithm, dsaEncoding, padding, saltLength);
     }
   }
 };

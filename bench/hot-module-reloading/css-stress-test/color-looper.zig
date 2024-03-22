@@ -25,7 +25,7 @@ pub var all_timestamps: [RUN_COUNT + 1]usize = undefined;
 // 1. file path
 // 2. Byte offset in file
 // 3. ms update interval
-var color_buf: [8096 + SIMULATE_LONG_FILE.len]u8 = undefined;
+var color_buf: [8192 + SIMULATE_LONG_FILE.len]u8 = undefined;
 
 pub fn main() anyerror!void {
     var allocator = std.heap.c_allocator;

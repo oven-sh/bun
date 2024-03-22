@@ -170,10 +170,10 @@ void uws_app_listen(int ssl, uws_app_t *app, int port,
 void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
                                 uint16_t port, int32_t options,
                                 uws_listen_handler handler, void *user_data);
-void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, 
+void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain,  size_t pathlen,
                            uws_listen_domain_handler handler, void *user_data);
 
-void uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain,
+void uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain, size_t pathlen,
                                         int options, uws_listen_domain_handler handler,
                                         void *user_data);
 void uws_app_domain(int ssl, uws_app_t *app, const char *server_name);

@@ -1,6 +1,5 @@
-// @known-failing-on-windows: 1 failing
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { bunRun, bunRunAsScript, bunTest, tempDirWithFiles, bunExe, bunEnv } from "harness";
+import { bunRun, bunRunAsScript, bunTest, tempDirWithFiles, bunExe, bunEnv, isWindows } from "harness";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -258,41 +257,39 @@ test(".env process variables no comments", () => {
 
 describe("package scripts load from .env.production and .env.development", () => {
   test("NODE_ENV=production", () => {
+    const pkgjson = {
+      "name": "foo",
+      "version": "2.0",
+      "scripts": {
+        "test": `'${bunExe()}' run index.ts`,
+      },
+    };
     const dir = tempDirWithFiles("dotenv-package-script-prod", {
       "index.ts": "console.log(process.env.TEST);",
-      "package.json": `
-      {
-        "name": "foo",
-        "version": "2.0",
-        "scripts": {
-          "test": "NODE_ENV=production ${bunExe()} run index.ts",
-        }
-      }
-      `,
+      "package.json": JSON.stringify(pkgjson),
       ".env.production": "TEST=prod",
       ".env.development": "TEST=dev",
     });
 
-    const { stdout } = bunRunAsScript(dir, "test");
+    const { stdout } = bunRunAsScript(dir, "test", { "NODE_ENV": "production" });
     expect(stdout).toBe("prod");
   });
   test("NODE_ENV=development", () => {
+    const pkgjson = {
+      "name": "foo",
+      "version": "2.0",
+      "scripts": {
+        "test": `'${bunExe()}' run index.ts`,
+      },
+    };
     const dir = tempDirWithFiles("dotenv-package-script-prod", {
       "index.ts": "console.log(process.env.TEST);",
-      "package.json": `
-        {
-          "name": "foo",
-          "version": "2.0",
-          "scripts": {
-            "test": "NODE_ENV=development ${bunExe()} run index.ts",
-          }
-        }
-        `,
+      "package.json": JSON.stringify(pkgjson),
       ".env.production": "TEST=prod",
       ".env.development": "TEST=dev",
     });
 
-    const { stdout } = bunRunAsScript(dir, "test");
+    const { stdout } = bunRunAsScript(dir, "test", { "NODE_ENV": "development" });
     expect(stdout).toBe("dev");
   });
 });
@@ -582,7 +579,7 @@ describe("--env-file", () => {
   });
 });
 
-test.if(process.platform === "win32")("environment variables are case-insensitive on Windows", () => {
+test.if(isWindows)("environment variables are case-insensitive on Windows", () => {
   const dir = tempDirWithFiles("dotenv", {
     ".env": "FOO=bar\n",
     "index.ts": "console.log(process.env.FOO, process.env.foo, process.env.fOo);",
@@ -703,8 +700,39 @@ console.log(dynamic().NODE_ENV);
 });
 
 test("NODE_ENV default is not propogated in bun run", () => {
+  const getenv =
+    process.platform !== "win32"
+      ? "env | grep NODE_ENV && exit 1 || true"
+      : "node -e 'if(process.env.NODE_ENV)throw(1)'";
   const tmp = tempDirWithFiles("default-node-env", {
-    "package.json": '{"scripts":{"show-env":"env | grep NODE_ENV && exit 1 || true"}}',
+    "package.json": '{"scripts":{"show-env":' + JSON.stringify(getenv) + "}}",
   });
   expect(bunRunAsScript(tmp, "show-env", {}).stdout).toBe("");
+});
+
+const todoOnPosix = process.platform !== "win32" ? test.todo : test;
+todoOnPosix("setting process.env coerces the value to a string", () => {
+  // @ts-expect-error
+  process.env.SET_TO_TRUE = true;
+  let did_call = 0;
+  // @ts-expect-error
+  process.env.SET_TO_BUN = {
+    toString() {
+      did_call++;
+      return "bun!";
+    },
+  };
+  expect(process.env.SET_TO_TRUE).toBe("true");
+  expect(process.env.SET_TO_BUN).toBe("bun!");
+  expect(did_call).toBe(1);
+});
+
+test("NODE_ENV=test loads .env.test even when .env.production exists", () => {
+  const dir = tempDirWithFiles("dotenv", {
+    "index.ts": "console.log(process.env.AWESOME);",
+    ".env.production": "AWESOME=production",
+    ".env.test": "AWESOME=test",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`, { NODE_ENV: "test" });
+  expect(stdout).toBe("test");
 });

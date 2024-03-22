@@ -12,6 +12,6 @@ enum SinkID : uint8_t {
 
 };
 static constexpr unsigned numberOfSinkIDs
-    = 6;
+    = 7;
 
 }

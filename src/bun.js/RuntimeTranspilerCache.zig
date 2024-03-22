@@ -185,7 +185,6 @@ pub const RuntimeTranspilerCache = struct {
                                 .utf8 => Encoding.utf8,
                                 .utf16 => Encoding.utf16,
                                 .latin1 => Encoding.latin1,
-                                else => @panic("Unexpected encoding"),
                             },
                         },
                         .sourcemap_byte_length = sourcemap.len,
@@ -210,16 +209,16 @@ pub const RuntimeTranspilerCache = struct {
                     break :brk metadata_buf[0..metadata_stream.pos];
                 };
 
-                const vecs: []const std.os.iovec_const = if (output_bytes.len > 0)
+                const vecs: []const bun.PlatformIOVecConst = if (output_bytes.len > 0)
                     &.{
-                        .{ .iov_base = metadata_bytes.ptr, .iov_len = metadata_bytes.len },
-                        .{ .iov_base = output_bytes.ptr, .iov_len = output_bytes.len },
-                        .{ .iov_base = sourcemap.ptr, .iov_len = sourcemap.len },
+                        bun.platformIOVecConstCreate(metadata_bytes),
+                        bun.platformIOVecConstCreate(output_bytes),
+                        bun.platformIOVecConstCreate(sourcemap),
                     }
                 else
                     &.{
-                        .{ .iov_base = metadata_bytes.ptr, .iov_len = metadata_bytes.len },
-                        .{ .iov_base = sourcemap.ptr, .iov_len = sourcemap.len },
+                        bun.platformIOVecConstCreate(metadata_bytes),
+                        bun.platformIOVecConstCreate(sourcemap),
                     };
 
                 var position: isize = 0;
@@ -228,14 +227,19 @@ pub const RuntimeTranspilerCache = struct {
                 if (bun.Environment.allow_assert) {
                     var total: usize = 0;
                     for (vecs) |v| {
-                        std.debug.assert(v.iov_len > 0);
-                        total += v.iov_len;
+                        if (comptime bun.Environment.isWindows) {
+                            std.debug.assert(v.len > 0);
+                            total += v.len;
+                        } else {
+                            std.debug.assert(v.iov_len > 0);
+                            total += v.iov_len;
+                        }
                     }
                     std.debug.assert(end_position == total);
                 }
                 std.debug.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
 
-                bun.C.preallocate_file(bun.fdcast(tmpfile.fd), 0, @intCast(end_position)) catch {};
+                bun.C.preallocate_file(tmpfile.fd.cast(), 0, @intCast(end_position)) catch {};
                 while (position < end_position) {
                     const written = try bun.sys.pwritev(tmpfile.fd, vecs, position).unwrap();
                     if (written <= 0) {
@@ -246,7 +250,7 @@ pub const RuntimeTranspilerCache = struct {
                 }
             }
 
-            try tmpfile.finish(destination_path.sliceAssumeZ());
+            try tmpfile.finish(@ptrCast(std.fs.path.basename(destination_path.slice())));
         }
 
         pub fn load(
@@ -479,8 +483,9 @@ pub const RuntimeTranspilerCache = struct {
             _ = bun.sys.unlink(cache_file_path.sliceAssumeZ());
         }
 
-        const file = std.fs.File{ .handle = bun.fdcast(cache_fd) };
+        const file = cache_fd.asFile();
         const metadata_bytes = try file.preadAll(&metadata_bytes_buf, 0);
+        if (comptime bun.Environment.isWindows) try file.seekTo(0);
         var metadata_stream = std.io.fixedBufferStream(metadata_bytes_buf[0..metadata_bytes]);
 
         var entry = Entry{
@@ -539,7 +544,7 @@ pub const RuntimeTranspilerCache = struct {
         const cache_dir_fd = brk: {
             if (std.fs.path.dirname(cache_file_path)) |dirname| {
                 const dir = try std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true });
-                break :brk bun.toFD(dir.fd);
+                break :brk bun.toLibUVOwnedFD(dir.fd);
             }
 
             break :brk bun.toFD(std.fs.cwd().fd);

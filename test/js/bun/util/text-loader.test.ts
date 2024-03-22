@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
@@ -6,6 +5,7 @@ import { join } from "path";
 
 describe("text-loader", () => {
   const fixtures = [
+    ["dynamic-import reloaded 10000 times", "text-loader-fixture-dynamic-import-stress.ts"],
     ["dynamic-import", "text-loader-fixture-dynamic-import.ts"],
     ["import", "text-loader-fixture-import.ts"],
     ["require", "text-loader-fixture-require.ts"],
@@ -20,6 +20,10 @@ describe("text-loader", () => {
           stderr: "inherit",
           stdin: "ignore",
         });
+
+        if (result.exitCode !== 0) {
+          console.log({ result });
+        }
 
         expect(result.stdout.toString()).toBe("These are words!");
         expect(result.exitCode).toBe(0);

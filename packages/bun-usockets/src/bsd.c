@@ -269,6 +269,8 @@ LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd) {
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef _WIN32
     /* Libuv will set windows sockets as non-blocking */
+#elif defined(__APPLE__)
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK  | O_CLOEXEC);
 #else
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
 #endif
@@ -390,7 +392,12 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 
     internal_finalize_bsd_addr(addr);
 
+#if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
+// skip the extra fcntl calls.
+    return accepted_fd;
+#else
     return bsd_set_nonblocking(apple_no_sigpipe(accepted_fd));
+#endif
 }
 
 int bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
@@ -471,7 +478,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
             setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval3, sizeof(optval3));
         }
 #else
-    #if /*defined(__linux) &&*/ defined(SO_REUSEPORT)
+    #if /*defined(__linux__) &&*/ defined(SO_REUSEPORT)
         if (!(options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
             int optval = 1;
             setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval, sizeof(optval));
@@ -560,8 +567,91 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 #endif
 #include <sys/stat.h>
 #include <stddef.h>
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, int options) {
 
+static int bsd_create_unix_socket_address(const char *path, size_t path_len, int* dirfd_linux_workaround_for_unix_path_len, struct sockaddr_un *server_address, size_t* addrlen) {
+    memset(server_address, 0, sizeof(struct sockaddr_un));
+    server_address->sun_family = AF_UNIX;
+
+    if (path_len == 0) {
+        #if defined(_WIN32)
+            // simulate ENOENT
+            SetLastError(ERROR_PATH_NOT_FOUND);
+        #else
+            errno = ENOENT;
+        #endif
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    *addrlen = sizeof(struct sockaddr_un);
+
+    #if defined(__linux__)
+        // Unix socket addresses have a maximum length of 108 bytes on Linux
+        // As a workaround, we can use /proc/self/fd/ as a directory to shorten the path
+        if (path_len >= sizeof(server_address->sun_path) && path[0] != '\0') {
+            size_t dirname_len = path_len;
+            // get the basename
+            while (dirname_len > 1 && path[dirname_len - 1] != '/') {
+                dirname_len--;
+            }
+
+            // if the path is just a single character, or the path is too long, we cannot use this method
+            if (dirname_len < 2 || (path_len - dirname_len + 1) >= sizeof(server_address->sun_path)) {
+                errno = ENAMETOOLONG;
+                return LIBUS_SOCKET_ERROR;
+            }
+
+            char dirname_buf[4096];
+            if (dirname_len + 1 > sizeof(dirname_buf)) {
+                errno = ENAMETOOLONG;
+                return LIBUS_SOCKET_ERROR;
+            }
+
+            memcpy(dirname_buf, path, dirname_len);
+            dirname_buf[dirname_len] = 0;
+
+            int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_PATH | O_DIRECTORY, 0700);
+            if (socket_dir_fd == -1) {
+                errno = ENAMETOOLONG;
+                return LIBUS_SOCKET_ERROR;
+            }
+
+            int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%s", socket_dir_fd, path + dirname_len);
+            if (sun_path_len >= sizeof(server_address->sun_path) || sun_path_len < 0) {
+                close(socket_dir_fd);
+                errno = ENAMETOOLONG;
+                return LIBUS_SOCKET_ERROR;
+            }
+
+            *dirfd_linux_workaround_for_unix_path_len = socket_dir_fd;
+            return 0;
+        } else if (path_len < sizeof(server_address->sun_path)) {
+            memcpy(server_address->sun_path, path, path_len);
+
+            // abstract domain sockets
+            if (server_address->sun_path[0] == 0) {
+                *addrlen = offsetof(struct sockaddr_un, sun_path) + path_len;
+            }
+
+            return 0;
+        }
+    #endif
+
+    if (path_len >= sizeof(server_address->sun_path)) {
+        #if defined(_WIN32)
+            // simulate ENAMETOOLONG
+            SetLastError(ERROR_FILENAME_EXCED_RANGE);    
+        #else
+            errno = ENAMETOOLONG;
+        #endif
+        
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    memcpy(server_address->sun_path, path, path_len);
+    return 0;
+}
+
+static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char* path, int options, struct sockaddr_un* server_address, size_t addrlen) {
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
 
     listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0);
@@ -577,21 +667,43 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, int opti
     _chmod(path, S_IREAD | S_IWRITE | S_IEXEC);
 #endif
 
-    struct sockaddr_un server_address;
-    memset(&server_address, 0, sizeof(server_address));
-    server_address.sun_family = AF_UNIX;
-    strcpy(server_address.sun_path, path);
-    int size = offsetof(struct sockaddr_un, sun_path) + strlen(server_address.sun_path);
 #ifdef _WIN32
     _unlink(path);
 #else
     unlink(path);
 #endif
 
-    if (bind(listenFd, (struct sockaddr *)&server_address, size) || listen(listenFd, 512)) {
+    if (bind(listenFd, (struct sockaddr *)server_address, addrlen) || listen(listenFd, 512)) {
+        #if defined(_WIN32)
+          int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
+        #endif
         bsd_close_socket(listenFd);
+        #if defined(_WIN32)
+            if (shouldSimulateENOENT) {
+                SetLastError(ERROR_PATH_NOT_FOUND);
+            }
+        #endif
         return LIBUS_SOCKET_ERROR;
     }
+
+    return listenFd;
+}
+
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t len, int options) {
+    int dirfd_linux_workaround_for_unix_path_len = -1;
+    struct sockaddr_un server_address;
+    size_t addrlen = 0;
+    if (bsd_create_unix_socket_address(path, len, &dirfd_linux_workaround_for_unix_path_len, &server_address, &addrlen)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    LIBUS_SOCKET_DESCRIPTOR listenFd = internal_bsd_create_listen_socket_unix(path, options, &server_address, addrlen);
+
+#if defined(__linux__)
+    if (dirfd_linux_workaround_for_unix_path_len != -1) {
+        close(dirfd_linux_workaround_for_unix_path_len);
+    }
+#endif
 
     return listenFd;
 }
@@ -750,6 +862,64 @@ static int bsd_do_connect(struct addrinfo *rp, int *fd)
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, const char *source_host, int options) {
+#ifdef _WIN32
+    // The caller (sometimes) uses NULL to indicate localhost. This works fine with getaddrinfo, but not with WSAConnectByName
+    if (!host) {
+        host = "localhost";
+    } else if (strcmp(host, "0.0.0.0") == 0 || strcmp(host, "::") == 0 || strcmp(host, "[::]") == 0) {
+        // windows disallows connecting to 0.0.0.0. To emulate POSIX behavior, we connect to localhost instead
+        // Also see https://docs.libuv.org/en/v1.x/tcp.html#c.uv_tcp_connect
+        host = "localhost";
+    }
+    // On windows we use WSAConnectByName to speed up connecting to localhost
+    // The other implementation also works on windows, but is slower
+    char port_string[16];
+    snprintf(port_string, 16, "%d", port);
+    SOCKET s = socket(AF_INET6, SOCK_STREAM, 0);
+    if (s == INVALID_SOCKET) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsaconnectbynamea#remarks
+    DWORD zero = 0;
+    if (SOCKET_ERROR == setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&zero, sizeof(DWORD))) {
+        closesocket(s);
+        return LIBUS_SOCKET_ERROR;
+    }
+    if (source_host) {
+        struct addrinfo *interface_result;
+        if (!getaddrinfo(source_host, NULL, NULL, &interface_result)) {
+            int ret = bind(s, interface_result->ai_addr, (socklen_t) interface_result->ai_addrlen);
+            freeaddrinfo(interface_result);
+            if (ret == SOCKET_ERROR) {
+                closesocket(s);
+                return LIBUS_SOCKET_ERROR;
+            }
+        }
+    }
+    SOCKADDR_STORAGE local;
+    SOCKADDR_STORAGE remote;
+    DWORD local_len = sizeof(local);
+    DWORD remote_len = sizeof(remote);
+    if (FALSE == WSAConnectByNameA(s, host, port_string, &local_len, (SOCKADDR*)&local, &remote_len, (SOCKADDR*)&remote, NULL, NULL)) {
+        closesocket(s);
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    // See
+    // - https://stackoverflow.com/questions/60591081/getpeername-always-fails-with-error-code-wsaenotconn
+    // - https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsaconnectbynamea#remarks
+    //
+    // When the WSAConnectByName function returns TRUE, the socket s is in the default state for a connected socket. 
+    // The socket s does not enable previously set properties or options until SO_UPDATE_CONNECT_CONTEXT is set on the socket. 
+    // Use the setsockopt function to set the SO_UPDATE_CONNECT_CONTEXT option.
+    //
+    if (SOCKET_ERROR == setsockopt( s, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0 )) {
+        closesocket(s);
+        return LIBUS_SOCKET_ERROR;
+    }
+    return s;
+#else
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC;
@@ -795,26 +965,47 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, co
     
     freeaddrinfo(result);
     return fd;
+#endif
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, int options) {
-
-    struct sockaddr_un server_address;
-    memset(&server_address, 0, sizeof(server_address));
-    server_address.sun_family = AF_UNIX;
-    strcpy(server_address.sun_path, server_path);
-    int size = offsetof(struct sockaddr_un, sun_path) + strlen(server_address.sun_path);
-
+static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen) {
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0);
 
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
     }
 
-    if (connect(fd, (struct sockaddr *)&server_address, size) != 0 && errno != EINPROGRESS) {
+    if (connect(fd, (struct sockaddr *)server_address, addrlen) != 0 && errno != EINPROGRESS) {
+        #if defined(_WIN32)
+          int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
+        #endif
         bsd_close_socket(fd);
+        #if defined(_WIN32)
+            if (shouldSimulateENOENT) {
+                SetLastError(ERROR_PATH_NOT_FOUND);
+            }
+        #endif
         return LIBUS_SOCKET_ERROR;
     }
+
+    return fd;
+}
+
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t len, int options) {
+    struct sockaddr_un server_address;
+    size_t addrlen = 0;
+    int dirfd_linux_workaround_for_unix_path_len = -1;
+    if (bsd_create_unix_socket_address(server_path, len, &dirfd_linux_workaround_for_unix_path_len, &server_address, &addrlen)) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    LIBUS_SOCKET_DESCRIPTOR fd = internal_bsd_create_connect_socket_unix(server_path, len, options, &server_address, addrlen);
+
+    #if defined(__linux__)
+    if (dirfd_linux_workaround_for_unix_path_len != -1) {
+        close(dirfd_linux_workaround_for_unix_path_len);
+    }
+    #endif
 
     return fd;
 }

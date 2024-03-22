@@ -26,6 +26,7 @@ pub const Classes = struct {
     pub const ExpectArrayContaining = JSC.Expect.ExpectArrayContaining;
     pub const FileSystemRouter = JSC.API.FileSystemRouter;
     pub const Glob = JSC.API.Glob;
+    pub const ShellInterpreter = JSC.API.Shell.eval.Interpreter;
     pub const Bundler = JSC.API.JSBundler;
     pub const JSBundler = Bundler;
     pub const Transpiler = JSC.API.JSTranspiler;
@@ -64,4 +65,7 @@ pub const Classes = struct {
     pub const Crypto = JSC.WebCore.Crypto;
     pub const FFI = JSC.FFI;
     pub const H2FrameParser = JSC.API.H2FrameParser;
+    pub const FileInternalReadableStreamSource = JSC.WebCore.FileReader.Source;
+    pub const BlobInternalReadableStreamSource = JSC.WebCore.ByteBlobLoader.Source;
+    pub const BytesInternalReadableStreamSource = JSC.WebCore.ByteStream.Source;
 };

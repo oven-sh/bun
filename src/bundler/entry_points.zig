@@ -8,7 +8,7 @@ const Bundler = bun.Bundler;
 const strings = bun.strings;
 
 pub const FallbackEntryPoint = struct {
-    code_buffer: [8096]u8 = undefined,
+    code_buffer: [8192]u8 = undefined,
     path_buffer: [bun.MAX_PATH_BYTES]u8 = undefined,
     source: logger.Source = undefined,
     built_code: string = "",
@@ -74,7 +74,7 @@ pub const FallbackEntryPoint = struct {
 };
 
 pub const ClientEntryPoint = struct {
-    code_buffer: [8096]u8 = undefined,
+    code_buffer: [8192]u8 = undefined,
     path_buffer: [bun.MAX_PATH_BYTES]u8 = undefined,
     source: logger.Source = undefined,
 
@@ -242,7 +242,7 @@ pub const MacroEntryPoint = struct {
     source: logger.Source = undefined,
 
     pub fn generateID(entry_path: string, function_name: string, buf: []u8, len: *u32) i32 {
-        var hasher = bun.Wyhash.init(0);
+        var hasher = bun.Wyhash11.init(0);
         hasher.update(js_ast.Macro.namespaceWithColon);
         hasher.update(entry_path);
         hasher.update(function_name);
@@ -315,12 +315,20 @@ pub const MacroEntryPoint = struct {
                 \\Bun.registerMacro({d}, Macros['{s}']);
             ,
                 .{
-                    dir_to_use,
-                    import_path.filename,
+                    bun.fmt.fmtPath(u8, dir_to_use, .{
+                        .escape_backslashes = true,
+                    }),
+                    bun.fmt.fmtPath(u8, import_path.filename, .{
+                        .escape_backslashes = true,
+                    }),
                     function_name,
                     function_name,
-                    dir_to_use,
-                    import_path.filename,
+                    bun.fmt.fmtPath(u8, dir_to_use, .{
+                        .escape_backslashes = true,
+                    }),
+                    bun.fmt.fmtPath(u8, import_path.filename, .{
+                        .escape_backslashes = true,
+                    }),
                     macro_id,
                     function_name,
                 },

@@ -27,22 +27,28 @@ test("process.binding('tty_wrap')", () => {
   expect(tty_isTTY(9999999)).toBe(false);
 
   expect(() => tty()).toThrow(TypeError);
-  expect(() => new tty(0)).not.toThrow();
 
-  const array = [-1, -1];
+  if (isatty(0)) {
+    expect(() => new tty(0)).not.toThrow();
 
-  expect(() => tty_prototype.getWindowSize.call(array, 0)).toThrow(TypeError);
-  const ttywrapper = new tty(0);
+    const array = [-1, -1];
 
-  expect(ttywrapper.getWindowSize(array)).toBeBoolean();
+    expect(() => tty_prototype.getWindowSize.call(array, 0)).toThrow(TypeError);
+    const ttywrapper = new tty(0);
 
-  if (ttywrapper.getWindowSize(array)) {
-    expect(array[0]).toBeNumber();
-    expect(array[0]).toBeGreaterThanOrEqual(0);
-    expect(array[1]).toBeNumber();
-    expect(array[1]).toBeGreaterThanOrEqual(0);
+    expect(ttywrapper.getWindowSize(array)).toBeBoolean();
+
+    if (ttywrapper.getWindowSize(array)) {
+      expect(array[0]).toBeNumber();
+      expect(array[0]).toBeGreaterThanOrEqual(0);
+      expect(array[1]).toBeNumber();
+      expect(array[1]).toBeGreaterThanOrEqual(0);
+    } else {
+      expect(array[0]).toBe(-1);
+      expect(array[1]).toBe(-1);
+    }
   } else {
-    expect(array[0]).toBe(-1);
-    expect(array[1]).toBe(-1);
+    expect(() => new tty(0)).toThrow();
+    console.warn("warn: Skipping tty tests because stdin is not a tty");
   }
 });

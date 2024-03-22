@@ -37,7 +37,7 @@ on:
 jobs:
   macOS-zig:
     name: macOS Zig Object
-    runs-on: med-ubuntu
+    runs-on: namespace-profile-zig-build
     if: github.repository_owner == 'oven-sh'
     strategy:
       matrix:
@@ -50,22 +50,15 @@ jobs:
       # - name: Checkout submodules
       #   run: git submodule update --init --recursive --depth=1 --progress --force
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v2
-        id: buildx
-        with:
-          install: true
-
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compile Zig Object
-        uses: docker/build-push-action@v3
-        if: runner.arch == 'X64'
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: false
@@ -84,10 +77,11 @@ jobs:
           outputs: type=local,dest=${{runner.temp}}/release
 
       - name: Upload Zig Object
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.tag }}
           path: ${{runner.temp}}/release/bun-zig.o
+          if-no-files-found: "error"
 
   macOS-dependencies:
     name: macOS Dependencies
@@ -141,7 +135,7 @@ jobs:
 
       - name: Cache submodule dependencies
         id: cache-deps-restore
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v4
         with:
           path: ${{runner.temp}}/bun-deps
           key: bun-deps-${{ matrix.tag }}-${{ steps.submodule-versions.outputs.sha }}
@@ -159,16 +153,17 @@ jobs:
       - name: Cache submodule dependencies
         if: ${{ !steps.cache-deps-restore.outputs.cache-hit }}
         id: cache-deps-save
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v4
         with:
           path: ${{runner.temp}}/bun-deps
           key: ${{ steps.cache-deps-restore.outputs.cache-primary-key }}
 
       - name: Upload submodule dependencies
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps
+          if-no-files-found: "error"
 
   macOS-cpp:
     name: macOS C++
@@ -228,6 +223,7 @@ jobs:
 
           cmake -S $SOURCE_DIR -B $OBJ_DIR \
             -G Ninja \
+            -DUSE_LTO=ON \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUN_CPP_ONLY=1 \
             -DNO_CONFIGURE_DEPENDS=1
@@ -235,10 +231,11 @@ jobs:
           bash compile-cpp-only.sh -v
 
       - name: Upload C++
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.tag }}-cpp
           path: ${{ runner.temp }}/bun-cpp-obj/bun-cpp-objects.a
+          if-no-files-found: "error"
   macOS-link:
     name: macOS Link
     runs-on: ${{ matrix.runner }}
@@ -285,19 +282,19 @@ jobs:
           echo "${{ runner.temp }}/.bun/bin" >> $GITHUB_PATH
 
       - name: Download C++
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.tag }}-cpp
           path: ${{ runner.temp }}/bun-cpp-obj
 
       - name: Download Zig Object
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.obj }}
           path: ${{ runner.temp }}/release
 
       - name: Downloaded submodule dependencies
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps
@@ -312,6 +309,7 @@ jobs:
           cmake $SRC_DIR \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LTO=ON \
             -DBUN_LINK_ONLY=1 \
             -DBUN_ZIG_OBJ="${{ runner.temp }}/release/bun-zig.o" \
             -DBUN_CPP_ARCHIVE="${{ runner.temp }}/bun-cpp-obj/bun-cpp-objects.a" \
@@ -330,14 +328,16 @@ jobs:
 
           zip -r ${{matrix.tag}}-profile.zip ${{matrix.tag}}-profile
           zip -r ${{matrix.tag}}.zip ${{matrix.tag}}
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{matrix.tag}}-profile
           path: ${{runner.temp}}/link-build/${{matrix.tag}}-profile.zip
-      - uses: actions/upload-artifact@v3
+          if-no-files-found: "error"
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{matrix.tag}}
           path: ${{runner.temp}}/link-build/${{matrix.tag}}.zip
+          if-no-files-found: "error"
       - name: Release
         id: release
         uses: ncipollo/release-action@v1
@@ -394,12 +394,12 @@ jobs:
     steps:
       - id: checkout
         name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: false
       - id: download
         name: Download
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{matrix.tag}}
           path: ${{runner.temp}}/release
@@ -426,6 +426,7 @@ jobs:
         name: Test (node runner)
         env:
           SMTP_SENDGRID_SENDER: ${{ secrets.SMTP_SENDGRID_SENDER }}
+          TMPDIR: ${{runner.temp}}
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
         # if: ${{github.event.inputs.use_bun == 'false'}}

@@ -667,30 +667,43 @@ pub const StreamResult = union(Tag) {
         into_array_and_done: Blob.SizeType,
 
         pub const Pending = struct {
-            future: Future = undefined,
+            future: Future = .{ .none = {} },
             result: Writable,
             consumed: Blob.SizeType = 0,
             state: StreamResult.Pending.State = .none,
 
-            pub fn deinit(_: *@This()) void {
-                // TODO:
+            pub fn deinit(this: *@This()) void {
+                this.future.deinit();
             }
 
             pub const Future = union(enum) {
-                promise: struct {
-                    promise: *JSPromise,
-                    globalThis: *JSC.JSGlobalObject,
-                },
+                none: void,
+                promise: JSC.JSPromise.Strong,
                 handler: Handler,
+
+                pub fn deinit(this: *@This()) void {
+                    if (this.* == .promise) {
+                        this.promise.strong.deinit();
+                        this.* = .{ .none = {} };
+                    }
+                }
             };
 
             pub fn promise(this: *Writable.Pending, globalThis: *JSC.JSGlobalObject) *JSPromise {
-                const prom = JSPromise.create(globalThis);
-                this.future = .{
-                    .promise = .{ .promise = prom, .globalThis = globalThis },
-                };
                 this.state = .pending;
-                return prom;
+
+                switch (this.future) {
+                    .promise => |p| {
+                        return p.get();
+                    },
+                    else => {
+                        this.future = .{
+                            .promise = JSC.JSPromise.Strong.init(globalThis),
+                        };
+
+                        return this.future.promise.get();
+                    },
+                }
             }
 
             pub const Handler = struct {
@@ -714,12 +727,15 @@ pub const StreamResult = union(Tag) {
                 if (this.state != .pending) return;
                 this.state = .used;
                 switch (this.future) {
-                    .promise => |p| {
-                        Writable.fulfillPromise(this.result, p.promise, p.globalThis);
+                    .promise => {
+                        var p = this.future.promise;
+                        this.future = .none;
+                        Writable.fulfillPromise(this.result, p.swap(), p.strong.globalThis.?);
                     },
                     .handler => |h| {
                         h.handler(h.ctx, this.result);
                     },
+                    .none => {},
                 }
             }
         };
@@ -765,11 +781,7 @@ pub const StreamResult = union(Tag) {
                 // undefined == noop, but we probably won't send it
                 .done => JSC.JSValue.jsBoolean(true),
 
-                .pending => |pending| brk: {
-                    const promise_value = pending.promise(globalThis).asValue(globalThis);
-                    promise_value.protect();
-                    break :brk promise_value;
-                },
+                .pending => |pending| pending.promise(globalThis).asValue(globalThis),
             };
         }
     };
@@ -947,17 +959,15 @@ pub const StreamResult = union(Tag) {
 };
 
 pub const Signal = struct {
-    ptr: *anyopaque = dead,
-    vtable: VTable = VTable.Dead,
-
-    pub const dead = @as(*anyopaque, @ptrFromInt(0xaaaaaaaa));
+    ptr: ?*anyopaque = null,
+    vtable: ?*const VTable = null,
 
     pub fn clear(this: *Signal) void {
-        this.ptr = dead;
+        this.ptr = null;
     }
 
     pub fn isDead(this: Signal) bool {
-        return this.ptr == dead;
+        return this.ptr == null;
     }
 
     pub fn initWithType(comptime Type: type, handler: *Type) Signal {
@@ -965,7 +975,7 @@ pub const Signal = struct {
         @setRuntimeSafety(false);
         return .{
             .ptr = handler,
-            .vtable = VTable.wrap(Type),
+            .vtable = comptime &VTable.wrap(Type),
         };
     }
 
@@ -973,44 +983,32 @@ pub const Signal = struct {
         return initWithType(std.meta.Child(@TypeOf(handler)), handler);
     }
 
-    pub fn close(this: Signal, err: ?Syscall.Error) void {
+    pub fn close(this: *Signal, err: ?Syscall.Error) void {
         if (this.isDead())
             return;
-        this.vtable.close(this.ptr, err);
+        this.vtable.?.close(this.ptr.?, err);
     }
-    pub fn ready(this: Signal, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void {
+
+    pub fn ready(this: *Signal, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void {
         if (this.isDead())
             return;
-        this.vtable.ready(this.ptr, amount, offset);
+        this.vtable.?.ready(this.ptr.?, amount, offset);
     }
-    pub fn start(this: Signal) void {
+
+    pub fn start(this: *Signal) void {
         if (this.isDead())
             return;
-        this.vtable.start(this.ptr);
+        this.vtable.?.start(this.ptr.?);
     }
 
     pub const VTable = struct {
         pub const OnCloseFn = *const (fn (this: *anyopaque, err: ?Syscall.Error) void);
         pub const OnReadyFn = *const (fn (this: *anyopaque, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void);
         pub const OnStartFn = *const (fn (this: *anyopaque) void);
+
         close: OnCloseFn,
         ready: OnReadyFn,
         start: OnStartFn,
-
-        const DeadFns = struct {
-            pub fn close(_: *anyopaque, _: ?Syscall.Error) void {
-                unreachable;
-            }
-            pub fn ready(_: *anyopaque, _: ?Blob.SizeType, _: ?Blob.SizeType) void {
-                unreachable;
-            }
-
-            pub fn start(_: *anyopaque) void {
-                unreachable;
-            }
-        };
-
-        pub const Dead = VTable{ .close = DeadFns.close, .ready = DeadFns.ready, .start = DeadFns.start };
 
         pub fn wrap(
             comptime Wrapped: type,
@@ -2880,6 +2878,7 @@ pub const FileSink = struct {
     // we should not duplicate these fields...
     pollable: bool = false,
     nonblocking: bool = false,
+    force_sync_on_windows: bool = false,
     is_socket: bool = false,
     fd: bun.FileDescriptor = bun.invalid_fd,
     has_js_called_unref: bool = false,
@@ -2890,6 +2889,19 @@ pub const FileSink = struct {
 
     pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
     pub const Poll = IOWriter;
+
+    fn Bun__ForceFileSinkToBeSynchronousOnWindows(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
+        comptime std.debug.assert(Environment.isWindows);
+
+        var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(globalObject, jsvalue) orelse return));
+        this.force_sync_on_windows = true;
+    }
+
+    comptime {
+        if (Environment.isWindows) {
+            @export(Bun__ForceFileSinkToBeSynchronousOnWindows, .{ .name = "Bun__ForceFileSinkToBeSynchronousOnWindows" });
+        }
+    }
 
     pub fn onAttachedProcessExit(this: *FileSink) void {
         log("onAttachedProcessExit()", .{});
@@ -3029,7 +3041,7 @@ pub const FileSink = struct {
         // TODO: this should be concurrent.
         const fd = switch (switch (options.input_path) {
             .path => |path| bun.sys.openA(path.slice(), options.flags(), options.mode),
-            .fd => |fd_| bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none) std.os.O.NONBLOCK else 0),
+            .fd => |fd_| bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none and !this.force_sync_on_windows) std.os.O.NONBLOCK else 0),
         }) {
             .err => |err| return .{ .err = err },
             .result => |fd| fd,
@@ -3052,10 +3064,28 @@ pub const FileSink = struct {
                 },
             }
         } else if (comptime Environment.isWindows) {
-            this.pollable = (bun.windows.GetFileType(fd.cast()) & bun.windows.FILE_TYPE_PIPE) != 0;
+            this.pollable = (bun.windows.GetFileType(fd.cast()) & bun.windows.FILE_TYPE_PIPE) != 0 and !this.force_sync_on_windows;
             this.fd = fd;
         } else {
             @compileError("TODO: implement for this platform");
+        }
+
+        if (comptime Environment.isWindows) {
+            if (this.force_sync_on_windows) {
+                switch (this.writer.startSync(
+                    fd,
+                    this.pollable,
+                )) {
+                    .err => |err| {
+                        _ = bun.sys.close(fd);
+                        return .{ .err = err };
+                    },
+                    .result => {
+                        this.writer.updateRef(this.eventLoop(), false);
+                    },
+                }
+                return .{ .result = {} };
+            }
         }
 
         switch (this.writer.start(
@@ -3125,7 +3155,7 @@ pub const FileSink = struct {
     pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) JSC.Maybe(JSValue) {
         _ = wait; // autofix
         if (this.pending.state == .pending) {
-            return .{ .result = this.pending.future.promise.promise.asValue(globalThis) };
+            return .{ .result = this.pending.future.promise.value() };
         }
 
         if (this.done) {
@@ -3191,6 +3221,7 @@ pub const FileSink = struct {
         if (this.done) {
             return .{ .done = {} };
         }
+
         return this.toResult(this.writer.writeLatin1(data.slice()));
     }
     pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
@@ -3235,6 +3266,7 @@ pub const FileSink = struct {
         }
     }
     pub fn deinit(this: *FileSink) void {
+        this.pending.deinit();
         this.writer.deinit();
     }
 
@@ -3249,7 +3281,7 @@ pub const FileSink = struct {
     pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) JSC.Maybe(JSValue) {
         if (this.done) {
             if (this.pending.state == .pending) {
-                return .{ .result = this.pending.future.promise.promise.asValue(globalThis) };
+                return .{ .result = this.pending.future.promise.value() };
             }
 
             return .{ .result = JSValue.jsNumber(this.written) };
@@ -3375,20 +3407,21 @@ pub const FileReader = struct {
 
             const fd = if (file.pathlike != .path)
                 // We will always need to close the file descriptor.
-                switch (Syscall.dupWithFlags(file.pathlike.fd, brk: {
-                    if (comptime Environment.isPosix) {
-                        if (bun.FDTag.get(file.pathlike.fd) == .none and !(file.is_atty orelse false)) {
-                            break :brk std.os.O.NONBLOCK;
-                        }
-                    }
+                // switch (Syscall.dupWithFlags(file.pathlike.fd, brk: {
+                //     if (comptime Environment.isPosix) {
+                //         if (bun.FDTag.get(file.pathlike.fd) == .none and !(file.is_atty orelse false)) {
+                //             break :brk std.os.O.NONBLOCK;
+                //         }
+                //     }
 
-                    break :brk 0;
-                })) {
-                    .result => |_fd| if (Environment.isWindows) bun.toLibUVOwnedFD(_fd) else _fd,
-                    .err => |err| {
-                        return .{ .err = err.withFd(file.pathlike.fd) };
-                    },
-                }
+                //     break :brk 0;
+                // })) {
+                //     .result => |_fd| if (Environment.isWindows) bun.toLibUVOwnedFD(_fd) else _fd,
+                //     .err => |err| {
+                //         return .{ .err = err.withFd(file.pathlike.fd) };
+                //     },
+                // }
+                file.pathlike.fd
             else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
                 .err => |err| {

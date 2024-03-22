@@ -1,5 +1,7 @@
+
 #include "root.h"
 
+#include "JavaScriptCore/DeleteAllCodeEffort.h"
 #include "headers.h"
 
 #include "BunClientData.h"
@@ -1980,7 +1982,10 @@ CPP_DECL JSC__JSString* JSC__jsTypeStringForValue(JSC__JSGlobalObject* globalObj
 
 JSC__JSValue JSC__JSPromise__asValue(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1)
 {
-    return JSC::JSValue::encode(JSC::JSValue(arg0));
+    JSValue value = JSC::JSValue(arg0);
+    ASSERT_WITH_MESSAGE(!value.isEmpty(), "JSPromise.asValue() called on a empty JSValue");
+    ASSERT_WITH_MESSAGE(value.inherits<JSC::JSPromise>(), "JSPromise::asValue() called on a non-promise object");
+    return JSC::JSValue::encode(value);
 }
 JSC__JSPromise* JSC__JSPromise__create(JSC__JSGlobalObject* arg0)
 {
@@ -2916,7 +2921,7 @@ void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
 {
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
     ASSERT_WITH_MESSAGE(arg0->status(arg0->vm()) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
-
+    ASSERT_WITH_MESSAGE(!JSValue::decode(JSValue2).inherits<JSC::JSPromise>(), "Called .resolve() with another Promise. Did you mean to do that?");
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
 }
 
@@ -3057,7 +3062,7 @@ void JSC__JSInternalPromise__rejectAsHandledException(JSC__JSInternalPromise* ar
 JSC__JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC__JSGlobalObject* arg0,
     JSC__JSValue JSValue1)
 {
-    return reinterpret_cast<JSC::JSInternalPromise*>(
+    return jsCast<JSC::JSInternalPromise*>(
         JSC::JSInternalPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1)));
 }
 
@@ -4584,8 +4589,11 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
     WTF::releaseFastMallocFreeMemory();
 
     if (sync) {
+        vm->clearSourceProviderCaches();
+        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     } else {
+        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }
 

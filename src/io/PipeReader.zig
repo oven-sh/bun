@@ -341,7 +341,7 @@ pub fn WindowsPipeReader(
             const nread_int = nread.int();
             bun.sys.syslog("onStreamRead() = {d}", .{nread_int});
 
-            //NOTE: pipes/tty need to call stopReading on errors (yeah)
+            // NOTE: pipes/tty need to call stopReading on errors (yeah)
             switch (nread_int) {
                 0 => {
                     // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)
@@ -453,7 +453,7 @@ pub fn WindowsPipeReader(
         pub fn closeImpl(this: *This, comptime callDone: bool) void {
             if (this.source) |source| {
                 switch (source) {
-                    .file => |file| {
+                    .sync_file, .file => |file| {
                         file.fs.deinit();
                         file.fs.data = file;
                         _ = uv.uv_fs_close(uv.Loop.get(), &source.file.fs, source.file.file, @ptrCast(&onFileClose));
@@ -638,6 +638,7 @@ const PosixBufferedReader = struct {
         received_eof: bool = false,
         closed_without_reporting: bool = false,
         close_handle: bool = true,
+        memfd: bool = false,
     };
 
     pub fn init(comptime Type: type) PosixBufferedReader {
@@ -677,6 +678,11 @@ const PosixBufferedReader = struct {
     pub fn setParent(this: *PosixBufferedReader, parent_: *anyopaque) void {
         this.vtable.parent = parent_;
         this.handle.setOwner(this);
+    }
+
+    pub fn startMemfd(this: *PosixBufferedReader, fd: bun.FileDescriptor) void {
+        this.flags.memfd = true;
+        this.handle = .{ .fd = fd };
     }
 
     pub usingnamespace PosixPipeReader(@This(), .{
@@ -745,6 +751,18 @@ const PosixBufferedReader = struct {
 
     pub fn buffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
         return &@as(*PosixBufferedReader, @alignCast(@ptrCast(this)))._buffer;
+    }
+
+    pub fn finalBuffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
+        if (this.flags.memfd and this.handle == .fd) {
+            defer this.handle.close(null, {});
+            _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer()).unwrap() catch |err| {
+                bun.Output.debugWarn("error reading from memfd\n{}", .{err});
+                return this.buffer();
+            };
+        }
+
+        return this.buffer();
     }
 
     pub fn disableKeepingProcessAlive(this: *@This(), event_loop_ctx: anytype) void {
@@ -992,6 +1010,8 @@ pub const WindowsBufferedReader = struct {
         return &this._buffer;
     }
 
+    pub const finalBuffer = buffer;
+
     pub fn hasPendingActivity(this: *const WindowsOutputReader) bool {
         const source = this.source orelse return false;
         return source.isActive();
@@ -1038,6 +1058,7 @@ pub const WindowsBufferedReader = struct {
 
     pub fn startWithCurrentPipe(this: *WindowsOutputReader) bun.JSC.Maybe(void) {
         std.debug.assert(this.source != null);
+        this.source.?.setData(this);
         this.buffer().clearRetainingCapacity();
         this.flags.is_done = false;
         this.unpause();

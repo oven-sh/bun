@@ -132,6 +132,10 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
         std.debug.assert(FDImpl.decode(fd).kind == kind);
     }
 
+    pub fn cwd() FileDescriptor {
+        return toFD(std.fs.cwd().fd);
+    }
+
     pub fn isStdio(fd: FileDescriptor) bool {
         // fd.assertValid();
         const decoded = FDImpl.decode(fd);
@@ -964,6 +968,8 @@ pub const disableCopyFileRangeSyscall = CopyFile.disableCopyFileRangeSyscall;
 pub const can_use_ioctl_ficlone = CopyFile.can_use_ioctl_ficlone;
 pub const disable_ioctl_ficlone = CopyFile.disable_ioctl_ficlone;
 pub const copyFile = CopyFile.copyFile;
+pub const copyFileWithState = CopyFile.copyFileWithState;
+pub const CopyFileState = CopyFile.CopyFileState;
 
 pub fn parseDouble(input: []const u8) !f64 {
     if (comptime Environment.isWasm) {
@@ -1016,6 +1022,10 @@ pub const SignalCode = enum(u8) {
         }
 
         return null;
+    }
+
+    pub fn valid(value: SignalCode) bool {
+        return @intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS) and @intFromEnum(value) >= @intFromEnum(SignalCode.SIGHUP);
     }
 
     /// Shell scripts use exit codes 128 + signal number
@@ -1915,6 +1925,20 @@ pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
             FileDescriptor => FDImpl.decode(fd),
             else => @compileError("uvfdcast() does not support type \"" ++ @typeName(T) ++ "\""),
         });
+
+        // Specifically allow these anywhere:
+        if (fd == win32.STDIN_FD) {
+            return 0;
+        }
+
+        if (fd == win32.STDOUT_FD) {
+            return 1;
+        }
+
+        if (fd == win32.STDERR_FD) {
+            return 2;
+        }
+
         if (Environment.allow_assert) {
             if (decoded.kind != .uv) {
                 std.debug.panic("uvfdcast({}) called on an windows handle", .{decoded});
@@ -2156,7 +2180,17 @@ pub const FDTag = enum {
     stdout,
     pub fn get(fd_: anytype) FDTag {
         const fd = toFD(fd_);
+        const T = @TypeOf(fd_);
         if (comptime Environment.isWindows) {
+            if (@typeInfo(T) == .Int or @typeInfo(T) == .ComptimeInt) {
+                switch (fd_) {
+                    0 => return .stdin,
+                    1 => return .stdout,
+                    2 => return .stderr,
+                    else => {},
+                }
+            }
+
             if (fd == win32.STDOUT_FD) {
                 return .stdout;
             } else if (fd == win32.STDERR_FD) {
@@ -2577,12 +2611,12 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
 
         pub fn ref(self: *T) void {
-            log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
+            if (comptime Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
             self.ref_count += 1;
         }
 
         pub fn deref(self: *T) void {
-            log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+            if (comptime Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
             self.ref_count -= 1;
 
             if (self.ref_count == 0) {
@@ -2778,3 +2812,5 @@ pub fn linuxKernelVersion() Semver.Version {
 pub const WindowsSpawnWorkaround = @import("./child_process_windows.zig");
 
 pub const exe_suffix = if (Environment.isWindows) ".exe" else "";
+
+pub const spawnSync = @This().spawn.sync.spawn;

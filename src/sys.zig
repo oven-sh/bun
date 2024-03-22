@@ -118,6 +118,7 @@ pub const Tag = enum(u8) {
     realpath,
     futime,
     pidfd_open,
+    poll,
 
     kevent,
     kqueue,
@@ -409,6 +410,24 @@ pub fn chdir(destination: anytype) Maybe(void) {
     }
 
     return Maybe(void).todo();
+}
+
+pub fn sendfile(src: bun.FileDescriptor, dest: bun.FileDescriptor, len: usize) Maybe(usize) {
+    while (true) {
+        const rc = std.os.linux.sendfile(
+            dest.cast(),
+            src.cast(),
+            null,
+            // we set a maximum to avoid EINVAL
+            @min(len, std.math.maxInt(i32) - 1),
+        );
+        if (Maybe(usize).errnoSysFd(rc, .sendfile, src)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+
+        return .{ .result = rc };
+    }
 }
 
 pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
@@ -1513,12 +1532,14 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
     if (Environment.isWindows) {
         var w_buf_from: bun.WPathBuffer = undefined;
         var w_buf_to: bun.WPathBuffer = undefined;
+
         return bun.C.renameAtW(
             from_dir,
             bun.strings.toWPath(&w_buf_from, from),
             to_dir,
             bun.strings.toWPath(&w_buf_to, to),
-            false,
+            // @paperdave why waas this set to false?
+            true,
         );
     }
     while (true) {
@@ -2195,6 +2216,28 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
     return write(fd, buf);
 }
 
+pub fn getFileSize(fd: bun.FileDescriptor) Maybe(usize) {
+    if (Environment.isWindows) {
+        var size: windows.LARGE_INTEGER = undefined;
+        if (windows.GetFileSizeEx(fd.cast(), &size) == windows.FALSE) {
+            const err = Error.fromCode(windows.getLastErrno(), .fstat);
+            log("GetFileSizeEx({}) = {s}", .{ fd, err.name() });
+            return .{ .err = err };
+        }
+        log("GetFileSizeEx({}) = {d}", .{ fd, size });
+        return .{ .result = @intCast(@max(size, 0)) };
+    }
+
+    switch (fstat(fd)) {
+        .result => |*stat_| {
+            return .{ .result = @intCast(@max(stat_.size, 0)) };
+        },
+        .err => |err| {
+            return .{ .err = err };
+        },
+    }
+}
+
 pub fn isPollable(mode: mode_t) bool {
     return os.S.ISFIFO(mode) or os.S.ISSOCK(mode);
 }
@@ -2314,5 +2357,54 @@ pub const File = struct {
     pub fn close(self: File) void {
         // TODO: probably return the error? we have a lot of code paths which do not so we are keeping for now
         _ = This.close(self.handle);
+    }
+
+    pub fn getEndPos(self: File) Maybe(usize) {
+        return getFileSize(self.handle);
+    }
+
+    pub const ReadToEndResult = struct {
+        bytes: std.ArrayList(u8) = std.ArrayList(u8).init(default_allocator),
+        err: ?Error = null,
+    };
+    pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8)) Maybe(usize) {
+        const size = switch (this.getEndPos()) {
+            .err => |err| {
+                return .{ .err = err };
+            },
+            .result => |s| s,
+        };
+
+        list.ensureUnusedCapacity(size + 16) catch bun.outOfMemory();
+
+        var total: i64 = 0;
+        while (true) {
+            if (list.unusedCapacitySlice().len == 0) {
+                list.ensureUnusedCapacity(16) catch bun.outOfMemory();
+            }
+
+            switch (bun.sys.pread(this.handle, list.unusedCapacitySlice(), total)) {
+                .err => |err| {
+                    return .{ .err = err };
+                },
+                .result => |bytes_read| {
+                    if (bytes_read == 0) {
+                        break;
+                    }
+
+                    list.items.len += bytes_read;
+                    total += @intCast(bytes_read);
+                },
+            }
+        }
+
+        return .{ .result = @intCast(total) };
+    }
+    pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
+        var list = std.ArrayList(u8).init(allocator);
+        return switch (readToEndWithArrayList(this, &list)) {
+            .err => |err| .{ .err = err, .bytes = list },
+            .result => .{ .err = null, .bytes = list },
+        };
     }
 };

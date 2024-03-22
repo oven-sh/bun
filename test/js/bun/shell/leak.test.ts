@@ -1,5 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
-
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv } from "harness";
@@ -101,9 +99,6 @@ describe("fd leak", () => {
                   prev = val;
                   prevprev = val;
                 } else {
-                  // const delta = prevprev - val;
-                  // prevprev = val;
-                  // console.error("Delta", delta);
                   expect(Math.abs(prev - val)).toBeLessThan(threshold)
                   if (!(Math.abs(prev - val) < threshold)) process.exit(1);
                 }

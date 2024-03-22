@@ -44,7 +44,7 @@ const Bunfig = @import("./bunfig.zig").Bunfig;
 
 pub const Cli = struct {
     var wait_group: sync.WaitGroup = undefined;
-    var log_: logger.Log = undefined;
+    pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
     pub fn start(allocator: std.mem.Allocator, comptime MainPanicHandler: type) void {
         start_time = std.time.nanoTimestamp();
@@ -408,10 +408,21 @@ pub const Arguments = struct {
         if (args.option("--cwd")) |cwd_| {
             cwd = brk: {
                 var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const out = std.os.realpath(cwd_, &outbuf) catch |err| {
-                    Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
-                    Global.exit(1);
-                };
+                const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_);
+
+                // On POSIX, we don't actually call chdir() on the path
+                //
+                // On Windows, we do change the current directory.
+                // Not all system calls on Windows support passing a dirfd (and libuv entirely doesn't)
+                // So we have to do it the real way
+                if (comptime Environment.isWindows) {
+                    var wbuf: bun.WPathBuffer = undefined;
+                    bun.sys.chdir(bun.strings.toWPathNormalized(&wbuf, out)).unwrap() catch |err| {
+                        Output.prettyErrorln("{}\n", .{err});
+                        Global.exit(1);
+                    };
+                }
+
                 break :brk try allocator.dupe(u8, out);
             };
         } else {

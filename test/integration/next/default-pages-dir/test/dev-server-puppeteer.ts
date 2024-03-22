@@ -15,7 +15,6 @@ if (process.argv.length > 2) {
 const b = await launch({
   headless: true,
   dumpio: true,
-  protocol: "webDriverBiDi",
 });
 
 async function main() {

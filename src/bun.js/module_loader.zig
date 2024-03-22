@@ -594,7 +594,7 @@ pub const RuntimeTranspilerStore = struct {
                     .source_url = duped.createIfDifferent(path.text),
                     .hash = 0,
                 };
-                this.resolved_source.source_code.value.WTFStringImpl.ensureHash();
+                this.resolved_source.source_code.ensureHash();
                 return;
             }
 
@@ -683,7 +683,7 @@ pub const RuntimeTranspilerStore = struct {
                 // Before ensureHash:
                 // 506.00 ms    6.1%	506.00 ms	 	  WTF::StringImpl::hashSlowCase() const
                 //
-                result.value.WTFStringImpl.ensureHash();
+                result.ensureHash();
 
                 break :brk result;
             };

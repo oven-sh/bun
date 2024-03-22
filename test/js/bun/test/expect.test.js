@@ -2315,7 +2315,7 @@ describe("expect()", () => {
     [[1n, "abc", null, -1n, undefined], -1n],
     [[Symbol.for("a")], Symbol.for("a")],
     [new Set([1, 2, 3]), 1],
-    [new Set([[], { a: 1 }, new Headers()]), new Headers()],
+    ...[!isJest ? [new Set([[], { a: 1 }, new Headers()]), new Headers()] : []],
     [new Set(["a", "b", "c"]), "c"],
     [new Set([new Map([[1, 2]])]), new Map([[1, 2]])],
     [new Uint8Array([1, 2, 3]), 1],
@@ -3267,18 +3267,22 @@ describe("expect()", () => {
         label: `Buffer.from("")`,
         value: Buffer.from(""),
       },
-      {
-        label: `new Headers()`,
-        value: new Headers(),
-      },
-      {
-        label: `new URLSearchParams()`,
-        value: new URLSearchParams(),
-      },
-      {
-        label: `new FormData()`,
-        value: new FormData(),
-      },
+      ...(isBun
+        ? [
+            {
+              label: `new Headers()`,
+              value: new Headers(),
+            },
+            {
+              label: `new URLSearchParams()`,
+              value: new URLSearchParams(),
+            },
+            {
+              label: `new FormData()`,
+              value: new FormData(),
+            },
+          ]
+        : []),
       {
         label: `(function* () {})()`,
         value: (function* () {})(),
@@ -3343,26 +3347,30 @@ describe("expect()", () => {
         label: `Buffer.from(" ")`,
         value: Buffer.from(" "),
       },
-      {
-        label: `new Headers({...})`,
-        value: new Headers({
-          a: "b",
-          c: "d",
-        }),
-      },
-      {
-        label: `URL.searchParams`,
-        value: new URL("https://example.com?d=e&f=g").searchParams,
-      },
-      {
-        label: `FormData`,
-        value: (() => {
-          var a = new FormData();
-          a.append("a", "b");
-          a.append("c", "d");
-          return a;
-        })(),
-      },
+      ...(isBun
+        ? [
+            {
+              label: `new Headers({...})`,
+              value: new Headers({
+                a: "b",
+                c: "d",
+              }),
+            },
+            {
+              label: `URL.searchParams`,
+              value: new URL("https://example.com?d=e&f=g").searchParams,
+            },
+            {
+              label: `FormData`,
+              value: (() => {
+                var a = new FormData();
+                a.append("a", "b");
+                a.append("c", "d");
+                return a;
+              })(),
+            },
+          ]
+        : []),
       {
         label: `generator function`,
         value: (function* () {
@@ -4282,7 +4290,7 @@ describe("expect()", () => {
     expect(expect.assertions(1)).toBeUndefined();
   });
 
-  const mocked = mock(() => {});
+  const mocked = isBun ? mock(() => {}) : jest.fn(() => {});
   mocked();
 
   test("fail to return undefined", () => {

@@ -295,6 +295,10 @@ pub const String = extern struct {
         return this.tag == Tag.ZigString and this.value.ZigString.isGloballyAllocated();
     }
 
+    pub fn ensureHash(this: String) void {
+        if (this.tag == .WTFStringImpl) this.value.WTFStringImpl.ensureHash();
+    }
+
     pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) ![]u8 {
         switch (this.tag) {
             .ZigString => return try this.value.ZigString.toOwnedSlice(allocator),

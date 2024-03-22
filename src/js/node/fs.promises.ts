@@ -505,9 +505,7 @@ export default exports;
     }
 
     [kRef]() {
-      console.log("ref");
       this[kRefs]++;
-      console.log(this[kRefs]);
     }
 
     [kUnref]() {

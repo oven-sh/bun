@@ -2169,10 +2169,16 @@ describe("fs/promises", () => {
   }, 100000);
 
   for (let withFileTypes of [false, true] as const) {
-    const iterCount = 100;
+    const warmup = 1;
+    const iterCount = 200;
+    const full = resolve(import.meta.dir, "../");
+
     const doIt = async () => {
+      for (let i = 0; i < warmup; i++) {
+        await promises.readdir(full, { withFileTypes });
+      }
+
       const maxFD = getMaxFD();
-      const full = resolve(import.meta.dir, "../");
 
       const pending = new Array(iterCount);
       for (let i = 0; i < iterCount; i++) {
@@ -2890,6 +2896,10 @@ it("fs.ReadStream allows functions", () => {
 });
 
 describe.if(isWindows)("windows path handling", () => {
+  // dont call `it` because these paths wont make sense
+  // the `it` in this branch makes something be printed on posix'
+  if (!isWindows) return it("works", () => {});
+
   const file = import.meta.path.slice(3);
   const drive = import.meta.path[0];
   const filenames = [

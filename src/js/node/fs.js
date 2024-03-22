@@ -1082,7 +1082,6 @@ function WriteStream_handleWrite(er, bytes) {
 
 function WriteStream_internalClose(err, cb) {
   this[_writeStreamPathFastPathSymbol] = false;
-  console.log("WriteStream_internalClose", this);
   var handle = this[kHandle];
   if (handle) {
     handle[kUnref]();

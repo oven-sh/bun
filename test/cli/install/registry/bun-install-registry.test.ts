@@ -3422,7 +3422,7 @@ for (const forceWaiterThread of [
       return dependenciesList;
     }
 
-    test.skip("reach max concurrent scripts", async () => {
+    test("reach max concurrent scripts", async () => {
       const scripts = {
         "preinstall": `${bunExe()} -e "Bun.sleepSync(500)"`,
       };
@@ -3600,7 +3600,7 @@ for (const forceWaiterThread of [
       ]);
       expect(await exited).toBe(0);
     });
-    test.skip("node-gyp should always be available for lifecycle scripts", async () => {
+    test("node-gyp should always be available for lifecycle scripts", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -4561,7 +4561,7 @@ for (const forceWaiterThread of [
       // when we change bun install to delete dependencies from node_modules
       // for both cases, we need to update this test
       for (const withRm of [true, false]) {
-        test.skip(withRm ? "withRm" : "withoutRm", async () => {
+        test(withRm ? "withRm" : "withoutRm", async () => {
           await writeFile(
             join(packageDir, "package.json"),
             JSON.stringify({
